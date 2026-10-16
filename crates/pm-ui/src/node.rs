@@ -23,7 +23,7 @@ pub struct Node {
     pub(crate) focus: Option<FocusId>,
     /// An icon the box draws, tinted with the text colour, in the largest
     /// square that fits its content area.
-    pub(crate) icon: Option<IconName>,
+    pub(crate) icon: Option<pm_icon::Svg>,
     /// A picture the box draws in its own colours, cropped to fill its content area.
     pub(crate) picture: Option<pm_renderer::Picture>,
     /// A ring the box draws in its content area: how much of it is filled, how thick it is, the colour of the filled part and the colour of the rest.
@@ -60,6 +60,38 @@ pub struct Node {
     pub(crate) tooltip: Option<String>,
     /// The selectable text the lines inside the box are part of.
     pub(crate) selectable: Option<FocusId>,
+    /// Stretches of the box's text painted apart from the rest.
+    pub(crate) marks: Vec<Mark>,
+}
+
+/// How a stretch of a line of text is painted apart from the rest.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Paint {
+    /// Its letters in another colour.
+    Ink,
+    /// A box of colour behind it.
+    Fill,
+    /// A wavy line under it.
+    Wave,
+    /// A straight line under it.
+    Underline,
+    /// Shown as selected, as the selection of a field is.
+    Selected,
+    /// A blinking caret before its first byte, as the caret of a field is.
+    Caret,
+    /// A thin upright line the height of the line at the column its first number counts, in spaces from the left, which may lie past the end of the text.
+    Guide,
+}
+
+/// A stretch of a line of text painted apart from the rest.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Mark {
+    /// The bytes of the text.
+    pub range: std::ops::Range<usize>,
+    /// The colour.
+    pub color: pm_style::Color,
+    /// How.
+    pub paint: Paint,
 }
 
 /// The end of a box's contents that a scroll position is measured from.
@@ -87,7 +119,13 @@ pub fn text(content: impl Into<String>) -> Node {
 impl Node {
     /// Makes the box draw `name` in the text colour; size the box to size the icon.
     pub fn icon(mut self, name: IconName) -> Self {
-        self.icon = Some(name);
+        self.icon = Some(name.svg());
+        self
+    }
+
+    /// Makes the box draw the artwork `svg` in the text colour, as an icon is drawn.
+    pub fn artwork(mut self, svg: pm_icon::Svg) -> Self {
+        self.icon = Some(svg);
         self
     }
 
@@ -160,6 +198,27 @@ impl Node {
     /// answering to the user, for a control that is switched off.
     pub fn inert(mut self) -> Self {
         self.focus = None;
+        self
+    }
+
+    /// Paints the bytes `range` of this node's text in `color` the way `paint` says, over or under the rest of the text.
+    pub fn mark(
+        mut self,
+        range: std::ops::Range<usize>,
+        color: impl Into<pm_style::Color>,
+        paint: Paint,
+    ) -> Self {
+        self.marks.push(Mark {
+            range,
+            color: color.into(),
+            paint,
+        });
+        self
+    }
+
+    /// Paints each stretch of `marks` apart from the rest of this node's text.
+    pub fn marks(mut self, marks: impl IntoIterator<Item = Mark>) -> Self {
+        self.marks.extend(marks);
         self
     }
 

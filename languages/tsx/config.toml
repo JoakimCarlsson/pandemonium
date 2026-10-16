@@ -1,0 +1,32 @@
+# TSX: how files are told to be TSX, how they are edited and the language
+# server that reads them. A project's own TypeScript is used before the one
+# installed with the server.
+
+name = "TSX"
+version = "0.1.0"
+description = "TSX, installed with TypeScript."
+icon = "icon.svg"
+color = "#5aa9e6"
+grammar = "tsx"
+suffixes = ["tsx"]
+aliases = ["typescriptreact"]
+line_comment = "//"
+indent = 2
+pairs = ["()", "[]", "{}", "\"\"", "''", "``"]
+hidden = true
+
+[grammar_file]
+url = "https://github.com/tree-sitter/tree-sitter-typescript/releases/download/v0.23.2/tree-sitter-tsx.wasm"
+sha256 = "79e5da75ea62855a0cd67177685f0164eac87d5f630b3cbe1e0a099751ad30f8"
+
+[server]
+id = "typescript-language-server"
+language_id = "typescriptreact"
+command = "typescript-language-server"
+args = ["--stdio"]
+project = ["node_modules/.bin"]
+
+[server.install]
+kind = "npm"
+version = "6.0.2"
+packages = ["typescript-language-server@6.0.2", "typescript@6.0.3"]

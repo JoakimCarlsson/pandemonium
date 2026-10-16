@@ -18,6 +18,7 @@ make lint    # cargo clippy --workspace --all-targets -- -D warnings
 make install        # build and install the window as pandemonium-preview
 make install-server # build and install only the headless pandemonium-server
 make release VERSION=x.y.z  # bump, tag and push; CI builds and publishes
+make languages      # write languages/languages.json after a language folder changes
 ```
 
 **Verify a change:** build, then draw the screen you touched. `pandemonium
@@ -74,14 +75,30 @@ One crate per layer, each depending only on the layers below it.
   selection. `pm-components` draws it as the terminal dock.
 - **Markdown:** `pm-markdown`: markdown parsed into blocks of styled spans;
   `pm-components` lays them out as `Markdown`.
+- **Code:** `pm-buffer` (a text with its lines indexed, places as language
+  servers and syntax trees count them, and the change an edit made),
+  `pm-treesitter` (grammars compiled to WebAssembly and loaded at run time;
+  highlighting with injections, indentation, bracket pairs and the outline from
+  each language's queries; parsed in the window) and `pm-lsp` (the language
+  index, installing languages and their servers, and the hub that runs language
+  servers for the files clients have open; the server uses it), and `pm-editor`
+  (an open file being edited: its syntax tree and language server version kept
+  in step, completions, indentation as the language says, pairs, whole-line
+  edits, several carets, find and replace, folding, how its lines differ from
+  the last commit, formatting edits and jumps back and forward; every rule
+  returns the edits it calls for and `pm-components` draws it). A language is a
+  folder in `languages/`: a `config.toml` manifest and five tree-sitter queries.
+  `make languages` writes `languages/languages.json` with every file's checksum
+  after a folder changes; a release build reads the folders from the repository
+  at its own release tag, a debug build from its checkout, and either from
+  `PANDEMONIUM_LANGUAGES` when it is set.
 - **Domain:** `pm-acp` (agents over the Agent Client Protocol), `pm-git`,
   `pm-store` (persistence under the data directory). The server uses them; the
   window does not.
 - **Binary:** `pandemonium`: the event loop, the window and the threads that
   talk to the servers. It wires the layers and implements none of them.
 - **Not built yet** (one doc comment each): `pm-session`, `pm-review`,
-  `pm-config`, `pm-lsp`, `pm-treesitter`, `pm-buffer`,
-  `pm-mcp`, `pm-policy`, `pm-plugin`, `pm-plugin-api`, `pm-wasm`,
+  `pm-config`, `pm-mcp`, `pm-policy`, `pm-plugin`, `pm-plugin-api`, `pm-wasm`,
   `pm-agent-library`.
 
 ## Hard rules

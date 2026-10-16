@@ -15,10 +15,11 @@ use pm_components::arrange::{
     SESSION_MENU_COPY_BRANCH, SESSION_MENU_COPY_PATH, SESSION_MENU_OPEN_FOLDER,
     SESSION_MENU_RENAME, SessionMenu,
 };
-use pm_components::context_menu::field_menu;
+use pm_components::context_menu::{editor_menu, field_menu};
 use pm_components::file_icon::file_icon;
 use pm_components::git_prompts;
 use pm_components::message_menu::message_menu;
+use pm_components::open_files::EDITOR_FIELD;
 use pm_components::open_files::{FILE_CLOSE_BASE, FILE_TAB_BASE, Viewer};
 use pm_components::parts::{glyph, line, spacer};
 use pm_components::{
@@ -109,9 +110,16 @@ fn viewer_tab(viewer: &Viewer, index: usize, shown: bool) -> Node {
         ]));
     }
     tab.child(
-        Button::icon(IconName::Close, FocusId(FILE_CLOSE_BASE + index as u64))
-            .size(pm_components::button::Size::Icon)
-            .build(),
+        Button::icon(
+            if viewer.pinned {
+                IconName::Pin
+            } else {
+                IconName::Close
+            },
+            FocusId(FILE_CLOSE_BASE + index as u64),
+        )
+        .size(pm_components::button::Size::Icon)
+        .build(),
     )
     .focusable(FocusId(FILE_TAB_BASE + index as u64))
 }
@@ -263,6 +271,7 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
             home_page(state, main_width, height, shaper)
         }
         (Page::History, _) => history::history(state),
+        (Page::Extensions, _) => pm_components::extensions::extensions(state),
         _ => welcome::welcome(
             state,
             ((height - WELCOME_HEIGHT) / 2.0 + WELCOME_ABOVE).max(0.0),
@@ -280,11 +289,20 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
     if let Some(session) = state.review_session().filter(|_| reviewing) {
         root = root.child(review::review(state, session, shaper));
     }
-    root.children(
-        state
-            .menu
-            .and_then(|menu| state.field(menu.field).map(|field| field_menu(field, menu))),
-    )
+    root.children(state.menu.and_then(|menu| {
+        let field = state.field(menu.field)?;
+        Some(if menu.field == EDITOR_FIELD {
+            editor_menu(
+                field,
+                menu,
+                state.coding(),
+                state.review_is_local(),
+                &state.editor.keymap(),
+            )
+        } else {
+            field_menu(field, menu)
+        })
+    }))
     .children(sidebar::drag_ghost(state))
     .children(state.project_menu.map(project_menu))
     .children(state.session_menu.map(|open| session_menu(state, open)))
@@ -293,6 +311,16 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
     .children(settings::settings(state, width, height))
     .children(pm_components::settings_servers::server_menu(state))
     .children(state.git_menu_node().filter(|_| reviewing))
+    .children(state.tab_menu.and_then(|open| {
+        state.git.viewers.get(open.index).map(|viewer| {
+            pm_components::tab_menu::tab_menu(
+                viewer,
+                open,
+                state.git.viewers.len(),
+                state.review_is_local(),
+            )
+        })
+    }))
     .children(
         state
             .git
@@ -300,6 +328,7 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
             .as_ref()
             .map(|open| git_prompts::prompt(state, open)),
     )
+    .children(pm_components::assist::assist(state, height, shaper))
 }
 
 /// The menu of a project: start a session in it, or take it out of the window.

@@ -38,6 +38,10 @@ pub struct Menu {
     at: (f32, f32),
     /// The rows, top to bottom.
     entries: Vec<Entry>,
+    /// How wide it is, in style units.
+    width: f32,
+    /// How tall each row is, in style units.
+    row: f32,
 }
 
 impl Menu {
@@ -46,7 +50,21 @@ impl Menu {
         Self {
             at: (x, y),
             entries: Vec::new(),
+            width: 52.0,
+            row: 8.0,
         }
+    }
+
+    /// The menu with rows `units` style units tall, for a long menu that has to fit the window.
+    pub fn row_height(mut self, units: f32) -> Self {
+        self.row = units;
+        self
+    }
+
+    /// The menu `units` style units wide, for rows whose labels and keys need more room.
+    pub fn width(mut self, units: f32) -> Self {
+        self.width = units;
+        self
     }
 
     /// The menu with a row saying `label`, answering to `id`, written with
@@ -83,7 +101,7 @@ impl Menu {
                 z(50),
                 flex(),
                 flex_col(),
-                w(52),
+                w(self.width),
                 min_w_px(0),
                 p(1),
                 rounded(Radius::Md),
@@ -92,12 +110,12 @@ impl Menu {
                 border_color(Role::Border),
                 shadow_md(),
             ])
-            .children(self.entries.into_iter().map(row))
+            .children(self.entries.into_iter().map(|entry| row(entry, self.row)))
     }
 }
 
-/// The node for one entry.
-fn row(entry: Entry) -> Node {
+/// The node for one entry, `height` style units tall when it is a row.
+fn row(entry: Entry, height: f32) -> Node {
     match entry {
         Entry::Separator => node().styles([
             h(0.25),
@@ -115,7 +133,7 @@ fn row(entry: Entry) -> Node {
                 flex(),
                 items_center(),
                 gap(4),
-                h(8),
+                h(height),
                 px(2),
                 rounded(Radius::Sm),
             ];

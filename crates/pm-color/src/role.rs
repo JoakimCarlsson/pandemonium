@@ -45,11 +45,29 @@ pub enum Role {
     OnSuccess,
     /// Text and icons drawn on the danger colour.
     OnDanger,
+    /// Something that may be wrong.
+    Warning,
+    /// The words of a programming language in code.
+    SyntaxKeyword,
+    /// Functions, methods and macros in code.
+    SyntaxFunction,
+    /// Types and modules in code.
+    SyntaxType,
+    /// Strings and characters in code.
+    SyntaxString,
+    /// Numbers and constants in code.
+    SyntaxConstant,
+    /// Comments in code.
+    SyntaxComment,
+    /// Fields, properties and attributes in code.
+    SyntaxProperty,
+    /// Operators and punctuation in code.
+    SyntaxPunctuation,
 }
 
 impl Role {
     /// Every role, in declaration order.
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 27] = [
         Self::Background,
         Self::Sidebar,
         Self::Surface,
@@ -68,6 +86,15 @@ impl Role {
         Self::OnAccent,
         Self::OnSuccess,
         Self::OnDanger,
+        Self::Warning,
+        Self::SyntaxKeyword,
+        Self::SyntaxFunction,
+        Self::SyntaxType,
+        Self::SyntaxString,
+        Self::SyntaxConstant,
+        Self::SyntaxComment,
+        Self::SyntaxProperty,
+        Self::SyntaxPunctuation,
     ];
 
     /// The role's name as a theme file writes it, such as `surface-hover`.
@@ -91,6 +118,15 @@ impl Role {
             Self::OnAccent => "on-accent",
             Self::OnSuccess => "on-success",
             Self::OnDanger => "on-danger",
+            Self::Warning => "warning",
+            Self::SyntaxKeyword => "syntax-keyword",
+            Self::SyntaxFunction => "syntax-function",
+            Self::SyntaxType => "syntax-type",
+            Self::SyntaxString => "syntax-string",
+            Self::SyntaxConstant => "syntax-constant",
+            Self::SyntaxComment => "syntax-comment",
+            Self::SyntaxProperty => "syntax-property",
+            Self::SyntaxPunctuation => "syntax-punctuation",
         }
     }
 }

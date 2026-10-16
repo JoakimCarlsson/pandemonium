@@ -3,6 +3,7 @@
 
 use std::time::Instant;
 
+use pm_components::assist::HOVER_CARD;
 use pm_components::message_menu::{
     MESSAGE_MENU_COPY, MESSAGE_MENU_SELECT_ALL, is_message_menu_item,
 };
@@ -28,7 +29,7 @@ impl App {
         }
         let before = self.text_selection.take();
         self.text_held = None;
-        if self.pressed_on.is_some() {
+        if self.pressed_on.is_some() && self.pressed_on != Some(HOVER_CARD) {
             return;
         }
         let Some((id, point)) = self
@@ -126,7 +127,7 @@ impl App {
     }
 
     /// Puts the selected text on the clipboard, when some is selected.
-    fn copy_selection(&mut self) {
+    pub(super) fn copy_selection(&mut self) {
         let Some(selection) = self.text_selection.filter(|held| !held.is_empty()) else {
             return;
         };

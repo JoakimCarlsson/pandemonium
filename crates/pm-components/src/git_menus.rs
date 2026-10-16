@@ -160,6 +160,7 @@ impl WorkspaceState {
     pub fn is_menu_row(&self, id: FocusId) -> bool {
         (self.git.menu.is_some() && id.0.checked_sub(MENU_ROW_BASE).is_some_and(|row| row < 40))
             || self.settings_menu_row(id)
+            || self.is_tab_menu_row(id)
     }
 
     /// Which commit of the graph the row `id` is, if it is one.

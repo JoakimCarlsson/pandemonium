@@ -34,6 +34,10 @@ pm-ssh = { path = "crates/pm-ssh" }
 pm-server = { path = "crates/pm-server" }
 pm-markdown = { path = "crates/pm-markdown" }
 pm-terminal = { path = "crates/pm-terminal" }
+pm-buffer = { path = "crates/pm-buffer" }
+pm-treesitter = { path = "crates/pm-treesitter" }
+pm-lsp = { path = "crates/pm-lsp" }
+pm-editor = { path = "crates/pm-editor" }
 
 [profile.dist]
 inherits = "release"

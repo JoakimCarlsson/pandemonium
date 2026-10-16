@@ -339,7 +339,7 @@ impl WorkspaceState {
                     &tool.env,
                 ))
             }
-            Section::General | Section::Agents => None,
+            _ => None,
         }
     }
 
@@ -672,6 +672,15 @@ pub(crate) fn is_form_field(id: FocusId) -> bool {
 fn summary(section: Section) -> &'static str {
     match section {
         Section::General => "",
+        Section::Keymap => {
+            "Pick the editor your hands know, or press a binding to give an action keys of your own."
+        }
+        Section::Editor
+        | Section::EditorAppearance
+        | Section::EditorEditing
+        | Section::EditorSaving
+        | Section::EditorIntelligence
+        | Section::EditorSearch => crate::settings_editor::summary(section),
         Section::Agents => {
             "Tailor how agents work in your projects: the agents that can be started, and the tools they are given."
         }
@@ -729,6 +738,39 @@ pub(crate) fn body(state: &WorkspaceState, section: Section) -> Node {
     let inner = inner.child(page_title(section));
     match section {
         Section::General => page.child(inner),
+        Section::Editor => page.child(
+            inner
+                .child(paragraph(crate::settings_editor::summary(section)))
+                .child(line("Settings", 15, 1.4, Role::Text).styles([pm_style::font_medium()]))
+                .children(
+                    [
+                        Section::EditorAppearance,
+                        Section::EditorEditing,
+                        Section::EditorSaving,
+                        Section::EditorIntelligence,
+                        Section::EditorSearch,
+                    ]
+                    .map(|part| card(part, String::new())),
+                ),
+        ),
+        Section::Keymap => page
+            .child(
+                inner
+                    .child(paragraph(summary(section)))
+                    .children(crate::settings_keymap::rows(state)),
+            )
+            .scroll_from_start(SETTINGS_SCROLL, state.settings_servers.scroll),
+        Section::EditorAppearance
+        | Section::EditorEditing
+        | Section::EditorSaving
+        | Section::EditorIntelligence
+        | Section::EditorSearch => page
+            .child(
+                inner
+                    .child(paragraph(crate::settings_editor::summary(section)))
+                    .child(crate::settings_editor::rows(state, section)),
+            )
+            .scroll_from_start(SETTINGS_SCROLL, state.settings_servers.scroll),
         Section::Agents => page.child(
             inner
                 .child(paragraph(summary(section)))
@@ -749,7 +791,7 @@ fn count_of(state: &WorkspaceState, section: Section) -> String {
     match section {
         Section::AgentServers => format!("{} available", state.offered_agents().len()),
         Section::McpServers => format!("{} installed", state.settings_servers.tools.len()),
-        Section::General | Section::Agents => String::new(),
+        _ => String::new(),
     }
 }
 
@@ -801,7 +843,8 @@ fn card(section: Section, count: String) -> Node {
         .child(line(
             match section {
                 Section::AgentServers => "The agents that can be started, and the ones you add.",
-                _ => "Tool servers every agent is started with.",
+                Section::McpServers => "Tool servers every agent is started with.",
+                other => crate::settings_editor::summary(other),
             },
             12,
             1.4,
@@ -1174,7 +1217,7 @@ fn badge(label: &str, tone: Role) -> Node {
 }
 
 /// A switch that is on while `on` is true, answering to `id`.
-fn switch(on: bool, id: FocusId) -> Node {
+pub(crate) fn switch(on: bool, id: FocusId) -> Node {
     let knob = node().styles([size(4), rounded_full(), bg(Role::Text)]);
     let track = node()
         .styles([

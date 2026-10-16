@@ -19,6 +19,14 @@ pub enum Motion {
     Home,
     /// To the end of the line.
     End,
+    /// To the start of the line of a multiline field the caret is on.
+    LineStart,
+    /// To the end of the line of a multiline field the caret is on.
+    LineEnd,
+    /// To the line above, as many characters in as the caret is.
+    LineUp,
+    /// To the line below, as many characters in as the caret is.
+    LineDown,
 }
 
 /// One change to make to a [`Field`].
@@ -53,6 +61,19 @@ pub enum Edit {
     /// Scroll the line so it starts this many logical pixels left of the
     /// view; negative offsets are taken as none.
     ScrollTo(f32),
+    /// Replace the bytes of the text in the range with the text, as one
+    /// change, then select from the first offset of the new text to the
+    /// second; control characters are dropped as when pasting.
+    Replace(std::ops::Range<usize>, String, (usize, usize)),
+    /// Select from the first byte offset of the text to the second, the
+    /// caret at the second.
+    Select(usize, usize),
+    /// Keep what is selected and select from the first byte offset of the
+    /// text to the second as well, the new selection the one the caret is
+    /// in; edits are then made at every selection.
+    AddSelection(usize, usize),
+    /// Keep only the selection the caret is in.
+    OnlySelection,
     /// Show text an input method is still composing at the caret, such as
     /// the accent of a dead key waiting for its letter, or stop showing it
     /// when empty. The text is not typed until the input method commits it.
@@ -89,6 +110,9 @@ pub struct Field {
     /// Text an input method is composing at the caret: shown, but not part
     /// of the text until it is committed.
     composing: String,
+    /// The other selections, besides the one the caret is in, each as the
+    /// end that does not move and the end that does.
+    others: Vec<(usize, usize)>,
 }
 
 /// What a field held at one moment, for undoing back to it.
@@ -100,6 +124,8 @@ struct Snapshot {
     caret: usize,
     /// The other end of the selection.
     anchor: usize,
+    /// The other selections.
+    others: Vec<(usize, usize)>,
 }
 
 /// What a masked line shows for each of its characters.
@@ -279,6 +305,33 @@ impl Field {
             .then(|| self.anchor.min(self.caret)..self.anchor.max(self.caret))
     }
 
+    /// Every selection, the one the caret is in among them, as the end that does not move and the end that does, in the order they come in the text.
+    pub fn selections(&self) -> Vec<(usize, usize)> {
+        let mut all: Vec<(usize, usize)> = std::iter::once((self.anchor, self.caret))
+            .chain(self.others.iter().copied())
+            .collect();
+        all.sort_by_key(|(anchor, caret)| (*anchor).min(*caret));
+        all
+    }
+
+    /// The text of every selection that holds some, in the order they come, one to a line; empty when the line is masked.
+    pub fn selected_all(&self) -> String {
+        if self.masked {
+            return String::new();
+        }
+        self.selections()
+            .into_iter()
+            .filter(|(anchor, caret)| anchor != caret)
+            .map(|(anchor, caret)| &self.text[anchor.min(caret)..anchor.max(caret)])
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Whether there are selections besides the one the caret is in.
+    pub fn has_others(&self) -> bool {
+        !self.others.is_empty()
+    }
+
     /// The selected text, empty when nothing is selected or the line is masked.
     pub fn selected(&self) -> &str {
         match self.selection() {
@@ -310,6 +363,7 @@ impl Field {
             edit,
             Edit::Insert(_)
                 | Edit::Paste(_)
+                | Edit::Replace(..)
                 | Edit::Backspace
                 | Edit::Delete
                 | Edit::BackspaceWord
@@ -320,42 +374,23 @@ impl Field {
         }
         let before = changes.then(|| self.snapshot());
         let typed = matches!(&edit, Edit::Insert(c) if !c.is_whitespace());
-        match edit {
-            Edit::Insert(character) => {
-                if !character.is_control() || (matches!(character, '\n' | '\t') && self.multiline) {
-                    self.replace_selection(character.encode_utf8(&mut [0; 4]));
-                }
+        let everywhere = matches!(
+            edit,
+            Edit::Insert(_)
+                | Edit::Paste(_)
+                | Edit::Backspace
+                | Edit::Delete
+                | Edit::BackspaceWord
+                | Edit::DeleteWord
+                | Edit::Move(..)
+        );
+        if everywhere && !self.others.is_empty() {
+            self.perform_everywhere(&edit);
+        } else {
+            if !matches!(edit, Edit::AddSelection(..)) {
+                self.others.clear();
             }
-            Edit::Paste(text) => {
-                let multiline = self.multiline;
-                let clean: String = text
-                    .replace("\r\n", "\n")
-                    .chars()
-                    .filter(|c| !c.is_control() || (multiline && matches!(*c, '\n' | '\t')))
-                    .collect();
-                self.replace_selection(&clean);
-            }
-            Edit::Backspace => self.delete_or(|field| field.before(field.caret)),
-            Edit::Delete => self.delete_or(|field| field.after(field.caret)),
-            Edit::BackspaceWord => self.delete_or(|field| Some(field.word_before(field.caret))),
-            Edit::DeleteWord => self.delete_or(|field| Some(field.word_after(field.caret))),
-            Edit::Move(motion, extend) => self.travel(motion, extend),
-            Edit::SelectAll => {
-                self.anchor = 0;
-                self.caret = self.text.len();
-            }
-            Edit::Place(shown, extend) => {
-                self.caret = self.to_text(shown);
-                if !extend {
-                    self.anchor = self.caret;
-                }
-            }
-            Edit::SelectWordAt(shown) => {
-                let byte = self.to_text(shown);
-                self.anchor = self.word_before(self.after(byte).unwrap_or(byte));
-                self.caret = self.word_after(self.before(byte).unwrap_or(byte));
-            }
-            Edit::Undo | Edit::Redo | Edit::ScrollTo(_) | Edit::Compose(_) => {}
+            self.perform(edit);
         }
         if let Some(before) = before
             && before != self.snapshot()
@@ -373,12 +408,138 @@ impl Field {
         }
     }
 
+    /// Makes `edit` at every selection, the last in the text first so the earlier ones stay where they are, and joins selections that come to overlap.
+    fn perform_everywhere(&mut self, edit: &Edit) {
+        let mut all: Vec<(usize, usize)> = std::iter::once((self.anchor, self.caret))
+            .chain(self.others.iter().copied())
+            .collect();
+        let mut order: Vec<usize> = (0..all.len()).collect();
+        order.sort_by_key(|index| std::cmp::Reverse(all[*index].0.min(all[*index].1)));
+        for (done, index) in order.iter().enumerate() {
+            (self.anchor, self.caret) = all[*index];
+            let length = self.text.len() as isize;
+            self.perform(edit.clone());
+            let grown = self.text.len() as isize - length;
+            all[*index] = (self.anchor, self.caret);
+            for later in &order[..done] {
+                let (anchor, caret) = all[*later];
+                all[*later] = (
+                    (anchor as isize + grown).max(0) as usize,
+                    (caret as isize + grown).max(0) as usize,
+                );
+            }
+        }
+        let primary = all[0];
+        let mut sorted = all.clone();
+        sorted.sort_by_key(|(anchor, caret)| (*anchor).min(*caret));
+        let mut joined: Vec<(usize, usize)> = Vec::new();
+        for (anchor, caret) in sorted {
+            let (start, end) = (anchor.min(caret), anchor.max(caret));
+            if let Some(last) = joined.last_mut() {
+                let (held_start, held_end) = (last.0.min(last.1), last.0.max(last.1));
+                if start < held_end || (start == held_start && end == held_end) {
+                    let reach = held_end.max(end);
+                    *last = if last.1 >= last.0 {
+                        (held_start, reach)
+                    } else {
+                        (reach, held_start)
+                    };
+                    continue;
+                }
+            }
+            joined.push((anchor, caret));
+        }
+        let at = joined
+            .iter()
+            .position(|(anchor, caret)| {
+                let (start, end) = ((*anchor).min(*caret), (*anchor).max(*caret));
+                start <= primary.1 && primary.1 <= end
+            })
+            .unwrap_or(0);
+        (self.anchor, self.caret) = joined.remove(at);
+        self.others = joined;
+    }
+
+    /// Makes `edit` at the selection the caret is in.
+    fn perform(&mut self, edit: Edit) {
+        match edit {
+            Edit::Insert(character) => {
+                if !character.is_control() || (matches!(character, '\n' | '\t') && self.multiline) {
+                    self.replace_selection(character.encode_utf8(&mut [0; 4]));
+                }
+            }
+            Edit::Paste(text) => {
+                let clean = self.cleaned(&text);
+                self.replace_selection(&clean);
+            }
+            Edit::Replace(range, text, (anchor, caret)) => {
+                let clean = self.cleaned(&text);
+                let start = self.boundary(range.start);
+                let end = self.boundary(range.end.max(range.start));
+                self.text.replace_range(start..end, &clean);
+                self.anchor = self.boundary(anchor);
+                self.caret = self.boundary(caret);
+            }
+            Edit::Backspace => self.delete_or(|field| field.before(field.caret)),
+            Edit::Delete => self.delete_or(|field| field.after(field.caret)),
+            Edit::BackspaceWord => self.delete_or(|field| Some(field.word_before(field.caret))),
+            Edit::DeleteWord => self.delete_or(|field| Some(field.word_after(field.caret))),
+            Edit::Move(motion, extend) => self.travel(motion, extend),
+            Edit::SelectAll => {
+                self.anchor = 0;
+                self.caret = self.text.len();
+            }
+            Edit::Place(shown, extend) => {
+                self.caret = self.to_text(shown);
+                if !extend {
+                    self.anchor = self.caret;
+                }
+            }
+            Edit::Select(anchor, caret) => {
+                self.anchor = self.boundary(anchor);
+                self.caret = self.boundary(caret);
+            }
+            Edit::SelectWordAt(shown) => {
+                let byte = self.to_text(shown);
+                self.anchor = self.word_before(self.after(byte).unwrap_or(byte));
+                self.caret = self.word_after(self.before(byte).unwrap_or(byte));
+            }
+            Edit::AddSelection(anchor, caret) => {
+                let anchor = self.boundary(anchor);
+                let caret = self.boundary(caret);
+                let (start, end) = (anchor.min(caret), anchor.max(caret));
+                let taken = std::iter::once((self.anchor, self.caret))
+                    .chain(self.others.iter().copied())
+                    .any(|(held_anchor, held_caret)| {
+                        held_anchor.min(held_caret) == start && held_anchor.max(held_caret) == end
+                    });
+                if !taken {
+                    self.others.push((self.anchor, self.caret));
+                    self.anchor = anchor;
+                    self.caret = caret;
+                }
+            }
+            Edit::OnlySelection => self.others.clear(),
+            Edit::Undo | Edit::Redo | Edit::ScrollTo(_) | Edit::Compose(_) => {}
+        }
+    }
+
+    /// `text` as this field holds it: line endings made plain, and control characters dropped but for line breaks and tabs in a multiline field.
+    fn cleaned(&self, text: &str) -> String {
+        let multiline = self.multiline;
+        text.replace("\r\n", "\n")
+            .chars()
+            .filter(|c| !c.is_control() || (multiline && matches!(*c, '\n' | '\t')))
+            .collect()
+    }
+
     /// The line, caret and selection as they are now.
     fn snapshot(&self) -> Snapshot {
         Snapshot {
             text: self.text.clone(),
             caret: self.caret,
             anchor: self.anchor,
+            others: self.others.clone(),
         }
     }
 
@@ -387,6 +548,7 @@ impl Field {
         self.text = snapshot.text;
         self.caret = snapshot.caret;
         self.anchor = snapshot.anchor;
+        self.others = snapshot.others;
         self.typing = false;
     }
 
@@ -445,11 +607,50 @@ impl Field {
             (Motion::WordRight, _) => self.word_after(self.caret),
             (Motion::Home, _) => 0,
             (Motion::End, _) => self.text.len(),
+            (Motion::LineStart, _) => self.line_start(self.caret),
+            (Motion::LineEnd, _) => self.line_end(self.caret),
+            (Motion::LineUp, _) => self.line_step(false),
+            (Motion::LineDown, _) => self.line_step(true),
         };
         self.caret = target;
         if !extend {
             self.anchor = target;
         }
+    }
+
+    /// Where the line holding the byte `offset` starts.
+    fn line_start(&self, offset: usize) -> usize {
+        self.text[..offset].rfind('\n').map_or(0, |at| at + 1)
+    }
+
+    /// Where the line holding the byte `offset` ends, before its line break.
+    fn line_end(&self, offset: usize) -> usize {
+        self.text[offset..]
+            .find('\n')
+            .map_or(self.text.len(), |at| offset + at)
+    }
+
+    /// Where the caret goes on the line below, or above unless `down`, as many characters in as it is now or at the end of a shorter line; the start or end of the text when there is no such line.
+    fn line_step(&self, down: bool) -> usize {
+        let start = self.line_start(self.caret);
+        let column = self.text[start..self.caret].chars().count();
+        let target = if down {
+            let end = self.line_end(self.caret);
+            if end >= self.text.len() {
+                return self.text.len();
+            }
+            end + 1
+        } else {
+            if start == 0 {
+                return 0;
+            }
+            self.line_start(start - 1)
+        };
+        let end = self.line_end(target);
+        self.text[target..end]
+            .char_indices()
+            .nth(column)
+            .map_or(end, |(at, _)| target + at)
     }
 
     /// The nearest character boundary at or before `byte`, within the text.

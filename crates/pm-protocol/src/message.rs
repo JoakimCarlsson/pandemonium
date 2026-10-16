@@ -87,4 +87,20 @@ pub enum ServerMessage {
         /// The shell.
         terminal: u64,
     },
+    /// What a language server finds wrong with a file the connection opened, replacing what it found before.
+    Diagnostics {
+        /// The folder the file was opened in.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The version of the text the diagnostics are about, when the server says.
+        version: Option<i32>,
+        /// What is wrong.
+        diagnostics: Vec<pm_lsp::Diagnostic>,
+    },
+    /// The extensions changed: one was installed or removed, or installing one moved on. Sent to every client.
+    ExtensionsChanged {
+        /// Every extension, as `extensions` lists them.
+        extensions: Vec<crate::ExtensionInfo>,
+    },
 }

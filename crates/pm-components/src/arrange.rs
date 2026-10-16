@@ -327,6 +327,7 @@ impl WorkspaceState {
             },
             Page::New(project) => Page::New(map.get(project).copied().flatten().unwrap_or(0)),
             Page::History => Page::History,
+            Page::Extensions => Page::Extensions,
         };
         self.opened = self
             .opened

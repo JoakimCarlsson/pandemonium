@@ -18,6 +18,8 @@ use pm_state::State;
 
 use crate::view::View;
 
+mod code;
+
 /// The most files listed for the list behind an `@`.
 const FILE_LIMIT: usize = 20_000;
 
@@ -80,6 +82,8 @@ enum Job {
     Previewed(String, Option<Picture>),
     /// The server on this machine was found or reached, or could not be.
     Server(Host, Result<Target, String>),
+    /// The grammar of the language with this folder name was compiled, or could not be.
+    Grammar(String, Result<(), String>),
 }
 
 /// What is to be done with the answer to a request.
@@ -149,6 +153,44 @@ enum Pending {
     Folders(String),
     /// A repository the panel for adding a project asked to have cloned.
     Added,
+    /// The grammar of a language, asked for by this name.
+    Grammar(String),
+    /// The file of the session at this position, at this path, was opened for its language server.
+    Opened(usize, String),
+    /// What could be written in the file of the session at this position, at this path, as asked at this version.
+    Completions(usize, String, i32),
+    /// What the language server says about this place of the file of the session at this position, at this path.
+    Hovered(usize, String, pm_protocol::Position),
+    /// The extensions the server on this machine can install.
+    Extensions,
+    /// The places looked for from a place in a file of the session at this position.
+    Definitions(usize, pm_protocol::Seek),
+    /// Who last changed this line of the file of the session at this position, at this path.
+    Blame(usize, String, usize),
+    /// What is wrong with the files of the project of the session at this position.
+    Problems(usize),
+    /// The symbols of the project of the session at this position matching this query.
+    Symbols(usize, String),
+    /// The file of the session at this position, at this path, as the last commit holds it.
+    Base(usize, String),
+    /// Where the thing at a place of the file of the session at this position, at this path and version, is used.
+    Highlights(usize, String, i32),
+    /// The signature of the call a place of the file of the session at this position, at this path and version, is in.
+    Signature(usize, String, i32),
+    /// The edits that rename something across the project of the session at this position.
+    Renamed(usize),
+    /// The changes the language server offers for the file of the session at this position, at this path.
+    CodeActions(usize, String),
+    /// The edits a change the language server offered makes across the project of the session at this position.
+    TookAction(usize),
+    /// The web address of a file or a line, opened in the browser when true and copied otherwise.
+    Permalink(bool),
+    /// The commits that changed the file of the session at this position, at this path.
+    FileHistory(usize, String),
+    /// A file of the session at this position as a commit left it, shown under this name.
+    Revision(usize, String),
+    /// The edits that format the file of the session at this position, at this path and version, and whether it is written afterwards.
+    Formatted(usize, String, i32, bool),
 }
 
 impl Pending {
@@ -238,6 +280,8 @@ pub struct Work {
     resume: Option<View>,
     /// How many threads have yet to report.
     pending: Cell<usize>,
+    /// The grammars asked for of each machine, by the name they were asked by, so each is asked for once.
+    grammars: HashSet<(Host, String)>,
 }
 
 impl Work {
@@ -263,6 +307,7 @@ impl Work {
                 .collect(),
             resume: None,
             pending: Cell::new(0),
+            grammars: HashSet::new(),
         }
     }
 
@@ -319,6 +364,7 @@ impl Work {
             },
         );
         self.ask(&None, Request::Sessions, Pending::Sessions(None));
+        self.ask(&None, Request::Extensions, Pending::Extensions);
         Some(Bootstrap {
             projects,
             choices,
@@ -489,6 +535,7 @@ impl Work {
                 Outgoing::Reindexed(moved) => self.reindex(&moved),
                 Outgoing::OpenTerminal {
                     session,
+                    folder,
                     tab,
                     columns,
                     rows,
@@ -496,10 +543,15 @@ impl Work {
                     let Some(placement) = Self::session_of(model, session) else {
                         continue;
                     };
-                    let directory = if placement.directory.is_empty() {
+                    let root = if placement.directory.is_empty() {
                         placement.repository
                     } else {
                         placement.directory
+                    };
+                    let directory = if folder.is_empty() {
+                        root
+                    } else {
+                        format!("{}/{folder}", root.trim_end_matches(['/', '\\']))
                     };
                     self.held.insert(tab, Vec::new());
                     self.ask(
@@ -829,6 +881,7 @@ impl Work {
                             directory,
                             path: wanted,
                             head,
+                            revision: None,
                         },
                         Pending::ReadFile(session, path, head),
                     );
@@ -957,6 +1010,7 @@ impl Work {
                     Pending::Added,
                 ),
                 Outgoing::Copy { text } => copies.push(text),
+                code => self.deliver_code(model, code),
             }
         }
         self.publish_working(model);
@@ -965,6 +1019,7 @@ impl Work {
 
     /// Takes in what the servers and the threads have reported since the last look.
     pub fn poll(&mut self, model: &State<Screen>) {
+        self.ask_wanted_grammars(model);
         while let Ok(job) = self.jobs.try_recv() {
             self.pending.set(self.pending.get().saturating_sub(1));
             self.finish(model, job);
@@ -979,6 +1034,10 @@ impl Work {
                 match item {
                     Incoming::Connected => {
                         self.ask(&host, Request::Sessions, Pending::Sessions(host.clone()));
+                        self.share_extensions(model, &host);
+                        model.update(|screen| {
+                            *screen = std::mem::take(screen).reopen_documents(&host);
+                        });
                     }
                     Incoming::Disconnected(reason) => {
                         eprintln!("the server on {host:?} is out of reach: {reason}");
@@ -1027,6 +1086,30 @@ impl Work {
                     Incoming::ProjectsChanged(paths) => {
                         if host.is_none() {
                             Self::projects_changed(model, &paths);
+                        }
+                    }
+                    Incoming::Diagnostics {
+                        directory,
+                        path,
+                        diagnostics,
+                        ..
+                    } => model.update(|screen| {
+                        *screen = std::mem::take(screen).with_diagnostics(
+                            &host,
+                            &directory,
+                            &path,
+                            diagnostics,
+                        );
+                    }),
+                    Incoming::ExtensionsChanged(extensions) => {
+                        model.update(|screen| {
+                            *screen =
+                                std::mem::take(screen).with_host_extensions(&host, &extensions);
+                        });
+                        if host.is_none() {
+                            model.update(|screen| {
+                                *screen = std::mem::take(screen).with_extensions(extensions);
+                            });
                         }
                     }
                 }
@@ -1079,6 +1162,7 @@ impl Work {
                 }
                 link.client = Some(client);
             }
+            Job::Grammar(language, outcome) => self.grammar_compiled(model, &language, outcome),
             Job::Server(host, Err(reason)) => {
                 eprintln!("{reason}");
                 let Some(link) = self.links.remove(&host) else {
@@ -1430,7 +1514,11 @@ impl Work {
             }
             Pending::ReadFile(session, path, head) => {
                 let read = match response {
-                    Response::File { text, truncated } => Ok((text, truncated)),
+                    Response::File {
+                        text,
+                        truncated,
+                        language,
+                    } => Ok((text, truncated, language)),
                     Response::Failed { message } => Err(message),
                     _ => Err("the server answered with something else".to_owned()),
                 };
@@ -1499,6 +1587,25 @@ impl Work {
                     model.update(|screen| *screen = screen.clone().noted(session, &reason));
                 }
             },
+            Pending::Grammar(_)
+            | Pending::Opened(..)
+            | Pending::Completions(..)
+            | Pending::Hovered(..)
+            | Pending::Definitions(..)
+            | Pending::Base(..)
+            | Pending::Symbols(..)
+            | Pending::Problems(_)
+            | Pending::Blame(..)
+            | Pending::Highlights(..)
+            | Pending::Signature(..)
+            | Pending::Renamed(_)
+            | Pending::CodeActions(..)
+            | Pending::TookAction(_)
+            | Pending::Permalink(_)
+            | Pending::FileHistory(..)
+            | Pending::Revision(..)
+            | Pending::Formatted(..)
+            | Pending::Extensions => self.answered_code(model, host, pending, response),
             Pending::Back(session, failing) => {
                 if let Some(message) = failure {
                     let reason = format!("{failing}: {message}");
@@ -1696,6 +1803,7 @@ impl Work {
         let Some(placement) = Self::session_of(model, session) else {
             return;
         };
+        model.update(|screen| *screen = std::mem::take(screen).bases_wanted(session));
         let inspecting = self.links.get(&placement.host).is_some_and(|link| {
             link.waiting
                 .values()

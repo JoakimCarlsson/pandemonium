@@ -1,6 +1,9 @@
 //! Where the window was when it was closed, kept on this machine so that the next launch opens on the same page.
 
-use pm_components::state::{Page, SESSION_BASE, Tab, WorkspaceState, prompt_field};
+use pm_components::open_files::{Contents, EDITOR_FIELD, Left};
+use pm_components::state::{
+    PROMPT, Page, ReviewTab, SESSION_BASE, Tab, WorkspaceState, prompt_field,
+};
 use pm_input::FocusId;
 use serde::{Deserialize, Serialize};
 
@@ -21,6 +24,8 @@ enum Saved {
     New(String),
     /// Every session.
     History,
+    /// The extensions there are to install.
+    Extensions,
     /// The page for starting work in the first project.
     #[default]
     First,
@@ -35,6 +40,24 @@ struct SavedFile {
     head: bool,
     /// Whether its tab was only a preview.
     preview: bool,
+    /// How far down it was scrolled, in logical pixels.
+    #[serde(default)]
+    scroll: f32,
+    /// The caret, as a byte offset into the text.
+    #[serde(default)]
+    caret: usize,
+    /// The text that was not written to the folder, when the file had changes.
+    #[serde(default)]
+    unsaved: Option<String>,
+}
+
+/// The field the reader was typing in.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+enum Typing {
+    /// The prompt to the agent.
+    Prompt,
+    /// The file shown.
+    Editor,
 }
 
 /// What the reader had on screen: the page, the panels and the prompt being written.
@@ -55,6 +78,36 @@ pub struct View {
     file_tab: bool,
     /// Whether the review panel was open.
     review: bool,
+    /// Whether the review panel listed every file of the project instead of the changes.
+    #[serde(default)]
+    files_tab: bool,
+    /// The folders of the project's files that were folded away.
+    #[serde(default)]
+    closed_tree: Vec<String>,
+    /// The folders of the changed files that were folded away.
+    #[serde(default)]
+    closed_folders: Vec<String>,
+    /// How far down the review panel's list was scrolled, in logical pixels.
+    #[serde(default)]
+    tree_scroll: f32,
+    /// How far down the diff was scrolled, in logical pixels.
+    #[serde(default)]
+    diff_scroll: f32,
+    /// Whether the list of changes was open in the review panel.
+    #[serde(default = "open")]
+    changes_open: bool,
+    /// Whether the graph of commits was open in the review panel.
+    #[serde(default)]
+    graph_open: bool,
+    /// Whether the graph showed every branch.
+    #[serde(default)]
+    graph_all: bool,
+    /// How tall the graph was, in logical pixels.
+    #[serde(default)]
+    graph_height: f32,
+    /// Whether the terminal was taller than usual.
+    #[serde(default)]
+    terminal_maximized: bool,
     /// Whether the terminal was open.
     terminal: bool,
     /// How far the sidebar's list was scrolled, in logical pixels.
@@ -63,6 +116,14 @@ pub struct View {
     agent: usize,
     /// The prompt being written.
     prompt: String,
+    /// The field the reader was typing in, if one had the keyboard.
+    #[serde(default)]
+    typing: Option<Typing>,
+}
+
+/// A flag that was set before it was kept.
+fn open() -> bool {
+    true
 }
 
 impl View {
@@ -71,16 +132,17 @@ impl View {
         serde_json::from_str(&pm_store::load_text(FILE)?).ok()
     }
 
-    /// Keeps the view for the next launch.
+    /// Keeps the view for the next launch, readable by the reader alone since it holds the text of files that were not saved.
     pub fn save(&self) {
         if let Ok(text) = serde_json::to_string(self) {
-            let _ = pm_store::save_text(FILE, &text);
+            let _ = pm_store::save_private(FILE, &text);
         }
     }
 
-    /// What `state` shows now, with `server_number` telling each session's machine and number on its server.
+    /// What `state` shows now, with `focused` the field that has the keyboard and `server_number` telling each session's machine and number on its server.
     pub fn capture(
         state: &WorkspaceState,
+        focused: Option<FocusId>,
         server_number: impl Fn(usize) -> Option<(Option<String>, u64)>,
     ) -> Self {
         let path = |project: usize| {
@@ -102,33 +164,79 @@ impl View {
             },
             Page::New(project) => Saved::New(path(project)),
             Page::History => Saved::History,
+            Page::Extensions => Saved::Extensions,
         };
-        let in_session = matches!(state.page, Page::Session(_));
-        let files = if in_session {
+        let with_files = matches!(page, Saved::Session { .. })
+            || matches!((&page, state.page), (Saved::New(_), Page::New(_)));
+        let files = if with_files {
             state
                 .git
                 .viewers
                 .iter()
-                .map(|viewer| SavedFile {
-                    path: viewer.path.clone(),
-                    head: viewer.head,
-                    preview: viewer.preview,
+                .map(|viewer| {
+                    let document = match &viewer.contents {
+                        Contents::Text(document) => Some(document),
+                        _ => None,
+                    };
+                    SavedFile {
+                        path: viewer.path.clone(),
+                        head: viewer.head,
+                        preview: viewer.preview,
+                        scroll: viewer.scroll,
+                        caret: document.map_or(0, |document| document.field.caret()),
+                        unsaved: document
+                            .filter(|document| document.is_dirty())
+                            .map(|document| document.field.text().to_owned()),
+                    }
                 })
                 .collect()
         } else {
             Vec::new()
         };
+        let typing = match focused {
+            Some(PROMPT) => Some(Typing::Prompt),
+            Some(EDITOR_FIELD) if with_files => Some(Typing::Editor),
+            _ => None,
+        };
         Self {
             page,
             files,
-            shown: state.git.shown.filter(|_| in_session),
-            file_tab: in_session && state.tab == Tab::File,
+            shown: state.git.shown.filter(|_| with_files),
+            file_tab: with_files && state.tab == Tab::File,
             diff: state.tab == Tab::Diff,
             review: state.review,
+            files_tab: state.review_tab == ReviewTab::Files,
+            closed_tree: sorted(&state.closed_tree),
+            closed_folders: sorted(&state.closed_folders),
+            tree_scroll: state.tree_scroll,
+            diff_scroll: state.diff_scroll,
+            changes_open: state.git.changes_open,
+            graph_open: state.git.graph_open,
+            graph_all: state.git.graph_all,
+            graph_height: state.git.graph_height,
+            terminal_maximized: state.terminal_maximized,
             terminal: state.terminal,
             scroll: state.sidebar_scroll,
             agent: state.agent,
             prompt: state.prompt.text().to_owned(),
+            typing,
+        }
+    }
+
+    /// What the review panel listed.
+    fn review_tab(&self) -> ReviewTab {
+        if self.files_tab {
+            ReviewTab::Files
+        } else {
+            ReviewTab::Changes
+        }
+    }
+
+    /// The field the reader was typing in, to give the keyboard back to once the view is finished.
+    pub fn typing(&self) -> Option<FocusId> {
+        match self.typing? {
+            Typing::Prompt => Some(PROMPT),
+            Typing::Editor => Some(EDITOR_FIELD),
         }
     }
 
@@ -151,43 +259,87 @@ impl View {
         match &self.page {
             Saved::New(path) => state.page = Page::New(project_at(path).unwrap_or(0)),
             Saved::History => state.page = Page::History,
+            Saved::Extensions => state.page = Page::Extensions,
             Saved::Session { .. } | Saved::First => {}
         }
         state.review = self.review;
+        state.review_tab = self.review_tab();
+        state.closed_tree = self.closed_tree.iter().cloned().collect();
+        state.closed_folders = self.closed_folders.iter().cloned().collect();
         state.terminal = self.terminal;
+        state.terminal_maximized = self.terminal_maximized;
         state.agent = self.agent.min(state.agent_slots().saturating_sub(1));
         state.prompt = prompt_field(&self.prompt);
         state
     }
 
-    /// `state` open on the session at `position`, on the tab it was left on, unless it was closed since, with the sidebar scrolled as it was.
+    /// `state` open on the session at `position`, on the tab it was left on, unless it was closed since, or on the page for starting work with the files that were open there, with the sidebar scrolled as it was.
     pub fn reopen(&self, state: WorkspaceState, position: Option<usize>) -> WorkspaceState {
         let open = position.filter(|at| state.sessions.get(*at).is_some_and(|held| !held.closed));
-        let mut state = match open {
-            Some(position) => {
+        let mut state = match (open, state.page) {
+            (Some(position), _) => {
                 let mut opened = state.after(FocusId(SESSION_BASE + position as u64));
                 opened.tab = if self.diff { Tab::Diff } else { Tab::Chat };
                 opened.sync_context();
-                for file in &self.files {
-                    opened.open_viewer(file.path.clone(), file.head);
-                    if let Some(viewer) = opened.git.viewers.last_mut() {
-                        viewer.preview = false;
-                    }
-                }
-                for (viewer, file) in opened.git.viewers.iter_mut().zip(&self.files) {
-                    viewer.preview = file.preview;
-                }
-                opened.git.shown = self.shown.filter(|shown| *shown < opened.git.viewers.len());
-                opened.tab = match (self.file_tab, opened.git.shown) {
-                    (true, Some(_)) => Tab::File,
-                    _ if self.diff => Tab::Diff,
-                    _ => Tab::Chat,
-                };
-                opened
+                self.reopen_files(opened)
             }
-            None => state,
+            (None, Page::New(_)) if matches!(self.page, Saved::New(_)) => {
+                let mut opened = state;
+                opened.sync_context();
+                self.reopen_files(opened)
+            }
+            _ => state,
         };
+        state.git.changes_open = self.changes_open;
+        state.git.graph_open = self.graph_open;
+        state.git.graph_all = self.graph_all;
+        if self.graph_height > 0.0 {
+            state.git.graph_height = self.graph_height;
+        }
+        state.review_tab = self.review_tab();
         state.sidebar_scroll = self.scroll;
+        state.tree_scroll = self.tree_scroll;
+        state.diff_scroll = self.diff_scroll;
+        state.refresh_files();
         state
     }
+
+    /// `opened` with the files that were open put back in their tabs, each scrolled, with its caret and its unsaved text as it was left, on the tab that was showing.
+    fn reopen_files(&self, mut opened: WorkspaceState) -> WorkspaceState {
+        for file in &self.files {
+            opened.open_viewer(file.path.clone(), file.head);
+            if let Some(viewer) = opened.git.viewers.last_mut() {
+                viewer.preview = false;
+            }
+        }
+        for file in &self.files {
+            if let Some(viewer) = opened
+                .git
+                .viewers
+                .iter_mut()
+                .find(|viewer| viewer.path == file.path && viewer.head == file.head)
+            {
+                viewer.preview = file.preview;
+                viewer.scroll = file.scroll;
+                viewer.left = Some(Left {
+                    unsaved: file.unsaved.clone(),
+                    caret: file.caret,
+                });
+            }
+        }
+        opened.git.shown = self.shown.filter(|shown| *shown < opened.git.viewers.len());
+        opened.tab = match (self.file_tab, opened.git.shown) {
+            (true, Some(_)) => Tab::File,
+            _ if self.diff => Tab::Diff,
+            _ => Tab::Chat,
+        };
+        opened
+    }
+}
+
+/// The members of `set`, in order, so that the same set is always kept the same way.
+fn sorted(set: &std::collections::HashSet<String>) -> Vec<String> {
+    let mut members: Vec<String> = set.iter().cloned().collect();
+    members.sort();
+    members
 }

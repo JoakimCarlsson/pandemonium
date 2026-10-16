@@ -1,0 +1,31 @@
+; TypeScript: a node captured @indent indents the lines inside it; a token captured
+; @outdent closes one and goes back to the level it opened at.
+
+[
+  (statement_block)
+  (class_body)
+  (object)
+  (object_pattern)
+  (array)
+  (array_pattern)
+  (arguments)
+  (formal_parameters)
+  (switch_body)
+  (switch_case)
+  (switch_default)
+  (template_string)
+  (parenthesized_expression)
+  (named_imports)
+  (export_clause)
+  (interface_body)
+  (enum_body)
+  (object_type)
+  (type_arguments)
+  (type_parameters)
+] @indent
+
+[
+  "}"
+  ")"
+  "]"
+] @outdent

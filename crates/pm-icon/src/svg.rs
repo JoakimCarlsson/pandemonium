@@ -17,7 +17,27 @@ impl Svg {
     pub const fn new(name: &'static str, source: &'static str) -> Self {
         Self { name, source }
     }
+
+    /// The artwork `source` that arrived while the app runs, such as the icon of an extension, called `name`; artwork of one name is kept once, the first source given for it standing for every later one.
+    pub fn arrived(name: &str, source: &str) -> Self {
+        let mut held = ARRIVED
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(svg) = held.get(name) {
+            return *svg;
+        }
+        let svg = Self {
+            name: Box::leak(name.to_owned().into_boxed_str()),
+            source: Box::leak(source.to_owned().into_boxed_str()),
+        };
+        held.insert(name.to_owned(), svg);
+        svg
+    }
 }
+
+/// The artwork that arrived while the app runs, by name, each kept for as long as the app runs.
+static ARRIVED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, Svg>>> =
+    std::sync::LazyLock::new(Default::default);
 
 /// An icon's coverage at one size: how much ink each pixel holds, row by row.
 #[derive(Clone, Debug, Eq, PartialEq)]

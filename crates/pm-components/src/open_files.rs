@@ -1,11 +1,12 @@
 //! The files open in the window beside the conversation: one tab each, a file looked at in a tab that the next one replaces, and kept once it is changed.
 
 use pm_input::FocusId;
+
 use pm_text::Edit;
 
-use crate::document::Document;
 use crate::git_prompts::Prompt;
 use crate::state::{Outgoing, Page, Tab, WorkspaceState};
+use pm_editor::Document;
 
 /// The text of the file being edited.
 pub const EDITOR_FIELD: FocusId = FocusId(7083);
@@ -18,9 +19,6 @@ pub const FILE_TAB_BASE: u64 = 4_000_000;
 
 /// The first of the buttons that close a file's tab; the rest follow it.
 pub const FILE_CLOSE_BASE: u64 = 4_100_000;
-
-/// How tall a line of the file is, in logical pixels.
-pub const ROW: f32 = 20.0;
 
 /// How tall the strip above the lines is, in logical pixels.
 pub const STRIP: f32 = 40.0;
@@ -49,6 +47,45 @@ pub struct Viewer {
     pub scroll: f32,
     /// Whether it is only being looked at: its tab is given up to the next file looked at, until the file is changed.
     pub preview: bool,
+    /// Where the file was left when the window last closed, put back once its text arrives.
+    pub left: Option<Left>,
+    /// The place the caret goes to once the text arrives, as when the file was opened to show where something is defined.
+    pub jump: Option<pm_protocol::Position>,
+    /// Whether the tab is pinned: kept at the start of the strip, and left open when the tabs around it are closed.
+    pub pinned: bool,
+}
+
+/// Where a file was left when the window closed: what it held that was not saved, and the caret.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Left {
+    /// The text that was not written to the folder, when the file had changes.
+    pub unsaved: Option<String>,
+    /// The caret, as a byte offset into the text.
+    pub caret: usize,
+}
+
+impl Left {
+    /// Puts the unsaved text and the caret back into `document`, which was just read from the folder.
+    fn put_back(self, document: &mut Document) {
+        if let Some(text) = self.unsaved.filter(|_| !document.field.is_read_only()) {
+            let before = document.field.text().to_owned();
+            let before_lines = document.line_index().clone();
+            document.field.apply(Edit::Place(0, false));
+            document.field.apply(Edit::Place(before.len(), true));
+            document.field.apply(Edit::Paste(text));
+            document.refresh(&before, &before_lines);
+        }
+        let caret = self.caret.min(document.field.text().len());
+        if document.field.text().is_char_boundary(caret) {
+            document.field.apply(Edit::Place(caret, false));
+        }
+    }
+}
+
+/// Puts the caret of `document` at `position` and returns how far down to scroll for its line to show a little below the top.
+pub(crate) fn jump(document: &mut Document, position: pm_protocol::Position, row: f32) -> f32 {
+    let line = document.jump(position);
+    (document.row_of_line(line) as f32 * row - row * 6.0).max(0.0)
 }
 
 impl Viewer {
@@ -94,6 +131,9 @@ impl WorkspaceState {
                     contents: Contents::Loading,
                     scroll: 0.0,
                     preview: true,
+                    left: None,
+                    jump: None,
+                    pinned: false,
                 };
                 self.outbox.push(Outgoing::ReadFile {
                     session,
@@ -102,7 +142,8 @@ impl WorkspaceState {
                 });
                 match self.git.viewers.iter().position(|held| held.preview) {
                     Some(index) => {
-                        self.git.viewers[index] = viewer;
+                        let replaced = std::mem::replace(&mut self.git.viewers[index], viewer);
+                        self.close_document(session, &replaced);
                         index
                     }
                     None => {
@@ -181,27 +222,54 @@ impl WorkspaceState {
         self
     }
 
-    /// The state after the server answered for the file at `path` of the session at `session`: its text and whether it was cut short, or why there is none.
+    /// The state after the server answered for the file at `path` of the session at `session`: its text, whether it was cut short and the installed language it is written in, or why there is none.
     pub fn with_file(
         mut self,
         session: usize,
         path: &str,
         head: bool,
-        read: Result<(Option<String>, bool), String>,
+        read: Result<(Option<String>, bool, Option<String>), String>,
     ) -> Self {
+        let row = self.editor.row_height();
+        let language = read
+            .as_ref()
+            .ok()
+            .and_then(|(text, _, language)| text.as_ref().and(language.clone()));
         if let Some(viewer) = self.viewers_of(session).and_then(|viewers| {
             viewers
                 .iter_mut()
                 .find(|viewer| viewer.path == path && viewer.head == head)
         }) {
             viewer.contents = match read {
-                Ok((Some(text), truncated)) => {
-                    Contents::Text(Box::new(Document::new(&text, head, truncated)))
+                Ok((Some(text), truncated, _)) => {
+                    let mut document = Document::new(&text, head, truncated);
+                    if let Some(left) = viewer.left.take() {
+                        left.put_back(&mut document);
+                    }
+                    if let Some(position) = viewer.jump.take() {
+                        viewer.scroll = jump(&mut document, position, row);
+                    }
+                    Contents::Text(Box::new(document))
                 }
-                Ok((None, _)) => Contents::Message("This file is not text.".to_owned()),
+                Ok((None, _, _)) => Contents::Message("This file is not text.".to_owned()),
                 Err(reason) => Contents::Message(reason),
             };
         }
+        let opened = !head
+            && self.viewers_of(session).is_some_and(|viewers| {
+                viewers.iter().any(|viewer| {
+                    viewer.path == path
+                        && !viewer.head
+                        && matches!(viewer.contents, Contents::Text(_))
+                })
+            });
+        if opened {
+            self.outbox.push(Outgoing::ReadBase {
+                session,
+                path: path.to_owned(),
+            });
+        }
+        self.took_language(session, path, head, language);
         self
     }
 
@@ -217,6 +285,7 @@ impl WorkspaceState {
 
     /// The state with the file shown scrolled just far enough to show the caret, in a view `height` logical pixels tall.
     pub fn with_caret_shown(mut self, height: f32) -> Self {
+        let row = self.editor.row_height();
         let Some(index) = self.git.shown else {
             return self;
         };
@@ -226,39 +295,35 @@ impl WorkspaceState {
         let Contents::Text(document) = &viewer.contents else {
             return self;
         };
-        let line = document.line_of(document.field.caret());
-        let (top, bottom) = (line as f32 * ROW, (line + 1) as f32 * ROW);
-        let view = (height - STRIP).max(ROW);
-        if top < viewer.scroll {
-            viewer.scroll = top;
-        } else if bottom + ROW > viewer.scroll + view {
-            viewer.scroll = bottom + ROW - view;
+        let line = document.row_of_line(document.line_of(document.field.caret()));
+        let (top, bottom) = (line as f32 * row, (line + 1) as f32 * row);
+        let view = (height - STRIP).max(row);
+        let room = (view / row / 2.0).floor().max(0.0) as usize;
+        let margin = self.editor.vertical_scroll_margin.min(room) as f32 * row;
+        if top - margin < viewer.scroll {
+            viewer.scroll = (top - margin).max(0.0);
+        } else if bottom + margin > viewer.scroll + view {
+            viewer.scroll = bottom + margin - view;
         }
         self
     }
 
-    /// Applies `edit` to the file shown; changing its text keeps its tab open.
-    pub(crate) fn file_edited(&mut self, edit: Edit) {
-        let Some(index) = self.git.shown else {
-            return;
-        };
-        let Some(viewer) = self.git.viewers.get_mut(index) else {
-            return;
-        };
-        let Contents::Text(document) = &mut viewer.contents else {
-            return;
-        };
-        document.field.apply(edit);
-        if document.refresh() {
-            viewer.preview = false;
-        }
-    }
-
     /// Writes the file shown to the folder.
-    fn save_file(&mut self) {
+    pub(crate) fn save_file(&mut self) {
         let Some(session) = self.review_index() else {
             return;
         };
+        let (trim, final_newline) = (
+            self.editor.remove_trailing_whitespace_on_save,
+            self.editor.ensure_final_newline_on_save,
+        );
+        let tidy = self
+            .shown_document()
+            .filter(|document| !document.field.is_read_only())
+            .and_then(|document| document.tidy_edit(trim, final_newline));
+        if let Some(edit) = tidy {
+            self.file_edited(edit);
+        }
         let Some(index) = self.git.shown else {
             return;
         };
@@ -298,7 +363,7 @@ impl WorkspaceState {
     }
 
     /// Closes the tab at `index`, first asking when its file has changes that were not saved.
-    fn close_file(&mut self, index: usize) {
+    pub(crate) fn close_file(&mut self, index: usize) {
         if self.git.viewers.get(index).is_some_and(Viewer::is_dirty) {
             self.git.shown = Some(index);
             self.tab = Tab::File;
@@ -313,7 +378,10 @@ impl WorkspaceState {
         if index >= self.git.viewers.len() {
             return;
         }
-        self.git.viewers.remove(index);
+        let closed = self.git.viewers.remove(index);
+        if let Some(session) = self.review_index() {
+            self.close_document(session, &closed);
+        }
         self.git.shown = match self.git.shown {
             _ if self.git.viewers.is_empty() => None,
             Some(shown) if shown > index => Some(shown - 1),
@@ -363,11 +431,16 @@ impl WorkspaceState {
             .checked_sub(FILE_CLOSE_BASE)
             .filter(|index| *index < count)
         {
-            self.close_file(index as usize);
+            let index = index as usize;
+            if self.git.viewers[index].pinned {
+                self.git.viewers[index].pinned = false;
+            } else {
+                self.close_file(index);
+            }
             return true;
         }
         match action {
-            EDITOR_SAVE => self.save_file(),
+            EDITOR_SAVE => self.format_then_save(true),
             EDITOR_FIELD => {}
             _ => return false,
         }

@@ -71,6 +71,59 @@ Limits:
 - Logins that need a terminal look for a Linux terminal emulator, so they do
   not open on macOS or Windows.
 
+## Extensions and languages
+
+Nothing language-specific ships in the binary. Languages are extensions: you
+pick them on first launch, or later on the Extensions page in the sidebar,
+and the server installs each one
+on the machine that holds the project: its tree-sitter grammar, its queries
+and its language server. A file of an installed language gets syntax
+highlighting, indentation, bracket pairs and an outline in the window, and
+completion, diagnostics and hover from its language server.
+
+The editor works the way a code editor is expected to. The right-click menu
+and its keys go to definitions, declarations, type definitions and
+implementations, list references and incoming and outgoing calls, rename a
+symbol across the project, format the file and show the code actions the
+language server offers. It also copies a line's permalink, shows the file's
+history and opens a terminal beside it. While writing, brackets and quotes
+close themselves, the call the caret is in shows its signature, and the uses
+of the name under the caret are marked. Lines can be commented, moved,
+duplicated and deleted, and the selection grows along the syntax tree. Several
+carets work at once (Ctrl+D, Ctrl+Shift+L, Alt+click). There is find and
+replace (Ctrl+F, Ctrl+H) with regular expressions, an outline to jump through
+(Ctrl+Shift+O), symbols of the whole project (Ctrl+T), a file finder (Ctrl+P),
+search across the project's files (Ctrl+Shift+F), every problem the language
+servers found in the project (Ctrl+Shift+M), go to line (Ctrl+G) and folding.
+Indent guides are drawn, marks beside the line numbers show how each line
+differs from the last commit, and the caret's line says who last changed it.
+Settings → Editor changes how files look, are edited and saved, what the
+language server shows while you write, and searching and scrolling. Settings →
+Keymap starts the keys from Pandemonium's own, VS Code's, JetBrains' or
+Sublime Text's, and any action can be given keys of your own by pressing them.
+
+A language is a folder in [`languages/`](languages): a `config.toml` manifest,
+five queries (`highlights`, `indents`, `outline`, `injections`, `brackets`)
+and the icon its files are shown with, so no file icon ships with the app
+either. The manifest pins the grammar and says how the language server is
+found and installed: a program you already have is used first, in the project
+(`.venv/bin`, `node_modules/.bin`) and then on your path; otherwise it is
+downloaded, built with `go install` or installed with `npm ci`, into a folder
+per version. `languages/languages.json` lists the folders with a checksum for
+every file, every download is checked against the checksum it is pinned to,
+an npm install is pinned by the lockfile in the language's folder and a Go one
+by Go's checksum database. A
+release build reads the list from this repository at its own release tag, and a debug build such as `make run` from the checkout it was built from; point
+`PANDEMONIUM_LANGUAGES` at a folder or address to read it from elsewhere, and
+run `make languages` after changing a folder.
+
+A language of your own needs no release: Install Extension… on the Extensions
+page takes its folder and installs it, copying it into `local-languages`
+in the server's data folder, where you can also put it by hand. It holds a
+`config.toml` and its queries like any other, and either a `grammar.wasm` or a
+`grammar_file` pinned by checksum. It is listed beside the others, marked as
+your own, and takes the place of a listed language with the same name.
+
 ## Installing
 
 Prebuilt binaries for Linux, macOS and Windows are attached to each
@@ -154,13 +207,13 @@ implements none of them; it wires them together.
 | Protocol   | `pm-protocol`: the messages between clients and a server                                                |
 | Server     | `pm-server`: the `pandemonium-server` program                                                           |
 | Client     | `pm-client` (one reconnecting connection, and starting the local server), `pm-ssh` (ssh transport)      |
+| Code       | `pm-buffer` (text and places), `pm-treesitter` (grammars, highlighting), `pm-lsp` (languages, language servers), `pm-editor` (editing a file) |
 | Domain     | `pm-acp` (agents over ACP), `pm-git`, `pm-store` (persistence)                                          |
 | Binary     | `pandemonium`: the event loop, the window and the threads that talk to the servers                      |
 
 Crates for later work, each holding only a doc comment so far: `pm-session`,
-`pm-review`, `pm-terminal`, `pm-config`, `pm-lsp`, `pm-treesitter`,
-`pm-buffer`, `pm-markdown`, `pm-mcp`, `pm-policy`, `pm-plugin`,
-`pm-plugin-api`, `pm-wasm` and `pm-agent-library`.
+`pm-review`, `pm-terminal`, `pm-config`, `pm-markdown`, `pm-mcp`, `pm-policy`,
+`pm-plugin`, `pm-plugin-api`, `pm-wasm` and `pm-agent-library`.
 
 ## License
 

@@ -97,6 +97,9 @@ pub enum Response {
         text: Option<String>,
         /// Whether the text was cut short.
         truncated: bool,
+        /// The installed language the file is written in, by folder name, when one is.
+        #[serde(default)]
+        language: Option<String>,
     },
     /// Who an agent is signed in as.
     Identity {
@@ -206,6 +209,81 @@ pub enum Response {
         path: String,
         /// The names of the folders inside it, in order, hidden ones left out.
         names: Vec<String>,
+    },
+    /// The extensions there are to install and those installed.
+    Extensions {
+        /// Each one, by name; hidden ones included.
+        extensions: Vec<crate::ExtensionInfo>,
+    },
+    /// An installed language's grammar and queries.
+    Grammar(crate::GrammarBundle),
+    /// A file was opened for its language server.
+    Opened {
+        /// The characters after which the server offers completions without being asked; empty when the language has no server.
+        triggers: Vec<String>,
+        /// The characters after which the server tells what the call the caret is in looks like.
+        #[serde(default)]
+        signature: Vec<String>,
+    },
+    /// What could be written at a place.
+    Completions {
+        /// The best match for the word typed there first.
+        items: Vec<pm_lsp::Completion>,
+    },
+    /// The edits that format a file, each a stretch of its text at the version asked for and what replaces it; none when its language server cannot format.
+    Formatted {
+        /// The edits, in any order; they do not overlap.
+        edits: Vec<pm_lsp::TextChange>,
+    },
+    /// Where the thing at a place is defined.
+    Definitions {
+        /// Each place, the one the server names first first.
+        locations: Vec<pm_lsp::Location>,
+    },
+    /// The commits that changed a file, newest first.
+    FileHistory {
+        /// The commits.
+        commits: Vec<pm_git::FileCommit>,
+    },
+    /// A web address.
+    Address {
+        /// The address.
+        url: String,
+    },
+    /// Who last changed a line of a file.
+    Blamed {
+        /// The commit and its author.
+        blame: pm_git::Blame,
+    },
+    /// What the language servers say is wrong with the files of a folder.
+    Problems {
+        /// What is wrong, the worst first.
+        problems: Vec<pm_lsp::Problem>,
+    },
+    /// The stretches of a file where the thing at a place is used.
+    Highlights {
+        /// The stretches.
+        spans: Vec<pm_buffer::Span>,
+    },
+    /// The signature of the call a place is in.
+    Signature {
+        /// The signature, or nothing when the place is in no call.
+        signature: Option<pm_lsp::Signature>,
+    },
+    /// The changes the language server offers for a stretch.
+    CodeActions {
+        /// Each change, in the order the server gave them.
+        actions: Vec<pm_lsp::CodeAction>,
+    },
+    /// An edit across a project was made: files no client has open were changed on disk, and these are the changes to the open ones, for the client to make.
+    Edited {
+        /// The changes to each open file.
+        files: Vec<pm_lsp::FileEdit>,
+    },
+    /// What the language server says about the thing at a place.
+    Hovered {
+        /// What it says, or nothing when it says nothing.
+        hover: Option<pm_lsp::Hover>,
     },
     /// The folder a repository was cloned into.
     Directory {

@@ -13,7 +13,7 @@ use pm_components::git_controls::{BRANCH_BUTTON, BRANCH_FILTER, Pick as Choosing
 use pm_components::git_menus::MenuKind;
 use pm_components::git_prompts::Prompt;
 use pm_components::open_files::EDITOR_FIELD;
-use pm_components::settings::{SETTINGS_ADD, SETTINGS_SECTION_BASE};
+use pm_components::settings::{SETTINGS_ADD, Section};
 use pm_components::state::SETTINGS;
 use pm_components::state::{
     AGENT_BASE, CHAT_TEXT, COMMENT_ADD, COMMENT_FIELD, COMMIT_MESSAGE, DETAILS_BASE, FILE_BASE,
@@ -143,6 +143,12 @@ pub enum Shot {
     Settings,
     /// The settings panel on Agents, which opens the sections inside it.
     SettingsAgents,
+    /// The settings panel on the Editor, which opens the pages inside it.
+    SettingsEditor,
+    /// The settings panel on the keymap.
+    SettingsKeymap,
+    /// The settings panel on how files look.
+    SettingsAppearance,
     /// The settings panel on the MCP servers inside Agents, with one installed, the registry's offers and the menu of the installed one open.
     SettingsMcp,
     /// The settings panel on the Agent Servers inside Agents, with the form for adding one open.
@@ -155,6 +161,428 @@ pub enum Shot {
     Cloning,
     /// The same panel on the folders of the machine, to open one as a project.
     Folders,
+    /// A Rust file being written: highlighted, with what the language server finds wrong under it and the brackets at the caret paired.
+    Code,
+    /// The same file with the list of completions open at the caret.
+    Completing,
+    /// The same file with the card about a place that has something wrong with it.
+    Hovering,
+    /// The same file with its menu open.
+    EditorMenu,
+    /// The same file with the places a name is used listed under the caret.
+    References,
+    /// The same file with the box for a new name of the thing at the caret open.
+    Renaming,
+    /// The same file with the changes the language server offers at the caret listed.
+    CodeActions,
+    /// The same file with the commits that changed it listed.
+    FileHistory,
+    /// The same file with the caret in a call, its signature over it and the uses of a name marked.
+    Signing,
+    /// The same file with the bar for finding and replacing open on a word it holds several times.
+    Finding,
+    /// The same file with its outline listed, narrowed by a letter typed.
+    Outline,
+    /// The same file with every use of a name selected, a caret at each.
+    Cursors,
+    /// The same file with the body of a function folded away.
+    Folded,
+    /// The finder for the files of the project, narrowed by what is typed.
+    Finder,
+    /// The same file with the menu on its tab open.
+    TabMenu,
+    /// The extensions page, some installed, one being installed, one that failed and one of the reader's own.
+    Extensions,
+}
+
+/// Loads the grammar of the language `id` installed on this machine, if it is, so a snapshot can highlight with it.
+fn load_installed_grammar(id: &str) {
+    let Some(manifest) = pm_lsp::installed_manifest(id) else {
+        return;
+    };
+    let (Ok(folder), Ok(grammar)) = (pm_lsp::language_folder(id), pm_lsp::grammar_file(id)) else {
+        return;
+    };
+    let read = |file: &str| std::fs::read_to_string(folder.join(file)).unwrap_or_default();
+    let Ok(wasm) = std::fs::read(grammar) else {
+        return;
+    };
+    let queries = pm_treesitter::Queries {
+        highlights: read("highlights.scm"),
+        indents: read("indents.scm"),
+        outline: read("outline.scm"),
+        injections: read("injections.scm"),
+        brackets: read("brackets.scm"),
+    };
+    let editing = pm_treesitter::Editing {
+        indent: manifest.indent,
+        tabs: manifest.tabs,
+        line_comment: manifest.line_comment.clone(),
+        pairs: pm_treesitter::Editing::pairs_of(&manifest.pairs),
+    };
+    if let Ok(loaded) =
+        pm_treesitter::Grammar::load(id, &manifest.grammar, &wasm, &queries, editing)
+    {
+        let mut aliases = manifest.aliases.clone();
+        aliases.push(manifest.grammar.clone());
+        pm_treesitter::registry::add(loaded, &aliases);
+    }
+}
+
+/// The path of the Rust file the code snapshots write in.
+const CODE_PATH: &str = "crates/pandemonium/src/session.rs";
+
+/// A Rust file of the first session open for writing, its grammar loaded when Rust is installed on this machine, with the caret after the brace that opens `new` and what the language server finds wrong in it.
+fn code() -> WorkspaceState {
+    for id in ["rust", "markdown", "markdown-inline"] {
+        load_installed_grammar(id);
+    }
+    let mut state = workspace_sample().after(TAB_DIFF);
+    state.open_viewer(CODE_PATH.to_owned(), false);
+    let text = "use std::collections::HashMap;\nuse std::path::PathBuf;\n\n/// A session of an agent, with its **own** worktree.\n#[derive(Clone, Debug)]\npub struct Session {\n    pub id: u64,\n    pub root: PathBuf,\n    names: HashMap<String, usize>,\n}\n\nconst LIMIT: usize = 64;\n\nimpl Session {\n    /// Makes a session working in `root`.\n    pub fn new(id: u64, root: PathBuf) -> Self {\n        let names = HashMap::with_capacity(LIMIT);\n        let label: u32 = \"main\";\n        Self { id, root, names }\n    }\n\n    /// How many names the session knows.\n    pub fn count(&self) -> usize {\n        self.names.len()\n    }\n}\n";
+    let state = state.with_file(
+        0,
+        CODE_PATH,
+        false,
+        Ok((Some(text.to_owned()), false, Some("rust".to_owned()))),
+    );
+    let base = text
+        .replace("        let label: u32 = \"main\";\n", "")
+        .replace("HashMap::with_capacity(LIMIT)", "HashMap::new()")
+        .replace(
+            "const LIMIT: usize = 64;\n\n",
+            "const LIMIT: usize = 64;\nconst SPARE: usize = 8;\n\n",
+        );
+    let state = state.with_base(0, CODE_PATH, Some(base));
+    let directory = state
+        .sessions
+        .first()
+        .map(|session| session.directory.clone())
+        .unwrap_or_default();
+    let span = |line: u32, from: u32, to: u32| {
+        pm_protocol::Span::new(
+            pm_protocol::Position::new(line, from),
+            pm_protocol::Position::new(line, to),
+        )
+    };
+    let diagnostics = vec![
+        pm_protocol::Diagnostic {
+            span: span(17, 26, 32),
+            severity: pm_protocol::Severity::Error,
+            message: "mismatched types\nexpected `u32`, found `&str`".to_owned(),
+            source: Some("rustc".to_owned()),
+        },
+        pm_protocol::Diagnostic {
+            span: span(17, 12, 17),
+            severity: pm_protocol::Severity::Warning,
+            message: "unused variable: `label`".to_owned(),
+            source: Some("rustc".to_owned()),
+        },
+    ];
+    let state = state
+        .with_opened(
+            0,
+            CODE_PATH,
+            Ok(pm_protocol::Triggers {
+                completion: vec![".".to_owned(), ":".to_owned()],
+                signature: vec!["(".to_owned(), ",".to_owned()],
+            }),
+        )
+        .with_diagnostics(&None, &directory, CODE_PATH, diagnostics);
+    let caret = text.find("-> Self {").map_or(0, |at| at + "-> Self ".len());
+    state
+        .edited(EDITOR_FIELD, Edit::Place(caret, false))
+        .with_blame(
+            0,
+            CODE_PATH,
+            16,
+            pm_git::Blame {
+                id: "514332d8".to_owned(),
+                author: "Joakim Carlsson".to_owned(),
+                when: (pm_components::age::now() / 1000) as i64 - 3 * 86_400,
+                summary: "Reopen files browsed on a project page".to_owned(),
+            },
+        )
+}
+
+/// The Rust file with `self.names.` typed into `count` and the language server's completions open under it.
+fn completing() -> WorkspaceState {
+    let state = code();
+    let anchor = "        self.names.len()";
+    let at = state
+        .shown_document()
+        .and_then(|document| document.field.text().find(anchor))
+        .map_or(0, |at| at + "        self.names.".len());
+    let state = state
+        .edited(EDITOR_FIELD, Edit::Place(at, false))
+        .edited(EDITOR_FIELD, Edit::Paste("i".to_owned()))
+        .completion_requested((236.0, 548.0));
+    let version = state
+        .shown_document()
+        .map_or(0, |document| document.version);
+    let item = |label: &str, detail: &str, kind: pm_protocol::CompletionKind| {
+        pm_protocol::Completion {
+            label: label.to_owned(),
+            detail: Some(detail.to_owned()),
+            kind,
+            text: label.to_owned(),
+            span: None,
+            filter: label.to_owned(),
+            sort: label.to_owned(),
+            documentation: (label == "insert").then(|| {
+                "Inserts a key-value pair into the map.\n\nIf the map did not have this key present, `None` is returned.\n\n```rust\nlet mut map = HashMap::new();\nassert_eq!(map.insert(37, \"a\"), None);\n```".to_owned()
+            }),
+        }
+    };
+    use pm_protocol::CompletionKind::{Function, Type};
+    state.with_completions(
+        0,
+        CODE_PATH,
+        version,
+        vec![
+            item("insert", "fn(&mut self, k: K, v: V) -> Option<V>", Function),
+            item("into_iter", "fn(self) -> IntoIter<K, V>", Function),
+            item("into_keys", "fn(self) -> IntoKeys<K, V>", Function),
+            item("into_values", "fn(self) -> IntoValues<K, V>", Function),
+            item("is_empty", "fn(&self) -> bool", Function),
+            item("iter", "fn(&self) -> Iter<'_, K, V>", Function),
+            item("iter_mut", "fn(&mut self) -> IterMut<'_, K, V>", Function),
+            item("IntoIter", "struct IntoIter<K, V>", Type),
+        ],
+    )
+}
+
+/// The Rust file with the card about the string that does not fit its type open over it.
+fn hovering() -> WorkspaceState {
+    let state = code();
+    let offset = state
+        .shown_document()
+        .and_then(|document| document.field.text().find("main\";"))
+        .unwrap_or_default();
+    let state = state.hover_requested(offset, (330.0, 440.0));
+    let position = state
+        .shown_document()
+        .map(|document| document.position_of(offset))
+        .unwrap_or_default();
+    state.with_hover(
+        0,
+        CODE_PATH,
+        position,
+        Some(pm_protocol::Hover {
+            text: "\n```rust\npandemonium::session\n```\n\n```rust\npub fn new(id: u64, root: PathBuf) -> Self\n```\n\n---\n\nMakes a session working in `root`, with no names yet. See [the session docs](https://example.com/session).\n\n```rust\npub fn with_a_very_long_signature(first_argument: HashMap<String, Vec<PathBuf>>, second_argument: Option<&mut Session>) -> Result<Self, std::io::Error>\n```\n\nParagraph 1 of the documentation keeps going so the card has more to say than fits, which is what makes it scroll instead of running off the bottom of the window.\n\nParagraph 2 of the documentation keeps going so the card has more to say than fits, which is what makes it scroll instead of running off the bottom of the window.\n\nParagraph 3 of the documentation keeps going so the card has more to say than fits, which is what makes it scroll instead of running off the bottom of the window.\n\nParagraph 4 of the documentation keeps going so the card has more to say than fits, which is what makes it scroll instead of running off the bottom of the window.\n\nParagraph 5 of the documentation keeps going so the card has more to say than fits, which is what makes it scroll instead of running off the bottom of the window.\n\nParagraph 6 of the documentation keeps going so the card has more to say than fits, which is what makes it scroll instead of running off the bottom of the window.\n\nParagraph 7 of the documentation keeps going so the card has more to say than fits, which is what makes it scroll instead of running off the bottom of the window.\n\nParagraph 8 of the documentation keeps going so the card has more to say than fits, which is what makes it scroll instead of running off the bottom of the window.".to_owned(),
+            span: None,
+        }),
+    )
+}
+
+/// The Rust file with the places `Session::new` is used listed under the caret.
+fn references() -> WorkspaceState {
+    let state = code().seek_requested(0, pm_protocol::Seek::References, (330.0, 470.0));
+    let place = |path: &str, line: u32, text: &str| pm_protocol::Location {
+        path: path.to_owned(),
+        span: pm_protocol::Span::new(
+            pm_protocol::Position::new(line, 8),
+            pm_protocol::Position::new(line, 11),
+        ),
+        inside: true,
+        line: Some(text.to_owned()),
+        ..pm_protocol::Location::default()
+    };
+    state.with_places(
+        0,
+        pm_protocol::Seek::References,
+        vec![
+            place(
+                CODE_PATH,
+                14,
+                "    pub fn new(id: u64, root: PathBuf) -> Self {",
+            ),
+            place(
+                "crates/pandemonium/src/app.rs",
+                211,
+                "        let session = Session::new(next_id, root.clone());",
+            ),
+            place(
+                "crates/pandemonium/src/work.rs",
+                88,
+                "            sessions.push(Session::new(id, folder));",
+            ),
+            place(
+                "crates/pm-server/src/core.rs",
+                301,
+                "    let session = Session::new(request.id, place(&request.directory));",
+            ),
+            place(
+                "tests/sessions.rs",
+                12,
+                "    let made = Session::new(1, PathBuf::from(\"/tmp/a\"));",
+            ),
+        ],
+    )
+}
+
+/// The Rust file with the caret in the call to `with_capacity`, its signature over it, and the uses of `names` marked.
+fn signing() -> WorkspaceState {
+    let state = code();
+    let text = state
+        .shown_document()
+        .map(|document| document.field.text().to_owned())
+        .unwrap_or_default();
+    let caret = text.find("(LIMIT)").map_or(0, |at| at + 1);
+    let mut state = state
+        .edited(EDITOR_FIELD, Edit::Place(caret, false))
+        .with_signature_at((470.0, 362.0));
+    let version = state
+        .shown_document()
+        .map_or(0, |document| document.version);
+    let uses: Vec<pm_protocol::Span> = text
+        .match_indices("names")
+        .filter_map(|(at, _)| {
+            let document = state.shown_document()?;
+            Some(pm_protocol::Span::new(
+                document.position_of(at),
+                document.position_of(at + "names".len()),
+            ))
+        })
+        .collect();
+    state = state.with_highlights(0, CODE_PATH, version, uses);
+    state.with_signature(
+        0,
+        CODE_PATH,
+        version,
+        Some(pm_protocol::Signature {
+            label: "pub fn with_capacity(capacity: usize) -> HashMap<K, V, RandomState>".to_owned(),
+            active: Some((21, 36)),
+            documentation: Some(
+                "Creates an empty `HashMap` with at least the specified capacity.".to_owned(),
+            ),
+            others: 0,
+        }),
+    )
+}
+
+/// The Rust file with the changes the language server offers at the caret listed.
+fn code_actions() -> WorkspaceState {
+    let state = code().code_actions_requested((330.0, 470.0));
+    let action = |title: &str, kind: &str, preferred: bool| pm_protocol::CodeAction {
+        title: title.to_owned(),
+        kind: Some(kind.to_owned()),
+        preferred,
+        disabled: None,
+    };
+    state.with_code_actions(
+        0,
+        CODE_PATH,
+        vec![
+            action("Change type of `count` to `&str`", "quickfix", true),
+            action("Convert to `parse::<u32>()`", "quickfix", false),
+            action("Extract into variable", "refactor.extract", false),
+            action("Inline `label`", "refactor.inline", false),
+            pm_protocol::CodeAction {
+                title: "Generate documentation template".to_owned(),
+                kind: Some("refactor.rewrite".to_owned()),
+                preferred: false,
+                disabled: Some("not on a function".to_owned()),
+            },
+        ],
+    )
+}
+
+/// The Rust file with the commits that changed it listed.
+fn file_history() -> WorkspaceState {
+    let state = code().file_history_requested((330.0, 470.0));
+    let commit = |id: &str, author: &str, when: &str, summary: &str| pm_git::FileCommit {
+        object: format!("{id}0000000000000000000000000000000"),
+        id: id.to_owned(),
+        author: author.to_owned(),
+        when: when.to_owned(),
+        summary: summary.to_owned(),
+        path: CODE_PATH.to_owned(),
+    };
+    state.with_file_history(
+        0,
+        CODE_PATH,
+        vec![
+            commit(
+                "54149c90",
+                "Joakim Carlsson",
+                "10 minutes ago",
+                "Add go to definition, formatting and jumps",
+            ),
+            commit(
+                "514332d8",
+                "Joakim Carlsson",
+                "2 hours ago",
+                "Reopen files browsed on a project page",
+            ),
+            commit(
+                "e3e796f4",
+                "Joakim Carlsson",
+                "3 days ago",
+                "Add language support: tree-sitter highlighting",
+            ),
+            commit(
+                "81f70099",
+                "Joakim Carlsson",
+                "2 weeks ago",
+                "Add the nightly channel for pre-releases",
+            ),
+        ],
+    )
+}
+
+/// The languages a server on this machine could list: some installed, one being installed and one that failed.
+fn sample_languages() -> Vec<pm_protocol::ExtensionInfo> {
+    let language =
+        |id: &str, name: &str, suffix: &str, installed: bool| pm_protocol::ExtensionInfo {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            kind: "language".to_owned(),
+            version: "0.1.0".to_owned(),
+            description: format!("{name} support."),
+            icon: std::fs::read_to_string(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../../languages")
+                    .join(id)
+                    .join("icon.svg"),
+            )
+            .ok(),
+            color: Some("#8fb8e8".to_owned()),
+            hidden: false,
+            suffixes: vec![suffix.to_owned()],
+            installed,
+            busy: None,
+            problem: None,
+            server: None,
+            local: false,
+        };
+    vec![
+        pm_protocol::ExtensionInfo {
+            server: Some("gopls v0.24.0".to_owned()),
+            ..language("go", "Go", "go", true)
+        },
+        language("javascript", "JavaScript", "js", false),
+        language("json", "JSON", "json", false),
+        pm_protocol::ExtensionInfo {
+            busy: Some("Installing the language server".to_owned()),
+            ..language("markdown", "Markdown", "md", false)
+        },
+        pm_protocol::ExtensionInfo {
+            problem: Some("Python: installing this language server needs Node.js and npm, which is not on this machine".to_owned()),
+            ..language("python", "Python", "py", true)
+        },
+        pm_protocol::ExtensionInfo {
+            server: Some("Uses /usr/bin/rust-analyzer".to_owned()),
+            ..language("rust", "Rust", "rs", true)
+        },
+        language("toml", "TOML", "toml", false),
+        pm_protocol::ExtensionInfo {
+            local: true,
+            server: Some("zls 0.14.0".to_owned()),
+            ..language("zig", "Zig", "zig", true)
+        },
+        language("typescript", "TypeScript", "ts", false),
+    ]
 }
 
 /// The workspace of made-up sessions.
@@ -316,7 +744,7 @@ fn reading() -> WorkspaceState {
         0,
         "crates/pandemonium/src/session.rs",
         true,
-        Ok((Some(text.to_owned()), false)),
+        Ok((Some(text.to_owned()), false, None)),
     )
 }
 
@@ -329,7 +757,7 @@ fn editing() -> WorkspaceState {
         0,
         "crates/pandemonium/src/session.rs",
         false,
-        Ok((Some(text.to_owned()), false)),
+        Ok((Some(text.to_owned()), false, None)),
     );
     let mut state = state.edited(EDITOR_FIELD, Edit::Paste("// edited\n".to_owned()));
     state.open_viewer("crates/pandemonium/src/lib.rs".to_owned(), false);
@@ -337,7 +765,7 @@ fn editing() -> WorkspaceState {
         0,
         "crates/pandemonium/src/lib.rs",
         false,
-        Ok((Some("pub mod session;\n".to_owned()), false)),
+        Ok((Some("pub mod session;\n".to_owned()), false, None)),
     )
 }
 
@@ -353,6 +781,7 @@ fn new_file() -> WorkspaceState {
         Ok((
             Some("fn main() {\n    println!(\"hi\");\n}\n".to_owned()),
             false,
+            None,
         )),
     )
 }
@@ -419,6 +848,79 @@ impl Shot {
     fn screen(self) -> Screen {
         let workspace = workspace_sample;
         match self {
+            Self::Onboarding(Step::Languages) => Screen::Onboarding(OnboardingState {
+                step: Step::Languages,
+                languages: sample_languages(),
+                chosen: vec!["rust".to_owned(), "typescript".to_owned(), "toml".to_owned()],
+                ..OnboardingState::default()
+            }),
+            Self::Code => Screen::Workspace(code()),
+            Self::Completing => Screen::Workspace(completing()),
+            Self::Hovering => Screen::Workspace(hovering()),
+            Self::EditorMenu => Screen::Workspace(code().with_menu(EDITOR_FIELD, (420.0, 200.0))),
+            Self::References => Screen::Workspace(references()),
+            Self::Renaming => {
+                let state = code();
+                let caret = state
+                    .shown_document()
+                    .map_or(0, |document| document.field.caret());
+                Screen::Workspace(state.rename_requested(caret.saturating_sub(12), (330.0, 470.0)))
+            }
+            Self::CodeActions => Screen::Workspace(code_actions()),
+            Self::FileHistory => Screen::Workspace(file_history()),
+            Self::Signing => Screen::Workspace(signing()),
+            Self::TabMenu => Screen::Workspace(code().with_tab_menu(0, (500.0, 52.0))),
+            Self::Finder => {
+                let mut state = code();
+                state.files = [
+                    "Cargo.toml",
+                    "README.md",
+                    "crates/pandemonium/src/main.rs",
+                    "crates/pandemonium/src/session.rs",
+                    "crates/pandemonium/src/snapshot.rs",
+                    "crates/pm-server/src/sessions.rs",
+                    "crates/pm-protocol/src/response.rs",
+                    "docs/protocol.md",
+                ]
+                .map(str::to_owned)
+                .to_vec();
+                Screen::Workspace(state.file_finder_requested((340.0, 56.0)).edited(
+                    pm_components::listing::LISTING_FILTER,
+                    Edit::Paste("ses".to_owned()),
+                ))
+            }
+            Self::Folded => Screen::Workspace(
+                code().lines_edited(pm_components::line_edits::LineEdit::Fold),
+            ),
+            Self::Cursors => {
+                let state = code();
+                let at = state
+                    .shown_document()
+                    .and_then(|document| document.field.text().find("names"))
+                    .unwrap_or_default();
+                Screen::Workspace(
+                    state
+                        .edited(EDITOR_FIELD, Edit::Place(at + 2, false))
+                        .lines_edited(pm_components::line_edits::LineEdit::SelectAllOccurrences),
+                )
+            }
+            Self::Outline => Screen::Workspace(
+                code()
+                    .outline_requested((330.0, 140.0))
+                    .edited(pm_components::listing::LISTING_FILTER, Edit::Paste("n".to_owned())),
+            ),
+            Self::Finding => Screen::Workspace(
+                code()
+                    .edited(EDITOR_FIELD, Edit::Place(0, false))
+                    .find_opened(true)
+                    .find_typed(Edit::Paste("names".to_owned()))
+                    .find_stepped(false),
+            ),
+            Self::Extensions => Screen::Workspace(
+                welcome()
+                    .after(pm_components::extensions::EXTENSIONS)
+                    .with_extensions(sample_languages()),
+            ),
             Self::Onboarding(step) => Screen::Onboarding(OnboardingState {
                 step,
                 projects: if step == Step::Project {
@@ -560,15 +1062,30 @@ impl Shot {
                 Screen::Workspace(welcome().edited(PROMPT, Edit::Paste("@zzzzqq".to_owned())))
             }
             Self::Settings => Screen::Workspace(welcome().after(SETTINGS)),
+            Self::SettingsKeymap => Screen::Workspace(
+                welcome()
+                    .after(SETTINGS)
+                    .after(Section::Keymap.id()),
+            ),
+            Self::SettingsEditor => Screen::Workspace(
+                welcome()
+                    .after(SETTINGS)
+                    .after(Section::Editor.id()),
+            ),
+            Self::SettingsAppearance => Screen::Workspace(
+                welcome()
+                    .after(SETTINGS)
+                    .after(Section::EditorAppearance.id()),
+            ),
             Self::SettingsAgents => Screen::Workspace(
                 welcome()
                     .after(SETTINGS)
-                    .after(FocusId(SETTINGS_SECTION_BASE + 1)),
+                    .after(Section::Agents.id()),
             ),
             Self::SettingsMcp => Screen::Workspace(
                 welcome()
                     .after(SETTINGS)
-                    .after(FocusId(SETTINGS_SECTION_BASE + 3))
+                    .after(Section::McpServers.id())
                     .with_mcp_servers(vec![pm_protocol::McpServer {
                         name: "context7".to_owned(),
                         target: "https://mcp.context7.com/mcp".to_owned(),
@@ -589,7 +1106,7 @@ impl Shot {
             Self::SettingsForm => Screen::Workspace(
                 welcome()
                     .after(SETTINGS)
-                    .after(FocusId(SETTINGS_SECTION_BASE + 2))
+                    .after(Section::AgentServers.id())
                     .after(SETTINGS_ADD),
             ),
             Self::Adding => Screen::Workspace(welcome().after(ADD_PROJECT)),

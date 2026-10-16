@@ -9,16 +9,19 @@ use std::time::{Duration, Instant};
 use pm_acp::{Login, Standing};
 use pm_components::adder::{ADDER_DOWN, ADDER_ESCAPE, ADDER_UP};
 use pm_components::arrange::{is_project_menu_item, is_session_menu_item};
+use pm_components::assist::HOVER_SCROLL;
 use pm_components::diff::gutter_of;
+use pm_components::extensions::{EXTENSIONS_SCROLL, INSTALL_EXTENSION};
 use pm_components::git_controls::{GRAPH_SASH, GRAPH_SCROLL, Pick, REVIEW_DISMISS, VIEWER_SCROLL};
 use pm_components::git_menus::MenuKind;
 use pm_components::message_menu::is_message_menu_item;
-use pm_components::open_files::{EDITOR_FIELD, EDITOR_SAVE};
+use pm_components::open_files::EDITOR_FIELD;
 use pm_components::settings::{SETTINGS_CLOSE, SETTINGS_SCROLL};
 use pm_components::state::{COMMENT_CANCEL, COMMENT_FIELD};
 use pm_components::tree_actions::{ENTRY_FIELD, TreeTarget};
 use pm_components::{
-    MENU_COPY, MENU_CUT, MENU_PASTE, MENU_REDO, MENU_SELECT_ALL, MENU_UNDO, is_menu_item,
+    EDITOR_MENU_HEIGHT, EditorCommand, MENU_COPY, MENU_CUT, MENU_PASTE, MENU_REDO, MENU_SELECT_ALL,
+    MENU_UNDO, is_menu_item,
 };
 use pm_input::{Button, Focus, FocusId, Key, KeyEvent, Modifiers, PointerEvent, PointerState};
 use pm_pages::{
@@ -37,6 +40,7 @@ use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::{CursorIcon, Window, WindowId};
 
+mod code;
 mod select;
 mod terminal;
 
@@ -71,6 +75,9 @@ const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
 /// How far the pointer has to move, in logical pixels, with a project header held down for it to be a drag.
 const DRAG_DISTANCE: f32 = 6.0;
+
+/// The file the editor's settings are kept in.
+const EDITOR_SETTINGS: &str = "editor-settings.json";
 
 /// The window and what draws into it; both exist once the platform is ready.
 pub struct App {
@@ -124,6 +131,10 @@ pub struct App {
     saved: Option<Vec<String>>,
     /// The choices for the agents' settings last written to disk, so only changes are written.
     saved_choices: Vec<pm_store::Choice>,
+    /// The editor's settings as they were last written to disk.
+    saved_editor: pm_editor::EditorSettings,
+    /// The file shown and its version while it waits to be saved by itself, and since when.
+    autosave_wait: Option<((String, i32), Instant)>,
     /// The agents the server can start, which onboarding checks.
     agents: Vec<pm_protocol::AgentServer>,
     /// The logins each agent last offered, in the order of `agents`.
@@ -132,6 +143,8 @@ pub struct App {
     work: Work,
     /// What was last written as the view, which is what the window opened with until it changes.
     saved_view: Option<View>,
+    /// The field the reader was typing in when the window last closed, which takes the keyboard once it is drawn.
+    refocus: Option<FocusId>,
     /// The project header a press began on, by position, and where the pointer was.
     project_press: Option<(usize, (f32, f32))>,
     /// Whether the pointer moved far enough from `project_press` for it to be a drag.
@@ -150,6 +163,22 @@ pub struct App {
     terminal_scroll_rest: f32,
     /// The stretch of the conversation's text that is selected, if any.
     text_selection: Option<TextSelection>,
+    /// The word of the file shown the pointer rests on, by where it starts, and since when.
+    hover_rest: Option<(usize, Instant)>,
+    /// When the pointer left both the card about a word and the word, while the card is still showing.
+    hover_leaving: Option<Instant>,
+    /// Whether the pointer has been on the card about a word since it opened, so leaving it takes it away at once.
+    hover_entered: bool,
+    /// The chords pressed so far of a binding of more than one.
+    pending: Vec<pm_editor::Chord>,
+    /// The chords pressed so far while keys are recorded on the keymap page, as they are written.
+    recorded: Vec<String>,
+    /// When recording keeps what was pressed so far, unless another chord comes first.
+    record_deadline: Option<Instant>,
+    /// The file, version and caret the language server was last asked about for where the thing at the caret is used.
+    highlighted: Option<(String, i32, usize)>,
+    /// The file, version and caret waiting to settle before the language server is asked about them, and since when.
+    highlight_wait: Option<((String, i32, usize), Instant)>,
     /// What a press on selectable text took, from its start to its end, and
     /// how much it takes at a time, while the button is held, so dragging
     /// selects from it.
@@ -214,7 +243,10 @@ impl Default for App {
         {
             work.resume(view);
         }
-        let model = State::new(screen);
+        let editor = pm_store::load_text(EDITOR_SETTINGS)
+            .map(|text| pm_editor::EditorSettings::read(&text))
+            .unwrap_or_default();
+        let model = State::new(screen.with_editor_settings(editor.clone()));
         let dirty = Rc::new(Cell::new(false));
         let flag = Rc::clone(&dirty);
         model.subscribe(move |_| flag.set(true));
@@ -244,10 +276,13 @@ impl Default for App {
             last_press: None,
             composing_in: None,
             saved,
+            refocus: saved_view.as_ref().and_then(View::typing),
             saved_view,
             project_press: None,
             project_dragging: false,
             saved_choices: choices,
+            saved_editor: editor,
+            autosave_wait: None,
             logins: vec![Vec::new(); agents.len()],
             agents,
             work,
@@ -259,6 +294,14 @@ impl Default for App {
             terminal_scroll_rest: 0.0,
             text_selection: None,
             text_held: None,
+            hover_rest: None,
+            hover_leaving: None,
+            hover_entered: false,
+            pending: Vec::new(),
+            recorded: Vec::new(),
+            record_deadline: None,
+            highlighted: None,
+            highlight_wait: None,
         }
     }
 }
@@ -315,6 +358,7 @@ impl App {
     /// the frame could not be presented.
     fn redraw(&mut self) {
         self.fit_terminal();
+        let reaching = self.reaching();
         let (Some(window), Some(renderer)) = (self.window.as_ref(), self.renderer.as_mut()) else {
             return;
         };
@@ -342,6 +386,13 @@ impl App {
             if std::mem::take(&mut self.focus_terminal) {
                 self.focus.focus(TERMINAL_BODY);
             }
+            let drawn = |id| self.output.regions.iter().any(|region| region.id == id);
+            Self::give_back_focus(
+                &mut self.refocus,
+                &mut self.focus,
+                self.work.resuming(),
+                drawn,
+            );
             let starting = state.is_starting();
             if starting && !self.autofocused {
                 self.focus.focus(PROMPT);
@@ -391,8 +442,13 @@ impl App {
             self.model
                 .update(|state| *state = std::mem::take(state).edited(id, Edit::ScrollTo(want)));
         }
-        if self.output.cursor != self.cursor {
-            self.cursor = self.output.cursor;
+        let cursor = if reaching {
+            Cursor::Pointer
+        } else {
+            self.output.cursor
+        };
+        if cursor != self.cursor {
+            self.cursor = cursor;
             window.set_cursor(cursor_icon(self.cursor));
         }
         let presented = renderer.render(&self.list, &mut self.shaper, scene::ground(theme), || {
@@ -401,6 +457,8 @@ impl App {
         if self.output.animating || !presented {
             window.request_redraw();
         }
+        self.place_completion();
+        self.place_signature();
     }
 
     /// Carries out what pressing the element `id` means.
@@ -433,6 +491,10 @@ impl App {
             self.attach();
             return;
         }
+        if id == INSTALL_EXTENSION {
+            self.install_extension();
+            return;
+        }
         if let Some(index) = self.model.read(|screen| screen.settings_more_of(id)) {
             self.open_settings_menu(index);
             return;
@@ -458,6 +520,11 @@ impl App {
         }
         self.model
             .update(|state| *state = std::mem::take(state).after(id));
+        if pm_components::find::is_find_part(id)
+            || pm_components::listing::listing_row_of(id).is_some()
+        {
+            self.show_editor_caret();
+        }
         if let Some(next) = Screen::refocus(id) {
             self.focus.focus(next);
         }
@@ -473,6 +540,19 @@ impl App {
                 let _ = clipboard.set_text(text);
             }
         }
+    }
+
+    /// Writes the editor's settings to disk when they differ from what was last written.
+    fn persist_editor(&mut self) {
+        let Some(settings) = self
+            .model
+            .read(Screen::editor_settings)
+            .filter(|settings| *settings != self.saved_editor)
+        else {
+            return;
+        };
+        let _ = pm_store::save_text(EDITOR_SETTINGS, &settings.write());
+        self.saved_editor = settings;
     }
 
     /// Writes what the reader chose for the agents' settings to disk when it differs from what was last written.
@@ -496,8 +576,9 @@ impl App {
             return;
         }
         let work = &self.work;
+        let focused = self.focus.current();
         let Some(view) = self.model.read(|screen| match screen {
-            Screen::Workspace(state) => Some(View::capture(state, |position| {
+            Screen::Workspace(state) => Some(View::capture(state, focused, |position| {
                 work.server_number(position)
             })),
             Screen::Onboarding(_) => None,
@@ -511,9 +592,27 @@ impl App {
         self.saved_view = Some(view);
     }
 
+    /// Gives `focus` to the field in `refocus`, the one the reader was typing in when the window last closed, once the view is no longer `resuming` and the field is `drawn`.
+    fn give_back_focus(
+        refocus: &mut Option<FocusId>,
+        focus: &mut Focus,
+        resuming: bool,
+        drawn: impl Fn(FocusId) -> bool,
+    ) {
+        let Some(field) = *refocus else {
+            return;
+        };
+        if resuming || !drawn(field) {
+            return;
+        }
+        focus.focus(field);
+        *refocus = None;
+    }
+
     /// Writes the project list to disk when the workspace's differs from what was last written.
     fn persist(&mut self) {
         self.persist_choices();
+        self.persist_editor();
         let Some(paths) = self.model.read(|screen| screen.project_paths()) else {
             return;
         };
@@ -605,6 +704,20 @@ impl App {
         self.work.relist();
     }
 
+    /// Asks the desktop for a folder and installs the extension in it, unless the dialog is dismissed.
+    fn install_extension(&mut self) {
+        let Some(folder) = rfd::FileDialog::new()
+            .set_title("Choose an extension folder")
+            .pick_folder()
+        else {
+            return;
+        };
+        let path = folder.to_string_lossy().into_owned();
+        self.model
+            .update(|state| *state = std::mem::take(state).extension_picked(path));
+        self.deliver();
+    }
+
     /// Asks the desktop for files and mentions them in the prompt, unless the dialog is dismissed.
     fn attach(&mut self) {
         let Some(files) = rfd::FileDialog::new()
@@ -656,6 +769,8 @@ impl App {
                 DIFF_SCROLL => std::mem::take(state).scrolled_diff(pixels, room),
                 TREE_SCROLL => std::mem::take(state).scrolled_tree(pixels, room),
                 SETTINGS_SCROLL => std::mem::take(state).scrolled_settings(pixels, room),
+                EXTENSIONS_SCROLL => std::mem::take(state).scrolled_extensions(pixels, room),
+                HOVER_SCROLL => std::mem::take(state).scrolled_hover(pixels, room),
                 VIEWER_SCROLL => std::mem::take(state).scrolled_viewer(pixels, room),
                 GRAPH_SCROLL => std::mem::take(state).scrolled_graph(pixels, room),
                 _ => std::mem::take(state).scrolled_chat(pixels, room),
@@ -748,6 +863,10 @@ impl App {
                         let position = screen.change_folder_row_of(id).unwrap_or_default();
                         self.open_folder_change_menu(position);
                     }
+                    Some(id) if screen.file_tab_of(id).is_some() => {
+                        let index = screen.file_tab_of(id).unwrap_or_default();
+                        self.open_tab_menu(index);
+                    }
                     Some(id) if screen.tree_row_of(id).is_some() => {
                         let target = screen.tree_row_of(id).unwrap_or_else(TreeTarget::root);
                         self.open_tree_menu(target);
@@ -772,6 +891,7 @@ impl App {
                     self.model
                         .update(|state| *state = std::mem::take(state).comment_drag_begun(id));
                 }
+                self.press_beside_code(on);
                 let screen = self.model.get();
                 self.project_press = on
                     .and_then(|id| screen.header_of(id))
@@ -814,8 +934,12 @@ impl App {
                 {
                     self.press_in_field(id);
                 }
+                if self.pressed_on == Some(EDITOR_FIELD) && self.editor_reach_pressed() {
+                    self.dragging = None;
+                }
             }
             PointerEvent::Moved(x, y) => {
+                self.editor_pointer_moved(x, y);
                 self.drag_bar(y);
                 self.drag_sash(y);
                 self.drag_comment((x, y));
@@ -869,7 +993,11 @@ impl App {
             MENU_COPY => self.clip(field, Clip::Copy),
             MENU_PASTE => self.clip(field, Clip::Paste),
             MENU_SELECT_ALL => self.edit_field(field, Edit::SelectAll),
-            _ => {}
+            row => {
+                if let Some(command) = EditorCommand::of(row) {
+                    self.editor_command(command);
+                }
+            }
         }
     }
 
@@ -881,6 +1009,25 @@ impl App {
         self.model.update(|state| {
             *state = std::mem::take(state).with_settings_menu(index, (x - 190.0, y + 14.0))
         });
+    }
+
+    /// Opens the menu on the tab of the open file at `index`, just under the pointer and inside the window.
+    fn open_tab_menu(&mut self, index: usize) {
+        let Some((x, y)) = self.pointer.position else {
+            return;
+        };
+        let (width, height) = self
+            .renderer
+            .as_ref()
+            .map_or((1280.0, 800.0), |renderer| renderer.size());
+        let at = (
+            (x - 8.0).min(width - 256.0).max(0.0),
+            (y + 12.0)
+                .min(height - pm_components::tab_menu::TAB_MENU_HEIGHT - 8.0)
+                .max(0.0),
+        );
+        self.model
+            .update(|state| *state = std::mem::take(state).with_tab_menu(index, at));
     }
 
     /// Opens the menu of the project at `project`, just under the pointer.
@@ -1027,6 +1174,18 @@ impl App {
         if !inside {
             self.edit_field(id, Edit::Place(offset, false));
         }
+        let (x, y) = if id == EDITOR_FIELD {
+            let (width, height) = self
+                .renderer
+                .as_ref()
+                .map_or((1280.0, 800.0), |renderer| renderer.size());
+            (
+                x.min(width - 272.0).max(0.0),
+                y.min(height - EDITOR_MENU_HEIGHT - 8.0).max(0.0),
+            )
+        } else {
+            (x, y)
+        };
         self.model
             .update(|state| *state = std::mem::take(state).with_menu(id, (x, y)));
     }
@@ -1042,6 +1201,10 @@ impl App {
             return;
         };
         self.focus.focus(id);
+        if id == EDITOR_FIELD && self.modifiers.alt {
+            self.edit_field(id, Edit::AddSelection(offset, offset));
+            return;
+        }
         let clicks = match self.last_press {
             Some((at, last, clicks)) if last == id && at.elapsed() < DOUBLE_CLICK => clicks + 1,
             _ => 1,
@@ -1059,14 +1222,23 @@ impl App {
     /// Moves the caret of the multiline field `id` by `by` lines as they are
     /// drawn, to the start or the end of the text when there is no line there.
     fn move_vertically(&mut self, id: FocusId, by: isize, extend: bool) {
-        let Some((caret, length)) = self
+        let Some((caret, length, several)) = self
             .model
             .get()
             .field(id)
-            .map(|field| (field.caret(), field.text().len()))
+            .map(|field| (field.caret(), field.text().len(), field.has_others()))
         else {
             return;
         };
+        if several {
+            let motion = if by < 0 {
+                pm_text::Motion::LineUp
+            } else {
+                pm_text::Motion::LineDown
+            };
+            self.edit_field(id, Edit::Move(motion, extend));
+            return;
+        }
         let target = self
             .output
             .vertical(id, caret, by)
@@ -1077,12 +1249,22 @@ impl App {
     /// Moves the caret of the multiline field `id` to the start, or the end
     /// when `end` is set, of the line it is on as the line is drawn.
     fn move_to_line_edge(&mut self, id: FocusId, end: bool, extend: bool) {
-        let Some(caret) = self
-            .model
-            .read(|screen| screen.field(id).map(|field| field.caret()))
-        else {
+        let Some((caret, several)) = self.model.read(|screen| {
+            screen
+                .field(id)
+                .map(|field| (field.caret(), field.has_others()))
+        }) else {
             return;
         };
+        if several {
+            let motion = if end {
+                pm_text::Motion::LineEnd
+            } else {
+                pm_text::Motion::LineStart
+            };
+            self.edit_field(id, Edit::Move(motion, extend));
+            return;
+        }
         if let Some(target) = self.output.line_edge(id, caret, end) {
             self.edit_field(id, Edit::Place(target, extend));
         }
@@ -1116,11 +1298,24 @@ impl App {
 
     /// Makes `edit` to the field `id`.
     fn edit_field(&mut self, id: FocusId, edit: Edit) {
+        let looks = |app: &Self| {
+            app.model.read(|screen| {
+                screen
+                    .field(id)
+                    .map(|field| (field.caret(), field.selection(), field.text().len()))
+            })
+        };
+        let before = looks(self);
         self.model
             .update(|state| *state = std::mem::take(state).edited(id, edit));
-        if id == EDITOR_FIELD
-            && let Some(height) = self.renderer.as_ref().map(|renderer| renderer.size().1)
-        {
+        if id == EDITOR_FIELD && looks(self) != before {
+            self.show_editor_caret();
+        }
+    }
+
+    /// Scrolls the file shown just far enough to show its caret.
+    fn show_editor_caret(&mut self) {
+        if let Some(height) = self.renderer.as_ref().map(|renderer| renderer.size().1) {
             self.model
                 .update(|state| *state = std::mem::take(state).with_caret_shown(height - TABS));
         }
@@ -1142,7 +1337,13 @@ impl App {
                     .model
                     .get()
                     .field(id)
-                    .map(|field| field.selected().to_owned())
+                    .map(|field| {
+                        if field.has_others() {
+                            field.selected_all()
+                        } else {
+                            field.selected().to_owned()
+                        }
+                    })
                     .unwrap_or_default();
                 if selected.is_empty() {
                     return;
@@ -1182,7 +1383,16 @@ impl App {
         if !event.pressed {
             return;
         }
-        if self.terminal_key(event) || self.text_key(event) {
+        if self.recording_key(event)
+            || self.terminal_key(event)
+            || self.text_key(event)
+            || self.card_key(event)
+            || self.rename_key(event)
+            || self.find_key(event)
+            || self.listing_key(event)
+            || self.keymap_key(event)
+            || self.editor_key(event)
+        {
             return;
         }
         match event.key {
@@ -1214,15 +1424,6 @@ impl App {
                         .inquiry_hotkey(digit.to_digit(10).unwrap_or_default() as usize) =>
             {
                 self.activate(id);
-            }
-            Key::Character('s' | 'S')
-                if (event.modifiers.control || event.modifiers.logo)
-                    && self.focus.current() == Some(EDITOR_FIELD) =>
-            {
-                self.activate(EDITOR_SAVE);
-            }
-            Key::Tab if self.focus.current() == Some(EDITOR_FIELD) && !event.modifiers.shift => {
-                self.edit_field(EDITOR_FIELD, Edit::Paste("    ".to_owned()));
             }
             Key::Tab if event.modifiers.shift && self.in_prompt() => {
                 self.model
@@ -1378,14 +1579,32 @@ impl ApplicationHandler for App {
         self.take_standings();
         self.work.discover(&self.model);
         self.work.poll(&self.model);
+        self.settle_rename_focus();
+        if self.model.read(Screen::editor_settings_wanted) {
+            let settings = self.saved_editor.clone();
+            self.model
+                .update(|screen| *screen = std::mem::take(screen).with_editor_settings(settings));
+        }
         if self.model.read(Screen::has_outbox) {
             self.deliver();
         }
         let waiting = self.model.read(|screen| screen.waiting()) || self.work.busy();
-        event_loop.set_control_flow(if waiting {
-            ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(50))
-        } else {
-            ControlFlow::Wait
+        let hover = [
+            self.editor_hover_due(),
+            self.editor_highlight_due(),
+            self.editor_autosave_due(),
+            self.recording_due(),
+        ]
+        .into_iter()
+        .flatten()
+        .min();
+        if self.model.read(Screen::has_outbox) {
+            self.deliver();
+        }
+        event_loop.set_control_flow(match (waiting, hover) {
+            (true, _) => ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(50)),
+            (false, Some(due)) => ControlFlow::WaitUntil(due),
+            (false, None) => ControlFlow::Wait,
         });
         if self.model.read(Screen::place_unrecorded) {
             self.model
@@ -1437,6 +1656,7 @@ impl ApplicationHandler for App {
                 self.scroll(pixels);
             }
             WindowEvent::MouseInput { state, button, .. } => {
+                self.refocus = None;
                 let button = match button {
                     MouseButton::Left => Button::Left,
                     MouseButton::Right => Button::Right,
@@ -1466,8 +1686,10 @@ impl ApplicationHandler for App {
             }
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.modifiers = keys::modifiers(modifiers.state());
+                self.editor_modifiers_changed();
             }
             WindowEvent::KeyboardInput { event, .. } => {
+                self.refocus = None;
                 if let Some(event) = keys::key_event(&event, self.modifiers) {
                     self.key(event);
                 }

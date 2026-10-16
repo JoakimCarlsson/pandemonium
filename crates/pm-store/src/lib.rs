@@ -102,7 +102,7 @@ pub fn save_text(name: &str, text: &str) -> io::Result<()> {
     fs::write(directory.join(name), text)
 }
 
-/// Saves `text` under `name` so that only the reader can read it, replacing what was saved there.
+/// Saves `text` under `name` so that only the reader can read it, replacing what was saved there and taking away what others could read of a file saved there before.
 pub fn save_private(name: &str, text: &str) -> io::Result<()> {
     use std::io::Write;
     let Some(directory) = directory() else {
@@ -113,9 +113,10 @@ pub fn save_private(name: &str, text: &str) -> io::Result<()> {
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    options
-        .open(directory.join(name))?
-        .write_all(text.as_bytes())
+    let mut file = options.open(directory.join(name))?;
+    #[cfg(unix)]
+    file.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
+    file.write_all(text.as_bytes())
 }
 
 /// Makes the folder at `path`, and the ones above it, so that only the reader can open the ones made.

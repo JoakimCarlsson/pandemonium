@@ -9,6 +9,16 @@ use crate::block::{Block, Inline, Span};
 /// A source cut off part way, as a streamed reply is, parses as though every
 /// open block closed where it ends.
 pub fn parse(source: &str) -> Vec<Block> {
+    read(source).root
+}
+
+/// The addresses of the links of `source`, in the order the text of each is numbered by [`Inline::target`].
+pub fn links(source: &str) -> Vec<String> {
+    read(source).targets
+}
+
+/// `source` read through.
+fn read(source: &str) -> Builder {
     let options =
         Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
     let mut builder = Builder::default();
@@ -17,7 +27,7 @@ pub fn parse(source: &str) -> Vec<Block> {
     }
     builder.close_text();
     builder.fold_details();
-    builder.root
+    builder
 }
 
 /// A block that holds other blocks and is still being read.
@@ -86,6 +96,10 @@ struct Builder {
     strike: u32,
     /// How many links are open.
     link: u32,
+    /// The addresses of the links read so far, in order.
+    targets: Vec<String>,
+    /// The links open, innermost last, by their number among `targets`.
+    open_links: Vec<u16>,
     /// How many HTML code or key tags are open.
     monospace: u32,
 }
@@ -171,7 +185,11 @@ impl Builder {
             Tag::Emphasis => self.emphasis += 1,
             Tag::Strong => self.strong += 1,
             Tag::Strikethrough => self.strike += 1,
-            Tag::Link { .. } => self.link += 1,
+            Tag::Link { dest_url, .. } => {
+                self.link += 1;
+                self.targets.push(dest_url.into_string());
+                self.open_links.push(self.targets.len() as u16);
+            }
             _ => {}
         }
     }
@@ -241,7 +259,10 @@ impl Builder {
             TagEnd::Emphasis => self.emphasis = self.emphasis.saturating_sub(1),
             TagEnd::Strong => self.strong = self.strong.saturating_sub(1),
             TagEnd::Strikethrough => self.strike = self.strike.saturating_sub(1),
-            TagEnd::Link => self.link = self.link.saturating_sub(1),
+            TagEnd::Link => {
+                self.link = self.link.saturating_sub(1);
+                self.open_links.pop();
+            }
             _ => {}
         }
     }
@@ -254,6 +275,7 @@ impl Builder {
             code: self.monospace > 0,
             strike: self.strike > 0,
             link: self.link > 0,
+            target: self.open_links.last().copied().unwrap_or(0),
         }
     }
 

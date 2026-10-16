@@ -1,0 +1,36 @@
+# Python: how files are told to be Python, how they are edited and the
+# language server that reads them. The project's own environment is looked in
+# first, so the server sees the packages installed there.
+
+name = "Python"
+version = "0.1.0"
+description = "Python with pyright, using the project's virtual environment."
+icon = "icon.svg"
+color = "#6fb0e0"
+grammar = "python"
+suffixes = ["py", "pyi"]
+aliases = ["py", "python3"]
+line_comment = "#"
+indent = 4
+pairs = ["()", "[]", "{}", "\"\"", "''"]
+
+[grammar_file]
+url = "https://github.com/tree-sitter/tree-sitter-python/releases/download/v0.25.0/tree-sitter-python.wasm"
+sha256 = "16108b50df4ee9a30168794252ab55e7c93bfc5765d7fa0aa3e335752c515f47"
+
+[server]
+id = "pyright"
+language_id = "python"
+command = "pyright-langserver"
+args = ["--stdio"]
+project = [".venv/bin", "venv/bin", ".venv/Scripts", "venv/Scripts"]
+
+[server.settings.python.analysis]
+autoSearchPaths = true
+useLibraryCodeForTypes = true
+diagnosticMode = "openFilesOnly"
+
+[server.install]
+kind = "npm"
+version = "1.1.414"
+packages = ["pyright@1.1.414"]

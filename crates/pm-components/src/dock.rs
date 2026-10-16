@@ -113,14 +113,19 @@ impl WorkspaceState {
 
     /// Starts a shell in the open session and shows the dock.
     fn open_terminal(&mut self) {
-        let Some(session) = self.open_position() else {
-            return;
-        };
+        if let Some(session) = self.open_position() {
+            self.open_terminal_in(session, String::new());
+        }
+    }
+
+    /// Starts a shell in `folder`, from the root of the folder of the session at `session`, and shows the dock.
+    pub(crate) fn open_terminal_in(&mut self, session: usize, folder: String) {
         let (columns, rows) = self.terminal_size;
         if let Some(tab) = self.add_terminal(session, columns, rows) {
             self.terminal = true;
             self.outbox.push(Outgoing::OpenTerminal {
                 session,
+                folder,
                 tab,
                 columns,
                 rows,

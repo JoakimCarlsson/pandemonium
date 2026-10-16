@@ -279,6 +279,237 @@ pub const CHOICE_BASE: u64 = 3600;
 /// Something the window has to do or tell an agent, taken off the state by whoever runs the agents.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Outgoing {
+    /// Asks the server of the session at this position for the grammar of a language, by its folder name or another name.
+    Grammar {
+        /// The session, by position.
+        session: usize,
+        /// The language.
+        language: String,
+    },
+    /// Opens a file of the session at this position for its language server.
+    OpenDocument {
+        /// The session, by position.
+        session: usize,
+        /// The file, from the root of the session's folder.
+        path: String,
+        /// The installed language it is written in.
+        language: String,
+        /// The version of its text.
+        version: i32,
+        /// Its text.
+        text: String,
+    },
+    /// Tells the language server how a file of the session at this position was edited.
+    ChangeDocument {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The version the edits take the text to.
+        version: i32,
+        /// The stretches replaced, in order.
+        changes: Vec<pm_protocol::TextChange>,
+    },
+    /// Tells the language server a file of the session at this position was closed.
+    CloseDocument {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+    },
+    /// Asks the language server what could be written at a place of a file of the session at this position.
+    Completion {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The version of the text the place is in.
+        version: i32,
+        /// The place.
+        position: pm_protocol::Position,
+        /// The character typed that asked, when one did.
+        trigger: Option<String>,
+    },
+    /// Asks the language server for the edits that format a file of the session at this position.
+    Format {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The version of the text the edits are for.
+        version: i32,
+        /// Whether the file is written to the folder once it is formatted.
+        save: bool,
+    },
+    /// Asks the language server where the thing at a place of a file of the session at this position is defined.
+    Definition {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The version of the text the place is in.
+        version: i32,
+        /// The place.
+        position: pm_protocol::Position,
+        /// What is looked for.
+        seek: pm_protocol::Seek,
+    },
+    /// Asks who last changed a line of a file of the session at this position.
+    Blame {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The line, counted from 1.
+        line: usize,
+    },
+    /// Asks what the language servers say is wrong with the files of the project of the session at this position.
+    Problems {
+        /// The session, by position.
+        session: usize,
+    },
+    /// Asks for the lines of the files of the project of the session at this position that hold some text.
+    SearchFiles {
+        /// The session, by position.
+        session: usize,
+        /// What is looked for.
+        query: String,
+    },
+    /// Asks the language server of a file of the session at this position for the symbols of the project matching a query.
+    WorkspaceSymbols {
+        /// The session, by position.
+        session: usize,
+        /// The open file whose language server is asked.
+        path: String,
+        /// What the names are matched against.
+        query: String,
+    },
+    /// Asks the language server where the thing at a place of a file of the session at this position is used in that file.
+    Highlights {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The version of the text the place is in.
+        version: i32,
+        /// The place.
+        position: pm_protocol::Position,
+    },
+    /// Asks the language server what the call a place of a file of the session at this position is in looks like.
+    Signature {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The version of the text the place is in.
+        version: i32,
+        /// The place.
+        position: pm_protocol::Position,
+    },
+    /// Asks the language server to rename the thing at a place of a file of the session at this position across its project.
+    RenameSymbol {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The version of the text the place is in.
+        version: i32,
+        /// The place.
+        position: pm_protocol::Position,
+        /// The new name.
+        name: String,
+    },
+    /// Asks the language server what changes it offers for a stretch of a file of the session at this position.
+    CodeActions {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The version of the text the stretch is in.
+        version: i32,
+        /// The stretch.
+        span: pm_protocol::Span,
+    },
+    /// Takes one of the changes the language server last offered for a file of the session at this position.
+    TakeCodeAction {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The change, by its place in the list offered.
+        index: usize,
+    },
+    /// Reads a file of the session at this position as the last commit holds it, to mark how the open file differs from it.
+    ReadBase {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+    },
+    /// Shows a file of the session at this position in the file manager of this machine.
+    RevealFile {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+    },
+    /// Copies or opens the web address of a file of the session at this position, or of a line of it, on the host of its repository.
+    Permalink {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The line, counted from 1, or nothing for the whole file.
+        line: Option<usize>,
+        /// Whether the address is opened in the browser rather than copied.
+        open: bool,
+    },
+    /// Asks for the commits that changed a file of the session at this position.
+    FileHistory {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+    },
+    /// Reads a file of the session at this position as a commit left it, to show it read only.
+    ReadRevision {
+        /// The session, by position.
+        session: usize,
+        /// The path the file had in the commit.
+        path: String,
+        /// The commit, by its full object name.
+        revision: String,
+        /// What the tab is called.
+        label: String,
+    },
+    /// Asks the language server what it says about a place of a file of the session at this position.
+    Hover {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The version of the text the place is in.
+        version: i32,
+        /// The place.
+        position: pm_protocol::Position,
+    },
+    /// Asks the server on this machine for the extensions there are to install.
+    Extensions,
+    /// Has the server on this machine install extensions.
+    InstallExtensions {
+        /// The extensions, by folder name.
+        ids: Vec<String>,
+    },
+    /// Has the server on this machine install the extension in a folder of this machine.
+    InstallExtension {
+        /// The folder.
+        path: String,
+    },
+    /// Has the server on this machine take an extension off.
+    RemoveExtension {
+        /// The extension, by folder name.
+        id: String,
+    },
     /// Asks the server for the agents added by hand and the tool servers every agent is started with.
     LoadServers,
     /// Opens `address` in the reader's browser.
@@ -299,6 +530,8 @@ pub enum Outgoing {
     OpenTerminal {
         /// The session, by position.
         session: usize,
+        /// The folder inside the session's folder the shell starts in, from its root; empty for the root itself.
+        folder: String,
         /// The tab, by the name this window knows it by.
         tab: u64,
         /// How many columns wide its window is.
@@ -690,6 +923,8 @@ pub enum Page {
     New(usize),
     /// Every session.
     History,
+    /// The extensions there are to install.
+    Extensions,
 }
 
 /// Which view of a session is showing.
@@ -875,6 +1110,34 @@ pub struct WorkspaceState {
     pub opened: Vec<(usize, usize, usize)>,
     /// The fold-outs of replies that are open, by session, reply and place in the reply.
     pub unfolded: Vec<(usize, usize, usize)>,
+    /// The languages the server on this machine has installed and can install, once it has said.
+    pub extensions: Vec<pm_protocol::ExtensionInfo>,
+    /// What the extensions page remembers.
+    pub extensions_page: crate::extensions::ExtensionsPage,
+    /// Where the caret was before each jump to a definition, to go back to.
+    pub jumps: pm_editor::Jumps,
+    /// The list hanging over the file shown, when one is open.
+    pub listing: Option<crate::listing::Listing>,
+    /// The box giving the thing at the caret a new name, when open.
+    pub renaming: Option<crate::navigate::Renaming>,
+    /// The box for going to a line of the file shown by its number, when open.
+    pub going_to: Option<crate::line_edits::GoingTo>,
+    /// Where the signature of the call the caret is in hangs, in logical pixels of the window.
+    pub signature_at: (f32, f32),
+    /// The bar for finding and replacing in the file shown, when open.
+    pub finding: Option<crate::find::Finding>,
+    /// How the editor looks and behaves.
+    pub editor: pm_editor::EditorSettings,
+    /// The action keys are being recorded for on the keymap page, when they are.
+    pub recording: Option<pm_editor::Action>,
+    /// The chords pressed so far while keys are recorded, as they are written.
+    pub recorded: Vec<String>,
+    /// Whether the editor's settings kept between runs were put in, so that what is shown is not mistaken for them before.
+    pub editor_loaded: bool,
+    /// The menu on the tab of an open file, when open.
+    pub tab_menu: Option<crate::tab_menu::TabMenu>,
+    /// Who last changed the line of the caret of a file, once asked: the session, the file, the line counted from 1, and the answer.
+    pub blame: Option<(usize, String, usize, pm_git::Blame)>,
 }
 
 impl WorkspaceState {
@@ -967,6 +1230,20 @@ impl WorkspaceState {
             slash: 0,
             opened: Vec::new(),
             unfolded: Vec::new(),
+            extensions: Vec::new(),
+            extensions_page: crate::extensions::ExtensionsPage::default(),
+            jumps: pm_editor::Jumps::default(),
+            listing: None,
+            renaming: None,
+            going_to: None,
+            signature_at: (0.0, 0.0),
+            finding: None,
+            blame: None,
+            tab_menu: None,
+            editor: pm_editor::EditorSettings::default(),
+            editor_loaded: false,
+            recording: None,
+            recorded: Vec::new(),
             trail: crate::trail::Trail::default(),
         };
         state.sync_context();
@@ -1058,6 +1335,64 @@ impl WorkspaceState {
         if !self.settings_menu_row(action) {
             self.settings_servers.menu = None;
         }
+        if let Some(place) = action
+            .0
+            .checked_sub(crate::assist::COMPLETION_ROW_BASE)
+            .filter(|_| action.0 < crate::assist::COMPLETION_ROW_END)
+        {
+            return self.completion_taken(Some(place as usize));
+        }
+        if action == crate::assist::COMPLETION_BODY || action == crate::assist::HOVER_CARD {
+            return self;
+        }
+        if let Some(line) = crate::viewer::fold_of(action) {
+            if let Some(document) = self.shown_text() {
+                document.unfold_line(line);
+            }
+            return self;
+        }
+        if let Some(row) = crate::listing::listing_row_of(action) {
+            return self.listing_taken(Some(row));
+        }
+        if action == crate::listing::LISTING_TAKE {
+            return self.listing_taken(None);
+        }
+        if action == crate::listing::LISTING_FILTER
+            || action == crate::listing::LISTING_BODY
+            || action == crate::navigate::RENAME_BOX
+            || action == crate::navigate::RENAME_SYMBOL
+        {
+            return self;
+        }
+        if action == crate::navigate::RENAME_SYMBOL_SUBMIT {
+            return self.rename_submitted();
+        }
+        if let Some(command) =
+            crate::tab_menu::TabCommand::of(action).filter(|_| self.tab_menu.is_some())
+        {
+            return self.tab_command(command);
+        }
+        self.tab_menu = None;
+        if crate::find::is_find_part(action) {
+            return self.find_pressed(action);
+        }
+        if action == crate::line_edits::GO_TO_LINE_SUBMIT {
+            return self.go_to_line_submitted();
+        }
+        if action == crate::line_edits::GO_TO_LINE || action == crate::line_edits::GO_TO_LINE_BOX {
+            return self;
+        }
+        if let Some(address) = self
+            .shown_document()
+            .and_then(|document| document.hover.as_ref())
+            .and_then(|card| card.text.as_deref())
+            .and_then(|said| crate::assist::hover_link(said, action))
+        {
+            if pm_acp::is_web_address(&address) {
+                self.outbox.push(Outgoing::Open { address });
+            }
+            return self;
+        }
         let restoring = self.restoring.take();
         match action {
             RESTORE_FILES => self.restore(restoring),
@@ -1076,6 +1411,10 @@ impl WorkspaceState {
                 return self.adder_pressed(action);
             }
             HISTORY => self.page = Page::History,
+            crate::extensions::EXTENSIONS => return self.with_extensions_page(),
+            action if crate::extensions::is_extensions(action) => {
+                return self.extensions_pressed(action);
+            }
             TAB_CHAT => self.tab = Tab::Chat,
             TAB_DIFF => self.tab = Tab::Diff,
             TERMINAL | NEW_TERMINAL | MAXIMIZE_TERMINAL => {
@@ -1124,6 +1463,20 @@ impl WorkspaceState {
             STASH_FIELD => self.git.stash_message.apply(edit),
             RENAME_FIELD => self.git.rename.apply(edit),
             EDITOR_FIELD => self.file_edited(edit),
+            crate::navigate::RENAME_SYMBOL => {
+                if let Some(renaming) = self.renaming.as_mut() {
+                    renaming.field.apply(edit);
+                    renaming.problem = None;
+                }
+            }
+            crate::line_edits::GO_TO_LINE => {
+                if let Some(going) = self.going_to.as_mut() {
+                    going.field.apply(edit);
+                }
+            }
+            crate::find::FIND_FIELD => return self.find_typed(edit),
+            crate::listing::LISTING_FILTER => return self.listing_filtered(edit),
+            crate::find::REPLACE_FIELD => return self.replacement_typed(edit),
             ENTRY_FIELD => {
                 if let Some((_, field)) = self.git.naming.as_mut() {
                     field.apply(edit);
@@ -1131,6 +1484,7 @@ impl WorkspaceState {
             }
             ADDER_FIELD => self.adder_edited(edit),
             HISTORY_SEARCH => self.history_search.apply(edit),
+            crate::extensions::EXTENSIONS_SEARCH => self.extensions_searched(edit),
             id if crate::settings_servers::is_form_field(id) => self.server_form_edited(id, edit),
             OTHER => {
                 if let Page::Session(open) = self.page
@@ -1157,7 +1511,15 @@ impl WorkspaceState {
             RENAME_FIELD => Some(&self.git.rename),
             ENTRY_FIELD => self.git.naming.as_ref().map(|(_, field)| field),
             EDITOR_FIELD => self.shown_document().map(|document| &document.field),
+            crate::navigate::RENAME_SYMBOL => {
+                self.renaming.as_ref().map(|renaming| &renaming.field)
+            }
+            crate::line_edits::GO_TO_LINE => self.going_to.as_ref().map(|going| &going.field),
+            crate::find::FIND_FIELD => self.finding.as_ref().map(|finding| &finding.query),
+            crate::listing::LISTING_FILTER => self.listing_filter(),
+            crate::find::REPLACE_FIELD => self.finding.as_ref().map(|finding| &finding.replacement),
             HISTORY_SEARCH => Some(&self.history_search),
+            crate::extensions::EXTENSIONS_SEARCH => Some(&self.extensions_page.search),
             ADDER_FIELD => self.adder.as_ref().map(|open| &open.field),
             id if crate::settings_servers::is_form_field(id) => self.server_form_field(id),
             OTHER => self.other_field(),
@@ -1175,7 +1537,13 @@ impl WorkspaceState {
             || id == RENAME_FIELD
             || id == ENTRY_FIELD
             || id == EDITOR_FIELD
+            || id == crate::navigate::RENAME_SYMBOL
+            || id == crate::line_edits::GO_TO_LINE
+            || id == crate::find::FIND_FIELD
+            || id == crate::listing::LISTING_FILTER
+            || id == crate::find::REPLACE_FIELD
             || id == HISTORY_SEARCH
+            || id == crate::extensions::EXTENSIONS_SEARCH
             || id == OTHER
             || id == ADDER_FIELD
             || crate::settings_servers::is_form_field(id)
@@ -1190,6 +1558,11 @@ impl WorkspaceState {
             STASH_FIELD | RENAME_FIELD => PROMPT_CONFIRM,
             ENTRY_FIELD => crate::tree_actions::TREE_NAME_SUBMIT,
             EDITOR_FIELD => crate::open_files::EDITOR_SAVE,
+            crate::navigate::RENAME_SYMBOL => crate::navigate::RENAME_SYMBOL_SUBMIT,
+            crate::line_edits::GO_TO_LINE => crate::line_edits::GO_TO_LINE_SUBMIT,
+            crate::find::FIND_FIELD => crate::find::FIND_NEXT,
+            crate::listing::LISTING_FILTER => crate::listing::LISTING_TAKE,
+            crate::find::REPLACE_FIELD => crate::find::REPLACE_ONE,
             HISTORY_SEARCH => HISTORY,
             ADDER_FIELD => ADDER_SUBMIT,
             crate::settings::SETTINGS_SEARCH => crate::settings::SETTINGS_SEARCH_GO,
@@ -1222,6 +1595,7 @@ impl WorkspaceState {
         self.message_menu = None;
         self.git.menu = None;
         self.settings_servers.menu = None;
+        self.tab_menu = None;
         self
     }
 
@@ -1351,6 +1725,9 @@ impl WorkspaceState {
             self.restoring = Some(index);
         } else if let Some(index) = position(TURN_BASE, self.messages_open()) {
             self.toggle_turn(index);
+        } else if let Some(index) = position(TREE_BASE, self.files.len() + self.tree_folders.len())
+        {
+            self.fold_tree_folder(index);
         } else if id >= DETAILS_BASE {
             let offset = (id - DETAILS_BASE) as usize;
             self.toggle_details(offset / 1000, offset % 1000);
@@ -1373,9 +1750,6 @@ impl WorkspaceState {
             self.start_comment(index, None, false);
         } else if let Some(index) = position(COMMENT_REMOVE_BASE, self.comment_count()) {
             self.remove_comment(index);
-        } else if let Some(index) = position(TREE_BASE, self.files.len() + self.tree_folders.len())
-        {
-            self.fold_tree_folder(index);
         } else if let Some(index) = position(VIEWED_BASE, self.change_count()) {
             self.change_at(index, |change| change.viewed = !change.viewed);
         }
@@ -1628,7 +2002,7 @@ impl WorkspaceState {
                 self.tab = Tab::Chat;
                 self.sessions.len() - 1
             }
-            Page::History => return,
+            Page::History | Page::Extensions => return,
         };
         let files = self.take_prompt();
         let held = &mut self.sessions[session];
@@ -1873,7 +2247,7 @@ impl WorkspaceState {
     }
 
     /// Shows `tab` in the review panel from its top.
-    fn show_review_tab(&mut self, tab: ReviewTab) {
+    pub(crate) fn show_review_tab(&mut self, tab: ReviewTab) {
         self.review_tab = tab;
         self.tree_scroll = 0.0;
     }

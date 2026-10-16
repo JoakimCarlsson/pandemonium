@@ -299,7 +299,7 @@ impl WorkspaceState {
                 .sessions
                 .iter()
                 .position(|session| session.home && session.project == project),
-            Page::History => None,
+            Page::History | Page::Extensions => None,
         }
     }
 

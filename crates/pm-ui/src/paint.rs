@@ -1,6 +1,5 @@
 //! Painting a laid-out node tree into a draw list.
 
-use pm_icon::IconName;
 use pm_input::{FocusId, PointerState};
 use pm_renderer::{Affine, DrawList, Icon, Quad, Rect, Text};
 use pm_style::color::Srgba;
@@ -12,7 +11,7 @@ use pm_style::layout::{Placed, solve};
 use pm_text::{Run, Shaper};
 use pm_theme::Theme;
 
-use crate::node::{Anchor, Node};
+use crate::node::{Anchor, Mark, Node, Paint};
 use crate::retain;
 use crate::select::{DrawnPiece, TextPiece, TextSelection};
 use crate::tooltip::{self, Showing};
@@ -25,6 +24,9 @@ const CARET_WIDTH: f32 = 1.5;
 
 /// How far a shadow's edge fades, as a share of its blur radius, which is what makes it look as soft as a browser draws it.
 const SHADOW_SOFTNESS: f32 = 1.3;
+
+/// How long each piece of a wavy underline is, in logical pixels.
+const WAVE_STEP: f32 = 2.0;
 
 /// How wide the bar of a scrolling box is, in logical pixels.
 const SCROLLBAR_WIDTH: f32 = 4.0;
@@ -671,7 +673,7 @@ impl Frame<'_> {
     /// Paints `name` in the largest square that fits the content area of the box at `rect`.
     fn icon(
         &mut self,
-        name: IconName,
+        svg: pm_icon::Svg,
         computed: &ComputedStyle,
         rect: Rect,
         world: Affine,
@@ -693,7 +695,7 @@ impl Frame<'_> {
             .resolve(self.theme)
             .alpha(opacity);
         self.list.push_icon(Icon {
-            svg: name.svg(),
+            svg,
             x: middle_x - size / 2.0,
             y: middle_y - size / 2.0,
             size,
@@ -739,10 +741,39 @@ impl Frame<'_> {
                 length: content.len(),
             });
         }
+        let guides: Vec<&Mark> = node
+            .marks
+            .iter()
+            .filter(|mark| mark.paint == Paint::Guide)
+            .collect();
+        if !guides.is_empty() {
+            let space = self.shaper.shape(" ", &computed.typography).width;
+            for mark in guides {
+                self.list.push(Quad::filled(
+                    Rect::new(x + space * mark.range.start as f32, y, 1.0, run.height),
+                    mark.color.resolve(self.theme).alpha(opacity),
+                ));
+            }
+        }
+        for mark in node.marks.iter().filter(|mark| mark.paint == Paint::Fill) {
+            let left = run.caret_x(mark.range.start);
+            let right = run.caret_x(mark.range.end);
+            self.list.push(Quad::filled(
+                Rect::new(x + left, y, (right - left).max(0.0), run.height),
+                mark.color.resolve(self.theme).alpha(opacity),
+            ));
+        }
         if let Some((range, owner)) = &node.selection
             && self.input.focused == Some(*owner)
         {
             self.highlight(&run, range.clone(), (x, y), opacity);
+        }
+        for mark in node
+            .marks
+            .iter()
+            .filter(|mark| mark.paint == Paint::Selected)
+        {
+            self.highlight(&run, mark.range.clone(), (x, y), opacity);
         }
         let drawn = DrawnPiece {
             seen,
@@ -786,8 +817,102 @@ impl Frame<'_> {
                 ));
             }
         }
+        let carets: Vec<usize> = node
+            .marks
+            .iter()
+            .filter(|mark| mark.paint == Paint::Caret)
+            .map(|mark| mark.range.start)
+            .collect();
+        if !carets.is_empty() {
+            self.output.animating = true;
+            if ((self.input.elapsed_ms / CARET_BLINK_MS) as u32).is_multiple_of(2) {
+                for byte in carets {
+                    let at = x + run.caret_x(byte);
+                    self.list.push(Quad::filled(
+                        Rect::new(at, y, CARET_WIDTH, run.height),
+                        color,
+                    ));
+                }
+            }
+        }
         self.lines(computed, &run, x, y, color);
-        self.list.push_text(Text { run, x, y, color });
+        for mark in node.marks.iter().filter(|mark| mark.paint == Paint::Wave) {
+            self.wave(&run, mark, (x, y), opacity);
+        }
+        for mark in node
+            .marks
+            .iter()
+            .filter(|mark| mark.paint == Paint::Underline)
+        {
+            let left = run.caret_x(mark.range.start);
+            let right = run.caret_x(mark.range.end);
+            self.list.push(Quad::filled(
+                Rect::new(
+                    x + left,
+                    y + run.baseline + computed.typography.size * 0.12,
+                    (right - left).max(0.0),
+                    (computed.typography.size / 14.0).max(1.0),
+                ),
+                mark.color.resolve(self.theme).alpha(opacity),
+            ));
+        }
+        let mut inked: Vec<&Mark> = node
+            .marks
+            .iter()
+            .filter(|mark| mark.paint == Paint::Ink)
+            .collect();
+        inked.sort_by_key(|mark| mark.range.start);
+        if inked.is_empty() {
+            self.list.push_text(Text { run, x, y, color });
+            return;
+        }
+        let mut plain = Vec::new();
+        let mut last = 0;
+        for mark in &inked {
+            if mark.range.start > last {
+                plain.push(last..mark.range.start);
+            }
+            last = last.max(mark.range.end);
+            self.list.push_text(Text {
+                run: run.part(mark.range.clone()),
+                x,
+                y,
+                color: mark.color.resolve(self.theme).alpha(opacity),
+            });
+        }
+        plain.push(last..content.len().max(last));
+        for range in plain {
+            self.list.push_text(Text {
+                run: run.part(range),
+                x,
+                y,
+                color,
+            });
+        }
+    }
+
+    /// Paints the wavy line `mark` asks for under its stretch of `run`, the line drawn with its top-left corner at `at`.
+    fn wave(&mut self, run: &Run, mark: &Mark, at: (f32, f32), opacity: f32) {
+        let left = at.0 + run.caret_x(mark.range.start);
+        let right = at.0 + run.caret_x(mark.range.end);
+        let right = if right - left < WAVE_STEP * 2.0 {
+            left + WAVE_STEP * 2.0
+        } else {
+            right
+        };
+        let color = mark.color.resolve(self.theme).alpha(opacity);
+        let top = at.1 + run.baseline + 2.0;
+        let mut step = 0;
+        let mut from = left;
+        while from < right {
+            let lifted = if step % 2 == 0 { 0.0 } else { 1.0 };
+            self.list.push(Quad::filled(
+                Rect::new(from, top + lifted, WAVE_STEP.min(right - from), 1.0),
+                color,
+            ));
+            from += WAVE_STEP;
+            step += 1;
+        }
     }
 
     /// Paints the underline and the line through that the typography of

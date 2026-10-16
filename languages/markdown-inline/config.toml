@@ -1,0 +1,14 @@
+# Inline markdown: the text inside each block of a Markdown file, a grammar of
+# its own that Markdown injects. No file is inline markdown by itself, so it is
+# installed only as part of Markdown and has no language server.
+
+name = "Inline markdown"
+version = "0.1.0"
+description = "The text inside Markdown blocks."
+grammar = "markdown_inline"
+aliases = ["markdown_inline"]
+hidden = true
+
+[grammar_file]
+url = "https://github.com/tree-sitter-grammars/tree-sitter-markdown/releases/download/v0.5.3/tree-sitter-markdown_inline.wasm"
+sha256 = "d47e5c43683c39b645ced8720ab90c3b3f467e715d3426b29ef3f69984d88c15"

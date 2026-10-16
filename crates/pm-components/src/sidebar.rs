@@ -164,6 +164,12 @@ pub fn sidebar(state: &WorkspaceState) -> Node {
                         state.page == Page::History,
                     ),
                     entry(IconName::Search, "Search", SEARCH, false),
+                    entry(
+                        IconName::FileCode,
+                        "Extensions",
+                        crate::extensions::EXTENSIONS,
+                        state.page == Page::Extensions,
+                    ),
                 ]),
         )
         .child(

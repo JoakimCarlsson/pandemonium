@@ -1,0 +1,33 @@
+# JSON: how files are told to be JSON, how they are edited and the language
+# server that reads them.
+
+name = "JSON"
+version = "0.1.0"
+description = "JSON with the VS Code JSON language server."
+icon = "icon.svg"
+color = "#e6c84f"
+grammar = "json"
+suffixes = ["json", "jsonc", "json5"]
+names = [".prettierrc", ".eslintrc", "flake.lock"]
+aliases = ["jsonc"]
+line_comment = "//"
+indent = 2
+pairs = ["[]", "{}", "\"\""]
+
+[grammar_file]
+url = "https://github.com/tree-sitter/tree-sitter-json/releases/download/v0.24.8/tree-sitter-json.wasm"
+sha256 = "d2119fb98d5912719b13f9458574f8608d2d29dfbe45f6be1f860ea1fe2a2405"
+
+[server]
+id = "vscode-json-language-server"
+language_id = "json"
+command = "vscode-json-language-server"
+args = ["--stdio"]
+
+[server.init]
+provideFormatter = true
+
+[server.install]
+kind = "npm"
+version = "4.10.0"
+packages = ["vscode-langservers-extracted@4.10.0"]
