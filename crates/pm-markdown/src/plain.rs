@@ -47,6 +47,12 @@ fn block(block: &Block) -> String {
             .collect::<Vec<_>>()
             .join("\n\n"),
         Block::Rule => String::new(),
+        Block::Math(text) => text.clone(),
+        Block::Images { images, .. } => images
+            .iter()
+            .map(|image| image.alt.as_str())
+            .collect::<Vec<_>>()
+            .join(" "),
         Block::Table { head, rows } => std::iter::once(head)
             .chain(rows)
             .map(|row| {

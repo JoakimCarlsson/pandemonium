@@ -769,6 +769,9 @@ const HISTORY_LIMIT: usize = 2000;
 /// The most bytes of a file that are read to be shown.
 const READ_LIMIT: usize = 2_000_000;
 
+/// The most bytes of a file that are read whole, as a picture is.
+const BYTES_LIMIT: usize = 32_000_000;
+
 /// What a file holds, read for showing.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Contents {
@@ -788,10 +791,15 @@ pub fn read(directory: &Path, path: &str, head: bool) -> Result<Contents, String
     read_at(directory, path, head.then_some("HEAD"))
 }
 
-/// What `path` holds in the working folder, or in the commit `revision` of the repository `directory` is in when one is named. No more than the limit of what is shown is ever read.
-pub fn read_at(directory: &Path, path: &str, revision: Option<&str>) -> Result<Contents, String> {
+/// The bytes `path` holds in the working folder, or in the commit `revision` of the repository `directory` is in when one is named, no more than one past `most`.
+fn read_raw(
+    directory: &Path,
+    path: &str,
+    revision: Option<&str>,
+    most: usize,
+) -> Result<Vec<u8>, String> {
     let path = inside(path)?;
-    let limit = READ_LIMIT as u64 + 1;
+    let limit = most as u64 + 1;
     let mut bytes = Vec::new();
     if let Some(revision) = revision {
         if revision.is_empty()
@@ -842,6 +850,20 @@ pub fn read_at(directory: &Path, path: &str, revision: Option<&str>) -> Result<C
             .and_then(|file| file.take(limit).read_to_end(&mut bytes))
             .map_err(|error| format!("could not read {path}: {error}"))?;
     }
+    Ok(bytes)
+}
+
+/// The bytes `path` holds in the working folder, or, when `head`, in the last commit of the repository `directory` is in, and whether they were cut short at the limit of what is read whole.
+pub fn read_bytes(directory: &Path, path: &str, head: bool) -> Result<(Vec<u8>, bool), String> {
+    let mut bytes = read_raw(directory, path, head.then_some("HEAD"), BYTES_LIMIT)?;
+    let truncated = bytes.len() > BYTES_LIMIT;
+    bytes.truncate(BYTES_LIMIT);
+    Ok((bytes, truncated))
+}
+
+/// What `path` holds in the working folder, or in the commit `revision` of the repository `directory` is in when one is named. No more than the limit of what is shown is ever read.
+pub fn read_at(directory: &Path, path: &str, revision: Option<&str>) -> Result<Contents, String> {
+    let bytes = read_raw(directory, path, revision, READ_LIMIT)?;
     if bytes.iter().take(8000).any(|byte| *byte == 0) {
         return Ok(Contents::Binary);
     }

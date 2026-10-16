@@ -5,6 +5,7 @@ use pm_input::FocusId;
 use pm_text::Edit;
 
 use crate::git_prompts::Prompt;
+use crate::preview::{PREVIEW_LINK_BASE, PREVIEW_LINKS, PREVIEW_SHOW, Rendering, SOURCE_SHOW};
 use crate::state::{Outgoing, Page, Tab, WorkspaceState};
 use pm_editor::Document;
 
@@ -30,6 +31,8 @@ pub enum Contents {
     Loading,
     /// The text of the file.
     Text(Box<Document>),
+    /// The pixels of a picture file, decoded.
+    Picture(pm_ui::Picture),
     /// Why there is nothing to show.
     Message(String),
 }
@@ -53,6 +56,10 @@ pub struct Viewer {
     pub jump: Option<pm_protocol::Position>,
     /// Whether the tab is pinned: kept at the start of the strip, and left open when the tabs around it are closed.
     pub pinned: bool,
+    /// Whether a file that can be rendered shows its source instead.
+    pub source: bool,
+    /// The text of a vector picture drawn, or why it could not be, once it has been tried.
+    pub drawn: Option<Result<pm_ui::Picture, String>>,
 }
 
 /// Where a file was left when the window closed: what it held that was not saved, and the caret.
@@ -97,6 +104,24 @@ impl Viewer {
     /// Whether the file has changes that were not written to the folder.
     pub fn is_dirty(&self) -> bool {
         matches!(&self.contents, Contents::Text(document) if document.is_dirty())
+    }
+
+    /// How the file is shown rendered, or nothing when it is shown as its source.
+    pub fn rendering(&self) -> Option<Rendering> {
+        Rendering::of(&self.path).filter(|rendering| !rendering.has_source() || !self.source)
+    }
+
+    /// What asks for the text of the file to be drawn as a vector picture, when it is one and is shown rendered.
+    fn draw_request(&self, session: usize) -> Option<Outgoing> {
+        let Contents::Text(document) = &self.contents else {
+            return None;
+        };
+        (self.rendering() == Some(Rendering::Vector)).then(|| Outgoing::DrawVector {
+            session,
+            path: self.path.clone(),
+            head: self.head,
+            text: document.field.text().to_owned(),
+        })
     }
 }
 
@@ -164,11 +189,20 @@ impl WorkspaceState {
                     left: None,
                     jump: None,
                     pinned: false,
+                    source: false,
+                    drawn: None,
                 };
-                self.outbox.push(Outgoing::ReadFile {
-                    session,
-                    path,
-                    head,
+                self.outbox.push(match Rendering::of(&path) {
+                    Some(Rendering::Picture) => Outgoing::ReadPicture {
+                        session,
+                        path,
+                        head,
+                    },
+                    _ => Outgoing::ReadFile {
+                        session,
+                        path,
+                        head,
+                    },
                 });
                 match self.git.viewers.iter().position(|held| held.preview) {
                     Some(index) => {
@@ -225,6 +259,13 @@ impl WorkspaceState {
         }
     }
 
+    /// The open file at `path` of the session at `session`, read from the last commit when `head`, whether it is showing or kept aside.
+    fn viewer_of(&mut self, session: usize, path: &str, head: bool) -> Option<&mut Viewer> {
+        self.viewers_of(session)?
+            .iter_mut()
+            .find(|viewer| viewer.path == path && viewer.head == head)
+    }
+
     /// The open files of the session at `session`, whether they are showing or kept aside.
     fn viewers_of(&mut self, session: usize) -> Option<&mut Vec<Viewer>> {
         if self.files_owner == Some(session) {
@@ -266,11 +307,8 @@ impl WorkspaceState {
             .as_ref()
             .ok()
             .and_then(|(text, _, language)| text.as_ref().and(language.clone()));
-        if let Some(viewer) = self.viewers_of(session).and_then(|viewers| {
-            viewers
-                .iter_mut()
-                .find(|viewer| viewer.path == path && viewer.head == head)
-        }) {
+        let mut draw = None;
+        if let Some(viewer) = self.viewer_of(session, path, head) {
             viewer.contents = match read {
                 Ok((Some(text), truncated, _)) => {
                     let mut document = Document::new(&text, head, truncated);
@@ -285,7 +323,10 @@ impl WorkspaceState {
                 Ok((None, _, _)) => Contents::Message("This file is not text.".to_owned()),
                 Err(reason) => Contents::Message(reason),
             };
+            draw = viewer.draw_request(session);
         }
+        self.outbox.extend(draw);
+        self.ask_shown_figures();
         let opened = !head
             && self.viewers_of(session).is_some_and(|viewers| {
                 viewers.iter().any(|viewer| {
@@ -302,6 +343,96 @@ impl WorkspaceState {
         }
         self.took_language(session, path, head, language);
         self
+    }
+
+    /// The state after the server answered for the picture file at `path` of the session at `session` with its pixels decoded, or why there are none.
+    pub fn with_picture(
+        mut self,
+        session: usize,
+        path: &str,
+        head: bool,
+        read: Result<pm_ui::Picture, String>,
+    ) -> Self {
+        if let Some(viewer) = self.viewer_of(session, path, head) {
+            viewer.contents = match read {
+                Ok(picture) => Contents::Picture(picture),
+                Err(reason) => Contents::Message(reason),
+            };
+        }
+        self
+    }
+
+    /// The state after the text of the vector picture at `path` of the session at `session` was drawn, or could not be.
+    pub fn with_drawn(
+        mut self,
+        session: usize,
+        path: &str,
+        head: bool,
+        drawn: Result<pm_ui::Picture, String>,
+    ) -> Self {
+        if let Some(viewer) = self.viewer_of(session, path, head) {
+            viewer.drawn = Some(drawn);
+        }
+        self
+    }
+
+    /// Shows the file shown as its source when `source`, or else rendered, drawing it again as its text now stands.
+    fn show_source(&mut self, source: bool) {
+        let Some(session) = self.review_index() else {
+            return;
+        };
+        let Some(viewer) = self
+            .git
+            .shown
+            .and_then(|index| self.git.viewers.get_mut(index))
+        else {
+            return;
+        };
+        viewer.source = source;
+        viewer.scroll = 0.0;
+        let draw = viewer.draw_request(session);
+        self.outbox.extend(draw);
+        self.ask_shown_figures();
+    }
+
+    /// Asks for every figure of the markdown file shown rendered that is neither drawn nor asked for yet.
+    pub(crate) fn ask_shown_figures(&mut self) {
+        let Some(session) = self.review_index() else {
+            return;
+        };
+        let Some(viewer) = self
+            .shown_viewer()
+            .filter(|viewer| viewer.rendering() == Some(Rendering::Markdown))
+        else {
+            return;
+        };
+        let Contents::Text(document) = &viewer.contents else {
+            return;
+        };
+        let wanted = crate::figures::figures_of(document.field.text(), Some(&viewer.path));
+        self.ask_figures(wanted, Some(session));
+    }
+
+    /// Follows the link at `place` among those of the markdown file shown rendered: an address on the web opens in the browser, and a file of the repository opens in a tab.
+    fn follow_preview_link(&mut self, place: usize) {
+        let Some(viewer) = self.shown_viewer() else {
+            return;
+        };
+        let Contents::Text(document) = &viewer.contents else {
+            return;
+        };
+        let Some(address) = pm_markdown::links(document.field.text())
+            .into_iter()
+            .nth(place)
+        else {
+            return;
+        };
+        if pm_acp::is_web_address(&address) {
+            self.outbox.push(Outgoing::Open { address });
+        } else if let Some(path) = crate::preview::linked_path(&viewer.path, &address) {
+            let head = viewer.head;
+            self.open_viewer(path, head);
+        }
     }
 
     /// The state after the file shown is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
@@ -456,6 +587,7 @@ impl WorkspaceState {
         {
             self.git.shown = Some(index as usize);
             self.tab = Tab::File;
+            self.ask_shown_figures();
             return true;
         }
         if let Some(index) = action
@@ -471,7 +603,17 @@ impl WorkspaceState {
             }
             return true;
         }
+        if let Some(place) = action
+            .0
+            .checked_sub(PREVIEW_LINK_BASE)
+            .filter(|place| *place < PREVIEW_LINKS)
+        {
+            self.follow_preview_link(place as usize);
+            return true;
+        }
         match action {
+            PREVIEW_SHOW => self.show_source(false),
+            SOURCE_SHOW => self.show_source(true),
             EDITOR_SAVE => self.format_then_save(true),
             EDITOR_FIELD => {}
             _ => return false,

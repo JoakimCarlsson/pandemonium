@@ -11,6 +11,7 @@ mod core;
 mod credential;
 mod documents;
 mod entries;
+mod fetch;
 mod folders;
 mod handler;
 mod languages;
