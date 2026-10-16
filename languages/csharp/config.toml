@@ -1,0 +1,26 @@
+# C#: how files are told to be C#, how they are edited and the language server
+# that reads them. csharp-ls is a .NET tool that runs on the .NET SDK, so it is
+# not installed here: the one on the machine's path is used, as
+# `dotnet tool install --global csharp-ls` puts it there.
+
+name = "C#"
+version = "0.1.0"
+description = "C# with csharp-ls."
+icon = "icon.svg"
+color = "#5fbfb0"
+grammar = "c_sharp"
+suffixes = ["cs", "csx"]
+aliases = ["c#", "cs", "csharp", "c_sharp"]
+line_comment = "//"
+indent = 4
+pairs = ["()", "[]", "{}", "\"\"", "''"]
+
+[grammar_file]
+url = "https://github.com/tree-sitter/tree-sitter-c-sharp/releases/download/v0.23.5/tree-sitter-c_sharp.wasm"
+sha256 = "6f69e1cae44e1c32c1eccc170dc5a9778fb94ff716f71113fe1f8c4299aa2f40"
+
+[server]
+id = "csharp-ls"
+language_id = "csharp"
+command = "csharp-ls"
+check = ["--version"]

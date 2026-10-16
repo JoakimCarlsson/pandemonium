@@ -57,6 +57,30 @@
       "local": false
     },
     {
+      "id": "cmake",
+      "name": "CMake",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "CMake with neocmakelsp.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "cmake"
+      ],
+      "server": "neocmakelsp",
+      "files": {
+        "brackets.scm": "923753dd3d71b7d4a0dff97f478fa5ce175303f490cb38aa51a01b12c592ec04",
+        "config.toml": "ddbb20e9ae22021cc8c74c18c6bce3e1d4a9a9d91895171ae450d2c6ffd4c54a",
+        "grammar.wasm": "146dcfeb8d10d08e36e6a08fab9840eb60803064c063060f55e9b64c5137b1af",
+        "highlights.scm": "a87ad76b9692226952b729f1e49b06ea647bf3ae0246a79666bc84d4b7cb64ff",
+        "icon.svg": "f3fbe924ad93da6475e674b2bb5f248b20f42f81ac75e8247952b5004d681df2",
+        "indents.scm": "c3d30820f95c3170debe9db6d38742b1c9453454958d081978cf2aa2052f44a9",
+        "injections.scm": "b3c5958b1903048a6ee1dae918a2744020d22ad89726bec2f60a180729651e6f",
+        "outline.scm": "589b9538ebb8b2acfe491efaf08d0d586659dce681c5108b5c075040e8082e72"
+      },
+      "local": false
+    },
+    {
       "id": "cpp",
       "name": "C++",
       "kind": "language",
@@ -88,6 +112,30 @@
         "indents.scm": "e29c41a339ada86a5f9b4df2e30c8e18425d4a054b062d39cbdf69b25d4b33ae",
         "injections.scm": "375bde9d355721abfdd7491d5c2e253723abcfe7402f7a24a4342c0bfa2510b0",
         "outline.scm": "edc8e1a737e1889c2336e17907492496c35c9ca56a86c49f7ddc9ab7ebea9bc8"
+      },
+      "local": false
+    },
+    {
+      "id": "csharp",
+      "name": "C#",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "C# with csharp-ls.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "cs",
+        "csx"
+      ],
+      "server": "csharp-ls",
+      "files": {
+        "brackets.scm": "c0eda163cc24f7a3cf17c8fe4878b06ce74226c6a752c486d24dfb8a39016cb4",
+        "config.toml": "de70bb3347d2aef345a308940806914b3ddb9187a2b46e903af3f982dd42da53",
+        "highlights.scm": "318f006570387526f43cce3e7d9ea8199a8c8bc34641c8ebba9525434d65e1e2",
+        "icon.svg": "67212cc5e02d45cde18934170f6fe45517ac85bb23be6b7836a6b50f97e7cf75",
+        "indents.scm": "73c49944a486f94d04e7d1bb43ebc9662aea8bcfca6e7041ad9e2901b70b8d22",
+        "injections.scm": "1970c2d5552dcbb380a319f3cd16fe17c1a94b9b5add7f8144827d559a7a7144",
+        "outline.scm": "a21821f312270857a1fd5204fdaed76867a9b59d070d7f20a62c7246cf8b533f"
       },
       "local": false
     },
@@ -205,6 +253,58 @@
       "local": false
     },
     {
+      "id": "graphql",
+      "name": "GraphQL",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "GraphQL with the GraphQL language service.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "graphql",
+        "gql",
+        "graphqls"
+      ],
+      "server": "graphql-lsp",
+      "files": {
+        "brackets.scm": "0e3ce5ff1db5b65199040d96b389af72bdf59357f392b31b95616fb7380e3ece",
+        "config.toml": "875076e28caa79e1b31357de8eac0db1a769fa2bacf885c06ea986268b0f0434",
+        "grammar.wasm": "bf35af571832782393b576da71d06081f5b807e26bd2d3daf87b06109183c004",
+        "highlights.scm": "0237fed60ff22cd8e79fe99ea5d29ecb2457413b81f08c90cae17badfe1f8fbb",
+        "icon.svg": "21ff8f3092926918ebcbca126aec433b04684c0d8a4724faa5cf28ef3423c0bb",
+        "indents.scm": "2b0275528d7b71ef3f8a34ffd434a67e55fdb712cff311315425d9df412d919f",
+        "injections.scm": "55359f11d050139ba50aed076c56b094459d7ed155236f1f7a5e6cb1e2ef7608",
+        "outline.scm": "b638321b3bef37dd4682479d5fc801ee94ac2f2b83dd49baad8da1fa76844666",
+        "package-lock.json": "9cce7474147a4b7911853037fc798b0cfec2130acc77ccffb279cc2e85b4a1e5",
+        "package.json": "a860ea25dcd181cdcd82cdf9192576da6acfb6eda8fcc6d9f947e2de37138160"
+      },
+      "local": false
+    },
+    {
+      "id": "hcl",
+      "name": "HCL",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "HashiCorp Configuration Language.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "hcl",
+        "nomad"
+      ],
+      "server": null,
+      "files": {
+        "brackets.scm": "844b2cb8936826cd310c3b645e3c914453718f21517165a48d2e13f1e9f617c8",
+        "config.toml": "4491f39cfbfb75cf21a65c6d599d7a7852061c6312435c724bd6f5a4863a38c6",
+        "highlights.scm": "76f7bc12a0399404485655ebbcdf82ac6fefdd8072a8b2768ef28bd66a145e56",
+        "icon.svg": "8a0c2f88d85e8345f4f9c1984b419041df7363976030482a4e1400625f9a6f07",
+        "indents.scm": "ddd4fd60778127deb25d6d2a6707991d1d76de213f8c8a85a90b40effe87e0a3",
+        "injections.scm": "73e5db626f9cb14193d2c0564285fef9c46d6e1edaec3f9b6ee668b2e9832353",
+        "outline.scm": "561c947c9634771cc0bae65dc0fa9910910170c5f3e585f7757feea73fbb3d56"
+      },
+      "local": false
+    },
+    {
       "id": "hlsl",
       "name": "HLSL",
       "kind": "language",
@@ -261,6 +361,29 @@
       "local": false
     },
     {
+      "id": "java",
+      "name": "Java",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "Java with the Eclipse JDT language server.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "java"
+      ],
+      "server": "jdtls",
+      "files": {
+        "brackets.scm": "38c5c582bb6c3d0d9c621f43463cbea7de4ae9b0c7bef9111020aaaa26007208",
+        "config.toml": "184efc742bb0ec25139b9f15358b17b527c0a2376fedd928bd898a1b890ffc30",
+        "highlights.scm": "19012606048c71619cdc5a93ea3d6c493ac41dc75980405b2f3ea72d0d81ab57",
+        "icon.svg": "26f51cbdb259fbd3a6fc7cd49e8c24ca4717565ae40e1d67e0fedafda5802d69",
+        "indents.scm": "fc4243dcac7477ef195f9abcd4b5850f02bbbab7a63a60b46a1eab7cc9393d71",
+        "injections.scm": "2c61063e8c05d1b9821a6630807c550ca71867d69b14d5ceddcb0977ceeabc5f",
+        "outline.scm": "ef47515d474d8faa40cc8fce663dce6bd2983c853aa3627516cf51a4890c06d8"
+      },
+      "local": false
+    },
+    {
       "id": "javascript",
       "name": "JavaScript",
       "kind": "language",
@@ -281,7 +404,7 @@
         "highlights.scm": "8c40d2b7d43982fc34929b92fa594b17759bf4f00fbdc185435d1c2e372c86a3",
         "icon.svg": "12b4bbacd7fbf2b1a685b791ce8c5c0196a3f01f78aff3f75cc05929868e17c6",
         "indents.scm": "8c6500f9272158bf36044cf0bce758b81f71910ff87d4840b8c612ecc4d92501",
-        "injections.scm": "22954768ed0e3a02eea5c118456010505c5d2d381ee1f530e25e4655bff69380",
+        "injections.scm": "851622253f579747bbdf74bf57b3e3fece122995617cb5e348d4d0b28bc4ea19",
         "outline.scm": "36680a2012f2f4478c54f77f7b36282ce9cff3f7ad3466c47263e108c0e61757",
         "package-lock.json": "c189d4f360f0e680a42b980556c9c40cc5eae5a28f5dc5ddeb4b57764cabf209",
         "package.json": "3788f0a00bcb75e7dc63603a9b1af6ede654cc00a6976aea8eaca317a07e5185"
@@ -316,6 +439,30 @@
       "local": false
     },
     {
+      "id": "kotlin",
+      "name": "Kotlin",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "Kotlin with JetBrains' kotlin-lsp.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "kt",
+        "kts"
+      ],
+      "server": "kotlin-lsp",
+      "files": {
+        "brackets.scm": "838f05f2b4bc332feacdb4c9cd9e0ab2d01bb1ac31fde486503c590da94668ee",
+        "config.toml": "060605b4a5ce9eef21d4744511374347265da6ccf5afa548886cc75c4be352a4",
+        "highlights.scm": "f334c49d82a6b3cbbf60c0e9a71677f2714608bb1b5942b7f59c38c2563464b3",
+        "icon.svg": "c36d71b7572efe32f7662b3a67c4edce83a459b1e0d69d2800a7290b904bbd05",
+        "indents.scm": "52f5a1a256c1dbb8ca6fcb0721bfda430dbe60f8fe3178390bf52d58b14fa7be",
+        "injections.scm": "5f5bd6a1303894aeaa64e120ec8b9868b32dbb2cf5f14bc3d2bf728dfd7bed00",
+        "outline.scm": "9f9879aaf927c8b8100ec6d7242cb4d7bfd9a2f0142a1aefd3ab4d794e5e7ae5"
+      },
+      "local": false
+    },
+    {
       "id": "lua",
       "name": "Lua",
       "kind": "language",
@@ -335,6 +482,30 @@
         "indents.scm": "8aef0a6a9ebfc5148ff596eef3a61c69db499ea63e7cb658b5eabc99e5c41e02",
         "injections.scm": "c489e9e0c0185d2d5dc2537ed6b6ee4ffd158b4a7e85cac2121be0e7d47835f5",
         "outline.scm": "09ca730d835abd89b1c9e3039a03d5ce96e45b3383b986ae050ecda791f0a245"
+      },
+      "local": false
+    },
+    {
+      "id": "make",
+      "name": "Make",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "Makefiles.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "mk",
+        "mak"
+      ],
+      "server": null,
+      "files": {
+        "brackets.scm": "c54dac6541b82a63f109aa3c66e55c3e2074a6b17a450905ec008fd9e038633e",
+        "config.toml": "01c4d1f399a9b201d3bd109f2b4d7f627bf13f26cc5b8037a8cac33cfb604e97",
+        "highlights.scm": "5b4481cb03a2cef43789bec78bfb4e7741f31ee0888072623aaa9b8df52b855e",
+        "icon.svg": "c08d36925b4afc2155c821e3ffe9412b24cc60c224be06a65d06a55cf311554d",
+        "indents.scm": "00abeee62a9ac43016d26cd9fab371c1e9aef55fc39510792d97a814f1f50091",
+        "injections.scm": "ca80e7c5d0577b1fb46091aa62d46512ddc35cddbd03478591e8718038de846a",
+        "outline.scm": "f3a121e2c7e56da7a9f7d92ced02c00dbf55b44333278cf2949736ef2879b27d"
       },
       "local": false
     },
@@ -382,6 +553,54 @@
         "indents.scm": "e5141ae41c4a38dcfb0eddcab50d06e4033f185f850979cc2c17caa7f8779d72",
         "injections.scm": "226f70cda97f0ad289ca501d80ee518f93208d9e9f38955d43e2a29660260fd1",
         "outline.scm": "249325de79d83e8663592ccb129546935f8babebf2f0887357726da2eb848f35"
+      },
+      "local": false
+    },
+    {
+      "id": "nix",
+      "name": "Nix",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "Nix with nil.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "nix"
+      ],
+      "server": "nil",
+      "files": {
+        "brackets.scm": "04082d638799a472be09578b1134c62a7f099838c5cf7ed76a21302a47ad40a5",
+        "config.toml": "bbbcd06bdbfdd2db41d7793cd274fdbbd901de13173241bcc2b695cce4719d9d",
+        "grammar.wasm": "98faa2e223fc3fe88c20c02c51fd739da8ebe1f1591b131d0964ede6cf320b08",
+        "highlights.scm": "7dd6dd853318b2cceef4d09fed818014b5a036b6a8feed4a18bf0c193c64374e",
+        "icon.svg": "253344d7119898d6304026069362e0a051841b1a0db0a1bcfd3cc9a57cc005fd",
+        "indents.scm": "ed2bce4247a26bcdd13d17758290fe33688e479529fca2944f26ab191298cc91",
+        "injections.scm": "1404c96a3af0c690c9436b1f9b153b976e923e3d3809be1cd602c9d202227623",
+        "outline.scm": "9df692efc1ec489e5e837f4fc1b9232d90de354a4e177ea9f6c8c83c6def472b"
+      },
+      "local": false
+    },
+    {
+      "id": "proto",
+      "name": "Protocol Buffers",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "Protocol Buffers with the buf language server.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "proto"
+      ],
+      "server": "buf",
+      "files": {
+        "brackets.scm": "ba9eda11f3e2f5d4a5ed02733b61cd7fdea414830a4b699eedcd36b2dbf43654",
+        "config.toml": "117fe17acc7d6f551675e99049970545701b506e1cf3f715445ebea2732c5ccf",
+        "grammar.wasm": "2179ef77376c7c1a1c08c145915c8902436d6f08724cb055ce597879f107bf61",
+        "highlights.scm": "805d183db2752ec6262d609e657cf458440f5217c9625be535670211f9583a12",
+        "icon.svg": "bafcbd89b7d7d1c0dec636def51ad896209cd4500c522d90f5839378aceda2a2",
+        "indents.scm": "2a7ee9f55190282504e919bfbde5efeb09ecd1cba532033ab928ea1c787c9334",
+        "injections.scm": "fb1d0635c5e92567e846fdaa9a99d0538e5d45e4ffac8c92ddfd95f5465cf378",
+        "outline.scm": "44cceb832be2abd66b663a5b6c293096cd41e1b415562d37ed95ef4389594547"
       },
       "local": false
     },
@@ -435,6 +654,32 @@
       "local": false
     },
     {
+      "id": "scss",
+      "name": "SCSS",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "SCSS with the VS Code CSS language server.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "scss"
+      ],
+      "server": "vscode-css-language-server",
+      "files": {
+        "brackets.scm": "f913a23a7da353dfc04becf612ef28eaa93576d6337662836ee9d6bda27ed1fa",
+        "config.toml": "2c7be8784fbe36fc8e64df651063f15281da39aaac6e096c4b6be251a42d2206",
+        "grammar.wasm": "54266012ebc1ec7cd38f908f6658dcaf72006b02b02ae117b3cac82cc2f60791",
+        "highlights.scm": "41bd61df91237454d3a0ebad5372a30caded0be03234b78624113d39b86f4ce9",
+        "icon.svg": "4889d866e0d88c9b157233a589acfc7e8c658481de2d6e610edf20338d770223",
+        "indents.scm": "7f15b7aafdfd6055bd5833adf5422919bcfcfed9dac790a7c113bec7c66918fb",
+        "injections.scm": "21e369f22bc08a6e6ffce57a534411fb33ff74543a52563e6c8eaa3f405e799a",
+        "outline.scm": "655e081967d81b5e03b598d005d402e2dd4b998dfd1132a6c374beb9522d93fd",
+        "package-lock.json": "288146eab1ca603996363de8668698ac9d923c0c26d86a1bc2fadef2feb8e71d",
+        "package.json": "7d81df436c9a71ce9d767e164cc5b0fe7f6b1bd7abc2cf8f2be3213f2afde3ae"
+      },
+      "local": false
+    },
+    {
       "id": "sql",
       "name": "SQL",
       "kind": "language",
@@ -455,6 +700,80 @@
         "indents.scm": "aed47621c259d29281f145d771ac08bcdb3c40467c378af4b6d999330f0a0a7c",
         "injections.scm": "0dbcc498a3caa770e7c086701aff8ef1cf3140bfbc877a0f294d69d8a14b6eb5",
         "outline.scm": "814c263ce9b4d4f79a979808a860623f59830a0031ff26530f55fd040aab4e99"
+      },
+      "local": false
+    },
+    {
+      "id": "svelte",
+      "name": "Svelte",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "Svelte components with the Svelte language server.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "svelte"
+      ],
+      "server": "svelteserver",
+      "files": {
+        "brackets.scm": "2b990e69b11146dfc8dfbc0cb7461ab93fcedd03ce6154494efc3e31f296b702",
+        "config.toml": "54f3fc1a1b577536e4fe3e5dabe5672e77ddcd042bb7f2ac458ff71e18163c0f",
+        "grammar.wasm": "751461809861a9197a7f5ee0eceeb600e03121ce9f6bc6225d569a8c504454e0",
+        "highlights.scm": "e4799b788338ab73f86ff9370ea1c3d8fa65b06c4a90d3782a89189bdd437467",
+        "icon.svg": "f73a1d7267fe0338d6f8bc033ebb4c5e22d16d89511ad50c9c10d73e75f88344",
+        "indents.scm": "3e8289ba5982e201af96a00b4b24a07ca2590560cbdafc3520172261c2d78ebe",
+        "injections.scm": "5781d6794960502ddb96f7a65b3b4d36e32b078f4d20a39dffbeda0bbbc9529c",
+        "outline.scm": "75aee4eaa1dbbeb109700d2423a53e2d2a2cc40066a26c3d729cceabe89264b0",
+        "package-lock.json": "24bb24d95efb6c073ba2c3b974f2ba997c2406e1ffd94204fc508477d2924715",
+        "package.json": "84fa9edb14a09cf7ea2b9cc9769d36822b3d440a2e4eaa45a674109401b803cf"
+      },
+      "local": false
+    },
+    {
+      "id": "swift",
+      "name": "Swift",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "Swift with sourcekit-lsp.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "swift"
+      ],
+      "server": "sourcekit-lsp",
+      "files": {
+        "brackets.scm": "ddbf3f1406267674c11c18da47a542e828590e2d557beaf19c32ae6d882c4189",
+        "config.toml": "5556ac155f426aef249beb06e42a1fca4bee217ce4755b57067ad7f5ac6faf37",
+        "highlights.scm": "b053fb073e41023e6fae4d94a1ecda972a130a635b7804e8cbb80e980e9b7e53",
+        "icon.svg": "70d4ec1f9c5d7f799f684524d429d1d0c7a395804dd0baef547f9930ee9755f3",
+        "indents.scm": "06cbe32948a2288c637291a520a970685504eb5f9b93848483eef01f031e6a43",
+        "injections.scm": "bef3cae2e453d3f29b6e0ad377c3376a2de8ff423724bd0b644499557d1526ce",
+        "outline.scm": "31c3ca754d3472c339fd6be19b12006359eed8b39ab25bc5e641366f2a3ab6a2"
+      },
+      "local": false
+    },
+    {
+      "id": "terraform",
+      "name": "Terraform",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "Terraform and OpenTofu with terraform-ls.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "tf",
+        "tfvars",
+        "tofu"
+      ],
+      "server": "terraform-ls",
+      "files": {
+        "brackets.scm": "16775b4d215bea366f23336444fa775bc5f1a428e3e0969bc998ae3848e8ba01",
+        "config.toml": "91fe4e7a06ff77efdfaea501dcefa2891e2bf4618f405eba852b22011cf26367",
+        "highlights.scm": "3deb9267cef2c20ba55d019b638fd67c18e4f3758c683cddc1e2db82807b7799",
+        "icon.svg": "fe3a5a06f92a79112dc099d5b407c92dd9e84cc8cf861af4b51ed34f82c27178",
+        "indents.scm": "8dcfc75a808edc42bc27c70aa3a7f17cbbe089c5b5fea8e06a166fea4d0a5f6a",
+        "injections.scm": "841b48b1c4c1d8ce4fe2a2c4cc698af443e6267c1dc450fe406f69a9858dfcac",
+        "outline.scm": "72b0ff859457aa68e894367f85caedcdc5d06f0d8d256f1403a2a1eaa684c083"
       },
       "local": false
     },
@@ -499,7 +818,7 @@
         "highlights.scm": "f4deb8a99b627a6257479f40cb392fe82763f5a0d8af77b273bb873ca6792212",
         "icon.svg": "dfe113def52fc72b2975392c6a5648883f8e4feb908a66f41f4092753cac1f1b",
         "indents.scm": "540da706c65dc1b5f126673895334cdb5ac386a606d05d9ef8f4e36e96f57888",
-        "injections.scm": "09fdaed24168550661baa86d01668ae173f4f237bdc099c61a0f1dd18cc1903f",
+        "injections.scm": "3156d4f0bafa8341cc21344b1c121f73d4d84177cd04fa7e2e958f44626ed063",
         "outline.scm": "516b6a18de1bb65e277e2f0a862c0182158e2cd3f8df99bf97300071f28cef9d",
         "package-lock.json": "c189d4f360f0e680a42b980556c9c40cc5eae5a28f5dc5ddeb4b57764cabf209",
         "package.json": "3788f0a00bcb75e7dc63603a9b1af6ede654cc00a6976aea8eaca317a07e5185"
@@ -528,7 +847,7 @@
         "highlights.scm": "3ee958b8f7217a26f9e683a916a7872d8e79e81a57f2424a4d6ccd613f6017f4",
         "icon.svg": "0004d33f46b2175e90f8ea86aef139e29af5f7a3a3cf310e6dd6b8c084bab884",
         "indents.scm": "a95eaed00775b56c91e823fdbca801ff691db2e1fc9922309b4ded21b90c2784",
-        "injections.scm": "e186ca5a4a5963e7cfbd739f5a966e7b493fec9893512394a145acbe47cdddbe",
+        "injections.scm": "b163fa4d3644dfc021f0947d31194d95c8fd9071027541039a7ea5aa81299d0a",
         "outline.scm": "77ac576398b2b5170d7fa02e8d8b1bf30c365a00a6a536c05c8e5a2206895d52",
         "package-lock.json": "c189d4f360f0e680a42b980556c9c40cc5eae5a28f5dc5ddeb4b57764cabf209",
         "package.json": "3788f0a00bcb75e7dc63603a9b1af6ede654cc00a6976aea8eaca317a07e5185"
@@ -584,6 +903,48 @@
       "local": false
     },
     {
+      "id": "xml",
+      "name": "XML",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "XML with LemMinX.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "xml",
+        "xsd",
+        "xsl",
+        "xslt",
+        "svg",
+        "plist",
+        "rss",
+        "atom",
+        "xaml",
+        "csproj",
+        "fsproj",
+        "vbproj",
+        "props",
+        "targets",
+        "nuspec",
+        "resx",
+        "wsdl",
+        "pom",
+        "xib",
+        "storyboard"
+      ],
+      "server": "lemminx",
+      "files": {
+        "brackets.scm": "d9d5505ec143503948b4feb03e401188b5001abb1c466e0b480a9f0962ece492",
+        "config.toml": "8747022d178d8ffe3c3f668b179ecf7d7fc10a1543fd1ee5a09c43c347f744e1",
+        "highlights.scm": "407472079d4fe941a40279c3f4bc24d5300a655f529a67e2bbf775898569e85e",
+        "icon.svg": "e27ab54c0bb4c3ae9af2c3aa674461db171ac241bfd5cf55d8431792fedd9c72",
+        "indents.scm": "4d05e161a85e8216af37f702556c6790e87157c3a10258ae0fed640e088cb4ff",
+        "injections.scm": "8dd7e30bcdba0610801e3a2dd6992a98c2f4494eae3f83007b48cf8e72676c1e",
+        "outline.scm": "9e0664512215a77148ff6a3e3915853a1e8ded8cba1d256c2ebd208e3ecf86e5"
+      },
+      "local": false
+    },
+    {
       "id": "yaml",
       "name": "YAML",
       "kind": "language",
@@ -606,6 +967,30 @@
         "outline.scm": "477701c984e32a81d7add82ac11650d26885a1beb669ce0158e28122a3038bcb",
         "package-lock.json": "2d9d2cfd20eb1cf0330a8e31ba6950f425d64b64623dc72da8f25901abfc8241",
         "package.json": "3391e2928948b3f2b3a172535c2c5701503cae3fa916184609406b413d743f95"
+      },
+      "local": false
+    },
+    {
+      "id": "zig",
+      "name": "Zig",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "Zig with zls.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "zig",
+        "zon"
+      ],
+      "server": "zls",
+      "files": {
+        "brackets.scm": "4de737f1fbc56247ac99d6dd5046c008363b861bd98d1b43acf4ac31908e181f",
+        "config.toml": "0bbe02d6567d160f7e4dab8bc868c5f3a47d3cc2bfb84b63121fa6db718ead38",
+        "highlights.scm": "114aa3fb21661ad908ece52ab488479eec7ec31ef3e210477e5367cf9e51013f",
+        "icon.svg": "168c3bb72c93eae31052aa8ab6057971a749906633d93b0d6eca8784234b2d2e",
+        "indents.scm": "0f51c4eeb6bbfcfc50a6d710177d9ea913b5378116d0c813b7219695d1f21c7d",
+        "injections.scm": "5cc97b67984ad2a6b0cbbd5e8bd3f56b82f3432fbd4a1baedd696e5e8d58e4d2",
+        "outline.scm": "d1687d0cd4cd459c638b186d8cc7d92c8ab4e55091a2683e32befab632716091"
       },
       "local": false
     }

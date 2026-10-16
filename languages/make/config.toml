@@ -1,0 +1,20 @@
+# Make: how files are told to be makefiles and how they are edited. Make has
+# no language server.
+
+name = "Make"
+version = "0.1.0"
+description = "Makefiles."
+icon = "icon.svg"
+color = "#c9a27a"
+grammar = "make"
+suffixes = ["mk", "mak"]
+names = ["Makefile", "makefile", "GNUmakefile"]
+aliases = ["makefile", "mk"]
+line_comment = "#"
+indent = 4
+tabs = true
+pairs = ["()", "{}", "\"\"", "''"]
+
+[grammar_file]
+url = "https://github.com/tree-sitter-grammars/tree-sitter-make/releases/download/v1.1.1/tree-sitter-make.wasm"
+sha256 = "1254d1e5787be8bb944d55d1f6552b6b2b7908272ed498013bfdc07bd7d042dd"

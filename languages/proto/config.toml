@@ -1,0 +1,51 @@
+# Protocol Buffers: how files are told to be Protocol Buffers, how they are
+# edited and the language server that reads them. No grammar is released
+# built, so grammar.wasm in this folder was built with tree-sitter CLI 0.27.1
+# from coder3101/tree-sitter-proto v0.6.0.
+
+name = "Protocol Buffers"
+version = "0.1.0"
+description = "Protocol Buffers with the buf language server."
+icon = "icon.svg"
+color = "#4cc2b0"
+grammar = "proto"
+suffixes = ["proto"]
+aliases = ["protobuf", "proto3", "proto2"]
+line_comment = "//"
+indent = 2
+pairs = ["()", "[]", "{}", "<>", "\"\"", "''"]
+
+[server]
+id = "buf"
+language_id = "proto"
+command = "buf"
+args = ["lsp", "serve"]
+check = ["--version"]
+
+[server.install]
+kind = "download"
+version = "1.74.0"
+
+[server.install.downloads.linux-x86_64]
+url = "https://github.com/bufbuild/buf/releases/download/v1.74.0/buf-Linux-x86_64"
+sha256 = "92326d957d613712669fb55f9e4340946a8142a92120e09008459118778273d2"
+
+[server.install.downloads.linux-aarch64]
+url = "https://github.com/bufbuild/buf/releases/download/v1.74.0/buf-Linux-aarch64"
+sha256 = "d42b471501a85dbadb40062960492dd81ce5ca4e413f4133d514d3ae3c0af4df"
+
+[server.install.downloads.macos-x86_64]
+url = "https://github.com/bufbuild/buf/releases/download/v1.74.0/buf-Darwin-x86_64"
+sha256 = "a385ecb788f4255c855d0e77643a60ed0de23f9eb978bd54d695c820aa29e172"
+
+[server.install.downloads.macos-aarch64]
+url = "https://github.com/bufbuild/buf/releases/download/v1.74.0/buf-Darwin-arm64"
+sha256 = "602d73e39a8835efd29a02ba6db6060ae86e4a0df19b8ac4403032b5deae3569"
+
+[server.install.downloads.windows-x86_64]
+url = "https://github.com/bufbuild/buf/releases/download/v1.74.0/buf-Windows-x86_64.exe"
+sha256 = "0677ba830deceadd619455b058631cc00ffbe305858e03d6a90b17b12cb16d38"
+
+[server.install.downloads.windows-aarch64]
+url = "https://github.com/bufbuild/buf/releases/download/v1.74.0/buf-Windows-arm64.exe"
+sha256 = "681d1d56d42d7e5d74cbcd940cc0e8d656aed66d926a1e0c9f6ef9bd514d8fff"

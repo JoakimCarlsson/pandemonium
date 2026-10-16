@@ -1,0 +1,26 @@
+# Kotlin: how files are told to be Kotlin, how they are edited and the
+# language server that reads them. kotlin-lsp runs on a Java runtime and needs
+# the folder of libraries it ships with beside it, so it is not installed
+# here: the one on the machine's path is used.
+
+name = "Kotlin"
+version = "0.1.0"
+description = "Kotlin with JetBrains' kotlin-lsp."
+icon = "icon.svg"
+color = "#d483d9"
+grammar = "kotlin"
+suffixes = ["kt", "kts"]
+aliases = ["kt", "kts"]
+line_comment = "//"
+indent = 4
+pairs = ["()", "[]", "{}", "\"\"", "''"]
+
+[grammar_file]
+url = "https://github.com/fwcd/tree-sitter-kotlin/releases/download/0.3.8/tree-sitter-kotlin.wasm"
+sha256 = "c624e7443b371c28adc5d81674e73067564c12555ebe3ed96a6c8db814b7602d"
+
+[server]
+id = "kotlin-lsp"
+language_id = "kotlin"
+command = "kotlin-lsp"
+args = ["--stdio"]

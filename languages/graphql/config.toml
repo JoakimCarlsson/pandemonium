@@ -1,0 +1,28 @@
+# GraphQL: how files are told to be GraphQL, how they are edited and the
+# language server that reads them, which finds the schema through the project's
+# GraphQL config file. No grammar is released built, so grammar.wasm in this
+# folder was built with tree-sitter CLI 0.27.1 from bkegley/tree-sitter-graphql
+# at commit 5e66e961eee421786bdda8495ed1db045e06b5fe.
+
+name = "GraphQL"
+version = "0.1.0"
+description = "GraphQL with the GraphQL language service."
+icon = "icon.svg"
+color = "#e535ab"
+grammar = "graphql"
+suffixes = ["graphql", "gql", "graphqls"]
+aliases = ["gql", "graphqls"]
+line_comment = "#"
+indent = 2
+pairs = ["()", "[]", "{}", "\"\""]
+
+[server]
+id = "graphql-lsp"
+language_id = "graphql"
+command = "graphql-lsp"
+args = ["server", "-m", "stream"]
+
+[server.install]
+kind = "npm"
+version = "3.5.0"
+packages = ["graphql-language-service-cli@3.5.0"]

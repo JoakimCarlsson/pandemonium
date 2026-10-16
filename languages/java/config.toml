@@ -1,0 +1,24 @@
+# Java: how files are told to be Java, how they are edited and the language
+# server that reads them. jdtls runs on a Java runtime and needs the folder of
+# plugins it ships with beside it, so it is not installed here: the one on the
+# machine's path is used.
+
+name = "Java"
+version = "0.1.0"
+description = "Java with the Eclipse JDT language server."
+icon = "icon.svg"
+color = "#c9a27e"
+grammar = "java"
+suffixes = ["java"]
+line_comment = "//"
+indent = 4
+pairs = ["()", "[]", "{}", "\"\"", "''"]
+
+[grammar_file]
+url = "https://github.com/tree-sitter/tree-sitter-java/releases/download/v0.23.5/tree-sitter-java.wasm"
+sha256 = "4fdeac4ca6ca089f06c6f7e562abcac1733cd465728cc7031ebb73c2019122c4"
+
+[server]
+id = "jdtls"
+language_id = "java"
+command = "jdtls"

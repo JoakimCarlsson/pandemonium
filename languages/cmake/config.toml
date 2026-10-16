@@ -1,0 +1,24 @@
+# CMake: how files are told to be CMake, how they are edited and the language
+# server that reads them. No grammar is released built, so grammar.wasm in this
+# folder was built with tree-sitter CLI 0.27.1 from uyha/tree-sitter-cmake
+# v0.7.5. neocmakelsp is released for Linux and macOS only as tar.gz archives,
+# so it is not installed here: the one on the machine's path is used.
+
+name = "CMake"
+version = "0.1.0"
+description = "CMake with neocmakelsp."
+icon = "icon.svg"
+color = "#b5c95a"
+grammar = "cmake"
+suffixes = ["cmake"]
+names = ["CMakeLists.txt"]
+line_comment = "#"
+indent = 4
+pairs = ["()", "{}", "\"\""]
+
+[server]
+id = "neocmakelsp"
+language_id = "cmake"
+command = "neocmakelsp"
+args = ["stdio"]
+check = ["--version"]
