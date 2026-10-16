@@ -148,6 +148,15 @@ request with exactly one `response` carrying the same `id`.
 | `repositories` | `owner`, `organization`                                                                          | `repositories`  |
 | `folders`      | `path`                                                                                           | `folders`       |
 | `clone`        | `url`, `under` (optional)                                                                        | `directory`     |
+| `languages`    | none                                                                                             | `languages`     |
+| `install_languages` | `ids`                                                                                       | `done`          |
+| `remove_language` | `id`                                                                                          | `done`          |
+| `grammar`      | `language`                                                                                       | `grammar`       |
+| `open_document`| `directory`, `path`, `language`, `version`, `text`                                               | `opened`        |
+| `change_document` | `directory`, `path`, `version`, `changes`: `[{span, text}]`                                   | `done`          |
+| `close_document` | `directory`, `path`                                                                            | `done`          |
+| `completion`   | `directory`, `path`, `version`, `position`, `trigger` (optional)                                 | `completions`   |
+| `hover`        | `directory`, `path`, `version`, `position`                                                       | `hovered`       |
 
 `agent` is an agent's id: `claude-code`, `codex` or `grok`.
 
@@ -312,7 +321,62 @@ request with exactly one `response` carrying the same `id`.
   `directory`, which must stay inside it) with `text`, making the file when it is
   not there. A folder is refused.
 - **`read_file`:** reads `path` from the working folder or, when `head`, from
-  the last commit. The response holds no text for a file that is not text.
+  the last commit. The response holds no text for a file that is not text, and
+  names the installed language the file is written in, by the endings and names
+  of files its manifest lists.
+- **`languages`:** every language the list of languages offers, then those
+  installed on the server's machine that it does not, each as `{id, name,
+  hidden, suffixes, installed, busy, problem, server}`. `hidden` languages are
+  installed only as part of another and left out of what a reader picks from;
+  `busy` says what installing it is doing now, `problem` why installing it or
+  its language server last failed, and `server` what the machine has of its
+  language server, in words. The list is `languages.json` read from
+  `https://raw.githubusercontent.com/JoakimCarlsson/pandemonium/<tag>/languages`,
+  where the tag is the server's own release (`v<version>`) or `nightly`, or from
+  the folder or address `PANDEMONIUM_LANGUAGES` names. It is fetched again only
+  when it changed, and the copy kept is used when it cannot be fetched.
+- **`install_languages`:** installs each language of `ids`, the languages it
+  `requires` first, and their language servers, on a thread of the server's
+  own, and answers at once. Every file of a language's folder is checked against
+  the checksum `languages.json` gives it, and the grammar and a downloaded
+  language server against the checksums the language's `config.toml` gives
+  them. A language server is looked for in the project's own folders and on the
+  machine's path first; one that is missing is installed into the data folder
+  under its version, by download, `go install` or `npm ci` as the manifest
+  says, and a version installed before is used when that fails. `npm ci` runs
+  from the `package-lock.json` in the language's folder, which pins the
+  checksum of every package, and `go install` runs with Go's checksum database
+  enforced. Every client is
+  told how it goes with `languages_changed`.
+- **`remove_language`:** takes the language off the machine; its language
+  server stays, for other languages that use it.
+- **`grammar`:** the grammar and queries of an installed language, found by its
+  folder name or a name a code fence calls it, as `{id, symbol, aliases, wasm,
+  highlights, indents, outline, injections, brackets, indent, tabs,
+  line_comment}`. `wasm` is the tree-sitter grammar compiled to WebAssembly, in
+  base64; a client parses and highlights with it itself.
+- **`open_document`:** opens `path` of the folder `directory` for the language
+  server of `language`, holding `text` at `version`, and starts that server for
+  the folder when it is not running, which can take a while. The response gives
+  the characters after which the server offers completions. The connection is
+  told what the server finds wrong with the file with `diagnostics`.
+- **`change_document`:** edits an open file the way the client did. `changes`
+  take the text from the version before to `version`, each a `span` (absent for
+  the whole text) and the `text` that replaces it. Requests are carried out
+  concurrently, so changes that arrive ahead of the ones before them wait for
+  those, and ones already taken in are ignored.
+- **`close_document`:** closes the file for this connection; the server closes
+  it for its language server once no connection has it open, and stops the
+  server once no open file of the folder uses it. A connection that goes away
+  closes what it had open.
+- **`completion`, `hover`:** wait until the open file reaches `version`, then
+  ask its language server. `completions` holds `[{label, detail, kind, text,
+  span, filter, sort}]`, the best match for the word before `position` first,
+  with snippets made plain text; `span`, when given, is what choosing it
+  replaces. `hovered` holds `{text, span}` in markdown, or null.
+
+A **position** is `{line, character}`, counted from 0, `character` in UTF-16
+code units as language servers count; a **span** is `{start, end}`.
 
 An **attachment** is `{ "name": "a.txt", "data": "<base64>" }`. The file is
 sent whole, so the server needs no access to the client's disk. The server
@@ -332,7 +396,7 @@ embedded context, and anything else as a link to the stored file.
 | `branches`   | `names`: local branches, the current one first, then remote ones such as `origin/main`; read from git at each request |
 | `stashes`    | `stashes`: `[{index, message, when}]`, newest first |
 | `log`        | `commits`: `[{id, refs, summary, lanes}]`, newest first |
-| `file`       | `text`: string or null for a file that is not text, `truncated`: whether it was cut short |
+| `file`       | `text`: string or null for a file that is not text, `truncated`: whether it was cut short, `language` (optional): the installed language it is written in |
 | `identity`   | `default`, `selected`: who the agent is signed in as, or null |
 | `started`    | `session`, `directory`, `branch` (always null for now), `head` (null without a worktree) |
 | `inspected`  | `changes`: `[{path, diff, staged, untracked, index, worktree, conflicted, from}]`, `commits`: `[string]` or null, `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind}`, `operation`: `Merge`, `Rebase` or `CherryPick` with what git prepared, or null |
@@ -350,6 +414,11 @@ embedded context, and anything else as a link to the stored file.
 | `repositories` | `repositories`: `[{name, description, private, url}]`   |
 | `folders`    | `path`: absolute, `names`: the folders inside it           |
 | `directory`  | `path`: a `clone` made   |
+| `languages`  | `languages`: `[{id, name, hidden, suffixes, installed, busy, problem, server}]` |
+| `grammar`    | `{id, symbol, aliases, wasm, highlights, indents, outline, injections, brackets, indent, tabs, line_comment}` |
+| `opened`     | `triggers`: the characters after which the server offers completions |
+| `completions`| `items`: `[{label, detail, kind, text, span, filter, sort}]`, `kind` one of `function`, `variable`, `type`, `module`, `keyword`, `constant`, `snippet`, `other` |
+| `hovered`    | `hover`: `{text, span}` or null |
 
 ## Changes other clients make
 
@@ -471,6 +540,21 @@ keeps its own emulator for them.
   (`"\r"` for Enter, `"\u001b[A"` for the up arrow), and the answers an
   emulator gives to the shell's queries.
 - A shell started in a session's folder belongs to that session in the window.
+
+## Languages
+
+```json
+{ "type": "diagnostics", "directory": "~/code/app", "path": "src/main.rs", "version": 4, "diagnostics": [{ "span": { "start": { "line": 3, "character": 8 }, "end": { "line": 3, "character": 12 } }, "severity": "error", "message": "…", "source": "rustc" }] }
+{ "type": "languages_changed", "languages": [{ "id": "rust", "name": "Rust", "installed": true, … }] }
+```
+
+- `diagnostics`: what a language server finds wrong with a file the connection
+  opened, replacing what it found before. `severity` is `error`, `warning`,
+  `information` or `hint`; `version` is the version of the text it is about,
+  when the server says.
+- `languages_changed`: sent to every client when a language was installed or
+  removed, or installing one moved on, with every language as `languages`
+  lists them.
 
 ## Compatibility
 

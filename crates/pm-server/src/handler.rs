@@ -8,6 +8,7 @@ use pm_protocol::{Attachment, Request, Response, ServerMessage};
 
 use crate::conversation;
 use crate::core::{Connection, Core, Session, Told, now};
+use crate::languages;
 use crate::queue::Prompt;
 use crate::sessions::{self, Meta};
 use crate::uploads;
@@ -685,10 +686,12 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             Ok(pm_git::Contents::Text { text, truncated }) => Response::File {
                 text: Some(text),
                 truncated,
+                language: languages::language_of(&path),
             },
             Ok(pm_git::Contents::Binary) => Response::File {
                 text: None,
                 truncated: false,
+                language: None,
             },
             Err(reason) => failed(reason),
         },
@@ -697,6 +700,80 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             path,
             text,
         } => done(crate::entries::write(&place(&directory), &path, &text)),
+        Request::Languages => Response::Languages {
+            languages: core.language_infos(true),
+        },
+        Request::InstallLanguages { ids } => {
+            core.install_languages(ids);
+            Response::Done
+        }
+        Request::RemoveLanguage { id } => done(core.remove_language(&id)),
+        Request::Grammar { language } => match languages::grammar(&language) {
+            Ok(bundle) => Response::Grammar(bundle),
+            Err(reason) => failed(reason),
+        },
+        Request::OpenDocument {
+            directory,
+            path,
+            language,
+            version,
+            text,
+        } => {
+            let root = place(&directory);
+            core.documents
+                .opened(connection, root.clone(), &directory, &path);
+            match core
+                .documents
+                .hub
+                .open(&root, &path, &language, version, &text)
+            {
+                Ok(triggers) => Response::Opened { triggers },
+                Err(reason) => failed(reason),
+            }
+        }
+        Request::ChangeDocument {
+            directory,
+            path,
+            version,
+            changes,
+        } => done(
+            core.documents
+                .hub
+                .change(&place(&directory), &path, version, changes),
+        ),
+        Request::CloseDocument { directory, path } => {
+            core.documents.closed(connection, place(&directory), &path);
+            Response::Done
+        }
+        Request::Completion {
+            directory,
+            path,
+            version,
+            position,
+            trigger,
+        } => match core.documents.hub.completion(
+            &place(&directory),
+            &path,
+            version,
+            position,
+            trigger.as_deref(),
+        ) {
+            Ok(items) => Response::Completions { items },
+            Err(reason) => failed(reason),
+        },
+        Request::Hover {
+            directory,
+            path,
+            version,
+            position,
+        } => match core
+            .documents
+            .hub
+            .hover(&place(&directory), &path, version, position)
+        {
+            Ok(hover) => Response::Hovered { hover },
+            Err(reason) => failed(reason),
+        },
         Request::OpenTerminal {
             directory,
             columns,

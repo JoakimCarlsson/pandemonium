@@ -7,6 +7,8 @@ license.workspace = true
 [dependencies]
 base64 = "0.23.1"
 pm-acp.workspace = true
+pm-buffer.workspace = true
 pm-git.workspace = true
+pm-lsp.workspace = true
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"

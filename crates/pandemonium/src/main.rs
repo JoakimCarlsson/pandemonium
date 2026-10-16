@@ -56,6 +56,11 @@ fn main() {
         let shot = match arguments.get(7).map(String::as_str) {
             Some("project") => Shot::Onboarding(pm_pages::Step::Project),
             Some("agents") => Shot::Onboarding(pm_pages::Step::Agents),
+            Some("languages") => Shot::Onboarding(pm_pages::Step::Languages),
+            Some("code") => Shot::Code,
+            Some("completing") => Shot::Completing,
+            Some("hovering") => Shot::Hovering,
+            Some("settings-languages") => Shot::SettingsLanguages,
             Some("workspace") => Shot::Workspace,
             Some("diff") => Shot::Diff,
             Some("commenting") => Shot::Commenting,

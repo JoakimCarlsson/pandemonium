@@ -300,6 +300,7 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
             .as_ref()
             .map(|open| git_prompts::prompt(state, open)),
     )
+    .children(pm_components::assist::assist(state, shaper))
 }
 
 /// The menu of a project: start a session in it, or take it out of the window.

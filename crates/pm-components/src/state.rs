@@ -279,6 +279,80 @@ pub const CHOICE_BASE: u64 = 3600;
 /// Something the window has to do or tell an agent, taken off the state by whoever runs the agents.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Outgoing {
+    /// Asks the server of the session at this position for the grammar of a language, by its folder name or another name.
+    Grammar {
+        /// The session, by position.
+        session: usize,
+        /// The language.
+        language: String,
+    },
+    /// Opens a file of the session at this position for its language server.
+    OpenDocument {
+        /// The session, by position.
+        session: usize,
+        /// The file, from the root of the session's folder.
+        path: String,
+        /// The installed language it is written in.
+        language: String,
+        /// The version of its text.
+        version: i32,
+        /// Its text.
+        text: String,
+    },
+    /// Tells the language server how a file of the session at this position was edited.
+    ChangeDocument {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The version the edits take the text to.
+        version: i32,
+        /// The stretches replaced, in order.
+        changes: Vec<pm_protocol::TextChange>,
+    },
+    /// Tells the language server a file of the session at this position was closed.
+    CloseDocument {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+    },
+    /// Asks the language server what could be written at a place of a file of the session at this position.
+    Completion {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The version of the text the place is in.
+        version: i32,
+        /// The place.
+        position: pm_protocol::Position,
+        /// The character typed that asked, when one did.
+        trigger: Option<String>,
+    },
+    /// Asks the language server what it says about a place of a file of the session at this position.
+    Hover {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The version of the text the place is in.
+        version: i32,
+        /// The place.
+        position: pm_protocol::Position,
+    },
+    /// Asks the server on this machine for the languages there are to install.
+    Languages,
+    /// Has the server on this machine install languages.
+    InstallLanguages {
+        /// The languages, by folder name.
+        ids: Vec<String>,
+    },
+    /// Has the server on this machine take a language off.
+    RemoveLanguage {
+        /// The language, by folder name.
+        id: String,
+    },
     /// Asks the server for the agents added by hand and the tool servers every agent is started with.
     LoadServers,
     /// Opens `address` in the reader's browser.
@@ -875,6 +949,8 @@ pub struct WorkspaceState {
     pub opened: Vec<(usize, usize, usize)>,
     /// The fold-outs of replies that are open, by session, reply and place in the reply.
     pub unfolded: Vec<(usize, usize, usize)>,
+    /// The languages the server on this machine has installed and can install, once it has said.
+    pub languages: Vec<pm_protocol::LanguageInfo>,
 }
 
 impl WorkspaceState {
@@ -967,6 +1043,7 @@ impl WorkspaceState {
             slash: 0,
             opened: Vec::new(),
             unfolded: Vec::new(),
+            languages: Vec::new(),
             trail: crate::trail::Trail::default(),
         };
         state.sync_context();
@@ -1057,6 +1134,16 @@ impl WorkspaceState {
         }
         if !self.settings_menu_row(action) {
             self.settings_servers.menu = None;
+        }
+        if let Some(place) = action
+            .0
+            .checked_sub(crate::assist::COMPLETION_ROW_BASE)
+            .filter(|_| action.0 < crate::assist::COMPLETION_ROW_END)
+        {
+            return self.completion_taken(Some(place as usize));
+        }
+        if action == crate::assist::COMPLETION_BODY || action == crate::assist::HOVER_CARD {
+            return self;
         }
         let restoring = self.restoring.take();
         match action {

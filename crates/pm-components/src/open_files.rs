@@ -1,7 +1,6 @@
 //! The files open in the window beside the conversation: one tab each, a file looked at in a tab that the next one replaces, and kept once it is changed.
 
 use pm_input::FocusId;
-use pm_text::Edit;
 
 use crate::document::Document;
 use crate::git_prompts::Prompt;
@@ -102,7 +101,8 @@ impl WorkspaceState {
                 });
                 match self.git.viewers.iter().position(|held| held.preview) {
                     Some(index) => {
-                        self.git.viewers[index] = viewer;
+                        let replaced = std::mem::replace(&mut self.git.viewers[index], viewer);
+                        self.close_document(session, &replaced);
                         index
                     }
                     None => {
@@ -181,27 +181,32 @@ impl WorkspaceState {
         self
     }
 
-    /// The state after the server answered for the file at `path` of the session at `session`: its text and whether it was cut short, or why there is none.
+    /// The state after the server answered for the file at `path` of the session at `session`: its text, whether it was cut short and the installed language it is written in, or why there is none.
     pub fn with_file(
         mut self,
         session: usize,
         path: &str,
         head: bool,
-        read: Result<(Option<String>, bool), String>,
+        read: Result<(Option<String>, bool, Option<String>), String>,
     ) -> Self {
+        let language = read
+            .as_ref()
+            .ok()
+            .and_then(|(text, _, language)| text.as_ref().and(language.clone()));
         if let Some(viewer) = self.viewers_of(session).and_then(|viewers| {
             viewers
                 .iter_mut()
                 .find(|viewer| viewer.path == path && viewer.head == head)
         }) {
             viewer.contents = match read {
-                Ok((Some(text), truncated)) => {
+                Ok((Some(text), truncated, _)) => {
                     Contents::Text(Box::new(Document::new(&text, head, truncated)))
                 }
-                Ok((None, _)) => Contents::Message("This file is not text.".to_owned()),
+                Ok((None, _, _)) => Contents::Message("This file is not text.".to_owned()),
                 Err(reason) => Contents::Message(reason),
             };
         }
+        self.took_language(session, path, head, language);
         self
     }
 
@@ -235,23 +240,6 @@ impl WorkspaceState {
             viewer.scroll = bottom + ROW - view;
         }
         self
-    }
-
-    /// Applies `edit` to the file shown; changing its text keeps its tab open.
-    pub(crate) fn file_edited(&mut self, edit: Edit) {
-        let Some(index) = self.git.shown else {
-            return;
-        };
-        let Some(viewer) = self.git.viewers.get_mut(index) else {
-            return;
-        };
-        let Contents::Text(document) = &mut viewer.contents else {
-            return;
-        };
-        document.field.apply(edit);
-        if document.refresh() {
-            viewer.preview = false;
-        }
     }
 
     /// Writes the file shown to the folder.
@@ -313,7 +301,10 @@ impl WorkspaceState {
         if index >= self.git.viewers.len() {
             return;
         }
-        self.git.viewers.remove(index);
+        let closed = self.git.viewers.remove(index);
+        if let Some(session) = self.review_index() {
+            self.close_document(session, &closed);
+        }
         self.git.shown = match self.git.shown {
             _ if self.git.viewers.is_empty() => None,
             Some(shown) if shown > index => Some(shown - 1),

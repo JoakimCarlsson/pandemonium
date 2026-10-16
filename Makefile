@@ -1,4 +1,4 @@
-.PHONY: fmt lint run install install-server release
+.PHONY: fmt lint run install install-server release languages
 
 fmt:
 	cargo fmt --all
@@ -17,3 +17,6 @@ install-server:
 
 release:
 	scripts/release.sh $(VERSION)
+
+languages:
+	cargo run -p pm-server --bin pandemonium-server -- --index-languages languages

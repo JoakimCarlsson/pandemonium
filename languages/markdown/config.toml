@@ -1,0 +1,44 @@
+# Markdown: how files are told to be Markdown, how they are edited and the
+# language server that reads them. The text inside each block is inline
+# markdown, a grammar of its own installed with this one.
+
+name = "Markdown"
+grammar = "markdown"
+suffixes = ["md", "markdown", "mdx"]
+aliases = ["md"]
+requires = ["markdown-inline"]
+indent = 2
+
+[grammar_file]
+url = "https://github.com/tree-sitter-grammars/tree-sitter-markdown/releases/download/v0.5.3/tree-sitter-markdown.wasm"
+sha256 = "dd9fc12ac2804d7c7da787e4774125b32e4fb3c244e5e7031a77cb7dd8036020"
+
+[server]
+id = "marksman"
+language_id = "markdown"
+command = "marksman"
+args = ["server"]
+
+[server.install]
+kind = "download"
+version = "2026-02-08"
+
+[server.install.downloads.linux-x86_64]
+url = "https://github.com/artempyanykh/marksman/releases/download/2026-02-08/marksman-linux-x64"
+sha256 = "be5098e8213219269c47fc0d916a66fa31ce0602ec967475c722260aabf26087"
+
+[server.install.downloads.linux-aarch64]
+url = "https://github.com/artempyanykh/marksman/releases/download/2026-02-08/marksman-linux-arm64"
+sha256 = "db8e124527f7f8048e3e6c91821b9c52ef173d92c01e47d221bf1337afd962fb"
+
+[server.install.downloads.macos-x86_64]
+url = "https://github.com/artempyanykh/marksman/releases/download/2026-02-08/marksman-macos"
+sha256 = "6a801c17b5ac0dba69787c5282b3b3bd416e66c96253fae098d311c6bbd1833b"
+
+[server.install.downloads.macos-aarch64]
+url = "https://github.com/artempyanykh/marksman/releases/download/2026-02-08/marksman-macos"
+sha256 = "6a801c17b5ac0dba69787c5282b3b3bd416e66c96253fae098d311c6bbd1833b"
+
+[server.install.downloads.windows-x86_64]
+url = "https://github.com/artempyanykh/marksman/releases/download/2026-02-08/marksman.exe"
+sha256 = "a6d05beb08ebe41b0a9f09c98a438540421436fa5531424c22e0bb1d22529705"

@@ -522,6 +522,79 @@ pub enum Request {
         /// The folder; a leading `~` is the home folder, and nothing is the home folder itself.
         path: String,
     },
+    /// The languages there are to install and those installed on the server's machine.
+    Languages,
+    /// Installs languages, with the languages they need and their language servers, on the server's machine; every client is told how it goes with `languages_changed`.
+    InstallLanguages {
+        /// The languages, by folder name.
+        ids: Vec<String>,
+    },
+    /// Takes a language off the server's machine.
+    RemoveLanguage {
+        /// The language, by folder name.
+        id: String,
+    },
+    /// The grammar and queries of an installed language, found by its folder name or by a name a code fence calls it.
+    Grammar {
+        /// The language.
+        language: String,
+    },
+    /// Opens a file of a folder for its language server, starting the server for the folder when it is not running; the connection is told what the server finds wrong with the file.
+    OpenDocument {
+        /// The folder, which the server treats as the project.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The installed language it is written in, by folder name.
+        language: String,
+        /// The version of the text, counted by the client.
+        version: i32,
+        /// What the file holds in the client.
+        text: String,
+    },
+    /// Edits an open file the way the client did, taking it to `version`, one more than the version before; edits that arrive out of order are put back in order by their versions.
+    ChangeDocument {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The version the edits take the text to.
+        version: i32,
+        /// The stretches replaced, in order.
+        changes: Vec<pm_lsp::TextChange>,
+    },
+    /// Closes an open file, stopping its language server when no other open file of the folder uses it.
+    CloseDocument {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+    },
+    /// What could be written at a place of an open file, once the file reaches `version`.
+    Completion {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The version of the text the place is in.
+        version: i32,
+        /// The place.
+        position: pm_buffer::Position,
+        /// The character typed that asked for completions, when one did.
+        #[serde(default)]
+        trigger: Option<String>,
+    },
+    /// What the language server says about the thing at a place of an open file, once the file reaches `version`.
+    Hover {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The version of the text the place is in.
+        version: i32,
+        /// The place.
+        position: pm_buffer::Position,
+    },
     /// Fetches a repository into a folder of its own, named after it.
     Clone {
         /// Where to fetch it from.

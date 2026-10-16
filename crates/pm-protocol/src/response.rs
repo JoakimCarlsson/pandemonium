@@ -97,6 +97,9 @@ pub enum Response {
         text: Option<String>,
         /// Whether the text was cut short.
         truncated: bool,
+        /// The installed language the file is written in, by folder name, when one is.
+        #[serde(default)]
+        language: Option<String>,
     },
     /// Who an agent is signed in as.
     Identity {
@@ -206,6 +209,28 @@ pub enum Response {
         path: String,
         /// The names of the folders inside it, in order, hidden ones left out.
         names: Vec<String>,
+    },
+    /// The languages there are to install and those installed.
+    Languages {
+        /// Each one, by name; hidden ones included.
+        languages: Vec<crate::LanguageInfo>,
+    },
+    /// An installed language's grammar and queries.
+    Grammar(crate::GrammarBundle),
+    /// A file was opened for its language server.
+    Opened {
+        /// The characters after which the server offers completions without being asked; empty when the language has no server.
+        triggers: Vec<String>,
+    },
+    /// What could be written at a place.
+    Completions {
+        /// The best match for the word typed there first.
+        items: Vec<pm_lsp::Completion>,
+    },
+    /// What the language server says about the thing at a place.
+    Hovered {
+        /// What it says, or nothing when it says nothing.
+        hover: Option<pm_lsp::Hover>,
     },
     /// The folder a repository was cloned into.
     Directory {

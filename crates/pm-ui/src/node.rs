@@ -60,6 +60,30 @@ pub struct Node {
     pub(crate) tooltip: Option<String>,
     /// The selectable text the lines inside the box are part of.
     pub(crate) selectable: Option<FocusId>,
+    /// Stretches of the box's text painted apart from the rest.
+    pub(crate) marks: Vec<Mark>,
+}
+
+/// How a stretch of a line of text is painted apart from the rest.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Paint {
+    /// Its letters in another colour.
+    Ink,
+    /// A box of colour behind it.
+    Fill,
+    /// A wavy line under it.
+    Wave,
+}
+
+/// A stretch of a line of text painted apart from the rest.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Mark {
+    /// The bytes of the text.
+    pub range: std::ops::Range<usize>,
+    /// The colour.
+    pub color: pm_style::Color,
+    /// How.
+    pub paint: Paint,
 }
 
 /// The end of a box's contents that a scroll position is measured from.
@@ -160,6 +184,27 @@ impl Node {
     /// answering to the user, for a control that is switched off.
     pub fn inert(mut self) -> Self {
         self.focus = None;
+        self
+    }
+
+    /// Paints the bytes `range` of this node's text in `color` the way `paint` says, over or under the rest of the text.
+    pub fn mark(
+        mut self,
+        range: std::ops::Range<usize>,
+        color: impl Into<pm_style::Color>,
+        paint: Paint,
+    ) -> Self {
+        self.marks.push(Mark {
+            range,
+            color: color.into(),
+            paint,
+        });
+        self
+    }
+
+    /// Paints each stretch of `marks` apart from the rest of this node's text.
+    pub fn marks(mut self, marks: impl IntoIterator<Item = Mark>) -> Self {
+        self.marks.extend(marks);
         self
     }
 

@@ -71,6 +71,29 @@ Limits:
 - Logins that need a terminal look for a Linux terminal emulator, so they do
   not open on macOS or Windows.
 
+## Languages
+
+Nothing language-specific ships in the binary. You pick languages on first
+launch, or later under Settings, Languages, and the server installs each one
+on the machine that holds the project: its tree-sitter grammar, its queries
+and its language server. A file of an installed language gets syntax
+highlighting, indentation, bracket pairs and an outline in the window, and
+completion, diagnostics and hover from its language server.
+
+A language is a folder in [`languages/`](languages): a `config.toml` manifest
+and five queries (`highlights`, `indents`, `outline`, `injections`,
+`brackets`). The manifest pins the grammar and says how the language server is
+found and installed: a program you already have is used first, in the project
+(`.venv/bin`, `node_modules/.bin`) and then on your path; otherwise it is
+downloaded, built with `go install` or installed with `npm ci`, into a folder
+per version. `languages/languages.json` lists the folders with a checksum for
+every file, every download is checked against the checksum it is pinned to,
+an npm install is pinned by the lockfile in the language's folder and a Go one
+by Go's checksum database. A
+build reads the list from this repository at its own release tag; point
+`PANDEMONIUM_LANGUAGES` at a folder or address to read it from elsewhere, and
+run `make languages` after changing a folder.
+
 ## Installing
 
 Prebuilt binaries for Linux, macOS and Windows are attached to each
@@ -154,13 +177,13 @@ implements none of them; it wires them together.
 | Protocol   | `pm-protocol`: the messages between clients and a server                                                |
 | Server     | `pm-server`: the `pandemonium-server` program                                                           |
 | Client     | `pm-client` (one reconnecting connection, and starting the local server), `pm-ssh` (ssh transport)      |
+| Code       | `pm-buffer` (text and places), `pm-treesitter` (grammars, highlighting), `pm-lsp` (languages, language servers) |
 | Domain     | `pm-acp` (agents over ACP), `pm-git`, `pm-store` (persistence)                                          |
 | Binary     | `pandemonium`: the event loop, the window and the threads that talk to the servers                      |
 
 Crates for later work, each holding only a doc comment so far: `pm-session`,
-`pm-review`, `pm-terminal`, `pm-config`, `pm-lsp`, `pm-treesitter`,
-`pm-buffer`, `pm-markdown`, `pm-mcp`, `pm-policy`, `pm-plugin`,
-`pm-plugin-api`, `pm-wasm` and `pm-agent-library`.
+`pm-review`, `pm-terminal`, `pm-config`, `pm-markdown`, `pm-mcp`, `pm-policy`,
+`pm-plugin`, `pm-plugin-api`, `pm-wasm` and `pm-agent-library`.
 
 ## License
 

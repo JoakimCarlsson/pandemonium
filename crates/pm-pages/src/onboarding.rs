@@ -17,7 +17,10 @@ use pm_components::button::{Size, Variant};
 use pm_components::context_menu::{ContextMenu, field_menu};
 use pm_components::parts::{glyph, line};
 use pm_components::project::Project;
-use pm_components::{Avatar, Progress, Tile};
+use pm_components::settings_languages::{endings, pickable, standing};
+use pm_components::state::Outgoing;
+use pm_components::{Avatar, Checkbox, Progress, Tile};
+use pm_protocol::LanguageInfo;
 
 /// Moves to the step after the current one.
 pub const CONTINUE: FocusId = FocusId(100);
@@ -45,6 +48,12 @@ const REMOVE_BASE: u64 = 140;
 
 /// The first of the buttons moving an agent along; the rest follow it.
 const AGENT_BASE: u64 = 160;
+
+/// The first of the rows ticking a language to install; the rest follow it.
+const LANGUAGE_PICK_BASE: u64 = 600;
+
+/// One past the last of the rows ticking a language.
+const LANGUAGE_PICK_END: u64 = 700;
 
 /// How many characters of a failure an agent row has room for.
 const REASON_WIDTH: usize = 72;
@@ -92,19 +101,22 @@ pub enum Step {
     Welcome,
     /// Adding a project to start with.
     Project,
+    /// Choosing the languages to write code in.
+    Languages,
     /// Choosing which agents are ready.
     Agents,
 }
 
 impl Step {
     /// Every step, in the order onboarding shows them.
-    const ALL: [Self; 3] = [Self::Welcome, Self::Project, Self::Agents];
+    const ALL: [Self; 4] = [Self::Welcome, Self::Project, Self::Languages, Self::Agents];
 
     /// The step after this one, or this one when it is the last.
     fn next(self) -> Self {
         match self {
             Self::Welcome => Self::Project,
-            Self::Project | Self::Agents => Self::Agents,
+            Self::Project => Self::Languages,
+            Self::Languages | Self::Agents => Self::Agents,
         }
     }
 
@@ -112,7 +124,8 @@ impl Step {
     fn previous(self) -> Self {
         match self {
             Self::Welcome | Self::Project => Self::Welcome,
-            Self::Agents => Self::Project,
+            Self::Languages => Self::Project,
+            Self::Agents => Self::Languages,
         }
     }
 }
@@ -134,6 +147,12 @@ pub struct OnboardingState {
     pub finished: bool,
     /// The menu open over a field, and where, if one is.
     pub menu: Option<ContextMenu>,
+    /// The languages the server on this machine can install, once it has said.
+    pub languages: Vec<LanguageInfo>,
+    /// The languages ticked to install, by folder name.
+    pub chosen: Vec<String>,
+    /// What the server has yet to be asked.
+    pub outbox: Vec<Outgoing>,
 }
 
 impl Default for OnboardingState {
@@ -147,6 +166,9 @@ impl Default for OnboardingState {
             listed: Vec::new(),
             finished: false,
             menu: None,
+            languages: Vec::new(),
+            chosen: Vec::new(),
+            outbox: Vec::new(),
         }
         .listing(&pm_protocol::builtin_agents())
     }
@@ -171,9 +193,37 @@ impl OnboardingState {
     /// The state after `action` was pressed.
     pub fn after(mut self, action: FocusId) -> Self {
         match action {
-            CONTINUE => self.step = self.step.next(),
+            CONTINUE if self.step == Step::Languages => {
+                if !self.chosen.is_empty() {
+                    self.outbox.push(Outgoing::InstallLanguages {
+                        ids: self.chosen.clone(),
+                    });
+                }
+                self.step = self.step.next();
+            }
+            CONTINUE => {
+                self.step = self.step.next();
+                if self.step == Step::Languages {
+                    self.outbox.push(Outgoing::Languages);
+                }
+            }
             BACK => self.step = self.step.previous(),
-            SKIP => self.step = Step::Agents,
+            SKIP => {
+                self.step = Step::Languages;
+                self.outbox.push(Outgoing::Languages);
+            }
+            FocusId(id) if (LANGUAGE_PICK_BASE..LANGUAGE_PICK_END).contains(&id) => {
+                let place = (id - LANGUAGE_PICK_BASE) as usize;
+                if let Some(language) = pickable(&self.languages).nth(place) {
+                    let id = language.id.clone();
+                    match self.chosen.iter().position(|held| *held == id) {
+                        Some(at) => {
+                            self.chosen.remove(at);
+                        }
+                        None => self.chosen.push(id),
+                    }
+                }
+            }
             FINISH if self.has_ready_agent() => self.finished = true,
             ADD => {
                 let source = self.path.text().to_owned();
@@ -241,6 +291,24 @@ impl OnboardingState {
     /// Whether `id` names a text field.
     pub fn is_field(id: FocusId) -> bool {
         id == PATH
+    }
+
+    /// The state after the server on this machine said which languages there are; the ones a project's files are written in start ticked the first time.
+    pub fn with_languages(mut self, languages: Vec<LanguageInfo>) -> Self {
+        if self.languages.is_empty() && self.chosen.is_empty() {
+            self.chosen = languages
+                .iter()
+                .filter(|language| language.installed && !language.hidden)
+                .map(|language| language.id.clone())
+                .collect();
+        }
+        self.languages = languages;
+        self
+    }
+
+    /// What the server has yet to be asked, taken off the state.
+    pub fn take_outbox(&mut self) -> Vec<Outgoing> {
+        std::mem::take(&mut self.outbox)
     }
 
     /// Whether at least one agent can be used.
@@ -453,6 +521,50 @@ fn agents(state: &OnboardingState) -> Node {
         )
 }
 
+/// The language step: every language there is, ticked to install it on this machine.
+fn languages(state: &OnboardingState) -> Node {
+    let rows: Vec<Node> = pickable(&state.languages)
+        .enumerate()
+        .map(|(place, language)| {
+            let action = FocusId(LANGUAGE_PICK_BASE + place as u64);
+            let ticked = state.chosen.contains(&language.id);
+            let (said, tone) = if language.installed || language.busy.is_some() {
+                standing(language)
+            } else {
+                (endings(language), Role::Subtle)
+            };
+            Tile::new(action).build().children([
+                Checkbox::new(ticked, action).build(),
+                node().styles([flex(), flex_col(), flex_1()]).children([
+                    line(language.name.clone(), 14, 1.4, Role::Text),
+                    line(said, 12, 1.4, tone),
+                ]),
+            ])
+        })
+        .collect();
+    let list = if rows.is_empty() {
+        line("Asking which languages there are…", 13, 1.4, Role::Subtle)
+    } else {
+        node()
+            .styles([pm_style::grid(), pm_style::grid_cols(2), gap(2), w_full()])
+            .children(rows)
+    };
+    node()
+        .styles([flex(), flex_col(), gap(4), w_full()])
+        .child(heading(
+            "Pick your languages",
+            28,
+            1.25,
+            14,
+            1.4,
+            &[
+                "Each language brings colours, completions and diagnostics, with its",
+                "language server. Nothing is bundled; add more later in Settings.",
+            ],
+        ))
+        .child(list)
+}
+
 /// The buttons under a step: back on the left, the way forward on the right.
 fn footer(state: &OnboardingState) -> Node {
     let forward = match state.step {
@@ -460,6 +572,12 @@ fn footer(state: &OnboardingState) -> Node {
         Step::Project => Button::new("Continue", CONTINUE)
             .size(Size::Lg)
             .disabled(state.projects.is_empty())
+            .build(),
+        Step::Languages if state.chosen.is_empty() => {
+            Button::new("Continue", CONTINUE).size(Size::Lg).build()
+        }
+        Step::Languages => Button::new("Install and continue", CONTINUE)
+            .size(Size::Lg)
             .build(),
         Step::Agents => Button::new("Open workspace", FINISH)
             .size(Size::Lg)
@@ -490,6 +608,7 @@ pub fn onboarding(state: &OnboardingState) -> Node {
     let step = match state.step {
         Step::Welcome => welcome(),
         Step::Project => project(state),
+        Step::Languages => languages(state),
         Step::Agents => agents(state),
     };
     let body = node()

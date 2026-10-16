@@ -57,6 +57,21 @@ impl Run {
             .map_or(self.width, |glyph| glyph.x)
     }
 
+    /// The glyphs of the line that stand for the bytes `range` of its text, placed where they are in the whole line.
+    pub fn part(&self, range: std::ops::Range<usize>) -> Self {
+        Self {
+            width: self.width,
+            height: self.height,
+            baseline: self.baseline,
+            glyphs: self
+                .glyphs
+                .iter()
+                .filter(|glyph| range.contains(&glyph.start))
+                .cloned()
+                .collect(),
+        }
+    }
+
     /// The byte offset of the character boundary nearest `x` logical pixels
     /// right of the start of the line, in a line of `length` bytes.
     pub fn byte_at(&self, x: f32, length: usize) -> usize {

@@ -1,0 +1,25 @@
+# Go: how files are told to be Go, how they are edited and the language server
+# that reads them.
+
+name = "Go"
+grammar = "go"
+suffixes = ["go"]
+aliases = ["golang"]
+line_comment = "//"
+indent = 4
+tabs = true
+
+[grammar_file]
+url = "https://github.com/tree-sitter/tree-sitter-go/releases/download/v0.25.0/tree-sitter-go.wasm"
+sha256 = "9504573f352b20be7f2f1911754d710622aedc15afff16d5ed8fb5645681aee7"
+
+[server]
+id = "gopls"
+language_id = "go"
+command = "gopls"
+check = ["version"]
+
+[server.install]
+kind = "go"
+version = "v0.24.0"
+package = "golang.org/x/tools/gopls@v0.24.0"

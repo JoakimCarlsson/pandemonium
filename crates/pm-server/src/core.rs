@@ -9,6 +9,8 @@ use std::sync::{Arc, Mutex};
 use pm_acp::{Agent, Chat, Event};
 use pm_protocol::{ServerMessage, SessionInfo};
 
+use crate::documents::Documents;
+use crate::languages::Installs;
 use crate::queue::Waiting;
 use crate::sessions::{self, Meta};
 use crate::terminals::Terminal;
@@ -122,6 +124,10 @@ pub(crate) struct Core {
     pub(crate) terminals: Mutex<HashMap<u64, Arc<Terminal>>>,
     /// The number the next shell gets.
     next_terminal: AtomicU64,
+    /// The files clients have open for their language servers.
+    pub(crate) documents: Documents,
+    /// What the server knows of installing languages.
+    pub(crate) installs: Installs,
 }
 
 impl Core {
@@ -133,6 +139,8 @@ impl Core {
             connections: Mutex::new(Vec::new()),
             terminals: Mutex::new(HashMap::new()),
             next_terminal: AtomicU64::new(1),
+            documents: Documents::new(),
+            installs: Installs::default(),
         })
     }
 

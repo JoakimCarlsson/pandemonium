@@ -47,6 +47,19 @@ pub enum Incoming {
     },
     /// The shell with this number ended.
     TerminalExited(u64),
+    /// What a language server finds wrong with a file this client opened.
+    Diagnostics {
+        /// The folder the file was opened in.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The version of the text they are about, when the server says.
+        version: Option<i32>,
+        /// What is wrong.
+        diagnostics: Vec<pm_protocol::Diagnostic>,
+    },
+    /// The languages changed; these are all of them now.
+    LanguagesChanged(Vec<pm_protocol::LanguageInfo>),
     /// Something an agent did, numbered within its session.
     Event {
         /// The session.
@@ -380,6 +393,22 @@ fn converse(
                     }
                     ServerMessage::ProjectsChanged { paths } => {
                         let _ = reporter.send(Incoming::ProjectsChanged(paths));
+                    }
+                    ServerMessage::Diagnostics {
+                        directory,
+                        path,
+                        version,
+                        diagnostics,
+                    } => {
+                        let _ = reporter.send(Incoming::Diagnostics {
+                            directory,
+                            path,
+                            version,
+                            diagnostics,
+                        });
+                    }
+                    ServerMessage::LanguagesChanged { languages } => {
+                        let _ = reporter.send(Incoming::LanguagesChanged(languages));
                     }
                     ServerMessage::Ready { .. } | ServerMessage::Denied { .. } => {}
                 }

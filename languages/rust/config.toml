@@ -1,0 +1,55 @@
+# Rust: how files are told to be Rust, how they are edited and the language
+# server that reads them.
+
+name = "Rust"
+grammar = "rust"
+suffixes = ["rs"]
+aliases = ["rs"]
+line_comment = "//"
+indent = 4
+
+[grammar_file]
+url = "https://github.com/tree-sitter/tree-sitter-rust/releases/download/v0.24.2/tree-sitter-rust.wasm"
+sha256 = "24c89bd9252255e4aebbcbd7d2d308bd92c86dd95a130fdc80efa49577b8d738"
+
+[server]
+id = "rust-analyzer"
+language_id = "rust"
+command = "rust-analyzer"
+check = ["--version"]
+
+[server.install]
+kind = "download"
+version = "2026-10-12"
+
+[server.install.downloads.linux-x86_64]
+url = "https://github.com/rust-lang/rust-analyzer/releases/download/2026-10-12/rust-analyzer-x86_64-unknown-linux-gnu.gz"
+sha256 = "040cab4e2abc490fadd95c3f6cbc60b941a78761dbc3acf0ec66fd7a97f31db3"
+archive = "gz"
+
+[server.install.downloads.linux-aarch64]
+url = "https://github.com/rust-lang/rust-analyzer/releases/download/2026-10-12/rust-analyzer-aarch64-unknown-linux-gnu.gz"
+sha256 = "d7219d5d8f5537bb227b521157aebddfe7e4a90f4a85a74f31e53722f5691025"
+archive = "gz"
+
+[server.install.downloads.macos-x86_64]
+url = "https://github.com/rust-lang/rust-analyzer/releases/download/2026-10-12/rust-analyzer-x86_64-apple-darwin.gz"
+sha256 = "56a5698a2e0d495c3ec28155416db310c879f21a70f6f38db549166cf157cfab"
+archive = "gz"
+
+[server.install.downloads.macos-aarch64]
+url = "https://github.com/rust-lang/rust-analyzer/releases/download/2026-10-12/rust-analyzer-aarch64-apple-darwin.gz"
+sha256 = "a2e45e828b37bfc4b507c2ca456e8b61096e0bdfbae225f3d33295546d1eeacf"
+archive = "gz"
+
+[server.install.downloads.windows-x86_64]
+url = "https://github.com/rust-lang/rust-analyzer/releases/download/2026-10-12/rust-analyzer-x86_64-pc-windows-msvc.zip"
+sha256 = "77f7a907f0e6f179281bac38e2d08435c974db9a5b99de52c5c963aff52883ec"
+archive = "zip"
+member = "rust-analyzer.exe"
+
+[server.install.downloads.windows-aarch64]
+url = "https://github.com/rust-lang/rust-analyzer/releases/download/2026-10-12/rust-analyzer-aarch64-pc-windows-msvc.zip"
+sha256 = "b053585692c2848acfa8e9ddf5f85bdc3741f3b23c51b72717ba0b391910b5fe"
+archive = "zip"
+member = "rust-analyzer.exe"

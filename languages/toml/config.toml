@@ -1,0 +1,49 @@
+# TOML: how files are told to be TOML, how they are edited and the language
+# server that reads them.
+
+name = "TOML"
+grammar = "toml"
+suffixes = ["toml"]
+names = ["Cargo.lock", "uv.lock", "poetry.lock"]
+line_comment = "#"
+indent = 2
+
+[grammar_file]
+url = "https://github.com/tree-sitter-grammars/tree-sitter-toml/releases/download/v0.7.0/tree-sitter-toml.wasm"
+sha256 = "1ac6a83826c35a68857f8325e00c78f6bcbef4eb6db3931a6cf3041f76e5e09f"
+
+[server]
+id = "taplo"
+language_id = "toml"
+command = "taplo"
+args = ["lsp", "stdio"]
+check = ["--version"]
+
+[server.install]
+kind = "download"
+version = "0.10.0"
+
+[server.install.downloads.linux-x86_64]
+url = "https://github.com/tamasfe/taplo/releases/download/0.10.0/taplo-linux-x86_64.gz"
+sha256 = "8fe196b894ccf9072f98d4e1013a180306e17d244830b03986ee5e8eabeb6156"
+archive = "gz"
+
+[server.install.downloads.linux-aarch64]
+url = "https://github.com/tamasfe/taplo/releases/download/0.10.0/taplo-linux-aarch64.gz"
+sha256 = "033681d01eec8376c3fd38fa3703c79316f5e14bb013d859943b60a07bccdcc3"
+archive = "gz"
+
+[server.install.downloads.macos-x86_64]
+url = "https://github.com/tamasfe/taplo/releases/download/0.10.0/taplo-darwin-x86_64.gz"
+sha256 = "898122cde3a0b1cd1cbc2d52d3624f23338218c91b5ddb71518236a4c2c10ef2"
+archive = "gz"
+
+[server.install.downloads.macos-aarch64]
+url = "https://github.com/tamasfe/taplo/releases/download/0.10.0/taplo-darwin-aarch64.gz"
+sha256 = "713734314c3e71894b9e77513c5349835eefbd52908445a0d73b0c7dc469347d"
+archive = "gz"
+
+[server.install.downloads.windows-x86_64]
+url = "https://github.com/tamasfe/taplo/releases/download/0.10.0/taplo-windows-x86_64.gz"
+sha256 = "550fdc955343f8a196447a05346ecf8827e391726e4ded577bb00a0a36cf220c"
+archive = "gz"

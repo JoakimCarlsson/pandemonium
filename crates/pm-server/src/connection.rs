@@ -140,4 +140,5 @@ pub(crate) fn serve(core: &Arc<Core>, stream: TcpStream, token: &str) {
     if let Ok(mut connections) = core.connections.lock() {
         connections.retain(|held| !Arc::ptr_eq(held, &connection));
     }
+    core.documents.forget(&connection);
 }

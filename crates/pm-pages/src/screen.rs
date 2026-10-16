@@ -520,7 +520,7 @@ impl Screen {
         session: usize,
         path: &str,
         head: bool,
-        read: Result<(Option<String>, bool), String>,
+        read: Result<(Option<String>, bool, Option<String>), String>,
     ) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_file(session, path, head, read)),
@@ -956,7 +956,7 @@ impl Screen {
     /// What the agents have yet to be told, taken off the workspace.
     pub fn take_outbox(&mut self) -> Vec<Outgoing> {
         match self {
-            Self::Onboarding(_) => Vec::new(),
+            Self::Onboarding(state) => state.take_outbox(),
             Self::Workspace(state) => state.take_outbox(),
         }
     }
@@ -971,7 +971,10 @@ impl Screen {
 
     /// Whether the workspace has something to send to the servers.
     pub fn has_outbox(&self) -> bool {
-        matches!(self, Self::Workspace(state) if !state.outbox.is_empty())
+        match self {
+            Self::Onboarding(state) => !state.outbox.is_empty(),
+            Self::Workspace(state) => !state.outbox.is_empty(),
+        }
     }
 
     /// What the key for the number `digit` presses while the agent's questions are open.

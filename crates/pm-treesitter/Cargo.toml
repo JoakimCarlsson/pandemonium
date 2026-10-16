@@ -5,3 +5,5 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+pm-buffer.workspace = true
+tree-sitter = { version = "0.27.1", features = ["wasm"] }

@@ -1,0 +1,207 @@
+{
+  "version": 1,
+  "languages": [
+    {
+      "id": "go",
+      "name": "Go",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "go"
+      ],
+      "server": "gopls",
+      "files": {
+        "brackets.scm": "f0353a09140622170b89963be336b7bf1dfb4d3630516204a0d9a71de0244dde",
+        "config.toml": "1342726d8e7baaafdc4c56373a53bf8861d87b9226c1ca38e1d232d950676e32",
+        "highlights.scm": "b845477ebabd708f06ff69438b4e309b1eadc8c014f9de78f2fa865652679528",
+        "indents.scm": "a748e02c783a8758db59509a5d80db5c3ca3ea664699436444b7280b60ae8f18",
+        "injections.scm": "84aafde3ba3b8da8c13e67e149aa41faa3938b46b09ec96394040492bf711325",
+        "outline.scm": "ccfac5aaf8a1d295a958424274a9baa5d0eed9d64fe7a10f16788c5ac908377a"
+      }
+    },
+    {
+      "id": "javascript",
+      "name": "JavaScript",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "js",
+        "mjs",
+        "cjs",
+        "jsx"
+      ],
+      "server": "typescript-language-server",
+      "files": {
+        "brackets.scm": "17d43133e8204321af678d982fc4952fecbda68995324a9be04b92677f17124a",
+        "config.toml": "5b47aeb5fb5910fc6936cad26a1b43bdb33d3f9523104061aa4fc9990752f07c",
+        "highlights.scm": "8c40d2b7d43982fc34929b92fa594b17759bf4f00fbdc185435d1c2e372c86a3",
+        "indents.scm": "8c6500f9272158bf36044cf0bce758b81f71910ff87d4840b8c612ecc4d92501",
+        "injections.scm": "22954768ed0e3a02eea5c118456010505c5d2d381ee1f530e25e4655bff69380",
+        "outline.scm": "36680a2012f2f4478c54f77f7b36282ce9cff3f7ad3466c47263e108c0e61757",
+        "package-lock.json": "c189d4f360f0e680a42b980556c9c40cc5eae5a28f5dc5ddeb4b57764cabf209",
+        "package.json": "3788f0a00bcb75e7dc63603a9b1af6ede654cc00a6976aea8eaca317a07e5185"
+      }
+    },
+    {
+      "id": "json",
+      "name": "JSON",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "json",
+        "jsonc",
+        "json5"
+      ],
+      "server": "vscode-json-language-server",
+      "files": {
+        "brackets.scm": "d13aeee7b2b6ff238a68e2029bfa42543e624415911624e2fb88cd93abf47bc5",
+        "config.toml": "219d9f3558575be162fca0179d189de7034fd22f0504c572f76c83a21e367caf",
+        "highlights.scm": "86cb3d2ca3aada199a87998e2d948de975e92c47d5258bcedbe71f193fe8fa4d",
+        "indents.scm": "8d640f47854fdfb20e09a5ed3aec2c427b168ed62b2026350adc0b83dea69a2d",
+        "injections.scm": "bf5e206d7ce8cf219cb98657904930f236cbeb830c186a6c62fa82500f9f08c3",
+        "outline.scm": "0dddd12b8c6b67923ce700ff0c65adef827a7ae40a6aec1d855f9aa88c9c4783",
+        "package-lock.json": "114277b435719d7f6c5410f85076b2eed8b7dc8190663a085651f0b99aa1d1fe",
+        "package.json": "2a4446da171df7890c82ecbdfe1de27a922991023178205d6c2ef0b57fe0d329"
+      }
+    },
+    {
+      "id": "markdown",
+      "name": "Markdown",
+      "hidden": false,
+      "requires": [
+        "markdown-inline"
+      ],
+      "suffixes": [
+        "md",
+        "markdown",
+        "mdx"
+      ],
+      "server": "marksman",
+      "files": {
+        "brackets.scm": "b7ab133d108eac96fb9b228121b068542f1ccf2984358ff15e4db33e59388bd9",
+        "config.toml": "9a139cb2dc6124e16b23660f384a2d2f12512ad6d52f9f8c04b2a71829b8c053",
+        "highlights.scm": "c4d57d2a10100af9a75f21fedebc1d913cf88f9ea46f769f92d78530853ac636",
+        "indents.scm": "9ee17887c03d262070cfc98369bbca1f509f11fdb05b0f68ea9b5e6a96088354",
+        "injections.scm": "33f54802351c212062e48f1c4f3fc248d8e5f5ee040b671c40baabb6088e56f3",
+        "outline.scm": "27b5c20a376c1e3f0618110e06da9bc7e461c23c5052bc538d5d5cbe8b00c1f6"
+      }
+    },
+    {
+      "id": "markdown-inline",
+      "name": "Inline markdown",
+      "hidden": true,
+      "requires": [],
+      "suffixes": [],
+      "server": null,
+      "files": {
+        "brackets.scm": "00d13c1625889737dfefb1bdf41b28c8e9324404e984393c8e5707f5b4bee105",
+        "config.toml": "c8c7e5f1447ce917d665313dace82a83b0df8bbb479dcc6ea6036f9d123c7296",
+        "highlights.scm": "65394f8c5080ae1439c9e9ffb86e20203b644ab27af672c381dd5f7f5760a492",
+        "indents.scm": "e5141ae41c4a38dcfb0eddcab50d06e4033f185f850979cc2c17caa7f8779d72",
+        "injections.scm": "226f70cda97f0ad289ca501d80ee518f93208d9e9f38955d43e2a29660260fd1",
+        "outline.scm": "249325de79d83e8663592ccb129546935f8babebf2f0887357726da2eb848f35"
+      }
+    },
+    {
+      "id": "python",
+      "name": "Python",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "py",
+        "pyi"
+      ],
+      "server": "pyright-langserver",
+      "files": {
+        "brackets.scm": "4d23538e4730c901b85c049aa4f18c246b7aff9b4dbce9f7edaafc616352a2a3",
+        "config.toml": "baebe4c08773729fa549cd249c950ce15094c4b67a3ceb562d2c41d3acad22c9",
+        "highlights.scm": "5fbf61e4a31701ccbb46a41328cce553e0944648d9f450d24fdf14029919f8a8",
+        "indents.scm": "b243ab33a226ec1f0bc5d7e1c16607903d393222561f582bcdf794ceb2a1fc35",
+        "injections.scm": "cfc127a77efb07444f8962ed4d36116e743a7493090d35f3cfcbd338d39289e0",
+        "outline.scm": "37eb4d26ddba6e2ae8a1490a88220ea9c64381e0c71ef6863717434a3f79ff6b",
+        "package-lock.json": "61b7c8aa29b3bde2f467a01f9c7e22696f8d0342bea05a78ef52b4abf280db53",
+        "package.json": "681387c1adeb3bb6e72d2e5144eb9efe09261fce91218abe5520131f1ce823f7"
+      }
+    },
+    {
+      "id": "rust",
+      "name": "Rust",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "rs"
+      ],
+      "server": "rust-analyzer",
+      "files": {
+        "brackets.scm": "914f67dd435081dc1e4744104acda3ddc62c8dce73706f1117223c488b9de5e7",
+        "config.toml": "e5dec9a4fd200de7a5a20250edd6256bcd4cd4b8eadca2409a84193fb0aab3b1",
+        "highlights.scm": "48a60820fe574a37494db0f7decb2fbf586235be9d5110557b7c37c710256277",
+        "indents.scm": "75b96136a0eda604b13de69a37c9329ad2ef79e715b6d458f393fed854caf95a",
+        "injections.scm": "24e830e374ec2d6ba3c77a51b0924bf331e4b3ad29403ece0ddce138d03e3684",
+        "outline.scm": "0a7c5d8454d6ba5eba16711a4d7fe0bfb772c6c35bff23c84449437efdab9546"
+      }
+    },
+    {
+      "id": "toml",
+      "name": "TOML",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "toml"
+      ],
+      "server": "taplo",
+      "files": {
+        "brackets.scm": "a0d7d33c46c561c820e4b4b5e83a2c358eb5831a06b538338a0d3c950aa7e48e",
+        "config.toml": "595db3525ffcac3ff153b5c4e413c0402d9099e2d9d0661297980393aaaf8919",
+        "highlights.scm": "25a36ce579bff0ac2d3ca0233d2b81fc05e4c4092c4b172bd7be32297fd78aec",
+        "indents.scm": "9a3247ddd5fcc06a840724120ec90be62f8896f51801ae7504afedc7addbea97",
+        "injections.scm": "ab9da020af6105fee23299dc79805483f1143a8f40313af6cef147a93e5748c5",
+        "outline.scm": "9b4802a88954ac160f59aa3f505406615f35fb21ba59f1bc5ddf5a4c810885d0"
+      }
+    },
+    {
+      "id": "tsx",
+      "name": "TSX",
+      "hidden": true,
+      "requires": [],
+      "suffixes": [
+        "tsx"
+      ],
+      "server": "typescript-language-server",
+      "files": {
+        "brackets.scm": "970b02fb5bf6b37f95ae18de20d95274ea3adfcde501744d0188dcc514acd55c",
+        "config.toml": "4f8e4e0b844b6937fdead86c080188699316d12d4614c113f150c3f39b27c1c0",
+        "highlights.scm": "f4deb8a99b627a6257479f40cb392fe82763f5a0d8af77b273bb873ca6792212",
+        "indents.scm": "540da706c65dc1b5f126673895334cdb5ac386a606d05d9ef8f4e36e96f57888",
+        "injections.scm": "09fdaed24168550661baa86d01668ae173f4f237bdc099c61a0f1dd18cc1903f",
+        "outline.scm": "516b6a18de1bb65e277e2f0a862c0182158e2cd3f8df99bf97300071f28cef9d",
+        "package-lock.json": "c189d4f360f0e680a42b980556c9c40cc5eae5a28f5dc5ddeb4b57764cabf209",
+        "package.json": "3788f0a00bcb75e7dc63603a9b1af6ede654cc00a6976aea8eaca317a07e5185"
+      }
+    },
+    {
+      "id": "typescript",
+      "name": "TypeScript",
+      "hidden": false,
+      "requires": [
+        "tsx"
+      ],
+      "suffixes": [
+        "ts",
+        "mts",
+        "cts"
+      ],
+      "server": "typescript-language-server",
+      "files": {
+        "brackets.scm": "e7319b052b3ac296c901ac7183841072b5a9fe57d8032944ead6f0ef431c5644",
+        "config.toml": "b8645785e774ba26e1244a16d9b65a3ca3122ec7a75e7ef8ccf760fc44514eb5",
+        "highlights.scm": "3ee958b8f7217a26f9e683a916a7872d8e79e81a57f2424a4d6ccd613f6017f4",
+        "indents.scm": "a95eaed00775b56c91e823fdbca801ff691db2e1fc9922309b4ded21b90c2784",
+        "injections.scm": "e186ca5a4a5963e7cfbd739f5a966e7b493fec9893512394a145acbe47cdddbe",
+        "outline.scm": "77ac576398b2b5170d7fa02e8d8b1bf30c365a00a6a536c05c8e5a2206895d52",
+        "package-lock.json": "c189d4f360f0e680a42b980556c9c40cc5eae5a28f5dc5ddeb4b57764cabf209",
+        "package.json": "3788f0a00bcb75e7dc63603a9b1af6ede654cc00a6976aea8eaca317a07e5185"
+      }
+    }
+  ]
+}

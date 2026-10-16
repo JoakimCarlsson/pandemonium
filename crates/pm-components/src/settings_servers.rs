@@ -339,7 +339,7 @@ impl WorkspaceState {
                     &tool.env,
                 ))
             }
-            Section::General | Section::Agents => None,
+            Section::General | Section::Agents | Section::Languages => None,
         }
     }
 
@@ -672,6 +672,9 @@ pub(crate) fn is_form_field(id: FocusId) -> bool {
 fn summary(section: Section) -> &'static str {
     match section {
         Section::General => "",
+        Section::Languages => {
+            "Languages give files their colours, completions and diagnostics. Each is installed on the machine that holds the project, with its language server."
+        }
         Section::Agents => {
             "Tailor how agents work in your projects: the agents that can be started, and the tools they are given."
         }
@@ -729,6 +732,12 @@ pub(crate) fn body(state: &WorkspaceState, section: Section) -> Node {
     let inner = inner.child(page_title(section));
     match section {
         Section::General => page.child(inner),
+        Section::Languages => page
+            .child(crate::settings_languages::list(
+                state,
+                inner.child(paragraph(summary(section))),
+            ))
+            .scroll_from_start(SETTINGS_SCROLL, state.settings_servers.scroll),
         Section::Agents => page.child(
             inner
                 .child(paragraph(summary(section)))
@@ -749,12 +758,12 @@ fn count_of(state: &WorkspaceState, section: Section) -> String {
     match section {
         Section::AgentServers => format!("{} available", state.offered_agents().len()),
         Section::McpServers => format!("{} installed", state.settings_servers.tools.len()),
-        Section::General | Section::Agents => String::new(),
+        Section::General | Section::Agents | Section::Languages => String::new(),
     }
 }
 
 /// A box with an outline around rows that have a hairline between each and the next.
-fn boxed(rows: Vec<Node>) -> Node {
+pub(crate) fn boxed(rows: Vec<Node>) -> Node {
     let last = rows.len().saturating_sub(1);
     node()
         .styles([
@@ -810,7 +819,7 @@ fn card(section: Section, count: String) -> Node {
 }
 
 /// A row of a boxed list: its contents side by side, with room around them.
-fn flat_row() -> Node {
+pub(crate) fn flat_row() -> Node {
     node().styles([
         flex(),
         items_center(),
@@ -941,7 +950,7 @@ fn heading(title: &str, count: usize, open: bool, toggle: FocusId) -> Node {
 }
 
 /// A line that only says something.
-fn note(message: &str) -> Node {
+pub(crate) fn note(message: &str) -> Node {
     line(message, 12, 1.4, Role::Muted).styles([flex_none()])
 }
 

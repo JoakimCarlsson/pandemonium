@@ -4,6 +4,7 @@ mod address;
 mod agents;
 mod bytes;
 mod credential;
+mod languages;
 mod message;
 mod request;
 mod response;
@@ -11,7 +12,10 @@ mod response;
 pub use address::{SSH_SCHEME, host_of, is_destination};
 pub use agents::builtin_agents;
 pub use credential::{Build, Credential, Target};
+pub use languages::{GrammarBundle, LanguageInfo};
 pub use message::{ClientMessage, ServerMessage};
+pub use pm_buffer::{Position, Span};
+pub use pm_lsp::{Completion, CompletionKind, Diagnostic, Hover, Severity, TextChange};
 pub use request::{AgentServer, Attachment, Login, McpServer, RegistryAgent, Request, ToolListing};
 pub use response::{Response, SessionInfo, TerminalInfo};
 

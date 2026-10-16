@@ -37,6 +37,7 @@ use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::{CursorIcon, Window, WindowId};
 
+mod code;
 mod select;
 mod terminal;
 
@@ -150,6 +151,8 @@ pub struct App {
     terminal_scroll_rest: f32,
     /// The stretch of the conversation's text that is selected, if any.
     text_selection: Option<TextSelection>,
+    /// The word of the file shown the pointer rests on, by where it starts, and since when.
+    hover_rest: Option<(usize, Instant)>,
     /// What a press on selectable text took, from its start to its end, and
     /// how much it takes at a time, while the button is held, so dragging
     /// selects from it.
@@ -259,6 +262,7 @@ impl Default for App {
             terminal_scroll_rest: 0.0,
             text_selection: None,
             text_held: None,
+            hover_rest: None,
         }
     }
 }
@@ -401,6 +405,7 @@ impl App {
         if self.output.animating || !presented {
             window.request_redraw();
         }
+        self.place_completion();
     }
 
     /// Carries out what pressing the element `id` means.
@@ -816,6 +821,7 @@ impl App {
                 }
             }
             PointerEvent::Moved(x, y) => {
+                self.editor_pointer_moved(x, y);
                 self.drag_bar(y);
                 self.drag_sash(y);
                 self.drag_comment((x, y));
@@ -1118,9 +1124,14 @@ impl App {
     fn edit_field(&mut self, id: FocusId, edit: Edit) {
         self.model
             .update(|state| *state = std::mem::take(state).edited(id, edit));
-        if id == EDITOR_FIELD
-            && let Some(height) = self.renderer.as_ref().map(|renderer| renderer.size().1)
-        {
+        if id == EDITOR_FIELD {
+            self.show_editor_caret();
+        }
+    }
+
+    /// Scrolls the file shown just far enough to show its caret.
+    fn show_editor_caret(&mut self) {
+        if let Some(height) = self.renderer.as_ref().map(|renderer| renderer.size().1) {
             self.model
                 .update(|state| *state = std::mem::take(state).with_caret_shown(height - TABS));
         }
@@ -1182,7 +1193,7 @@ impl App {
         if !event.pressed {
             return;
         }
-        if self.terminal_key(event) || self.text_key(event) {
+        if self.terminal_key(event) || self.text_key(event) || self.editor_key(event) {
             return;
         }
         match event.key {
@@ -1220,9 +1231,6 @@ impl App {
                     && self.focus.current() == Some(EDITOR_FIELD) =>
             {
                 self.activate(EDITOR_SAVE);
-            }
-            Key::Tab if self.focus.current() == Some(EDITOR_FIELD) && !event.modifiers.shift => {
-                self.edit_field(EDITOR_FIELD, Edit::Paste("    ".to_owned()));
             }
             Key::Tab if event.modifiers.shift && self.in_prompt() => {
                 self.model
@@ -1382,10 +1390,11 @@ impl ApplicationHandler for App {
             self.deliver();
         }
         let waiting = self.model.read(|screen| screen.waiting()) || self.work.busy();
-        event_loop.set_control_flow(if waiting {
-            ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(50))
-        } else {
-            ControlFlow::Wait
+        let hover = self.editor_hover_due();
+        event_loop.set_control_flow(match (waiting, hover) {
+            (true, _) => ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(50)),
+            (false, Some(due)) => ControlFlow::WaitUntil(due),
+            (false, None) => ControlFlow::Wait,
         });
         if self.model.read(Screen::place_unrecorded) {
             self.model

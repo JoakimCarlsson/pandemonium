@@ -140,12 +140,15 @@ pub enum Section {
     AgentServers,
     /// The tool servers every agent is started with.
     McpServers,
+    /// The languages installed on the server's machine, and those that can be.
+    Languages,
 }
 
 impl Section {
     /// Every section, in the order the list shows them, each followed by the ones inside it.
-    pub const ALL: [Section; 4] = [
+    pub const ALL: [Section; 5] = [
         Section::General,
+        Section::Languages,
         Section::Agents,
         Section::AgentServers,
         Section::McpServers,
@@ -158,6 +161,7 @@ impl Section {
             Self::Agents => "Agents",
             Self::AgentServers => "Agent Servers",
             Self::McpServers => "MCP Servers",
+            Self::Languages => "Languages",
         }
     }
 
@@ -168,6 +172,7 @@ impl Section {
             Self::Agents => IconName::Sparkles,
             Self::AgentServers => IconName::Folder,
             Self::McpServers => IconName::Plug,
+            Self::Languages => IconName::FileCode,
         }
     }
 
@@ -175,12 +180,12 @@ impl Section {
     pub(crate) fn parent(self) -> Option<Section> {
         match self {
             Self::AgentServers | Self::McpServers => Some(Self::Agents),
-            Self::General | Self::Agents => None,
+            Self::General | Self::Agents | Self::Languages => None,
         }
     }
 
     /// The name of pressing its row in the list.
-    pub(crate) fn id(self) -> FocusId {
+    pub fn id(self) -> FocusId {
         let position = Self::ALL.iter().position(|section| *section == self);
         FocusId(SETTINGS_SECTION_BASE + position.unwrap_or_default() as u64)
     }
@@ -229,6 +234,11 @@ impl WorkspaceState {
                     }
                     self.settings = Some(section);
                     self.section_changed();
+                    if section == Section::Languages {
+                        self.outbox.push(crate::state::Outgoing::Languages);
+                    }
+                } else if crate::settings_languages::is_language_button(action) {
+                    return self.language_pressed(action);
                 } else {
                     return self.servers_pressed(action);
                 }
@@ -289,7 +299,7 @@ fn entry(section: Section, showing: bool, folded: bool) -> Node {
         .build()
         .styles([px(2)]);
     let row = match section {
-        Section::General => row.child(glyph(section.icon(), 4.0, tone)),
+        Section::General | Section::Languages => row.child(glyph(section.icon(), 4.0, tone)),
         Section::Agents => row.child(glyph(
             if folded {
                 IconName::ChevronRight
