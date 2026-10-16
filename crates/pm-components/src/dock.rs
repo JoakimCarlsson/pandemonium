@@ -373,16 +373,40 @@ impl WorkspaceState {
         Some((emulator.application_cursor(), emulator.bracketed_paste()))
     }
 
-    /// The position of a session on the machine `host` that works in `directory`.
+    /// The position of the session on the machine `host` whose folder holds `directory`, the innermost when several do.
     pub fn session_in(&self, host: &Option<String>, directory: &str) -> Option<usize> {
-        self.sessions.iter().position(|session| {
-            !session.home
-                && session.directory == directory
-                && self
-                    .projects
-                    .get(session.project)
-                    .is_some_and(|project| project.host() == *host)
-        })
+        self.sessions
+            .iter()
+            .enumerate()
+            .filter(|(_, session)| !session.home)
+            .filter_map(|(position, session)| {
+                let project = self.projects.get(session.project)?;
+                if project.host() != *host {
+                    return None;
+                }
+                let root = if session.directory.is_empty() {
+                    project.directory().to_string_lossy().into_owned()
+                } else {
+                    session.directory.clone()
+                };
+                within(directory, &root).then_some((position, root.len()))
+            })
+            .max_by_key(|(_, length)| *length)
+            .map(|(position, _)| position)
+    }
+
+    /// Starts a shell in the open session when it is on the machine `host` and the dock shows none, as when the shells it showed ended with an earlier server.
+    pub fn revive_terminal(&mut self, host: &Option<String>) {
+        let Some(session) = self.open() else {
+            return;
+        };
+        let on_host = self
+            .projects
+            .get(session.project)
+            .is_some_and(|project| project.host() == *host);
+        if self.terminal && on_host && session.terminals.is_empty() {
+            self.open_terminal();
+        }
     }
 
     /// Whether the dock shows a shell, and what its window holds: columns, lines and how far it is scrolled back.
@@ -398,4 +422,12 @@ impl WorkspaceState {
             || id == NEW_TERMINAL
             || (TERMINAL_TAB_BASE..TERMINAL_CLOSE_BASE).contains(&id.0)
     }
+}
+
+/// Whether `directory` is `root` or a folder inside it.
+fn within(directory: &str, root: &str) -> bool {
+    let root = root.trim_end_matches(['/', '\\']);
+    directory
+        .strip_prefix(root)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(['/', '\\']))
 }

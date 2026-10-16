@@ -1065,7 +1065,14 @@ impl Screen {
         }
     }
 
-    /// The position of a session on the machine `host` that works in `directory`.
+    /// Starts a shell in the open session when it is on the machine `host` and the dock shows none.
+    pub fn revive_terminal(&mut self, host: &Option<String>) {
+        if let Self::Workspace(state) = self {
+            state.revive_terminal(host);
+        }
+    }
+
+    /// The position of the session on the machine `host` whose folder holds `directory`, the innermost when several do.
     pub fn session_in(&self, host: &Option<String>, directory: &str) -> Option<usize> {
         match self {
             Self::Workspace(state) => state.session_in(host, directory),
