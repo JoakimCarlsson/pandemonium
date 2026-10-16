@@ -161,7 +161,10 @@ impl WorkspaceState {
                 plan::width_in(self, window.0 - self.sidebar_width - self.review_width),
                 Grows::Left,
             )),
-            TERMINAL_SASH => Some((terminal::height(self, window.1), Grows::Up)),
+            TERMINAL_SASH => Some((
+                terminal::height(self, window.1 - crate::title_bar::TITLE_BAR_HEIGHT),
+                Grows::Up,
+            )),
             GRAPH_SASH => Some((self.git.graph_height, Grows::Up)),
             _ => crate::panes::split_sash_of(id).and_then(|index| self.split_sash(index, window)),
         }
@@ -175,7 +178,8 @@ impl WorkspaceState {
             PLAN_SASH => self.plan_width = size.clamp(plan::WIDTHS.0, plan::WIDTHS.1),
             TERMINAL_SASH => {
                 self.terminal_maximized = false;
-                self.terminal_height = size.clamp(terminal::HEIGHTS.0, terminal::tallest(window.1));
+                let page = window.1 - crate::title_bar::TITLE_BAR_HEIGHT;
+                self.terminal_height = size.clamp(terminal::HEIGHTS.0, terminal::tallest(page));
             }
             GRAPH_SASH => self.git.graph_height = size.clamp(graph::HEIGHTS.0, graph::HEIGHTS.1),
             _ => {

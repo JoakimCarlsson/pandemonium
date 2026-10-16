@@ -22,11 +22,13 @@ use pm_components::sash::Grows;
 use pm_components::settings::{SETTINGS_CLOSE, SETTINGS_NAV_SCROLL, SETTINGS_SCROLL, is_settings};
 use pm_components::state::{COMMENT_CANCEL, COMMENT_FIELD};
 use pm_components::terminal_menu::TerminalCommand;
+use pm_components::title_bar::{COMMAND_CENTER, GO_BACK, GO_FORWARD};
 use pm_components::tree_actions::{ENTRY_FIELD, TreeTarget};
 use pm_components::{
     EDITOR_MENU_HEIGHT, EditorCommand, MENU_COPY, MENU_CUT, MENU_PASTE, MENU_REDO, MENU_SELECT_ALL,
     MENU_UNDO, is_menu_item,
 };
+use pm_editor::Action;
 use pm_input::{Button, Focus, FocusId, Key, KeyEvent, Modifiers, PointerEvent, PointerState};
 use pm_pages::{
     ATTACH, AgentStatus, BROWSE, DIFF_SCROLL, MENU_SCROLL, PLAN_SCROLL, PROMPT, Screen,
@@ -45,6 +47,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::{CursorIcon, Window, WindowId};
 
 mod code;
+mod frame;
 mod panes;
 mod paste;
 mod select;
@@ -176,6 +179,14 @@ pub struct App {
     naming: bool,
     /// The last press that activated a control, for noticing a file pressed twice.
     last_activation: Option<(FocusId, Instant)>,
+    /// When the title bar was last pressed, for noticing it pressed twice.
+    title_press: Option<Instant>,
+    /// The edge of the window the pointer showed it resizes, when it did.
+    edge_cursor: Option<winit::window::ResizeDirection>,
+    /// Whether the window's own close button asked it to close and nothing is left to ask first.
+    closing: bool,
+    /// Whether the field narrowing the list over the file is to take the keyboard once it is drawn.
+    focus_filter: bool,
     /// Whether the shell is to take the keyboard once it is drawn.
     focus_terminal: bool,
     /// The cell of the shell's window a press began in, while the button is held, so dragging marks text.
@@ -343,6 +354,10 @@ impl Default for App {
             autofocused: false,
             naming: false,
             last_activation: None,
+            title_press: None,
+            edge_cursor: None,
+            closing: false,
+            focus_filter: false,
             focus_terminal: false,
             terminal_anchor: None,
             terminal_scroll_rest: 0.0,
@@ -366,6 +381,17 @@ impl App {
         let attributes = Window::default_attributes()
             .with_title("Pandemonium")
             .with_inner_size(size);
+        #[cfg(target_os = "macos")]
+        let attributes = {
+            use winit::platform::macos::WindowAttributesExtMacOS;
+
+            attributes
+                .with_titlebar_transparent(true)
+                .with_title_hidden(true)
+                .with_fullsize_content_view(true)
+        };
+        #[cfg(not(target_os = "macos"))]
+        let attributes = attributes.with_decorations(false);
         #[cfg(target_os = "linux")]
         let attributes = {
             use winit::platform::wayland::WindowAttributesExtWayland;
@@ -417,6 +443,7 @@ impl App {
         }
         self.fit_terminal();
         let reaching = self.reaching() || self.reaching_terminal_link();
+        let edge = self.frame_edge();
         let (Some(window), Some(renderer)) = (self.window.as_ref(), self.renderer.as_mut()) else {
             return;
         };
@@ -444,6 +471,9 @@ impl App {
                 .set_order(self.output.regions.iter().map(|region| region.id).collect());
             if std::mem::take(&mut self.focus_terminal) {
                 self.focus.focus(TERMINAL_BODY);
+            }
+            if std::mem::take(&mut self.focus_filter) {
+                self.focus.focus(pm_components::listing::LISTING_FILTER);
             }
             let drawn = |id| self.output.regions.iter().any(|region| region.id == id);
             Self::give_back_focus(
@@ -507,9 +537,10 @@ impl App {
             None if reaching => Cursor::Pointer,
             None => self.output.cursor,
         };
-        if cursor != self.cursor {
+        if cursor != self.cursor || edge != self.edge_cursor {
             self.cursor = cursor;
-            window.set_cursor(cursor_icon(self.cursor));
+            self.edge_cursor = edge;
+            window.set_cursor(edge.map_or_else(|| cursor_icon(cursor), frame::edge_icon));
         }
         let presented = renderer.render(&self.list, &mut self.shaper, scene::ground(theme), || {
             window.pre_present_notify()
@@ -565,6 +596,15 @@ impl App {
         if again {
             self.model
                 .update(|state| *state = std::mem::take(state).with_file_kept(id));
+        }
+        if self.take_command(id) || self.window_control(id) {
+            return;
+        }
+        match id {
+            COMMAND_CENTER => return self.perform(Action::CommandPalette),
+            GO_BACK => return self.navigate(-1),
+            GO_FORWARD => return self.navigate(1),
+            _ => {}
         }
         if is_menu_item(id) {
             self.menu_action(id);
@@ -1808,7 +1848,7 @@ impl ApplicationHandler for App {
             self.persist_window();
             self.persist_editor();
         }
-        if self.model.read(Screen::quitting) {
+        if self.closing || self.model.read(Screen::quitting) {
             event_loop.exit();
         }
         self.sync_settings_window(event_loop);
@@ -1847,12 +1887,7 @@ impl App {
         let scale = window.scale_factor() as f32;
         match event {
             WindowEvent::CloseRequested => {
-                self.model
-                    .update(|screen| *screen = std::mem::take(screen).close_asked());
-                let onboarding = self
-                    .model
-                    .read(|screen| matches!(screen, Screen::Onboarding(_)));
-                if onboarding || self.model.read(Screen::quitting) {
+                if self.close_window() {
                     event_loop.exit();
                 }
             }
@@ -1890,6 +1925,13 @@ impl App {
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 self.refocus = None;
+                if button == MouseButton::Left
+                    && state == ElementState::Pressed
+                    && self.frame_press(&window)
+                {
+                    window.request_redraw();
+                    return;
+                }
                 let button = match button {
                     MouseButton::Left => Button::Left,
                     MouseButton::Right => Button::Right,

@@ -254,6 +254,8 @@ pub enum Shot {
     Folded,
     /// The finder for the files of the project, narrowed by what is typed.
     Finder,
+    /// The same file with the list of every command open, narrowed by what is typed.
+    Commands,
     /// The same file with the menu on its tab open.
     TabMenu,
     /// The extensions page, some installed, one being installed, one that failed and one of the reader's own.
@@ -1057,11 +1059,21 @@ impl Shot {
                 ]
                 .map(str::to_owned)
                 .to_vec();
-                Screen::Workspace(state.file_finder_requested((340.0, 56.0)).edited(
+                Screen::Workspace(state.file_finder_requested((340.0, 0.0)).edited(
                     pm_components::listing::LISTING_FILTER,
                     Edit::Paste("ses".to_owned()),
                 ))
             }
+            Self::Commands => Screen::Workspace(
+                code()
+                    .command_used(pm_editor::Action::FileFinder)
+                    .command_used(pm_editor::Action::GoToLine)
+                    .commands_requested((340.0, 0.0))
+                    .edited(
+                        pm_components::listing::LISTING_FILTER,
+                        Edit::Paste("go".to_owned()),
+                    ),
+            ),
             Self::Folded => Screen::Workspace(
                 code().lines_edited(pm_components::line_edits::LineEdit::Fold),
             ),
@@ -1079,7 +1091,7 @@ impl Shot {
             }
             Self::Outline => Screen::Workspace(
                 code()
-                    .outline_requested((330.0, 140.0))
+                    .outline_requested((340.0, 0.0))
                     .edited(pm_components::listing::LISTING_FILTER, Edit::Paste("n".to_owned())),
             ),
             Self::Finding => Screen::Workspace(

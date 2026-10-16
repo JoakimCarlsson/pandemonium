@@ -8,11 +8,17 @@ use pm_components::assist::{
 };
 use pm_components::find::{FIND_CASE, FIND_FIELD, FIND_REGEX, FIND_WORD, REPLACE_FIELD};
 use pm_components::line_edits::{GO_TO_LINE, GO_TO_LINE_BOX, LineEdit};
-use pm_components::listing::{LISTING_BODY, LISTING_FILTER, LISTING_HEIGHT, listing_row_of};
+use pm_components::listing::{
+    LISTING_BODY, LISTING_FILTER, LISTING_HEIGHT, LISTING_TAKE, LISTING_WIDTH, QUICK_INSET,
+    listing_row_of,
+};
 use pm_components::navigate::{RENAME_BOX, RENAME_SYMBOL};
 use pm_components::open_files::{EDITOR_FIELD, EDITOR_SAVE};
+use pm_components::quick_input::{FIELD_HEIGHT, QUICK_SHOWN};
+use pm_components::state::SETTINGS;
+use pm_components::title_bar::{COMMAND_CENTER, TITLE_BAR_HEIGHT};
 use pm_editor::{Action, Chord, Keymap, Pressed};
-use pm_input::{Key, KeyEvent};
+use pm_input::{FocusId, Key, KeyEvent};
 use pm_pages::Screen;
 use pm_protocol::Seek;
 use pm_text::Edit;
@@ -473,19 +479,56 @@ impl App {
         }
     }
 
-    /// Where a list opened from anywhere hangs: across the top of the window.
+    /// Where a list opened from anywhere hangs: over the command center in the middle of the title bar, its field lying on the command center.
     fn across_top(&self) -> (f32, f32) {
-        let width = self
-            .renderer
-            .as_ref()
-            .map_or(1280.0, |renderer| renderer.size().0);
-        (((width - 600.0) / 2.0).max(0.0), 56.0)
+        let width = self.window_size().0;
+        let center = self
+            .output
+            .regions
+            .iter()
+            .find(|region| region.id == COMMAND_CENTER)
+            .map(|region| region.rect);
+        let (middle, field_top) = center.map_or(
+            (width / 2.0, (TITLE_BAR_HEIGHT - FIELD_HEIGHT) / 2.0),
+            |rect| (rect.x + rect.width / 2.0, rect.y),
+        );
+        let left = (middle - LISTING_WIDTH / 2.0).clamp(0.0, (width - LISTING_WIDTH).max(0.0));
+        (left, (field_top - QUICK_INSET).max(0.0))
     }
 
-    /// Gives the keyboard to the field narrowing the list over the file, when one is open.
+    /// Carries out the command the list takes when `id`, one of its rows or the key that takes the row picked, is pressed, and says whether the list held commands.
+    pub(super) fn take_command(&mut self, id: FocusId) -> bool {
+        let row = listing_row_of(id);
+        if row.is_none() && id != LISTING_TAKE {
+            return false;
+        }
+        let Some(action) = self.model.read(|screen| screen.command_taken(row)) else {
+            return false;
+        };
+        self.model.update(|screen| {
+            *screen = std::mem::take(screen).listing_closed().command_used(action)
+        });
+        self.leave_listing();
+        self.perform(action);
+        true
+    }
+
+    /// Gives the keyboard back to the file shown once the list over it closed, or lets go of it when no file is shown.
+    fn leave_listing(&mut self) {
+        if self
+            .model
+            .read(|screen| screen.field(EDITOR_FIELD).is_some())
+        {
+            self.focus.focus(EDITOR_FIELD);
+        } else {
+            self.focus.clear();
+        }
+    }
+
+    /// Gives the keyboard to the field narrowing the list over the file once it is drawn, when one is open.
     fn focus_listing(&mut self) {
         if self.model.read(Screen::listing_open) {
-            self.focus.focus(LISTING_FILTER);
+            self.focus_filter = true;
         }
     }
 
@@ -576,9 +619,7 @@ impl App {
                 self.focus.focus(GO_TO_LINE);
             }
             Action::Outline => {
-                let at = self.editor_caret().map_or((48.0, 96.0), |caret| {
-                    self.hung(caret, LISTING_HEIGHT + 40.0)
-                });
+                let at = self.across_top();
                 self.model
                     .update(|screen| *screen = std::mem::take(screen).outline_requested(at));
                 self.focus_listing();
@@ -608,6 +649,13 @@ impl App {
                 self.focus_listing();
             }
             Action::Save => self.activate(EDITOR_SAVE),
+            Action::CommandPalette => {
+                let at = self.across_top();
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).commands_requested(at));
+                self.focus_listing();
+            }
+            Action::OpenSettings => self.activate(SETTINGS),
             _ => {}
         }
     }
@@ -628,23 +676,28 @@ impl App {
 
     /// Takes a key pressed while the field narrowing the list over the file has the keyboard: the arrows move the pick and Escape closes the list. Says whether it took the key.
     pub(super) fn listing_key(&mut self, event: KeyEvent) -> bool {
-        if self.focus.current() != Some(LISTING_FILTER) {
+        let focused = self.focus.current();
+        let held = focused == Some(LISTING_FILTER) || focused.is_none();
+        if !held || !self.model.read(Screen::listing_open) {
             return false;
         }
-        match event.key {
-            Key::ArrowUp => self
-                .model
-                .update(|screen| *screen = std::mem::take(screen).listing_moved(-1)),
-            Key::ArrowDown => self
-                .model
-                .update(|screen| *screen = std::mem::take(screen).listing_moved(1)),
+        let page = QUICK_SHOWN as isize - 1;
+        let delta = match event.key {
+            Key::ArrowUp => -1,
+            Key::ArrowDown => 1,
+            Key::PageUp => -page,
+            Key::PageDown => page,
             Key::Escape => {
                 self.model
                     .update(|screen| *screen = std::mem::take(screen).listing_closed());
-                self.focus.focus(EDITOR_FIELD);
+                self.focus_filter = false;
+                self.leave_listing();
+                return true;
             }
             _ => return false,
-        }
+        };
+        self.model
+            .update(|screen| *screen = std::mem::take(screen).listing_moved(delta));
         true
     }
 

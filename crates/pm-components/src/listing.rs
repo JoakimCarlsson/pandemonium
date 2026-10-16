@@ -1,5 +1,6 @@
-//! The list that hangs over the file shown to pick from: the places a search from the caret found, the changes the language server offers there, the commits that changed the file, the items of its outline, or the files of the project.
+//! The list that hangs over the file shown to pick from: the places a search from the caret found, the changes the language server offers there, the commits that changed the file, or what the problems are; and the quick input over the command center, whose first character says what it lists: the files of the project, `>` the commands of the window, `#` the symbols of the project, `@` the items of the file's outline and `%` the lines of the project holding what is typed.
 
+use pm_editor::Action;
 use pm_input::FocusId;
 use pm_protocol::{CodeAction, Location, Seek};
 use pm_text::{Edit, Field};
@@ -17,6 +18,64 @@ pub const LISTING_ROW_END: u64 = 7_401_000;
 
 /// How many rows the list shows at once.
 pub const LISTING_SHOWN: usize = 12;
+
+/// How wide the list is, in logical pixels.
+pub const LISTING_WIDTH: f32 = 600.0;
+
+/// How far the field of the quick input is set in from its edges, in logical pixels, so that the field lies over the command center it opens from.
+pub const QUICK_INSET: f32 = 6.0;
+
+/// What the quick input lists, as the first character typed in it says.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Quick {
+    /// The files of the project, typed with nothing before them.
+    Files,
+    /// The commands of the window, after `>`.
+    Commands,
+    /// The symbols of the project, after `#`.
+    Symbols,
+    /// The items of the outline of the file shown, after `@`.
+    Outline,
+    /// The lines of the files of the project holding what is typed, after `%`.
+    Search,
+}
+
+impl Quick {
+    /// What is typed first to list this.
+    pub const fn prefix(self) -> &'static str {
+        match self {
+            Self::Files => "",
+            Self::Commands => ">",
+            Self::Symbols => "#",
+            Self::Outline => "@",
+            Self::Search => "%",
+        }
+    }
+
+    /// What the field says while nothing but the prefix is typed in it.
+    pub const fn placeholder(self) -> &'static str {
+        match self {
+            Self::Files => {
+                "Search files by name (append > for commands, # for symbols, @ for symbols in the file, % for text)"
+            }
+            Self::Commands => "Run a command",
+            Self::Symbols => "Go to a symbol in the project",
+            Self::Outline => "Go to a symbol in the file",
+            Self::Search => "Search the text of the project",
+        }
+    }
+
+    /// What `text`, all that is typed in the quick input, lists.
+    fn of(text: &str) -> Self {
+        match text.chars().next() {
+            Some('>') => Self::Commands,
+            Some('#') => Self::Symbols,
+            Some('@') => Self::Outline,
+            Some('%') => Self::Search,
+            _ => Self::Files,
+        }
+    }
+}
 
 /// How tall the list is at most, in logical pixels: its title and the rows it shows at once.
 pub const LISTING_HEIGHT: f32 = 28.0 + LISTING_SHOWN as f32 * 26.0 + 10.0;
@@ -84,10 +143,24 @@ pub enum Items {
         /// The files that match, best first, by place among `paths`.
         matched: Vec<usize>,
     },
+    /// The commands that can be carried out where the keyboard was, narrowed by what is typed, to carry one out.
+    Commands {
+        /// Every command, with the keys it is bound to as they are shown.
+        commands: Vec<(Action, Option<String>)>,
+        /// What the titles are narrowed to.
+        filter: Field,
+        /// The commands that match, the recently used first and then the best, by place among `commands`.
+        matched: Vec<usize>,
+        /// How many of `matched` were used recently.
+        recent: usize,
+    },
 }
 
 /// How many files the finder lists at most.
 const MOST_FILES: usize = 200;
+
+/// How many commands the quick input remembers as used recently.
+const RECENT_COMMANDS: usize = 8;
 
 /// How well `path` matches `typed`, lower being better: the letters must come in order, and a match within the file name, near its start and in a short path ranks first; nothing when they do not come in order.
 fn path_score(path: &str, typed: &str) -> Option<(u8, usize, usize)> {
@@ -124,6 +197,77 @@ fn matching_files(paths: &[String], typed: &str) -> Vec<usize> {
         .collect()
 }
 
+/// The commands of `commands` whose titles match `typed`, with how many of them lead as `recent`, those used lately, the latest first; the rest best first: a title starting with it, then one holding it, then one holding its letters in order, each in the order the commands are listed.
+fn matching_commands(
+    commands: &[(Action, Option<String>)],
+    typed: &str,
+    recent: &[Action],
+) -> (Vec<usize>, usize) {
+    let typed = typed.trim().to_lowercase();
+    let rank = |action: Action| {
+        let title = action.title().to_lowercase();
+        if title.starts_with(&typed) {
+            Some(0)
+        } else if title.contains(&typed) {
+            Some(1)
+        } else if narrows_to(&title, &typed) {
+            Some(2)
+        } else {
+            None
+        }
+    };
+    let used: Vec<usize> = recent
+        .iter()
+        .filter(|action| rank(**action).is_some())
+        .filter_map(|action| commands.iter().position(|(held, _)| held == action))
+        .collect();
+    let mut scored: Vec<(u8, usize)> = commands
+        .iter()
+        .enumerate()
+        .filter(|(place, _)| !used.contains(place))
+        .filter_map(|(place, (action, _))| rank(*action).map(|rank| (rank, place)))
+        .collect();
+    scored.sort();
+    let count = used.len();
+    let matched = used
+        .into_iter()
+        .chain(scored.into_iter().map(|(_, place)| place))
+        .collect();
+    (matched, count)
+}
+
+/// The characters of `name` that `typed` matches, by their place among the characters of `name`, ignoring case: the run that holds it when `name` holds it whole, and otherwise its letters where they first come in order; none when they do not.
+pub fn matched_characters(name: &str, typed: &str) -> Vec<usize> {
+    let name: Vec<char> = name.chars().flat_map(char::to_lowercase).collect();
+    let typed: Vec<char> = typed
+        .trim()
+        .chars()
+        .flat_map(char::to_lowercase)
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    if typed.is_empty() {
+        return Vec::new();
+    }
+    let whole: String = typed.iter().collect();
+    let joined: String = name.iter().collect();
+    if let Some(start) = joined.find(&whole) {
+        let first = joined[..start].chars().count();
+        return (first..first + typed.len()).collect();
+    }
+    let mut places = Vec::new();
+    let mut wanted = typed.iter().peekable();
+    for (place, held) in name.iter().enumerate() {
+        if wanted.peek() == Some(&held) {
+            places.push(place);
+            wanted.next();
+        }
+    }
+    if wanted.peek().is_some() {
+        return Vec::new();
+    }
+    places
+}
+
 /// Whether the letters of `typed` come in order in `name`, ignoring case.
 fn narrows_to(name: &str, typed: &str) -> bool {
     let mut rest = name.chars().flat_map(char::to_lowercase);
@@ -140,18 +284,51 @@ impl Items {
             Self::Places { locations, .. } => (0..locations.len()).collect(),
             Self::Actions { offered, .. } => (0..offered.len()).collect(),
             Self::History { commits, .. } => (0..commits.len()).collect(),
-            Self::Outline { items, filter } => items
+            Self::Outline { items, .. } => items
                 .iter()
                 .enumerate()
-                .filter(|(_, item)| narrows_to(&item.name, filter.text().trim()))
+                .filter(|(_, item)| narrows_to(&item.name, self.query().trim()))
                 .map(|(place, _)| place)
                 .collect(),
-            Self::Files { matched, .. } => matched.clone(),
+            Self::Files { matched, .. } | Self::Commands { matched, .. } => matched.clone(),
             Self::Problems { problems } => (0..problems.len()).collect(),
             Self::Symbols { locations, .. } | Self::Search { locations, .. } => {
                 (0..locations.len()).collect()
             }
         }
+    }
+
+    /// What the quick input lists while it holds these items, when it can hold them.
+    pub fn quick(&self) -> Option<Quick> {
+        match self {
+            Self::Files { .. } => Some(Quick::Files),
+            Self::Commands { .. } => Some(Quick::Commands),
+            Self::Symbols { .. } => Some(Quick::Symbols),
+            Self::Outline { .. } => Some(Quick::Outline),
+            Self::Search { .. } => Some(Quick::Search),
+            _ => None,
+        }
+    }
+
+    /// The field narrowing the items, when they have one.
+    pub fn filter(&self) -> Option<&Field> {
+        match self {
+            Self::Outline { filter, .. }
+            | Self::Files { filter, .. }
+            | Self::Commands { filter, .. }
+            | Self::Symbols { filter, .. }
+            | Self::Search { filter, .. } => Some(filter),
+            _ => None,
+        }
+    }
+
+    /// What is typed to narrow the items, without the character that says what the quick input lists.
+    pub fn query(&self) -> &str {
+        let Some(filter) = self.filter() else {
+            return "";
+        };
+        let prefix = self.quick().map_or("", Quick::prefix);
+        filter.text().strip_prefix(prefix).unwrap_or(filter.text())
     }
 
     /// How many rows there are.
@@ -176,6 +353,7 @@ impl Items {
             }
             Self::Outline { .. } => "Outline".to_owned(),
             Self::Files { .. } => "Files".to_owned(),
+            Self::Commands { .. } => "Commands".to_owned(),
             Self::Symbols { .. } => "Symbols".to_owned(),
             Self::Search { .. } => "Search".to_owned(),
             Self::Problems { .. } => "Problems".to_owned(),
@@ -198,6 +376,8 @@ pub struct Listing {
     pub problem: Option<String>,
     /// Where it hangs, in logical pixels of the window.
     pub at: (f32, f32),
+    /// Whether it is the quick input over the command center, whose first character says what it lists.
+    pub quick: bool,
 }
 
 impl Listing {
@@ -210,6 +390,7 @@ impl Listing {
             answered: false,
             problem: None,
             at,
+            quick: false,
         }
     }
 }
@@ -251,143 +432,238 @@ impl WorkspaceState {
         self
     }
 
-    /// Lists the items of the outline of the file shown at `at`, to go to one by typing part of its name.
-    pub fn outline_requested(mut self, at: (f32, f32)) -> Self {
-        let Some(session) = self.review_index() else {
-            return self;
-        };
-        let Some(document) = self.shown_document() else {
-            return self;
-        };
-        let items = document
-            .syntax
-            .as_ref()
-            .map(|syntax| syntax.outline(document.field.text()))
+    /// Opens the quick input at `at` over the items of the outline of the file shown, to go to one by typing part of its name.
+    pub fn outline_requested(self, at: (f32, f32)) -> Self {
+        self.quick_opened(Field::new(Quick::Outline.prefix()), at)
+    }
+
+    /// Opens the quick input at `at` over the files of the project the review panel is about, to open one by typing part of its path.
+    pub fn file_finder_requested(self, at: (f32, f32)) -> Self {
+        self.quick_opened(Field::new(Quick::Files.prefix()), at)
+    }
+
+    /// Opens the quick input at `at` over the commands that can be carried out where the keyboard is, to carry one out by typing part of its name.
+    pub fn commands_requested(self, at: (f32, f32)) -> Self {
+        self.quick_opened(Field::new(Quick::Commands.prefix()), at)
+    }
+
+    /// Opens the quick input at `at` over the symbols of the project, as the language server of the file shown finds them.
+    pub fn symbols_requested(self, at: (f32, f32)) -> Self {
+        self.quick_opened(Field::new(Quick::Symbols.prefix()), at)
+    }
+
+    /// Opens the quick input at `at` over the lines of the files of the project holding what is typed, starting from what is selected in the file shown.
+    pub fn search_requested(self, at: (f32, f32)) -> Self {
+        let selected = self
+            .shown_document()
+            .map(|document| document.field.selected().to_owned())
+            .filter(|selected| !selected.is_empty() && !selected.contains('\n'))
             .unwrap_or_default();
-        let caret = document.field.caret();
-        let picked = items
-            .iter()
-            .rposition(|item| item.range.start <= caret && caret <= item.range.end)
-            .unwrap_or(0);
+        let typed = format!("{}{selected}", Quick::Search.prefix());
+        self.quick_opened(Field::new(typed), at)
+    }
+
+    /// The quick input at `at` holding `filter`, listing what its first character says, or saying why it cannot.
+    fn quick_opened(mut self, filter: Field, at: (f32, f32)) -> Self {
+        let quick = Quick::of(filter.text());
+        let query = filter
+            .text()
+            .strip_prefix(quick.prefix())
+            .unwrap_or_default()
+            .to_owned();
+        let session = self.review_index();
+        let mut picked = 0;
+        let mut problem = None;
+        let mut answered = true;
+        let items = match quick {
+            Quick::Commands => {
+                let coding = self.shown_document().is_some();
+                let keymap = self.editor.keymap();
+                let commands: Vec<(Action, Option<String>)> = Action::ALL
+                    .into_iter()
+                    .filter(|action| *action != Action::CommandPalette && !action.in_terminal())
+                    .filter(|action| coding || action.everywhere())
+                    .map(|action| (action, keymap.label(action)))
+                    .collect();
+                let (matched, recent) = matching_commands(&commands, &query, &self.recent_commands);
+                Items::Commands {
+                    commands,
+                    filter,
+                    matched,
+                    recent,
+                }
+            }
+            Quick::Files => {
+                if session.is_none() {
+                    problem = Some("Open a project to go to its files".to_owned());
+                }
+                let paths = if session.is_some() {
+                    self.files.clone()
+                } else {
+                    Vec::new()
+                };
+                let matched = matching_files(&paths, &query);
+                Items::Files {
+                    paths,
+                    filter,
+                    matched,
+                }
+            }
+            Quick::Outline => {
+                let items = match self.shown_document() {
+                    Some(document) => {
+                        let items = document
+                            .syntax
+                            .as_ref()
+                            .map(|syntax| syntax.outline(document.field.text()))
+                            .unwrap_or_default();
+                        let caret = document.field.caret();
+                        picked = items
+                            .iter()
+                            .rposition(|item| item.range.start <= caret && caret <= item.range.end)
+                            .filter(|_| query.is_empty())
+                            .unwrap_or(0);
+                        items
+                    }
+                    None => {
+                        problem = Some("Open a file to go to its symbols".to_owned());
+                        Vec::new()
+                    }
+                };
+                Items::Outline { items, filter }
+            }
+            Quick::Symbols => {
+                let path = self
+                    .shown_viewer()
+                    .filter(|_| self.coding())
+                    .map(|viewer| viewer.path.clone())
+                    .unwrap_or_default();
+                if path.is_empty() || session.is_none() {
+                    problem = Some("Open a file to go to the symbols of its project".to_owned());
+                } else if !query.is_empty() {
+                    answered = false;
+                    self.outbox.push(Outgoing::WorkspaceSymbols {
+                        session: session.unwrap_or_default(),
+                        path: path.clone(),
+                        query: query.clone(),
+                    });
+                }
+                Items::Symbols {
+                    path,
+                    filter,
+                    locations: Vec::new(),
+                }
+            }
+            Quick::Search => {
+                match session {
+                    None => problem = Some("Open a project to search its files".to_owned()),
+                    Some(session) if !query.is_empty() => {
+                        answered = false;
+                        self.outbox.push(Outgoing::SearchFiles {
+                            session,
+                            query: query.clone(),
+                        });
+                    }
+                    Some(_) => {}
+                }
+                Items::Search {
+                    filter,
+                    locations: Vec::new(),
+                }
+            }
+        };
         self.listing = Some(Listing {
-            session,
-            items: Items::Outline {
-                items,
-                filter: Field::new(""),
-            },
+            session: session.unwrap_or_default(),
+            items,
             picked,
-            answered: true,
-            problem: None,
+            answered,
+            problem,
             at,
+            quick: true,
         });
         self
     }
 
-    /// Lists the files of the project the review panel is about at `at`, to open one by typing part of its path.
-    pub fn file_finder_requested(mut self, at: (f32, f32)) -> Self {
-        let Some(session) = self.review_index() else {
-            return self;
-        };
-        let paths = self.files.clone();
-        let matched = matching_files(&paths, "");
-        self.listing = Some(Listing {
-            session,
-            items: Items::Files {
-                paths,
-                filter: Field::new(""),
-                matched,
-            },
-            picked: 0,
-            answered: true,
-            problem: None,
-            at,
-        });
+    /// The state after `action` was carried out from the quick input: it leads the commands used recently.
+    pub fn command_used(mut self, action: Action) -> Self {
+        self.recent_commands.retain(|held| *held != action);
+        self.recent_commands.insert(0, action);
+        self.recent_commands.truncate(RECENT_COMMANDS);
         self
+    }
+
+    /// The command that taking the row `row` of the list, or the row picked when there is none, carries out, when the list holds commands.
+    pub fn command_taken(&self, row: Option<usize>) -> Option<Action> {
+        let listing = self.listing.as_ref()?;
+        let Items::Commands { commands, .. } = &listing.items else {
+            return None;
+        };
+        let index = *listing.items.rows().get(row.unwrap_or(listing.picked))?;
+        commands.get(index).map(|(action, _)| *action)
     }
 
     /// The field narrowing the list, when the list has one.
     pub fn listing_filter(&self) -> Option<&Field> {
-        match &self.listing.as_ref()?.items {
-            Items::Outline { filter, .. }
-            | Items::Files { filter, .. }
-            | Items::Symbols { filter, .. }
-            | Items::Search { filter, .. } => Some(filter),
-            _ => None,
-        }
+        self.listing.as_ref()?.items.filter()
     }
 
-    /// The state after the field narrowing the list was changed by `edit`: the first row is picked.
+    /// The state after the field narrowing the list was changed by `edit`: the first row is picked, and the quick input lists something else when its first character says to.
     pub fn listing_filtered(mut self, edit: Edit) -> Self {
+        let has_session = self.review_index().is_some();
         let Some(listing) = self.listing.as_mut() else {
             return self;
         };
-        match &mut listing.items {
+        if listing.quick
+            && let Some(filter) = listing.items.filter()
+        {
+            let mut changed = filter.clone();
+            changed.apply(edit.clone());
+            if listing.items.quick() != Some(Quick::of(changed.text())) {
+                let at = listing.at;
+                return self.quick_opened(changed, at);
+            }
+        }
+        let recent = self.recent_commands.clone();
+        let session = listing.session;
+        let items = &mut listing.items;
+        let before = items.query().to_owned();
+        match items {
             Items::Outline { filter, .. } => filter.apply(edit),
-            Items::Files {
-                paths,
-                filter,
-                matched,
-            } => {
-                filter.apply(edit);
-                *matched = matching_files(paths, filter.text());
-            }
-            Items::Symbols { path, filter, .. } => {
-                let before = filter.text().to_owned();
-                filter.apply(edit);
-                if filter.text() != before {
-                    let request = Outgoing::WorkspaceSymbols {
-                        session: listing.session,
-                        path: path.clone(),
-                        query: filter.text().to_owned(),
-                    };
-                    listing.answered = false;
-                    self.outbox.push(request);
-                }
-            }
-            Items::Search { filter, .. } => {
-                let before = filter.text().to_owned();
-                filter.apply(edit);
-                if filter.text() != before {
-                    let request = Outgoing::SearchFiles {
-                        session: listing.session,
-                        query: filter.text().to_owned(),
-                    };
-                    listing.answered = false;
-                    self.outbox.push(request);
-                }
-            }
+            Items::Files { filter, .. }
+            | Items::Commands { filter, .. }
+            | Items::Symbols { filter, .. }
+            | Items::Search { filter, .. } => filter.apply(edit),
             _ => return self,
+        }
+        let query = items.query().to_owned();
+        match items {
+            Items::Files { paths, matched, .. } => *matched = matching_files(paths, &query),
+            Items::Commands {
+                commands,
+                matched,
+                recent: count,
+                ..
+            } => (*matched, *count) = matching_commands(commands, &query, &recent),
+            Items::Symbols { path, .. } if query != before && !path.is_empty() => {
+                let request = Outgoing::WorkspaceSymbols {
+                    session,
+                    path: path.clone(),
+                    query,
+                };
+                listing.answered = false;
+                listing.problem = None;
+                self.outbox.push(request);
+            }
+            Items::Search { .. } if query != before && has_session && !query.is_empty() => {
+                listing.answered = false;
+                listing.problem = None;
+                self.outbox.push(Outgoing::SearchFiles { session, query });
+            }
+            _ => {}
         }
         if let Some(listing) = self.listing.as_mut() {
             listing.picked = 0;
         }
-        self
-    }
-
-    /// Lists the symbols of the project as the language server of the file shown finds them, at `at`, narrowed by what is typed.
-    pub fn symbols_requested(mut self, at: (f32, f32)) -> Self {
-        let Some(session) = self.review_index() else {
-            return self;
-        };
-        let Some(path) = self
-            .shown_viewer()
-            .filter(|_| self.coding())
-            .map(|viewer| viewer.path.clone())
-        else {
-            return self;
-        };
-        self.listing = Some(Listing {
-            session,
-            items: Items::Symbols {
-                path,
-                filter: Field::new(""),
-                locations: Vec::new(),
-            },
-            picked: 0,
-            answered: true,
-            problem: None,
-            at,
-        });
         self
     }
 
@@ -419,52 +695,17 @@ impl WorkspaceState {
         self
     }
 
-    /// Lists the lines of the files of the project the review panel is about that hold what is typed, at `at`, starting from what is selected in the file shown.
-    pub fn search_requested(mut self, at: (f32, f32)) -> Self {
-        let Some(session) = self.review_index() else {
-            return self;
-        };
-        let selected = self
-            .shown_document()
-            .map(|document| document.field.selected().to_owned())
-            .filter(|selected| !selected.is_empty() && !selected.contains('\n'))
-            .unwrap_or_default();
-        let mut filter = Field::new(selected.clone());
-        filter.apply(Edit::SelectAll);
-        self.listing = Some(Listing {
-            session,
-            items: Items::Search {
-                filter,
-                locations: Vec::new(),
-            },
-            picked: 0,
-            answered: selected.is_empty(),
-            problem: None,
-            at,
-        });
-        if !selected.is_empty() {
-            self.outbox.push(Outgoing::SearchFiles {
-                session,
-                query: selected,
-            });
-        }
-        self
-    }
-
     /// The state after the server named `locations`, the symbols or the lines of the project found for `query`, when that is still what is typed.
     pub fn with_symbols(mut self, session: usize, query: &str, locations: Vec<Location>) -> Self {
         if let Some(listing) = self.listing.as_mut()
             && listing.session == session
+            && listing.items.query() == query
             && let Items::Symbols {
-                filter,
-                locations: held,
-                ..
+                locations: held, ..
             }
             | Items::Search {
-                filter,
-                locations: held,
+                locations: held, ..
             } = &mut listing.items
-            && filter.text() == query
         {
             *held = locations;
             listing.answered = true;
@@ -530,6 +771,7 @@ impl WorkspaceState {
                 Some(location) => self.go_to_location(session, location),
                 None => self,
             },
+            Items::Commands { .. } => self,
             Items::Actions { path, offered } => {
                 let usable = offered
                     .get(index)

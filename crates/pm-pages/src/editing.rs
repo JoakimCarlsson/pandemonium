@@ -169,6 +169,24 @@ impl Screen {
         self.in_workspace(|state| state.file_finder_requested(at))
     }
 
+    /// The screen listing the commands that can be carried out where the keyboard is, at `at`, to carry one out.
+    pub fn commands_requested(self, at: (f32, f32)) -> Self {
+        self.in_workspace(|state| state.commands_requested(at))
+    }
+
+    /// The screen after `action` was carried out from the quick input, which lists it among the commands used recently.
+    pub fn command_used(self, action: pm_editor::Action) -> Self {
+        self.in_workspace(|state| state.command_used(action))
+    }
+
+    /// The command that taking the row `row` of the list over the file, or the row picked when there is none, carries out, when the list holds commands.
+    pub fn command_taken(&self, row: Option<usize>) -> Option<pm_editor::Action> {
+        match self {
+            Self::Workspace(state) => state.command_taken(row),
+            Self::Onboarding(_) => None,
+        }
+    }
+
     /// The screen listing the symbols of the project at `at`, as the language server of the file shown finds them.
     pub fn symbols_requested(self, at: (f32, f32)) -> Self {
         self.in_workspace(|state| state.symbols_requested(at))

@@ -1,10 +1,9 @@
 //! The workspace window: the sidebar of projects and sessions beside the page the reader is on.
 
-use pm_style::{Role, bg, flex, h_full, min_h, w_full};
+use pm_style::{Role, bg, flex, flex_1, flex_col, h_full, min_h, w_full};
 use pm_text::Shaper;
 use pm_ui::{Node, node};
 
-use pm_components::Menu;
 use pm_components::arrange::{
     PROJECT_MENU_NEW, PROJECT_MENU_REMOVE, ProjectMenu, SESSION_MENU_CLOSE,
     SESSION_MENU_COPY_BRANCH, SESSION_MENU_COPY_PATH, SESSION_MENU_OPEN_FOLDER,
@@ -14,6 +13,8 @@ use pm_components::context_menu::{editor_menu, field_menu};
 use pm_components::git_prompts;
 use pm_components::message_menu::message_menu;
 use pm_components::open_files::EDITOR_FIELD;
+use pm_components::title_bar::TITLE_BAR_HEIGHT;
+use pm_components::{Menu, TitleBar};
 use pm_components::{adder, history, plan, review, settings, sidebar, terminal, welcome};
 
 pub use pm_components::state::{
@@ -26,8 +27,9 @@ use pm_components::state::Page;
 
 use crate::panes;
 
-/// The whole workspace screen for `state` in a window `width` logical pixels wide.
+/// The whole workspace screen for `state` in a window `width` logical pixels wide and `height` tall: the title bar over the sidebar and the page.
 pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut Shaper) -> Node {
+    let page = height - TITLE_BAR_HEIGHT;
     let planning = state.plan_shown().is_some();
     let reviewing = state.review_session().is_some() && state.review;
     let sidebar_width = state.sidebar_width;
@@ -44,34 +46,45 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
         }
         Page::History => history::history(state),
         Page::Extensions => pm_components::extensions::extensions(state),
-        _ => panes::starting_page(state, main_width, height, shaper),
+        _ => panes::starting_page(state, main_width, page, shaper),
     };
-    let mut root = node()
-        .styles([flex(), w_full(), h_full(), min_h(0), bg(Role::Background)])
+    let mut body = node()
+        .styles([flex(), flex_1(), w_full(), min_h(0)])
         .child(sidebar::sidebar(state))
         .child(main);
     if let Some(source) = state.plan_shown() {
-        root = root.child(plan::panel(state, source, plan_width, shaper));
+        body = body.child(plan::panel(state, source, plan_width, shaper));
     }
     if let Some(session) = state.review_session().filter(|_| reviewing) {
-        root = root.child(review::review(state, session, shaper));
+        body = body.child(review::review(state, session, shaper));
     }
+    let mut root = node()
+        .styles([
+            flex(),
+            flex_col(),
+            w_full(),
+            h_full(),
+            min_h(0),
+            bg(Role::Background),
+        ])
+        .child(TitleBar::of(state).build())
+        .child(body);
     root = root.child(
         Sash::column(SIDEBAR_SASH)
-            .at((sidebar_width, 0.0), height)
+            .at((sidebar_width, TITLE_BAR_HEIGHT), page)
             .build(),
     );
     if planning {
         root = root.child(
             Sash::column(PLAN_SASH)
-                .at((sidebar_width + main_width, 0.0), height)
+                .at((sidebar_width + main_width, TITLE_BAR_HEIGHT), page)
                 .build(),
         );
     }
     if reviewing {
         root = root.child(
             Sash::column(REVIEW_SASH)
-                .at((width - review_width, 0.0), height)
+                .at((width - review_width, TITLE_BAR_HEIGHT), page)
                 .build(),
         );
     }
@@ -79,7 +92,7 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
         root = root.child(
             Sash::row(TERMINAL_SASH)
                 .at(
-                    (sidebar_width, height - terminal::height(state, height)),
+                    (sidebar_width, height - terminal::height(state, page)),
                     main_width,
                 )
                 .build(),

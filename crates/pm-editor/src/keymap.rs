@@ -13,6 +13,10 @@ use serde::{Deserialize, Serialize};
 /// Something the keys can ask the editor to do.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum Action {
+    /// Lists every action, to carry one out by typing part of its name.
+    CommandPalette,
+    /// Opens the settings.
+    OpenSettings,
     /// Goes to where the name at the caret is defined.
     GoToDefinition,
     /// Goes to where it is declared.
@@ -127,7 +131,9 @@ pub enum Action {
 
 impl Action {
     /// Every action, in the order the keymap lists them.
-    pub const ALL: [Self; 55] = [
+    pub const ALL: [Self; 57] = [
+        Self::CommandPalette,
+        Self::OpenSettings,
         Self::GoToDefinition,
         Self::GoToDeclaration,
         Self::GoToTypeDefinition,
@@ -188,6 +194,8 @@ impl Action {
     /// The name it is kept under in the settings.
     pub fn key(self) -> &'static str {
         match self {
+            Self::CommandPalette => "command_palette",
+            Self::OpenSettings => "open_settings",
             Self::GoToDefinition => "go_to_definition",
             Self::GoToDeclaration => "go_to_declaration",
             Self::GoToTypeDefinition => "go_to_type_definition",
@@ -249,6 +257,8 @@ impl Action {
     /// What the keymap calls it.
     pub fn title(self) -> &'static str {
         match self {
+            Self::CommandPalette => "Show All Commands",
+            Self::OpenSettings => "Open Settings",
             Self::GoToDefinition => "Go to Definition",
             Self::GoToDeclaration => "Go to Declaration",
             Self::GoToTypeDefinition => "Go to Type Definition",
@@ -310,6 +320,7 @@ impl Action {
     /// The group the keymap lists it under.
     pub fn group(self) -> &'static str {
         match self {
+            Self::CommandPalette | Self::OpenSettings => "Window",
             Self::GoToDefinition
             | Self::GoToDeclaration
             | Self::GoToTypeDefinition
@@ -354,7 +365,11 @@ impl Action {
     pub fn everywhere(self) -> bool {
         matches!(
             self,
-            Self::FileFinder | Self::SearchProject | Self::Problems
+            Self::CommandPalette
+                | Self::OpenSettings
+                | Self::FileFinder
+                | Self::SearchProject
+                | Self::Problems
         )
     }
 
@@ -429,6 +444,8 @@ impl Preset {
                 (MatchingBracket, &["ctrl+shift+\\"]),
             ],
             Self::JetBrains => &[
+                (CommandPalette, &["ctrl+shift+a"]),
+                (OpenSettings, &["ctrl+alt+s"]),
                 (GoToDefinition, &["ctrl+b"]),
                 (GoToTypeDefinition, &["ctrl+shift+b"]),
                 (GoToImplementation, &["ctrl+alt+b"]),
@@ -485,6 +502,8 @@ impl Preset {
 fn own() -> &'static [(Action, &'static [&'static str])] {
     use Action::*;
     &[
+        (CommandPalette, &["ctrl+shift+p", "f1"]),
+        (OpenSettings, &["ctrl+,"]),
         (GoToDefinition, &["f12"]),
         (GoToDeclaration, &[]),
         (GoToTypeDefinition, &["ctrl+f12"]),
