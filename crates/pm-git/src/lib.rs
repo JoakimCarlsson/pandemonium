@@ -147,6 +147,22 @@ fn run_indexed(
     }
 }
 
+/// The folder git keeps the state of the worktree at `directory` in, and the one it shares with every worktree of the repository, as full paths; the same folder twice for a repository's own worktree.
+pub fn git_folders(directory: &Path) -> Option<(PathBuf, PathBuf)> {
+    let said = run(
+        directory,
+        &[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-dir",
+            "--git-common-dir",
+        ],
+    )
+    .ok()?;
+    let mut lines = said.lines().map(|line| PathBuf::from(line.trim()));
+    Some((lines.next()?, lines.next()?))
+}
+
 /// Whether `directory` is inside a Git repository.
 pub fn is_repository(directory: &Path) -> bool {
     directory.is_dir() && run(directory, &["rev-parse", "--git-dir"]).is_ok()

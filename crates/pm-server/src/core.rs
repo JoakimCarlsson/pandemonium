@@ -10,6 +10,7 @@ use pm_acp::{Agent, Chat, Event};
 use pm_protocol::{ServerMessage, SessionInfo};
 
 use crate::documents::Documents;
+use crate::folders::Folders;
 use crate::languages::Installs;
 use crate::queue::Waiting;
 use crate::sessions::{self, Meta};
@@ -78,6 +79,27 @@ impl Session {
         self.log.last().map_or(0, |(seq, _)| *seq) + 1
     }
 
+    /// Whether the log ends on a turn handed to the agent that never ended.
+    pub(crate) fn turn_open(&self) -> bool {
+        self.log.iter().fold(false, |open, (_, event)| match event {
+            Event::Prompted { .. } => true,
+            Event::Finished(_) | Event::Failed(_) => false,
+            _ => open,
+        })
+    }
+
+    /// Ends the turn the log leaves open, numbered `number`, as stopped for `reason`, and returns what it noted; nothing when no turn is open.
+    pub(crate) fn end_open_turn(&mut self, number: u64, reason: &str) -> Told {
+        if !self.turn_open() {
+            return Told::new();
+        }
+        self.busy = false;
+        [Event::Halted, Event::Finished(Some(reason.to_owned()))]
+            .into_iter()
+            .map(|event| (number, self.note(number, &event), event))
+            .collect()
+    }
+
     /// Whether `event` only says again what the last context usage in the log said.
     pub(crate) fn repeats(&self, event: &Event) -> bool {
         matches!(event, Event::Used(_))
@@ -109,6 +131,12 @@ impl Session {
     }
 }
 
+/// Why a turn the server was working on when it stopped ended.
+const INTERRUPTED: &str = "the server stopped while the agent was working";
+
+/// Why a turn whose agent is no longer running ended when it was stopped.
+pub(crate) const NOT_RUNNING: &str = "the agent was no longer running";
+
 /// Events noted in a session's log and yet to be told to the clients: the session, the number and the event.
 pub(crate) type Told = Vec<(u64, u64, Event)>;
 
@@ -128,6 +156,8 @@ pub(crate) struct Core {
     pub(crate) documents: Documents,
     /// What the server knows of installing languages.
     pub(crate) installs: Installs,
+    /// The folders clients watch.
+    pub(crate) folders: Folders,
 }
 
 impl Core {
@@ -141,6 +171,7 @@ impl Core {
             next_terminal: AtomicU64::new(1),
             documents: Documents::new(),
             installs: Installs::default(),
+            folders: Folders::new(),
         })
     }
 
@@ -165,6 +196,7 @@ impl Core {
                 highest = highest.max(number);
                 let mut session = Session::new(agent, PathBuf::from(&meta.directory), log, meta);
                 session.forget_queue(number);
+                session.end_open_turn(number, INTERRUPTED);
                 sessions.insert(number, session);
             }
         }

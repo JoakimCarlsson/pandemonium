@@ -20,6 +20,7 @@ use crate::view::View;
 
 mod code;
 mod machine;
+mod watch;
 
 /// The most files listed for the list behind an `@`.
 const FILE_LIMIT: usize = 20_000;
@@ -263,6 +264,10 @@ pub struct Work {
     tokens: HashMap<String, String>,
     /// The number of the last event each session had when the window first listed it, by machine and number; the events up to it are history, not news.
     history: HashMap<(Host, u64), u64>,
+    /// The folder each server was last asked to watch, by machine.
+    watched: HashMap<Host, Option<String>>,
+    /// The sessions, by position, whose folders were asked to be read while a read of them was on its way, so they are read once more when it lands.
+    read_again: HashSet<usize>,
     /// The machine and the server's number of each session, by the session's position.
     numbers: HashMap<usize, (Host, u64)>,
     /// The session's position, by the machine and the server's number.
@@ -304,6 +309,8 @@ impl Work {
             machine: None,
             tokens: HashMap::new(),
             history: HashMap::new(),
+            watched: HashMap::new(),
+            read_again: HashSet::new(),
             numbers: HashMap::new(),
             positions: HashMap::new(),
             forgotten: HashSet::new(),
@@ -1040,12 +1047,14 @@ impl Work {
             }
         }
         self.publish_working(model);
+        self.watch_shown(model);
         copies
     }
 
     /// Takes in what the servers and the threads have reported since the last look.
     pub fn poll(&mut self, model: &State<Screen>) {
         self.ask_wanted_grammars(model);
+        self.watch_shown(model);
         while let Ok(job) = self.jobs.try_recv() {
             self.pending.set(self.pending.get().saturating_sub(1));
             self.finish(model, job);
@@ -1059,6 +1068,7 @@ impl Work {
             for item in items {
                 match item {
                     Incoming::Connected => {
+                        self.watched.remove(&host);
                         self.ask(&host, Request::Sessions, Pending::Sessions(host.clone()));
                         self.share_extensions(model, &host);
                         model.update(|screen| {
@@ -1131,6 +1141,9 @@ impl Work {
                             diagnostics,
                         );
                     }),
+                    Incoming::FolderChanged(directory) => {
+                        self.folder_changed(model, &host, &directory);
+                    }
                     Incoming::ExtensionsChanged(extensions) => {
                         model.update(|screen| {
                             *screen =
@@ -1221,6 +1234,10 @@ impl Work {
     fn reindex(&mut self, moved: &[Option<usize>]) {
         let before = std::mem::take(&mut self.numbers);
         self.positions.clear();
+        self.read_again = std::mem::take(&mut self.read_again)
+            .into_iter()
+            .filter_map(|old| moved.get(old).copied().flatten())
+            .collect();
         for (old, key) in before {
             match moved.get(old).copied().flatten() {
                 Some(new) => {
@@ -1509,6 +1526,9 @@ impl Work {
                             .checked_out(session, branch.as_deref(), head.as_deref())
                             .tracked(session, branch.as_deref(), tracking, operation);
                     });
+                }
+                if self.read_again.remove(&session) {
+                    self.refresh(model, session);
                 }
             }
             Pending::Stage(session) => {
@@ -1859,6 +1879,7 @@ impl Work {
                 .any(|pending| matches!(pending, Pending::Inspect(held) if *held == session))
         });
         if inspecting {
+            self.read_again.insert(session);
             return;
         }
         let log = model.read(|screen| screen.graph_wanted());

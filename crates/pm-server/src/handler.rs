@@ -503,6 +503,10 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             Err(reason) => failed(reason),
         },
         Request::SaveMcpServers { servers } => saved_list("mcp-servers", &servers),
+        Request::WatchFolders { directories } => {
+            core.folders.watch(connection, directories);
+            Response::Done
+        }
         Request::MachineSettings => Response::MachineSettings {
             settings: crate::machine::settings(),
         },
@@ -617,10 +621,15 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             }
         }),
         Request::Cancel { session } => telling(core, session, |held| {
-            if let Some(chat) = &held.chat {
-                chat.cancel();
-            }
-            held.drop_queue(session)
+            let mut told = match &held.chat {
+                Some(chat) => {
+                    chat.cancel();
+                    Told::new()
+                }
+                None => held.end_open_turn(session, crate::core::NOT_RUNNING),
+            };
+            told.extend(held.drop_queue(session));
+            told
         }),
         Request::Set {
             session,

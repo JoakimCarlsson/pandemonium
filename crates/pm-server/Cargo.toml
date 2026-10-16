@@ -10,6 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 getrandom = "0.4.3"
+notify = "8.2.0"
 pm-acp.workspace = true
 pm-git.workspace = true
 pm-lsp.workspace = true

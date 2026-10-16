@@ -60,6 +60,8 @@ pub enum Incoming {
     },
     /// The languages changed; these are all of them now.
     ExtensionsChanged(Vec<pm_protocol::ExtensionInfo>),
+    /// The files of a folder this client watches changed; this is the folder, as the client named it.
+    FolderChanged(String),
     /// Something an agent did, numbered within its session.
     Event {
         /// The session.
@@ -409,6 +411,9 @@ fn converse(
                     }
                     ServerMessage::ExtensionsChanged { extensions } => {
                         let _ = reporter.send(Incoming::ExtensionsChanged(extensions));
+                    }
+                    ServerMessage::FolderChanged { directory } => {
+                        let _ = reporter.send(Incoming::FolderChanged(directory));
                     }
                     ServerMessage::Ready { .. } | ServerMessage::Denied { .. } => {}
                 }

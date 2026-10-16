@@ -121,6 +121,7 @@ request with exactly one `response` carrying the same `id`.
 | `save_agent_servers`| `servers`: `[{id, name, command, env, package, installer, home}]`, `env`: `[[name, value]]`                                | `done`          |
 | `mcp_servers`  | none                                                                                             | `mcp_servers`   |
 | `save_mcp_servers`| `servers`: `[{name, target, env, description, website, enabled}]`, `env`: `[[name, value]]`                                     | `done`          |
+| `watch_folders`| `directories`: `[string]`                                                                       | `done`          |
 | `machine_settings`| none                                                                                          | `machine_settings` |
 | `save_machine_settings`| `settings`: `{git, agents, shell, languages}`                                            | `done`          |
 | `latest_release`| `channel`: `stable` or `nightly`                                                                 | `latest_release` |
@@ -249,7 +250,10 @@ request with exactly one `response` carrying the same `id`.
   `session_added`. Fails while the agent is still writing that reply.
 - **`cancel`:** stops the running turn and drops the prompts queued behind it,
   each with an `Unqueued` event. A question the agent was waiting on is
-  declined.
+  declined. When the agent is no longer running but its log leaves a turn open,
+  the turn is ended with `Halted` and a `Finished` that says why.
+- A turn the server was working on when it stopped is ended the same way the
+  next time it loads its sessions, so no session stays working after a restart.
 - **`choose`:** answers an `ask` event. `ticket` is the ticket of the question
   and `option` is the `id` of one of its choices.
 - **`answer`:** answers an `Inquire` event. `ticket` is the ticket of the form
@@ -283,6 +287,14 @@ request with exactly one `response` carrying the same `id`.
 - **`sessions`:** every session the server holds, running or not, with enough
   to list it. To open one, send `attach` with `after: 0`: the log replays the
   whole conversation.
+- **`watch_folders`:** the server tells this connection with `folder_changed`
+  whenever a file in one of `directories` changes, or what git keeps about it
+  (the index, `HEAD`, the references, also where a worktree keeps them outside
+  its folder). It replaces the folders the connection watched before; an empty
+  list watches nothing, and the watches end with the connection. Changes inside
+  `.pandemonium`, `node_modules`, `target`, `.git/objects` and `.git/logs` are
+  left out, and changes coming close together are told once, at most every
+  1.5 seconds while the folder keeps changing.
 - **`machine_settings`, `save_machine_settings`:** what the reader set up for
   the work the server does on its machine, kept by the server, replaced whole by
   the save and put to work at once. `git` is `{auto_fetch, fetch_minutes,
@@ -643,7 +655,12 @@ keeps its own emulator for them.
 ```json
 { "type": "diagnostics", "directory": "~/code/app", "path": "src/main.rs", "version": 4, "diagnostics": [{ "span": { "start": { "line": 3, "character": 8 }, "end": { "line": 3, "character": 12 } }, "severity": "error", "message": "…", "source": "rustc" }] }
 { "type": "extensions_changed", "extensions": [{ "id": "rust", "name": "Rust", "kind": "language", "installed": true, … }] }
+{ "type": "folder_changed", "directory": "~/code/app" }
 ```
+
+- `folder_changed`: a folder the connection watches with `watch_folders`
+  changed, named as the connection named it. The window reads the git panel of
+  the session shown again when it gets one.
 
 - `diagnostics`: what a language server finds wrong with a file the connection
   opened, replacing what it found before. `severity` is `error`, `warning`,

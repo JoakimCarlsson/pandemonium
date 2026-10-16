@@ -141,4 +141,5 @@ pub(crate) fn serve(core: &Arc<Core>, stream: TcpStream, token: &str) {
         connections.retain(|held| !Arc::ptr_eq(held, &connection));
     }
     core.documents.forget(&connection);
+    core.folders.forget(&connection);
 }
