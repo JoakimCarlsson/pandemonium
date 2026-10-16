@@ -12,6 +12,7 @@ suffixes = ["md", "markdown", "mdx"]
 aliases = ["md"]
 requires = ["markdown-inline"]
 indent = 2
+pairs = ["()", "[]", "``"]
 
 [grammar_file]
 url = "https://github.com/tree-sitter-grammars/tree-sitter-markdown/releases/download/v0.5.3/tree-sitter-markdown.wasm"

@@ -13,6 +13,8 @@ pub struct Edited {
     pub change: Option<(i32, TextChange)>,
     /// Completions to ask the language server for, as the character typed that asked when one did; the list is open and waiting for them already.
     pub ask: Option<Option<String>>,
+    /// Whether to ask the language server what the call the caret is in looks like: a character that opens or separates arguments was typed, or the signature showing follows the text.
+    pub signature: bool,
 }
 
 impl Document {
@@ -20,12 +22,19 @@ impl Document {
     pub fn edit(&mut self, edit: Edit) -> Option<Edited> {
         let before = self.field.text().to_owned();
         let before_lines: Lines = self.line_index().clone();
+        let caret_line = self.line_of(self.field.caret());
         self.field.apply(edit);
         let Some(change) = self.refresh(&before, &before_lines) else {
+            self.carry_folds(None);
             self.refilter(false);
+            if self.line_of(self.field.caret()) != caret_line {
+                self.signature = None;
+            }
             return None;
         };
         self.hover = None;
+        self.grown.clear();
+        self.carry_folds(Some(&change));
         let typed: Option<char> = (change.range.is_empty() && change.text.chars().count() == 1)
             .then(|| change.text.chars().next())
             .flatten();
@@ -38,6 +47,16 @@ impl Document {
         });
         let trigger =
             typed.filter(|character| self.triggers.iter().any(|held| held.ends_with(*character)));
+        let opened = (change.range.is_empty() && change.text.chars().count() <= 2)
+            .then(|| change.text.chars().next())
+            .flatten();
+        let signature = self.synced
+            && (self.signature.is_some()
+                || opened.is_some_and(|character| {
+                    self.signature_triggers
+                        .iter()
+                        .any(|held| held.ends_with(character))
+                }));
         let reopen = self.refilter(trigger.is_some());
         let ask = match (trigger, reopen) {
             (Some(character), _) => Some(Some(character.to_string())),
@@ -49,7 +68,11 @@ impl Document {
             let at = self.completion.as_ref().map_or((0.0, 0.0), |held| held.at);
             self.open_completion(at);
         }
-        Some(Edited { change: told, ask })
+        Some(Edited {
+            change: told,
+            ask,
+            signature,
+        })
     }
 
     /// Opens the list of completions at the caret, waiting for the language server, hanging at `at`; returns the version and place they are asked for at.

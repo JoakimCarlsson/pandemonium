@@ -20,7 +20,8 @@ use pm_components::settings::{SETTINGS_CLOSE, SETTINGS_SCROLL};
 use pm_components::state::{COMMENT_CANCEL, COMMENT_FIELD};
 use pm_components::tree_actions::{ENTRY_FIELD, TreeTarget};
 use pm_components::{
-    MENU_COPY, MENU_CUT, MENU_PASTE, MENU_REDO, MENU_SELECT_ALL, MENU_UNDO, is_menu_item,
+    EDITOR_MENU_HEIGHT, EditorCommand, MENU_COPY, MENU_CUT, MENU_PASTE, MENU_REDO, MENU_SELECT_ALL,
+    MENU_UNDO, is_menu_item,
 };
 use pm_input::{Button, Focus, FocusId, Key, KeyEvent, Modifiers, PointerEvent, PointerState};
 use pm_pages::{
@@ -161,6 +162,12 @@ pub struct App {
     hover_leaving: Option<Instant>,
     /// Whether the pointer has been on the card about a word since it opened, so leaving it takes it away at once.
     hover_entered: bool,
+    /// Whether Ctrl+K was pressed in the file shown, so the next key finishes a pair.
+    paired: bool,
+    /// The file, version and caret the language server was last asked about for where the thing at the caret is used.
+    highlighted: Option<(String, i32, usize)>,
+    /// The file, version and caret waiting to settle before the language server is asked about them, and since when.
+    highlight_wait: Option<((String, i32, usize), Instant)>,
     /// What a press on selectable text took, from its start to its end, and
     /// how much it takes at a time, while the button is held, so dragging
     /// selects from it.
@@ -274,6 +281,9 @@ impl Default for App {
             hover_rest: None,
             hover_leaving: None,
             hover_entered: false,
+            paired: false,
+            highlighted: None,
+            highlight_wait: None,
         }
     }
 }
@@ -430,6 +440,7 @@ impl App {
             window.request_redraw();
         }
         self.place_completion();
+        self.place_signature();
     }
 
     /// Carries out what pressing the element `id` means.
@@ -491,6 +502,11 @@ impl App {
         }
         self.model
             .update(|state| *state = std::mem::take(state).after(id));
+        if pm_components::find::is_find_part(id)
+            || pm_components::listing::listing_row_of(id).is_some()
+        {
+            self.show_editor_caret();
+        }
         if let Some(next) = Screen::refocus(id) {
             self.focus.focus(next);
         }
@@ -839,6 +855,7 @@ impl App {
                     self.model
                         .update(|state| *state = std::mem::take(state).comment_drag_begun(id));
                 }
+                self.press_beside_code(on);
                 let screen = self.model.get();
                 self.project_press = on
                     .and_then(|id| screen.header_of(id))
@@ -940,7 +957,11 @@ impl App {
             MENU_COPY => self.clip(field, Clip::Copy),
             MENU_PASTE => self.clip(field, Clip::Paste),
             MENU_SELECT_ALL => self.edit_field(field, Edit::SelectAll),
-            _ => {}
+            row => {
+                if let Some(command) = EditorCommand::of(row) {
+                    self.editor_command(command);
+                }
+            }
         }
     }
 
@@ -1098,6 +1119,18 @@ impl App {
         if !inside {
             self.edit_field(id, Edit::Place(offset, false));
         }
+        let (x, y) = if id == EDITOR_FIELD {
+            let (width, height) = self
+                .renderer
+                .as_ref()
+                .map_or((1280.0, 800.0), |renderer| renderer.size());
+            (
+                x.min(width - 272.0).max(0.0),
+                y.min(height - EDITOR_MENU_HEIGHT - 8.0).max(0.0),
+            )
+        } else {
+            (x, y)
+        };
         self.model
             .update(|state| *state = std::mem::take(state).with_menu(id, (x, y)));
     }
@@ -1113,6 +1146,10 @@ impl App {
             return;
         };
         self.focus.focus(id);
+        if id == EDITOR_FIELD && self.modifiers.alt {
+            self.edit_field(id, Edit::AddSelection(offset, offset));
+            return;
+        }
         let clicks = match self.last_press {
             Some((at, last, clicks)) if last == id && at.elapsed() < DOUBLE_CLICK => clicks + 1,
             _ => 1,
@@ -1130,14 +1167,23 @@ impl App {
     /// Moves the caret of the multiline field `id` by `by` lines as they are
     /// drawn, to the start or the end of the text when there is no line there.
     fn move_vertically(&mut self, id: FocusId, by: isize, extend: bool) {
-        let Some((caret, length)) = self
+        let Some((caret, length, several)) = self
             .model
             .get()
             .field(id)
-            .map(|field| (field.caret(), field.text().len()))
+            .map(|field| (field.caret(), field.text().len(), field.has_others()))
         else {
             return;
         };
+        if several {
+            let motion = if by < 0 {
+                pm_text::Motion::LineUp
+            } else {
+                pm_text::Motion::LineDown
+            };
+            self.edit_field(id, Edit::Move(motion, extend));
+            return;
+        }
         let target = self
             .output
             .vertical(id, caret, by)
@@ -1148,12 +1194,22 @@ impl App {
     /// Moves the caret of the multiline field `id` to the start, or the end
     /// when `end` is set, of the line it is on as the line is drawn.
     fn move_to_line_edge(&mut self, id: FocusId, end: bool, extend: bool) {
-        let Some(caret) = self
-            .model
-            .read(|screen| screen.field(id).map(|field| field.caret()))
-        else {
+        let Some((caret, several)) = self.model.read(|screen| {
+            screen
+                .field(id)
+                .map(|field| (field.caret(), field.has_others()))
+        }) else {
             return;
         };
+        if several {
+            let motion = if end {
+                pm_text::Motion::LineEnd
+            } else {
+                pm_text::Motion::LineStart
+            };
+            self.edit_field(id, Edit::Move(motion, extend));
+            return;
+        }
         if let Some(target) = self.output.line_edge(id, caret, end) {
             self.edit_field(id, Edit::Place(target, extend));
         }
@@ -1187,9 +1243,17 @@ impl App {
 
     /// Makes `edit` to the field `id`.
     fn edit_field(&mut self, id: FocusId, edit: Edit) {
+        let looks = |app: &Self| {
+            app.model.read(|screen| {
+                screen
+                    .field(id)
+                    .map(|field| (field.caret(), field.selection(), field.text().len()))
+            })
+        };
+        let before = looks(self);
         self.model
             .update(|state| *state = std::mem::take(state).edited(id, edit));
-        if id == EDITOR_FIELD {
+        if id == EDITOR_FIELD && looks(self) != before {
             self.show_editor_caret();
         }
     }
@@ -1218,7 +1282,13 @@ impl App {
                     .model
                     .get()
                     .field(id)
-                    .map(|field| field.selected().to_owned())
+                    .map(|field| {
+                        if field.has_others() {
+                            field.selected_all()
+                        } else {
+                            field.selected().to_owned()
+                        }
+                    })
                     .unwrap_or_default();
                 if selected.is_empty() {
                     return;
@@ -1261,6 +1331,11 @@ impl App {
         if self.terminal_key(event)
             || self.text_key(event)
             || self.card_key(event)
+            || self.rename_key(event)
+            || self.find_key(event)
+            || self.listing_key(event)
+            || self.finder_key(event)
+            || self.search_key(event)
             || self.editor_key(event)
         {
             return;
@@ -1455,11 +1530,18 @@ impl ApplicationHandler for App {
         self.take_standings();
         self.work.discover(&self.model);
         self.work.poll(&self.model);
+        self.settle_rename_focus();
         if self.model.read(Screen::has_outbox) {
             self.deliver();
         }
         let waiting = self.model.read(|screen| screen.waiting()) || self.work.busy();
-        let hover = self.editor_hover_due();
+        let hover = [self.editor_hover_due(), self.editor_highlight_due()]
+            .into_iter()
+            .flatten()
+            .min();
+        if self.model.read(Screen::has_outbox) {
+            self.deliver();
+        }
         event_loop.set_control_flow(match (waiting, hover) {
             (true, _) => ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(50)),
             (false, Some(due)) => ControlFlow::WaitUntil(due),

@@ -33,7 +33,7 @@ impl WorkspaceState {
     }
 
     /// Every open file of every session, whether its tab is showing or kept aside, with the session it belongs to.
-    fn every_viewer(&mut self) -> Vec<(usize, &mut Viewer)> {
+    pub(crate) fn every_viewer(&mut self) -> Vec<(usize, &mut Viewer)> {
         let owner = self.files_owner;
         let mut found: Vec<(usize, &mut Viewer)> = Vec::new();
         if let Some(owner) = owner {
@@ -46,7 +46,7 @@ impl WorkspaceState {
     }
 
     /// The open file at `path` of the session at `session`, as it is in the folder.
-    fn file_mut(&mut self, session: usize, path: &str) -> Option<&mut Document> {
+    pub(crate) fn file_mut(&mut self, session: usize, path: &str) -> Option<&mut Document> {
         self.every_viewer()
             .into_iter()
             .find(|(owner, viewer)| *owner == session && is_file(viewer, path))
@@ -218,17 +218,18 @@ impl WorkspaceState {
         self
     }
 
-    /// The state after the language server opened the file at `path` of the session at `session`, offering completions after `triggers`, or could not, for `problem`.
+    /// The state after the language server opened the file at `path` of the session at `session`, saying something unasked after `triggers`, or could not, for `problem`.
     pub fn with_opened(
         mut self,
         session: usize,
         path: &str,
-        outcome: Result<Vec<String>, String>,
+        outcome: Result<pm_protocol::Triggers, String>,
     ) -> Self {
         if let Some(document) = self.file_mut(session, path) {
             match outcome {
                 Ok(triggers) => {
-                    document.triggers = triggers;
+                    document.triggers = triggers.completion;
+                    document.signature_triggers = triggers.signature;
                     document.server_problem = None;
                 }
                 Err(problem) => {
@@ -287,33 +288,31 @@ impl WorkspaceState {
         let Some((session, viewer)) = self.shown_mut() else {
             return;
         };
-        let path = viewer.path.clone();
-        let Contents::Text(document) = &mut viewer.contents else {
-            return;
-        };
-        let Some(edited) = document.edit(edit) else {
-            return;
-        };
-        let position = document.position_of(document.field.caret());
-        let version = document.version;
-        viewer.preview = false;
-        if let Some((version, change)) = edited.change {
-            self.outbox.push(Outgoing::ChangeDocument {
-                session,
-                path: path.clone(),
-                version,
-                changes: vec![change],
-            });
+        let told = edit_viewer(session, viewer, edit);
+        self.outbox.extend(told);
+    }
+
+    /// Makes `changes`, each a stretch of the text as it is now and what replaces it, to the open file at `path` of the session at `session`, whether its tab is showing or not.
+    pub(crate) fn change_open_file(
+        &mut self,
+        session: usize,
+        path: &str,
+        changes: Vec<pm_protocol::TextChange>,
+    ) {
+        let mut told = Vec::new();
+        if let Some((_, viewer)) = self
+            .every_viewer()
+            .into_iter()
+            .find(|(owner, viewer)| *owner == session && is_file(viewer, path))
+        {
+            let edits = document_of(viewer)
+                .map(|document| document.change_edits(changes))
+                .unwrap_or_default();
+            for edit in edits {
+                told.extend(edit_viewer(session, viewer, edit));
+            }
         }
-        if let Some(trigger) = edited.ask {
-            self.outbox.push(Outgoing::Completion {
-                session,
-                path,
-                version,
-                position,
-                trigger,
-            });
-        }
+        self.outbox.extend(told);
     }
 
     /// Makes `edits` to the file shown, one after another.
@@ -327,7 +326,13 @@ impl WorkspaceState {
     pub fn editor_newline(mut self) -> Self {
         let edits = self
             .shown_document()
-            .map(Document::newline_edits)
+            .map(|document| {
+                if document.field.has_others() {
+                    vec![Edit::Insert('\n')]
+                } else {
+                    document.newline_edits()
+                }
+            })
             .unwrap_or_default();
         self.file_edits(edits);
         self
@@ -345,8 +350,22 @@ impl WorkspaceState {
         self
     }
 
-    /// Types `character` into the file shown; a closing bracket typed where the line holds nothing else goes back a level of indentation.
+    /// Types `character` into the file shown as its language pairs it; a closing bracket typed where the line holds nothing else goes back a level of indentation.
     pub fn editor_typed(mut self, character: char) -> Self {
+        if self
+            .shown_document()
+            .is_some_and(|document| document.field.has_others())
+        {
+            self.file_edited(Edit::Insert(character));
+            return self;
+        }
+        if let Some(edit) = self
+            .shown_document()
+            .and_then(|document| document.typed_edit(character))
+        {
+            self.file_edited(edit);
+            return self;
+        }
         self.file_edited(Edit::Insert(character));
         let edits = self
             .shown_document()
@@ -575,34 +594,12 @@ impl WorkspaceState {
         self
     }
 
-    /// Asks the language server where the thing at the byte `offset` of the file shown is defined.
-    pub fn definition_requested(mut self, offset: usize) -> Self {
-        let Some((session, viewer)) = self.shown_mut() else {
-            return self;
-        };
-        let path = viewer.path.clone();
-        let Some(document) = document_of(viewer).filter(|document| document.synced) else {
-            return self;
-        };
-        let request = Outgoing::Definition {
-            session,
-            path,
-            version: document.version,
-            position: document.position_of(offset),
-        };
-        self.outbox.push(request);
-        self
-    }
-
-    /// The state after the language server said where something in a file of the session at `session` is defined: the first place it named is shown, in the file open already, in a tab of its own for another file of the project, or read only for a file outside it.
-    pub fn with_definitions(
+    /// Shows `location`, a place in a file of the session at `session`: in the file open already, in a tab of its own for another file of the project, or read only for a file outside it.
+    pub(crate) fn go_to_location(
         mut self,
         session: usize,
-        locations: Vec<pm_protocol::Location>,
+        location: pm_protocol::Location,
     ) -> Self {
-        let Some(location) = locations.into_iter().next() else {
-            return self;
-        };
         if self.review_index() != Some(session) {
             return self;
         }
@@ -683,4 +680,45 @@ impl WorkspaceState {
         self.shown_document()
             .is_some_and(|document| document.hover.is_some())
     }
+}
+
+/// Applies `edit` to the text of `viewer`, the file at its path of the session at `session`, keeping its syntax tree and the completions open at its caret in step; returns what its language server is to be told and asked. Changing its text keeps its tab open.
+fn edit_viewer(session: usize, viewer: &mut Viewer, edit: Edit) -> Vec<Outgoing> {
+    let path = viewer.path.clone();
+    let Contents::Text(document) = &mut viewer.contents else {
+        return Vec::new();
+    };
+    let Some(edited) = document.edit(edit) else {
+        return Vec::new();
+    };
+    let position = document.position_of(document.field.caret());
+    let version = document.version;
+    viewer.preview = false;
+    let mut told = Vec::new();
+    if let Some((version, change)) = edited.change {
+        told.push(Outgoing::ChangeDocument {
+            session,
+            path: path.clone(),
+            version,
+            changes: vec![change],
+        });
+    }
+    if edited.signature {
+        told.push(Outgoing::Signature {
+            session,
+            path: path.clone(),
+            version,
+            position,
+        });
+    }
+    if let Some(trigger) = edited.ask {
+        told.push(Outgoing::Completion {
+            session,
+            path,
+            version,
+            position,
+            trigger,
+        });
+    }
+    told
 }

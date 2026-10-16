@@ -12,6 +12,7 @@ suffixes = ["tsx"]
 aliases = ["typescriptreact"]
 line_comment = "//"
 indent = 2
+pairs = ["()", "[]", "{}", "\"\"", "''", "``"]
 hidden = true
 
 [grammar_file]

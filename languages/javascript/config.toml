@@ -12,6 +12,7 @@ suffixes = ["js", "mjs", "cjs", "jsx"]
 aliases = ["js", "jsx"]
 line_comment = "//"
 indent = 2
+pairs = ["()", "[]", "{}", "\"\"", "''", "``"]
 
 
 [grammar_file]

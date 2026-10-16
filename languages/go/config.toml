@@ -12,6 +12,7 @@ aliases = ["golang"]
 line_comment = "//"
 indent = 4
 tabs = true
+pairs = ["()", "[]", "{}", "\"\"", "''", "``"]
 
 [grammar_file]
 url = "https://github.com/tree-sitter/tree-sitter-go/releases/download/v0.25.0/tree-sitter-go.wasm"

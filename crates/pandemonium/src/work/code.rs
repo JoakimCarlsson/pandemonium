@@ -26,6 +26,12 @@ fn compile(bundle: &GrammarBundle) -> Result<Arc<Grammar>, String> {
             indent: bundle.indent,
             tabs: bundle.tabs,
             line_comment: bundle.line_comment.clone(),
+            pairs: Editing::pairs_of(
+                &bundle
+                    .pairs
+                    .clone()
+                    .unwrap_or_else(pm_treesitter::default_pairs),
+            ),
         },
     )
 }
@@ -197,6 +203,7 @@ impl Work {
                 path,
                 version,
                 position,
+                seek,
             } => self.ask_in_folder(
                 model,
                 session,
@@ -205,8 +212,217 @@ impl Work {
                     path,
                     version,
                     position,
+                    seek,
                 },
-                Pending::Definitions(session),
+                Pending::Definitions(session, seek),
+            ),
+            Outgoing::Blame {
+                session,
+                path,
+                line,
+            } => {
+                let asked = path.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::Blame {
+                        directory,
+                        path,
+                        line,
+                    },
+                    Pending::Blame(session, asked, line),
+                );
+            }
+            Outgoing::Problems { session } => self.ask_in_folder(
+                model,
+                session,
+                |directory| Request::Problems { directory },
+                Pending::Problems(session),
+            ),
+            Outgoing::SearchFiles { session, query } => {
+                let asked = query.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::SearchFiles {
+                        directory,
+                        query,
+                        regex: false,
+                        case: false,
+                    },
+                    Pending::Symbols(session, asked),
+                );
+            }
+            Outgoing::WorkspaceSymbols {
+                session,
+                path,
+                query,
+            } => {
+                let asked = query.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::WorkspaceSymbols {
+                        directory,
+                        path,
+                        query,
+                    },
+                    Pending::Symbols(session, asked),
+                );
+            }
+            Outgoing::ReadBase { session, path } => {
+                let asked = path.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::ReadFile {
+                        directory,
+                        path,
+                        head: true,
+                        revision: None,
+                    },
+                    Pending::Base(session, asked),
+                );
+            }
+            Outgoing::Highlights {
+                session,
+                path,
+                version,
+                position,
+            } => {
+                let asked = path.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::Highlights {
+                        directory,
+                        path,
+                        version,
+                        position,
+                    },
+                    Pending::Highlights(session, asked, version),
+                );
+            }
+            Outgoing::Signature {
+                session,
+                path,
+                version,
+                position,
+            } => {
+                let asked = path.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::Signature {
+                        directory,
+                        path,
+                        version,
+                        position,
+                    },
+                    Pending::Signature(session, asked, version),
+                );
+            }
+            Outgoing::RenameSymbol {
+                session,
+                path,
+                version,
+                position,
+                name,
+            } => self.ask_in_folder(
+                model,
+                session,
+                |directory| Request::Rename {
+                    directory,
+                    path,
+                    version,
+                    position,
+                    name,
+                },
+                Pending::Renamed(session),
+            ),
+            Outgoing::CodeActions {
+                session,
+                path,
+                version,
+                span,
+            } => {
+                let asked = path.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::CodeActions {
+                        directory,
+                        path,
+                        version,
+                        span,
+                    },
+                    Pending::CodeActions(session, asked),
+                );
+            }
+            Outgoing::TakeCodeAction {
+                session,
+                path,
+                index,
+            } => self.ask_in_folder(
+                model,
+                session,
+                |directory| Request::TakeCodeAction {
+                    directory,
+                    path,
+                    index,
+                },
+                Pending::TookAction(session),
+            ),
+            Outgoing::RevealFile { session, path } => {
+                if let Some(placement) = Self::session_of(model, session)
+                    && placement.host.is_none()
+                {
+                    let root = if placement.directory.is_empty() {
+                        placement.repository
+                    } else {
+                        placement.directory
+                    };
+                    reveal(&std::path::Path::new(&root).join(path));
+                }
+            }
+            Outgoing::Permalink {
+                session,
+                path,
+                line,
+            } => self.ask_in_folder(
+                model,
+                session,
+                |directory| Request::Permalink {
+                    directory,
+                    path,
+                    line,
+                },
+                Pending::Permalink,
+            ),
+            Outgoing::FileHistory { session, path } => {
+                let asked = path.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::FileHistory { directory, path },
+                    Pending::FileHistory(session, asked),
+                );
+            }
+            Outgoing::ReadRevision {
+                session,
+                path,
+                revision,
+                label,
+            } => self.ask_in_folder(
+                model,
+                session,
+                |directory| Request::ReadFile {
+                    directory,
+                    path,
+                    head: false,
+                    revision: Some(revision),
+                },
+                Pending::Revision(session, label),
             ),
             Outgoing::Extensions => self.ask(&None, Request::Extensions, Pending::Extensions),
             Outgoing::InstallExtensions { ids } => {
@@ -265,7 +481,13 @@ impl Work {
             }
             (Pending::Opened(session, path), response) => {
                 let outcome = match response {
-                    Response::Opened { triggers } => Ok(triggers),
+                    Response::Opened {
+                        triggers,
+                        signature,
+                    } => Ok(pm_protocol::Triggers {
+                        completion: triggers,
+                        signature,
+                    }),
                     other => Err(Self::trouble_of(other)),
                 };
                 model.update(|screen| {
@@ -308,10 +530,120 @@ impl Work {
                         std::mem::take(screen).with_formatted(session, &path, version, edits, save);
                 });
             }
-            (Pending::Definitions(session), Response::Definitions { locations }) => {
+            (Pending::Definitions(session, seek), Response::Definitions { locations }) => {
                 model.update(|screen| {
-                    *screen = std::mem::take(screen).with_definitions(session, locations);
+                    *screen = std::mem::take(screen).with_places(session, seek, locations);
                 });
+            }
+            (
+                Pending::Renamed(session) | Pending::TookAction(session),
+                Response::Edited { files },
+            ) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_edited_files(session, files);
+                });
+            }
+            (Pending::Renamed(_), other) => {
+                let problem = Self::trouble_of(other);
+                model.update(|screen| *screen = std::mem::take(screen).rename_failed(problem));
+            }
+            (Pending::TookAction(session), other) => {
+                let problem = Self::trouble_of(other);
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).noted(session, &problem);
+                });
+            }
+            (Pending::CodeActions(session, path), Response::CodeActions { actions }) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_code_actions(session, &path, actions);
+                });
+            }
+            (Pending::CodeActions(..), other) => {
+                let problem = Self::trouble_of(other);
+                model.update(|screen| *screen = std::mem::take(screen).listing_failed(problem));
+            }
+            (Pending::Blame(session, path, line), Response::Blamed { blame }) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_blame(session, &path, line, blame);
+                });
+            }
+            (Pending::Problems(session), response) => {
+                let problems = match response {
+                    Response::Problems { problems } => problems,
+                    _ => Vec::new(),
+                };
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_problems(session, problems)
+                });
+            }
+            (Pending::Symbols(session, query), response) => {
+                let locations = match response {
+                    Response::Definitions { locations } => locations,
+                    _ => Vec::new(),
+                };
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_symbols(session, &query, locations);
+                });
+            }
+            (Pending::Base(session, path), response) => {
+                let base = match response {
+                    Response::File { text, .. } => text,
+                    _ => None,
+                };
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_base(session, &path, base)
+                });
+            }
+            (Pending::Highlights(session, path, version), response) => {
+                let spans = match response {
+                    Response::Highlights { spans } => spans,
+                    _ => Vec::new(),
+                };
+                model.update(|screen| {
+                    *screen =
+                        std::mem::take(screen).with_highlights(session, &path, version, spans);
+                });
+            }
+            (Pending::Signature(session, path, version), response) => {
+                let signature = match response {
+                    Response::Signature { signature } => signature,
+                    _ => None,
+                };
+                model.update(|screen| {
+                    *screen =
+                        std::mem::take(screen).with_signature(session, &path, version, signature);
+                });
+            }
+            (Pending::Permalink, Response::Address { url }) => {
+                model.update(|screen| *screen = std::mem::take(screen).with_copied(url));
+            }
+            (Pending::FileHistory(session, path), Response::FileHistory { commits }) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_file_history(session, &path, commits);
+                });
+            }
+            (Pending::Definitions(..) | Pending::FileHistory(..), other) => {
+                let problem = Self::trouble_of(other);
+                model.update(|screen| *screen = std::mem::take(screen).listing_failed(problem));
+            }
+            (
+                Pending::Revision(session, label),
+                Response::File {
+                    text: Some(text),
+                    language,
+                    ..
+                },
+            ) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_revision(session, label, text, language);
+                });
+            }
+            (Pending::Revision(session, label), other) => {
+                let problem = format!("{label}: {}", Self::trouble_of(other));
+                model.update(|screen| *screen = std::mem::take(screen).noted(session, &problem));
+            }
+            (Pending::Permalink, other) => {
+                eprintln!("no permalink: {}", Self::trouble_of(other));
             }
             (Pending::Extensions, Response::Extensions { extensions }) => {
                 model.update(|screen| {
@@ -338,5 +670,47 @@ impl Work {
             }
             Err(reason) => eprintln!("the grammar of {language} could not be loaded: {reason}"),
         }
+    }
+}
+
+/// Shows `file` in the file manager of this machine, picked out among the files beside it where the file manager can do that, and its folder opened otherwise.
+fn reveal(file: &std::path::Path) {
+    let quiet = |command: &mut std::process::Command| {
+        command
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    };
+    let shown = if cfg!(target_os = "macos") {
+        quiet(std::process::Command::new("open").arg("-R").arg(file))
+    } else if cfg!(target_os = "windows") {
+        quiet(std::process::Command::new("explorer").arg(format!("/select,{}", file.display())))
+    } else {
+        let address = format!("file://{}", file.display());
+        quiet(std::process::Command::new("dbus-send").args([
+            "--session",
+            "--print-reply",
+            "--dest=org.freedesktop.FileManager1",
+            "--type=method_call",
+            "/org/freedesktop/FileManager1",
+            "org.freedesktop.FileManager1.ShowItems",
+            &format!("array:string:{address}"),
+            "string:",
+        ]))
+    };
+    if !shown && let Some(folder) = file.parent() {
+        let opener = if cfg!(target_os = "macos") {
+            "open"
+        } else if cfg!(target_os = "windows") {
+            "explorer"
+        } else {
+            "xdg-open"
+        };
+        let _ = std::process::Command::new(opener)
+            .arg(folder)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
     }
 }

@@ -12,7 +12,13 @@ use pm_text::Shaper;
 use pm_ui::{Mark, Node, Paint, node, text};
 
 use crate::editor::COMPLETIONS_SHOWN;
+use crate::input::{Input, Size as InputSize};
+use crate::line_edits::{GO_TO_LINE, GO_TO_LINE_BOX, GoingTo};
+use crate::listing::{
+    Items, LISTING_BODY, LISTING_FILTER, LISTING_ROW_BASE, LISTING_SHOWN, Listing,
+};
 use crate::markdown::Markdown;
+use crate::navigate::{RENAME_BOX, RENAME_SYMBOL, Renaming};
 use crate::parts::line;
 use crate::state::WorkspaceState;
 use crate::viewer::severity_role;
@@ -177,6 +183,54 @@ fn completion_list(completion: &Completions) -> Option<Node> {
             .styles([w_px(LIST_WIDTH)])
             .focusable(COMPLETION_BODY)
             .children(rows),
+    )
+}
+
+/// How wide the documentation beside the list of completions is, in logical pixels.
+const DOCS_WIDTH: f32 = 380.0;
+
+/// How many lines of the documentation of a completion are read at most.
+const DOCS_LINES: usize = 40;
+
+/// The documentation of the completion picked in `completion`, beside the list, when the language server sent any: its detail as code, then what it says.
+fn completion_docs(
+    completion: &Completions,
+    language: Option<&str>,
+    shaper: &mut Shaper,
+) -> Option<Node> {
+    let item = completion
+        .shown
+        .get(completion.picked)
+        .and_then(|index| completion.items.get(*index))?;
+    let said = item.documentation.as_deref()?;
+    let width = DOCS_WIDTH - 26.0;
+    let mut parts: Vec<Node> = Vec::new();
+    if let Some(detail) = &item.detail {
+        parts.extend(code_lines(detail, "", language, width, shaper));
+        parts.push(rule());
+    }
+    for piece in pieces(said, DOCS_LINES) {
+        parts.push(match piece {
+            Piece::Code(fence, body) => node()
+                .styles([flex(), flex_col(), min_w_px(0), overflow_hidden()])
+                .children(code_lines(&body, &fence, language, width, shaper)),
+            Piece::Prose(text) => Markdown::new(&text, width)
+                .size(12)
+                .tone(Role::Muted)
+                .build(shaper),
+            Piece::Rule => rule(),
+        });
+    }
+    Some(
+        floating((completion.at.0 + LIST_WIDTH + 4.0, completion.at.1))
+            .styles([
+                w_px(DOCS_WIDTH),
+                max_h(list_height(completion).max(160.0) / 4.0),
+                gap(1.5),
+                px(3),
+                py(2),
+            ])
+            .children(parts),
     )
 }
 
@@ -406,7 +460,11 @@ fn hover_card(
 /// What floats over the file shown, in a window `height` logical pixels tall: its list of completions and its card about a place, when they are open.
 pub fn assist(state: &WorkspaceState, height: f32, shaper: &mut Shaper) -> Vec<Node> {
     let Some(document) = state.shown_document() else {
-        return Vec::new();
+        return state
+            .listing_shown()
+            .map(listing_panel)
+            .into_iter()
+            .collect();
     };
     let mut floating = Vec::new();
     if let Some(card) = &document.hover {
@@ -419,8 +477,345 @@ pub fn assist(state: &WorkspaceState, height: f32, shaper: &mut Shaper) -> Vec<N
     }
     if let Some(completion) = document.completion.as_ref().filter(|held| !held.loading) {
         floating.extend(completion_list(completion));
+        floating.extend(completion_docs(
+            completion,
+            document.language.as_deref(),
+            shaper,
+        ));
+    }
+    if let Some(listing) = state.listing_shown() {
+        floating.push(listing_panel(listing));
+    }
+    if let Some(renaming) = &state.renaming {
+        floating.push(rename_box(renaming));
+    }
+    if let Some(going) = &state.going_to {
+        floating.push(go_to_line_box(going, document.lines()));
+    }
+    if let Some(signature) = document
+        .signature
+        .as_ref()
+        .filter(|_| document.completion.is_none())
+    {
+        floating.push(signature_card(signature, state.signature_at));
     }
     floating
+}
+
+/// How tall the card with the signature of the call the caret is in is, in logical pixels.
+pub fn signature_height(signature: &pm_protocol::Signature) -> f32 {
+    if signature.documentation.is_some() {
+        52.0
+    } else {
+        30.0
+    }
+}
+
+/// The signature of the call the caret is in, the parameter the caret is at marked, with the first line of what its documentation says.
+fn signature_card(signature: &pm_protocol::Signature, at: (f32, f32)) -> Node {
+    let mut marks = Vec::new();
+    if let Some((start, end)) = signature.active {
+        marks.push(Mark {
+            range: start..end,
+            color: Role::Accent.into(),
+            paint: Paint::Ink,
+        });
+        marks.push(Mark {
+            range: start..end,
+            color: Role::Accent.into(),
+            paint: Paint::Underline,
+        });
+    }
+    let mut label = signature.label.clone();
+    if signature.others > 0 {
+        label.push_str(&format!("   (+{} more)", signature.others));
+    }
+    let first_line = signature
+        .documentation
+        .as_deref()
+        .and_then(|said| {
+            said.lines()
+                .map(str::trim)
+                .find(|line| !line.is_empty() && !line.starts_with("```"))
+        })
+        .map(|line| line.replace('`', ""));
+    floating(at)
+        .styles([max_w_px(CARD_WIDTH + 120.0), gap(0.5), px(2), py(1)])
+        .child(
+            node().styles([overflow_hidden()]).child(
+                text(label)
+                    .styles([
+                        text_px(12),
+                        leading_ratio(1.5),
+                        font_mono(),
+                        text_color(Role::Text),
+                    ])
+                    .marks(marks),
+            ),
+        )
+        .children(first_line.map(|said| {
+            node()
+                .styles([overflow_hidden()])
+                .child(line(said, 11, 1.4, Role::Muted))
+        }))
+}
+
+/// The box the number of the line to go to is typed in, saying how many lines there are.
+fn go_to_line_box(going: &GoingTo, lines: usize) -> Node {
+    floating(going.at)
+        .styles([w_px(260.0), gap(1), p(1.5)])
+        .focusable(GO_TO_LINE_BOX)
+        .child(
+            Input::new(&going.field, GO_TO_LINE)
+                .size(InputSize::Sm)
+                .placeholder("Line number")
+                .build(),
+        )
+        .child(line(
+            format!("Go to a line from 1 to {lines}"),
+            11,
+            1.4,
+            Role::Subtle,
+        ))
+}
+
+/// How wide the list over the file is, in logical pixels.
+const LISTING_WIDTH: f32 = 600.0;
+
+/// A line of the list over the file, `content` in `pixels` and `tone`, cut short at the edge of the room it is given; in the font for code when `code`.
+fn cell(content: impl Into<String>, pixels: u32, tone: Role, code: bool) -> Node {
+    let mut line =
+        text(content.into()).styles([text_px(pixels), leading_ratio(1.4), text_color(tone)]);
+    if code {
+        line = line.styles([font_mono()]);
+    }
+    node()
+        .styles([flex_1(), min_w_px(0), overflow_hidden()])
+        .child(line)
+}
+
+/// A line of the list over the file that keeps its own width, `content` in `pixels` and `tone`.
+fn tag(content: impl Into<String>, pixels: u32, tone: Role) -> Node {
+    node()
+        .styles([
+            flex_none(),
+            max_w_px(LISTING_WIDTH * 0.5),
+            overflow_hidden(),
+        ])
+        .child(line(content.into(), pixels, 1.4, tone))
+}
+
+/// The file name and line of `location`, as a list names it.
+fn place_name(location: &pm_protocol::Location) -> String {
+    let name = location.path.rsplit('/').next().unwrap_or(&location.path);
+    format!("{name}:{}", location.span.start.line + 1)
+}
+
+/// The cells of the `index`-th row of `items`.
+fn listing_cells(items: &Items, index: usize) -> Vec<Node> {
+    match items {
+        Items::Symbols { locations, .. } => {
+            let Some(location) = locations.get(index) else {
+                return Vec::new();
+            };
+            vec![
+                cell(
+                    location.name.clone().unwrap_or_default(),
+                    12,
+                    Role::Text,
+                    true,
+                ),
+                tag(place_name(location), 11, Role::Subtle),
+            ]
+        }
+        Items::Problems { problems } => {
+            let Some(problem) = problems.get(index) else {
+                return Vec::new();
+            };
+            let diagnostic = &problem.diagnostic;
+            let first = diagnostic.message.lines().next().unwrap_or_default();
+            let name = problem.path.rsplit('/').next().unwrap_or(&problem.path);
+            vec![
+                node().styles([
+                    size(2),
+                    rounded(4.0),
+                    flex_none(),
+                    bg(severity_role(diagnostic.severity)),
+                ]),
+                cell(first.to_owned(), 12, Role::Text, false),
+                tag(
+                    format!("{name}:{}", diagnostic.span.start.line + 1),
+                    11,
+                    Role::Subtle,
+                ),
+            ]
+        }
+        Items::Files { paths, .. } => {
+            let Some(path) = paths.get(index) else {
+                return Vec::new();
+            };
+            let (folder, name) = path.rsplit_once('/').unwrap_or(("", path));
+            vec![
+                crate::file_icon::file_icon(path, 4.0),
+                tag(name.to_owned(), 12, Role::Text),
+                cell(folder.to_owned(), 11, Role::Subtle, false),
+            ]
+        }
+        Items::Outline { items, .. } => {
+            let Some(item) = items.get(index) else {
+                return Vec::new();
+            };
+            vec![
+                node().styles([w_px(item.depth.min(8) as f32 * 14.0), flex_none()]),
+                node()
+                    .styles([w_px(52.0), flex_none(), overflow_hidden()])
+                    .child(line(item.context.clone(), 11, 1.4, Role::SyntaxKeyword)),
+                cell(item.name.clone(), 12, Role::Text, true),
+            ]
+        }
+        Items::Places { locations, .. } | Items::Search { locations, .. } => {
+            let Some(location) = locations.get(index) else {
+                return Vec::new();
+            };
+            match &location.name {
+                Some(name) => vec![
+                    cell(name.clone(), 12, Role::Text, true),
+                    tag(place_name(location), 11, Role::Subtle),
+                ],
+                None => vec![
+                    tag(place_name(location), 12, Role::Text),
+                    cell(
+                        location.line.as_deref().unwrap_or_default().trim(),
+                        12,
+                        Role::Muted,
+                        true,
+                    ),
+                ],
+            }
+        }
+        Items::Actions { offered, .. } => {
+            let Some(action) = offered.get(index) else {
+                return Vec::new();
+            };
+            let tone = if action.disabled.is_some() {
+                Role::Subtle
+            } else {
+                Role::Text
+            };
+            let mut cells = vec![cell(action.title.clone(), 12, tone, false)];
+            if let Some(reason) = action.disabled.as_ref().or(action.kind.as_ref()) {
+                cells.push(tag(reason.clone(), 11, Role::Subtle));
+            }
+            cells
+        }
+        Items::History { commits, .. } => {
+            let Some(commit) = commits.get(index) else {
+                return Vec::new();
+            };
+            vec![
+                cell(commit.summary.clone(), 12, Role::Text, false),
+                tag(
+                    format!("{} · {} · {}", commit.id, commit.author, commit.when),
+                    11,
+                    Role::Subtle,
+                ),
+            ]
+        }
+    }
+}
+
+/// The list over the file: its title and how many rows it has, then the rows around the one picked, or what keeps it empty.
+fn listing_panel(listing: &Listing) -> Node {
+    let shown = listing.items.rows();
+    let count = shown.len();
+    let status = match (&listing.problem, listing.answered, count) {
+        (Some(problem), _, _) => Some(problem.clone()),
+        (None, false, _) => Some("Asking…".to_owned()),
+        (None, true, 0) => Some("Nothing found".to_owned()),
+        _ => None,
+    };
+    let filter = match &listing.items {
+        Items::Outline { filter, .. } => Some((filter, "Go to an item of this file")),
+        Items::Files { filter, .. } => Some((filter, "Open a file of this project")),
+        Items::Symbols { filter, .. } => Some((filter, "Go to a symbol of this project")),
+        Items::Search { filter, .. } => Some((filter, "Search the files of this project")),
+        _ => None,
+    }
+    .map(|(filter, hint)| {
+        node().styles([px(0.5), py(0.5)]).child(
+            Input::new(filter, LISTING_FILTER)
+                .size(InputSize::Sm)
+                .placeholder(hint)
+                .build(),
+        )
+    });
+    let header = node()
+        .styles([flex(), items_center(), gap(2), h(7), px(1.5)])
+        .child(cell(listing.items.title(), 12, Role::Text, false))
+        .children((count > 0).then(|| tag(count.to_string(), 11, Role::Subtle)));
+    let first = listing
+        .picked
+        .saturating_sub(LISTING_SHOWN - 1)
+        .min(count.saturating_sub(LISTING_SHOWN));
+    let rows = (first..count.min(first + LISTING_SHOWN)).map(|place| {
+        let index = shown[place];
+        let mut row = node()
+            .styles([
+                flex(),
+                items_center(),
+                gap(3),
+                h(6.5),
+                px(1.5),
+                rounded(Radius::Sm),
+                cursor_pointer(),
+                bg(Role::SurfaceHover).hover(),
+            ])
+            .focusable(FocusId(LISTING_ROW_BASE + place as u64))
+            .children(listing_cells(&listing.items, index));
+        if place == listing.picked {
+            row = row.styles([bg(Role::SurfaceSelected)]);
+        }
+        row
+    });
+    floating(listing.at)
+        .styles([w_px(LISTING_WIDTH)])
+        .focusable(LISTING_BODY)
+        .children(filter)
+        .child(header)
+        .children(status.map(|said| {
+            node()
+                .styles([px(1.5), py(1)])
+                .child(line(said, 12, 1.4, Role::Muted))
+        }))
+        .children(rows)
+}
+
+/// The box the new name of the thing at the caret is typed in, with why the last rename failed under it.
+fn rename_box(renaming: &Renaming) -> Node {
+    let hint = if renaming.busy {
+        "Renaming…"
+    } else {
+        "Enter to rename, Escape to cancel"
+    };
+    floating(renaming.at)
+        .styles([w_px(320.0), gap(1), p(1.5)])
+        .focusable(RENAME_BOX)
+        .child(
+            Input::new(&renaming.field, RENAME_SYMBOL)
+                .size(InputSize::Sm)
+                .invalid(renaming.problem.is_some())
+                .build(),
+        )
+        .child(line(
+            renaming.problem.clone().unwrap_or_else(|| hint.to_owned()),
+            11,
+            1.4,
+            if renaming.problem.is_some() {
+                Role::Danger
+            } else {
+                Role::Subtle
+            },
+        ))
 }
 
 /// How tall the list of completions of `completion` is, in logical pixels.

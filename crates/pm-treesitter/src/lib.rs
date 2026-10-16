@@ -19,9 +19,10 @@ mod indent;
 mod kind;
 mod outline;
 pub mod registry;
+mod select;
 mod syntax;
 
-pub use grammar::{Editing, Grammar, Queries};
+pub use grammar::{Editing, Grammar, Queries, default_pairs};
 pub use highlight::Highlight;
 pub use indent::Indent;
 pub use kind::Kind;

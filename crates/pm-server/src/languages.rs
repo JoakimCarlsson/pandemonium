@@ -51,6 +51,7 @@ pub(crate) fn grammar(name: &str) -> Result<GrammarBundle, String> {
         indent: manifest.indent,
         tabs: manifest.tabs,
         line_comment: manifest.line_comment,
+        pairs: Some(manifest.pairs),
         id,
     })
 }

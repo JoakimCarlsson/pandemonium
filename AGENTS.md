@@ -83,8 +83,10 @@ One crate per layer, each depending only on the layers below it.
   index, installing languages and their servers, and the hub that runs language
   servers for the files clients have open; the server uses it), and `pm-editor`
   (an open file being edited: its syntax tree and language server version kept
-  in step, completions, indentation as the language says, formatting edits and
-  jumps back and forward; `pm-components` draws it). A language is a
+  in step, completions, indentation as the language says, pairs, whole-line
+  edits, several carets, find and replace, folding, how its lines differ from
+  the last commit, formatting edits and jumps back and forward; every rule
+  returns the edits it calls for and `pm-components` draws it). A language is a
   folder in `languages/`: a `config.toml` manifest and five tree-sitter queries.
   `make languages` writes `languages/languages.json` with every file's checksum
   after a folder changes; a release build reads the folders from the repository

@@ -12,6 +12,7 @@ suffixes = ["py", "pyi"]
 aliases = ["py", "python3"]
 line_comment = "#"
 indent = 4
+pairs = ["()", "[]", "{}", "\"\"", "''"]
 
 [grammar_file]
 url = "https://github.com/tree-sitter/tree-sitter-python/releases/download/v0.25.0/tree-sitter-python.wasm"

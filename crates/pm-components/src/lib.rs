@@ -28,8 +28,10 @@ pub mod dock;
 pub mod draft;
 pub mod editor;
 pub mod extensions;
+pub mod file_actions;
 pub mod file_icon;
 pub mod file_tree;
+pub mod find;
 pub mod folder_browser;
 pub mod git_controls;
 pub mod git_menus;
@@ -40,10 +42,14 @@ pub mod history;
 pub mod input;
 pub mod inquiry;
 pub mod jumps;
+pub mod line_edits;
+pub mod listing;
 pub mod markdown;
+pub mod marks;
 pub mod menu;
 pub mod message_menu;
 pub mod modal;
+pub mod navigate;
 pub mod open_files;
 pub mod parts;
 pub mod plan;
@@ -76,8 +82,8 @@ pub use checkbox::Checkbox;
 pub use chip::Chip;
 pub use code_box::CodeBox;
 pub use context_menu::{
-    ContextMenu, MENU_COPY, MENU_CUT, MENU_PASTE, MENU_REDO, MENU_SELECT_ALL, MENU_UNDO,
-    is_menu_item,
+    ContextMenu, EDITOR_MENU_HEIGHT, EditorCommand, MENU_COPY, MENU_CUT, MENU_PASTE, MENU_REDO,
+    MENU_SELECT_ALL, MENU_UNDO, editor_menu, is_menu_item,
 };
 pub use input::Input;
 pub use markdown::Markdown;

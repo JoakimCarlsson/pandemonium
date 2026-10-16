@@ -32,20 +32,40 @@ pub struct Editing {
     pub tabs: bool,
     /// What starts a comment that runs to the end of the line.
     pub line_comment: Option<String>,
+    /// The characters that open a pair the editor closes as the opening one is typed, each with the one that closes it.
+    pub pairs: Vec<(char, char)>,
 }
 
 impl Default for Editing {
-    /// Four spaces a level, and no line comments.
+    /// Four spaces a level, no line comments, and brackets and double quotes closed as they are opened.
     fn default() -> Self {
         Self {
             indent: 4,
             tabs: false,
             line_comment: None,
+            pairs: Editing::pairs_of(&default_pairs()),
         }
     }
 }
 
+/// The pairs closed as they are opened when a language names none: brackets and double quotes.
+pub fn default_pairs() -> Vec<String> {
+    ["()", "[]", "{}", "\"\""].map(str::to_owned).to_vec()
+}
+
 impl Editing {
+    /// The pairs `written`, each two characters, the one that opens it and the one that closes it; others are left out.
+    pub fn pairs_of(written: &[String]) -> Vec<(char, char)> {
+        written
+            .iter()
+            .filter_map(|pair| {
+                let mut characters = pair.chars();
+                let (open, close) = (characters.next()?, characters.next()?);
+                characters.next().is_none().then_some((open, close))
+            })
+            .collect()
+    }
+
     /// The text of `levels` levels of indentation.
     pub fn unit(&self, levels: usize) -> String {
         if self.tabs {

@@ -1,7 +1,8 @@
 //! One running language server: started for a project, told of the files open in it, and asked for completions and hovers.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use pm_buffer::{Position, Span};
@@ -11,7 +12,10 @@ use crate::manifest::ServerSpec;
 use crate::resolve::{found, managed};
 use crate::rpc::{Handler, Rpc};
 use crate::snippet;
-use crate::types::{Completion, CompletionKind, Diagnostic, Hover, Severity, TextChange};
+use crate::types::{
+    CodeAction, Completion, CompletionKind, Diagnostic, Hover, Seek, Severity, Signature,
+    TextChange,
+};
 use crate::uri::file_uri;
 
 /// How long a server may take to start.
@@ -26,10 +30,25 @@ const STOPPING: Duration = Duration::from_secs(2);
 /// What is done with the diagnostics a server publishes: the address of the file, the version they are about and the diagnostics.
 pub(crate) type DiagnosticsSink = Arc<dyn Fn(String, Option<i32>, Vec<Diagnostic>) + Send + Sync>;
 
+/// What a server last said is wrong with each file, as it wrote it, by address, to hand back when asking it for changes at a place.
+type Raw = Arc<Mutex<HashMap<String, Vec<Value>>>>;
+
+/// The edits a server asked to have made while it carried out a command, as it wrote them.
+type Applied = Arc<Mutex<Vec<Value>>>;
+
+/// A place a server names: the address of the file, the stretch, and what the place is called when it says.
+pub(crate) type Found = (String, Span, Option<String>);
+
 /// A running language server.
 pub(crate) struct LanguageServer {
     /// The conversation with it.
     rpc: Arc<Rpc>,
+    /// What it can do, as it said when it started.
+    abilities: Value,
+    /// What it last said is wrong with each file, as it wrote it.
+    raw: Raw,
+    /// The edits it asked to have made while carrying out a command.
+    applied: Applied,
     /// How it takes changes: 0 not at all, 1 as the whole text, 2 as stretches.
     sync: u64,
     /// The characters after which it offers completions without being asked.
@@ -150,6 +169,10 @@ fn completion_of(item: &Value, default_span: Option<Span>) -> Option<Completion>
             .unwrap_or(&label)
             .to_owned(),
         kind: CompletionKind::of_number(item.get("kind").and_then(Value::as_u64)),
+        documentation: item
+            .get("documentation")
+            .map(markup_of)
+            .filter(|said| !said.trim().is_empty()),
         label,
         detail,
         text,
@@ -161,8 +184,42 @@ fn completion_of(item: &Value, default_span: Option<Span>) -> Option<Completion>
 fn capabilities() -> Value {
     json!({
         "general": {"positionEncodings": ["utf-16"]},
-        "workspace": {"configuration": true, "workspaceFolders": true},
+        "workspace": {
+            "configuration": true,
+            "workspaceFolders": true,
+            "applyEdit": true,
+            "workspaceEdit": {"documentChanges": true},
+            "executeCommand": {}
+        },
         "textDocument": {
+            "definition": {"linkSupport": true},
+            "declaration": {"linkSupport": true},
+            "typeDefinition": {"linkSupport": true},
+            "implementation": {"linkSupport": true},
+            "references": {},
+            "documentHighlight": {},
+            "signatureHelp": {
+                "signatureInformation": {
+                    "documentationFormat": ["markdown", "plaintext"],
+                    "parameterInformation": {"labelOffsetSupport": true},
+                    "activeParameterSupport": true
+                },
+                "contextSupport": true
+            },
+            "callHierarchy": {},
+            "rename": {"prepareSupport": false},
+            "codeAction": {
+                "codeActionLiteralSupport": {
+                    "codeActionKind": {"valueSet": [
+                        "", "quickfix", "refactor", "refactor.extract", "refactor.inline",
+                        "refactor.rewrite", "source", "source.organizeImports", "source.fixAll"
+                    ]}
+                },
+                "isPreferredSupport": true,
+                "disabledSupport": true,
+                "dataSupport": true,
+                "resolveSupport": {"properties": ["edit"]}
+            },
             "synchronization": {"dynamicRegistration": false, "didSave": false},
             "completion": {
                 "completionItem": {
@@ -179,8 +236,14 @@ fn capabilities() -> Value {
     })
 }
 
-/// What answers the requests of a server started for `root` with `settings`, and hands the diagnostics it publishes to `sink`.
-fn handler(root: &Path, settings: Value, sink: DiagnosticsSink) -> Handler {
+/// What answers the requests of a server started for `root` with `settings`, hands the diagnostics it publishes to `sink` and keeps them as written in `raw`, and keeps the edits it asks to have made in `applied`.
+fn handler(
+    root: &Path,
+    settings: Value,
+    sink: DiagnosticsSink,
+    raw: Raw,
+    applied: Applied,
+) -> Handler {
     let folders = json!([{
         "uri": file_uri(root),
         "name": root.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default(),
@@ -201,8 +264,20 @@ fn handler(root: &Path, settings: Value, sink: DiagnosticsSink) -> Handler {
                 .unwrap_or_default(),
         ),
         "workspace/workspaceFolders" => folders.clone(),
+        "workspace/applyEdit" => {
+            if let (Some(edit), Ok(mut held)) = (params.get("edit"), applied.lock()) {
+                held.push(edit.clone());
+            }
+            json!({"applied": true})
+        }
         "textDocument/publishDiagnostics" => {
             if let Some(uri) = params.get("uri").and_then(Value::as_str) {
+                if let (Some(list), Ok(mut held)) = (
+                    params.get("diagnostics").and_then(Value::as_array),
+                    raw.lock(),
+                ) {
+                    held.insert(uri.to_owned(), list.clone());
+                }
                 let diagnostics = params
                     .get("diagnostics")
                     .and_then(Value::as_array)
@@ -254,12 +329,20 @@ impl LanguageServer {
             .iter()
             .map(|folder| root.join(folder))
             .collect();
+        let raw = Raw::default();
+        let applied = Applied::default();
         let rpc = Rpc::start(
             program,
             &spec.args,
             root,
             &first,
-            handler(root, spec.settings.clone(), sink),
+            handler(
+                root,
+                spec.settings.clone(),
+                sink,
+                raw.clone(),
+                applied.clone(),
+            ),
         )?;
         let mut params = json!({
             "processId": std::process::id(),
@@ -312,6 +395,9 @@ impl LanguageServer {
         }
         Ok(Self {
             rpc,
+            abilities: capabilities,
+            raw,
+            applied,
             sync,
             triggers,
         })
@@ -459,40 +545,359 @@ impl LanguageServer {
             .unwrap_or_default())
     }
 
-    /// Where the thing at `position` of the file at `uri` is defined, as the addresses and stretches the server gives.
-    pub(crate) fn definition(
+    /// The places `seek` looks for from `position` of the file at `uri`, as the addresses and stretches the server gives, with the names of the functions for calls.
+    pub(crate) fn locate(
         &self,
         uri: &str,
         position: Position,
-    ) -> Result<Vec<(String, Span)>, String> {
+        seek: Seek,
+    ) -> Result<Vec<Found>, String> {
+        let at = json!({"textDocument": {"uri": uri}, "position": position_value(position)});
+        let method = match seek {
+            Seek::Definition => "textDocument/definition",
+            Seek::Declaration => "textDocument/declaration",
+            Seek::TypeDefinition => "textDocument/typeDefinition",
+            Seek::Implementation => "textDocument/implementation",
+            Seek::References => {
+                let mut params = at;
+                params["context"] = json!({"includeDeclaration": true});
+                let answer = self
+                    .rpc
+                    .request("textDocument/references", params, ANSWERING)?;
+                return Ok(places_of(answer));
+            }
+            Seek::IncomingCalls | Seek::OutgoingCalls => return self.calls(at, seek),
+        };
+        Ok(places_of(self.rpc.request(method, at, ANSWERING)?))
+    }
+
+    /// The functions that call, or are called by, the function at the place `at`, as `seek` says.
+    fn calls(&self, at: Value, seek: Seek) -> Result<Vec<Found>, String> {
+        let prepared = self
+            .rpc
+            .request("textDocument/prepareCallHierarchy", at, ANSWERING)?;
+        let (method, side) = if seek == Seek::IncomingCalls {
+            ("callHierarchy/incomingCalls", "from")
+        } else {
+            ("callHierarchy/outgoingCalls", "to")
+        };
+        let mut found = Vec::new();
+        for item in prepared.as_array().into_iter().flatten() {
+            let calls = self.rpc.request(method, json!({"item": item}), ANSWERING)?;
+            for call in calls.as_array().into_iter().flatten() {
+                let Some(other) = call.get(side) else {
+                    continue;
+                };
+                let (Some(address), Some(span)) = (
+                    other.get("uri").and_then(Value::as_str),
+                    other
+                        .get("selectionRange")
+                        .or_else(|| other.get("range"))
+                        .and_then(span_of),
+                ) else {
+                    continue;
+                };
+                let name = other.get("name").and_then(Value::as_str).map(str::to_owned);
+                found.push((address.to_owned(), span, name));
+            }
+        }
+        Ok(found)
+    }
+
+    /// The symbols of the project whose names match `query`, as the server finds them, each with the place it is defined and its name.
+    pub(crate) fn workspace_symbols(&self, query: &str) -> Result<Vec<Found>, String> {
+        let answer = self
+            .rpc
+            .request("workspace/symbol", json!({"query": query}), ANSWERING)?;
+        Ok(answer
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|symbol| {
+                let name = symbol.get("name")?.as_str()?.to_owned();
+                let location = symbol.get("location")?;
+                let address = location.get("uri")?.as_str()?.to_owned();
+                let span = location.get("range").and_then(span_of).unwrap_or_default();
+                let container = symbol
+                    .get("containerName")
+                    .and_then(Value::as_str)
+                    .filter(|container| !container.is_empty());
+                let shown = match container {
+                    Some(container) => format!("{name}  {container}"),
+                    None => name,
+                };
+                Some((address, span, Some(shown)))
+            })
+            .collect())
+    }
+
+    /// The stretches of the file at `uri` where the thing at `position` is used, as the server gives them.
+    pub(crate) fn highlights(&self, uri: &str, position: Position) -> Result<Vec<Span>, String> {
         let answer = self.rpc.request(
-            "textDocument/definition",
+            "textDocument/documentHighlight",
             json!({"textDocument": {"uri": uri}, "position": position_value(position)}),
             ANSWERING,
         )?;
-        let items = match answer {
-            Value::Array(items) => items,
-            Value::Null => Vec::new(),
-            single => vec![single],
-        };
-        Ok(items
-            .iter()
-            .filter_map(|item| {
-                let address = item
-                    .get("targetUri")
-                    .or_else(|| item.get("uri"))
-                    .and_then(Value::as_str)?;
-                let range = item
-                    .get("targetSelectionRange")
-                    .or_else(|| item.get("range"))
-                    .and_then(span_of)?;
-                Some((address.to_owned(), range))
-            })
+        Ok(answer
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| span_of(item.get("range")?))
             .collect())
+    }
+
+    /// The characters after which the server tells what the call the caret is in looks like.
+    pub(crate) fn signature_triggers(&self) -> Vec<String> {
+        let provider = self.abilities.get("signatureHelpProvider");
+        ["triggerCharacters", "retriggerCharacters"]
+            .iter()
+            .flat_map(|key| {
+                provider
+                    .and_then(|provider| provider.get(*key))
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default()
+            })
+            .filter_map(|value| value.as_str().map(str::to_owned))
+            .collect()
+    }
+
+    /// The signature of the call at `position` of the file at `uri`, with the parameter it is at.
+    pub(crate) fn signature(
+        &self,
+        uri: &str,
+        position: Position,
+    ) -> Result<Option<Signature>, String> {
+        let answer = self.rpc.request(
+            "textDocument/signatureHelp",
+            json!({"textDocument": {"uri": uri}, "position": position_value(position), "context": {"triggerKind": 1, "isRetrigger": false}}),
+            ANSWERING,
+        )?;
+        let signatures = answer
+            .get("signatures")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let chosen = answer
+            .get("activeSignature")
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as usize;
+        let Some(signature) = signatures.get(chosen).or(signatures.first()) else {
+            return Ok(None);
+        };
+        let label = signature
+            .get("label")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let parameter = signature
+            .get("activeParameter")
+            .or_else(|| answer.get("activeParameter"))
+            .and_then(Value::as_u64)
+            .map(|index| index as usize);
+        let active = parameter
+            .and_then(|index| signature.get("parameters")?.as_array()?.get(index).cloned())
+            .and_then(|parameter| match parameter.get("label")? {
+                Value::String(name) => {
+                    let start = label.find(name.as_str())?;
+                    Some((start, start + name.len()))
+                }
+                Value::Array(bounds) => {
+                    let start = utf16_to_byte(&label, bounds.first()?.as_u64()? as usize);
+                    let end = utf16_to_byte(&label, bounds.get(1)?.as_u64()? as usize);
+                    Some((start, end))
+                }
+                _ => None,
+            });
+        let documentation = signature
+            .get("documentation")
+            .map(markup_of)
+            .filter(|text| !text.trim().is_empty());
+        Ok(Some(Signature {
+            label,
+            active,
+            documentation,
+            others: signatures.len().saturating_sub(1),
+        }))
+    }
+
+    /// The edit across the project that renames the thing at `position` of the file at `uri` to `name`, as the server writes it.
+    pub(crate) fn rename(
+        &self,
+        uri: &str,
+        position: Position,
+        name: &str,
+    ) -> Result<Value, String> {
+        self.rpc.request(
+            "textDocument/rename",
+            json!({"textDocument": {"uri": uri}, "position": position_value(position), "newName": name}),
+            ANSWERING,
+        )
+    }
+
+    /// The changes the server offers for the stretch `span` of the file at `uri`, as it writes them, with what it said is wrong there.
+    pub(crate) fn code_actions(&self, uri: &str, span: Span) -> Result<Vec<Value>, String> {
+        let wrong: Vec<Value> = self
+            .raw
+            .lock()
+            .ok()
+            .and_then(|held| held.get(uri).cloned())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|diagnostic| {
+                diagnostic
+                    .get("range")
+                    .and_then(span_of)
+                    .is_some_and(|held| held.start <= span.end && span.start <= held.end)
+            })
+            .collect();
+        let answer = self.rpc.request(
+            "textDocument/codeAction",
+            json!({
+                "textDocument": {"uri": uri},
+                "range": range_value(span),
+                "context": {"diagnostics": wrong, "triggerKind": 1},
+            }),
+            ANSWERING,
+        )?;
+        Ok(answer.as_array().cloned().unwrap_or_default())
+    }
+
+    /// Carries out `action`, one of the changes the server offered: the edits it makes, as the server writes them, those of its command among them.
+    pub(crate) fn take_action(&self, action: &Value) -> Result<Vec<Value>, String> {
+        let resolves = self
+            .abilities
+            .get("codeActionProvider")
+            .and_then(|provider| provider.get("resolveProvider"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let is_command = action.get("command").is_some_and(Value::is_string);
+        let action = if resolves && !is_command && action.get("edit").is_none() {
+            self.rpc
+                .request("codeAction/resolve", action.clone(), ANSWERING)?
+        } else {
+            action.clone()
+        };
+        let mut edits: Vec<Value> = action.get("edit").cloned().into_iter().collect();
+        let command = if is_command {
+            Some(action.clone())
+        } else {
+            action.get("command").cloned()
+        };
+        if let Some(command) = command {
+            if let Ok(mut held) = self.applied.lock() {
+                held.clear();
+            }
+            self.rpc.request(
+                "workspace/executeCommand",
+                json!({"command": command.get("command"), "arguments": command.get("arguments").cloned().unwrap_or(json!([]))}),
+                ANSWERING,
+            )?;
+            if let Ok(mut held) = self.applied.lock() {
+                edits.append(&mut held);
+            }
+        }
+        Ok(edits)
     }
 
     /// Asks the server to stop, and ends it if it does not.
     pub(crate) fn stop(&self) {
         self.rpc.stop(STOPPING);
     }
+}
+
+/// What a code action the server writes as `value` is to the reader.
+pub(crate) fn action_of(value: &Value) -> Option<CodeAction> {
+    Some(CodeAction {
+        title: value.get("title")?.as_str()?.to_owned(),
+        kind: value.get("kind").and_then(Value::as_str).map(str::to_owned),
+        preferred: value
+            .get("isPreferred")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        disabled: value
+            .get("disabled")
+            .and_then(|disabled| disabled.get("reason"))
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    })
+}
+
+/// The places a server writes as `answer`: one location or link, a list of them, or none.
+fn places_of(answer: Value) -> Vec<Found> {
+    let items = match answer {
+        Value::Array(items) => items,
+        Value::Null => Vec::new(),
+        single => vec![single],
+    };
+    items
+        .iter()
+        .filter_map(|item| {
+            let address = item
+                .get("targetUri")
+                .or_else(|| item.get("uri"))
+                .and_then(Value::as_str)?;
+            let range = item
+                .get("targetSelectionRange")
+                .or_else(|| item.get("range"))
+                .and_then(span_of)?;
+            Some((address.to_owned(), range, None))
+        })
+        .collect()
+}
+
+/// The changes to each file that the edit across a project a server writes as `edit` makes, by address; files it creates, renames or deletes are left out.
+pub(crate) fn file_changes(edit: &Value) -> Vec<(String, Vec<TextChange>)> {
+    let changes_of = |edits: &Value| -> Vec<TextChange> {
+        edits
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|edit| {
+                Some(TextChange {
+                    span: Some(span_of(edit.get("range")?)?),
+                    text: edit.get("newText")?.as_str()?.to_owned(),
+                })
+            })
+            .collect()
+    };
+    let mut files: Vec<(String, Vec<TextChange>)> = Vec::new();
+    let mut add = |address: &str, mut changes: Vec<TextChange>| match files
+        .iter_mut()
+        .find(|(held, _)| held == address)
+    {
+        Some((_, held)) => held.append(&mut changes),
+        None => files.push((address.to_owned(), changes)),
+    };
+    if let Some(documents) = edit.get("documentChanges").and_then(Value::as_array) {
+        for document in documents {
+            if let Some(address) = document
+                .get("textDocument")
+                .and_then(|held| held.get("uri"))
+                .and_then(Value::as_str)
+            {
+                add(
+                    address,
+                    changes_of(document.get("edits").unwrap_or(&Value::Null)),
+                );
+            }
+        }
+    } else if let Some(changes) = edit.get("changes").and_then(Value::as_object) {
+        for (address, edits) in changes {
+            add(address, changes_of(edits));
+        }
+    }
+    files
+}
+
+/// The byte of `text` that `units` UTF-16 code units into it reach.
+fn utf16_to_byte(text: &str, units: usize) -> usize {
+    let mut counted = 0;
+    for (at, character) in text.char_indices() {
+        if counted >= units {
+            return at;
+        }
+        counted += character.len_utf16();
+    }
+    text.len()
 }

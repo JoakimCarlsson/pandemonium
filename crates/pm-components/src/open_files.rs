@@ -85,7 +85,8 @@ impl Left {
 
 /// Puts the caret of `document` at `position` and returns how far down to scroll for its line to show a little below the top.
 pub(crate) fn jump(document: &mut Document, position: pm_protocol::Position) -> f32 {
-    (document.jump(position) as f32 * ROW - ROW * 6.0).max(0.0)
+    let line = document.jump(position);
+    (document.row_of_line(line) as f32 * ROW - ROW * 6.0).max(0.0)
 }
 
 impl Viewer {
@@ -253,6 +254,20 @@ impl WorkspaceState {
                 Err(reason) => Contents::Message(reason),
             };
         }
+        let opened = !head
+            && self.viewers_of(session).is_some_and(|viewers| {
+                viewers.iter().any(|viewer| {
+                    viewer.path == path
+                        && !viewer.head
+                        && matches!(viewer.contents, Contents::Text(_))
+                })
+            });
+        if opened {
+            self.outbox.push(Outgoing::ReadBase {
+                session,
+                path: path.to_owned(),
+            });
+        }
         self.took_language(session, path, head, language);
         self
     }
@@ -278,7 +293,7 @@ impl WorkspaceState {
         let Contents::Text(document) = &viewer.contents else {
             return self;
         };
-        let line = document.line_of(document.field.caret());
+        let line = document.row_of_line(document.line_of(document.field.caret()));
         let (top, bottom) = (line as f32 * ROW, (line + 1) as f32 * ROW);
         let view = (height - STRIP).max(ROW);
         if top < viewer.scroll {

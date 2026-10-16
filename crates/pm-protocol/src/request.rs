@@ -357,6 +357,25 @@ pub enum Request {
         path: String,
         /// Whether to read it from the last commit rather than from the working folder.
         head: bool,
+        /// The commit to read it from, by object name, in place of the working folder or the last commit.
+        #[serde(default)]
+        revision: Option<String>,
+    },
+    /// The commits that changed a file of a folder, newest first.
+    FileHistory {
+        /// The folder.
+        directory: String,
+        /// The path, from the root of the folder.
+        path: String,
+    },
+    /// The web address of a line of a file of a folder on the host of its repository, at the commit checked out.
+    Permalink {
+        /// The folder.
+        directory: String,
+        /// The path, from the root of the folder.
+        path: String,
+        /// The line, counted from 1.
+        line: usize,
     },
     /// Replaces the contents of a file of a folder with text, making the file when it is not there.
     WriteFile {
@@ -598,7 +617,7 @@ pub enum Request {
         /// The version of the text the edits are made to.
         version: i32,
     },
-    /// Where the thing at a place of an open file is defined, once the file reaches `version`.
+    /// The places looked for from a place of an open file, once the file reaches `version`: where the thing there is defined, unless `seek` names something else.
     Definition {
         /// The folder.
         directory: String,
@@ -608,6 +627,100 @@ pub enum Request {
         version: i32,
         /// The place.
         position: pm_buffer::Position,
+        /// What is looked for.
+        #[serde(default)]
+        seek: pm_lsp::Seek,
+    },
+    /// Who last changed a line of a file of a folder, and in which commit.
+    Blame {
+        /// The folder.
+        directory: String,
+        /// The path, from the root of the folder.
+        path: String,
+        /// The line, counted from 1.
+        line: usize,
+    },
+    /// What the language servers last said is wrong with the files of a folder, open or not.
+    Problems {
+        /// The folder.
+        directory: String,
+    },
+    /// The lines of the files of a folder's repository that hold some text, tracked or not but not ignored.
+    SearchFiles {
+        /// The folder.
+        directory: String,
+        /// What is looked for.
+        query: String,
+        /// Whether the query is a regular expression.
+        #[serde(default)]
+        regex: bool,
+        /// Whether upper and lower case must match.
+        #[serde(default)]
+        case: bool,
+    },
+    /// The symbols of a folder whose names match a query, as the language server of an open file finds them.
+    WorkspaceSymbols {
+        /// The folder.
+        directory: String,
+        /// The open file whose language server is asked, from the root of the folder.
+        path: String,
+        /// What the names are matched against.
+        query: String,
+    },
+    /// The stretches of an open file where the thing at a place is used, once the file reaches `version`.
+    Highlights {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The version of the text the place is in.
+        version: i32,
+        /// The place.
+        position: pm_buffer::Position,
+    },
+    /// The signature of the call a place of an open file is in, once the file reaches `version`.
+    Signature {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The version of the text the place is in.
+        version: i32,
+        /// The place.
+        position: pm_buffer::Position,
+    },
+    /// Renames the thing at a place of an open file across its project, once the file reaches `version`.
+    Rename {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The version of the text the place is in.
+        version: i32,
+        /// The place.
+        position: pm_buffer::Position,
+        /// The new name.
+        name: String,
+    },
+    /// The changes the language server offers for a stretch of an open file, once the file reaches `version`.
+    CodeActions {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The version of the text the stretch is in.
+        version: i32,
+        /// The stretch.
+        span: pm_buffer::Span,
+    },
+    /// Takes one of the changes last offered for an open file.
+    TakeCodeAction {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The change, by its place in the list offered.
+        index: usize,
     },
     /// What the language server says about the thing at a place of an open file, once the file reaches `version`.
     Hover {

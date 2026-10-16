@@ -34,4 +34,7 @@ pub use install::{add_extension, install, installed, installed_manifest, languag
 pub use manifest::{Archive, Download, Install, InstallKind, Manifest, Pinned, ServerSpec};
 pub use paths::{grammar_file, language_folder, local_root};
 pub use resolve::server_state;
-pub use types::{Completion, CompletionKind, Diagnostic, Hover, Location, Severity, TextChange};
+pub use types::{
+    CodeAction, Completion, CompletionKind, Diagnostic, FileEdit, Hover, Location, Problem, Seek,
+    Severity, Signature, TextChange, Triggers,
+};

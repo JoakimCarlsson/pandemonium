@@ -15,10 +15,11 @@ use pm_components::arrange::{
     SESSION_MENU_COPY_BRANCH, SESSION_MENU_COPY_PATH, SESSION_MENU_OPEN_FOLDER,
     SESSION_MENU_RENAME, SessionMenu,
 };
-use pm_components::context_menu::field_menu;
+use pm_components::context_menu::{editor_menu, field_menu};
 use pm_components::file_icon::file_icon;
 use pm_components::git_prompts;
 use pm_components::message_menu::message_menu;
+use pm_components::open_files::EDITOR_FIELD;
 use pm_components::open_files::{FILE_CLOSE_BASE, FILE_TAB_BASE, Viewer};
 use pm_components::parts::{glyph, line, spacer};
 use pm_components::{
@@ -281,11 +282,14 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
     if let Some(session) = state.review_session().filter(|_| reviewing) {
         root = root.child(review::review(state, session, shaper));
     }
-    root.children(
-        state
-            .menu
-            .and_then(|menu| state.field(menu.field).map(|field| field_menu(field, menu))),
-    )
+    root.children(state.menu.and_then(|menu| {
+        let field = state.field(menu.field)?;
+        Some(if menu.field == EDITOR_FIELD {
+            editor_menu(field, menu, state.coding(), state.review_is_local())
+        } else {
+            field_menu(field, menu)
+        })
+    }))
     .children(sidebar::drag_ghost(state))
     .children(state.project_menu.map(project_menu))
     .children(state.session_menu.map(|open| session_menu(state, open)))

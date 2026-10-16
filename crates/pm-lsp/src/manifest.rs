@@ -144,6 +144,9 @@ pub struct Manifest {
     /// Whether a level of indentation is a tab rather than spaces.
     #[serde(default)]
     pub tabs: bool,
+    /// The pairs the editor closes as the opening character is typed, each the opening and the closing character, such as `"()"`.
+    #[serde(default = "default_pairs")]
+    pub pairs: Vec<String>,
     /// The languages installed with it.
     #[serde(default)]
     pub requires: Vec<String>,
@@ -166,6 +169,11 @@ fn language_kind() -> String {
 /// One level of indentation is four columns unless a manifest says otherwise.
 fn default_indent() -> usize {
     4
+}
+
+/// The pairs closed as they are opened when a manifest names none: brackets and double quotes.
+fn default_pairs() -> Vec<String> {
+    ["()", "[]", "{}", "\"\""].map(str::to_owned).to_vec()
 }
 
 impl Manifest {

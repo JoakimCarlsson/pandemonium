@@ -11,6 +11,7 @@ suffixes = ["toml"]
 names = ["Cargo.lock", "uv.lock", "poetry.lock"]
 line_comment = "#"
 indent = 2
+pairs = ["[]", "{}", "\"\"", "''"]
 
 [grammar_file]
 url = "https://github.com/tree-sitter-grammars/tree-sitter-toml/releases/download/v0.7.0/tree-sitter-toml.wasm"

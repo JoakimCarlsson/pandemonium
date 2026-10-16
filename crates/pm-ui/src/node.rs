@@ -75,6 +75,12 @@ pub enum Paint {
     Wave,
     /// A straight line under it.
     Underline,
+    /// Shown as selected, as the selection of a field is.
+    Selected,
+    /// A blinking caret before its first byte, as the caret of a field is.
+    Caret,
+    /// A thin upright line the height of the line at the column its first number counts, in spaces from the left, which may lie past the end of the text.
+    Guide,
 }
 
 /// A stretch of a line of text painted apart from the rest.

@@ -10,3 +10,5 @@ pm-lsp.workspace = true
 pm-protocol.workspace = true
 pm-text.workspace = true
 pm-treesitter.workspace = true
+regex = "1.13.1"
+similar = "3.2.0"

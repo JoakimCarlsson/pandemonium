@@ -12,6 +12,7 @@ names = [".prettierrc", ".eslintrc", "flake.lock"]
 aliases = ["jsonc"]
 line_comment = "//"
 indent = 2
+pairs = ["[]", "{}", "\"\""]
 
 [grammar_file]
 url = "https://github.com/tree-sitter/tree-sitter-json/releases/download/v0.24.8/tree-sitter-json.wasm"

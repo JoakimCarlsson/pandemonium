@@ -163,8 +163,32 @@ enum Pending {
     Hovered(usize, String, pm_protocol::Position),
     /// The extensions the server on this machine can install.
     Extensions,
-    /// Where something in a file of the session at this position is defined.
-    Definitions(usize),
+    /// The places looked for from a place in a file of the session at this position.
+    Definitions(usize, pm_protocol::Seek),
+    /// Who last changed this line of the file of the session at this position, at this path.
+    Blame(usize, String, usize),
+    /// What is wrong with the files of the project of the session at this position.
+    Problems(usize),
+    /// The symbols of the project of the session at this position matching this query.
+    Symbols(usize, String),
+    /// The file of the session at this position, at this path, as the last commit holds it.
+    Base(usize, String),
+    /// Where the thing at a place of the file of the session at this position, at this path and version, is used.
+    Highlights(usize, String, i32),
+    /// The signature of the call a place of the file of the session at this position, at this path and version, is in.
+    Signature(usize, String, i32),
+    /// The edits that rename something across the project of the session at this position.
+    Renamed(usize),
+    /// The changes the language server offers for the file of the session at this position, at this path.
+    CodeActions(usize, String),
+    /// The edits a change the language server offered makes across the project of the session at this position.
+    TookAction(usize),
+    /// The web address of a line, to copy.
+    Permalink,
+    /// The commits that changed the file of the session at this position, at this path.
+    FileHistory(usize, String),
+    /// A file of the session at this position as a commit left it, shown under this name.
+    Revision(usize, String),
     /// The edits that format the file of the session at this position, at this path and version, and whether it is written afterwards.
     Formatted(usize, String, i32, bool),
 }
@@ -511,6 +535,7 @@ impl Work {
                 Outgoing::Reindexed(moved) => self.reindex(&moved),
                 Outgoing::OpenTerminal {
                     session,
+                    folder,
                     tab,
                     columns,
                     rows,
@@ -518,10 +543,15 @@ impl Work {
                     let Some(placement) = Self::session_of(model, session) else {
                         continue;
                     };
-                    let directory = if placement.directory.is_empty() {
+                    let root = if placement.directory.is_empty() {
                         placement.repository
                     } else {
                         placement.directory
+                    };
+                    let directory = if folder.is_empty() {
+                        root
+                    } else {
+                        format!("{}/{folder}", root.trim_end_matches(['/', '\\']))
                     };
                     self.held.insert(tab, Vec::new());
                     self.ask(
@@ -851,6 +881,7 @@ impl Work {
                             directory,
                             path: wanted,
                             head,
+                            revision: None,
                         },
                         Pending::ReadFile(session, path, head),
                     );
@@ -1560,7 +1591,19 @@ impl Work {
             | Pending::Opened(..)
             | Pending::Completions(..)
             | Pending::Hovered(..)
-            | Pending::Definitions(_)
+            | Pending::Definitions(..)
+            | Pending::Base(..)
+            | Pending::Symbols(..)
+            | Pending::Problems(_)
+            | Pending::Blame(..)
+            | Pending::Highlights(..)
+            | Pending::Signature(..)
+            | Pending::Renamed(_)
+            | Pending::CodeActions(..)
+            | Pending::TookAction(_)
+            | Pending::Permalink
+            | Pending::FileHistory(..)
+            | Pending::Revision(..)
             | Pending::Formatted(..)
             | Pending::Extensions => self.answered_code(model, host, pending, response),
             Pending::Back(session, failing) => {
@@ -1760,6 +1803,7 @@ impl Work {
         let Some(placement) = Self::session_of(model, session) else {
             return;
         };
+        model.update(|screen| *screen = std::mem::take(screen).bases_wanted(session));
         let inspecting = self.links.get(&placement.host).is_some_and(|link| {
             link.waiting
                 .values()

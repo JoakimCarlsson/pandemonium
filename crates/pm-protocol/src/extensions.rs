@@ -77,4 +77,7 @@ pub struct GrammarBundle {
     /// What starts a comment that runs to the end of the line.
     #[serde(default)]
     pub line_comment: Option<String>,
+    /// The pairs the editor closes as the opening character is typed, each the opening and the closing character; brackets and double quotes when the server says nothing.
+    #[serde(default)]
+    pub pairs: Option<Vec<String>>,
 }

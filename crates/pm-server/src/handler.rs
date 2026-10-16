@@ -678,11 +678,30 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
         Request::CreateBranch { directory, name } => {
             done(pm_git::create_branch(&place(&directory), &name))
         }
+        Request::FileHistory { directory, path } => {
+            match pm_git::file_history(&place(&directory), &path) {
+                Ok(commits) => Response::FileHistory { commits },
+                Err(reason) => failed(reason),
+            }
+        }
+        Request::Permalink {
+            directory,
+            path,
+            line,
+        } => match pm_git::permalink(&place(&directory), &path, line) {
+            Ok(url) => Response::Address { url },
+            Err(reason) => failed(reason),
+        },
         Request::ReadFile {
             directory,
             path,
             head,
-        } => match pm_git::read(&place(&directory), &path, head) {
+            revision,
+        } => match pm_git::read_at(
+            &place(&directory),
+            &path,
+            revision.as_deref().or(head.then_some("HEAD")),
+        ) {
             Ok(pm_git::Contents::Text { text, truncated }) => Response::File {
                 text: Some(text),
                 truncated,
@@ -734,7 +753,10 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                 .hub
                 .open(&root, &path, &language, version, &text)
             {
-                Ok(triggers) => Response::Opened { triggers },
+                Ok(triggers) => Response::Opened {
+                    triggers: triggers.completion,
+                    signature: triggers.signature,
+                },
                 Err(reason) => failed(reason),
             }
         }
@@ -785,12 +807,133 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             path,
             version,
             position,
+            seek,
         } => match core
             .documents
             .hub
-            .definition(&place(&directory), &path, version, position)
+            .locate(&place(&directory), &path, version, position, seek)
         {
             Ok(locations) => Response::Definitions { locations },
+            Err(reason) => failed(reason),
+        },
+        Request::Blame {
+            directory,
+            path,
+            line,
+        } => match pm_git::blame(&place(&directory), &path, line) {
+            Ok(blame) => Response::Blamed { blame },
+            Err(reason) => failed(reason),
+        },
+        Request::Problems { directory } => Response::Problems {
+            problems: core.documents.hub.problems(&place(&directory)),
+        },
+        Request::SearchFiles {
+            directory,
+            query,
+            regex,
+            case,
+        } => match pm_git::search(&place(&directory), &query, regex, case) {
+            Ok(found) => Response::Definitions {
+                locations: found
+                    .into_iter()
+                    .map(|held| {
+                        let start = held.column.saturating_sub(1).min(held.text.len());
+                        let character = held
+                            .text
+                            .get(..start)
+                            .map_or(0, |before| before.encode_utf16().count())
+                            as u32;
+                        let line = held.line.saturating_sub(1) as u32;
+                        pm_lsp::Location {
+                            path: held.path,
+                            span: pm_protocol::Span::new(
+                                pm_protocol::Position::new(line, character),
+                                pm_protocol::Position::new(line, character),
+                            ),
+                            inside: true,
+                            line: Some(held.text),
+                            ..pm_lsp::Location::default()
+                        }
+                    })
+                    .collect(),
+            },
+            Err(reason) => failed(reason),
+        },
+        Request::WorkspaceSymbols {
+            directory,
+            path,
+            query,
+        } => match core
+            .documents
+            .hub
+            .workspace_symbols(&place(&directory), &path, &query)
+        {
+            Ok(locations) => Response::Definitions { locations },
+            Err(reason) => failed(reason),
+        },
+        Request::Highlights {
+            directory,
+            path,
+            version,
+            position,
+        } => match core
+            .documents
+            .hub
+            .highlights(&place(&directory), &path, version, position)
+        {
+            Ok(spans) => Response::Highlights { spans },
+            Err(reason) => failed(reason),
+        },
+        Request::Signature {
+            directory,
+            path,
+            version,
+            position,
+        } => match core
+            .documents
+            .hub
+            .signature(&place(&directory), &path, version, position)
+        {
+            Ok(signature) => Response::Signature { signature },
+            Err(reason) => failed(reason),
+        },
+        Request::Rename {
+            directory,
+            path,
+            version,
+            position,
+            name,
+        } => match core
+            .documents
+            .hub
+            .rename(&place(&directory), &path, version, position, &name)
+        {
+            Ok(files) => Response::Edited { files },
+            Err(reason) => failed(reason),
+        },
+        Request::CodeActions {
+            directory,
+            path,
+            version,
+            span,
+        } => match core
+            .documents
+            .hub
+            .code_actions(&place(&directory), &path, version, span)
+        {
+            Ok(actions) => Response::CodeActions { actions },
+            Err(reason) => failed(reason),
+        },
+        Request::TakeCodeAction {
+            directory,
+            path,
+            index,
+        } => match core
+            .documents
+            .hub
+            .take_action(&place(&directory), &path, index)
+        {
+            Ok(files) => Response::Edited { files },
             Err(reason) => failed(reason),
         },
         Request::Hover {

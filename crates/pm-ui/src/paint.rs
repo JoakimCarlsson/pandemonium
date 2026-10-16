@@ -741,6 +741,20 @@ impl Frame<'_> {
                 length: content.len(),
             });
         }
+        let guides: Vec<&Mark> = node
+            .marks
+            .iter()
+            .filter(|mark| mark.paint == Paint::Guide)
+            .collect();
+        if !guides.is_empty() {
+            let space = self.shaper.shape(" ", &computed.typography).width;
+            for mark in guides {
+                self.list.push(Quad::filled(
+                    Rect::new(x + space * mark.range.start as f32, y, 1.0, run.height),
+                    mark.color.resolve(self.theme).alpha(opacity),
+                ));
+            }
+        }
         for mark in node.marks.iter().filter(|mark| mark.paint == Paint::Fill) {
             let left = run.caret_x(mark.range.start);
             let right = run.caret_x(mark.range.end);
@@ -753,6 +767,13 @@ impl Frame<'_> {
             && self.input.focused == Some(*owner)
         {
             self.highlight(&run, range.clone(), (x, y), opacity);
+        }
+        for mark in node
+            .marks
+            .iter()
+            .filter(|mark| mark.paint == Paint::Selected)
+        {
+            self.highlight(&run, mark.range.clone(), (x, y), opacity);
         }
         let drawn = DrawnPiece {
             seen,
@@ -794,6 +815,24 @@ impl Frame<'_> {
                     Rect::new(at, y, CARET_WIDTH, run.height),
                     color,
                 ));
+            }
+        }
+        let carets: Vec<usize> = node
+            .marks
+            .iter()
+            .filter(|mark| mark.paint == Paint::Caret)
+            .map(|mark| mark.range.start)
+            .collect();
+        if !carets.is_empty() {
+            self.output.animating = true;
+            if ((self.input.elapsed_ms / CARET_BLINK_MS) as u32).is_multiple_of(2) {
+                for byte in carets {
+                    let at = x + run.caret_x(byte);
+                    self.list.push(Quad::filled(
+                        Rect::new(at, y, CARET_WIDTH, run.height),
+                        color,
+                    ));
+                }
             }
         }
         self.lines(computed, &run, x, y, color);

@@ -15,7 +15,10 @@ pub use credential::{Build, Credential, Target};
 pub use extensions::{ExtensionInfo, GrammarBundle};
 pub use message::{ClientMessage, ServerMessage};
 pub use pm_buffer::{Position, Span};
-pub use pm_lsp::{Completion, CompletionKind, Diagnostic, Hover, Location, Severity, TextChange};
+pub use pm_lsp::{
+    CodeAction, Completion, CompletionKind, Diagnostic, FileEdit, Hover, Location, Problem, Seek,
+    Severity, Signature, TextChange, Triggers,
+};
 pub use request::{AgentServer, Attachment, Login, McpServer, RegistryAgent, Request, ToolListing};
 pub use response::{Response, SessionInfo, TerminalInfo};
 

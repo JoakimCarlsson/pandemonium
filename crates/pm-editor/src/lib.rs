@@ -5,16 +5,27 @@
 //! language server was told of in step and says what to tell the server.
 //! The rest of the editing rules are plain operations on a document that
 //! return the edits they call for: the indentation of a new line, a closing
-//! bracket going back a level, the completion picked, the edits that format
-//! the file. Nothing here sends anything or draws anything; the window does.
+//! bracket going back a level, pairs of brackets and quotes, more than one caret, whole lines
+//! commented, moved, duplicated and deleted, the selection grown along the
+//! syntax tree, text found and replaced, the completion picked, the edits that format the file. Nothing here sends anything or draws anything; the window does.
 
 mod complete;
+mod cursors;
 mod document;
 mod edit;
+mod find;
+mod fold;
 mod format;
+mod gutter;
 mod indent;
 mod jumps;
+mod lines;
+mod marks;
+mod pairs;
 
 pub use document::{Completions, Document, HoverCard};
 pub use edit::Edited;
+pub use find::Query;
+pub use fold::Fold;
+pub use gutter::LineChange;
 pub use jumps::{Jumps, Spot};

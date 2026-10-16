@@ -2,10 +2,18 @@
 
 use std::time::{Duration, Instant};
 
-use pm_components::assist::{HOVER_CARD, HOVER_LINK_BASE, HOVER_LINK_END, HOVER_TEXT, list_height};
+use pm_components::EditorCommand;
+use pm_components::assist::{
+    HOVER_CARD, HOVER_LINK_BASE, HOVER_LINK_END, HOVER_TEXT, list_height, signature_height,
+};
+use pm_components::find::{FIND_CASE, FIND_FIELD, FIND_REGEX, FIND_WORD, REPLACE_FIELD};
+use pm_components::line_edits::{GO_TO_LINE, GO_TO_LINE_BOX, LineEdit};
+use pm_components::listing::{LISTING_BODY, LISTING_FILTER, LISTING_HEIGHT, listing_row_of};
+use pm_components::navigate::{RENAME_BOX, RENAME_SYMBOL};
 use pm_components::open_files::EDITOR_FIELD;
 use pm_input::{Key, KeyEvent};
 use pm_pages::Screen;
+use pm_protocol::Seek;
 use pm_text::Edit;
 
 use super::App;
@@ -16,6 +24,9 @@ const HOVER_REST: Duration = Duration::from_millis(450);
 
 /// How long a card stays after the pointer left both it and its word, so the pointer can cross the gap between them.
 const HOVER_GRACE: Duration = Duration::from_millis(350);
+
+/// How long the caret rests before the language server is asked where the thing at it is used.
+const HIGHLIGHT_REST: Duration = Duration::from_millis(250);
 
 /// How far below the line it is about the list or card hangs, in logical pixels.
 const GAP: f32 = 2.0;
@@ -92,6 +103,80 @@ impl App {
         }
     }
 
+    /// Hangs the signature of the call the caret is in just above the caret's line, or below it at the top of the window, as the last frame drew the line.
+    pub(super) fn place_signature(&mut self) {
+        let Some((caret, height)) = self.model.read(|screen| match screen {
+            Screen::Workspace(state) => state.shown_document().and_then(|document| {
+                document
+                    .signature
+                    .as_ref()
+                    .map(|signature| (document.field.caret(), signature_height(signature)))
+            }),
+            Screen::Onboarding(_) => None,
+        }) else {
+            return;
+        };
+        let Some((x, top, line)) = self.editor_point(caret) else {
+            return;
+        };
+        let at = if top - height - GAP >= 0.0 {
+            (x, top - height - GAP)
+        } else {
+            (x, top + line + GAP)
+        };
+        let placed = self.model.read(|screen| match screen {
+            Screen::Workspace(state) => {
+                (state.signature_at.0 - at.0).abs() < 0.5
+                    && (state.signature_at.1 - at.1).abs() < 0.5
+            }
+            Screen::Onboarding(_) => true,
+        });
+        if !placed {
+            self.model
+                .update(|screen| *screen = std::mem::take(screen).with_signature_at(at));
+        }
+    }
+
+    /// Asks the language server where the thing at the caret of the file shown is used once the caret has rested there long enough, and says when to look again while it has yet to.
+    pub(super) fn editor_highlight_due(&mut self) -> Option<Instant> {
+        if self.focus.current() != Some(EDITOR_FIELD) {
+            self.highlight_wait = None;
+            return None;
+        }
+        let here = self.model.read(|screen| match screen {
+            Screen::Workspace(state) => {
+                let path = state.shown_viewer()?.path.clone();
+                let document = state.shown_document()?;
+                Some((path, document.version, document.field.caret()))
+            }
+            Screen::Onboarding(_) => None,
+        })?;
+        if self.highlighted.as_ref() == Some(&here) {
+            self.highlight_wait = None;
+            return None;
+        }
+        let since = match &self.highlight_wait {
+            Some((waiting, since)) if *waiting == here => *since,
+            _ => {
+                let now = Instant::now();
+                self.highlight_wait = Some((here, now));
+                return Some(now + HIGHLIGHT_REST);
+            }
+        };
+        let due = since + HIGHLIGHT_REST;
+        if Instant::now() < due {
+            return Some(due);
+        }
+        self.highlight_wait = None;
+        self.highlighted = Some(here);
+        self.model.update(|screen| {
+            *screen = std::mem::take(screen)
+                .highlights_requested()
+                .blame_requested()
+        });
+        None
+    }
+
     /// Where the card about the byte `offset` is placed from: the left edge of the byte and the top of its line, as the last frame drew them.
     fn card_at(&self, offset: usize) -> Option<(f32, f32)> {
         let (x, top, _) = self.editor_point(offset)?;
@@ -100,15 +185,10 @@ impl App {
 
     /// Asks for completions at the caret of the file shown.
     fn complete_at_caret(&mut self) {
-        let Some(caret) = self
-            .model
-            .read(|screen| screen.field(EDITOR_FIELD).map(pm_text::Field::caret))
-        else {
+        let Some(caret) = self.editor_caret() else {
             return;
         };
-        let at = self
-            .editor_point(caret)
-            .map_or((0.0, 0.0), |(x, top, line)| (x, top + line + GAP));
+        let at = self.below(caret);
         self.model
             .update(|screen| *screen = std::mem::take(screen).completion_requested(at));
     }
@@ -139,6 +219,310 @@ impl App {
         true
     }
 
+    /// The caret of the file shown.
+    fn editor_caret(&self) -> Option<usize> {
+        self.model
+            .read(|screen| screen.field(EDITOR_FIELD).map(pm_text::Field::caret))
+    }
+
+    /// Where something hung under the line of the byte `offset` of the file shown goes: at its left edge, just below its line, as the last frame drew them.
+    fn below(&self, offset: usize) -> (f32, f32) {
+        self.editor_point(offset)
+            .map_or((48.0, 96.0), |(x, top, line)| (x, top + line + GAP))
+    }
+
+    /// Where something up to `height` logical pixels tall hangs by the line of the byte `offset` of the file shown: below it, or above it when it would run past the bottom of the window.
+    fn hung(&self, offset: usize, height: f32) -> (f32, f32) {
+        let Some((x, top, line)) = self.editor_point(offset) else {
+            return (48.0, 96.0);
+        };
+        let below = top + line + GAP;
+        if below + height > self.window_height() {
+            (x, (top - height - GAP).max(0.0))
+        } else {
+            (x, below)
+        }
+    }
+
+    /// Carries out `command` on the file shown, at its caret.
+    pub(super) fn editor_command(&mut self, command: EditorCommand) {
+        let Some(caret) = self.editor_caret() else {
+            return;
+        };
+        let at = self.hung(caret, LISTING_HEIGHT);
+        let seek = match command {
+            EditorCommand::Definition => Some(Seek::Definition),
+            EditorCommand::Declaration => Some(Seek::Declaration),
+            EditorCommand::TypeDefinition => Some(Seek::TypeDefinition),
+            EditorCommand::Implementation => Some(Seek::Implementation),
+            EditorCommand::References => Some(Seek::References),
+            EditorCommand::IncomingCalls => Some(Seek::IncomingCalls),
+            EditorCommand::OutgoingCalls => Some(Seek::OutgoingCalls),
+            _ => None,
+        };
+        if let Some(seek) = seek {
+            self.model
+                .update(|screen| *screen = std::mem::take(screen).seek_requested(caret, seek, at));
+            return;
+        }
+        self.model.update(|screen| {
+            let taken = std::mem::take(screen);
+            *screen = match command {
+                EditorCommand::Rename => taken.rename_requested(caret, self.hung(caret, 72.0)),
+                EditorCommand::Format => taken.formatted_by_hand(),
+                EditorCommand::CodeActions => taken.code_actions_requested(at),
+                EditorCommand::CopyTrimmed => taken.copied_trimmed(),
+                EditorCommand::Reveal => taken.file_revealed(),
+                EditorCommand::OpenTerminal => taken.terminal_beside_file(),
+                EditorCommand::Permalink => taken.permalink_requested(),
+                EditorCommand::FileHistory => taken.file_history_requested(at),
+                _ => taken,
+            };
+        });
+        if command == EditorCommand::Rename && self.model.read(Screen::renaming_open) {
+            self.focus.focus(RENAME_SYMBOL);
+        }
+        if command == EditorCommand::OpenTerminal {
+            self.focus_terminal = true;
+        }
+    }
+
+    /// The command the keys of `event` give for the file shown, when they give one; the second key of a pair begun with Ctrl+K when `paired`.
+    fn command_of(event: &KeyEvent, paired: bool) -> Option<EditorCommand> {
+        let modifiers = event.modifiers;
+        let command = modifiers.control || modifiers.logo;
+        if paired {
+            return match event.key {
+                Key::Character('r' | 'R') => Some(EditorCommand::Reveal),
+                _ => None,
+            };
+        }
+        match event.key {
+            Key::Function(12) if modifiers.alt && modifiers.shift => {
+                Some(EditorCommand::References)
+            }
+            Key::Function(12) if command => Some(EditorCommand::TypeDefinition),
+            Key::Function(12) if modifiers.shift => Some(EditorCommand::Implementation),
+            Key::Function(12) => Some(EditorCommand::Definition),
+            Key::Function(2) => Some(EditorCommand::Rename),
+            Key::Character('h' | 'H') if modifiers.alt && modifiers.shift => {
+                Some(EditorCommand::IncomingCalls)
+            }
+            Key::Character('f' | 'F') if modifiers.alt && modifiers.shift => {
+                Some(EditorCommand::Format)
+            }
+            Key::Character('i' | 'I') if command && modifiers.shift => Some(EditorCommand::Format),
+            Key::Character('.') if command => Some(EditorCommand::CodeActions),
+            _ => None,
+        }
+    }
+
+    /// Takes a key pressed while the box for a new name or for a line to go to has the keyboard: Escape closes it and gives the keyboard back to the file. Says whether it took the key.
+    pub(super) fn rename_key(&mut self, event: KeyEvent) -> bool {
+        let focused = self.focus.current();
+        if event.key != Key::Escape
+            || !(focused == Some(RENAME_SYMBOL) || focused == Some(GO_TO_LINE))
+        {
+            return false;
+        }
+        self.model
+            .update(|screen| *screen = std::mem::take(screen).rename_closed().go_to_line_closed());
+        self.focus.focus(EDITOR_FIELD);
+        true
+    }
+
+    /// Opens the finder for the files of the project the review panel is about, across the top of the window, when Ctrl+P is pressed; says whether it was.
+    pub(super) fn finder_key(&mut self, event: KeyEvent) -> bool {
+        let modifiers = event.modifiers;
+        let command = modifiers.control || modifiers.logo;
+        if !command || modifiers.shift || !matches!(event.key, Key::Character('p' | 'P')) {
+            return false;
+        }
+        let width = self
+            .renderer
+            .as_ref()
+            .map_or(1280.0, |renderer| renderer.size().0);
+        let at = (((width - 600.0) / 2.0).max(0.0), 56.0);
+        self.model
+            .update(|screen| *screen = std::mem::take(screen).file_finder_requested(at));
+        if self.model.read(Screen::listing_open) {
+            self.focus.focus(LISTING_FILTER);
+        }
+        true
+    }
+
+    /// Opens the search of the files of the project the review panel is about when Ctrl+Shift+F is pressed, or the list of what is wrong with them when Ctrl+Shift+M is, across the top of the window; says whether either was.
+    pub(super) fn search_key(&mut self, event: KeyEvent) -> bool {
+        let modifiers = event.modifiers;
+        let command = modifiers.control || modifiers.logo;
+        let searching = matches!(event.key, Key::Character('f' | 'F'));
+        let problems = matches!(event.key, Key::Character('m' | 'M'));
+        if !command || !modifiers.shift || !(searching || problems) {
+            return false;
+        }
+        let width = self
+            .renderer
+            .as_ref()
+            .map_or(1280.0, |renderer| renderer.size().0);
+        let at = (((width - 600.0) / 2.0).max(0.0), 56.0);
+        self.model.update(|screen| {
+            let taken = std::mem::take(screen);
+            *screen = if problems {
+                taken.problems_requested(at)
+            } else {
+                taken.search_requested(at)
+            };
+        });
+        if self.model.read(Screen::listing_open) {
+            self.focus.focus(LISTING_FILTER);
+        }
+        true
+    }
+
+    /// Takes a key pressed while the field narrowing the list over the file has the keyboard: the arrows move the pick and Escape closes the list. Says whether it took the key.
+    pub(super) fn listing_key(&mut self, event: KeyEvent) -> bool {
+        if self.focus.current() != Some(LISTING_FILTER) {
+            return false;
+        }
+        match event.key {
+            Key::ArrowUp => self
+                .model
+                .update(|screen| *screen = std::mem::take(screen).listing_moved(-1)),
+            Key::ArrowDown => self
+                .model
+                .update(|screen| *screen = std::mem::take(screen).listing_moved(1)),
+            Key::Escape => {
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).listing_closed());
+                self.focus.focus(EDITOR_FIELD);
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// Takes a key pressed while the bar for finding has the keyboard: Escape closes it, Shift+Enter goes back a match, F3 steps, Ctrl+Alt+Enter replaces every match, and Alt with C, W or R switches matching case, whole words or regular expressions. Says whether it took the key.
+    pub(super) fn find_key(&mut self, event: KeyEvent) -> bool {
+        let focused = self.focus.current();
+        if focused != Some(FIND_FIELD) && focused != Some(REPLACE_FIELD) {
+            return false;
+        }
+        let modifiers = event.modifiers;
+        let command = modifiers.control || modifiers.logo;
+        let toggled = match event.key {
+            Key::Character('c' | 'C') if modifiers.alt => Some(FIND_CASE),
+            Key::Character('w' | 'W') if modifiers.alt => Some(FIND_WORD),
+            Key::Character('r' | 'R') if modifiers.alt => Some(FIND_REGEX),
+            _ => None,
+        };
+        if let Some(which) = toggled {
+            self.model
+                .update(|screen| *screen = std::mem::take(screen).find_toggled(which));
+            self.show_editor_caret();
+            return true;
+        }
+        match event.key {
+            Key::Escape => {
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).find_closed());
+                self.focus.focus(EDITOR_FIELD);
+            }
+            Key::Enter if focused == Some(REPLACE_FIELD) && command && modifiers.alt => {
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).replaced_all());
+            }
+            Key::Enter if focused == Some(FIND_FIELD) && modifiers.shift => {
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).find_stepped(true));
+            }
+            Key::Function(3) => {
+                self.model.update(|screen| {
+                    *screen = std::mem::take(screen).find_stepped(modifiers.shift)
+                });
+            }
+            Key::Character('f' | 'F') if command => {
+                self.edit_field(FIND_FIELD, Edit::SelectAll);
+                self.focus.focus(FIND_FIELD);
+            }
+            _ => return false,
+        }
+        self.show_editor_caret();
+        true
+    }
+
+    /// What the keys of `event` do to the lines or the selection of the file shown, when they do something, with whether the selection runs over lines, `spanning`.
+    fn line_edit_of(event: &KeyEvent, spanning: bool) -> Option<LineEdit> {
+        let modifiers = event.modifiers;
+        let command = modifiers.control || modifiers.logo;
+        let (alt, shift) = (modifiers.alt, modifiers.shift);
+        match event.key {
+            Key::Character('d' | 'D') if command && !shift => Some(LineEdit::AddNextOccurrence),
+            Key::Character('l' | 'L') if command && shift => Some(LineEdit::SelectAllOccurrences),
+            Key::ArrowUp if command && alt => Some(LineEdit::AddCaretAbove),
+            Key::ArrowDown if command && alt => Some(LineEdit::AddCaretBelow),
+            Key::Character('[' | '{') if command && shift => Some(LineEdit::Fold),
+            Key::Character(']' | '}') if command && shift => Some(LineEdit::Unfold),
+            Key::Character('/') if command => Some(LineEdit::ToggleComment),
+            Key::Character('l' | 'L') if command && !shift => Some(LineEdit::SelectLine),
+            Key::Character('j' | 'J') if command && !shift => Some(LineEdit::JoinLines),
+            Key::Character('\\' | '|') if command && shift => Some(LineEdit::MatchingBracket),
+            Key::Character('m' | 'M') if command && !shift => Some(LineEdit::MatchingBracket),
+            Key::Enter if command && shift => Some(LineEdit::LineAbove),
+            Key::Enter if command => Some(LineEdit::LineBelow),
+            Key::Home if !command && !alt => Some(LineEdit::Home(shift)),
+            Key::Character(']') if command => Some(LineEdit::Indent),
+            Key::Character('[') if command => Some(LineEdit::Outdent),
+            Key::Tab if shift && !command => Some(LineEdit::Outdent),
+            Key::Tab if spanning && !command => Some(LineEdit::Indent),
+            Key::ArrowUp if alt && shift => Some(LineEdit::DuplicateUp),
+            Key::ArrowDown if alt && shift => Some(LineEdit::DuplicateDown),
+            Key::ArrowUp if alt => Some(LineEdit::MoveUp),
+            Key::ArrowDown if alt => Some(LineEdit::MoveDown),
+            Key::ArrowRight if alt && shift => Some(LineEdit::Grow),
+            Key::ArrowLeft if alt && shift => Some(LineEdit::Shrink),
+            Key::Character('k' | 'K') if command && shift => Some(LineEdit::Delete),
+            Key::Function(8) if shift => Some(LineEdit::PreviousProblem),
+            Key::Function(8) => Some(LineEdit::NextProblem),
+            Key::Backspace if !command && !alt && !shift => Some(LineEdit::Backspace),
+            _ => None,
+        }
+    }
+
+    /// Closes the list over the file and the box for a new name when the press at `on` is outside them.
+    pub(super) fn press_beside_code(&mut self, on: Option<pm_input::FocusId>) {
+        let on_listing = on.is_some_and(|id| {
+            id == LISTING_BODY || id == LISTING_FILTER || listing_row_of(id).is_some()
+        });
+        if !on_listing && self.model.read(Screen::listing_open) {
+            self.model
+                .update(|screen| *screen = std::mem::take(screen).listing_closed());
+        }
+        let on_box = on.is_some_and(|id| id == RENAME_SYMBOL || id == RENAME_BOX);
+        if !on_box && self.model.read(Screen::renaming_open) {
+            self.model
+                .update(|screen| *screen = std::mem::take(screen).rename_closed());
+        }
+        let on_line_box = on.is_some_and(|id| id == GO_TO_LINE || id == GO_TO_LINE_BOX);
+        if !on_line_box && self.model.read(Screen::going_to_open) {
+            self.model
+                .update(|screen| *screen = std::mem::take(screen).go_to_line_closed());
+        }
+    }
+
+    /// Gives the keyboard back to the file shown once the box for a new name or a line to go to it was lent to has closed.
+    pub(super) fn settle_rename_focus(&mut self) {
+        let focused = self.focus.current();
+        let closed = (focused == Some(RENAME_SYMBOL) && !self.model.read(Screen::renaming_open))
+            || (focused == Some(GO_TO_LINE) && !self.model.read(Screen::going_to_open))
+            || ((focused == Some(FIND_FIELD) || focused == Some(REPLACE_FIELD))
+                && !self.model.read(Screen::find_open))
+            || (focused == Some(LISTING_FILTER) && !self.model.read(Screen::listing_open));
+        if closed {
+            self.focus.focus(EDITOR_FIELD);
+            self.show_editor_caret();
+        }
+    }
+
     /// Takes a key pressed while the file shown has the keyboard, when it is one of the keys for writing code, and says whether it was.
     pub(super) fn editor_key(&mut self, event: KeyEvent) -> bool {
         if self.focus.current() != Some(EDITOR_FIELD) {
@@ -146,9 +530,116 @@ impl App {
         }
         let modifiers = event.modifiers;
         let command = modifiers.control || modifiers.logo;
-        let (completing, hovering) = self
-            .model
-            .read(|screen| (screen.completion_open(), screen.hover_open()));
+        let paired = std::mem::take(&mut self.paired);
+        if paired {
+            if matches!(event.key, Key::Character('i' | 'I')) {
+                self.hover_at_caret();
+                return true;
+            }
+            if let Some(chosen) = Self::command_of(&event, true) {
+                self.editor_command(chosen);
+                return true;
+            }
+        }
+        let spanning = self.model.read(Screen::selection_spans_lines);
+        if let Some(what) = Self::line_edit_of(&event, spanning) {
+            self.model
+                .update(|screen| *screen = std::mem::take(screen).lines_edited(what));
+            self.show_editor_caret();
+            return true;
+        }
+        if command && matches!(event.key, Key::Character('f' | 'F' | 'h' | 'H')) && !modifiers.shift
+        {
+            let replacing = matches!(event.key, Key::Character('h' | 'H'));
+            self.model
+                .update(|screen| *screen = std::mem::take(screen).find_opened(replacing));
+            self.focus.focus(FIND_FIELD);
+            self.show_editor_caret();
+            return true;
+        }
+        if event.key == Key::Function(3) {
+            self.model
+                .update(|screen| *screen = std::mem::take(screen).find_stepped(modifiers.shift));
+            self.show_editor_caret();
+            return true;
+        }
+        if command && !modifiers.shift && matches!(event.key, Key::Character('t' | 'T')) {
+            let width = self
+                .renderer
+                .as_ref()
+                .map_or(1280.0, |renderer| renderer.size().0);
+            let at = (((width - 600.0) / 2.0).max(0.0), 56.0);
+            self.model
+                .update(|screen| *screen = std::mem::take(screen).symbols_requested(at));
+            if self.model.read(Screen::listing_open) {
+                self.focus.focus(LISTING_FILTER);
+            }
+            return true;
+        }
+        if command && modifiers.shift && matches!(event.key, Key::Character('o' | 'O')) {
+            let at = self.editor_caret().map_or((48.0, 96.0), |caret| {
+                self.hung(caret, LISTING_HEIGHT + 40.0)
+            });
+            self.model
+                .update(|screen| *screen = std::mem::take(screen).outline_requested(at));
+            self.focus.focus(LISTING_FILTER);
+            return true;
+        }
+        if command && matches!(event.key, Key::Character('g' | 'G')) {
+            let at = self
+                .editor_caret()
+                .map_or((48.0, 96.0), |caret| self.hung(caret, 72.0));
+            self.model
+                .update(|screen| *screen = std::mem::take(screen).go_to_line_requested(at));
+            self.focus.focus(GO_TO_LINE);
+            return true;
+        }
+        if command && !modifiers.shift && matches!(event.key, Key::Character('k' | 'K')) {
+            self.paired = true;
+            return true;
+        }
+        let (completing, hovering, listing, signing, finding) = self.model.read(|screen| {
+            (
+                screen.completion_open(),
+                screen.hover_open(),
+                screen.listing_open(),
+                screen.signature_open(),
+                screen.find_open(),
+            )
+        });
+        let several = self.model.read(|screen| {
+            screen
+                .field(EDITOR_FIELD)
+                .is_some_and(pm_text::Field::has_others)
+        });
+        if listing {
+            let changed = |screen: Screen| -> Option<Screen> {
+                match event.key {
+                    Key::ArrowUp => Some(screen.listing_moved(-1)),
+                    Key::ArrowDown => Some(screen.listing_moved(1)),
+                    Key::Enter => Some(screen.listing_taken()),
+                    Key::Escape => Some(screen.listing_closed()),
+                    _ => None,
+                }
+            };
+            let mut taken = false;
+            self.model.update(|screen| {
+                if let Some(next) = changed(screen.clone()) {
+                    *screen = next;
+                    taken = true;
+                }
+            });
+            if taken {
+                self.show_editor_caret();
+                return true;
+            }
+            self.model
+                .update(|screen| *screen = std::mem::take(screen).listing_closed());
+        }
+        if let Some(chosen) = Self::command_of(&event, false) {
+            self.editor_command(chosen);
+            return true;
+        }
         let next = |screen: Screen| -> Option<Screen> {
             match event.key {
                 Key::ArrowUp if completing => Some(screen.completion_moved(-1)),
@@ -157,6 +648,9 @@ impl App {
                     Some(screen.completion_taken())
                 }
                 Key::Escape if completing => Some(screen.completion_closed()),
+                Key::Escape if signing => Some(screen.signature_closed()),
+                Key::Escape if finding => Some(screen.find_closed()),
+                Key::Escape if several => Some(screen.lines_edited(LineEdit::OnlyCaret)),
                 Key::Escape if hovering => Some(screen.hover_closed()),
                 Key::Enter if !command && !modifiers.shift && !modifiers.alt => {
                     Some(screen.editor_newline())
@@ -170,6 +664,11 @@ impl App {
                 },
             }
         };
+        if command && modifiers.shift && event.key == Key::Space {
+            self.model
+                .update(|screen| *screen = std::mem::take(screen).signature_requested());
+            return true;
+        }
         if command && event.key == Key::Space {
             self.complete_at_caret();
             return true;
@@ -183,25 +682,6 @@ impl App {
                     taken.jumped_back()
                 };
             });
-            return true;
-        }
-        if command && modifiers.shift && matches!(event.key, Key::Character('i' | 'I')) {
-            self.model
-                .update(|screen| *screen = std::mem::take(screen).formatted_by_hand());
-            return true;
-        }
-        if event.key == Key::Function(12) {
-            if let Some(caret) = self
-                .model
-                .read(|screen| screen.field(EDITOR_FIELD).map(pm_text::Field::caret))
-            {
-                self.model
-                    .update(|screen| *screen = std::mem::take(screen).definition_requested(caret));
-            }
-            return true;
-        }
-        if command && matches!(event.key, Key::Character('k' | 'K')) {
-            self.hover_at_caret();
             return true;
         }
         if hovering && event.key != Key::Escape {
@@ -331,10 +811,13 @@ impl App {
         let Some(stretch) = self.word_under(self.output.hit((x, y)), x, y) else {
             return false;
         };
+        let at = self.hung(stretch.start, LISTING_HEIGHT);
         self.model.update(|screen| {
-            *screen = std::mem::take(screen)
-                .with_reach(None)
-                .definition_requested(stretch.start)
+            *screen = std::mem::take(screen).with_reach(None).seek_requested(
+                stretch.start,
+                Seek::Definition,
+                at,
+            )
         });
         self.deliver();
         true

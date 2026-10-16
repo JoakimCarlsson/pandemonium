@@ -15,11 +15,15 @@ pub struct Item {
     pub context: String,
     /// The bytes of the text it covers.
     pub range: Range<usize>,
+    /// Where its name starts.
+    pub name_start: usize,
+    /// How many items hold it.
+    pub depth: usize,
 }
 
 impl Syntax {
-    /// The items of `text` that hold the byte `offset`, the outermost first.
-    pub fn enclosing(&self, text: &str, offset: usize) -> Vec<Item> {
+    /// The items of `text` that touch the bytes `within`, outermost and earliest first, each with how many of them hold it.
+    fn items(&self, text: &str, within: Range<usize>) -> Vec<Item> {
         let Some(query) = &self.grammar().outline else {
             return Vec::new();
         };
@@ -31,7 +35,7 @@ impl Syntax {
         };
         let context = query.capture_index_for_name("context");
         let mut cursor = QueryCursor::new();
-        cursor.set_byte_range(offset..(offset + 1).min(text.len()).max(offset));
+        cursor.set_byte_range(within);
         let mut found: Vec<Item> = Vec::new();
         let mut matches = cursor.matches(query, self.tree.root_node(), text.as_bytes());
         while let Some(held) = matches.next() {
@@ -51,13 +55,17 @@ impl Syntax {
             else {
                 continue;
             };
-            if !(range.start <= offset && offset <= range.end) {
-                continue;
-            }
+            let name_start = held
+                .captures()
+                .iter()
+                .find(|capture| capture.index == name)
+                .map_or(range.start, |capture| capture.node.start_byte());
             let entry = Item {
                 name: words(Some(name)),
                 context: words(context),
                 range,
+                name_start,
+                depth: 0,
             };
             if !entry.name.is_empty() && !found.contains(&entry) {
                 found.push(entry);
@@ -69,6 +77,25 @@ impl Syntax {
                 .cmp(&right.range.start)
                 .then(right.range.end.cmp(&left.range.end))
         });
+        let mut open: Vec<Range<usize>> = Vec::new();
+        for entry in &mut found {
+            open.retain(|outer| outer.start <= entry.range.start && entry.range.end <= outer.end);
+            entry.depth = open.len();
+            open.push(entry.range.clone());
+        }
         found
+    }
+
+    /// The items of `text` that hold the byte `offset`, the outermost first.
+    pub fn enclosing(&self, text: &str, offset: usize) -> Vec<Item> {
+        self.items(text, offset..(offset + 1).min(text.len()).max(offset))
+            .into_iter()
+            .filter(|entry| entry.range.start <= offset && offset <= entry.range.end)
+            .collect()
+    }
+
+    /// Every item of `text`, in the order they start, each with how many items hold it.
+    pub fn outline(&self, text: &str) -> Vec<Item> {
+        self.items(text, 0..text.len())
     }
 }

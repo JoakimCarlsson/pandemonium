@@ -81,6 +81,23 @@ and its language server. A file of an installed language gets syntax
 highlighting, indentation, bracket pairs and an outline in the window, and
 completion, diagnostics and hover from its language server.
 
+The editor works the way a code editor is expected to. The right-click menu
+and its keys go to definitions, declarations, type definitions and
+implementations, list references and incoming and outgoing calls, rename a
+symbol across the project, format the file and show the code actions the
+language server offers. It also copies a line's permalink, shows the file's
+history and opens a terminal beside it. While writing, brackets and quotes
+close themselves, the call the caret is in shows its signature, and the uses
+of the name under the caret are marked. Lines can be commented, moved,
+duplicated and deleted, and the selection grows along the syntax tree. Several
+carets work at once (Ctrl+D, Ctrl+Shift+L, Alt+click). There is find and
+replace (Ctrl+F, Ctrl+H) with regular expressions, an outline to jump through
+(Ctrl+Shift+O), symbols of the whole project (Ctrl+T), a file finder (Ctrl+P),
+search across the project's files (Ctrl+Shift+F), every problem the language
+servers found in the project (Ctrl+Shift+M), go to line (Ctrl+G) and folding.
+Indent guides are drawn, marks beside the line numbers show how each line
+differs from the last commit, and the caret's line says who last changed it.
+
 A language is a folder in [`languages/`](languages): a `config.toml` manifest,
 five queries (`highlights`, `indents`, `outline`, `injections`, `brackets`)
 and the icon its files are shown with, so no file icon ships with the app

@@ -15,7 +15,7 @@
       "server": "gopls",
       "files": {
         "brackets.scm": "f0353a09140622170b89963be336b7bf1dfb4d3630516204a0d9a71de0244dde",
-        "config.toml": "b9cb748dafebf05e726ad250e9e081ad71b93e6f6905cd53285976448746a691",
+        "config.toml": "aa01b358529d696e9cd4071f0458582d20811bab6339b3691a4b637833e7181b",
         "highlights.scm": "b845477ebabd708f06ff69438b4e309b1eadc8c014f9de78f2fa865652679528",
         "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d",
         "indents.scm": "a748e02c783a8758db59509a5d80db5c3ca3ea664699436444b7280b60ae8f18",
@@ -41,7 +41,7 @@
       "server": "typescript-language-server",
       "files": {
         "brackets.scm": "17d43133e8204321af678d982fc4952fecbda68995324a9be04b92677f17124a",
-        "config.toml": "0211e9ad846aa46be08fef658a79adbea7f3256d9e970cb7acadeb4f6724a741",
+        "config.toml": "4a3c14959d370d907e1043176afe48c4e68a575d1118f5bf40b8f541f153eb9a",
         "highlights.scm": "8c40d2b7d43982fc34929b92fa594b17759bf4f00fbdc185435d1c2e372c86a3",
         "icon.svg": "12b4bbacd7fbf2b1a685b791ce8c5c0196a3f01f78aff3f75cc05929868e17c6",
         "indents.scm": "8c6500f9272158bf36044cf0bce758b81f71910ff87d4840b8c612ecc4d92501",
@@ -68,7 +68,7 @@
       "server": "vscode-json-language-server",
       "files": {
         "brackets.scm": "d13aeee7b2b6ff238a68e2029bfa42543e624415911624e2fb88cd93abf47bc5",
-        "config.toml": "e9d76d64c7cbd50e0ff58d03974629e76644e1314a9e93a05ae6b6353a276366",
+        "config.toml": "e26f0eb9ef164de062671b5ed9d7f3633f2fe9d210c9ae9611f284a63017a9ce",
         "highlights.scm": "86cb3d2ca3aada199a87998e2d948de975e92c47d5258bcedbe71f193fe8fa4d",
         "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d",
         "indents.scm": "8d640f47854fdfb20e09a5ed3aec2c427b168ed62b2026350adc0b83dea69a2d",
@@ -97,7 +97,7 @@
       "server": "marksman",
       "files": {
         "brackets.scm": "b7ab133d108eac96fb9b228121b068542f1ccf2984358ff15e4db33e59388bd9",
-        "config.toml": "459b90df5f0ebf1608113c52a42e3d917a0587bd1d6e96e23ce0acf50fb2ed84",
+        "config.toml": "cfbd7dd327a88c46a7fabe7594511a38cc0c7e732792427c32ae5958af255c85",
         "highlights.scm": "c4d57d2a10100af9a75f21fedebc1d913cf88f9ea46f769f92d78530853ac636",
         "icon.svg": "be8f2f8d1aa65c6f8cd6d46c1d9ca3f2160f3c946f38b161646dd1e078a71d52",
         "indents.scm": "9ee17887c03d262070cfc98369bbca1f509f11fdb05b0f68ea9b5e6a96088354",
@@ -141,7 +141,7 @@
       "server": "pyright-langserver",
       "files": {
         "brackets.scm": "4d23538e4730c901b85c049aa4f18c246b7aff9b4dbce9f7edaafc616352a2a3",
-        "config.toml": "e8fe8fc6cf16ca9f52a927543a09fb96762df76f419d108bbc45b61826421d7d",
+        "config.toml": "69bd5e1f03b46227cf22595007a521b96dfb623f6667d5b63021bec473fc59ed",
         "highlights.scm": "5fbf61e4a31701ccbb46a41328cce553e0944648d9f450d24fdf14029919f8a8",
         "icon.svg": "87315ba89d065698044335641ca2dc26dda120866e508c58b7177d44dbe17c1c",
         "indents.scm": "b243ab33a226ec1f0bc5d7e1c16607903d393222561f582bcdf794ceb2a1fc35",
@@ -189,7 +189,7 @@
       "server": "taplo",
       "files": {
         "brackets.scm": "a0d7d33c46c561c820e4b4b5e83a2c358eb5831a06b538338a0d3c950aa7e48e",
-        "config.toml": "7d1cd2b037e1127141a77d6da3ce415d4e889ec3129b036975a40810dbb5898c",
+        "config.toml": "231ea83775ef64928f17e8838619d0b249b3893a5a95c42507ca522b12ff0f94",
         "highlights.scm": "25a36ce579bff0ac2d3ca0233d2b81fc05e4c4092c4b172bd7be32297fd78aec",
         "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d",
         "indents.scm": "9a3247ddd5fcc06a840724120ec90be62f8896f51801ae7504afedc7addbea97",
@@ -212,7 +212,7 @@
       "server": "typescript-language-server",
       "files": {
         "brackets.scm": "970b02fb5bf6b37f95ae18de20d95274ea3adfcde501744d0188dcc514acd55c",
-        "config.toml": "a7663aa357fe4ee88cd4ccfb507c5621ed4795e9bc9374d61bc06a83d7ecd774",
+        "config.toml": "faad2d4491fca9cfaeca7dabf3c88ae097291babdc99fe8abe5c97f2b975edf3",
         "highlights.scm": "f4deb8a99b627a6257479f40cb392fe82763f5a0d8af77b273bb873ca6792212",
         "icon.svg": "dfe113def52fc72b2975392c6a5648883f8e4feb908a66f41f4092753cac1f1b",
         "indents.scm": "540da706c65dc1b5f126673895334cdb5ac386a606d05d9ef8f4e36e96f57888",
@@ -241,7 +241,7 @@
       "server": "typescript-language-server",
       "files": {
         "brackets.scm": "e7319b052b3ac296c901ac7183841072b5a9fe57d8032944ead6f0ef431c5644",
-        "config.toml": "5d9d1dc434a82f82e7b69b3d34f836ded48462ffbae587e1616d0dd064a37838",
+        "config.toml": "504df80446b59646f3cd6470db166e91a9d66f2a34bac53ffc2a0028ea34715a",
         "highlights.scm": "3ee958b8f7217a26f9e683a916a7872d8e79e81a57f2424a4d6ccd613f6017f4",
         "icon.svg": "0004d33f46b2175e90f8ea86aef139e29af5f7a3a3cf310e6dd6b8c084bab884",
         "indents.scm": "a95eaed00775b56c91e823fdbca801ff691db2e1fc9922309b4ded21b90c2784",

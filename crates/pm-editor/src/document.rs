@@ -104,6 +104,8 @@ pub struct Document {
     pub version: i32,
     /// The characters after which the language server offers completions.
     pub triggers: Vec<String>,
+    /// The characters after which the language server tells what the call the caret is in looks like.
+    pub signature_triggers: Vec<String>,
     /// Why the language server could not read the file, when it could not.
     pub server_problem: Option<String>,
     /// What the language server finds wrong with the file.
@@ -114,6 +116,18 @@ pub struct Document {
     pub hover: Option<HoverCard>,
     /// The word the pointer is on while Ctrl is held, which pressing takes to where it is defined.
     pub reach: Option<Range<usize>>,
+    /// Each time the selection grew along the syntax tree, what it was and what it grew to, the latest last.
+    pub grown: Vec<(Range<usize>, Range<usize>)>,
+    /// The stretches where the thing at the caret is used, as the language server said for the version of the text they are about.
+    pub occurrences: (i32, Vec<Range<usize>>),
+    /// The signature of the call the caret is in, while it is showing.
+    pub signature: Option<pm_protocol::Signature>,
+    /// What the file held in the last commit, once read, when it is in one.
+    pub(crate) base: Option<String>,
+    /// How each line differs from the last commit, by line.
+    pub(crate) line_changes: Vec<Option<crate::gutter::LineChange>>,
+    /// The blocks folded away.
+    pub folds: Vec<crate::fold::Fold>,
     /// The highlights worked out last.
     painted: HighlightCache,
 }
@@ -151,11 +165,18 @@ impl Document {
             synced: false,
             version: 0,
             triggers: Vec::new(),
+            signature_triggers: Vec::new(),
             server_problem: None,
             diagnostics: Vec::new(),
             completion: None,
             hover: None,
             reach: None,
+            grown: Vec::new(),
+            occurrences: (0, Vec::new()),
+            signature: None,
+            base: None,
+            line_changes: Vec::new(),
+            folds: Vec::new(),
             painted: HighlightCache::default(),
         }
     }
@@ -171,6 +192,9 @@ impl Document {
         let change = Change::between(before, self.field.text())?;
         if let Some(syntax) = &mut self.syntax {
             syntax.edit(&change, before_lines, self.field.text(), &self.lines);
+        }
+        if self.base.is_some() {
+            self.compare_with_base();
         }
         Some(change)
     }

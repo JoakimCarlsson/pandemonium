@@ -12,6 +12,7 @@ suffixes = ["ts", "mts", "cts"]
 aliases = ["ts"]
 line_comment = "//"
 indent = 2
+pairs = ["()", "[]", "{}", "\"\"", "''", "``"]
 requires = ["tsx"]
 
 [grammar_file]

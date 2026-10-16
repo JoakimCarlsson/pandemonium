@@ -1,4 +1,4 @@
-//! Formatting: the edits a language server gives, made to the text in an order that keeps them true, the caret kept where it was among them.
+//! Formatting and edits across a project: the changes a language server gives, made to the text as one change, the caret kept where it was among them.
 
 use pm_protocol::TextChange;
 use pm_text::Edit;
@@ -8,7 +8,15 @@ use crate::document::Document;
 impl Document {
     /// The edits that make `changes`, which a language server gave to format the text as it was at `version`: the last stretch first so the others stay where they are, then the caret put back where it was among them; none when the text moved on since.
     pub fn format_edits(&self, version: i32, changes: Vec<TextChange>) -> Vec<Edit> {
-        if self.version != version || changes.is_empty() {
+        if self.version != version {
+            return Vec::new();
+        }
+        self.change_edits(changes)
+    }
+
+    /// The edit that makes `changes`, each a stretch of the text as it is now and what replaces it, as one change that undoes at once: the caret is kept where it was among them.
+    pub fn change_edits(&self, changes: Vec<TextChange>) -> Vec<Edit> {
+        if changes.is_empty() {
             return Vec::new();
         }
         let caret = self.field.caret();
@@ -22,25 +30,17 @@ impl Document {
             .filter(|(range, _)| range.end <= caret)
             .map(|(range, text)| text.len() as isize - range.len() as isize)
             .sum();
-        let length: isize = self.field.text().len() as isize
-            + ranges
-                .iter()
-                .map(|(range, text)| text.len() as isize - range.len() as isize)
-                .sum::<isize>();
-        let mut edits: Vec<Edit> = ranges
-            .into_iter()
-            .flat_map(|(range, text)| {
-                [
-                    Edit::Place(range.start, false),
-                    Edit::Place(range.end, true),
-                    Edit::Paste(text),
-                ]
-            })
-            .collect();
-        edits.push(Edit::Place(
-            (caret as isize + moved).clamp(0, length.max(0)) as usize,
-            false,
-        ));
-        edits
+        let mut text = self.field.text().to_owned();
+        let mut floor = text.len();
+        for (range, replacement) in ranges {
+            if range.end > floor {
+                continue;
+            }
+            floor = range.start;
+            text.replace_range(range, &replacement);
+        }
+        let caret = (caret as isize + moved).clamp(0, text.len() as isize) as usize;
+        let whole = self.field.text().len();
+        vec![Edit::Replace(0..whole, text, (caret, caret))]
     }
 }

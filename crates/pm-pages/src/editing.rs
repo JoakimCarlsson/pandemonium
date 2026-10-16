@@ -39,7 +39,7 @@ impl Screen {
         self,
         session: usize,
         path: &str,
-        outcome: Result<Vec<String>, String>,
+        outcome: Result<pm_protocol::Triggers, String>,
     ) -> Self {
         self.in_workspace(|state| state.with_opened(session, path, outcome))
     }
@@ -149,14 +149,297 @@ impl Screen {
         self.in_workspace(|state| state.with_reach(reach))
     }
 
-    /// The screen asking where the thing at the byte `offset` of the file shown is defined.
-    pub fn definition_requested(self, offset: usize) -> Self {
-        self.in_workspace(|state| state.definition_requested(offset))
+    /// The screen looking for what `seek` names from the byte `offset` of the file shown, a list of what is found hanging at `at`.
+    pub fn seek_requested(self, offset: usize, seek: pm_protocol::Seek, at: (f32, f32)) -> Self {
+        self.in_workspace(|state| state.seek_requested(offset, seek, at))
     }
 
-    /// The screen after the language server said where something in a file of the session at `session` is defined.
-    pub fn with_definitions(self, session: usize, locations: Vec<pm_protocol::Location>) -> Self {
-        self.in_workspace(|state| state.with_definitions(session, locations))
+    /// The screen after the language server named the places `seek` looks for from a place in a file of the session at `session`.
+    pub fn with_places(
+        self,
+        session: usize,
+        seek: pm_protocol::Seek,
+        locations: Vec<pm_protocol::Location>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_places(session, seek, locations))
+    }
+
+    /// The screen listing the files of the project the review panel is about at `at`, to open one.
+    pub fn file_finder_requested(self, at: (f32, f32)) -> Self {
+        self.in_workspace(|state| state.file_finder_requested(at))
+    }
+
+    /// The screen listing the symbols of the project at `at`, as the language server of the file shown finds them.
+    pub fn symbols_requested(self, at: (f32, f32)) -> Self {
+        self.in_workspace(|state| state.symbols_requested(at))
+    }
+
+    /// The screen asking who last changed the line of the caret of the file shown.
+    pub fn blame_requested(self) -> Self {
+        self.in_workspace(WorkspaceState::blame_requested)
+    }
+
+    /// The screen after the server said who last changed a line of a file.
+    pub fn with_blame(self, session: usize, path: &str, line: usize, blame: pm_git::Blame) -> Self {
+        self.in_workspace(|state| state.with_blame(session, path, line, blame))
+    }
+
+    /// The screen listing what is wrong with the files of the project, at `at`.
+    pub fn problems_requested(self, at: (f32, f32)) -> Self {
+        self.in_workspace(|state| state.problems_requested(at))
+    }
+
+    /// The screen after the server said what is wrong with the files of the project of the session at `session`.
+    pub fn with_problems(self, session: usize, problems: Vec<pm_protocol::Problem>) -> Self {
+        self.in_workspace(|state| state.with_problems(session, problems))
+    }
+
+    /// The screen listing the lines of the files of the project that hold what is typed, at `at`.
+    pub fn search_requested(self, at: (f32, f32)) -> Self {
+        self.in_workspace(|state| state.search_requested(at))
+    }
+
+    /// The screen after the language server named the symbols of the project matching `query`.
+    pub fn with_symbols(
+        self,
+        session: usize,
+        query: &str,
+        locations: Vec<pm_protocol::Location>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_symbols(session, query, locations))
+    }
+
+    /// The screen listing the items of the outline of the file shown at `at`.
+    pub fn outline_requested(self, at: (f32, f32)) -> Self {
+        self.in_workspace(|state| state.outline_requested(at))
+    }
+
+    /// Whether a list hangs over the file shown.
+    pub fn listing_open(&self) -> bool {
+        self.workspace_is(WorkspaceState::listing_open)
+    }
+
+    /// The screen with the pick of the list over the file moved `delta` rows.
+    pub fn listing_moved(self, delta: isize) -> Self {
+        self.in_workspace(|state| state.listing_moved(delta))
+    }
+
+    /// The screen with the list over the file closed.
+    pub fn listing_closed(self) -> Self {
+        self.in_workspace(WorkspaceState::listing_closed)
+    }
+
+    /// The screen with the row picked in the list over the file taken.
+    pub fn listing_taken(self) -> Self {
+        self.in_workspace(|state| state.listing_taken(None))
+    }
+
+    /// The screen after the server could not fill the list over the file, for `problem`.
+    pub fn listing_failed(self, problem: String) -> Self {
+        self.in_workspace(|state| state.listing_failed(problem))
+    }
+
+    /// The screen with a box at `at` to give the thing at the byte `offset` of the file shown a new name.
+    pub fn rename_requested(self, offset: usize, at: (f32, f32)) -> Self {
+        self.in_workspace(|state| state.rename_requested(offset, at))
+    }
+
+    /// Whether the box for a new name is open.
+    pub fn renaming_open(&self) -> bool {
+        self.workspace_is(WorkspaceState::renaming_open)
+    }
+
+    /// The screen with the box for a new name closed.
+    pub fn rename_closed(self) -> Self {
+        self.in_workspace(WorkspaceState::rename_closed)
+    }
+
+    /// The screen after renaming failed for `problem`.
+    pub fn rename_failed(self, problem: String) -> Self {
+        self.in_workspace(|state| state.rename_failed(problem))
+    }
+
+    /// The screen asking the language server what changes it offers at the caret of the file shown, listed at `at`.
+    pub fn code_actions_requested(self, at: (f32, f32)) -> Self {
+        self.in_workspace(|state| state.code_actions_requested(at))
+    }
+
+    /// The screen after the language server said what changes it offers for the file at `path` of the session at `session`.
+    pub fn with_code_actions(
+        self,
+        session: usize,
+        path: &str,
+        offered: Vec<pm_protocol::CodeAction>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_code_actions(session, path, offered))
+    }
+
+    /// The screen after an edit across the project of the session at `session` changed its open files by `files`.
+    pub fn with_edited_files(self, session: usize, files: Vec<pm_protocol::FileEdit>) -> Self {
+        self.in_workspace(|state| state.with_edited_files(session, files))
+    }
+
+    /// The screen with the bar for finding in the file shown open, with the row for replacing when `replacing`.
+    pub fn find_opened(self, replacing: bool) -> Self {
+        self.in_workspace(|state| state.find_opened(replacing))
+    }
+
+    /// Whether the bar for finding in the file shown is open.
+    pub fn find_open(&self) -> bool {
+        self.workspace_is(WorkspaceState::find_open)
+    }
+
+    /// The screen with the bar for finding closed.
+    pub fn find_closed(self) -> Self {
+        self.in_workspace(WorkspaceState::find_closed)
+    }
+
+    /// The screen with the next match selected, or the one before when `back`.
+    pub fn find_stepped(self, back: bool) -> Self {
+        self.in_workspace(|state| state.find_stepped(back))
+    }
+
+    /// The screen with every match replaced.
+    pub fn replaced_all(self) -> Self {
+        self.in_workspace(WorkspaceState::replaced_all)
+    }
+
+    /// The screen with the way of matching `which` names switched.
+    pub fn find_toggled(self, which: pm_input::FocusId) -> Self {
+        self.in_workspace(|state| state.find_toggled(which))
+    }
+
+    /// The screen after a file was read as the last commit holds it, or found in none.
+    pub fn with_base(self, session: usize, path: &str, base: Option<String>) -> Self {
+        self.in_workspace(|state| state.with_base(session, path, base))
+    }
+
+    /// The screen asking again for the open files of the session at `session` as the last commit holds them.
+    pub fn bases_wanted(self, session: usize) -> Self {
+        self.in_workspace(|state| state.bases_wanted(session))
+    }
+
+    /// The screen asking the language server where the thing at the caret of the file shown is used.
+    pub fn highlights_requested(self) -> Self {
+        self.in_workspace(WorkspaceState::highlights_requested)
+    }
+
+    /// The screen after the language server said where the thing at a place of a file is used.
+    pub fn with_highlights(
+        self,
+        session: usize,
+        path: &str,
+        version: i32,
+        spans: Vec<pm_protocol::Span>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_highlights(session, path, version, spans))
+    }
+
+    /// The screen after the language server said what the call a place of a file is in looks like.
+    pub fn with_signature(
+        self,
+        session: usize,
+        path: &str,
+        version: i32,
+        signature: Option<pm_protocol::Signature>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_signature(session, path, version, signature))
+    }
+
+    /// The screen asking what the call the caret of the file shown is in looks like.
+    pub fn signature_requested(self) -> Self {
+        self.in_workspace(WorkspaceState::signature_requested)
+    }
+
+    /// Whether the signature of a call shows over the file shown.
+    pub fn signature_open(&self) -> bool {
+        self.workspace_is(WorkspaceState::signature_open)
+    }
+
+    /// The screen with the signature of the call over the file shown taken away.
+    pub fn signature_closed(self) -> Self {
+        self.in_workspace(WorkspaceState::signature_closed)
+    }
+
+    /// The screen noting where the signature of the call the caret is in hangs.
+    pub fn with_signature_at(self, at: (f32, f32)) -> Self {
+        self.in_workspace(|state| state.with_signature_at(at))
+    }
+
+    /// The screen with `what` done to the lines or the selection of the file shown.
+    pub fn lines_edited(self, what: pm_components::line_edits::LineEdit) -> Self {
+        self.in_workspace(|state| state.lines_edited(what))
+    }
+
+    /// Whether the selection of the file shown runs over more than one line.
+    pub fn selection_spans_lines(&self) -> bool {
+        self.workspace_is(WorkspaceState::selection_spans_lines)
+    }
+
+    /// The screen with the box for going to a line by its number open at `at`.
+    pub fn go_to_line_requested(self, at: (f32, f32)) -> Self {
+        self.in_workspace(|state| state.go_to_line_requested(at))
+    }
+
+    /// Whether the box for going to a line is open.
+    pub fn going_to_open(&self) -> bool {
+        self.workspace_is(WorkspaceState::going_to_open)
+    }
+
+    /// The screen with the box for going to a line closed.
+    pub fn go_to_line_closed(self) -> Self {
+        self.in_workspace(WorkspaceState::go_to_line_closed)
+    }
+
+    /// The screen with the selection of the file shown copied without the indentation its lines share.
+    pub fn copied_trimmed(self) -> Self {
+        self.in_workspace(WorkspaceState::copied_trimmed)
+    }
+
+    /// The screen showing the file shown in the file manager.
+    pub fn file_revealed(self) -> Self {
+        self.in_workspace(WorkspaceState::file_revealed)
+    }
+
+    /// The screen with a shell started in the folder of the file shown.
+    pub fn terminal_beside_file(self) -> Self {
+        self.in_workspace(WorkspaceState::terminal_beside_file)
+    }
+
+    /// The screen asking for the web address of the caret's line of the file shown.
+    pub fn permalink_requested(self) -> Self {
+        self.in_workspace(WorkspaceState::permalink_requested)
+    }
+
+    /// The screen with `text` put on the clipboard.
+    pub fn with_copied(self, text: String) -> Self {
+        self.in_workspace(|state| state.with_copied(text))
+    }
+
+    /// The screen listing the commits that changed the file shown, at `at`.
+    pub fn file_history_requested(self, at: (f32, f32)) -> Self {
+        self.in_workspace(|state| state.file_history_requested(at))
+    }
+
+    /// The screen after the server listed the commits that changed the file at `path` of the session at `session`.
+    pub fn with_file_history(
+        self,
+        session: usize,
+        path: &str,
+        commits: Vec<pm_git::FileCommit>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_file_history(session, path, commits))
+    }
+
+    /// The screen showing a file of the session at `session` read only, as a commit left it.
+    pub fn with_revision(
+        self,
+        session: usize,
+        label: String,
+        text: String,
+        language: Option<String>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_revision(session, label, text, language))
     }
 
     /// The screen with the card about a place taken away.

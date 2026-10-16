@@ -6,12 +6,14 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 mod checkpoint;
+mod file_log;
 mod github;
 mod graph;
 mod operation;
 mod places;
 
 pub use checkpoint::{checkpoint, restore};
+pub use file_log::{Blame, FileCommit, Found, blame, file_history, permalink, search};
 pub use github::{Owner, Repository, owners, repositories};
 pub use graph::{Edge, Half, Lanes};
 pub use operation::{Operation, operation, step};
@@ -697,12 +699,24 @@ pub enum Contents {
 
 /// What `path` holds in the working folder, or, when `head`, in the last commit of the repository `directory` is in. No more than the limit of what is shown is ever read.
 pub fn read(directory: &Path, path: &str, head: bool) -> Result<Contents, String> {
+    read_at(directory, path, head.then_some("HEAD"))
+}
+
+/// What `path` holds in the working folder, or in the commit `revision` of the repository `directory` is in when one is named. No more than the limit of what is shown is ever read.
+pub fn read_at(directory: &Path, path: &str, revision: Option<&str>) -> Result<Contents, String> {
     let path = inside(path)?;
     let limit = READ_LIMIT as u64 + 1;
     let mut bytes = Vec::new();
-    if head {
+    if let Some(revision) = revision {
+        if revision.is_empty()
+            || !revision
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric())
+        {
+            return Err(format!("{revision:?} does not name a commit"));
+        }
         let mut child = Command::new("git")
-            .args(["show", &format!("HEAD:{path}")])
+            .args(["show", &format!("{revision}:{path}")])
             .env("GIT_LITERAL_PATHSPECS", "1")
             .current_dir(directory)
             .stdin(Stdio::null())

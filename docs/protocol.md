@@ -137,7 +137,7 @@ request with exactly one `response` carrying the same `id`.
 | `copy_entry`   | `directory`, `from`, `into`                                                                      | `done`          |
 | `remove_entry` | `directory`, `path`                                                                              | `done`          |
 | `write_file`   | `directory`, `path`, `text`                                                                      | `done`          |
-| `read_file`    | `directory`, `path`, `head`                                                                      | `file`          |
+| `read_file`    | `directory`, `path`, `head`, `revision` (optional)                                               | `file`          |
 | `open_terminal`| `directory`, `columns`, `rows`                                                                   | `terminal`      |
 | `terminal_input`| `terminal`, `data` (base64)                                                                     | `done`          |
 | `resize_terminal`| `terminal`, `columns`, `rows`                                                                  | `done`          |
@@ -158,6 +158,19 @@ request with exactly one `response` carrying the same `id`.
 | `close_document` | `directory`, `path`                                                                            | `done`          |
 | `completion`   | `directory`, `path`, `version`, `position`, `trigger` (optional)                                 | `completions`   |
 | `hover`        | `directory`, `path`, `version`, `position`                                                       | `hovered`       |
+| `format`       | `directory`, `path`, `version`                                                                   | `formatted`     |
+| `definition`   | `directory`, `path`, `version`, `position`, `seek` (optional)                                    | `definitions`   |
+| `workspace_symbols` | `directory`, `path`, `query`                                                                | `definitions`   |
+| `search_files` | `directory`, `query`, `regex` (optional), `case` (optional)                                      | `definitions`   |
+| `problems`     | `directory`                                                                                      | `problems`      |
+| `blame`        | `directory`, `path`, `line`                                                                      | `blamed`        |
+| `highlights`   | `directory`, `path`, `version`, `position`                                                       | `highlights`    |
+| `signature`    | `directory`, `path`, `version`, `position`                                                       | `signature`     |
+| `rename`       | `directory`, `path`, `version`, `position`, `name`                                               | `edited`        |
+| `code_actions` | `directory`, `path`, `version`, `span`                                                           | `code_actions`  |
+| `take_code_action` | `directory`, `path`, `index`                                                                 | `edited`        |
+| `file_history` | `directory`, `path`                                                                              | `file_history`  |
+| `permalink`    | `directory`, `path`, `line`                                                                      | `address`       |
 
 `agent` is an agent's id: `claude-code`, `codex` or `grok`.
 
@@ -322,7 +335,7 @@ request with exactly one `response` carrying the same `id`.
   `directory`, which must stay inside it) with `text`, making the file when it is
   not there. A folder is refused.
 - **`read_file`:** reads `path` from the working folder or, when `head`, from
-  the last commit. The response holds no text for a file that is not text, and
+  the last commit, or from the commit `revision` names by its object name. The response holds no text for a file that is not text, and
   names the installed language the file is written in, by the endings and names
   of files its manifest lists.
 - **`extensions`:** every extension the list offers, then those
@@ -368,8 +381,10 @@ request with exactly one `response` carrying the same `id`.
 - **`grammar`:** the grammar and queries of an installed language, found by its
   folder name or a name a code fence calls it, as `{id, symbol, aliases, wasm,
   highlights, indents, outline, injections, brackets, indent, tabs,
-  line_comment}`. `wasm` is the tree-sitter grammar compiled to WebAssembly, in
-  base64; a client parses and highlights with it itself.
+  line_comment, pairs}`. `wasm` is the tree-sitter grammar compiled to
+  WebAssembly, in base64; a client parses and highlights with it itself.
+  `pairs` lists what the editor closes as it is opened, each the opening and
+  the closing character, such as `"()"`.
 - **`open_document`:** opens `path` of the folder `directory` for the language
   server of `language`, holding `text` at `version`, and starts that server for
   the folder when it is not running, which can take a while. The response gives
@@ -386,9 +401,30 @@ request with exactly one `response` carrying the same `id`.
   closes what it had open.
 - **`completion`, `hover`:** wait until the open file reaches `version`, then
   ask its language server. `completions` holds `[{label, detail, kind, text,
-  span, filter, sort}]`, the best match for the word before `position` first,
-  with snippets made plain text; `span`, when given, is what choosing it
-  replaces. `hovered` holds `{text, span}` in markdown, or null.
+  span, filter, sort, documentation}]`, the best match for the word before
+  `position` first, with snippets made plain text; `span`, when given, is what
+  choosing it replaces, and `documentation` is markdown when the server sent
+  it with the list. `hovered` holds `{text, span}` in markdown, or null.
+- **`format`:** the edits that format the open file at `version`, as its
+  language server gives them.
+- **`definition`:** the places `seek` looks for from `position`: `definition`
+  (the default), `declaration`, `type_definition`, `implementation`,
+  `references`, `incoming_calls` or `outgoing_calls`. A file inside the folder
+  is named by its path from the root; one outside it by its absolute path, with
+  the whole text it holds for the first four, to be shown read only.
+- **`rename`, `take_code_action`:** carry out an edit across the folder. Files
+  no connection has open are changed on disk by the server; the changes to the
+  open ones come back in `edited` for the client to make, each a stretch of
+  the file as it is before any of them. `code_actions` lists what the language
+  server offers for `span`, and `take_code_action` takes one by its place in
+  the latest list for that file.
+- **`search_files`:** the lines of the files of the folder's repository,
+  tracked or not but not ignored, that hold `query`, as typed or as a regular
+  expression when `regex`, matching case only when `case`; as `definitions`
+  with `line` holding each line, at most 500 of them.
+- **`workspace_symbols`:** the symbols of the folder whose names match
+  `query`, as the language server of the open file `path` finds them, those
+  defined inside the folder only, as `definitions` with `name` naming each.
 
 A **position** is `{line, character}`, counted from 0, `character` in UTF-16
 code units as language servers count; a **span** is `{start, end}`.
@@ -431,9 +467,19 @@ embedded context, and anything else as a link to the stored file.
 | `directory`  | `path`: a `clone` made   |
 | `extensions` | `extensions`: `[{id, name, kind, version, description, icon, color, hidden, suffixes, installed, busy, problem, server, local}]` |
 | `grammar`    | `{id, symbol, aliases, wasm, highlights, indents, outline, injections, brackets, indent, tabs, line_comment}` |
-| `opened`     | `triggers`: the characters after which the server offers completions |
-| `completions`| `items`: `[{label, detail, kind, text, span, filter, sort}]`, `kind` one of `function`, `variable`, `type`, `module`, `keyword`, `constant`, `snippet`, `other` |
+| `opened`     | `triggers`: the characters after which the server offers completions; `signature`: those after which it tells what the call the caret is in looks like |
+| `completions`| `items`: `[{label, detail, kind, text, span, filter, sort, documentation}]`, `kind` one of `function`, `variable`, `type`, `module`, `keyword`, `constant`, `snippet`, `other` |
 | `hovered`    | `hover`: `{text, span}` or null |
+| `formatted`  | `edits`: `[{span, text}]` |
+| `definitions`| `locations`: `[{path, span, inside, text, language, name, line}]`; `name` names a calling or called function, `line` is the line the span starts on |
+| `code_actions` | `actions`: `[{title, kind, preferred, disabled}]` |
+| `highlights` | `spans`: the stretches of the file where the thing at `position` is used |
+| `blamed`     | `blame`: `{id, author, when, summary}`, who last changed the line as the file is on disk; `id` is empty for a line not committed, `when` seconds since the Unix epoch |
+| `problems`   | `problems`: `[{path, diagnostic}]`, what the language servers last said is wrong with each file of the folder, open or not, the worst first |
+| `signature`  | `signature`: `{label, active, documentation, others}` or null; `active` is the byte range of `label` naming the parameter the place is at, `others` how many more signatures there are |
+| `edited`     | `files`: `[{path, changes: [{span, text}]}]` |
+| `file_history` | `commits`: `[{object, id, author, when, summary, path}]`, newest first, following the file back through moves; `path` is what it was called in that commit |
+| `address`    | `url`: the web address of the line on the host of the repository's remote, at the commit checked out |
 
 ## Changes other clients make
 
