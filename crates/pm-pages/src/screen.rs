@@ -575,18 +575,22 @@ impl Screen {
         }
     }
 
-    /// The screen after the diagram kept under `key` was drawn, or could not be.
-    pub fn with_diagram(self, key: u64, drawn: Result<pm_ui::Picture, String>) -> Self {
+    /// The screen after the figure kept under `key` was drawn or fetched, or could not be.
+    pub fn with_figure(
+        self,
+        key: u64,
+        drawn: Result<pm_components::figures::Drawing, String>,
+    ) -> Self {
         match self {
-            Self::Workspace(state) => Self::Workspace(state.with_diagram(key, drawn)),
+            Self::Workspace(state) => Self::Workspace(state.with_figure(key, drawn)),
             other => other,
         }
     }
 
-    /// The screen with every drawn diagram let go and those of the file shown asked for again, as when the colours change.
-    pub fn without_diagrams(self) -> Self {
+    /// The screen with every figure let go and those of the file shown asked for again, as when the colours diagrams are drawn in change.
+    pub fn without_figures(self) -> Self {
         match self {
-            Self::Workspace(state) => Self::Workspace(state.without_diagrams()),
+            Self::Workspace(state) => Self::Workspace(state.without_figures()),
             other => other,
         }
     }

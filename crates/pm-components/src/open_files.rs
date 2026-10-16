@@ -326,7 +326,7 @@ impl WorkspaceState {
             draw = viewer.draw_request(session);
         }
         self.outbox.extend(draw);
-        self.ask_diagrams();
+        self.ask_shown_figures();
         let opened = !head
             && self.viewers_of(session).is_some_and(|viewers| {
                 viewers.iter().any(|viewer| {
@@ -392,11 +392,14 @@ impl WorkspaceState {
         viewer.scroll = 0.0;
         let draw = viewer.draw_request(session);
         self.outbox.extend(draw);
-        self.ask_diagrams();
+        self.ask_shown_figures();
     }
 
-    /// Asks for every diagram of the markdown file shown rendered that is neither drawn nor asked for yet.
-    fn ask_diagrams(&mut self) {
+    /// Asks for every figure of the markdown file shown rendered that is neither drawn nor asked for yet.
+    pub(crate) fn ask_shown_figures(&mut self) {
+        let Some(session) = self.review_index() else {
+            return;
+        };
         let Some(viewer) = self
             .shown_viewer()
             .filter(|viewer| viewer.rendering() == Some(Rendering::Markdown))
@@ -406,27 +409,8 @@ impl WorkspaceState {
         let Contents::Text(document) = &viewer.contents else {
             return;
         };
-        for source in crate::diagram::diagram_sources(document.field.text()) {
-            let key = crate::diagram::diagram_key(&source);
-            if !self.diagrams.contains_key(&key) && self.diagrams_asked.insert(key) {
-                self.outbox.push(Outgoing::DrawDiagram { key, source });
-            }
-        }
-    }
-
-    /// The state after the diagram kept under `key` was drawn, or could not be.
-    pub fn with_diagram(mut self, key: u64, drawn: Result<pm_ui::Picture, String>) -> Self {
-        self.diagrams_asked.remove(&key);
-        self.diagrams.insert(key, drawn);
-        self
-    }
-
-    /// The state with every drawn diagram let go, as when the colours they were drawn in change, and those of the file shown asked for again.
-    pub fn without_diagrams(mut self) -> Self {
-        self.diagrams.clear();
-        self.diagrams_asked.clear();
-        self.ask_diagrams();
-        self
+        let wanted = crate::figures::figures_of(document.field.text(), Some(&viewer.path));
+        self.ask_figures(wanted, Some(session));
     }
 
     /// Follows the link at `place` among those of the markdown file shown rendered: an address on the web opens in the browser, and a file of the repository opens in a tab.
@@ -603,7 +587,7 @@ impl WorkspaceState {
         {
             self.git.shown = Some(index as usize);
             self.tab = Tab::File;
-            self.ask_diagrams();
+            self.ask_shown_figures();
             return true;
         }
         if let Some(index) = action

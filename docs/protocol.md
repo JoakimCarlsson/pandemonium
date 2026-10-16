@@ -148,6 +148,7 @@ request with exactly one `response` carrying the same `id`.
 | `write_file`   | `directory`, `path`, `text`                                                                      | `done`          |
 | `read_file`    | `directory`, `path`, `head`, `revision` (optional)                                               | `file`          |
 | `read_bytes`   | `directory`, `path`, `head`                                                                      | `bytes`         |
+| `fetch_bytes`  | `url`: an `http` or `https` address                                                              | `bytes`         |
 | `open_terminal`| `directory`, `columns`, `rows`                                                                   | `terminal`      |
 | `terminal_input`| `terminal`, `data` (base64)                                                                     | `done`          |
 | `resize_terminal`| `terminal`, `columns`, `rows`                                                                  | `done`          |

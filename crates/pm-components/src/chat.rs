@@ -247,6 +247,7 @@ fn agent_message(
             Markdown::new(piece, width)
                 .details(DETAILS_BASE + (index * 1000 + base) as u64, unfolded)
                 .links(LINK_BASE + index as u64 * LINKS_PER_REPLY + number as u64 * LINKS_PER_PIECE)
+                .figures(&state.figures, None)
                 .build(shaper),
         );
     }

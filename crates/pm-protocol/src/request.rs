@@ -370,6 +370,11 @@ pub enum Request {
         /// Whether to read it from the last commit rather than from the working folder.
         head: bool,
     },
+    /// Fetches what a web address holds, as bytes, such as a picture markdown shows.
+    FetchBytes {
+        /// The address, `http` or `https`.
+        url: String,
+    },
     /// The commits that changed a file of a folder, newest first.
     FileHistory {
         /// The folder.

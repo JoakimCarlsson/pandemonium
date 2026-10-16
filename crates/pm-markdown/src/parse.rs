@@ -2,9 +2,9 @@
 
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
-use crate::block::{Block, Inline, Span};
+use crate::block::{Block, Image, Inline, Span};
 
-/// The blocks `source` is made of, with tables, strikethrough and task lists understood.
+/// The blocks `source` is made of, with tables, strikethrough, task lists and TeX formulas understood; a formula within running text is set as code.
 ///
 /// A source cut off part way, as a streamed reply is, parses as though every
 /// open block closed where it ends.
@@ -19,8 +19,10 @@ pub fn links(source: &str) -> Vec<String> {
 
 /// `source` read through.
 fn read(source: &str) -> Builder {
-    let options =
-        Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
+    let options = Options::ENABLE_TABLES
+        | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_TASKLISTS
+        | Options::ENABLE_MATH;
     let mut builder = Builder::default();
     for event in Parser::new_ext(source, options) {
         builder.event(event);
@@ -105,11 +107,22 @@ struct Builder {
     monospace: u32,
     /// Running text read but not yet added, gathered so that a web address the parser split is found whole.
     prose: String,
+    /// The picture whose words are being read, between the start and the end of a markdown image.
+    image: Option<Image>,
+    /// The pictures read into the open paragraph so far.
+    images: Vec<Image>,
+    /// Whether the open paragraph holds words of its own besides the words of its pictures.
+    worded: bool,
+    /// For each HTML paragraph or division open, innermost last, whether it sets what it holds in the middle.
+    aligned: Vec<bool>,
 }
 
 impl Builder {
     /// Takes one event of the parser into the blocks.
     fn event(&mut self, event: Event) {
+        if let (Some(image), Event::Text(text) | Event::Code(text)) = (&mut self.image, &event) {
+            return image.alt.push_str(text);
+        }
         if let Event::Text(text) = &event
             && !matches!(self.open, Some(Open::Code(_)))
         {
@@ -120,7 +133,11 @@ impl Builder {
             Event::Start(tag) => self.start(tag),
             Event::End(tag) => self.end(tag),
             Event::Text(text) => self.code.push_str(&text),
-            Event::Code(text) => self.text(
+            Event::DisplayMath(text) => {
+                self.close_text();
+                self.push_block(Block::Math(text.trim().to_owned()));
+            }
+            Event::Code(text) | Event::InlineMath(text) => self.text(
                 &text,
                 Inline {
                     code: true,
@@ -196,8 +213,30 @@ impl Builder {
                 self.targets.push(dest_url.into_string());
                 self.open_links.push(self.targets.len() as u16);
             }
+            Tag::Image { dest_url, .. } => {
+                self.image = Some(Image {
+                    source: dest_url.into_string(),
+                    alt: String::new(),
+                    target: self.open_links.last().copied().unwrap_or(0),
+                    width: None,
+                    height: None,
+                });
+            }
             _ => {}
         }
+    }
+
+    /// Adds `image` to the open paragraph: its words go into the text, which keeps them when the paragraph has words of its own, and the picture is kept to be shown when it has none.
+    fn add_image(&mut self, image: Image) {
+        if self.open.is_none() {
+            self.open = Some(Open::Paragraph);
+        }
+        let worded = self.worded;
+        if !image.alt.is_empty() {
+            self.text(&image.alt, self.inline());
+        }
+        self.worded = worded;
+        self.images.push(image);
     }
 
     /// Closes what `tag` ends.
@@ -210,7 +249,11 @@ impl Builder {
                     if text.ends_with('\n') {
                         text.pop();
                     }
-                    self.push_block(Block::Code { language, text });
+                    self.push_block(if language.eq_ignore_ascii_case("math") {
+                        Block::Math(text)
+                    } else {
+                        Block::Code { language, text }
+                    });
                 }
             }
             TagEnd::BlockQuote(_) => {
@@ -243,6 +286,7 @@ impl Builder {
             }
             TagEnd::TableCell => {
                 self.open = None;
+                self.forget_images();
                 let cell = std::mem::take(&mut self.spans);
                 if let Some(Container::Table {
                     head,
@@ -268,6 +312,11 @@ impl Builder {
             TagEnd::Link => {
                 self.link = self.link.saturating_sub(1);
                 self.open_links.pop();
+            }
+            TagEnd::Image => {
+                if let Some(image) = self.image.take() {
+                    self.add_image(image);
+                }
             }
             _ => {}
         }
@@ -360,6 +409,7 @@ impl Builder {
             "summary" if closing => {
                 if let Some(Open::Summary) = self.open {
                     self.open = None;
+                    self.forget_images();
                     let spans = std::mem::take(&mut self.spans);
                     if let Some(Container::Details { summary, .. }) = self.stack.last_mut() {
                         *summary = spans;
@@ -372,7 +422,27 @@ impl Builder {
                 self.open = Some(Open::Summary);
                 return;
             }
-            "span" | "sup" | "sub" | "u" | "mark" | "small" | "abbr" => return,
+            "img" if !closing => {
+                return self.add_image(html_image(
+                    inside,
+                    self.open_links.last().copied().unwrap_or(0),
+                ));
+            }
+            "p" | "div" | "center" if !closing => {
+                self.close_text();
+                let centered = name == "center"
+                    || attribute(inside, "align")
+                        .is_some_and(|align| align.eq_ignore_ascii_case("center"));
+                return self.aligned.push(centered);
+            }
+            "p" | "div" | "center" => {
+                self.close_text();
+                self.aligned.pop();
+                return;
+            }
+            "span" | "sup" | "sub" | "u" | "mark" | "small" | "abbr" | "picture" | "source" => {
+                return;
+            }
             _ => return self.close_text(),
         };
         *count = if closing {
@@ -411,6 +481,9 @@ impl Builder {
         if self.open.is_none() {
             self.open = Some(Open::Paragraph);
         }
+        if !text.trim().is_empty() {
+            self.worded = true;
+        }
         match self.spans.last_mut() {
             Some(last) if last.inline == inline && last.text != "\n" && text != "\n" => {
                 last.text.push_str(text)
@@ -420,6 +493,12 @@ impl Builder {
                 inline,
             }),
         }
+    }
+
+    /// Lets go of the pictures read into text that shows only their words, as a table cell or a summary does.
+    fn forget_images(&mut self) {
+        self.images.clear();
+        self.worded = false;
     }
 
     /// Ends the open text and opens `container`, where blocks now go.
@@ -437,6 +516,12 @@ impl Builder {
         };
         self.open = None;
         let spans = std::mem::take(&mut self.spans);
+        let images = std::mem::take(&mut self.images);
+        let worded = std::mem::take(&mut self.worded);
+        if level.is_none() && !images.is_empty() && !worded {
+            let centered = self.aligned.iter().any(|centered| *centered);
+            return self.push_block(Block::Images { images, centered });
+        }
         if spans.is_empty() {
             return;
         }
@@ -500,4 +585,50 @@ fn bare_address(text: &str) -> Option<(usize, usize)> {
         7
     };
     (address.len() > scheme).then_some((start, start + address.len()))
+}
+
+/// The picture an HTML `<img>` tag names, its words between the angle brackets being `inside`, as the face of the link numbered `target`.
+fn html_image(inside: &str, target: u16) -> Image {
+    let size = |name: &str| {
+        attribute(inside, name).and_then(|value| value.trim_end_matches("px").parse().ok())
+    };
+    Image {
+        source: attribute(inside, "src").unwrap_or_default().to_owned(),
+        alt: attribute(inside, "alt").unwrap_or_default().to_owned(),
+        target,
+        width: size("width"),
+        height: size("height"),
+    }
+}
+
+/// The value of the attribute `name` in the words `inside` an HTML tag, quoted or bare.
+fn attribute<'a>(inside: &'a str, name: &str) -> Option<&'a str> {
+    let lower = inside.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(found) = lower[from..].find(name) {
+        let at = from + found;
+        from = at + name.len();
+        let before = lower[..at].chars().next_back();
+        if before.is_some_and(|character| !character.is_whitespace()) {
+            continue;
+        }
+        let rest = inside[from..].trim_start();
+        let Some(rest) = rest.strip_prefix('=') else {
+            continue;
+        };
+        let rest = rest.trim_start();
+        return Some(match rest.chars().next() {
+            Some(quote @ ('"' | '\'')) => {
+                let value = &rest[1..];
+                &value[..value.find(quote).unwrap_or(value.len())]
+            }
+            _ => {
+                let end = rest
+                    .find(|character: char| character.is_whitespace() || character == '/')
+                    .unwrap_or(rest.len());
+                &rest[..end]
+            }
+        });
+    }
+    None
 }

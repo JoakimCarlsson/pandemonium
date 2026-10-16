@@ -5,6 +5,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::{Arc, LazyLock};
 
 use pm_color::Role;
+use pm_components::figures::Drawing;
 use pm_components::preview::VECTOR_DENSITY;
 use pm_renderer::Picture;
 
@@ -54,13 +55,15 @@ static FONTS: LazyLock<Arc<resvg::usvg::fontdb::Database>> = LazyLock::new(|| {
     Arc::new(fonts)
 });
 
-/// The colours diagrams are drawn in, taken from the theme the window is drawn in.
+/// The colours diagrams and formulas are drawn in, taken from the theme the window is drawn in.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Palette {
     /// Whether the theme is a dark one.
     dark: bool,
     /// The colours, as the theme variables of a diagram name them, in `#rrggbb`.
     variables: BTreeMap<String, String>,
+    /// The colour of running text, red, green and blue, which formulas are set in.
+    ink: [u8; 3],
 }
 
 impl Palette {
@@ -98,7 +101,12 @@ impl Palette {
         .into_iter()
         .map(|(name, role)| (name.to_owned(), hex(role)))
         .collect();
-        Self { dark, variables }
+        let [red, green, blue, _] = pm_color::Roles::role(theme, Role::Text).to_bytes();
+        Self {
+            dark,
+            variables,
+            ink: [red, green, blue],
+        }
     }
 }
 
@@ -130,8 +138,13 @@ pub(crate) fn decode(path: &str, bytes: &[u8], truncated: bool) -> Result<Pictur
     })
 }
 
-/// The vector picture `text` of the file at `path` holds, drawn at the density of a drawn vector picture, or why it could not be drawn.
+/// The vector picture `text` of the file at `path` holds, drawn at the density of a drawn vector picture and its longest side no shorter than the shortest a vector file is drawn at, or why it could not be drawn.
 pub(crate) fn draw(path: &str, text: &str) -> Result<Picture, String> {
+    draw_sized(path, text, SHORTEST_VECTOR_SIDE)
+}
+
+/// The vector picture `text` of the file at `path` holds, drawn at the density of a drawn vector picture and its longest side no shorter than `shortest` pixels, or why it could not be drawn.
+fn draw_sized(path: &str, text: &str, shortest: f32) -> Result<Picture, String> {
     let options = resvg::usvg::Options {
         fontdb: Arc::clone(&FONTS),
         ..resvg::usvg::Options::default()
@@ -140,7 +153,7 @@ pub(crate) fn draw(path: &str, text: &str) -> Result<Picture, String> {
         .map_err(|error| format!("This picture could not be drawn: {error}"))?;
     let size = tree.size();
     let longest = size.width().max(size.height()).max(1.0);
-    let side = (longest * VECTOR_DENSITY).clamp(SHORTEST_VECTOR_SIDE, LONGEST_SIDE as f32);
+    let side = (longest * VECTOR_DENSITY).clamp(shortest, LONGEST_SIDE as f32);
     let scale = side / longest;
     let width = (size.width() * scale).round().max(1.0) as u32;
     let height = (size.height() * scale).round().max(1.0) as u32;
@@ -167,8 +180,31 @@ pub(crate) fn draw(path: &str, text: &str) -> Result<Picture, String> {
     })
 }
 
+/// Whether `bytes` hold a vector picture's text rather than the pixels of a picture.
+fn is_vector(bytes: &[u8]) -> bool {
+    let start = &bytes[..bytes.len().min(1024)];
+    let text = String::from_utf8_lossy(start);
+    let text = text.trim_start_matches('\u{feff}').trim_start();
+    text.starts_with('<') && text.contains("<svg")
+}
+
+/// The picture `bytes` hold, drawn from its text when it is a vector picture and decoded otherwise, or why it could not be.
+pub(crate) fn figure(bytes: &[u8], truncated: bool) -> Result<Drawing, String> {
+    if is_vector(bytes) {
+        let text = String::from_utf8_lossy(bytes);
+        return draw_sized("figure", &text, 1.0).map(|picture| Drawing {
+            picture,
+            density: VECTOR_DENSITY,
+        });
+    }
+    decode("figure", bytes, truncated).map(|picture| Drawing {
+        picture,
+        density: 1.0,
+    })
+}
+
 /// The diagram written in mermaid as `source`, drawn in the colours of `palette`, or why it could not be drawn.
-pub(crate) fn diagram(source: &str, palette: &Palette) -> Result<Picture, String> {
+pub(crate) fn diagram(source: &str, palette: &Palette) -> Result<Drawing, String> {
     let mut theme = if palette.dark {
         mermaid_svg::Theme::dark()
     } else {
@@ -178,5 +214,27 @@ pub(crate) fn diagram(source: &str, palette: &Palette) -> Result<Picture, String
     theme.responsive = false;
     let svg = mermaid_svg::render_with(source, &theme)
         .map_err(|error| format!("This diagram could not be drawn: {error}"))?;
-    draw("diagram", &svg)
+    draw_sized("diagram", &svg, 1.0).map(|picture| Drawing {
+        picture,
+        density: VECTOR_DENSITY,
+    })
+}
+
+/// How tall the type of a formula is, in points, as the type of running text beside it is.
+const FORMULA_POINTS: (i64, i64) = (27, 2);
+
+/// The formula written in TeX as `source`, set on lines of its own in the ink of `palette`, or why it could not be set.
+pub(crate) fn formula(source: &str, palette: &Palette) -> Result<Drawing, String> {
+    let font = latex_rust::MathFont::stix_two_math().map_err(|error| error.to_string())?;
+    let [red, green, blue] = palette.ink;
+    let mut options = latex_rust::SvgOptions::new();
+    options.font_size_pt = latex_rust::Dim::ratio(FORMULA_POINTS.0, FORMULA_POINTS.1);
+    options.color = latex_rust::Color::rgb(red, green, blue);
+    options.display = true;
+    let svg = latex_rust::latex_to_svg(source, &font, &options)
+        .map_err(|error| format!("This formula could not be set: {error}"))?;
+    draw_sized("formula", &svg, 1.0).map(|picture| Drawing {
+        picture,
+        density: VECTOR_DENSITY,
+    })
 }

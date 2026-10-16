@@ -588,7 +588,7 @@ pub fn viewer(state: &WorkspaceState, width: f32, height: f32, shaper: &mut Shap
         return node();
     };
     let lines_height = (height - STRIP).max(0.0);
-    let rendered = crate::preview::rendered(viewer, &state.diagrams, (width, height), shaper);
+    let rendered = crate::preview::rendered(viewer, &state.figures, (width, height), shaper);
     let source = rendered.is_none();
     let body = match (rendered, &viewer.contents) {
         (Some(rendered), _) => rendered,

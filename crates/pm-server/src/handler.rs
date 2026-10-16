@@ -746,6 +746,10 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             Ok((bytes, truncated)) => Response::Bytes { bytes, truncated },
             Err(reason) => failed(reason),
         },
+        Request::FetchBytes { url } => match crate::fetch::bytes(&url) {
+            Ok((bytes, truncated)) => Response::Bytes { bytes, truncated },
+            Err(reason) => failed(reason),
+        },
         Request::WriteFile {
             directory,
             path,

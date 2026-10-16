@@ -812,6 +812,29 @@ pub enum Outgoing {
         /// What it is written as.
         source: String,
     },
+    /// Sets a formula written in TeX in markdown into pixels.
+    DrawFormula {
+        /// The key it is kept under.
+        key: u64,
+        /// The TeX it is written in.
+        source: String,
+    },
+    /// Reads a picture a markdown file of the folder of a session shows, to be decoded.
+    ReadFigure {
+        /// The key it is kept under.
+        key: u64,
+        /// The session, by position.
+        session: usize,
+        /// The picture, from the root of the repository.
+        path: String,
+    },
+    /// Fetches a picture markdown shows from the web, to be decoded.
+    FetchFigure {
+        /// The key it is kept under.
+        key: u64,
+        /// Its web address.
+        address: String,
+    },
     /// Draws the text of a vector picture open in a session into pixels.
     DrawVector {
         /// The session, by position.
@@ -1089,10 +1112,10 @@ pub struct WorkspaceState {
     pub discovered_elsewhere: std::collections::HashMap<Option<String>, Discovered>,
     /// What the attached pictures look like, by path, once they are decoded.
     pub previews: std::collections::HashMap<String, pm_ui::Picture>,
-    /// The diagrams of markdown files drawn so far.
-    pub diagrams: crate::diagram::Diagrams,
-    /// The diagrams asked to be drawn, by their key, so none is asked for twice.
-    pub diagrams_asked: std::collections::HashSet<u64>,
+    /// The diagrams and images of markdown drawn or fetched so far.
+    pub figures: crate::figures::Figures,
+    /// The figures asked for, by their key, so none is asked for twice.
+    pub figures_asked: std::collections::HashSet<u64>,
     /// The commit message being written.
     pub message: Field,
     /// What the history page is narrowed to.
@@ -1308,8 +1331,8 @@ impl WorkspaceState {
             skill_names: std::collections::HashSet::new(),
             attachments: Vec::new(),
             previews: std::collections::HashMap::new(),
-            diagrams: crate::diagram::Diagrams::new(),
-            diagrams_asked: std::collections::HashSet::new(),
+            figures: crate::figures::Figures::new(),
+            figures_asked: std::collections::HashSet::new(),
             discovery_host: None,
             discovered_elsewhere: std::collections::HashMap::new(),
             files: Vec::new(),
@@ -1749,8 +1772,12 @@ impl WorkspaceState {
             self.plan_open = true;
             self.plan_scroll = 0.0;
         }
+        let finishing = matches!(&event, Event::Finished(_) | Event::Failed(_));
         if let Some(held) = self.sessions.get_mut(session) {
             held.hear(event);
+        }
+        if finishing {
+            self.ask_reply_figures(session);
         }
         self
     }

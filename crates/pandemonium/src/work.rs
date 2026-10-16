@@ -7,6 +7,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use pm_acp::{Discovery, Event};
 use pm_client::{Client, Incoming};
 use pm_components::adder::{Found, Kind};
+use pm_components::figures::Drawing;
 use pm_components::git_controls::GRAPH_LIMIT;
 use pm_components::state::SESSION_BASE;
 use pm_components::tree_actions::EntryChange;
@@ -87,8 +88,8 @@ enum Job {
     Pictured(usize, String, bool, Result<Picture, String>),
     /// The text of the vector picture of the session at this position, at this path, and whether it was read from the last commit, was drawn, or could not be.
     Drawn(usize, String, bool, Result<Picture, String>),
-    /// The diagram kept under this key was drawn, or could not be.
-    Diagram(u64, Result<Picture, String>),
+    /// The figure kept under this key was drawn or decoded, or could not be.
+    Figure(u64, Result<Drawing, String>),
     /// The server on this machine was found or reached, or could not be.
     Server(Host, Result<Target, String>),
     /// The grammar of the language with this folder name was compiled, or could not be.
@@ -152,6 +153,8 @@ enum Pending {
     ReadFile(usize, String, bool),
     /// The bytes of the picture file of the session at this position, at this path, and whether they were read from the last commit.
     ReadPicture(usize, String, bool),
+    /// The bytes of the figure of markdown kept under this key.
+    Figure(u64),
     /// A session was branched off the session at this position.
     Fork(usize),
     /// The session at this position went back, with what its failing is called.
@@ -958,9 +961,31 @@ impl Work {
                     let palette = self.palette.clone();
                     self.spawn(move |reporter| {
                         let drawn = picture::diagram(&source, &palette);
-                        let _ = reporter.send(Job::Diagram(key, drawn));
+                        let _ = reporter.send(Job::Figure(key, drawn));
                     });
                 }
+                Outgoing::DrawFormula { key, source } => {
+                    let palette = self.palette.clone();
+                    self.spawn(move |reporter| {
+                        let drawn = picture::formula(&source, &palette);
+                        let _ = reporter.send(Job::Figure(key, drawn));
+                    });
+                }
+                Outgoing::ReadFigure { key, session, path } => self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::ReadBytes {
+                        directory,
+                        path,
+                        head: false,
+                    },
+                    Pending::Figure(key),
+                ),
+                Outgoing::FetchFigure { key, address } => self.ask(
+                    &None,
+                    Request::FetchBytes { url: address },
+                    Pending::Figure(key),
+                ),
                 Outgoing::Accounts { logins, in_use } => self.set_accounts(&logins, &in_use),
                 Outgoing::SignIn { agent } => {
                     if let Some(id) = self.agent_id(agent) {
@@ -1256,8 +1281,8 @@ impl Work {
                     *screen = std::mem::take(screen).with_drawn(session, &path, head, drawn);
                 });
             }
-            Job::Diagram(key, drawn) => {
-                model.update(|screen| *screen = std::mem::take(screen).with_diagram(key, drawn));
+            Job::Figure(key, drawn) => {
+                model.update(|screen| *screen = std::mem::take(screen).with_figure(key, drawn));
             }
             Job::Server(host, Ok(target)) => {
                 if !self.links.contains_key(&host) {
@@ -1669,6 +1694,22 @@ impl Work {
                     });
                 }
             },
+            Pending::Figure(key) => {
+                let read = match response {
+                    Response::Bytes { bytes, truncated } => Ok((bytes, truncated)),
+                    Response::Failed { message } => Err(message),
+                    _ => Err("the server answered with something else".to_owned()),
+                };
+                match read {
+                    Ok((bytes, truncated)) => self.spawn(move |reporter| {
+                        let drawn = picture::figure(&bytes, truncated);
+                        let _ = reporter.send(Job::Figure(key, drawn));
+                    }),
+                    Err(reason) => model.update(|screen| {
+                        *screen = std::mem::take(screen).with_figure(key, Err(reason));
+                    }),
+                }
+            }
             Pending::Commit(session, push) => {
                 let failed = failure.is_some();
                 if let Some(message) = failure {
