@@ -124,38 +124,8 @@ fn viewer_tab(viewer: &Viewer, index: usize, shown: bool) -> Node {
     .focusable(FocusId(FILE_TAB_BASE + index as u64))
 }
 
-/// The strip above a session: its views, and the button for the terminal.
-fn tabs(state: &WorkspaceState, session: &Session) -> Node {
-    let agent = state.agent_look(session.agent);
-    let mut strip = node()
-        .styles([
-            flex(),
-            items_end(),
-            gap(1),
-            h(12),
-            px(3),
-            flex_none(),
-            border_b(),
-            border_color(Role::Border),
-        ])
-        .child(tab(
-            IconName::Sparkles,
-            &agent.name,
-            TAB_CHAT,
-            state.tab == Tab::Chat,
-        ));
-    if !session.changes.is_empty() {
-        strip = strip.child(tab(
-            IconName::GitCompare,
-            "Diff",
-            TAB_DIFF,
-            state.tab == Tab::Diff,
-        ));
-    }
-    for (index, viewer) in state.git.viewers.iter().enumerate() {
-        let shown = state.tab == Tab::File && state.git.shown == Some(index);
-        strip = strip.child(viewer_tab(viewer, index, shown));
-    }
+/// The button that shows or hides the terminal dock, filled while the dock shows.
+fn terminal_toggle(state: &WorkspaceState) -> Node {
     let on = state.terminal;
     let mut toggle = vec![
         flex(),
@@ -172,23 +142,15 @@ fn tabs(state: &WorkspaceState, session: &Session) -> Node {
         toggle.push(bg(Role::SurfaceSelected));
     }
     let tone = if on { Role::Text } else { Role::Muted };
-    strip.child(spacer()).child(
-        node()
-            .styles(toggle)
-            .child(glyph(IconName::Terminal, 3.5, tone))
-            .child(line("Terminal", 13, 1.4, tone).styles([font_medium()]))
-            .focusable(TERMINAL),
-    )
+    node()
+        .styles(toggle)
+        .child(glyph(IconName::Terminal, 3.5, tone))
+        .child(line("Terminal", 13, 1.4, tone).styles([font_medium()]))
+        .focusable(TERMINAL)
 }
 
-/// What fills the main area, `width` by `height` logical pixels, on a page of a project while a file of the project is open: the tabs, the first of them, `first`, showing `page`, and the file under the others.
-fn home_page(
-    state: &WorkspaceState,
-    first: (IconName, &str),
-    page: Node,
-    (width, height): (f32, f32),
-    shaper: &mut Shaper,
-) -> Node {
+/// The strip above a page: the page's own tabs, `leading`, the tab of every open file, and the button for the terminal.
+fn tabs(state: &WorkspaceState, leading: Vec<Node>) -> Node {
     let mut strip = node()
         .styles([
             flex(),
@@ -200,21 +162,70 @@ fn home_page(
             border_b(),
             border_color(Role::Border),
         ])
-        .child(tab(first.0, first.1, TAB_CHAT, state.tab != Tab::File));
+        .children(leading);
     for (index, viewer) in state.git.viewers.iter().enumerate() {
         let shown = state.tab == Tab::File && state.git.shown == Some(index);
         strip = strip.child(viewer_tab(viewer, index, shown));
     }
-    node()
+    strip.child(spacer()).child(terminal_toggle(state))
+}
+
+/// Whether the terminal dock shows under the page in the main area.
+fn docking(state: &WorkspaceState) -> bool {
+    state.terminal
+        && !state.projects.is_empty()
+        && matches!(
+            (state.page, state.open()),
+            (Page::Session(_), Some(_)) | (Page::New(_) | Page::Project(_), _)
+        )
+        && state.docked().is_some()
+}
+
+/// How much of the main area's `height` the page above the terminal dock keeps, in logical pixels.
+fn above_dock(state: &WorkspaceState, height: f32) -> f32 {
+    if docking(state) {
+        height - terminal::height(state, height)
+    } else {
+        height
+    }
+}
+
+/// A page of the main area, `width` by `height` logical pixels: the strip of tabs, `view` under it, and the terminal dock at the foot while it shows.
+fn paned(
+    state: &WorkspaceState,
+    strip: Node,
+    view: Node,
+    (width, height): (f32, f32),
+    shaper: &mut Shaper,
+) -> Node {
+    let page = node()
         .styles([flex(), flex_col(), flex_1(), min_w_px(0), h_full()])
         .child(strip)
-        .child(
-            if state.tab == Tab::File && state.shown_viewer().is_some() {
-                viewer::viewer(state, width, height, shaper)
-            } else {
-                page
-            },
-        )
+        .child(view);
+    match state.docked().filter(|_| docking(state)) {
+        Some(session) => page.child(terminal::terminal(state, session, width, height, shaper)),
+        None => page,
+    }
+}
+
+/// What fills the main area, `width` by `height` logical pixels, on a page of a project: the tabs, the first of them, `first`, showing `page`, and the file under the others.
+fn home_page(
+    state: &WorkspaceState,
+    first: (IconName, &str),
+    page: Node,
+    (width, height): (f32, f32),
+    shaper: &mut Shaper,
+) -> Node {
+    let strip = tabs(
+        state,
+        vec![tab(first.0, first.1, TAB_CHAT, state.tab != Tab::File)],
+    );
+    let view = if state.tab == Tab::File && state.shown_viewer().is_some() {
+        viewer::viewer(state, width, height, shaper)
+    } else {
+        page
+    };
+    paned(state, strip, view, (width, height), shaper)
 }
 
 /// The page for starting work, its prompt box `width` logical pixels across in a window `height` tall.
@@ -227,7 +238,7 @@ fn starting_page(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
     )
 }
 
-/// What fills the main area while a session is open.
+/// What fills the main area while a session is open: its views, and the tab of every open file.
 fn session_page(
     state: &WorkspaceState,
     session: &Session,
@@ -236,19 +247,27 @@ fn session_page(
     height: f32,
     shaper: &mut Shaper,
 ) -> Node {
+    let agent = state.agent_look(session.agent);
+    let mut leading = vec![tab(
+        IconName::Sparkles,
+        &agent.name,
+        TAB_CHAT,
+        state.tab == Tab::Chat,
+    )];
+    if !session.changes.is_empty() {
+        leading.push(tab(
+            IconName::GitCompare,
+            "Diff",
+            TAB_DIFF,
+            state.tab == Tab::Diff,
+        ));
+    }
     let view = match state.tab {
         Tab::Diff if !session.changes.is_empty() => diff::diff(state, session, width, height),
         Tab::File if state.shown_viewer().is_some() => viewer::viewer(state, width, height, shaper),
         _ => chat::chat(state, session, width, above, shaper),
     };
-    let mut page = node()
-        .styles([flex(), flex_col(), flex_1(), min_w_px(0), h_full()])
-        .child(tabs(state, session))
-        .child(view);
-    if state.terminal {
-        page = page.child(terminal::terminal(state, session, width, height, shaper));
-    }
-    page
+    paned(state, tabs(state, leading), view, (width, height), shaper)
 }
 
 /// The whole workspace screen for `state` in a window `width` logical pixels wide.
@@ -274,21 +293,20 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
             height,
             shaper,
         ),
-        (Page::New(_), _) if !state.git.viewers.is_empty() => home_page(
+        (Page::New(_), _) => home_page(
             state,
             (IconName::Plus, "New Session"),
-            starting_page(state, main_width, height, shaper),
+            starting_page(state, main_width, above_dock(state, height), shaper),
             (main_width, height),
             shaper,
         ),
-        (Page::Project(project), _) if !state.git.viewers.is_empty() => home_page(
+        (Page::Project(project), _) => home_page(
             state,
             (IconName::Folder, "Overview"),
             overview::overview(state, project),
             (main_width, height),
             shaper,
         ),
-        (Page::Project(project), _) => overview::overview(state, project),
         (Page::History, _) => history::history(state),
         (Page::Extensions, _) => pm_components::extensions::extensions(state),
         _ => starting_page(state, main_width, height, shaper),
@@ -322,10 +340,7 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
                 .build(),
         );
     }
-    if state.terminal
-        && !state.projects.is_empty()
-        && matches!((state.page, open), (Page::Session(_), Some(_)))
-    {
+    if docking(state) {
         root = root.child(
             Sash::row(TERMINAL_SASH)
                 .at(

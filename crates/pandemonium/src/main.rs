@@ -107,6 +107,7 @@ fn main() {
             Some("projectmenu") => Shot::ProjectMenu,
             Some("dragging") => Shot::Dragging,
             Some("welcome") => Shot::Welcome,
+            Some("welcometerminal") => Shot::WelcomeTerminal,
             Some("wrapped") => Shot::Wrapped,
             Some("slashed") => Shot::Slashed,
             Some("dollar") => Shot::Dollar,

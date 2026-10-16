@@ -131,6 +131,8 @@ pub enum Shot {
     Dragging,
     /// The page for starting work in this repository, with the agent's settings known.
     Welcome,
+    /// The page for starting work in this repository with the terminal open under it.
+    WelcomeTerminal,
     /// The page for starting work with a long prompt that wraps and has a line break.
     Wrapped,
     /// The page for starting work after a command was picked from the list behind a slash.
@@ -890,7 +892,12 @@ fn files() -> WorkspaceState {
 
 /// The workspace with a shell open that has run a few commands, as the shell would have drawn them.
 fn terminal() -> WorkspaceState {
-    let mut state = workspace_sample().after(TERMINAL);
+    with_shell(workspace_sample())
+}
+
+/// `state` with the terminal opened and a few commands run in its shell, as the shell would have drawn them.
+fn with_shell(state: WorkspaceState) -> WorkspaceState {
+    let mut state = state.after(TERMINAL);
     state.fit_terminal(75, 11);
     let printed = "\x1b[1;32mpandemonium\x1b[0m \x1b[34m~/code/pandemonium\x1b[0m $ git status\r\n\
 On branch \x1b[36mtask/227-checkpoints\x1b[0m\r\n\
@@ -1160,6 +1167,7 @@ impl Shot {
             }
             Self::Dragging => Screen::Workspace(workspace().dragged_over(0, 2, (150.0, 470.0))),
             Self::Welcome => Screen::Workspace(welcome()),
+            Self::WelcomeTerminal => Screen::Workspace(with_shell(welcome())),
             Self::Wrapped => Screen::Workspace(welcome().edited(
                 PROMPT,
                 Edit::Paste(
