@@ -38,6 +38,15 @@ const WIDTH: u32 = 1280;
 /// Logical height of the snapshot.
 const HEIGHT: u32 = 800;
 
+/// Logical width of a snapshot of the settings window.
+const SETTINGS_WIDTH: u32 = 960;
+
+/// Logical height of a snapshot of the settings window.
+const SETTINGS_HEIGHT: u32 = 720;
+
+/// Logical width of a snapshot of the settings window at its narrowest.
+const NARROW_WIDTH: u32 = 640;
+
 /// Which screen a snapshot shows.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Shot {
@@ -147,6 +156,8 @@ pub enum Shot {
     SettingsEditor,
     /// The settings panel on the keymap.
     SettingsKeymap,
+    /// The settings window at its narrowest, on what the language server adds.
+    SettingsNarrow,
     /// The settings panel on how files look.
     SettingsAppearance,
     /// The settings panel on the MCP servers inside Agents, with one installed, the registry's offers and the menu of the installed one open.
@@ -835,6 +846,21 @@ fn projects() -> Vec<Project> {
 }
 
 impl Shot {
+    /// Whether this snapshot shows the settings window instead of the main one.
+    fn in_settings_window(self) -> bool {
+        matches!(
+            self,
+            Self::Settings
+                | Self::SettingsAgents
+                | Self::SettingsEditor
+                | Self::SettingsKeymap
+                | Self::SettingsAppearance
+                | Self::SettingsMcp
+                | Self::SettingsForm
+                | Self::SettingsNarrow
+        )
+    }
+
     /// The stretch of selectable text this snapshot shows selected, if any.
     fn selection(self) -> Option<TextSelection> {
         matches!(self, Self::Selecting | Self::MessageMenu).then_some(TextSelection {
@@ -1072,6 +1098,12 @@ impl Shot {
                     .after(SETTINGS)
                     .after(Section::Editor.id()),
             ),
+            Self::SettingsNarrow => Screen::Workspace(
+                welcome()
+                    .after(SETTINGS)
+                    .after(Section::Editor.id())
+                    .after(Section::EditorIntelligence.id()),
+            ),
             Self::SettingsAppearance => Screen::Workspace(
                 welcome()
                     .after(SETTINGS)
@@ -1101,7 +1133,7 @@ impl Shot {
                             tool_listing("GitHub", "github", "https://api.githubcopilot.com/mcp/"),
                         ]),
                     )
-                    .with_settings_menu(0, (800.0, 380.0)),
+                    .with_settings_menu(0, (711.0, 357.0)),
             ),
             Self::SettingsForm => Screen::Workspace(
                 welcome()
@@ -1515,7 +1547,19 @@ pub fn write(
     appearance: Appearance,
     shot: Shot,
 ) -> Result<(), String> {
-    let mut renderer = Renderer::headless(WIDTH, HEIGHT, 1.0).map_err(|error| error.to_string())?;
+    let (width, height) = if shot == Shot::SettingsNarrow {
+        (NARROW_WIDTH, SETTINGS_HEIGHT)
+    } else if shot.in_settings_window() {
+        (SETTINGS_WIDTH, SETTINGS_HEIGHT)
+    } else {
+        (WIDTH, HEIGHT)
+    };
+    let paint = if shot.in_settings_window() {
+        scene::paint_settings
+    } else {
+        scene::paint
+    };
+    let mut renderer = Renderer::headless(width, height, 1.0).map_err(|error| error.to_string())?;
     let mut shaper = scene::shaper();
     let mut list = DrawList::new();
     let input = Input {
@@ -1534,18 +1578,18 @@ pub fn write(
         elapsed_ms: 0.0,
         ..input
     };
-    scene::paint(
-        WIDTH as f32,
-        HEIGHT as f32,
+    paint(
+        width as f32,
+        height as f32,
         &screen,
         &resting,
         theme,
         &mut shaper,
         &mut DrawList::new(),
     );
-    scene::paint(
-        WIDTH as f32,
-        HEIGHT as f32,
+    paint(
+        width as f32,
+        height as f32,
         &screen,
         &input,
         theme,
@@ -1555,7 +1599,7 @@ pub fn write(
     let pixels = renderer
         .snapshot(&list, &mut shaper, scene::ground(theme))
         .ok_or("the renderer could not read its frame back")?;
-    image::save_buffer(path, &pixels, WIDTH, HEIGHT, image::ColorType::Rgba8)
+    image::save_buffer(path, &pixels, width, height, image::ColorType::Rgba8)
         .map_err(|error| error.to_string())
 }
 

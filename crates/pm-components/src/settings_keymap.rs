@@ -3,12 +3,12 @@
 use pm_editor::{Action, Preset, shown};
 use pm_input::FocusId;
 use pm_style::{
-    Radius, Role, bg, border, border_color, cursor_pointer, flex, flex_col, flex_none, font_mono,
-    gap, h, items_center, justify_between, justify_center, min_w_px, px, rounded, w_px,
+    Radius, Role, bg, border, border_color, cursor_pointer, flex, flex_1, flex_col, flex_none,
+    font_mono, gap, h, items_center, justify_between, justify_center, min_w_px, px, rounded, w_px,
 };
 use pm_ui::{Node, node};
 
-use crate::parts::line;
+use crate::parts::{clipped, line, wrap};
 use crate::state::WorkspaceState;
 
 /// The first of the choices of preset; the rest follow it.
@@ -16,6 +16,12 @@ const PRESET_BASE: u64 = 20_001_900;
 
 /// The first of the controls of the actions; each action has four after its own base, its place among them times four.
 const ACTION_BASE: u64 = 20_002_000;
+
+/// How wide the choices of preset are drawn, in logical pixels, at most.
+const PRESETS_WIDTH: f32 = 350.0;
+
+/// The least room what the preset row says is given beside the choices, in logical pixels, before they go under it.
+const MIN_WORDS: f32 = 200.0;
 
 /// How many controls an action has room for.
 const PER_ACTION: u64 = 4;
@@ -155,6 +161,32 @@ fn presets(picked: Preset) -> Node {
         }))
 }
 
+/// The row choosing the preset the keys start from, `room` logical pixels across: what it is beside the choices, or above them where they leave too little room.
+fn base(picked: Preset, room: f32) -> Node {
+    let beside = room - PRESETS_WIDTH - 24.0;
+    let stacked = beside < MIN_WORDS;
+    let words = if stacked { room } else { beside };
+    let about = node()
+        .styles([flex(), flex_col(), gap(0.5), min_w_px(0)])
+        .child(line("Base keymap", 13, 1.4, Role::Text))
+        .children(
+            wrap(
+                "The keys start as another editor has them; your own keys go over them.",
+                12,
+                words,
+            )
+            .into_iter()
+            .map(|words| line(words, 12, 1.4, Role::Muted)),
+        );
+    let row = node().styles([flex(), gap(6), flex_none()]);
+    let row = if stacked {
+        row.styles([flex_col(), pm_style::items_start(), gap(2)])
+    } else {
+        row.styles([items_center(), justify_between()])
+    };
+    row.child(about).child(presets(picked))
+}
+
 /// A small button of a row saying `label`.
 fn small(label: &str, id: FocusId) -> Node {
     node()
@@ -212,26 +244,10 @@ fn caps(keys: &[String], recording: Option<&[String]>, id: FocusId) -> Node {
     held
 }
 
-/// The keymap page's body: the preset, then every action under its group with its keys.
-pub(crate) fn rows(state: &WorkspaceState) -> Vec<Node> {
+/// The keymap page's body, `room` logical pixels across: the preset, then every action under its group with its keys.
+pub(crate) fn rows(state: &WorkspaceState, room: f32) -> Vec<Node> {
     let keymap = state.editor.keymap();
-    let mut parts =
-        vec![
-        node()
-            .styles([flex(), items_center(), justify_between(), gap(6), flex_none()])
-            .child(
-                node()
-                    .styles([flex(), flex_col(), gap(0.5), min_w_px(0)])
-                    .child(line("Base keymap", 13, 1.4, Role::Text))
-                    .child(line(
-                        "The keys start as another editor has them; your own keys go over them.",
-                        12,
-                        1.4,
-                        Role::Muted,
-                    )),
-            )
-            .child(presets(state.editor.keymap)),
-    ];
+    let mut parts = vec![base(state.editor.keymap, room)];
     let mut group = "";
     let mut rows: Vec<Node> = Vec::new();
     let groups = [
@@ -292,8 +308,8 @@ pub(crate) fn rows(state: &WorkspaceState) -> Vec<Node> {
             .collect();
         let recording = (state.recording == Some(action)).then_some(state.recorded.as_slice());
         let mut about = node()
-            .styles([flex(), flex_col(), gap(0.5), min_w_px(0)])
-            .child(line(action.title(), 13, 1.4, Role::Text));
+            .styles([flex(), flex_col(), flex_1(), gap(0.5), min_w_px(0)])
+            .child(clipped(action.title(), 13, Role::Text));
         if !clashes.is_empty() {
             about = about.child(line(
                 format!("Also bound to {}", clashes.join(", ")),

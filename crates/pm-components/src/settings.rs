@@ -1,27 +1,22 @@
-//! The settings panel: a modal with the sections of settings down its left side and the one chosen on its right.
+//! The settings window: the sections of settings down its left side and the one chosen on its right, filling a window of its own.
 
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
-    Role, bg, border_color, border_r, flex, flex_1, flex_col, flex_none, gap, h, h_px,
-    items_center, justify_end, min_w_px, p, pl, px, w_px,
+    Role, bg, border_color, border_r, flex, flex_1, flex_col, flex_none, gap, h, h_full,
+    items_center, min_h, min_w_px, p, pb, pl, pr, pt, px, w_full, w_px,
 };
 use pm_ui::{Node, node};
 
-use crate::button::{Size, Variant};
 use crate::parts::{glyph, line};
 use crate::settings_servers;
 use crate::state::WorkspaceState;
 use crate::tile::Tile;
-use crate::{Button, Modal};
 
-/// Closes the panel, which is what pressing outside it does.
-pub const SETTINGS_SCRIM: FocusId = FocusId(20_000_000);
+/// The first name the settings window answers to.
+const SETTINGS_START: u64 = 20_000_000;
 
-/// The panel itself, which keeps a press on it from counting as outside.
-pub const SETTINGS_BODY: FocusId = FocusId(20_000_001);
-
-/// Closes the panel.
+/// Closes the settings window.
 pub const SETTINGS_CLOSE: FocusId = FocusId(20_000_002);
 
 /// Opens the form for adding a server to the list showing.
@@ -102,33 +97,16 @@ pub const SETTINGS_REMOVE_BASE: u64 = 20_000_200;
 /// The first of the buttons installing what a registry offers; the rest follow it.
 pub const SETTINGS_INSTALL_BASE: u64 = 20_000_300;
 
-/// One past the last name the panel answers to.
+/// One past the last name the window answers to.
 const SETTINGS_END: u64 = 20_002_400;
 
-/// How far the panel keeps from every edge of the window, in logical pixels.
-const MARGIN: f32 = 14.0;
-
-/// How much of the window's width the panel takes, at least as wide as [`MIN_WIDTH`] where the window has room.
-const WIDTH_SHARE: f32 = 0.8;
-
-/// How much of the window's height the panel takes, at least as tall as [`MIN_HEIGHT`] where the window has room.
-const HEIGHT_SHARE: f32 = 0.85;
-
-/// The least wide the panel is made, in logical pixels, in a window that has room for it.
-const MIN_WIDTH: f32 = 1240.0;
-
-/// The least tall the panel is made, in logical pixels, in a window that has room for it.
-const MIN_HEIGHT: f32 = 780.0;
-
-/// `share` of a window `window` logical pixels across, no less than `least` and never past the margins.
-fn panel_extent(window: f32, share: f32, least: f32) -> f32 {
-    (window * share).max(least).min(window - 2.0 * MARGIN)
-}
+/// How far the settings stand in from either side of the right of the window, in logical pixels.
+const PAGE_INSET: f32 = 32.0;
 
 /// How wide the list of sections is, in logical pixels.
 const NAVIGATION_WIDTH: f32 = 220.0;
 
-/// A group of settings, named down the left side of the panel; some sit inside another.
+/// A group of settings, named down the left side of the window; some sit inside another.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Section {
     /// How the window looks and behaves.
@@ -226,19 +204,19 @@ impl Section {
     }
 }
 
-/// Whether `id` names something of the panel.
+/// Whether `id` names something of the window.
 pub fn is_settings(id: FocusId) -> bool {
     let FocusId(number) = id;
-    (SETTINGS_SCRIM.0..SETTINGS_END).contains(&number)
+    (SETTINGS_START..SETTINGS_END).contains(&number)
 }
 
 impl WorkspaceState {
-    /// Whether the settings panel is open.
+    /// Whether the settings window is open.
     pub fn settings_open(&self) -> bool {
         self.settings.is_some()
     }
 
-    /// The state with the settings panel open on its first section.
+    /// The state with the settings window open on its first section.
     pub(crate) fn with_settings(mut self) -> Self {
         self.menu = None;
         self.picker = None;
@@ -251,16 +229,21 @@ impl WorkspaceState {
         self
     }
 
-    /// The state after something of the settings panel was pressed: `action` is the name of what.
+    /// The state with settings closed, whatever form they had open.
+    pub fn without_settings(mut self) -> Self {
+        self.settings = None;
+        self.settings_servers.form = None;
+        self.recording = None;
+        self
+    }
+
+    /// The state after something of the settings window was pressed: `action` is the name of what.
     pub(crate) fn settings_pressed(mut self, action: FocusId) -> Self {
         match action {
             SETTINGS_CLOSE if self.settings_servers.form.is_some() => {
                 self.settings_servers.form = None;
             }
-            SETTINGS_SCRIM | SETTINGS_CLOSE => {
-                self.settings = None;
-                self.recording = None;
-            }
+            SETTINGS_CLOSE => return self.without_settings(),
             action if self.editor_setting_pressed(action) => {}
             action if self.keymap_pressed(action) => {}
             action => {
@@ -284,20 +267,19 @@ impl WorkspaceState {
     }
 }
 
-/// The node that draws the settings panel, when it is open, sized from a window `width` by `height` logical pixels.
-pub fn settings(state: &WorkspaceState, width: f32, height: f32) -> Option<Node> {
+/// The node that fills the settings window, `width` logical pixels across, when settings are open.
+pub fn settings(state: &WorkspaceState, width: f32) -> Option<Node> {
     let section = state.settings?;
     let folded = state.settings_servers.folded;
     Some(
-        Modal::new(SETTINGS_SCRIM, SETTINGS_BODY)
-            .width(panel_extent(width, WIDTH_SHARE, MIN_WIDTH))
-            .child(
-                node()
-                    .styles([flex(), h_px(panel_extent(height, HEIGHT_SHARE, MIN_HEIGHT))])
-                    .child(navigation(section, folded))
-                    .child(content(state, section)),
-            )
-            .build(),
+        node()
+            .styles([flex(), w_full(), h_full(), min_h(0), bg(Role::Surface)])
+            .child(navigation(section, folded))
+            .child(content(
+                state,
+                section,
+                width - NAVIGATION_WIDTH - 2.0 * PAGE_INSET,
+            )),
     )
 }
 
@@ -356,8 +338,8 @@ fn entry(section: Section, showing: bool, folded: bool) -> Node {
     row.child(line(section.title(), 13, 1.4, tone))
 }
 
-/// The settings of `section` under the button that closes the panel.
-fn content(state: &WorkspaceState, section: Section) -> Node {
+/// The settings of `section` under its title, with `room` logical pixels across for them.
+fn content(state: &WorkspaceState, section: Section, room: f32) -> Node {
     node()
         .styles([
             flex(),
@@ -371,17 +353,13 @@ fn content(state: &WorkspaceState, section: Section) -> Node {
                 .styles([
                     flex(),
                     items_center(),
-                    justify_end(),
-                    h(12),
-                    px(4),
+                    pl(8),
+                    pr(8),
+                    pt(6),
+                    pb(4),
                     flex_none(),
                 ])
-                .child(
-                    Button::icon(IconName::Close, SETTINGS_CLOSE)
-                        .variant(Variant::Ghost)
-                        .size(Size::Icon)
-                        .build(),
-                ),
+                .child(settings_servers::page_title(section)),
         )
-        .child(settings_servers::body(state, section))
+        .child(settings_servers::body(state, section, room))
 }

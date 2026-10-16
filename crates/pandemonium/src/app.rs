@@ -16,7 +16,7 @@ use pm_components::git_controls::{GRAPH_SASH, GRAPH_SCROLL, Pick, REVIEW_DISMISS
 use pm_components::git_menus::MenuKind;
 use pm_components::message_menu::is_message_menu_item;
 use pm_components::open_files::EDITOR_FIELD;
-use pm_components::settings::{SETTINGS_CLOSE, SETTINGS_SCROLL};
+use pm_components::settings::{SETTINGS_CLOSE, SETTINGS_SCROLL, is_settings};
 use pm_components::state::{COMMENT_CANCEL, COMMENT_FIELD};
 use pm_components::tree_actions::{ENTRY_FIELD, TreeTarget};
 use pm_components::{
@@ -42,6 +42,7 @@ use winit::window::{CursorIcon, Window, WindowId};
 
 mod code;
 mod select;
+mod settings_window;
 mod terminal;
 
 use crate::keys::Clip;
@@ -111,6 +112,10 @@ pub struct App {
     bar_drag: Option<(FocusId, f32)>,
     /// Where the pointer went down on the handle above the graph, and how tall the graph was.
     sash_drag: Option<(f32, f32)>,
+    /// The settings window and what it keeps, while settings are open and it is not standing in for the main window.
+    settings_surface: Option<settings_window::Surface>,
+    /// Whether the settings window stands in for the main one, while one of its events is handled.
+    on_settings: bool,
     /// When the application started, which animations run on.
     started: Instant,
     /// Where the threads that start agents report what they found.
@@ -267,6 +272,8 @@ impl Default for App {
             pressed_on: None,
             bar_drag: None,
             sash_drag: None,
+            settings_surface: None,
+            on_settings: false,
             started: Instant::now(),
             standings,
             reporter,
@@ -357,6 +364,10 @@ impl App {
     /// Draws one frame and asks for the next one while anything is moving or
     /// the frame could not be presented.
     fn redraw(&mut self) {
+        if self.on_settings {
+            self.redraw_settings();
+            return;
+        }
         self.fit_terminal();
         let reaching = self.reaching();
         let (Some(window), Some(renderer)) = (self.window.as_ref(), self.renderer.as_mut()) else {
@@ -1383,6 +1394,10 @@ impl App {
         if !event.pressed {
             return;
         }
+        if event.key == Key::Character(',') && event.modifiers.control {
+            self.open_settings();
+            return;
+        }
         if self.recording_key(event)
             || self.terminal_key(event)
             || self.text_key(event)
@@ -1613,15 +1628,36 @@ impl ApplicationHandler for App {
         if self.dirty.get() {
             self.persist_view();
         }
+        self.sync_settings_window(event_loop);
         if self.dirty.replace(false)
             && let Some(window) = self.window.as_ref()
         {
             window.request_redraw();
+            self.redraw_settings_window();
         }
     }
 
     /// Routes window events to the renderer, the pointer and the keyboard.
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        if self.is_settings_window(id) {
+            self.settings_window_event(event_loop, event);
+            return;
+        }
+        if self.window.as_ref().is_none_or(|window| window.id() != id) {
+            return;
+        }
+        if matches!(event, WindowEvent::Focused(true))
+            && self.focus.current().is_some_and(is_settings)
+        {
+            self.focus.clear();
+        }
+        self.handle_window_event(event_loop, event);
+    }
+}
+
+impl App {
+    /// Routes an event of the window standing as the main one to the renderer, the pointer and the keyboard.
+    fn handle_window_event(&mut self, event_loop: &ActiveEventLoop, event: WindowEvent) {
         let Some(window) = self.window.clone() else {
             return;
         };
@@ -1633,7 +1669,9 @@ impl ApplicationHandler for App {
                 if let Some(renderer) = self.renderer.as_mut() {
                     renderer.resize(size.width, size.height, scale);
                 }
-                Self::remember_size(&window);
+                if !self.on_settings {
+                    Self::remember_size(&window);
+                }
             }
             WindowEvent::ScaleFactorChanged { .. } => {
                 let size = window.inner_size();

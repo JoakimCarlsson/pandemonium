@@ -74,6 +74,10 @@ enum Target {
 
 /// Owns the GPU device and queue and the target they draw into.
 pub struct Renderer {
+    /// The wgpu instance the device was found through, which surfaces of other windows are made with.
+    instance: wgpu::Instance,
+    /// The GPU adapter the device was opened on.
+    adapter: wgpu::Adapter,
     /// The opened GPU device.
     device: wgpu::Device,
     /// The queue frames are submitted to.
@@ -164,6 +168,30 @@ impl Renderer {
         pollster::block_on(Self::create(None, width, height, scale))
     }
 
+    /// Opens a renderer for another window that draws with this renderer's
+    /// device, so that every window of the application shares one GPU device.
+    pub fn beside(
+        &self,
+        target: impl Into<wgpu::SurfaceTarget<'static>>,
+        width: u32,
+        height: u32,
+        scale: f32,
+    ) -> Result<Self, RendererError> {
+        let surface = self
+            .instance
+            .create_surface(target.into())
+            .map_err(RendererError::Surface)?;
+        Ok(Self::build(
+            self.instance.clone(),
+            self.adapter.clone(),
+            self.device.clone(),
+            self.queue.clone(),
+            Some(surface),
+            (width, height),
+            scale,
+        ))
+    }
+
     /// Acquires an adapter and device, then builds the target and the pipeline.
     async fn create(
         window: Option<wgpu::SurfaceTarget<'static>>,
@@ -195,6 +223,29 @@ impl Renderer {
             .await
             .map_err(RendererError::Device)?;
 
+        Ok(Self::build(
+            instance,
+            adapter,
+            device,
+            queue,
+            surface,
+            (width, height),
+            scale,
+        ))
+    }
+
+    /// Builds the target, a window's `surface` or a texture when there is
+    /// none, `size` physical pixels across, and the pipeline on `device`.
+    fn build(
+        instance: wgpu::Instance,
+        adapter: wgpu::Adapter,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        surface: Option<wgpu::Surface<'static>>,
+        size: (u32, u32),
+        scale: f32,
+    ) -> Self {
+        let (width, height) = size;
         let (target, format) = match surface {
             Some(surface) => {
                 let capabilities = surface.get_capabilities(&adapter);
@@ -326,7 +377,9 @@ impl Renderer {
             &GlyphInstance::ATTRIBUTES,
         );
 
-        Ok(Self {
+        Self {
+            instance,
+            adapter,
             device,
             queue,
             target,
@@ -343,7 +396,7 @@ impl Renderer {
             atlas,
             quad_instances: None,
             glyph_instances: None,
-        })
+        }
     }
 
     /// Puts `picture` on the GPU unless a picture with its key already is there.

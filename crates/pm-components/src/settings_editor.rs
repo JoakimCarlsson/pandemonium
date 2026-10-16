@@ -8,12 +8,30 @@ use pm_style::{
 };
 use pm_ui::{Node, node};
 
-use crate::parts::line;
+use crate::parts::{line, wrap};
 use crate::settings::Section;
 use crate::state::WorkspaceState;
 
 /// The first of the controls of the editor's settings; each setting has eight after its own base, its place among them times eight.
 const EDITOR_SETTING_BASE: u64 = 20_001_000;
+
+/// The pages of the editor's settings, in the order the list of sections shows them.
+const PAGES: [Section; 5] = [
+    Section::EditorAppearance,
+    Section::EditorEditing,
+    Section::EditorSaving,
+    Section::EditorIntelligence,
+    Section::EditorSearch,
+];
+
+/// The room between what a setting says and its control, in logical pixels.
+const ROW_GAP: f32 = 24.0;
+
+/// The least room what a setting says is given, in logical pixels, however wide its control.
+const MIN_WORDS: f32 = 120.0;
+
+/// How wide a character of the choices is taken to be, in logical pixels, generously so that the words beside never run under them.
+const CHOICE_CHARACTER: f32 = 7.5;
 
 /// How many controls a setting has room for.
 const PER_SETTING: u64 = 8;
@@ -93,6 +111,22 @@ enum Control {
     Choice(&'static [&'static str], usize),
     /// A number made smaller or bigger, as it is written.
     Number(String),
+}
+
+impl Control {
+    /// How wide it is drawn, in logical pixels, at most.
+    fn width(&self) -> f32 {
+        match self {
+            Self::Switch(_) => 36.0,
+            Self::Number(_) => 136.0,
+            Self::Choice(names, _) => {
+                8.0 + names
+                    .iter()
+                    .map(|name| 22.0 + name.chars().count() as f32 * CHOICE_CHARACTER)
+                    .sum::<f32>()
+            }
+        }
+    }
 }
 
 impl Setting {
@@ -568,10 +602,12 @@ fn number(setting: Setting, shown: String) -> Node {
         .child(button("+", 1))
 }
 
-/// One row of a page: what the setting is called and does, and its control.
-fn row(setting: Setting, settings: &EditorSettings) -> Node {
+/// One row of a page, `room` logical pixels across: what the setting is called and does, broken into lines beside its control, and the control.
+fn row(setting: Setting, settings: &EditorSettings, room: f32) -> Node {
     let (title, about) = setting.words();
-    let control = match setting.control(settings) {
+    let shown = setting.control(settings);
+    let words = (room - shown.width() - ROW_GAP).max(MIN_WORDS);
+    let control = match shown {
         Control::Switch(on) => switch(on, setting.id(0)),
         Control::Choice(names, picked) => choices(setting, names, picked),
         Control::Number(shown) => number(setting, shown),
@@ -582,42 +618,64 @@ fn row(setting: Setting, settings: &EditorSettings) -> Node {
             items_center(),
             justify_between(),
             gap(6),
-            px(4),
             pm_style::py(3),
             flex_none(),
         ])
         .child(
             node()
                 .styles([flex(), flex_col(), gap(0.5), min_w_px(0)])
-                .child(line(title, 13, 1.4, Role::Text))
-                .child(line(about, 12, 1.4, Role::Muted)),
+                .children(
+                    wrap(title, 13, words)
+                        .into_iter()
+                        .map(|words| line(words, 13, 1.4, Role::Text)),
+                )
+                .children(
+                    wrap(about, 12, words)
+                        .into_iter()
+                        .map(|words| line(words, 12, 1.4, Role::Muted)),
+                ),
         )
         .child(control)
 }
 
-/// The rows of the settings on the page `section`, in a box with a hairline between each and the next.
-pub(crate) fn rows(state: &WorkspaceState, section: Section) -> Node {
+/// The rows of the settings on the page `section`, `room` logical pixels across, side by side with their controls, with a hairline between each and the next.
+pub(crate) fn rows(state: &WorkspaceState, section: Section, room: f32) -> Node {
     let shown: Vec<Setting> = Setting::ALL
         .into_iter()
         .filter(|setting| setting.page() == section)
         .collect();
     let last = shown.len().saturating_sub(1);
     node()
-        .styles([
-            flex(),
-            flex_col(),
-            flex_none(),
-            rounded(Radius::Lg),
-            border(),
-            border_color(Role::Border),
-            bg(Role::Surface),
-        ])
+        .styles([flex(), flex_col(), flex_none()])
         .children(shown.into_iter().enumerate().map(|(place, setting)| {
-            let held = row(setting, &state.editor);
+            let held = row(setting, &state.editor, room);
             if place < last {
                 held.styles([pm_style::border_b(), border_color(Role::Border)])
             } else {
                 held
             }
         }))
+}
+
+/// Every page of the editor's settings one under another, each under its name, `room` logical pixels across.
+pub(crate) fn groups(state: &WorkspaceState, room: f32) -> impl Iterator<Item = Node> + '_ {
+    PAGES.into_iter().map(move |page| {
+        node()
+            .styles([flex(), flex_col(), flex_none(), pm_style::pt(2)])
+            .child(
+                node()
+                    .styles([
+                        flex(),
+                        items_center(),
+                        flex_none(),
+                        pm_style::pb(1),
+                        pm_style::border_b(),
+                        border_color(Role::Border),
+                    ])
+                    .child(
+                        line(page.title(), 12, 1.4, Role::Muted).styles([pm_style::font_medium()]),
+                    ),
+            )
+            .child(rows(state, page, room))
+    })
 }

@@ -126,6 +126,7 @@ fn main() {
             Some("settings") => Shot::Settings,
             Some("settings-agents") => Shot::SettingsAgents,
             Some("settings-editor") => Shot::SettingsEditor,
+            Some("settings-narrow") => Shot::SettingsNarrow,
             Some("settings-keymap") => Shot::SettingsKeymap,
             Some("settings-appearance") => Shot::SettingsAppearance,
             Some("settings-form") => Shot::SettingsForm,

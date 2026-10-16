@@ -1,7 +1,7 @@
 //! The screen the window shows, and how it is drawn.
 
 use pm_color::{Role, Roles, Srgba};
-use pm_pages::{Screen, screen};
+use pm_pages::{Screen, screen, settings_screen};
 use pm_renderer::DrawList;
 use pm_text::Shaper;
 use pm_theme::{Fonts, Theme};
@@ -33,4 +33,23 @@ pub fn paint(
     list.clear();
     let root = screen(state, width, height, shaper);
     pm_ui::draw(&root, width, height, input, theme, shaper, list)
+}
+
+/// Builds what the settings window shows for `state` and `input` and paints
+/// it into `list`, replacing what the list held. Reports what was drawn and
+/// where; nothing is drawn while settings are closed.
+pub fn paint_settings(
+    width: f32,
+    height: f32,
+    state: &Screen,
+    input: &Input,
+    theme: &Theme,
+    shaper: &mut Shaper,
+    list: &mut DrawList,
+) -> Output {
+    list.clear();
+    match settings_screen(state, width) {
+        Some(root) => pm_ui::draw(&root, width, height, input, theme, shaper, list),
+        None => Output::default(),
+    }
 }

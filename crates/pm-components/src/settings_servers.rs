@@ -5,9 +5,8 @@ use pm_input::FocusId;
 use pm_protocol::{AgentServer, McpServer, RegistryAgent, ToolListing};
 use pm_style::{
     Radius, Role, bg, border, border_b, border_color, cursor_pointer, flex, flex_1, flex_col,
-    flex_none, gap, h, items_center, items_start, justify_between, justify_end, max_w_px, min_h,
-    min_w_px, mx_auto, overflow_hidden, p, px, rounded, rounded_full, self_start, size, w_full,
-    w_px,
+    flex_none, gap, h, items_center, items_start, justify_between, justify_end, min_h, min_w_px,
+    overflow_hidden, p, px, rounded, rounded_full, self_start, size, w_full, w_px,
 };
 use pm_text::{Edit, Field};
 use pm_ui::{Node, node};
@@ -30,9 +29,6 @@ use crate::tile::Tile;
 
 /// How wide a paragraph of the pages may be, in logical pixels, so that it breaks before it reaches the button beside it.
 const PARAGRAPH_WIDTH: f32 = 600.0;
-
-/// How wide the content of a page may be, in logical pixels, however wide the panel is.
-const PAGE_WIDTH: f32 = 960.0;
 
 /// The page that explains tool servers.
 const TOOL_SERVERS_DOCS: &str = "https://modelcontextprotocol.io/";
@@ -693,17 +689,17 @@ fn summary(section: Section) -> &'static str {
     }
 }
 
-/// The words `content` breaks into, one line under another.
-fn paragraph(content: &str) -> Node {
+/// The words `content` breaks into, one line under another, in no more than `room` logical pixels across.
+fn paragraph(content: &str, room: f32) -> Node {
     node().styles([flex(), flex_col(), min_w_px(0)]).children(
-        wrap(content, 13, PARAGRAPH_WIDTH)
+        wrap(content, 13, room.min(PARAGRAPH_WIDTH))
             .into_iter()
             .map(|words| line(words, 13, 1.5, Role::Muted)),
     )
 }
 
 /// The breadcrumb over the title of `section`'s page, and the title.
-fn page_title(section: Section) -> Node {
+pub(crate) fn page_title(section: Section) -> Node {
     node()
         .styles([flex(), flex_col(), gap(1), flex_none()])
         .children(
@@ -714,8 +710,8 @@ fn page_title(section: Section) -> Node {
         .child(line(section.title(), 22, 1.3, Role::Text).styles([pm_style::font_medium()]))
 }
 
-/// What the right side of the panel holds: the title of `section` and what it is for, then its settings.
-pub(crate) fn body(state: &WorkspaceState, section: Section) -> Node {
+/// What the right side of the window holds under the title of `section`: what it is for, then its settings, `room` logical pixels across.
+pub(crate) fn body(state: &WorkspaceState, section: Section, room: f32) -> Node {
     let page = node().styles([
         flex(),
         flex_col(),
@@ -726,38 +722,21 @@ pub(crate) fn body(state: &WorkspaceState, section: Section) -> Node {
         px(8),
         pm_style::pb(6),
     ]);
-    let inner = node().styles([
-        flex(),
-        flex_col(),
-        gap(4),
-        flex_none(),
-        w_full(),
-        max_w_px(PAGE_WIDTH),
-        mx_auto(),
-    ]);
-    let inner = inner.child(page_title(section));
+    let inner = node().styles([flex(), flex_col(), gap(4), flex_none(), w_full()]);
     match section {
         Section::General => page.child(inner),
-        Section::Editor => page.child(
-            inner
-                .child(paragraph(crate::settings_editor::summary(section)))
-                .child(line("Settings", 15, 1.4, Role::Text).styles([pm_style::font_medium()]))
-                .children(
-                    [
-                        Section::EditorAppearance,
-                        Section::EditorEditing,
-                        Section::EditorSaving,
-                        Section::EditorIntelligence,
-                        Section::EditorSearch,
-                    ]
-                    .map(|part| card(part, String::new())),
-                ),
-        ),
+        Section::Editor => page
+            .child(
+                inner
+                    .child(paragraph(crate::settings_editor::summary(section), room))
+                    .children(crate::settings_editor::groups(state, room)),
+            )
+            .scroll_from_start(SETTINGS_SCROLL, state.settings_servers.scroll),
         Section::Keymap => page
             .child(
                 inner
-                    .child(paragraph(summary(section)))
-                    .children(crate::settings_keymap::rows(state)),
+                    .child(paragraph(summary(section), room))
+                    .children(crate::settings_keymap::rows(state, room)),
             )
             .scroll_from_start(SETTINGS_SCROLL, state.settings_servers.scroll),
         Section::EditorAppearance
@@ -767,13 +746,13 @@ pub(crate) fn body(state: &WorkspaceState, section: Section) -> Node {
         | Section::EditorSearch => page
             .child(
                 inner
-                    .child(paragraph(crate::settings_editor::summary(section)))
-                    .child(crate::settings_editor::rows(state, section)),
+                    .child(paragraph(crate::settings_editor::summary(section), room))
+                    .child(crate::settings_editor::rows(state, section, room)),
             )
             .scroll_from_start(SETTINGS_SCROLL, state.settings_servers.scroll),
         Section::Agents => page.child(
             inner
-                .child(paragraph(summary(section)))
+                .child(paragraph(summary(section), room))
                 .child(line("Explore", 15, 1.4, Role::Text).styles([pm_style::font_medium()]))
                 .children(
                     [Section::AgentServers, Section::McpServers]
@@ -781,7 +760,7 @@ pub(crate) fn body(state: &WorkspaceState, section: Section) -> Node {
                 ),
         ),
         Section::AgentServers | Section::McpServers => page
-            .child(list(state, section, inner))
+            .child(list(state, section, inner, room))
             .scroll_from_start(SETTINGS_SCROLL, state.settings_servers.scroll),
     }
 }
@@ -865,13 +844,13 @@ fn flat_row() -> Node {
     ])
 }
 
-/// The page of one list: what it is for, the search box, the form while one is open, the servers that are installed and what the registry offers.
-fn list(state: &WorkspaceState, section: Section, page: Node) -> Node {
+/// The page of one list, `room` logical pixels across: what it is for, the search box, the form while one is open, the servers that are installed and what the registry offers.
+fn list(state: &WorkspaceState, section: Section, page: Node, room: f32) -> Node {
     let settings = &state.settings_servers;
     let form = settings.form.as_ref();
     let adding = form.is_some_and(|form| form.index.is_none());
     let needle = state.needle();
-    let mut page = page.child(paragraph(summary(section)));
+    let mut page = page.child(paragraph(summary(section), room));
     if section == Section::McpServers {
         page = page.child(
             Button::new("Learn more about MCP servers", SETTINGS_DOCS)
@@ -932,10 +911,13 @@ fn list(state: &WorkspaceState, section: Section, page: Node) -> Node {
             !settings.available_folded,
             SETTINGS_TOGGLE_AVAILABLE,
         ))
-        .child(note(match section {
-            Section::AgentServers => "Agents from the Agent Client Protocol registry.",
-            _ => "Featured MCP servers from the marketplace. Search to find more.",
-        }));
+        .child(wrapped_note(
+            match section {
+                Section::AgentServers => "Agents from the Agent Client Protocol registry.",
+                _ => "Featured MCP servers from the marketplace. Search to find more.",
+            },
+            room,
+        ));
     if !settings.available_folded {
         if !offers.rows.is_empty() {
             page = page.child(boxed(offers.rows));
@@ -986,6 +968,15 @@ fn heading(title: &str, count: usize, open: bool, toggle: FocusId) -> Node {
 /// A line that only says something.
 fn note(message: &str) -> Node {
     line(message, 12, 1.4, Role::Muted).styles([flex_none()])
+}
+
+/// A quiet note saying `message`, broken into lines no more than `room` logical pixels across.
+fn wrapped_note(message: &str, room: f32) -> Node {
+    node().styles([flex(), flex_col(), flex_none()]).children(
+        wrap(message, 12, room)
+            .into_iter()
+            .map(|words| line(words, 12, 1.4, Role::Muted)),
+    )
 }
 
 /// How a tool server is reached, in the words of its row: what kind it is, where, and how many variables it takes.
