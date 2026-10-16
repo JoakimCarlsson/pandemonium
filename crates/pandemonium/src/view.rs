@@ -1,7 +1,9 @@
 //! Where the window was when it was closed, kept on this machine so that the next launch opens on the same page.
 
 use pm_components::open_files::{Contents, EDITOR_FIELD, Left};
-use pm_components::state::{PROMPT, Page, SESSION_BASE, Tab, WorkspaceState, prompt_field};
+use pm_components::state::{
+    PROMPT, Page, ReviewTab, SESSION_BASE, Tab, WorkspaceState, prompt_field,
+};
 use pm_input::FocusId;
 use serde::{Deserialize, Serialize};
 
@@ -76,6 +78,36 @@ pub struct View {
     file_tab: bool,
     /// Whether the review panel was open.
     review: bool,
+    /// Whether the review panel listed every file of the project instead of the changes.
+    #[serde(default)]
+    files_tab: bool,
+    /// The folders of the project's files that were folded away.
+    #[serde(default)]
+    closed_tree: Vec<String>,
+    /// The folders of the changed files that were folded away.
+    #[serde(default)]
+    closed_folders: Vec<String>,
+    /// How far down the review panel's list was scrolled, in logical pixels.
+    #[serde(default)]
+    tree_scroll: f32,
+    /// How far down the diff was scrolled, in logical pixels.
+    #[serde(default)]
+    diff_scroll: f32,
+    /// Whether the list of changes was open in the review panel.
+    #[serde(default = "open")]
+    changes_open: bool,
+    /// Whether the graph of commits was open in the review panel.
+    #[serde(default)]
+    graph_open: bool,
+    /// Whether the graph showed every branch.
+    #[serde(default)]
+    graph_all: bool,
+    /// How tall the graph was, in logical pixels.
+    #[serde(default)]
+    graph_height: f32,
+    /// Whether the terminal was taller than usual.
+    #[serde(default)]
+    terminal_maximized: bool,
     /// Whether the terminal was open.
     terminal: bool,
     /// How far the sidebar's list was scrolled, in logical pixels.
@@ -87,6 +119,11 @@ pub struct View {
     /// The field the reader was typing in, if one had the keyboard.
     #[serde(default)]
     typing: Option<Typing>,
+}
+
+/// A flag that was set before it was kept.
+fn open() -> bool {
+    true
 }
 
 impl View {
@@ -168,11 +205,30 @@ impl View {
             file_tab: with_files && state.tab == Tab::File,
             diff: state.tab == Tab::Diff,
             review: state.review,
+            files_tab: state.review_tab == ReviewTab::Files,
+            closed_tree: sorted(&state.closed_tree),
+            closed_folders: sorted(&state.closed_folders),
+            tree_scroll: state.tree_scroll,
+            diff_scroll: state.diff_scroll,
+            changes_open: state.git.changes_open,
+            graph_open: state.git.graph_open,
+            graph_all: state.git.graph_all,
+            graph_height: state.git.graph_height,
+            terminal_maximized: state.terminal_maximized,
             terminal: state.terminal,
             scroll: state.sidebar_scroll,
             agent: state.agent,
             prompt: state.prompt.text().to_owned(),
             typing,
+        }
+    }
+
+    /// What the review panel listed.
+    fn review_tab(&self) -> ReviewTab {
+        if self.files_tab {
+            ReviewTab::Files
+        } else {
+            ReviewTab::Changes
         }
     }
 
@@ -207,7 +263,11 @@ impl View {
             Saved::Session { .. } | Saved::First => {}
         }
         state.review = self.review;
+        state.review_tab = self.review_tab();
+        state.closed_tree = self.closed_tree.iter().cloned().collect();
+        state.closed_folders = self.closed_folders.iter().cloned().collect();
         state.terminal = self.terminal;
+        state.terminal_maximized = self.terminal_maximized;
         state.agent = self.agent.min(state.agent_slots().saturating_sub(1));
         state.prompt = prompt_field(&self.prompt);
         state
@@ -230,7 +290,17 @@ impl View {
             }
             _ => state,
         };
+        state.git.changes_open = self.changes_open;
+        state.git.graph_open = self.graph_open;
+        state.git.graph_all = self.graph_all;
+        if self.graph_height > 0.0 {
+            state.git.graph_height = self.graph_height;
+        }
+        state.review_tab = self.review_tab();
         state.sidebar_scroll = self.scroll;
+        state.tree_scroll = self.tree_scroll;
+        state.diff_scroll = self.diff_scroll;
+        state.refresh_files();
         state
     }
 
@@ -265,4 +335,11 @@ impl View {
         };
         opened
     }
+}
+
+/// The members of `set`, in order, so that the same set is always kept the same way.
+fn sorted(set: &std::collections::HashSet<String>) -> Vec<String> {
+    let mut members: Vec<String> = set.iter().cloned().collect();
+    members.sort();
+    members
 }
