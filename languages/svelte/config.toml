@@ -1,0 +1,26 @@
+# Svelte: how files are told to be Svelte, how they are edited and the
+# language server that reads them. The scripts and styles of a component are
+# their own languages', JavaScript or TypeScript and CSS or SCSS. No grammar is
+# released built, so grammar.wasm in this folder was built with tree-sitter CLI
+# 0.27.1 from tree-sitter-grammars/tree-sitter-svelte v1.0.2.
+
+name = "Svelte"
+version = "0.1.0"
+description = "Svelte components with the Svelte language server."
+icon = "icon.svg"
+color = "#ff4a1c"
+grammar = "svelte"
+suffixes = ["svelte"]
+indent = 2
+pairs = ["()", "[]", "{}", "\"\"", "''", "``"]
+
+[server]
+id = "svelteserver"
+language_id = "svelte"
+command = "svelteserver"
+args = ["--stdio"]
+
+[server.install]
+kind = "npm"
+version = "0.18.5"
+packages = ["svelte-language-server@0.18.5"]

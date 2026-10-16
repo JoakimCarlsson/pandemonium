@@ -59,6 +59,8 @@ pub struct Cell {
     pub bg: Color,
     /// How it is drawn.
     pub flags: Flags,
+    /// The hyperlink a program put on it, counted from one; nought for none.
+    pub link: u16,
 }
 
 impl Default for Cell {
@@ -69,6 +71,7 @@ impl Default for Cell {
             fg: Color::Default,
             bg: Color::Default,
             flags: Flags::default(),
+            link: 0,
         }
     }
 }

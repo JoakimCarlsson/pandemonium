@@ -1,0 +1,22 @@
+# Nix: how files are told to be Nix, how they are edited and the language
+# server that reads them. No grammar is released built, so grammar.wasm in this
+# folder was built with tree-sitter CLI 0.27.1 from nix-community/tree-sitter-nix
+# v0.3.0. nil publishes no programs to download, so it is not installed here:
+# the one on the machine's path is used.
+
+name = "Nix"
+version = "0.1.0"
+description = "Nix with nil."
+icon = "icon.svg"
+color = "#a3c4f3"
+grammar = "nix"
+suffixes = ["nix"]
+line_comment = "#"
+indent = 2
+pairs = ["()", "[]", "{}", "\"\""]
+
+[server]
+id = "nil"
+language_id = "nix"
+command = "nil"
+check = ["--version"]

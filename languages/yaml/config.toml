@@ -1,0 +1,37 @@
+# YAML: how files are told to be YAML, how they are edited and the language
+# server that reads them. Files the schema store knows, such as workflows and
+# compose files, are checked against their schema.
+
+name = "YAML"
+version = "0.1.0"
+description = "YAML with yaml-language-server and the schema store."
+icon = "icon.svg"
+color = "#8fc77a"
+grammar = "yaml"
+suffixes = ["yaml", "yml"]
+names = [".clang-format", ".clang-tidy", ".clangd"]
+aliases = ["yml"]
+line_comment = "#"
+indent = 2
+pairs = ["[]", "{}", "\"\"", "''"]
+
+[grammar_file]
+url = "https://github.com/tree-sitter-grammars/tree-sitter-yaml/releases/download/v0.7.2/tree-sitter-yaml.wasm"
+sha256 = "0a0e5ebcfeb0b2bf272d071396eeed107b2c4b2617b69d5959b13f78b357a4d6"
+
+[server]
+id = "yaml-language-server"
+language_id = "yaml"
+command = "yaml-language-server"
+args = ["--stdio"]
+
+[server.settings.yaml.format]
+enable = true
+
+[server.settings.yaml.schemaStore]
+enable = true
+
+[server.install]
+kind = "npm"
+version = "2.0.0"
+packages = ["yaml-language-server@2.0.0"]

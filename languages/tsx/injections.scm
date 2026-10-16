@@ -6,5 +6,5 @@
   function: (identifier) @injection.language
   arguments: (template_string
     (string_fragment) @injection.content)
-  (#any-of? @injection.language "markdown" "md" "json" "toml")
+  (#any-of? @injection.language "markdown" "md" "json" "toml" "graphql" "gql")
   (#set! injection.combined))

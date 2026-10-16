@@ -352,7 +352,7 @@ impl App {
     }
 
     /// The chord a press of keys makes, as the keymap names it.
-    fn chord_of(event: &KeyEvent) -> Option<Chord> {
+    pub(super) fn chord_of(event: &KeyEvent) -> Option<Chord> {
         let modifiers = event.modifiers;
         let name = match event.key {
             Key::Character(character) => character.to_string(),
@@ -381,7 +381,7 @@ impl App {
     }
 
     /// The keymap the editor's settings make.
-    fn keymap(&self) -> Keymap {
+    pub(super) fn keymap(&self) -> Keymap {
         self.model
             .read(|screen| screen.editor_settings().unwrap_or_default().keymap())
     }

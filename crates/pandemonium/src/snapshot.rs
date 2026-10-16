@@ -111,6 +111,10 @@ pub enum Shot {
     NewFile,
     /// The workspace with the terminal open.
     Terminal,
+    /// The workspace with the terminal open and a web address in it underlined as what a press opens.
+    TerminalLink,
+    /// The workspace with text of the terminal marked and the menu over it open.
+    TerminalMenu,
     /// The overview of a project.
     Overview,
     /// The workspace with the terminal open and the sidebar, the review panel and the terminal dragged to other sizes.
@@ -1104,6 +1108,15 @@ impl Shot {
             Self::Editing => Screen::Workspace(editing()),
             Self::NewFile => Screen::Workspace(new_file()),
             Self::Terminal => Screen::Workspace(terminal()),
+            Self::TerminalLink => {
+                let mut state = terminal();
+                state.terminal_output(
+                    1,
+                    b"gh pr view --web\r\nOpening https://github.com/alster/pandemonium/pull/250 or \x1b]8;;https://docs.rs/vte\x1b\\the vte docs\x1b]8;;\x1b\\\r\n",
+                );
+                state.reach_terminal_link(Some((9, 20)));
+                Screen::Workspace(state)
+            }
             Self::Overview => Screen::Workspace(overview()),
             Self::Resized => {
                 let mut state = terminal();
@@ -1111,6 +1124,11 @@ impl Shot {
                 state.review_width = 300.0;
                 state.terminal_height = 400.0;
                 Screen::Workspace(state)
+            }
+            Self::TerminalMenu => {
+                let mut state = terminal();
+                state.select_in_terminal((1, 0), (2, 20));
+                Screen::Workspace(state.with_terminal_menu((420.0, 560.0)))
             }
             Self::TerminalComposing => {
                 let mut state = terminal();

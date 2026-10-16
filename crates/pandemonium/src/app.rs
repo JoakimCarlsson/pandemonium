@@ -20,6 +20,7 @@ use pm_components::overview::OVERVIEW_SCROLL;
 use pm_components::sash::Grows;
 use pm_components::settings::{SETTINGS_CLOSE, SETTINGS_NAV_SCROLL, SETTINGS_SCROLL, is_settings};
 use pm_components::state::{COMMENT_CANCEL, COMMENT_FIELD};
+use pm_components::terminal_menu::TerminalCommand;
 use pm_components::tree_actions::{ENTRY_FIELD, TreeTarget};
 use pm_components::{
     EDITOR_MENU_HEIGHT, EditorCommand, MENU_COPY, MENU_CUT, MENU_PASTE, MENU_REDO, MENU_SELECT_ALL,
@@ -407,7 +408,7 @@ impl App {
             return;
         }
         self.fit_terminal();
-        let reaching = self.reaching();
+        let reaching = self.reaching() || self.reaching_terminal_link();
         let (Some(window), Some(renderer)) = (self.window.as_ref(), self.renderer.as_mut()) else {
             return;
         };
@@ -563,6 +564,12 @@ impl App {
         }
         if is_message_menu_item(id) {
             self.message_menu_action(id);
+            return;
+        }
+        if let Some(command) = TerminalCommand::of(id)
+            && self.model.read(|screen| screen.is_menu_row(id))
+        {
+            self.terminal_command(command);
             return;
         }
         if let Some(index) = Screen::agent_of(id) {
@@ -1009,6 +1016,7 @@ impl App {
                         let row = screen.history_row_of(id).unwrap_or_default();
                         self.open_git_menu(MenuKind::History(row));
                     }
+                    Some(TERMINAL_BODY) => self.open_terminal_menu(),
                     _ => self.open_message_menu(),
                 }
             }
@@ -1079,6 +1087,7 @@ impl App {
                 self.drag_comment((x, y));
                 self.drag_project((x, y));
                 self.terminal_drag((x, y));
+                self.reach_terminal_link();
                 self.text_drag((x, y));
                 if let Some(id) = self.dragging
                     && let Some(offset) = self.output.offset_in(id, x, y)
@@ -1883,6 +1892,7 @@ impl App {
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.modifiers = keys::modifiers(modifiers.state());
                 self.editor_modifiers_changed();
+                self.reach_terminal_link();
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 self.refocus = None;

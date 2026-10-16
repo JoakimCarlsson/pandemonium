@@ -40,6 +40,24 @@ impl Selection {
     }
 }
 
+/// A link in the output: where it runs, from `start` to `end` inclusive, each a line counted from the oldest kept and a column, and what it opens.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct Link {
+    /// Its first cell.
+    pub start: (usize, usize),
+    /// Its last cell.
+    pub end: (usize, usize),
+    /// What it opens.
+    pub target: String,
+}
+
+impl Link {
+    /// Whether the cell at `column` of line `line` is part of it.
+    pub fn covers(&self, line: usize, column: usize) -> bool {
+        self.start <= (line, column) && (line, column) <= self.end
+    }
+}
+
 /// The pen: how the next characters are drawn.
 #[derive(Clone, Copy, Debug, Default)]
 struct Pen {
@@ -49,6 +67,8 @@ struct Pen {
     bg: Color,
     /// How characters are drawn.
     flags: Flags,
+    /// The hyperlink characters are part of, counted from one; nought for none.
+    link: u16,
 }
 
 /// What a character set puts on the keys.
@@ -110,6 +130,8 @@ struct Screen {
     replies: Vec<u8>,
     /// The last printed character, which a repeat repeats.
     last: char,
+    /// What the hyperlinks programs opened point to, the first numbered one.
+    links: Vec<String>,
 }
 
 /// A terminal: a parser and the screen it draws on.
@@ -154,6 +176,7 @@ impl Emulator {
                 title: None,
                 replies: Vec::new(),
                 last: ' ',
+                links: Vec::new(),
             },
             version: 0,
             selection: None,
@@ -278,9 +301,88 @@ impl Emulator {
         std::mem::take(&mut self.screen.replies)
     }
 
+    /// The link the cell at `column` of line `line`, counted from the oldest kept, is part of: a hyperlink a program put there, or else an address `find` finds in the text around it, which it gives as where the first one starts and ends.
+    pub fn link_at(
+        &self,
+        (line, column): (usize, usize),
+        find: impl Fn(&str) -> Option<(usize, usize)>,
+    ) -> Option<Link> {
+        let cells = self.absolute(line);
+        let cell = cells.get(column)?;
+        if cell.link != 0 {
+            let other = |held: &Cell| held.link != cell.link;
+            let from = cells[..column]
+                .iter()
+                .rposition(other)
+                .map_or(0, |at| at + 1);
+            let to = cells[column..]
+                .iter()
+                .position(other)
+                .map_or(cells.len(), |at| column + at);
+            return Some(Link {
+                start: (line, from),
+                end: (line, to - 1),
+                target: self.screen.links.get(usize::from(cell.link) - 1)?.clone(),
+            });
+        }
+        let (text, places) = self.wrapped_text(line);
+        let mut offset = 0;
+        while let Some((start, end)) = find(&text[offset..]) {
+            let (start, end) = (offset + start, offset + end);
+            if places[start..end].contains(&(line, column)) {
+                return Some(Link {
+                    start: places[start],
+                    end: places[end - 1],
+                    target: text[start..end].to_owned(),
+                });
+            }
+            offset = end;
+        }
+        None
+    }
+
+    /// The text of line `line` joined with the lines it wraps from and into, and the line and column of the cell each byte of it came from.
+    fn wrapped_text(&self, line: usize) -> (String, Vec<(usize, usize)>) {
+        let full = |index: usize| {
+            self.absolute(index)
+                .last()
+                .is_some_and(|cell| cell.ch != ' ')
+        };
+        let total = self.history() + self.grid().lines.len();
+        let mut first = line;
+        while first > 0 && full(first - 1) {
+            first -= 1;
+        }
+        let mut last = line;
+        while last + 1 < total && full(last) {
+            last += 1;
+        }
+        let (mut text, mut places) = (String::new(), Vec::new());
+        for index in first..=last {
+            for (column, cell) in self.absolute(index).iter().enumerate() {
+                text.push(cell.ch);
+                places.extend(std::iter::repeat_n((index, column), cell.ch.len_utf8()));
+            }
+        }
+        (text, places)
+    }
+
     /// Marks the text from `anchor` to `head`, each a line counted from the oldest kept and a column.
     pub fn select(&mut self, anchor: (usize, usize), head: (usize, usize)) {
         self.selection = Some(Selection { anchor, head });
+        self.version += 1;
+    }
+
+    /// Marks every line kept, from the oldest to the last of the window.
+    pub fn select_all(&mut self) {
+        let last = self.history() + self.rows() - 1;
+        self.select((0, 0), (last, self.columns() - 1));
+    }
+
+    /// Clears the window and the lines kept above it, leaving the line the cursor is on at the top.
+    pub fn clear(&mut self) {
+        self.screen.grid().clear_above_cursor();
+        self.selection = None;
         self.version += 1;
     }
 
@@ -400,6 +502,25 @@ impl Screen {
         self.tabs = tab_stops(columns);
     }
 
+    /// Puts the characters printed next on a hyperlink to `target`, or on none when it is empty.
+    fn hyperlink(&mut self, target: &[u8]) {
+        if target.is_empty() {
+            self.pen.link = 0;
+            return;
+        }
+        let target = String::from_utf8_lossy(target);
+        let known = self.links.iter().position(|held| *held == target);
+        let index = match known {
+            Some(index) => Some(index),
+            None if self.links.len() < usize::from(u16::MAX) => {
+                self.links.push(target.into_owned());
+                Some(self.links.len() - 1)
+            }
+            None => None,
+        };
+        self.pen.link = index.map_or(0, |index| index as u16 + 1);
+    }
+
     /// Answers a query by writing `reply` back to the shell.
     fn reply(&mut self, reply: &str) {
         self.replies.extend_from_slice(reply.as_bytes());
@@ -419,6 +540,7 @@ impl Screen {
             fg: self.pen.fg,
             bg: self.pen.bg,
             flags: self.pen.flags,
+            link: self.pen.link,
         };
         let (wrap, fill) = (self.modes.wrap, self.fill());
         self.grid().put(cell, wrap, fill);
@@ -611,12 +733,14 @@ impl Perform for Screen {
         }
     }
 
-    /// Carries out an operating-system command: the window's title.
+    /// Carries out an operating-system command: the window's title, or a hyperlink opened or closed.
     fn osc_dispatch(&mut self, params: &[&[u8]], _bell_terminated: bool) {
-        if let [code, title, ..] = params
-            && (*code == b"0" || *code == b"2")
-        {
-            self.title = Some(String::from_utf8_lossy(title).into_owned());
+        match params {
+            [code, title, ..] if *code == b"0" || *code == b"2" => {
+                self.title = Some(String::from_utf8_lossy(title).into_owned());
+            }
+            [b"8", _, target @ ..] => self.hyperlink(&target.join(&b';')),
+            _ => {}
         }
     }
 

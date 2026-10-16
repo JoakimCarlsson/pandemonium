@@ -68,6 +68,17 @@ impl Grid {
         }
     }
 
+    /// Drops the history and every line but the cursor's, which moves to the top with the cursor on it.
+    pub(crate) fn clear_above_cursor(&mut self) {
+        let row = self.cursor.row.min(self.rows - 1);
+        let kept = std::mem::take(&mut self.lines[row]);
+        self.lines = vec![vec![Cell::default(); self.columns]; self.rows];
+        self.lines[0] = kept;
+        self.history.clear();
+        self.cursor.row = 0;
+        self.saved.row = 0;
+    }
+
     /// A line of `fill` cells.
     fn blank(&self, fill: Cell) -> Vec<Cell> {
         vec![fill; self.columns]
