@@ -111,6 +111,8 @@ pub enum Shot {
     NewFile,
     /// The workspace with the terminal open.
     Terminal,
+    /// The workspace with the terminal open and a web address in it underlined as what a press opens.
+    TerminalLink,
     /// The workspace of the projects onboarding added, with no sessions.
     New,
     /// The workspace with no project at all.
@@ -1073,6 +1075,15 @@ impl Shot {
             Self::Editing => Screen::Workspace(editing()),
             Self::NewFile => Screen::Workspace(new_file()),
             Self::Terminal => Screen::Workspace(terminal()),
+            Self::TerminalLink => {
+                let mut state = terminal();
+                state.terminal_output(
+                    1,
+                    b"gh pr view --web\r\nOpening https://github.com/alster/pandemonium/pull/250 or \x1b]8;;https://docs.rs/vte\x1b\\the vte docs\x1b]8;;\x1b\\\r\n",
+                );
+                state.reach_terminal_link(Some((9, 20)));
+                Screen::Workspace(state)
+            }
             Self::TerminalComposing => {
                 let mut state = terminal();
                 state.compose_in_terminal("¨");

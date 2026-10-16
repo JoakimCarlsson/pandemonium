@@ -473,7 +473,7 @@ impl Builder {
 
 /// Where the first bare `http://` or `https://` address of `text` starts and
 /// ends, the punctuation after it and a closing bracket it did not open left out.
-fn bare_address(text: &str) -> Option<(usize, usize)> {
+pub fn bare_address(text: &str) -> Option<(usize, usize)> {
     let start = [text.find("https://"), text.find("http://")]
         .into_iter()
         .flatten()

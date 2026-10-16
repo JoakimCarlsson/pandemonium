@@ -407,7 +407,7 @@ impl App {
             return;
         }
         self.fit_terminal();
-        let reaching = self.reaching();
+        let reaching = self.reaching() || self.reaching_terminal_link();
         let (Some(window), Some(renderer)) = (self.window.as_ref(), self.renderer.as_mut()) else {
             return;
         };
@@ -1065,6 +1065,7 @@ impl App {
                 self.drag_comment((x, y));
                 self.drag_project((x, y));
                 self.terminal_drag((x, y));
+                self.reach_terminal_link();
                 self.text_drag((x, y));
                 if let Some(id) = self.dragging
                     && let Some(offset) = self.output.offset_in(id, x, y)
@@ -1872,6 +1873,7 @@ impl App {
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.modifiers = keys::modifiers(modifiers.state());
                 self.editor_modifiers_changed();
+                self.reach_terminal_link();
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 self.refocus = None;

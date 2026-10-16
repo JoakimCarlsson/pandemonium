@@ -1103,6 +1103,29 @@ impl Screen {
         }
     }
 
+    /// Underlines the web address at `at` of the window of the shell showing, a line of it and a column, or none when `at` is nothing.
+    pub fn reach_terminal_link(&mut self, at: Option<(usize, usize)>) {
+        if let Self::Workspace(state) = self {
+            state.reach_terminal_link(at);
+        }
+    }
+
+    /// Whether a web address of the shell showing is underlined as what a press opens.
+    pub fn reaching_terminal_link(&self) -> bool {
+        match self {
+            Self::Workspace(state) => state.reaching_terminal_link(),
+            Self::Onboarding(_) => false,
+        }
+    }
+
+    /// Opens in the browser the web address at `at` of the window of the shell showing, a line of it and a column, and says whether there was one.
+    pub fn open_terminal_link(&mut self, at: (usize, usize)) -> bool {
+        match self {
+            Self::Workspace(state) => state.open_terminal_link(at),
+            Self::Onboarding(_) => false,
+        }
+    }
+
     /// Unmarks the text of the shell showing.
     pub fn clear_terminal_selection(&mut self) {
         if let Self::Workspace(state) = self {

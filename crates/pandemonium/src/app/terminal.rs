@@ -147,20 +147,51 @@ impl App {
         }
     }
 
-    /// Begins marking text when the primary button went down in the shell's window.
+    /// The cell of the shell's window under the pointer, when the pointer is over the window.
+    fn terminal_cell_under_pointer(&mut self) -> Option<(usize, usize)> {
+        let at = self.pointer.position?;
+        self.terminal_region()
+            .is_some_and(|body| body.contains(at.0, at.1))
+            .then(|| self.terminal_cell(at))
+            .flatten()
+    }
+
+    /// Underlines the web address under the pointer in the shell's window while Ctrl is held, and takes the underline away otherwise.
+    pub(super) fn reach_terminal_link(&mut self) {
+        let at = self
+            .modifiers
+            .control
+            .then(|| self.terminal_cell_under_pointer())
+            .flatten();
+        let reaching = self.model.read(|screen| screen.reaching_terminal_link());
+        if at.is_some() || reaching {
+            self.model.update(|screen| screen.reach_terminal_link(at));
+        }
+    }
+
+    /// Whether a web address of the shell is underlined as what a press opens.
+    pub(super) fn reaching_terminal_link(&self) -> bool {
+        self.model.read(|screen| screen.reaching_terminal_link())
+    }
+
+    /// Opens the web address under the pointer when Ctrl is held as the primary button goes down in the shell's window, or else begins marking text there.
     pub(super) fn terminal_press(&mut self) {
         self.terminal_anchor = None;
-        let Some(at) = self.pointer.position else {
+        let Some(cell) = self.terminal_cell_under_pointer() else {
             return;
         };
-        if self
-            .terminal_region()
-            .is_some_and(|body| body.contains(at.0, at.1))
-        {
-            self.terminal_anchor = self.terminal_cell(at);
+        let mut opened = false;
+        if self.modifiers.control {
             self.model
-                .update(|screen| screen.clear_terminal_selection());
+                .update(|screen| opened = screen.open_terminal_link(cell));
         }
+        if opened {
+            self.deliver();
+            return;
+        }
+        self.terminal_anchor = Some(cell);
+        self.model
+            .update(|screen| screen.clear_terminal_selection());
     }
 
     /// Extends the marked text to the point `at` while the button is held.
