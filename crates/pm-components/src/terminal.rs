@@ -24,8 +24,14 @@ use crate::state::{
     TERMINAL_TAB_BASE, WorkspaceState,
 };
 
-/// How tall the dock is, in logical pixels.
+/// How tall the dock is until it is dragged taller or shorter, in logical pixels.
 pub const HEIGHT: f32 = 280.0;
+
+/// How short and how tall the dock can be dragged, in logical pixels; a page leaves it less room than the second.
+pub const HEIGHTS: (f32, f32) = (120.0, 2000.0);
+
+/// How much of the page the dock always leaves above it, in logical pixels.
+const ROOM_ABOVE: f32 = 160.0;
 
 /// How much of the page the dock takes while it is maximized.
 const MAXIMIZED: f32 = 0.7;
@@ -84,13 +90,19 @@ pub fn fitting(width: f32, height: f32, cell: (f32, f32)) -> (u16, u16) {
     (columns.min(500.0) as u16, rows.min(200.0) as u16)
 }
 
+/// How tall the dock can be on a page `page` logical pixels tall.
+pub fn tallest(page: f32) -> f32 {
+    (page - ROOM_ABOVE).clamp(HEIGHTS.0, HEIGHTS.1)
+}
+
 /// How tall the dock is on a page `page` logical pixels tall.
 pub fn height(state: &WorkspaceState, page: f32) -> f32 {
-    if state.terminal_maximized {
-        (page * MAXIMIZED).max(HEIGHT)
+    let height = if state.terminal_maximized {
+        (page * MAXIMIZED).max(state.terminal_height)
     } else {
-        HEIGHT
-    }
+        state.terminal_height
+    };
+    height.clamp(HEIGHTS.0, tallest(page))
 }
 
 /// The dock of `session`, on a page `width` wide and `page` tall.

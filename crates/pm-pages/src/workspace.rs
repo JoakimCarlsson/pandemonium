@@ -23,17 +23,17 @@ use pm_components::open_files::EDITOR_FIELD;
 use pm_components::open_files::{FILE_CLOSE_BASE, FILE_TAB_BASE, Viewer};
 use pm_components::parts::{glyph, line, spacer};
 use pm_components::{
-    Button, adder, chat, diff, history, input, plan, review, settings, sidebar, terminal, viewer,
-    welcome,
+    Button, adder, chat, diff, history, input, overview, plan, review, settings, sidebar, terminal,
+    viewer, welcome,
 };
 
-pub use pm_components::sidebar::WIDTH as SIDEBAR_WIDTH;
 pub use pm_components::state::{
     ADD_PROJECT, ATTACH, CHAT_SCROLL, DIFF_SCROLL, HISTORY, MENU_SCROLL, Outgoing, PLAN_SCROLL,
     PROMPT, SEND, STOP, TAB_DIFF, TERMINAL, TERMINAL_BODY, TREE_SCROLL, WorkspaceState,
 };
 
 use pm_components::sample::Session;
+use pm_components::sash::{PLAN_SASH, REVIEW_SASH, SIDEBAR_SASH, Sash, TERMINAL_SASH};
 use pm_components::state::{Page, TAB_CHAT, Tab};
 
 /// How much of a window's height the conversation page keeps for something other than the room above the prompt box, in logical pixels.
@@ -181,8 +181,8 @@ fn tabs(state: &WorkspaceState, session: &Session) -> Node {
     )
 }
 
-/// What fills the main area on the page for starting work while a file of the project is open: the tabs, the page itself under the first of them, and the file under the others.
-fn home_page(state: &WorkspaceState, width: f32, height: f32, shaper: &mut Shaper) -> Node {
+/// What fills the main area on a page of a project while a file of the project is open: the tabs, the first of them, `first`, showing `page`, and the file under the others.
+fn home_page(state: &WorkspaceState, first: (IconName, &str), page: Node, height: f32) -> Node {
     let mut strip = node()
         .styles([
             flex(),
@@ -194,12 +194,7 @@ fn home_page(state: &WorkspaceState, width: f32, height: f32, shaper: &mut Shape
             border_b(),
             border_color(Role::Border),
         ])
-        .child(tab(
-            IconName::Plus,
-            "New Session",
-            TAB_CHAT,
-            state.tab != Tab::File,
-        ));
+        .child(tab(first.0, first.1, TAB_CHAT, state.tab != Tab::File));
     for (index, viewer) in state.git.viewers.iter().enumerate() {
         let shown = state.tab == Tab::File && state.git.shown == Some(index);
         strip = strip.child(viewer_tab(viewer, index, shown));
@@ -211,14 +206,19 @@ fn home_page(state: &WorkspaceState, width: f32, height: f32, shaper: &mut Shape
             if state.tab == Tab::File && state.shown_viewer().is_some() {
                 viewer::viewer(state, width, height, shaper)
             } else {
-                welcome::welcome(
-                    state,
-                    ((height - WELCOME_HEIGHT) / 2.0 + WELCOME_ABOVE).max(0.0),
-                    input::inner_width((width - 48.0).min(680.0)),
-                    shaper,
-                )
+                page
             },
         )
+}
+
+/// The page for starting work, its prompt box `width` logical pixels across in a window `height` tall.
+fn starting_page(state: &WorkspaceState, width: f32, height: f32, shaper: &mut Shaper) -> Node {
+    welcome::welcome(
+        state,
+        ((height - WELCOME_HEIGHT) / 2.0 + WELCOME_ABOVE).max(0.0),
+        input::inner_width((width - 48.0).min(680.0)),
+        shaper,
+    )
 }
 
 /// What fills the main area while a session is open.
@@ -250,13 +250,14 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
     let open = state.open();
     let planning = state.plan_shown().is_some();
     let reviewing = state.review_session().is_some() && state.review;
-    let review_width = if reviewing { review::WIDTH } else { 0.0 };
+    let sidebar_width = state.sidebar_width;
+    let review_width = if reviewing { state.review_width } else { 0.0 };
     let plan_width = if planning {
-        plan::width_in(width - sidebar::WIDTH - review_width)
+        plan::width_in(state, width - sidebar_width - review_width)
     } else {
         0.0
     };
-    let main_width = width - sidebar::WIDTH - review_width - plan_width;
+    let main_width = width - sidebar_width - review_width - plan_width;
     let main = match (state.page, open) {
         _ if state.projects.is_empty() => welcome::no_project(),
         (Page::Session(_), Some(session)) => session_page(
@@ -267,17 +268,22 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
             height,
             shaper,
         ),
-        (Page::New(_), _) if !state.git.viewers.is_empty() => {
-            home_page(state, main_width, height, shaper)
-        }
+        (Page::New(_), _) if !state.git.viewers.is_empty() => home_page(
+            state,
+            (IconName::Plus, "New Session"),
+            starting_page(state, main_width, height, shaper),
+            height,
+        ),
+        (Page::Project(project), _) if !state.git.viewers.is_empty() => home_page(
+            state,
+            (IconName::Folder, "Overview"),
+            overview::overview(state, project),
+            height,
+        ),
+        (Page::Project(project), _) => overview::overview(state, project),
         (Page::History, _) => history::history(state),
         (Page::Extensions, _) => pm_components::extensions::extensions(state),
-        _ => welcome::welcome(
-            state,
-            ((height - WELCOME_HEIGHT) / 2.0 + WELCOME_ABOVE).max(0.0),
-            input::inner_width((main_width - 48.0).min(680.0)),
-            shaper,
-        ),
+        _ => starting_page(state, main_width, height, shaper),
     };
     let mut root = node()
         .styles([flex(), w_full(), h_full(), min_h(0), bg(Role::Background)])
@@ -288,6 +294,38 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
     }
     if let Some(session) = state.review_session().filter(|_| reviewing) {
         root = root.child(review::review(state, session, shaper));
+    }
+    root = root.child(
+        Sash::column(SIDEBAR_SASH)
+            .at((sidebar_width, 0.0), height)
+            .build(),
+    );
+    if planning {
+        root = root.child(
+            Sash::column(PLAN_SASH)
+                .at((sidebar_width + main_width, 0.0), height)
+                .build(),
+        );
+    }
+    if reviewing {
+        root = root.child(
+            Sash::column(REVIEW_SASH)
+                .at((width - review_width, 0.0), height)
+                .build(),
+        );
+    }
+    if state.terminal
+        && !state.projects.is_empty()
+        && matches!((state.page, open), (Page::Session(_), Some(_)))
+    {
+        root = root.child(
+            Sash::row(TERMINAL_SASH)
+                .at(
+                    (sidebar_width, height - terminal::height(state, height)),
+                    main_width,
+                )
+                .build(),
+        );
     }
     root.children(state.menu.and_then(|menu| {
         if settings::is_settings(menu.field) {

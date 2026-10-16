@@ -970,6 +970,8 @@ pub enum Page {
     Session(usize),
     /// A prompt to start work in one project, by position.
     New(usize),
+    /// The overview of one project, by position: its sessions and its repository.
+    Project(usize),
     /// Every session.
     History,
     /// The extensions there are to install.
@@ -1054,10 +1056,14 @@ pub struct WorkspaceState {
     pub plan_open: bool,
     /// How far down the plan panel is scrolled, in logical pixels.
     pub plan_scroll: f32,
+    /// How far down a project's overview is scrolled, in logical pixels.
+    pub overview_scroll: f32,
     /// Whether the terminal is open.
     pub terminal: bool,
     /// Whether the terminal is taller than usual.
     pub terminal_maximized: bool,
+    /// How tall the terminal dock is while it is not maximized, in logical pixels.
+    pub terminal_height: f32,
     /// How many columns and lines the dock's window last held.
     pub terminal_size: (u16, u16),
     /// The name the next shell gets in this window.
@@ -1082,6 +1088,12 @@ pub struct WorkspaceState {
     pub history_search: Field,
     /// How far the sidebar's list is scrolled, in logical pixels.
     pub sidebar_scroll: f32,
+    /// How wide the sidebar is, in logical pixels.
+    pub sidebar_width: f32,
+    /// How wide the review panel is, in logical pixels.
+    pub review_width: f32,
+    /// How wide the plan panel was dragged to be, in logical pixels, or zero while it takes the width it would by itself.
+    pub plan_width: f32,
     /// The panel for adding a project, if it is open.
     pub adder: Option<Adder>,
     /// The section showing in the settings panel, if it is open.
@@ -1238,8 +1250,10 @@ impl WorkspaceState {
             homed: None,
             plan_open: false,
             plan_scroll: 0.0,
+            overview_scroll: 0.0,
             terminal: false,
             terminal_maximized: false,
+            terminal_height: crate::terminal::HEIGHT,
             terminal_size: crate::dock::FIRST_SIZE,
             next_terminal: 1,
             agent: 0,
@@ -1248,6 +1262,9 @@ impl WorkspaceState {
             message: commit_field(),
             history_search: Field::default(),
             sidebar_scroll: 0.0,
+            sidebar_width: crate::sidebar::WIDTH,
+            review_width: crate::review::WIDTH,
+            plan_width: 0.0,
             adder: None,
             settings: None,
             settings_servers: crate::settings_servers::ServerSettings {
@@ -1383,7 +1400,7 @@ impl WorkspaceState {
     /// The project the next new work goes to: the open session's, or the one being started in.
     pub fn current_project(&self) -> usize {
         match self.page {
-            Page::New(project) => project,
+            Page::New(project) | Page::Project(project) => project,
             _ => self.open().map_or(0, |session| session.project),
         }
     }
@@ -1812,7 +1829,8 @@ impl WorkspaceState {
         if let Some(index) = position(ADDER_ROW_BASE, rows) {
             self.adder_chosen(index);
         } else if let Some(index) = position(PROJECT_BASE, self.projects.len()) {
-            self.page = Page::New(index);
+            self.page = Page::Project(index);
+            self.overview_scroll = 0.0;
         } else if let Some(index) = position(NEW_IN_BASE, self.projects.len()) {
             self.page = Page::New(index);
         } else if let Some(index) = position(SESSION_BASE, self.sessions.len()) {
@@ -2144,7 +2162,7 @@ impl WorkspaceState {
                 self.tab = Tab::Chat;
                 self.sessions.len() - 1
             }
-            Page::History | Page::Extensions => return,
+            Page::Project(_) | Page::History | Page::Extensions => return,
         };
         let files = self.take_prompt();
         let held = &mut self.sessions[session];
