@@ -16,6 +16,24 @@ pub const SPLIT_SASH_BASE: u64 = 4_600_000;
 /// The first of the scrolling boxes of files shown in a pane other than the focused one; the rest follow it by the file's position.
 pub const PEEK_SCROLL_BASE: u64 = 4_700_000;
 
+/// The button in the strip of tabs that opens the menu of panes.
+pub const PANE_MENU: FocusId = FocusId(7096);
+
+/// The row of the menu of panes that splits the pane worked in with its tab on the right.
+pub const SPLIT_RIGHT: FocusId = FocusId(7097);
+
+/// The row of the menu of panes that splits the pane worked in with its tab on the left.
+pub const SPLIT_LEFT: FocusId = FocusId(7098);
+
+/// The row of the menu of panes that splits the pane worked in with its tab above.
+pub const SPLIT_UP: FocusId = FocusId(7099);
+
+/// The row of the menu of panes that splits the pane worked in with its tab below.
+pub const SPLIT_DOWN: FocusId = FocusId(7100);
+
+/// The first of the buttons of empty panes; each pane has four, by its position: bring the page in, bring the diff in, show the files, close it.
+pub const PANE_PUT_BASE: u64 = 4_800_000;
+
 /// How many ids each range above holds.
 const RANGE: u64 = 100_000;
 
@@ -362,15 +380,16 @@ impl Layout {
         second.find_split(index, two, count)
     }
 
-    /// The layout with `item` taken out of its pane, and a pane left empty taken out with it.
+    /// The layout with `item` taken out of its pane, and the pane taken out with it when that leaves it empty.
     fn without(self, item: &Item) -> Option<Self> {
         match self {
             Self::Group(mut group) => {
-                if let Some(at) = group.items.iter().position(|held| held == item) {
-                    group.items.remove(at);
-                    if group.active > at || group.active >= group.items.len() {
-                        group.active = group.active.saturating_sub(1);
-                    }
+                let Some(at) = group.items.iter().position(|held| held == item) else {
+                    return Some(Self::Group(group));
+                };
+                group.items.remove(at);
+                if group.active > at || group.active >= group.items.len() {
+                    group.active = group.active.saturating_sub(1);
                 }
                 (!group.items.is_empty()).then_some(Self::Group(group))
             }
@@ -391,14 +410,14 @@ impl Layout {
         }
     }
 
-    /// The layout with the `target`-th pane cut in two along `side`, `item` alone on that side.
-    fn split_at(self, target: usize, side: Side, item: Item) -> Self {
+    /// The layout with the `target`-th pane cut in two along `side`, `leaf` on that side.
+    fn split_at(self, target: usize, side: Side, leaf: Group) -> Self {
         let mut count = 0;
-        self.split_counting(target, side, item, &mut count)
+        self.split_counting(target, side, leaf, &mut count)
     }
 
     /// Cuts the `target`-th pane, counting in `count` the panes passed.
-    fn split_counting(self, target: usize, side: Side, item: Item, count: &mut usize) -> Self {
+    fn split_counting(self, target: usize, side: Side, leaf: Group, count: &mut usize) -> Self {
         match self {
             Self::Group(group) => {
                 let here = *count == target;
@@ -406,10 +425,7 @@ impl Layout {
                 if !here {
                     return Self::Group(group);
                 }
-                let alone = Self::Group(Group {
-                    items: vec![item],
-                    active: 0,
-                });
+                let alone = Self::Group(leaf);
                 let held = Self::Group(group);
                 let (axis, first, second) = match side {
                     Side::Left => (Axis::Row, alone, held),
@@ -430,8 +446,8 @@ impl Layout {
                 first,
                 second,
             } => {
-                let first = first.split_counting(target, side, item.clone(), count);
-                let second = second.split_counting(target, side, item, count);
+                let first = first.split_counting(target, side, leaf.clone(), count);
+                let second = second.split_counting(target, side, leaf, count);
                 Self::Split {
                     axis,
                     ratio,
@@ -442,37 +458,108 @@ impl Layout {
         }
     }
 
-    /// The layout with `item` moved to the `target`-th pane, or to a new pane on `side` of it; nothing changes when the tab would leave a pane only to split that same pane.
+    /// The layout with the `target`-th pane cut in two along `side`, an empty pane on that side, and the position of the empty pane.
+    pub fn split_empty(self, target: usize, side: Side) -> (Self, usize) {
+        let at = match side {
+            Side::Left | Side::Top => target,
+            _ => target + 1,
+        };
+        (
+            self.split_at(
+                target,
+                side,
+                Group {
+                    items: Vec::new(),
+                    active: 0,
+                },
+            ),
+            at,
+        )
+    }
+
+    /// The layout with the `target`-th pane taken out, or nothing when it is the only one.
+    pub fn without_group(self, target: usize) -> Option<Self> {
+        let mut count = 0;
+        self.without_counting(target, &mut count)
+    }
+
+    /// Takes the `target`-th pane out, counting in `count` the panes passed.
+    fn without_counting(self, target: usize, count: &mut usize) -> Option<Self> {
+        match self {
+            Self::Group(group) => {
+                let here = *count == target;
+                *count += 1;
+                (!here).then_some(Self::Group(group))
+            }
+            Self::Split {
+                axis,
+                ratio,
+                first,
+                second,
+            } => match (
+                first.without_counting(target, count),
+                second.without_counting(target, count),
+            ) {
+                (Some(first), Some(second)) => Some(Self::Split {
+                    axis,
+                    ratio,
+                    first: Box::new(first),
+                    second: Box::new(second),
+                }),
+                (one, two) => one.or(two),
+            },
+        }
+    }
+
+    /// The layout with `item` moved to the `target`-th pane, or to a new pane on `side` of it, and the pane it left taken out when that leaves it empty; nothing changes when the tab would leave a pane only to come back to it.
     pub fn moved(self, item: &Item, target: usize, side: Side) -> Self {
-        let groups = self.groups();
         let Some(from) = self.group_of(item) else {
             return self;
         };
-        let Some(anchor) = groups
+        let Some(alone) = self
+            .groups()
             .get(target)
-            .and_then(|group| group.items.iter().find(|held| *held != item).cloned())
+            .map(|group| group.items.iter().all(|held| held == item))
         else {
             return self;
         };
-        if from == target && side == Side::Center {
+        if from == target && (side == Side::Center || alone) {
             return self;
         }
-        let Some(left) = self.clone().without(item) else {
-            return self;
-        };
-        let Some(target) = left.group_of(&anchor) else {
-            return self;
-        };
+        let mut left = self;
+        if let Some(group) = left.groups_mut().into_iter().nth(from) {
+            group.items.retain(|held| held != item);
+            group.active = group.active.min(group.items.len().saturating_sub(1));
+        }
         let mut moved = match side {
             Side::Center => {
-                let mut left = left;
                 if let Some(group) = left.groups_mut().into_iter().nth(target) {
                     group.items.push(item.clone());
                 }
                 left
             }
-            side => left.split_at(target, side, item.clone()),
+            side => left.split_at(
+                target,
+                side,
+                Group {
+                    items: vec![item.clone()],
+                    active: 0,
+                },
+            ),
         };
+        let source = if side != Side::Center && from > target {
+            from + 1
+        } else {
+            from
+        };
+        if moved
+            .groups()
+            .get(source)
+            .is_some_and(|group| group.items.is_empty())
+            && let Some(pruned) = moved.clone().without_group(source)
+        {
+            moved = pruned;
+        }
         if let Some(at) = moved.group_of(item)
             && let Some(group) = moved.groups_mut().into_iter().nth(at)
         {
@@ -529,7 +616,7 @@ impl Layout {
                 .any(|item| matches!(item, Item::File { .. }))
         };
         let files = match layout.groups().get(focused) {
-            Some(group) if holds_file(group) => focused,
+            Some(group) if holds_file(group) || group.items.is_empty() => focused,
             _ => layout
                 .groups()
                 .iter()
@@ -565,6 +652,19 @@ pub struct Panes {
     pub layout: Layout,
     /// The pane last worked in, by position, which a file opened goes to.
     pub focused: usize,
+    /// While the pane worked in is empty, the tab that was shown when it was chosen; once another tab is shown, the pane holding it is the one worked in.
+    pub parked: Option<Item>,
+}
+
+/// The edge the row `id` of the menu of panes splits the pane worked in on, if it is one of its rows.
+pub fn split_row_of(id: FocusId) -> Option<Side> {
+    match id {
+        SPLIT_RIGHT => Some(Side::Right),
+        SPLIT_LEFT => Some(Side::Left),
+        SPLIT_UP => Some(Side::Top),
+        SPLIT_DOWN => Some(Side::Bottom),
+        _ => None,
+    }
 }
 
 /// Which handle between panes `id` is, if it is one.
@@ -666,15 +766,30 @@ impl WorkspaceState {
             .clone()
             .reconciled(&self.pane_items(), self.panes.focused);
         let current = self.current_item();
-        let focused = layout.group_of(&current).unwrap_or(0);
-        if let Some(group) = layout.groups_mut().into_iter().nth(focused) {
+        let held = layout.group_of(&current).unwrap_or(0);
+        if let Some(group) = layout.groups_mut().into_iter().nth(held) {
             group.active = group
                 .items
                 .iter()
                 .position(|item| *item == current)
                 .unwrap_or(group.active);
         }
-        Panes { layout, focused }
+        let empty = layout
+            .groups()
+            .get(self.panes.focused)
+            .is_some_and(|group| group.items.is_empty());
+        match self.panes.parked.as_ref() {
+            Some(parked) if empty && *parked == current => Panes {
+                layout,
+                focused: self.panes.focused,
+                parked: Some(current),
+            },
+            _ => Panes {
+                layout,
+                focused: held,
+                parked: None,
+            },
+        }
     }
 
     /// Keeps the panes as the page stands, so the pane being worked in is the one a file opened next goes to.
@@ -684,8 +799,11 @@ impl WorkspaceState {
         }
     }
 
-    /// Puts the open file `to` in the place of the tab of `from`, which it takes over.
+    /// Puts the open file `to` in the place of the tab of `from`, which it takes over, unless an empty pane is the one worked in, which it goes to instead.
     pub(crate) fn replace_pane_item(&mut self, from: Item, to: Item) {
+        if self.panes.parked.is_some() {
+            return;
+        }
         self.panes.layout = std::mem::take(&mut self.panes.layout).replaced(&from, to);
     }
 
@@ -732,18 +850,81 @@ impl WorkspaceState {
         }
     }
 
-    /// Makes the `index`-th pane the one being worked in, showing the tab it shows.
+    /// Makes the `index`-th pane the one being worked in, showing the tab it shows, or, when it is empty, keeping it the one a file opened next goes to.
     pub(crate) fn focus_pane(&mut self, index: usize) {
         let panes = self.panes();
-        if let Some(item) = panes
-            .layout
-            .groups()
-            .get(index)
-            .and_then(|group| group.items.get(group.active))
-            .cloned()
-        {
-            self.show_item(&item);
+        let Some(group) = panes.layout.groups().get(index).copied().cloned() else {
+            return;
+        };
+        match group.items.get(group.active) {
+            Some(item) => self.show_item(item),
+            None => {
+                self.panes = Panes {
+                    focused: index,
+                    parked: Some(self.current_item()),
+                    ..panes
+                }
+            }
         }
+    }
+
+    /// Carries out the button `id` of an empty pane, if it is one: brings the page or the diff into it, shows the files to open one in it, or closes it.
+    pub(crate) fn press_empty_pane(&mut self, id: FocusId) -> bool {
+        let Some(offset) =
+            id.0.checked_sub(PANE_PUT_BASE)
+                .filter(|offset| *offset < RANGE)
+        else {
+            return false;
+        };
+        let (pane, put) = ((offset / 4) as usize, offset % 4);
+        match put {
+            0 | 1 => {
+                let item = if put == 0 { Item::Page } else { Item::Diff };
+                let panes = self.panes();
+                self.panes = Panes {
+                    layout: panes.layout.moved(&item, pane, Side::Center),
+                    focused: pane,
+                    parked: None,
+                };
+                self.show_item(&item);
+                self.settle_panes();
+            }
+            2 => {
+                self.focus_pane(pane);
+                self.review = true;
+                self.show_review_tab(crate::state::ReviewTab::Files);
+            }
+            _ => {
+                let panes = self.panes();
+                if let Some(layout) = panes.layout.without_group(pane) {
+                    self.panes = Panes {
+                        layout,
+                        focused: 0,
+                        parked: None,
+                    };
+                    self.settle_panes();
+                }
+            }
+        }
+        true
+    }
+
+    /// The state with the menu of panes open with its corner at `at`.
+    pub fn with_pane_menu(mut self, at: (f32, f32)) -> Self {
+        self = self.without_menu();
+        self.pane_menu = Some(at);
+        self
+    }
+
+    /// Cuts the pane being worked in, an empty pane on `side` of it that becomes the one worked in.
+    pub(crate) fn split_focused(&mut self, side: Side) {
+        let panes = self.panes();
+        let (layout, empty) = panes.layout.split_empty(panes.focused, side);
+        self.panes = Panes {
+            layout,
+            focused: empty,
+            parked: Some(self.current_item()),
+        };
     }
 
     /// The state with the tab `item` being dragged, over the `over` pane and edge, if any, with the pointer at `at`.
@@ -764,6 +945,7 @@ impl WorkspaceState {
         self.panes = Panes {
             layout: panes.layout.moved(&drag.item, target, side),
             focused: panes.focused,
+            parked: None,
         };
         self.show_item(&drag.item);
         self.settle_panes();

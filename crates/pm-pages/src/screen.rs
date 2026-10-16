@@ -241,6 +241,14 @@ impl Screen {
         }
     }
 
+    /// The screen with the menu of panes open with its corner at `at`.
+    pub fn with_pane_menu(self, at: (f32, f32)) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_pane_menu(at)),
+            onboarding => onboarding,
+        }
+    }
+
     /// The tab of a pane `id` is, while the workspace is showing.
     pub fn pane_tab_of(&self, id: FocusId) -> Option<pm_components::panes::Item> {
         match self {
@@ -280,7 +288,7 @@ impl Screen {
 
     /// Whether a menu is open over a project, a session or a message, so that a press elsewhere has to close it.
     pub fn list_menu_open(&self) -> bool {
-        matches!(self, Self::Workspace(state) if state.project_menu.is_some() || state.session_menu.is_some() || state.message_menu.is_some() || state.terminal_menu.is_some() || state.git.menu.is_some() || state.settings_servers.menu.is_some() || state.tab_menu.is_some())
+        matches!(self, Self::Workspace(state) if state.project_menu.is_some() || state.session_menu.is_some() || state.message_menu.is_some() || state.terminal_menu.is_some() || state.git.menu.is_some() || state.settings_servers.menu.is_some() || state.tab_menu.is_some() || state.pane_menu.is_some())
     }
 
     /// Which session the row `id` of the sidebar opens, while the workspace is showing.

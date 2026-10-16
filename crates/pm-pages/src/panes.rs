@@ -4,16 +4,21 @@ use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
     Length, Radius, Role, Sides, absolute, bg, border, border_b, border_color, border_l, border_t,
-    flex, flex_1, flex_col, flex_none, font_medium, gap, h, h_full, h_px, inset_length,
-    items_center, items_end, mb, min_h, min_w_px, opacity, overflow_hidden, px, rounded, shadow_md,
+    flex, flex_1, flex_col, flex_none, gap, h, h_full, h_px, inset_length, items_center, items_end,
+    justify_center, mb, min_h, min_w_px, opacity, overflow_hidden, px, rounded, shadow_md, size,
     text_color, w_px, z,
 };
 use pm_text::Shaper;
 use pm_ui::{Node, node};
 
+use pm_components::Menu;
+use pm_components::button::{Size, Variant};
 use pm_components::file_icon::file_icon;
 use pm_components::open_files::{FILE_CLOSE_BASE, FILE_TAB_BASE, Viewer};
-use pm_components::panes::{Area, Axis, Group, Item, Layout, PANE_BASE, Placed};
+use pm_components::panes::{
+    Area, Axis, Group, Item, Layout, PANE_BASE, PANE_MENU, PANE_PUT_BASE, Placed, SPLIT_DOWN,
+    SPLIT_LEFT, SPLIT_RIGHT, SPLIT_UP,
+};
 use pm_components::parts::{glyph, line, spacer};
 use pm_components::sash::Sash;
 use pm_components::state::{Page, TAB_CHAT, TAB_DIFF, TERMINAL, WorkspaceState};
@@ -98,29 +103,55 @@ fn viewer_tab(viewer: &Viewer, index: usize, shown: bool) -> Node {
     .focusable(FocusId(FILE_TAB_BASE + index as u64))
 }
 
-/// The button that shows or hides the terminal dock, filled while the dock shows.
-fn terminal_toggle(state: &WorkspaceState) -> Node {
-    let on = state.terminal;
-    let mut toggle = vec![
+/// A square button in the strip of tabs holding only `icon`, filled while `on`, saying `hint` when the pointer rests on it.
+fn strip_button(icon: IconName, id: FocusId, on: bool, hint: &str) -> Node {
+    let mut styles = vec![
         flex(),
         items_center(),
-        gap(2),
-        h(8),
-        px(3),
+        justify_center(),
+        size(8.0),
         mb(1),
         rounded(Radius::Lg),
         pm_style::cursor_pointer(),
         bg(Role::SurfaceHover).hover(),
     ];
     if on {
-        toggle.push(bg(Role::SurfaceSelected));
+        styles.push(bg(Role::SurfaceSelected));
     }
     let tone = if on { Role::Text } else { Role::Muted };
     node()
-        .styles(toggle)
-        .child(glyph(IconName::Terminal, 3.5, tone))
-        .child(line("Terminal", 13, 1.4, tone).styles([font_medium()]))
-        .focusable(TERMINAL)
+        .styles(styles)
+        .child(glyph(icon, 3.5, tone))
+        .tooltip(hint)
+        .focusable(id)
+}
+
+/// The buttons at the end of the strip of tabs: the one that shows or hides the terminal dock, filled while the dock shows, and the one that opens the menu of panes.
+fn strip_buttons(state: &WorkspaceState) -> Node {
+    node()
+        .styles([flex(), items_end(), gap(1)])
+        .child(strip_button(
+            IconName::Terminal,
+            TERMINAL,
+            state.terminal,
+            "Terminal",
+        ))
+        .child(strip_button(
+            IconName::SquareSplit,
+            PANE_MENU,
+            state.pane_menu.is_some(),
+            "Split pane",
+        ))
+}
+
+/// The menu of panes, opened with its corner at `at`: the pane being worked in split with an empty pane on each side.
+pub(crate) fn pane_menu(at: (f32, f32)) -> Node {
+    Menu::new(at.0, at.1)
+        .item("Split pane right", None, SPLIT_RIGHT, false)
+        .item("Split pane left", None, SPLIT_LEFT, false)
+        .item("Split pane up", None, SPLIT_UP, false)
+        .item("Split pane down", None, SPLIT_DOWN, false)
+        .build()
 }
 
 /// The glyph and label of the tab of the page itself.
@@ -184,7 +215,7 @@ fn strip(state: &WorkspaceState, group: &Group, toggle: bool) -> Node {
                 .filter_map(|(index, item)| item_tab(state, item, index == group.active)),
         );
     if toggle {
-        strip.child(spacer()).child(terminal_toggle(state))
+        strip.child(spacer()).child(strip_buttons(state))
     } else {
         strip
     }
@@ -229,6 +260,64 @@ fn item_view(
     }
 }
 
+/// What an empty pane at `index` offers: the page and the diff brought into it, the files shown to open one in it, and closing it.
+fn empty_pane(state: &WorkspaceState, index: usize) -> Node {
+    let put = |kind: u64| FocusId(PANE_PUT_BASE + index as u64 * 4 + kind);
+    let (icon, label) = page_label(state);
+    let mut buttons = node()
+        .styles([flex(), flex_col(), items_center(), gap(2)])
+        .child(
+            Button::new(label, put(0))
+                .with_icon(icon)
+                .variant(Variant::Secondary)
+                .size(Size::Sm)
+                .build(),
+        );
+    if state
+        .open()
+        .is_some_and(|session| !session.changes.is_empty())
+    {
+        buttons = buttons.child(
+            Button::new("Diff", put(1))
+                .with_icon(IconName::GitCompare)
+                .variant(Variant::Secondary)
+                .size(Size::Sm)
+                .build(),
+        );
+    }
+    let buttons = buttons
+        .child(
+            Button::new("Open a file", put(2))
+                .with_icon(IconName::File)
+                .variant(Variant::Secondary)
+                .size(Size::Sm)
+                .build(),
+        )
+        .child(
+            Button::new("Close pane", put(3))
+                .variant(Variant::Ghost)
+                .size(Size::Sm)
+                .build(),
+        );
+    node()
+        .styles([
+            flex(),
+            flex_col(),
+            flex_1(),
+            items_center(),
+            justify_center(),
+            gap(4),
+            min_h(0),
+        ])
+        .child(line(
+            "Bring something into this pane, or drag a tab here.",
+            13,
+            1.4,
+            Role::Muted,
+        ))
+        .child(buttons)
+}
+
 /// The pane `placed`: its strip of tabs over the tab it shows, the button for the terminal in its strip when `toggle`, its views given `extra` logical pixels of height beyond its own.
 fn pane(
     state: &WorkspaceState,
@@ -238,9 +327,10 @@ fn pane(
     shaper: &mut Shaper,
 ) -> Node {
     let group = placed.group;
-    let view = group.items.get(group.active).map_or_else(node, |item| {
-        item_view(state, item, placed.area, placed.area.height + extra, shaper)
-    });
+    let view = match group.items.get(group.active) {
+        Some(item) => item_view(state, item, placed.area, placed.area.height + extra, shaper),
+        None => empty_pane(state, placed.index),
+    };
     node()
         .styles([
             flex(),

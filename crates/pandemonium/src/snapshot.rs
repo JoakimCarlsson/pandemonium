@@ -13,7 +13,7 @@ use pm_components::git_controls::{BRANCH_BUTTON, BRANCH_FILTER, Pick as Choosing
 use pm_components::git_menus::MenuKind;
 use pm_components::git_prompts::Prompt;
 use pm_components::open_files::EDITOR_FIELD;
-use pm_components::panes::{Item, Side};
+use pm_components::panes::{Item, SPLIT_RIGHT, Side};
 use pm_components::settings::{SETTINGS_ADD, SETTINGS_FIND, Section};
 use pm_components::settings_catalog::{OPEN_LIST, Setting as SettingsCatalogue};
 use pm_components::settings_machines::{MACHINE_ADD, MACHINE_ADDRESS, MACHINE_NAME};
@@ -138,6 +138,12 @@ pub enum Shot {
     Panes,
     /// A session with the tab of a file being dragged to the right edge of its pane.
     PanesDragging,
+    /// A session with the menu of panes open.
+    PaneMenu,
+    /// A session whose pane was split, an empty pane on its right.
+    PaneSplit,
+    /// A session whose pane was split, a file then opened in the empty pane on its right.
+    PaneSplitFile,
     /// The page for starting work with a long prompt that wraps and has a line break.
     Wrapped,
     /// The page for starting work after a command was picked from the list behind a slash.
@@ -1189,6 +1195,13 @@ impl Shot {
                     .pane_dropped()
                     .after(TAB_CHAT),
             ),
+            Self::PaneSplit => Screen::Workspace(code().after(SPLIT_RIGHT)),
+            Self::PaneSplitFile => {
+                let mut state = code().after(SPLIT_RIGHT);
+                state.open_viewer("README.md".to_owned(), false);
+                Screen::Workspace(state)
+            }
+            Self::PaneMenu => Screen::Workspace(code().with_pane_menu((690.0, 44.0))),
             Self::PanesDragging => Screen::Workspace(code().pane_dragged(
                 code_item(),
                 Some((0, Side::Right)),

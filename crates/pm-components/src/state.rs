@@ -1158,6 +1158,8 @@ pub struct WorkspaceState {
     pub pane_stash: std::collections::HashMap<usize, crate::panes::Panes>,
     /// The tab being dragged to another pane, if one is.
     pub pane_drag: Option<crate::panes::PaneDrag>,
+    /// Where the menu of panes opened, while it is open.
+    pub pane_menu: Option<(f32, f32)>,
     /// How far the conversation is scrolled back from its end, in logical pixels.
     pub chat_back: f32,
     /// The menu open over the prompt box, if one is.
@@ -1324,6 +1326,7 @@ impl WorkspaceState {
             panes: crate::panes::Panes::default(),
             pane_stash: std::collections::HashMap::new(),
             pane_drag: None,
+            pane_menu: None,
             chat_back: 0.0,
             picker: None,
             agent_settings: vec![Vec::new(); builtin.len()],
@@ -1525,7 +1528,18 @@ impl WorkspaceState {
             }
             return self;
         }
+        if self.pane_tab_of(action).is_some() {
+            self.panes.parked = None;
+        }
         self.settle_panes();
+        self.pane_menu = None;
+        if self.press_empty_pane(action) {
+            return self;
+        }
+        if let Some(side) = crate::panes::split_row_of(action) {
+            self.split_focused(side);
+            return self;
+        }
         if let Some(pane) = crate::panes::pane_of(action) {
             self.focus_pane(pane);
             return self;
@@ -1759,6 +1773,7 @@ impl WorkspaceState {
         self.git.menu = None;
         self.settings_servers.menu = None;
         self.tab_menu = None;
+        self.pane_menu = None;
         self
     }
 

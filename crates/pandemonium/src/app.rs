@@ -17,6 +17,7 @@ use pm_components::git_menus::MenuKind;
 use pm_components::message_menu::is_message_menu_item;
 use pm_components::open_files::{EDITOR_FIELD, STRIP};
 use pm_components::overview::OVERVIEW_SCROLL;
+use pm_components::panes::{PANE_MENU, split_row_of};
 use pm_components::sash::Grows;
 use pm_components::settings::{SETTINGS_CLOSE, SETTINGS_NAV_SCROLL, SETTINGS_SCROLL, is_settings};
 use pm_components::state::{COMMENT_CANCEL, COMMENT_FIELD};
@@ -607,6 +608,10 @@ impl App {
             self.open_git_menu(kind);
             return;
         }
+        if id == PANE_MENU {
+            self.open_pane_menu();
+            return;
+        }
         let picks = self.modifiers.shift || self.modifiers.control || self.modifiers.logo;
         if picks && let Some(index) = self.model.read(|screen| screen.change_row_of(id)) {
             let how = if self.modifiers.shift {
@@ -1055,6 +1060,7 @@ impl App {
                         is_project_menu_item(id)
                             || is_session_menu_item(id)
                             || is_message_menu_item(id)
+                            || split_row_of(id).is_some()
                             || screen.is_menu_row(id)
                     })
                 {

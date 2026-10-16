@@ -14,6 +14,15 @@ impl App {
         self.pane_dragging = false;
     }
 
+    /// Opens the menu of panes just under the pointer, its right edge near it.
+    pub(super) fn open_pane_menu(&mut self) {
+        let Some((x, y)) = self.pointer.position else {
+            return;
+        };
+        self.model
+            .update(|state| *state = std::mem::take(state).with_pane_menu((x - 190.0, y + 14.0)));
+    }
+
     /// The pane under `at`, by position, and the edge of it `at` is over.
     fn pane_under(&self, at: (f32, f32)) -> Option<(usize, Side)> {
         self.output.regions.iter().find_map(|region| {

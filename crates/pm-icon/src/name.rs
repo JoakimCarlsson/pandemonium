@@ -60,6 +60,8 @@ pub enum IconName {
     Copy,
     /// A window with a side panel.
     PanelRight,
+    /// A square cut down the middle: panes.
+    SquareSplit,
     /// A triangle pointing right: run.
     Play,
     /// Three dots: more actions.
@@ -150,6 +152,7 @@ impl IconName {
             Self::Sparkles => Svg::new("sparkles", include_icon!("sparkles")),
             Self::Copy => Svg::new("copy", include_icon!("copy")),
             Self::PanelRight => Svg::new("panel_right", include_icon!("panel_right")),
+            Self::SquareSplit => Svg::new("square_split", include_icon!("square_split")),
             Self::Play => Svg::new("play", include_icon!("play")),
             Self::More => Svg::new("more", include_icon!("more")),
             Self::At => Svg::new("at", include_icon!("at")),
