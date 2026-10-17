@@ -1189,7 +1189,7 @@ impl Work {
                         if let Some(position) = self.positions.get(&(host.clone(), number)).copied()
                         {
                             model.update(|screen| {
-                                *screen = screen.clone().closed_elsewhere(position)
+                                *screen = std::mem::take(screen).closed_elsewhere(position)
                             });
                         }
                     }
@@ -1268,7 +1268,7 @@ impl Work {
         match job {
             Job::Previewed(path, picture) => {
                 if let Some(picture) = picture {
-                    model.update(|screen| *screen = screen.clone().with_preview(&path, picture));
+                    model.update(|screen| *screen = std::mem::take(screen).with_preview(&path, picture));
                 }
             }
             Job::Pictured(session, path, head, read) => {
@@ -1312,7 +1312,7 @@ impl Work {
                     if let Pending::Start(session) = pending {
                         let reason = reason.clone();
                         model.update(|screen| {
-                            *screen = screen.clone().heard(session, Event::Failed(reason));
+                            *screen = std::mem::take(screen).heard(session, Event::Failed(reason));
                         });
                     }
                 }
@@ -1366,7 +1366,7 @@ impl Work {
             Event::Finished(_) | Event::Failed(_) | Event::Restored { .. }
         );
         let finished = live && matches!(event, Event::Finished(_));
-        model.update(|screen| *screen = screen.clone().heard(session, event));
+        model.update(|screen| *screen = std::mem::take(screen).heard(session, event));
         if files_moved {
             self.refresh(model, session);
         }
@@ -1413,11 +1413,11 @@ impl Work {
                     let _ = pm_store::save_text(&format!("discovery-{id}"), &found.to_text());
                 }
                 model.update(|screen| {
-                    *screen = screen.clone().with_discovery_of(origin, &id, found);
+                    *screen = std::mem::take(screen).with_discovery_of(origin, &id, found);
                 });
             }
             Pending::SignIn(agent) => {
-                model.update(|screen| *screen = screen.clone().signed_in(agent));
+                model.update(|screen| *screen = std::mem::take(screen).signed_in(agent));
                 if let Some(message) = failure {
                     eprintln!("sign-in failed: {message}");
                 } else if let Some(id) = self.agent_id(agent) {
@@ -1455,7 +1455,7 @@ impl Work {
             Pending::Skills(agent, project) => {
                 if let Response::Skills { skills, names } = response {
                     model.update(|screen| {
-                        *screen = screen.clone().with_skills(
+                        *screen = std::mem::take(screen).with_skills(
                             agent,
                             project,
                             skills,
@@ -1548,13 +1548,13 @@ impl Work {
             Pending::Files(key) => {
                 if let Response::Files { paths, folders } = response {
                     model.update(|screen| {
-                        *screen = screen.clone().with_files(&key, paths, folders);
+                        *screen = std::mem::take(screen).with_files(&key, paths, folders);
                     });
                 }
             }
             Pending::Branches(project) => {
                 if let Response::Branches { names } = response {
-                    model.update(|screen| *screen = screen.clone().with_branches(project, names));
+                    model.update(|screen| *screen = std::mem::take(screen).with_branches(project, names));
                 }
             }
             Pending::Identity(agent, naming) => {
@@ -1580,7 +1580,7 @@ impl Work {
                         client.watch(number, 0);
                     }
                     model.update(|screen| {
-                        *screen = screen.clone().worktree_ready(
+                        *screen = std::mem::take(screen).worktree_ready(
                             session,
                             &directory,
                             branch.as_deref(),
@@ -1596,7 +1596,7 @@ impl Work {
                     }
                 }
                 Response::Failed { message } => model.update(|screen| {
-                    *screen = screen.clone().heard(session, Event::Failed(message));
+                    *screen = std::mem::take(screen).heard(session, Event::Failed(message));
                 }),
                 _ => {}
             },
@@ -1760,7 +1760,7 @@ impl Work {
                     self.adopt(model, host, sessions);
                     if let Some(position) = branched.and_then(|key| self.positions.get(&key)) {
                         let open = FocusId(SESSION_BASE + *position as u64);
-                        model.update(|screen| *screen = screen.clone().after(open));
+                        model.update(|screen| *screen = std::mem::take(screen).after(open));
                     }
                 }
                 _ => {
@@ -1768,7 +1768,7 @@ impl Work {
                         "Could not branch from this reply: {}",
                         failure.unwrap_or_else(|| "the server answered something else".to_owned())
                     );
-                    model.update(|screen| *screen = screen.clone().noted(session, &reason));
+                    model.update(|screen| *screen = std::mem::take(screen).noted(session, &reason));
                 }
             },
             Pending::Grammar(_)
@@ -1796,7 +1796,7 @@ impl Work {
             Pending::Back(session, failing) => {
                 if let Some(message) = failure {
                     let reason = format!("{failing}: {message}");
-                    model.update(|screen| *screen = screen.clone().noted(session, &reason));
+                    model.update(|screen| *screen = std::mem::take(screen).noted(session, &reason));
                 }
             }
         }
@@ -1894,7 +1894,7 @@ impl Work {
         }
         let mut added = Vec::new();
         model.update(|screen| {
-            let (next, mapping) = screen.clone().restored(origin, &fresh);
+            let (next, mapping) = std::mem::take(screen).restored(origin, &fresh);
             *screen = next;
             added = mapping;
         });
@@ -1951,7 +1951,7 @@ impl Work {
     /// Adds the projects another client added on this machine.
     fn projects_changed(model: &State<Screen>, paths: &[String]) {
         model.update(|screen| {
-            let mut next = screen.clone();
+            let mut next = std::mem::take(screen);
             for path in paths {
                 next = next.with_project(path);
             }
