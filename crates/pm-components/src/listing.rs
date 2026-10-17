@@ -285,6 +285,8 @@ fn matching_commands(
             Some(1)
         } else if narrows_to(&title, &typed) {
             Some(2)
+        } else if every_word_known(&title, action.keywords(), &typed) {
+            Some(3)
         } else {
             None
         }
@@ -413,6 +415,21 @@ pub fn matched_characters(name: &str, typed: &str) -> Vec<usize> {
         return Vec::new();
     }
     places
+}
+
+/// Whether every word of `typed` starts a word of `title` or of `keywords`, ignoring case, and `typed` has a word.
+fn every_word_known(title: &str, keywords: &str, typed: &str) -> bool {
+    let known: Vec<String> = title
+        .split_whitespace()
+        .chain(keywords.split_whitespace())
+        .map(str::to_lowercase)
+        .collect();
+    let mut words = typed.split_whitespace().peekable();
+    words.peek().is_some()
+        && words.all(|word| {
+            let word = word.to_lowercase();
+            known.iter().any(|held| held.starts_with(&word))
+        })
 }
 
 /// Whether the letters of `typed` come in order in `name`, ignoring case.

@@ -589,7 +589,7 @@ impl Action {
             Self::OpenSettings => "Open Settings",
             Self::GoToSession => "Go to Session",
             Self::NewSession => "New Session",
-            Self::AddProject => "Add Project",
+            Self::AddProject => "New Workspace",
             Self::ShowHistory => "Show History",
             Self::ShowExtensions => "Show Extensions",
             Self::WorkspaceBack => "Go Back to Previous Page",
@@ -732,6 +732,19 @@ impl Action {
         match self.group() {
             "Source Control" => format!("Git: {}", self.title()),
             _ => self.title().to_owned(),
+        }
+    }
+
+    /// Other words it is known by, which find it in the list of commands too.
+    pub fn keywords(self) -> &'static str {
+        match self {
+            Self::AddProject => "add project open folder repository",
+            Self::NewSession => "start agent chat",
+            Self::GoToSession => "switch project workspace",
+            Self::CloneRepository => "new workspace project",
+            Self::OpenSettings => "preferences configure",
+            Self::CommandPalette => "command palette",
+            _ => "",
         }
     }
 
