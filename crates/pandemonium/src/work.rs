@@ -1268,7 +1268,9 @@ impl Work {
         match job {
             Job::Previewed(path, picture) => {
                 if let Some(picture) = picture {
-                    model.update(|screen| *screen = std::mem::take(screen).with_preview(&path, picture));
+                    model.update(|screen| {
+                        *screen = std::mem::take(screen).with_preview(&path, picture)
+                    });
                 }
             }
             Job::Pictured(session, path, head, read) => {
@@ -1554,7 +1556,9 @@ impl Work {
             }
             Pending::Branches(project) => {
                 if let Response::Branches { names } = response {
-                    model.update(|screen| *screen = std::mem::take(screen).with_branches(project, names));
+                    model.update(|screen| {
+                        *screen = std::mem::take(screen).with_branches(project, names)
+                    });
                 }
             }
             Pending::Identity(agent, naming) => {
