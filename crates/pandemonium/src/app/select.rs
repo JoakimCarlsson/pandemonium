@@ -7,6 +7,7 @@ use pm_components::assist::HOVER_CARD;
 use pm_components::message_menu::{
     MESSAGE_MENU_COPY, MESSAGE_MENU_SELECT_ALL, is_message_menu_item,
 };
+use pm_components::panes::pane_of;
 use pm_components::state::CHAT_TEXT;
 use pm_input::{FocusId, Key, KeyEvent};
 use pm_pages::Screen;
@@ -18,18 +19,22 @@ use crate::keys::{self, Clip};
 
 impl App {
     /// Begins a selection where the primary button went down, when it went
-    /// down on selectable text and on nothing that can be pressed, and lets
-    /// go of the selection there was unless the press is on a row of the
-    /// menu over a message, which may act on it. A second press soon after
-    /// the first takes the word under it and a third the paragraph; a press
-    /// with Shift held runs the selection there was to it.
+    /// down on selectable text and on nothing that can be pressed but the
+    /// pane holding it, and lets go of the selection there was unless the
+    /// press is on a row of the menu over a message, which may act on it. A
+    /// second press soon after the first takes the word under it and a third
+    /// the paragraph; a press with Shift held runs the selection there was
+    /// to it.
     pub(super) fn text_press(&mut self) {
         if self.pressed_on.is_some_and(is_message_menu_item) {
             return;
         }
         let before = self.text_selection.take();
         self.text_held = None;
-        if self.pressed_on.is_some() && self.pressed_on != Some(HOVER_CARD) {
+        if self
+            .pressed_on
+            .is_some_and(|id| id != HOVER_CARD && pane_of(id).is_none())
+        {
             return;
         }
         let Some((id, point)) = self
