@@ -36,6 +36,8 @@ pub(super) struct Surface {
     pointer: PointerState,
     /// The shape the pointer was last set to over the window.
     cursor: Cursor,
+    /// The edge of the window the pointer last showed it resizes, when it did.
+    edge_cursor: Option<winit::window::ResizeDirection>,
 }
 
 impl App {
@@ -77,6 +79,7 @@ impl App {
             output: Output::default(),
             pointer: PointerState::default(),
             cursor: Cursor::Default,
+            edge_cursor: None,
         }
     }
 
@@ -179,12 +182,14 @@ impl App {
         std::mem::swap(&mut self.output, &mut surface.output);
         std::mem::swap(&mut self.pointer, &mut surface.pointer);
         std::mem::swap(&mut self.cursor, &mut surface.cursor);
+        std::mem::swap(&mut self.edge_cursor, &mut surface.edge_cursor);
     }
 
     /// Draws one frame of the settings window, while it stands in for the main
     /// one, and asks for the next while anything is moving or the frame could
     /// not be presented.
     pub(super) fn redraw_settings(&mut self) {
+        let edge = self.frame_edge();
         let (Some(window), Some(renderer)) = (self.window.as_ref(), self.renderer.as_mut()) else {
             return;
         };
@@ -209,9 +214,11 @@ impl App {
                 &mut self.list,
             )
         });
-        if self.output.cursor != self.cursor {
+        if self.output.cursor != self.cursor || edge != self.edge_cursor {
             self.cursor = self.output.cursor;
-            window.set_cursor(cursor_icon(self.cursor));
+            self.edge_cursor = edge;
+            window
+                .set_cursor(edge.map_or_else(|| cursor_icon(self.cursor), super::frame::edge_icon));
         }
         let presented = renderer.render(&self.list, &mut self.shaper, scene::ground(theme), || {
             window.pre_present_notify()
