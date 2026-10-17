@@ -50,20 +50,17 @@ pub(super) fn edge_icon(direction: ResizeDirection) -> CursorIcon {
 }
 
 impl App {
-    /// The edge or corner of the main window the pointer is on, when the window draws its own frame and is not maximized.
+    /// The edge or corner of the window the pointer is on, when the window draws its own frame and is not maximized.
     pub(super) fn frame_edge(&self) -> Option<ResizeDirection> {
         let window = self.window.as_ref()?;
-        if !FRAMELESS || self.on_settings || window.is_maximized() {
+        if !FRAMELESS || window.is_maximized() {
             return None;
         }
         edge_at(self.pointer.position?, self.window_size())
     }
 
-    /// Resizes the main window when the left button goes down on its edge, moves it when it goes down on the title bar and maximizes or restores it when that is the second press there in a row. Says whether the press was taken.
+    /// Resizes the window when the left button goes down on its edge, moves it when it goes down on the title bar and maximizes or restores it when that is the second press there in a row. Says whether the press was taken.
     pub(super) fn frame_press(&mut self, window: &Window) -> bool {
-        if self.on_settings {
-            return false;
-        }
         if let Some(direction) = self.frame_edge() {
             let _ = window.drag_resize_window(direction);
             return true;
@@ -89,7 +86,7 @@ impl App {
         true
     }
 
-    /// Carries out the control of the window `id` names, and says whether it was one.
+    /// Carries out the control of the window `id` names, and says whether it was one. Closing the settings window closes settings.
     pub(super) fn window_control(&mut self, id: FocusId) -> bool {
         if !is_window_control(id) {
             return false;
@@ -100,6 +97,9 @@ impl App {
         match id {
             WINDOW_MINIMIZE => window.set_minimized(true),
             WINDOW_MAXIMIZE => window.set_maximized(!window.is_maximized()),
+            WINDOW_CLOSE if self.on_settings => self
+                .model
+                .update(|state| *state = std::mem::take(state).without_settings()),
             WINDOW_CLOSE => self.closing = self.close_window(),
             _ => {}
         }

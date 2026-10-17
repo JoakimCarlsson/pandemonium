@@ -59,6 +59,8 @@ const DESKTOP_CONTROLS: f32 = if FRAMELESS { 0.0 } else { 72.0 };
 pub struct TitleBar {
     /// What the command center says the window is pointed at; nothing leaves out everything but the controls of the window.
     place: Option<String>,
+    /// Whether closing is the only control of the window the bar holds.
+    close_only: bool,
 }
 
 impl TitleBar {
@@ -67,10 +69,19 @@ impl TitleBar {
         Self::default()
     }
 
+    /// A bar holding only the control that closes the window.
+    pub fn closing() -> Self {
+        Self {
+            close_only: true,
+            ..Self::default()
+        }
+    }
+
     /// The bar for the workspace `state`, naming the project and the session it shows.
     pub fn of(state: &WorkspaceState) -> Self {
         Self {
             place: Some(whereabouts(state)),
+            ..Self::default()
         }
     }
 
@@ -104,7 +115,7 @@ impl TitleBar {
                     .build()
                     .tooltip("Open Settings")
             }))
-            .children(FRAMELESS.then(window_controls));
+            .children(FRAMELESS.then(|| window_controls(self.close_only)));
         node()
             .styles([
                 flex(),
@@ -153,8 +164,8 @@ fn command_center(place: String) -> Node {
         )
 }
 
-/// The buttons that minimize, maximize and close a window the desktop draws no frame around.
-fn window_controls() -> Node {
+/// The buttons that minimize, maximize and close a window the desktop draws no frame around, or only the one that closes it when `close_only` is set.
+fn window_controls(close_only: bool) -> Node {
     node()
         .styles([
             flex(),
@@ -163,8 +174,8 @@ fn window_controls() -> Node {
             px(1.5),
             pm_style::h_full(),
         ])
-        .child(control(IconName::Minus, WINDOW_MINIMIZE, "Minimize"))
-        .child(control(IconName::Maximize, WINDOW_MAXIMIZE, "Maximize"))
+        .children((!close_only).then(|| control(IconName::Minus, WINDOW_MINIMIZE, "Minimize")))
+        .children((!close_only).then(|| control(IconName::Maximize, WINDOW_MAXIMIZE, "Maximize")))
         .child(control(IconName::Close, WINDOW_CLOSE, "Close"))
 }
 
