@@ -13,9 +13,10 @@ use crate::assist::listing_cells;
 use crate::input::{Input, Size as InputSize};
 use crate::listing::{
     Destination, Items, LISTING_BODY, LISTING_FILTER, LISTING_ROW_BASE, LISTING_WIDTH, Listing,
-    Quick, matched_characters,
+    Quick, line_named, matched_characters,
 };
-use crate::parts::line;
+use crate::parts::{glyph, line};
+use pm_icon::IconName;
 
 /// How many rows the quick input shows at once.
 pub const QUICK_SHOWN: usize = 16;
@@ -31,12 +32,11 @@ const SHADOW: [ShadowLayer; 1] = [ShadowLayer::new(0.0, 10.0, 32.0, 0.0, 0.36, f
 
 /// The quick input for `listing`: its field, then the rows around the one picked, or what keeps it empty.
 pub fn quick_input(listing: &Listing) -> Node {
-    let quick = listing.items.quick().unwrap_or(Quick::Files);
     let field = listing.items.filter().map(|filter| {
         node().styles([px(1.5), pt(1.5), pb(1)]).child(
             Input::new(filter, LISTING_FILTER)
                 .size(InputSize::Sm)
-                .placeholder(quick.placeholder())
+                .placeholder(listing.items.placeholder())
                 .build()
                 .styles([h_px(FIELD_HEIGHT)]),
         )
@@ -46,7 +46,7 @@ pub fn quick_input(listing: &Listing) -> Node {
     let status = match (&listing.problem, listing.answered, count) {
         (Some(problem), _, _) => Some(problem.clone()),
         (None, false, _) => Some("Searching…".to_owned()),
-        (None, true, 0) => Some(empty_words(quick).to_owned()),
+        (None, true, 0) => Some(empty_words(&listing.items)),
         _ => None,
     };
     let first = listing
@@ -85,14 +85,22 @@ pub fn quick_input(listing: &Listing) -> Node {
         )
 }
 
-/// What the quick input says when nothing matches what is typed.
-fn empty_words(quick: Quick) -> &'static str {
-    match quick {
-        Quick::Commands => "No matching commands",
-        Quick::Files => "No matching files",
-        Quick::Symbols | Quick::Outline => "No matching symbols",
-        Quick::Search => "Type to search the text of the project",
-        Quick::Sessions => "No matching sessions",
+/// What the quick input says when nothing of `items` is left to pick.
+fn empty_words(items: &Items) -> String {
+    match items {
+        Items::Line { lines, current, .. } => {
+            format!("Type a line number between 1 and {lines} (now on line {current})")
+        }
+        Items::Choices { choosing, .. } => choosing.empty().to_owned(),
+        items => match items.quick().unwrap_or(Quick::Files) {
+            Quick::Commands => "No matching commands",
+            Quick::Files => "No matching files",
+            Quick::Symbols | Quick::Outline => "No matching symbols",
+            Quick::Search => "Type to search the text of the project",
+            Quick::Sessions => "No matching sessions",
+            Quick::Line | Quick::Help | Quick::Choices => "Nothing matches",
+        }
+        .to_owned(),
     }
 }
 
@@ -117,10 +125,16 @@ fn row(listing: &Listing, place: usize, index: usize, picked: bool) -> Node {
             });
             (cells, group)
         }
-        Items::Files { paths, .. } => {
+        Items::Files { paths, recent, .. } => {
+            let group = match (*recent, place) {
+                (0, _) => None,
+                (_, 0) => Some(("recently opened", false)),
+                (recent, place) if place == recent => Some(("files", true)),
+                _ => None,
+            };
             let cells = paths.get(index).map_or_else(Vec::new, |path| {
                 let (folder, name) = path.rsplit_once('/').unwrap_or(("", path));
-                vec![
+                let mut cells = vec![
                     crate::file_icon::file_icon(path, 4.0),
                     node()
                         .styles([flex_none(), overflow_hidden()])
@@ -128,9 +142,11 @@ fn row(listing: &Listing, place: usize, index: usize, picked: bool) -> Node {
                     node()
                         .styles([flex_1(), min_w_px(0), overflow_hidden()])
                         .child(line(folder, 12, 1.4, Role::Subtle)),
-                ]
+                ];
+                cells.extend(group.map(|(said, _)| separator(said)));
+                cells
             });
-            (cells, None)
+            (cells, group)
         }
         Items::Sessions { sessions, .. } => {
             let project = |index: usize| {
@@ -159,6 +175,38 @@ fn row(listing: &Listing, place: usize, index: usize, picked: bool) -> Node {
                     cells
                 });
             (cells, group)
+        }
+        Items::Line { lines, .. } => {
+            let cells = line_named(query, *lines).map_or_else(Vec::new, |number| {
+                vec![
+                    marked(&format!("Go to line {number}"), ""),
+                    node().styles([flex_none()]).child(line(
+                        format!("of {lines}"),
+                        12,
+                        1.4,
+                        Role::Subtle,
+                    )),
+                ]
+            });
+            (cells, None)
+        }
+        Items::Choices { choices, .. } => {
+            let cells = choices.get(index).map_or_else(Vec::new, |choice| {
+                let mut cells = vec![marked(&choice.label, query.trim_start_matches('?'))];
+                if !choice.detail.is_empty() {
+                    cells.push(node().styles([flex_none(), overflow_hidden()]).child(line(
+                        choice.detail.clone(),
+                        12,
+                        1.4,
+                        Role::Subtle,
+                    )));
+                }
+                if choice.current {
+                    cells.push(glyph(IconName::Check, 3.5, Role::Muted));
+                }
+                cells
+            });
+            (cells, None)
         }
         items => (listing_cells(items, index), None),
     };

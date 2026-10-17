@@ -1222,6 +1222,8 @@ pub struct WorkspaceState {
     pub listing: Option<crate::listing::Listing>,
     /// The commands last carried out from the quick input, the latest first.
     pub recent_commands: Vec<pm_editor::Action>,
+    /// The files last opened, by path from the root of the project, the latest first.
+    pub recent_files: Vec<String>,
     /// The box giving the thing at the caret a new name, when open.
     pub renaming: Option<crate::navigate::Renaming>,
     /// The box for going to a line of the file shown by its number, when open.
@@ -1365,6 +1367,7 @@ impl WorkspaceState {
             jumps: pm_editor::Jumps::default(),
             listing: None,
             recent_commands: Vec::new(),
+            recent_files: Vec::new(),
             renaming: None,
             going_to: None,
             signature_at: (0.0, 0.0),

@@ -655,6 +655,16 @@ pub(crate) fn listing_cells(items: &Items, index: usize) -> Vec<Node> {
                 cell(folder.to_owned(), 11, Role::Subtle, false),
             ]
         }
+        Items::Line { .. } => Vec::new(),
+        Items::Choices { choices, .. } => {
+            let Some(choice) = choices.get(index) else {
+                return Vec::new();
+            };
+            vec![
+                cell(choice.label.clone(), 12, Role::Text, false),
+                tag(choice.detail.clone(), 11, Role::Subtle),
+            ]
+        }
         Items::Sessions { sessions, .. } => {
             let Some((_, title, beside)) = sessions.get(index) else {
                 return Vec::new();

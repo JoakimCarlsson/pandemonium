@@ -191,6 +191,7 @@ pub(crate) fn rows(state: &WorkspaceState, room: f32) -> Vec<Node> {
         "Window",
         "Session",
         "Source Control",
+        "Tabs",
         "Navigation",
         "Code Intelligence",
         "Editing",

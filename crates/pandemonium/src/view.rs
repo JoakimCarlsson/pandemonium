@@ -116,6 +116,9 @@ pub struct View {
     /// How wide the sidebar was, in logical pixels.
     #[serde(default)]
     sidebar_width: f32,
+    /// The commands last carried out from the quick input, by the name each is kept under, the latest first.
+    #[serde(default)]
+    recent_commands: Vec<String>,
     /// How wide the review panel was, in logical pixels.
     #[serde(default)]
     review_width: f32,
@@ -235,6 +238,11 @@ impl View {
             terminal_maximized: state.terminal_maximized,
             terminal_height: state.terminal_height,
             sidebar_width: state.sidebar_width,
+            recent_commands: state
+                .recent_commands
+                .iter()
+                .map(|action| action.key().to_owned())
+                .collect(),
             review_width: state.review_width,
             plan_width: state.plan_width,
             terminal: state.terminal,
@@ -297,6 +305,11 @@ impl View {
         if self.sidebar_width > 0.0 {
             state.sidebar_width = self.sidebar_width;
         }
+        state.recent_commands = self
+            .recent_commands
+            .iter()
+            .filter_map(|key| pm_editor::Action::of_key(key))
+            .collect();
         if self.review_width > 0.0 {
             state.review_width = self.review_width;
         }

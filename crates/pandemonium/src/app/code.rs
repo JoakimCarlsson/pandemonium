@@ -2,7 +2,12 @@
 
 use std::time::{Duration, Instant};
 
+use pm_acp::Verdict;
 use pm_components::EditorCommand;
+use pm_components::arrange::{
+    SESSION_MENU_CLOSE, SESSION_MENU_COPY_BRANCH, SESSION_MENU_COPY_PATH, SESSION_MENU_OPEN_FOLDER,
+    SESSION_MENU_RENAME,
+};
 use pm_components::assist::{
     HOVER_CARD, HOVER_LINK_BASE, HOVER_LINK_END, HOVER_TEXT, list_height, signature_height,
 };
@@ -15,16 +20,21 @@ use pm_components::listing::{
 };
 use pm_components::navigate::{RENAME_BOX, RENAME_SYMBOL};
 use pm_components::open_files::{EDITOR_FIELD, EDITOR_SAVE};
+use pm_components::panes::{SPLIT_DOWN, SPLIT_LEFT, SPLIT_RIGHT, SPLIT_UP};
+use pm_components::quick_choices::Choosing;
 use pm_components::quick_input::{FIELD_HEIGHT, QUICK_SHOWN};
 use pm_components::state::{
-    ADD_PROJECT, HISTORY, NEW_TERMINAL, REVIEW, STOP, TAB_CHAT, TAB_DIFF, TERMINAL,
+    ADD_PROJECT, HISTORY, NEW_TERMINAL, PROMPT, REVIEW, STOP, TAB_CHAT, TAB_DIFF, TERMINAL,
 };
+use pm_components::tab_menu::TabCommand;
 use pm_components::title_bar::{COMMAND_CENTER, TITLE_BAR_HEIGHT};
+use pm_config::ThemeMode;
 use pm_editor::{Action, Chord, Keymap, Pressed};
 use pm_input::{FocusId, Key, KeyEvent};
 use pm_pages::Screen;
 use pm_protocol::Seek;
 use pm_text::Edit;
+use pm_theme::Appearance;
 
 use super::App;
 use crate::keys;
@@ -535,6 +545,28 @@ impl App {
         }
     }
 
+    /// Opens the quick input over the choices of `choosing`.
+    fn choose(&mut self, choosing: Choosing) {
+        let at = self.across_top();
+        self.model
+            .update(|screen| *screen = std::mem::take(screen).choices_requested(choosing, at));
+        self.focus_listing();
+    }
+
+    /// Presses the row `row` of the menu of the session shown.
+    fn session_command(&mut self, row: FocusId) {
+        self.model
+            .update(|screen| *screen = std::mem::take(screen).session_command(row));
+        self.deliver();
+    }
+
+    /// Carries out `command` on the tab shown, as its menu does.
+    fn tab_command(&mut self, command: TabCommand) {
+        self.model
+            .update(|screen| *screen = std::mem::take(screen).shown_tab_command(command));
+        self.deliver();
+    }
+
     /// Carries out `action`.
     pub(super) fn perform(&mut self, action: Action) {
         let command = match action {
@@ -682,13 +714,98 @@ impl App {
             Action::ToggleTerminal => self.activate(TERMINAL),
             Action::NewTerminal => self.activate(NEW_TERMINAL),
             Action::ToggleSourceControl => self.activate(REVIEW),
+            Action::ChangeModel | Action::ChangeMode => {
+                let category = if action == Action::ChangeModel {
+                    "model"
+                } else {
+                    "mode"
+                };
+                let at = self.across_top();
+                self.model.update(|screen| {
+                    *screen = std::mem::take(screen).agent_category_requested(category, at)
+                });
+                self.focus_listing();
+            }
+            Action::ChangeAgentSetting => self.choose(Choosing::AgentSetting),
+            Action::ChangeTheme => self.choose(Choosing::Theme),
+            Action::CheckoutBranch => self.choose(Choosing::Branch),
+            Action::ChangeKeymap => self.choose(Choosing::Keymap),
+            Action::RewindConversation => self.choose(Choosing::Rewind),
+            Action::ForkConversation => self.choose(Choosing::Fork),
+            Action::RestoreFiles => self.choose(Choosing::Restore),
+            Action::CycleMode => self
+                .model
+                .update(|screen| *screen = std::mem::take(screen).mode_cycled()),
+            Action::AllowRequest | Action::AlwaysAllowRequest | Action::RejectRequest => {
+                let verdict = match action {
+                    Action::AllowRequest => Verdict::Allow,
+                    Action::AlwaysAllowRequest => Verdict::Always,
+                    _ => Verdict::Reject,
+                };
+                if let Some(id) = self.model.read(|screen| screen.answer_of(verdict)) {
+                    self.activate(id);
+                }
+            }
+            Action::RenameSession => self.session_command(SESSION_MENU_RENAME),
+            Action::ArchiveSession => self.session_command(SESSION_MENU_CLOSE),
+            Action::CopySessionPath => self.session_command(SESSION_MENU_COPY_PATH),
+            Action::CopyBranchName => self.session_command(SESSION_MENU_COPY_BRANCH),
+            Action::OpenSessionFolder => self.session_command(SESSION_MENU_OPEN_FOLDER),
+            Action::FocusPrompt => self.focus.focus(PROMPT),
+            Action::CloseTab => self.tab_command(TabCommand::Close),
+            Action::CloseOtherTabs => self.tab_command(TabCommand::CloseOthers),
+            Action::CloseSavedTabs => self.tab_command(TabCommand::CloseClean),
+            Action::CloseAllTabs => self.tab_command(TabCommand::CloseAll),
+            Action::PinTab => self.tab_command(TabCommand::TogglePin),
+            Action::ToggleReadOnly => self.tab_command(TabCommand::ToggleReadOnly),
+            Action::CopyPath => self.tab_command(TabCommand::CopyPath),
+            Action::CopyRelativePath => self.tab_command(TabCommand::CopyRelativePath),
+            Action::RevealInProject => self.tab_command(TabCommand::RevealInProject),
+            Action::OpenPermalink => self.tab_command(TabCommand::OpenPermalink),
+            Action::SplitRight => self.activate(SPLIT_RIGHT),
+            Action::SplitLeft => self.activate(SPLIT_LEFT),
+            Action::SplitUp => self.activate(SPLIT_UP),
+            Action::SplitDown => self.activate(SPLIT_DOWN),
+            Action::FocusNextPane | Action::FocusPreviousPane => {
+                let delta = if action == Action::FocusNextPane {
+                    1
+                } else {
+                    -1
+                };
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).pane_stepped(delta));
+            }
+            Action::ToggleTheme => {
+                let mode = if self.appearance == Appearance::Dark {
+                    ThemeMode::Light
+                } else {
+                    ThemeMode::Dark
+                };
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).with_theme_mode(mode));
+            }
+            Action::ZoomIn | Action::ZoomOut | Action::ResetZoom => {
+                let steps = match action {
+                    Action::ZoomIn => Some(1),
+                    Action::ZoomOut => Some(-1),
+                    _ => None,
+                };
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).zoomed(steps));
+            }
+            Action::CopyPermalink => self.editor_command(EditorCommand::Permalink),
+            Action::FileHistory => self.editor_command(EditorCommand::FileHistory),
+            Action::OpenTerminalHere => self.editor_command(EditorCommand::OpenTerminal),
+            Action::OutgoingCalls => self.editor_command(EditorCommand::OutgoingCalls),
+            Action::CopyWithoutIndentation => self.editor_command(EditorCommand::CopyTrimmed),
+            Action::Undo => self.edit_field(EDITOR_FIELD, Edit::Undo),
+            Action::Redo => self.edit_field(EDITOR_FIELD, Edit::Redo),
             Action::Commit
             | Action::CommitAndPush
             | Action::Pull
             | Action::Push
             | Action::Fetch
             | Action::StashChanges
-            | Action::CheckoutBranch
             | Action::CloneRepository
             | Action::RefreshSourceControl => {
                 self.model

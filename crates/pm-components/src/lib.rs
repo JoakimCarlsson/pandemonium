@@ -62,6 +62,7 @@ pub mod preview;
 pub mod progress;
 pub mod project;
 pub mod queued;
+pub mod quick_choices;
 pub mod quick_input;
 pub mod review;
 pub mod sample;

@@ -258,6 +258,12 @@ pub enum Shot {
     Commands,
     /// The same file with the list of the other sessions open.
     Sessions,
+    /// The same file with the quick input listing what can be typed first.
+    QuickHelp,
+    /// The same file with the quick input listing the themes.
+    Themes,
+    /// The same file with the quick input going to a line.
+    GoLine,
     /// The same file with the menu on its tab open.
     TabMenu,
     /// The extensions page, some installed, one being installed, one that failed and one of the reader's own.
@@ -1066,6 +1072,18 @@ impl Shot {
                     Edit::Paste("ses".to_owned()),
                 ))
             }
+            Self::QuickHelp => Screen::Workspace(code().file_finder_requested((340.0, 0.0)).edited(
+                pm_components::listing::LISTING_FILTER,
+                Edit::Paste("?".to_owned()),
+            )),
+            Self::Themes => Screen::Workspace(code().choices_requested(
+                pm_components::quick_choices::Choosing::Theme,
+                (340.0, 0.0),
+            )),
+            Self::GoLine => Screen::Workspace(code().file_finder_requested((340.0, 0.0)).edited(
+                pm_components::listing::LISTING_FILTER,
+                Edit::Paste(":12".to_owned()),
+            )),
             Self::Sessions => Screen::Workspace(code().sessions_requested((340.0, 0.0))),
             Self::Commands => Screen::Workspace(
                 code()

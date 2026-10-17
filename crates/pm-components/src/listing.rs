@@ -40,13 +40,21 @@ pub enum Quick {
     Search,
     /// The sessions of every project and the projects to start one in, typed with nothing before them; opened only by its own keys.
     Sessions,
+    /// The line of the file shown to go to, after `:`.
+    Line,
+    /// What can be typed first to list something else, after `?`.
+    Help,
+    /// One thing to pick from a list a command opened, typed with nothing before it.
+    Choices,
 }
 
 impl Quick {
     /// What is typed first to list this.
     pub const fn prefix(self) -> &'static str {
         match self {
-            Self::Files | Self::Sessions => "",
+            Self::Files | Self::Sessions | Self::Choices => "",
+            Self::Line => ":",
+            Self::Help => "?",
             Self::Commands => ">",
             Self::Symbols => "#",
             Self::Outline => "@",
@@ -57,9 +65,10 @@ impl Quick {
     /// What the field says while nothing but the prefix is typed in it.
     pub const fn placeholder(self) -> &'static str {
         match self {
-            Self::Files => {
-                "Search files by name (append > for commands, # for symbols, @ for symbols in the file, % for text)"
-            }
+            Self::Files => "Search files by name (type ? to see what else can be typed first)",
+            Self::Line => "Go to a line by its number",
+            Self::Help => "Type a prefix, or select one",
+            Self::Choices => "Select one",
             Self::Commands => "Run a command",
             Self::Symbols => "Go to a symbol in the project",
             Self::Outline => "Go to a symbol in the file",
@@ -71,7 +80,7 @@ impl Quick {
     /// What the quick input lists once `text` is typed in it while it lists this: what the first character of `text` says, but the sessions stay listed while nothing says otherwise.
     fn after_typing(self, text: &str) -> Self {
         match Self::of(text) {
-            Self::Files if self == Self::Sessions => Self::Sessions,
+            Self::Files if matches!(self, Self::Sessions | Self::Choices) => self,
             other => other,
         }
     }
@@ -83,6 +92,8 @@ impl Quick {
             Some('#') => Self::Symbols,
             Some('@') => Self::Outline,
             Some('%') => Self::Search,
+            Some(':') => Self::Line,
+            Some('?') => Self::Help,
             _ => Self::Files,
         }
     }
@@ -153,6 +164,8 @@ pub enum Items {
         filter: Field,
         /// The files that match, best first, by place among `paths`.
         matched: Vec<usize>,
+        /// How many of `matched` were opened recently.
+        recent: usize,
     },
     /// The commands that can be carried out where the keyboard was, narrowed by what is typed, to carry one out.
     Commands {
@@ -174,10 +187,33 @@ pub enum Items {
         /// The sessions that match, best first, by place among `sessions`.
         matched: Vec<usize>,
     },
+    /// The line of the file shown to go to, by the number typed.
+    Line {
+        /// What is typed: `:` and the number.
+        filter: Field,
+        /// How many lines the file has.
+        lines: usize,
+        /// The line the caret is on, counted from one.
+        current: usize,
+    },
+    /// Things to pick one of, narrowed by what is typed.
+    Choices {
+        /// What they are for.
+        choosing: crate::quick_choices::Choosing,
+        /// Every one of them, in the order they are listed.
+        choices: Vec<crate::quick_choices::Choice>,
+        /// What their names are narrowed to.
+        filter: Field,
+        /// The choices that match, best first, by place among `choices`.
+        matched: Vec<usize>,
+    },
 }
 
 /// How many files the finder lists at most.
 const MOST_FILES: usize = 200;
+
+/// How many files the quick input remembers as opened recently.
+pub const RECENT_FILES: usize = 20;
 
 /// How many commands the quick input remembers as used recently.
 const RECENT_COMMANDS: usize = 8;
@@ -199,6 +235,23 @@ fn path_score(path: &str, typed: &str) -> Option<(u8, usize, usize)> {
         3
     };
     Some((rank, name.len(), path.len()))
+}
+
+/// The files of `paths` that match `typed`, with how many of them lead as `recent`, those opened lately, the latest first; the rest best first, at most a limit of them.
+fn matching_recent_files(paths: &[String], typed: &str, recent: &[String]) -> (Vec<usize>, usize) {
+    let matched = matching_files(paths, typed);
+    let used: Vec<usize> = recent
+        .iter()
+        .filter_map(|wanted| {
+            matched
+                .iter()
+                .copied()
+                .find(|place| paths[*place] == *wanted)
+        })
+        .collect();
+    let count = used.len();
+    let rest = matched.into_iter().filter(|place| !used.contains(place));
+    (used.iter().copied().chain(rest).collect(), count)
 }
 
 /// The files of `paths` that match `typed`, best first, at most a limit of them.
@@ -292,6 +345,44 @@ fn matching_sessions(sessions: &[(Destination, String, String)], typed: &str) ->
     scored.into_iter().map(|(.., place)| place).collect()
 }
 
+/// The choices of `choices` whose names or what is said beside them match `typed`, best first: a name starting with it, then one holding it, then one holding its letters in order, then what is said beside it that does, each in the order they are listed; the `?` of the help is not matched.
+pub(crate) fn matching_choices(
+    choices: &[crate::quick_choices::Choice],
+    typed: &str,
+) -> Vec<usize> {
+    let typed = typed.trim_start_matches('?').trim().to_lowercase();
+    let mut scored: Vec<(u8, usize)> = choices
+        .iter()
+        .enumerate()
+        .filter_map(|(place, choice)| {
+            let label = choice.label.to_lowercase();
+            let rank = if label.starts_with(&typed) {
+                0
+            } else if label.contains(&typed) {
+                1
+            } else if narrows_to(&label, &typed) {
+                2
+            } else if narrows_to(&choice.detail.to_lowercase(), &typed) {
+                3
+            } else {
+                return None;
+            };
+            Some((rank, place))
+        })
+        .collect();
+    scored.sort();
+    scored.into_iter().map(|(_, place)| place).collect()
+}
+
+/// The line `typed` names among `lines`, counted from one, when it is a number of one of them.
+pub fn line_named(typed: &str, lines: usize) -> Option<usize> {
+    typed
+        .trim()
+        .parse::<usize>()
+        .ok()
+        .filter(|line| (1..=lines).contains(line))
+}
+
 /// The characters of `name` that `typed` matches, by their place among the characters of `name`, ignoring case: the run that holds it when `name` holds it whole, and otherwise its letters where they first come in order; none when they do not.
 pub fn matched_characters(name: &str, typed: &str) -> Vec<usize> {
     let name: Vec<char> = name.chars().flat_map(char::to_lowercase).collect();
@@ -348,7 +439,11 @@ impl Items {
                 .collect(),
             Self::Files { matched, .. }
             | Self::Commands { matched, .. }
-            | Self::Sessions { matched, .. } => matched.clone(),
+            | Self::Sessions { matched, .. }
+            | Self::Choices { matched, .. } => matched.clone(),
+            Self::Line { lines, .. } => line_named(self.query(), *lines)
+                .map(|_| vec![0])
+                .unwrap_or_default(),
             Self::Problems { problems } => (0..problems.len()).collect(),
             Self::Symbols { locations, .. } | Self::Search { locations, .. } => {
                 (0..locations.len()).collect()
@@ -365,6 +460,12 @@ impl Items {
             Self::Outline { .. } => Some(Quick::Outline),
             Self::Search { .. } => Some(Quick::Search),
             Self::Sessions { .. } => Some(Quick::Sessions),
+            Self::Line { .. } => Some(Quick::Line),
+            Self::Choices {
+                choosing: crate::quick_choices::Choosing::Help,
+                ..
+            } => Some(Quick::Help),
+            Self::Choices { .. } => Some(Quick::Choices),
             _ => None,
         }
     }
@@ -376,9 +477,19 @@ impl Items {
             | Self::Files { filter, .. }
             | Self::Commands { filter, .. }
             | Self::Sessions { filter, .. }
+            | Self::Line { filter, .. }
+            | Self::Choices { filter, .. }
             | Self::Symbols { filter, .. }
             | Self::Search { filter, .. } => Some(filter),
             _ => None,
+        }
+    }
+
+    /// What the field says while nothing but the prefix is typed in it.
+    pub fn placeholder(&self) -> &'static str {
+        match self {
+            Self::Choices { choosing, .. } => choosing.placeholder(),
+            items => items.quick().unwrap_or(Quick::Files).placeholder(),
         }
     }
 
@@ -415,6 +526,8 @@ impl Items {
             Self::Files { .. } => "Files".to_owned(),
             Self::Commands { .. } => "Commands".to_owned(),
             Self::Sessions { .. } => "Sessions".to_owned(),
+            Self::Line { .. } => "Go to line".to_owned(),
+            Self::Choices { .. } => "Choices".to_owned(),
             Self::Symbols { .. } => "Symbols".to_owned(),
             Self::Search { .. } => "Search".to_owned(),
             Self::Problems { .. } => "Problems".to_owned(),
@@ -529,6 +642,11 @@ impl WorkspaceState {
         self.quick_as(Quick::Sessions, Field::new(""), at)
     }
 
+    /// The quick input at `at` holding `typed`, listing what its first character says.
+    pub(crate) fn quick_typed(self, typed: &str, at: (f32, f32)) -> Self {
+        self.quick_opened(Field::new(typed), at)
+    }
+
     /// The quick input at `at` holding `filter`, listing what its first character says, or saying why it cannot.
     fn quick_opened(self, filter: Field, at: (f32, f32)) -> Self {
         let quick = Quick::of(filter.text());
@@ -547,6 +665,27 @@ impl WorkspaceState {
         let mut problem = None;
         let mut answered = true;
         let items = match quick {
+            Quick::Choices => return self,
+            Quick::Help => {
+                return self.choices_requested(crate::quick_choices::Choosing::Help, at);
+            }
+            Quick::Line => {
+                let (lines, current) = match self.shown_document() {
+                    Some(document) => (
+                        document.lines(),
+                        document.line_of(document.field.caret()) + 1,
+                    ),
+                    None => {
+                        problem = Some("Open a file to go to one of its lines".to_owned());
+                        (0, 0)
+                    }
+                };
+                Items::Line {
+                    filter,
+                    lines,
+                    current,
+                }
+            }
             Quick::Sessions => {
                 let shown = match self.page {
                     crate::state::Page::Session(index) => Some(index),
@@ -612,11 +751,12 @@ impl WorkspaceState {
                 } else {
                     Vec::new()
                 };
-                let matched = matching_files(&paths, &query);
+                let (matched, recent) = matching_recent_files(&paths, &query, &self.recent_files);
                 Items::Files {
                     paths,
                     filter,
                     matched,
+                    recent,
                 }
             }
             Quick::Outline => {
@@ -737,6 +877,7 @@ impl WorkspaceState {
             }
         }
         let recent = self.recent_commands.clone();
+        let recent_files = self.recent_files.clone();
         let session = listing.session;
         let items = &mut listing.items;
         let before = items.query().to_owned();
@@ -745,6 +886,8 @@ impl WorkspaceState {
             Items::Files { filter, .. }
             | Items::Commands { filter, .. }
             | Items::Sessions { filter, .. }
+            | Items::Line { filter, .. }
+            | Items::Choices { filter, .. }
             | Items::Symbols { filter, .. }
             | Items::Search { filter, .. } => filter.apply(edit),
             _ => return self,
@@ -754,10 +897,18 @@ impl WorkspaceState {
             return self;
         }
         match items {
-            Items::Files { paths, matched, .. } => *matched = matching_files(paths, &query),
+            Items::Files {
+                paths,
+                matched,
+                recent: count,
+                ..
+            } => (*matched, *count) = matching_recent_files(paths, &query, &recent_files),
             Items::Sessions {
                 sessions, matched, ..
             } => *matched = matching_sessions(sessions, &query),
+            Items::Choices {
+                choices, matched, ..
+            } => *matched = matching_choices(choices, &query),
             Items::Commands {
                 commands,
                 matched,
@@ -853,6 +1004,8 @@ impl WorkspaceState {
             return self;
         };
         let session = listing.session;
+        let typed = listing.items.query().to_owned();
+        let at = listing.at;
         match listing.items {
             Items::Outline { items, .. } => {
                 let Some(item) = items.get(index) else {
@@ -892,6 +1045,23 @@ impl WorkspaceState {
                 None => self,
             },
             Items::Commands { .. } => self,
+            Items::Line { lines, .. } => {
+                let Some(number) = line_named(&typed, lines) else {
+                    return self;
+                };
+                self.remember_spot();
+                let edit = self
+                    .shown_document()
+                    .map(|document| document.go_to_line_edit(number));
+                if let Some(edit) = edit {
+                    self.file_edited(edit);
+                }
+                self
+            }
+            Items::Choices { choices, .. } => match choices.into_iter().nth(index) {
+                Some(choice) => self.choice_taken(choice, at),
+                None => self,
+            },
             Items::Sessions { sessions, .. } => match sessions.get(index) {
                 Some((Destination::Session(session), ..)) => {
                     self.after(FocusId(crate::state::SESSION_BASE + *session as u64))

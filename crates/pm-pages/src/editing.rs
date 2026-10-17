@@ -174,6 +174,53 @@ impl Screen {
         self.in_workspace(|state| state.commands_requested(at))
     }
 
+    /// The screen listing the choices of `choosing` at `at`, to pick one.
+    pub fn choices_requested(
+        self,
+        choosing: pm_components::quick_choices::Choosing,
+        at: (f32, f32),
+    ) -> Self {
+        self.in_workspace(|state| state.choices_requested(choosing, at))
+    }
+
+    /// The screen listing the values of the agent's setting of `category` at `at`, to pick one.
+    pub fn agent_category_requested(self, category: &str, at: (f32, f32)) -> Self {
+        self.in_workspace(|state| state.agent_category_requested(category, at))
+    }
+
+    /// The screen with the menu of the session shown pressed on its row `row`.
+    pub fn session_command(self, row: pm_input::FocusId) -> Self {
+        self.in_workspace(|state| state.session_command(row))
+    }
+
+    /// The control answering what the agent of the session shown asks with an answer of `verdict`, when it asks.
+    pub fn answer_of(&self, verdict: pm_acp::Verdict) -> Option<pm_input::FocusId> {
+        match self {
+            Self::Workspace(state) => state.answer_of(verdict),
+            Self::Onboarding(_) => None,
+        }
+    }
+
+    /// The screen with the menu of the tab shown pressed on `command`.
+    pub fn shown_tab_command(self, command: pm_components::tab_menu::TabCommand) -> Self {
+        self.in_workspace(|state| state.shown_tab_command(command))
+    }
+
+    /// The screen working in the pane `delta` panes along from the one worked in.
+    pub fn pane_stepped(self, delta: isize) -> Self {
+        self.in_workspace(|state| state.pane_stepped(delta))
+    }
+
+    /// The screen drawn in `mode`.
+    pub fn with_theme_mode(self, mode: pm_config::ThemeMode) -> Self {
+        self.in_workspace(|state| state.with_theme_mode(mode))
+    }
+
+    /// The screen with its text `steps` points bigger, smaller when negative, or at the usual sizes when `steps` is nothing.
+    pub fn zoomed(self, steps: Option<i32>) -> Self {
+        self.in_workspace(|state| state.zoomed(steps))
+    }
+
     /// The screen listing the sessions of every project at `at`, to go to one.
     pub fn sessions_requested(self, at: (f32, f32)) -> Self {
         self.in_workspace(|state| state.sessions_requested(at))
