@@ -792,6 +792,7 @@ impl WorkspaceState {
     pub fn with_session_branches(mut self, session: usize, names: Vec<String>) -> Self {
         if self.review_index() == Some(session) {
             self.git.branches = names;
+            self.choices_renewed(crate::quick_choices::Choosing::Branch);
         }
         self
     }

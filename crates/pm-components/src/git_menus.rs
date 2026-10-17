@@ -416,6 +416,44 @@ impl WorkspaceState {
         }
     }
 
+    /// The state after the source control `action` of the keymap, carried out as the panel's own menu does it; any other action leaves it as it is.
+    pub fn source_control(mut self, action: pm_editor::Action) -> Self {
+        use pm_editor::Action;
+        let command = match action {
+            Action::Commit => Command::Commit,
+            Action::CommitAndPush => Command::CommitAndPush,
+            Action::Pull => Command::Pull,
+            Action::Push => Command::Push,
+            Action::Fetch => Command::Fetch,
+            Action::StashChanges => Command::StashPush,
+            Action::CheckoutBranch => Command::Checkout,
+            Action::CloneRepository => Command::Clone,
+            Action::RefreshSourceControl => Command::Refresh,
+            Action::PullRebase => Command::PullRebase,
+            Action::ForcePush => Command::ForcePush,
+            Action::StageAll => Command::StageAll,
+            Action::UnstageAll => Command::UnstageAll,
+            Action::CommitAmend => Command::Amend,
+            Action::ContinueOperation => Command::Commit,
+            Action::SkipCommit => Command::Skip,
+            Action::AbortOperation => Command::Abort,
+            Action::StashApply => Command::Stashes(StashAction::Apply),
+            Action::StashPop => Command::Stashes(StashAction::Pop),
+            Action::StashDrop => Command::Stashes(StashAction::Drop),
+            Action::Sync => {
+                self.remote("sync", "Syncing…");
+                return self;
+            }
+            Action::ToggleGraph => {
+                self.git.graph_open = !self.git.graph_open;
+                return self;
+            }
+            _ => return self,
+        };
+        self.run(command, MenuKind::Source);
+        self
+    }
+
     /// Carries out `command` from the menu `kind`.
     fn run(&mut self, command: Command, kind: MenuKind) {
         let acting = self.acting_on();

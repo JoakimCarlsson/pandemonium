@@ -716,16 +716,17 @@ impl WorkspaceState {
         } else {
             0.0
         };
+        let page = window.1 - crate::title_bar::TITLE_BAR_HEIGHT;
         let dock = if self.docking() {
-            terminal::height(self, window.1)
+            terminal::height(self, page)
         } else {
             0.0
         };
         Area {
             x: self.sidebar_width,
-            y: 0.0,
+            y: crate::title_bar::TITLE_BAR_HEIGHT,
             width: beside - plan,
-            height: window.1 - dock,
+            height: page - dock,
         }
     }
 

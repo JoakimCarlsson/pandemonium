@@ -13,6 +13,174 @@ use serde::{Deserialize, Serialize};
 /// Something the keys can ask the editor to do.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum Action {
+    /// Lists every action, to carry one out by typing part of its name.
+    CommandPalette,
+    /// Opens the settings.
+    OpenSettings,
+    /// Lists the sessions, to go to one by typing part of its name.
+    GoToSession,
+    /// Starts a new session in the project shown.
+    NewSession,
+    /// Adds a project to the window.
+    AddProject,
+    /// Shows every session of every project.
+    ShowHistory,
+    /// Shows the extensions there are to install.
+    ShowExtensions,
+    /// Goes back to the page shown before.
+    WorkspaceBack,
+    /// Goes forward to the page gone back from.
+    WorkspaceForward,
+    /// Closes the window.
+    Quit,
+    /// Shows the conversation of the session.
+    ShowChat,
+    /// Shows what the session changed.
+    ShowDiff,
+    /// Stops the agent of the session.
+    StopAgent,
+    /// Shows or hides the terminal.
+    ToggleTerminal,
+    /// Opens another terminal.
+    NewTerminal,
+    /// Shows or hides the source control panel.
+    ToggleSourceControl,
+    /// Lists the models of the agent, to pick one.
+    ChangeModel,
+    /// Lists the modes of the agent, to pick one.
+    ChangeMode,
+    /// Lists the settings of the agent, to change one.
+    ChangeAgentSetting,
+    /// Switches the agent to its next mode.
+    CycleMode,
+    /// Allows what the agent asked to do, this once.
+    AllowRequest,
+    /// Allows what the agent asked to do, from now on.
+    AlwaysAllowRequest,
+    /// Refuses what the agent asked to do.
+    RejectRequest,
+    /// Gives the session a new title.
+    RenameSession,
+    /// Archives the session.
+    ArchiveSession,
+    /// Copies the folder the session works in.
+    CopySessionPath,
+    /// Copies the branch the session is on.
+    CopyBranchName,
+    /// Shows the session's folder in the file manager.
+    OpenSessionFolder,
+    /// Lists the reader's messages, to take the conversation back to before one.
+    RewindConversation,
+    /// Lists the agent's replies, to start a session branching off after one.
+    ForkConversation,
+    /// Lists the reader's messages, to put the files back as they were before one.
+    RestoreFiles,
+    /// Gives the keyboard to the prompt.
+    FocusPrompt,
+    /// Closes the tab shown.
+    CloseTab,
+    /// Closes every tab but the one shown.
+    CloseOtherTabs,
+    /// Closes every tab without unsaved changes.
+    CloseSavedTabs,
+    /// Closes every tab.
+    CloseAllTabs,
+    /// Pins the tab shown, or unpins it.
+    PinTab,
+    /// Makes the file shown read-only, or editable again.
+    ToggleReadOnly,
+    /// Copies the path of the file shown on its machine.
+    CopyPath,
+    /// Copies the path of the file shown from the root of the project.
+    CopyRelativePath,
+    /// Shows the file shown in the project's files.
+    RevealInProject,
+    /// Splits the pane worked in to the right.
+    SplitRight,
+    /// Splits the pane worked in to the left.
+    SplitLeft,
+    /// Splits the pane worked in upwards.
+    SplitUp,
+    /// Splits the pane worked in downwards.
+    SplitDown,
+    /// Works in the next pane.
+    FocusNextPane,
+    /// Works in the pane before.
+    FocusPreviousPane,
+    /// Lists the themes, to pick one.
+    ChangeTheme,
+    /// Switches between the light and the dark theme.
+    ToggleTheme,
+    /// Lists the keymaps, to pick one.
+    ChangeKeymap,
+    /// Makes the text bigger.
+    ZoomIn,
+    /// Makes the text smaller.
+    ZoomOut,
+    /// Puts the text back to its usual size.
+    ResetZoom,
+    /// Copies a link to the line on the repository's host.
+    CopyPermalink,
+    /// Opens the line on the repository's host.
+    OpenPermalink,
+    /// Lists the commits that changed the file.
+    FileHistory,
+    /// Opens a terminal in the file's folder.
+    OpenTerminalHere,
+    /// Lists the functions it calls.
+    OutgoingCalls,
+    /// Copies the selection without the indentation its lines share.
+    CopyWithoutIndentation,
+    /// Undoes the last change to the file.
+    Undo,
+    /// Does again what was undone.
+    Redo,
+    /// Commits the staged changes.
+    Commit,
+    /// Commits the staged changes and pushes them.
+    CommitAndPush,
+    /// Pulls from the remote.
+    Pull,
+    /// Pushes to the remote.
+    Push,
+    /// Fetches from every remote.
+    Fetch,
+    /// Stashes the changes.
+    StashChanges,
+    /// Lists the branches, to check one out.
+    CheckoutBranch,
+    /// Clones a repository as a new project.
+    CloneRepository,
+    /// Reads the changes and the graph again.
+    RefreshSourceControl,
+    /// Pulls from the remote, replaying the branch's own commits on top.
+    PullRebase,
+    /// Pushes to the remote, overwriting only what was seen.
+    ForcePush,
+    /// Pulls from the remote and then pushes to it.
+    Sync,
+    /// Stages every change.
+    StageAll,
+    /// Unstages every change.
+    UnstageAll,
+    /// Rewrites the last commit with the staged changes.
+    CommitAmend,
+    /// Finishes the merge, rebase or cherry-pick that stopped.
+    ContinueOperation,
+    /// Leaves out the commit the rebase or cherry-pick stopped on.
+    SkipCommit,
+    /// Gives up the merge, rebase or cherry-pick that stopped.
+    AbortOperation,
+    /// Lists the stashes, to apply one and keep it.
+    StashApply,
+    /// Lists the stashes, to apply one and remove it.
+    StashPop,
+    /// Lists the stashes, to remove one.
+    StashDrop,
+    /// Makes a branch by the name typed and checks it out.
+    CreateBranch,
+    /// Shows or hides the graph of commits.
+    ToggleGraph,
     /// Goes to where the name at the caret is defined.
     GoToDefinition,
     /// Goes to where it is declared.
@@ -127,7 +295,91 @@ pub enum Action {
 
 impl Action {
     /// Every action, in the order the keymap lists them.
-    pub const ALL: [Self; 55] = [
+    pub const ALL: [Self; 139] = [
+        Self::CommandPalette,
+        Self::OpenSettings,
+        Self::GoToSession,
+        Self::NewSession,
+        Self::AddProject,
+        Self::ShowHistory,
+        Self::ShowExtensions,
+        Self::WorkspaceBack,
+        Self::WorkspaceForward,
+        Self::Quit,
+        Self::ShowChat,
+        Self::ShowDiff,
+        Self::StopAgent,
+        Self::ToggleTerminal,
+        Self::NewTerminal,
+        Self::ToggleSourceControl,
+        Self::ChangeModel,
+        Self::ChangeMode,
+        Self::ChangeAgentSetting,
+        Self::CycleMode,
+        Self::AllowRequest,
+        Self::AlwaysAllowRequest,
+        Self::RejectRequest,
+        Self::RenameSession,
+        Self::ArchiveSession,
+        Self::CopySessionPath,
+        Self::CopyBranchName,
+        Self::OpenSessionFolder,
+        Self::RewindConversation,
+        Self::ForkConversation,
+        Self::RestoreFiles,
+        Self::FocusPrompt,
+        Self::CloseTab,
+        Self::CloseOtherTabs,
+        Self::CloseSavedTabs,
+        Self::CloseAllTabs,
+        Self::PinTab,
+        Self::ToggleReadOnly,
+        Self::CopyPath,
+        Self::CopyRelativePath,
+        Self::RevealInProject,
+        Self::SplitRight,
+        Self::SplitLeft,
+        Self::SplitUp,
+        Self::SplitDown,
+        Self::FocusNextPane,
+        Self::FocusPreviousPane,
+        Self::ChangeTheme,
+        Self::ToggleTheme,
+        Self::ChangeKeymap,
+        Self::ZoomIn,
+        Self::ZoomOut,
+        Self::ResetZoom,
+        Self::CopyPermalink,
+        Self::OpenPermalink,
+        Self::FileHistory,
+        Self::OpenTerminalHere,
+        Self::OutgoingCalls,
+        Self::CopyWithoutIndentation,
+        Self::Undo,
+        Self::Redo,
+        Self::Commit,
+        Self::CommitAndPush,
+        Self::Pull,
+        Self::Push,
+        Self::Fetch,
+        Self::StashChanges,
+        Self::CheckoutBranch,
+        Self::CloneRepository,
+        Self::RefreshSourceControl,
+        Self::PullRebase,
+        Self::ForcePush,
+        Self::Sync,
+        Self::StageAll,
+        Self::UnstageAll,
+        Self::CommitAmend,
+        Self::ContinueOperation,
+        Self::SkipCommit,
+        Self::AbortOperation,
+        Self::StashApply,
+        Self::StashPop,
+        Self::StashDrop,
+        Self::CreateBranch,
+        Self::ToggleGraph,
         Self::GoToDefinition,
         Self::GoToDeclaration,
         Self::GoToTypeDefinition,
@@ -188,6 +440,90 @@ impl Action {
     /// The name it is kept under in the settings.
     pub fn key(self) -> &'static str {
         match self {
+            Self::CommandPalette => "command_palette",
+            Self::OpenSettings => "open_settings",
+            Self::GoToSession => "go_to_session",
+            Self::NewSession => "new_session",
+            Self::AddProject => "add_project",
+            Self::ShowHistory => "show_history",
+            Self::ShowExtensions => "show_extensions",
+            Self::WorkspaceBack => "workspace_back",
+            Self::WorkspaceForward => "workspace_forward",
+            Self::Quit => "quit",
+            Self::ShowChat => "show_chat",
+            Self::ShowDiff => "show_diff",
+            Self::StopAgent => "stop_agent",
+            Self::ToggleTerminal => "toggle_terminal",
+            Self::NewTerminal => "new_terminal",
+            Self::ToggleSourceControl => "toggle_source_control",
+            Self::ChangeModel => "change_model",
+            Self::ChangeMode => "change_mode",
+            Self::ChangeAgentSetting => "change_agent_setting",
+            Self::CycleMode => "cycle_mode",
+            Self::AllowRequest => "allow_request",
+            Self::AlwaysAllowRequest => "always_allow_request",
+            Self::RejectRequest => "reject_request",
+            Self::RenameSession => "rename_session",
+            Self::ArchiveSession => "archive_session",
+            Self::CopySessionPath => "copy_session_path",
+            Self::CopyBranchName => "copy_branch_name",
+            Self::OpenSessionFolder => "open_session_folder",
+            Self::RewindConversation => "rewind_conversation",
+            Self::ForkConversation => "fork_conversation",
+            Self::RestoreFiles => "restore_files",
+            Self::FocusPrompt => "focus_prompt",
+            Self::CloseTab => "close_tab",
+            Self::CloseOtherTabs => "close_other_tabs",
+            Self::CloseSavedTabs => "close_saved_tabs",
+            Self::CloseAllTabs => "close_all_tabs",
+            Self::PinTab => "pin_tab",
+            Self::ToggleReadOnly => "toggle_read_only",
+            Self::CopyPath => "copy_path",
+            Self::CopyRelativePath => "copy_relative_path",
+            Self::RevealInProject => "reveal_in_project",
+            Self::SplitRight => "split_right",
+            Self::SplitLeft => "split_left",
+            Self::SplitUp => "split_up",
+            Self::SplitDown => "split_down",
+            Self::FocusNextPane => "focus_next_pane",
+            Self::FocusPreviousPane => "focus_previous_pane",
+            Self::ChangeTheme => "change_theme",
+            Self::ToggleTheme => "toggle_theme",
+            Self::ChangeKeymap => "change_keymap",
+            Self::ZoomIn => "zoom_in",
+            Self::ZoomOut => "zoom_out",
+            Self::ResetZoom => "reset_zoom",
+            Self::CopyPermalink => "copy_permalink",
+            Self::OpenPermalink => "open_permalink",
+            Self::FileHistory => "file_history",
+            Self::OpenTerminalHere => "open_terminal_here",
+            Self::OutgoingCalls => "outgoing_calls",
+            Self::CopyWithoutIndentation => "copy_without_indentation",
+            Self::Undo => "undo",
+            Self::Redo => "redo",
+            Self::Commit => "git_commit",
+            Self::CommitAndPush => "git_commit_and_push",
+            Self::Pull => "git_pull",
+            Self::Push => "git_push",
+            Self::Fetch => "git_fetch",
+            Self::StashChanges => "git_stash",
+            Self::CheckoutBranch => "git_checkout",
+            Self::CloneRepository => "git_clone",
+            Self::RefreshSourceControl => "git_refresh",
+            Self::PullRebase => "git_pull_rebase",
+            Self::ForcePush => "git_force_push",
+            Self::Sync => "git_sync",
+            Self::StageAll => "git_stage_all",
+            Self::UnstageAll => "git_unstage_all",
+            Self::CommitAmend => "git_amend",
+            Self::ContinueOperation => "git_continue",
+            Self::SkipCommit => "git_skip",
+            Self::AbortOperation => "git_abort",
+            Self::StashApply => "git_stash_apply",
+            Self::StashPop => "git_stash_pop",
+            Self::StashDrop => "git_stash_drop",
+            Self::CreateBranch => "git_create_branch",
+            Self::ToggleGraph => "git_toggle_graph",
             Self::GoToDefinition => "go_to_definition",
             Self::GoToDeclaration => "go_to_declaration",
             Self::GoToTypeDefinition => "go_to_type_definition",
@@ -249,6 +585,90 @@ impl Action {
     /// What the keymap calls it.
     pub fn title(self) -> &'static str {
         match self {
+            Self::CommandPalette => "Show All Commands",
+            Self::OpenSettings => "Open Settings",
+            Self::GoToSession => "Go to Session",
+            Self::NewSession => "New Session",
+            Self::AddProject => "New Workspace",
+            Self::ShowHistory => "Show History",
+            Self::ShowExtensions => "Show Extensions",
+            Self::WorkspaceBack => "Go Back to Previous Page",
+            Self::WorkspaceForward => "Go Forward to Next Page",
+            Self::Quit => "Quit",
+            Self::ShowChat => "Show Chat",
+            Self::ShowDiff => "Show Diff",
+            Self::StopAgent => "Stop Agent",
+            Self::ToggleTerminal => "Toggle Terminal",
+            Self::NewTerminal => "New Terminal",
+            Self::ToggleSourceControl => "Toggle Source Control",
+            Self::ChangeModel => "Change Model",
+            Self::ChangeMode => "Change Mode",
+            Self::ChangeAgentSetting => "Change Agent Setting",
+            Self::CycleMode => "Cycle Mode",
+            Self::AllowRequest => "Allow Request",
+            Self::AlwaysAllowRequest => "Always Allow Request",
+            Self::RejectRequest => "Reject Request",
+            Self::RenameSession => "Rename Session",
+            Self::ArchiveSession => "Archive Session",
+            Self::CopySessionPath => "Copy Session Path",
+            Self::CopyBranchName => "Copy Branch Name",
+            Self::OpenSessionFolder => "Open Session Folder",
+            Self::RewindConversation => "Rewind Conversation",
+            Self::ForkConversation => "Fork Conversation",
+            Self::RestoreFiles => "Restore Files",
+            Self::FocusPrompt => "Focus Prompt",
+            Self::CloseTab => "Close Tab",
+            Self::CloseOtherTabs => "Close Other Tabs",
+            Self::CloseSavedTabs => "Close Saved Tabs",
+            Self::CloseAllTabs => "Close All Tabs",
+            Self::PinTab => "Pin Tab",
+            Self::ToggleReadOnly => "Toggle Read-Only",
+            Self::CopyPath => "Copy Path",
+            Self::CopyRelativePath => "Copy Relative Path",
+            Self::RevealInProject => "Reveal in Project",
+            Self::SplitRight => "Split Right",
+            Self::SplitLeft => "Split Left",
+            Self::SplitUp => "Split Up",
+            Self::SplitDown => "Split Down",
+            Self::FocusNextPane => "Focus Next Pane",
+            Self::FocusPreviousPane => "Focus Previous Pane",
+            Self::ChangeTheme => "Change Theme",
+            Self::ToggleTheme => "Toggle Light and Dark Theme",
+            Self::ChangeKeymap => "Change Keymap",
+            Self::ZoomIn => "Increase Text Size",
+            Self::ZoomOut => "Decrease Text Size",
+            Self::ResetZoom => "Reset Text Size",
+            Self::CopyPermalink => "Copy Permalink",
+            Self::OpenPermalink => "Open Permalink",
+            Self::FileHistory => "Show File History",
+            Self::OpenTerminalHere => "Open Terminal at File",
+            Self::OutgoingCalls => "Show Outgoing Calls",
+            Self::CopyWithoutIndentation => "Copy Without Indentation",
+            Self::Undo => "Undo",
+            Self::Redo => "Redo",
+            Self::Commit => "Commit",
+            Self::CommitAndPush => "Commit and Push",
+            Self::Pull => "Pull",
+            Self::Push => "Push",
+            Self::Fetch => "Fetch",
+            Self::StashChanges => "Stash Changes",
+            Self::CheckoutBranch => "Checkout Branch",
+            Self::CloneRepository => "Clone Repository",
+            Self::RefreshSourceControl => "Refresh Source Control",
+            Self::PullRebase => "Pull (Rebase)",
+            Self::ForcePush => "Push (Force)",
+            Self::Sync => "Sync",
+            Self::StageAll => "Stage All Changes",
+            Self::UnstageAll => "Unstage All Changes",
+            Self::CommitAmend => "Commit (Amend)",
+            Self::ContinueOperation => "Continue Merge or Rebase",
+            Self::SkipCommit => "Skip Commit",
+            Self::AbortOperation => "Abort Merge or Rebase",
+            Self::StashApply => "Apply Stash",
+            Self::StashPop => "Pop Stash",
+            Self::StashDrop => "Drop Stash",
+            Self::CreateBranch => "Create Branch",
+            Self::ToggleGraph => "Toggle Commit Graph",
             Self::GoToDefinition => "Go to Definition",
             Self::GoToDeclaration => "Go to Declaration",
             Self::GoToTypeDefinition => "Go to Type Definition",
@@ -307,9 +727,111 @@ impl Action {
         }
     }
 
+    /// What the list of commands calls it: its title, after `Git: ` for the commands of source control.
+    pub fn palette_title(self) -> String {
+        match self.group() {
+            "Source Control" => format!("Git: {}", self.title()),
+            _ => self.title().to_owned(),
+        }
+    }
+
+    /// Other words it is known by, which find it in the list of commands too.
+    pub fn keywords(self) -> &'static str {
+        match self {
+            Self::AddProject => "add project open folder repository",
+            Self::NewSession => "start agent chat",
+            Self::GoToSession => "switch project workspace",
+            Self::CloneRepository => "new workspace project",
+            Self::OpenSettings => "preferences configure",
+            Self::CommandPalette => "command palette",
+            _ => "",
+        }
+    }
+
     /// The group the keymap lists it under.
     pub fn group(self) -> &'static str {
         match self {
+            Self::ChangeModel
+            | Self::ChangeMode
+            | Self::ChangeAgentSetting
+            | Self::CycleMode
+            | Self::AllowRequest
+            | Self::AlwaysAllowRequest
+            | Self::RejectRequest
+            | Self::RenameSession
+            | Self::ArchiveSession
+            | Self::CopySessionPath
+            | Self::CopyBranchName
+            | Self::OpenSessionFolder
+            | Self::RewindConversation
+            | Self::ForkConversation
+            | Self::RestoreFiles
+            | Self::FocusPrompt => "Session",
+            Self::CloseTab
+            | Self::CloseOtherTabs
+            | Self::CloseSavedTabs
+            | Self::CloseAllTabs
+            | Self::PinTab
+            | Self::ToggleReadOnly
+            | Self::CopyPath
+            | Self::CopyRelativePath
+            | Self::RevealInProject
+            | Self::SplitRight
+            | Self::SplitLeft
+            | Self::SplitUp
+            | Self::SplitDown
+            | Self::FocusNextPane
+            | Self::FocusPreviousPane => "Tabs",
+            Self::ChangeTheme
+            | Self::ToggleTheme
+            | Self::ChangeKeymap
+            | Self::ZoomIn
+            | Self::ZoomOut
+            | Self::ResetZoom => "Window",
+            Self::CopyPermalink
+            | Self::OpenPermalink
+            | Self::FileHistory
+            | Self::OpenTerminalHere => "File",
+            Self::OutgoingCalls => "Navigation",
+            Self::CopyWithoutIndentation | Self::Undo | Self::Redo => "Editing",
+            Self::CommandPalette | Self::OpenSettings => "Window",
+            Self::GoToSession
+            | Self::NewSession
+            | Self::AddProject
+            | Self::ShowHistory
+            | Self::ShowExtensions
+            | Self::WorkspaceBack
+            | Self::WorkspaceForward
+            | Self::Quit => "Window",
+            Self::ShowChat
+            | Self::ShowDiff
+            | Self::StopAgent
+            | Self::ToggleTerminal
+            | Self::NewTerminal
+            | Self::ToggleSourceControl => "Session",
+            Self::Commit
+            | Self::CommitAndPush
+            | Self::Pull
+            | Self::Push
+            | Self::Fetch
+            | Self::StashChanges
+            | Self::CheckoutBranch
+            | Self::CloneRepository
+            | Self::RefreshSourceControl
+            | Self::PullRebase
+            | Self::ForcePush
+            | Self::Sync
+            | Self::StageAll
+            | Self::UnstageAll
+            | Self::CommitAmend
+            | Self::ContinueOperation
+            | Self::SkipCommit
+            | Self::AbortOperation
+            | Self::StashApply
+            | Self::StashPop
+            | Self::StashDrop
+            | Self::CreateBranch
+            | Self::ToggleGraph => "Source Control",
             Self::GoToDefinition
             | Self::GoToDeclaration
             | Self::GoToTypeDefinition
@@ -354,7 +876,87 @@ impl Action {
     pub fn everywhere(self) -> bool {
         matches!(
             self,
-            Self::FileFinder | Self::SearchProject | Self::Problems
+            Self::CommandPalette
+                | Self::OpenSettings
+                | Self::GoToSession
+                | Self::NewSession
+                | Self::AddProject
+                | Self::ShowHistory
+                | Self::ShowExtensions
+                | Self::WorkspaceBack
+                | Self::WorkspaceForward
+                | Self::Quit
+                | Self::ShowChat
+                | Self::ShowDiff
+                | Self::StopAgent
+                | Self::ToggleTerminal
+                | Self::NewTerminal
+                | Self::ToggleSourceControl
+                | Self::Commit
+                | Self::CommitAndPush
+                | Self::Pull
+                | Self::Push
+                | Self::Fetch
+                | Self::StashChanges
+                | Self::CheckoutBranch
+                | Self::CloneRepository
+                | Self::RefreshSourceControl
+                | Self::PullRebase
+                | Self::ForcePush
+                | Self::Sync
+                | Self::StageAll
+                | Self::UnstageAll
+                | Self::CommitAmend
+                | Self::ContinueOperation
+                | Self::SkipCommit
+                | Self::AbortOperation
+                | Self::StashApply
+                | Self::StashPop
+                | Self::StashDrop
+                | Self::CreateBranch
+                | Self::ToggleGraph
+                | Self::ChangeModel
+                | Self::ChangeMode
+                | Self::ChangeAgentSetting
+                | Self::CycleMode
+                | Self::AllowRequest
+                | Self::AlwaysAllowRequest
+                | Self::RejectRequest
+                | Self::RenameSession
+                | Self::ArchiveSession
+                | Self::CopySessionPath
+                | Self::CopyBranchName
+                | Self::OpenSessionFolder
+                | Self::RewindConversation
+                | Self::ForkConversation
+                | Self::RestoreFiles
+                | Self::FocusPrompt
+                | Self::CloseTab
+                | Self::CloseOtherTabs
+                | Self::CloseSavedTabs
+                | Self::CloseAllTabs
+                | Self::PinTab
+                | Self::ToggleReadOnly
+                | Self::CopyPath
+                | Self::CopyRelativePath
+                | Self::RevealInProject
+                | Self::SplitRight
+                | Self::SplitLeft
+                | Self::SplitUp
+                | Self::SplitDown
+                | Self::FocusNextPane
+                | Self::FocusPreviousPane
+                | Self::ChangeTheme
+                | Self::ToggleTheme
+                | Self::ChangeKeymap
+                | Self::ZoomIn
+                | Self::ZoomOut
+                | Self::ResetZoom
+                | Self::FileFinder
+                | Self::Outline
+                | Self::ProjectSymbols
+                | Self::SearchProject
+                | Self::Problems
         )
     }
 
@@ -417,6 +1019,7 @@ impl Preset {
         match self {
             Self::Pandemonium => &[],
             Self::VsCode => &[
+                (ZoomOut, &["ctrl+-"]),
                 (GoToTypeDefinition, &[]),
                 (GoToImplementation, &["ctrl+f12"]),
                 (FindReferences, &["shift+f12", "alt+shift+f12"]),
@@ -429,6 +1032,11 @@ impl Preset {
                 (MatchingBracket, &["ctrl+shift+\\"]),
             ],
             Self::JetBrains => &[
+                (CommandPalette, &["ctrl+shift+a"]),
+                (OpenSettings, &["ctrl+alt+s"]),
+                (GoToSession, &["ctrl+e"]),
+                (CloseTab, &["ctrl+f4"]),
+                (ZoomIn, &[]),
                 (GoToDefinition, &["ctrl+b"]),
                 (GoToTypeDefinition, &["ctrl+shift+b"]),
                 (GoToImplementation, &["ctrl+alt+b"]),
@@ -466,6 +1074,7 @@ impl Preset {
                 (Problems, &["alt+6"]),
             ],
             Self::Sublime => &[
+                (GoToSession, &["ctrl+alt+p"]),
                 (GoToImplementation, &[]),
                 (FindReferences, &["shift+f12"]),
                 (MoveLineUp, &["ctrl+shift+up"]),
@@ -485,6 +1094,90 @@ impl Preset {
 fn own() -> &'static [(Action, &'static [&'static str])] {
     use Action::*;
     &[
+        (CommandPalette, &["ctrl+shift+p", "f1"]),
+        (OpenSettings, &["ctrl+,"]),
+        (GoToSession, &["ctrl+r"]),
+        (NewSession, &["ctrl+n"]),
+        (AddProject, &[]),
+        (ShowHistory, &[]),
+        (ShowExtensions, &["ctrl+shift+x"]),
+        (WorkspaceBack, &["alt+left"]),
+        (WorkspaceForward, &["alt+right"]),
+        (Quit, &["ctrl+q"]),
+        (ShowChat, &[]),
+        (ShowDiff, &[]),
+        (StopAgent, &[]),
+        (ToggleTerminal, &["ctrl+`"]),
+        (NewTerminal, &["ctrl+shift+`"]),
+        (ToggleSourceControl, &["ctrl+shift+g"]),
+        (Commit, &[]),
+        (CommitAndPush, &[]),
+        (Pull, &[]),
+        (Push, &[]),
+        (Fetch, &[]),
+        (StashChanges, &[]),
+        (CheckoutBranch, &[]),
+        (CloneRepository, &[]),
+        (RefreshSourceControl, &[]),
+        (PullRebase, &[]),
+        (ForcePush, &[]),
+        (Sync, &[]),
+        (StageAll, &[]),
+        (UnstageAll, &[]),
+        (CommitAmend, &[]),
+        (ContinueOperation, &[]),
+        (SkipCommit, &[]),
+        (AbortOperation, &[]),
+        (StashApply, &[]),
+        (StashPop, &[]),
+        (StashDrop, &[]),
+        (CreateBranch, &[]),
+        (ToggleGraph, &[]),
+        (ChangeModel, &[]),
+        (ChangeMode, &[]),
+        (ChangeAgentSetting, &[]),
+        (CycleMode, &[]),
+        (AllowRequest, &[]),
+        (AlwaysAllowRequest, &[]),
+        (RejectRequest, &[]),
+        (RenameSession, &[]),
+        (ArchiveSession, &[]),
+        (CopySessionPath, &[]),
+        (CopyBranchName, &[]),
+        (OpenSessionFolder, &[]),
+        (RewindConversation, &[]),
+        (ForkConversation, &[]),
+        (RestoreFiles, &[]),
+        (FocusPrompt, &[]),
+        (CloseTab, &["ctrl+w"]),
+        (CloseOtherTabs, &[]),
+        (CloseSavedTabs, &[]),
+        (CloseAllTabs, &["ctrl+k ctrl+w"]),
+        (PinTab, &[]),
+        (ToggleReadOnly, &[]),
+        (CopyPath, &[]),
+        (CopyRelativePath, &[]),
+        (RevealInProject, &[]),
+        (SplitRight, &["ctrl+\\"]),
+        (SplitLeft, &[]),
+        (SplitUp, &[]),
+        (SplitDown, &[]),
+        (FocusNextPane, &["ctrl+k ctrl+right"]),
+        (FocusPreviousPane, &["ctrl+k ctrl+left"]),
+        (ChangeTheme, &["ctrl+k ctrl+t"]),
+        (ToggleTheme, &[]),
+        (ChangeKeymap, &[]),
+        (ZoomIn, &["ctrl+="]),
+        (ZoomOut, &[]),
+        (ResetZoom, &["ctrl+0"]),
+        (CopyPermalink, &[]),
+        (OpenPermalink, &[]),
+        (FileHistory, &[]),
+        (OpenTerminalHere, &[]),
+        (OutgoingCalls, &[]),
+        (CopyWithoutIndentation, &[]),
+        (Undo, &[]),
+        (Redo, &[]),
         (GoToDefinition, &["f12"]),
         (GoToDeclaration, &[]),
         (GoToTypeDefinition, &["ctrl+f12"]),

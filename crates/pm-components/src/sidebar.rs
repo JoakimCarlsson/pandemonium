@@ -3,8 +3,8 @@
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
-    Radius, Role, absolute, animate_spin, bg, border, border_color, border_r, border_t, flex,
-    flex_col, flex_none, gap, h, h_full, items_center, justify_center, left, mb, min_h, opacity,
+    Radius, Role, absolute, animate_spin, bg, border, border_color, border_r, flex, flex_col,
+    flex_none, gap, h, h_full, items_center, justify_center, left, mb, min_h, opacity,
     overflow_hidden, p, pl, pr, pt, px, rounded, rounded_full, shadow_md, size, top, w_px, z,
 };
 use pm_ui::{Node, node};
@@ -13,10 +13,10 @@ use crate::Avatar;
 use crate::Button;
 use crate::Tile;
 use crate::arrange::PROJECT_MORE_BASE;
-use crate::parts::{clipped, glyph, line, spacer};
+use crate::parts::{clipped, glyph, line};
 use crate::sample::{Session, Status};
 use crate::state::{
-    ADD_PROJECT, HISTORY, NEW_IN_BASE, PROJECT_BASE, Page, SESSION_BASE, SETTINGS, WorkspaceState,
+    ADD_PROJECT, HISTORY, NEW_IN_BASE, PROJECT_BASE, Page, SESSION_BASE, WorkspaceState,
 };
 
 /// How wide the sidebar is until it is dragged wider or narrower, in logical pixels.
@@ -32,12 +32,12 @@ const ROW: f32 = 36.0;
 const SECTION_GAP: f32 = 12.0;
 
 /// How tall everything in the sidebar but its list of projects is, in a
-/// window of any height: the three entries, the label above the list and the footer.
-const CHROME: f32 = 12.0 + 8.0 + 3.0 * ROW + 2.0 * 2.0 + ROW + 45.0;
+/// window of any height: the three entries and the label above the list.
+const CHROME: f32 = 12.0 + 8.0 + 3.0 * ROW + 2.0 * 2.0 + ROW;
 
-/// How tall the part of the sidebar showing the list is, in a window `height` logical pixels tall.
+/// How tall the part of the sidebar showing the list is, in a window `height` logical pixels tall, under the title bar.
 pub fn list_viewport(height: f32) -> f32 {
-    height - CHROME
+    height - crate::title_bar::TITLE_BAR_HEIGHT - CHROME
 }
 
 /// How tall the project at `index` is with its sessions, in logical pixels.
@@ -195,19 +195,6 @@ pub fn sidebar(state: &WorkspaceState) -> Node {
                         .map(|index| project(state, index)),
                 )
                 .scroll_y(state.sidebar_scroll),
-        )
-        .child(
-            node()
-                .styles([
-                    flex(),
-                    items_center(),
-                    gap(1),
-                    p(2),
-                    border_t(),
-                    border_color(Role::Border),
-                ])
-                .child(spacer())
-                .child(Button::icon(IconName::Settings, SETTINGS).build()),
         )
 }
 

@@ -2,20 +2,39 @@
 
 use std::time::{Duration, Instant};
 
+use pm_acp::Verdict;
 use pm_components::EditorCommand;
+use pm_components::arrange::{
+    SESSION_MENU_CLOSE, SESSION_MENU_COPY_BRANCH, SESSION_MENU_COPY_PATH, SESSION_MENU_OPEN_FOLDER,
+    SESSION_MENU_RENAME,
+};
 use pm_components::assist::{
     HOVER_CARD, HOVER_LINK_BASE, HOVER_LINK_END, HOVER_TEXT, list_height, signature_height,
 };
+use pm_components::extensions::EXTENSIONS;
 use pm_components::find::{FIND_CASE, FIND_FIELD, FIND_REGEX, FIND_WORD, REPLACE_FIELD};
 use pm_components::line_edits::{GO_TO_LINE, GO_TO_LINE_BOX, LineEdit};
-use pm_components::listing::{LISTING_BODY, LISTING_FILTER, LISTING_HEIGHT, listing_row_of};
+use pm_components::listing::{
+    LISTING_BODY, LISTING_FILTER, LISTING_HEIGHT, LISTING_TAKE, LISTING_WIDTH, QUICK_INSET,
+    listing_row_of,
+};
 use pm_components::navigate::{RENAME_BOX, RENAME_SYMBOL};
 use pm_components::open_files::{EDITOR_FIELD, EDITOR_SAVE};
+use pm_components::panes::{SPLIT_DOWN, SPLIT_LEFT, SPLIT_RIGHT, SPLIT_UP};
+use pm_components::quick_choices::Choosing;
+use pm_components::quick_input::{FIELD_HEIGHT, QUICK_SHOWN};
+use pm_components::state::{
+    ADD_PROJECT, HISTORY, NEW_TERMINAL, PROMPT, REVIEW, STOP, TAB_CHAT, TAB_DIFF, TERMINAL,
+};
+use pm_components::tab_menu::TabCommand;
+use pm_components::title_bar::{COMMAND_CENTER, TITLE_BAR_HEIGHT};
+use pm_config::ThemeMode;
 use pm_editor::{Action, Chord, Keymap, Pressed};
-use pm_input::{Key, KeyEvent};
+use pm_input::{FocusId, Key, KeyEvent};
 use pm_pages::Screen;
 use pm_protocol::Seek;
 use pm_text::Edit;
+use pm_theme::Appearance;
 
 use super::App;
 use crate::keys;
@@ -473,20 +492,79 @@ impl App {
         }
     }
 
-    /// Where a list opened from anywhere hangs: across the top of the window.
+    /// Where a list opened from anywhere hangs: over the command center in the middle of the title bar, its field lying on the command center.
     fn across_top(&self) -> (f32, f32) {
-        let width = self
-            .renderer
-            .as_ref()
-            .map_or(1280.0, |renderer| renderer.size().0);
-        (((width - 600.0) / 2.0).max(0.0), 56.0)
+        let width = self.window_size().0;
+        let center = self
+            .output
+            .regions
+            .iter()
+            .find(|region| region.id == COMMAND_CENTER)
+            .map(|region| region.rect);
+        let (middle, field_top) = center.map_or(
+            (width / 2.0, (TITLE_BAR_HEIGHT - FIELD_HEIGHT) / 2.0),
+            |rect| (rect.x + rect.width / 2.0, rect.y),
+        );
+        let left = (middle - LISTING_WIDTH / 2.0).clamp(0.0, (width - LISTING_WIDTH).max(0.0));
+        (left, (field_top - QUICK_INSET).max(0.0))
     }
 
-    /// Gives the keyboard to the field narrowing the list over the file, when one is open.
+    /// Carries out the command the list takes when `id`, one of its rows or the key that takes the row picked, is pressed, and says whether the list held commands.
+    pub(super) fn take_command(&mut self, id: FocusId) -> bool {
+        let row = listing_row_of(id);
+        if row.is_none() && id != LISTING_TAKE {
+            return false;
+        }
+        let Some(action) = self.model.read(|screen| screen.command_taken(row)) else {
+            return false;
+        };
+        self.model.update(|screen| {
+            *screen = std::mem::take(screen).listing_closed().command_used(action)
+        });
+        self.leave_listing();
+        self.perform(action);
+        true
+    }
+
+    /// Gives the keyboard back to the file shown once the list over it closed, or lets go of it when no file is shown.
+    fn leave_listing(&mut self) {
+        if self
+            .model
+            .read(|screen| screen.field(EDITOR_FIELD).is_some())
+        {
+            self.focus.focus(EDITOR_FIELD);
+        } else {
+            self.focus.clear();
+        }
+    }
+
+    /// Gives the keyboard to the field narrowing the list over the file once it is drawn, when one is open.
     fn focus_listing(&mut self) {
         if self.model.read(Screen::listing_open) {
-            self.focus.focus(LISTING_FILTER);
+            self.focus_filter = true;
         }
+    }
+
+    /// Opens the quick input over the choices of `choosing`.
+    fn choose(&mut self, choosing: Choosing) {
+        let at = self.across_top();
+        self.model
+            .update(|screen| *screen = std::mem::take(screen).choices_requested(choosing, at));
+        self.focus_listing();
+    }
+
+    /// Presses the row `row` of the menu of the session shown.
+    fn session_command(&mut self, row: FocusId) {
+        self.model
+            .update(|screen| *screen = std::mem::take(screen).session_command(row));
+        self.deliver();
+    }
+
+    /// Carries out `command` on the tab shown, as its menu does.
+    fn tab_command(&mut self, command: TabCommand) {
+        self.model
+            .update(|screen| *screen = std::mem::take(screen).shown_tab_command(command));
+        self.deliver();
     }
 
     /// Carries out `action`.
@@ -576,9 +654,7 @@ impl App {
                 self.focus.focus(GO_TO_LINE);
             }
             Action::Outline => {
-                let at = self.editor_caret().map_or((48.0, 96.0), |caret| {
-                    self.hung(caret, LISTING_HEIGHT + 40.0)
-                });
+                let at = self.across_top();
                 self.model
                     .update(|screen| *screen = std::mem::take(screen).outline_requested(at));
                 self.focus_listing();
@@ -608,6 +684,147 @@ impl App {
                 self.focus_listing();
             }
             Action::Save => self.activate(EDITOR_SAVE),
+            Action::CommandPalette => {
+                let at = self.across_top();
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).commands_requested(at));
+                self.focus_listing();
+            }
+            Action::OpenSettings => self.open_settings(),
+            Action::GoToSession => {
+                let at = self.across_top();
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).sessions_requested(at));
+                self.focus_listing();
+            }
+            Action::NewSession => {
+                if let Some(id) = self.model.read(Screen::new_session_button) {
+                    self.activate(id);
+                }
+            }
+            Action::AddProject => self.activate(ADD_PROJECT),
+            Action::ShowHistory => self.activate(HISTORY),
+            Action::ShowExtensions => self.activate(EXTENSIONS),
+            Action::WorkspaceBack => self.navigate(-1),
+            Action::WorkspaceForward => self.navigate(1),
+            Action::Quit => self.closing = self.close_window(),
+            Action::ShowChat => self.activate(TAB_CHAT),
+            Action::ShowDiff => self.activate(TAB_DIFF),
+            Action::StopAgent => self.activate(STOP),
+            Action::ToggleTerminal => self.activate(TERMINAL),
+            Action::NewTerminal => self.activate(NEW_TERMINAL),
+            Action::ToggleSourceControl => self.activate(REVIEW),
+            Action::ChangeModel | Action::ChangeMode => {
+                let category = if action == Action::ChangeModel {
+                    "model"
+                } else {
+                    "mode"
+                };
+                let at = self.across_top();
+                self.model.update(|screen| {
+                    *screen = std::mem::take(screen).agent_category_requested(category, at)
+                });
+                self.focus_listing();
+            }
+            Action::ChangeAgentSetting => self.choose(Choosing::AgentSetting),
+            Action::ChangeTheme => self.choose(Choosing::Theme),
+            Action::CheckoutBranch | Action::CreateBranch => self.choose(Choosing::Branch),
+            Action::ChangeKeymap => self.choose(Choosing::Keymap),
+            Action::RewindConversation => self.choose(Choosing::Rewind),
+            Action::ForkConversation => self.choose(Choosing::Fork),
+            Action::RestoreFiles => self.choose(Choosing::Restore),
+            Action::CycleMode => self
+                .model
+                .update(|screen| *screen = std::mem::take(screen).mode_cycled()),
+            Action::AllowRequest | Action::AlwaysAllowRequest | Action::RejectRequest => {
+                let verdict = match action {
+                    Action::AllowRequest => Verdict::Allow,
+                    Action::AlwaysAllowRequest => Verdict::Always,
+                    _ => Verdict::Reject,
+                };
+                if let Some(id) = self.model.read(|screen| screen.answer_of(verdict)) {
+                    self.activate(id);
+                }
+            }
+            Action::RenameSession => self.session_command(SESSION_MENU_RENAME),
+            Action::ArchiveSession => self.session_command(SESSION_MENU_CLOSE),
+            Action::CopySessionPath => self.session_command(SESSION_MENU_COPY_PATH),
+            Action::CopyBranchName => self.session_command(SESSION_MENU_COPY_BRANCH),
+            Action::OpenSessionFolder => self.session_command(SESSION_MENU_OPEN_FOLDER),
+            Action::FocusPrompt => self.focus.focus(PROMPT),
+            Action::CloseTab => self.tab_command(TabCommand::Close),
+            Action::CloseOtherTabs => self.tab_command(TabCommand::CloseOthers),
+            Action::CloseSavedTabs => self.tab_command(TabCommand::CloseClean),
+            Action::CloseAllTabs => self.tab_command(TabCommand::CloseAll),
+            Action::PinTab => self.tab_command(TabCommand::TogglePin),
+            Action::ToggleReadOnly => self.tab_command(TabCommand::ToggleReadOnly),
+            Action::CopyPath => self.tab_command(TabCommand::CopyPath),
+            Action::CopyRelativePath => self.tab_command(TabCommand::CopyRelativePath),
+            Action::RevealInProject => self.tab_command(TabCommand::RevealInProject),
+            Action::OpenPermalink => self.tab_command(TabCommand::OpenPermalink),
+            Action::SplitRight => self.activate(SPLIT_RIGHT),
+            Action::SplitLeft => self.activate(SPLIT_LEFT),
+            Action::SplitUp => self.activate(SPLIT_UP),
+            Action::SplitDown => self.activate(SPLIT_DOWN),
+            Action::FocusNextPane | Action::FocusPreviousPane => {
+                let delta = if action == Action::FocusNextPane {
+                    1
+                } else {
+                    -1
+                };
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).pane_stepped(delta));
+            }
+            Action::ToggleTheme => {
+                let mode = if self.appearance == Appearance::Dark {
+                    ThemeMode::Light
+                } else {
+                    ThemeMode::Dark
+                };
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).with_theme_mode(mode));
+            }
+            Action::ZoomIn | Action::ZoomOut | Action::ResetZoom => {
+                let steps = match action {
+                    Action::ZoomIn => Some(1),
+                    Action::ZoomOut => Some(-1),
+                    _ => None,
+                };
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).zoomed(steps));
+            }
+            Action::CopyPermalink => self.editor_command(EditorCommand::Permalink),
+            Action::FileHistory => self.editor_command(EditorCommand::FileHistory),
+            Action::OpenTerminalHere => self.editor_command(EditorCommand::OpenTerminal),
+            Action::OutgoingCalls => self.editor_command(EditorCommand::OutgoingCalls),
+            Action::CopyWithoutIndentation => self.editor_command(EditorCommand::CopyTrimmed),
+            Action::Undo => self.edit_field(EDITOR_FIELD, Edit::Undo),
+            Action::Redo => self.edit_field(EDITOR_FIELD, Edit::Redo),
+            Action::Commit
+            | Action::CommitAndPush
+            | Action::Pull
+            | Action::Push
+            | Action::Fetch
+            | Action::StashChanges
+            | Action::PullRebase
+            | Action::ForcePush
+            | Action::Sync
+            | Action::StageAll
+            | Action::UnstageAll
+            | Action::CommitAmend
+            | Action::ContinueOperation
+            | Action::SkipCommit
+            | Action::AbortOperation
+            | Action::StashApply
+            | Action::StashPop
+            | Action::StashDrop
+            | Action::ToggleGraph
+            | Action::CloneRepository
+            | Action::RefreshSourceControl => {
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).source_control(action));
+                self.deliver();
+            }
             _ => {}
         }
     }
@@ -628,23 +845,28 @@ impl App {
 
     /// Takes a key pressed while the field narrowing the list over the file has the keyboard: the arrows move the pick and Escape closes the list. Says whether it took the key.
     pub(super) fn listing_key(&mut self, event: KeyEvent) -> bool {
-        if self.focus.current() != Some(LISTING_FILTER) {
+        let focused = self.focus.current();
+        let held = focused == Some(LISTING_FILTER) || focused.is_none();
+        if !held || !self.model.read(Screen::listing_open) {
             return false;
         }
-        match event.key {
-            Key::ArrowUp => self
-                .model
-                .update(|screen| *screen = std::mem::take(screen).listing_moved(-1)),
-            Key::ArrowDown => self
-                .model
-                .update(|screen| *screen = std::mem::take(screen).listing_moved(1)),
+        let page = QUICK_SHOWN as isize - 1;
+        let delta = match event.key {
+            Key::ArrowUp => -1,
+            Key::ArrowDown => 1,
+            Key::PageUp => -page,
+            Key::PageDown => page,
             Key::Escape => {
                 self.model
                     .update(|screen| *screen = std::mem::take(screen).listing_closed());
-                self.focus.focus(EDITOR_FIELD);
+                self.focus_filter = false;
+                self.leave_listing();
+                return true;
             }
             _ => return false,
-        }
+        };
+        self.model
+            .update(|screen| *screen = std::mem::take(screen).listing_moved(delta));
         true
     }
 

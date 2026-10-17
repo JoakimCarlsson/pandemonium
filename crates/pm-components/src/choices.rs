@@ -843,6 +843,18 @@ impl WorkspaceState {
         (place as f32 * ROW_HEIGHT - ROW_HEIGHT).max(0.0)
     }
 
+    /// Gives the setting of the agent at `index` among those it offers now the value `value`.
+    pub fn agent_setting_changed(&mut self, index: usize, value: &str) {
+        let Some(id) = self
+            .settings_now()
+            .get(index)
+            .map(|setting| setting.id.clone())
+        else {
+            return;
+        };
+        self.change(&id, value);
+    }
+
     /// Chooses the value at `index` of the menu that is open.
     fn pick(&mut self, index: usize) {
         let Some(Picker::Setting(at)) = self.picker else {

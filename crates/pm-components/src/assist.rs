@@ -15,7 +15,7 @@ use crate::editor::COMPLETIONS_SHOWN;
 use crate::input::{Input, Size as InputSize};
 use crate::line_edits::{GO_TO_LINE, GO_TO_LINE_BOX, GoingTo};
 use crate::listing::{
-    Items, LISTING_BODY, LISTING_FILTER, LISTING_ROW_BASE, LISTING_SHOWN, Listing,
+    Items, LISTING_BODY, LISTING_FILTER, LISTING_ROW_BASE, LISTING_SHOWN, LISTING_WIDTH, Listing,
 };
 use crate::markdown::Markdown;
 use crate::navigate::{RENAME_BOX, RENAME_SYMBOL, Renaming};
@@ -457,7 +457,7 @@ pub fn assist(state: &WorkspaceState, height: f32, shaper: &mut Shaper) -> Vec<N
     let Some(document) = state.shown_document() else {
         return state
             .listing_shown()
-            .map(listing_panel)
+            .map(listing_or_quick)
             .into_iter()
             .collect();
     };
@@ -481,7 +481,7 @@ pub fn assist(state: &WorkspaceState, height: f32, shaper: &mut Shaper) -> Vec<N
         ));
     }
     if let Some(listing) = state.listing_shown() {
-        floating.push(listing_panel(listing));
+        floating.push(listing_or_quick(listing));
     }
     if let Some(renaming) = &state.renaming {
         floating.push(rename_box(renaming));
@@ -576,9 +576,6 @@ fn go_to_line_box(going: &GoingTo, lines: usize) -> Node {
         ))
 }
 
-/// How wide the list over the file is, in logical pixels.
-const LISTING_WIDTH: f32 = 600.0;
-
 /// A line of the list over the file, `content` in `pixels` and `tone`, cut short at the edge of the room it is given; in the font for code when `code`.
 fn cell(content: impl Into<String>, pixels: u32, tone: Role, code: bool) -> Node {
     let mut line =
@@ -609,7 +606,7 @@ fn place_name(location: &pm_protocol::Location) -> String {
 }
 
 /// The cells of the `index`-th row of `items`.
-fn listing_cells(items: &Items, index: usize) -> Vec<Node> {
+pub(crate) fn listing_cells(items: &Items, index: usize) -> Vec<Node> {
     match items {
         Items::Symbols { locations, .. } => {
             let Some(location) = locations.get(index) else {
@@ -657,6 +654,33 @@ fn listing_cells(items: &Items, index: usize) -> Vec<Node> {
                 tag(name.to_owned(), 12, Role::Text),
                 cell(folder.to_owned(), 11, Role::Subtle, false),
             ]
+        }
+        Items::Line { .. } => Vec::new(),
+        Items::Choices { choices, .. } => {
+            let Some(choice) = choices.get(index) else {
+                return Vec::new();
+            };
+            vec![
+                cell(choice.label.clone(), 12, Role::Text, false),
+                tag(choice.detail.clone(), 11, Role::Subtle),
+            ]
+        }
+        Items::Sessions { sessions, .. } => {
+            let Some((_, title, beside)) = sessions.get(index) else {
+                return Vec::new();
+            };
+            vec![
+                cell(title.clone(), 12, Role::Text, false),
+                tag(beside.clone(), 11, Role::Subtle),
+            ]
+        }
+        Items::Commands { commands, .. } => {
+            let Some((action, keys)) = commands.get(index) else {
+                return Vec::new();
+            };
+            let mut cells = vec![cell(action.title(), 12, Role::Text, false)];
+            cells.extend(keys.clone().map(|keys| tag(keys, 11, Role::Subtle)));
+            cells
         }
         Items::Outline { items, .. } => {
             let Some(item) = items.get(index) else {
@@ -721,6 +745,15 @@ fn listing_cells(items: &Items, index: usize) -> Vec<Node> {
     }
 }
 
+/// The quick input when `listing` is one, and otherwise the list over the file.
+fn listing_or_quick(listing: &Listing) -> Node {
+    if listing.quick {
+        crate::quick_input::quick_input(listing)
+    } else {
+        listing_panel(listing)
+    }
+}
+
 /// The list over the file: its title and how many rows it has, then the rows around the one picked, or what keeps it empty.
 fn listing_panel(listing: &Listing) -> Node {
     let shown = listing.items.rows();
@@ -734,6 +767,7 @@ fn listing_panel(listing: &Listing) -> Node {
     let filter = match &listing.items {
         Items::Outline { filter, .. } => Some((filter, "Go to an item of this file")),
         Items::Files { filter, .. } => Some((filter, "Open a file of this project")),
+        Items::Commands { filter, .. } => Some((filter, "Run a command")),
         Items::Symbols { filter, .. } => Some((filter, "Go to a symbol of this project")),
         Items::Search { filter, .. } => Some((filter, "Search the files of this project")),
         _ => None,

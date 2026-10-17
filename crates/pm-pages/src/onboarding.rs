@@ -5,7 +5,7 @@ use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
     Radius, Role, bg, flex, flex_1, flex_col, font_medium, font_semibold, gap, items_center,
-    justify_center, leading_ratio, max_w, min_w_px, p, rounded, size, text_color, text_px,
+    justify_center, leading_ratio, max_w, min_h, min_w_px, p, rounded, size, text_color, text_px,
     tracking_tight, tracking_wide, w_full,
 };
 use pm_text::{Edit, Field};
@@ -19,7 +19,7 @@ use pm_components::extensions::{endings, pickable, standing};
 use pm_components::parts::{glyph, line};
 use pm_components::project::Project;
 use pm_components::state::Outgoing;
-use pm_components::{Avatar, Checkbox, Progress, Tile};
+use pm_components::{Avatar, Checkbox, Progress, Tile, TitleBar};
 use pm_protocol::ExtensionInfo;
 
 /// Moves to the step after the current one.
@@ -603,7 +603,7 @@ fn footer(state: &OnboardingState) -> Node {
         .child(forward)
 }
 
-/// The whole onboarding screen for `state`.
+/// The whole onboarding screen for `state`, under a title bar holding only the controls of the window.
 pub fn onboarding(state: &OnboardingState) -> Node {
     let step = match state.step {
         Step::Welcome => welcome(),
@@ -628,17 +628,27 @@ pub fn onboarding(state: &OnboardingState) -> Node {
         )
         .child(step)
         .child(footer(state));
-    node()
+    let centered = node()
         .styles([
             flex(),
+            flex_1(),
+            min_h(0),
             items_center(),
             justify_center(),
             w_full(),
-            pm_style::h_full(),
             p(10),
+        ])
+        .child(body);
+    node()
+        .styles([
+            flex(),
+            flex_col(),
+            w_full(),
+            pm_style::h_full(),
             bg(Role::Background),
         ])
-        .child(body)
+        .child(TitleBar::new().build())
+        .child(centered)
         .children(state.menu.and_then(|open| menu_over(state, open)))
 }
 

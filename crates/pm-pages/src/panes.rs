@@ -22,6 +22,7 @@ use pm_components::panes::{
 use pm_components::parts::{glyph, line, spacer};
 use pm_components::sash::Sash;
 use pm_components::state::{Page, TAB_CHAT, TAB_DIFF, TERMINAL, WorkspaceState};
+use pm_components::title_bar::TITLE_BAR_HEIGHT;
 use pm_components::{Button, chat, diff, input, overview, terminal, viewer, welcome};
 
 /// How much of a window's height the conversation keeps for something other than the room above the prompt box, in logical pixels.
@@ -464,7 +465,8 @@ pub(crate) fn main_area(
     let area = state.pane_area(window);
     let panes = state.panes();
     let placed = panes.layout.placed(area);
-    let extra = window.1 - area.height;
+    let page = window.1 - TITLE_BAR_HEIGHT;
+    let extra = page - area.height;
     let mut next = 0;
     let body = laid(
         state,
@@ -482,9 +484,7 @@ pub(crate) fn main_area(
                 .child(body),
         );
     if let Some(session) = state.docked().filter(|_| state.docking()) {
-        column = column.child(terminal::terminal(
-            state, session, area.width, window.1, shaper,
-        ));
+        column = column.child(terminal::terminal(state, session, area.width, page, shaper));
     }
     let mut over: Vec<Node> = panes
         .layout

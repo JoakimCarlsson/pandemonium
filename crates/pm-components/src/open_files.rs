@@ -173,6 +173,9 @@ impl WorkspaceState {
         let Some(session) = self.review_index() else {
             return;
         };
+        self.recent_files.retain(|held| *held != path);
+        self.recent_files.insert(0, path.clone());
+        self.recent_files.truncate(crate::listing::RECENT_FILES);
         self.settle_panes();
         let held = self
             .git
