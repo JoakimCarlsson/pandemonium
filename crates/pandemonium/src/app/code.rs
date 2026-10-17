@@ -728,7 +728,7 @@ impl App {
             }
             Action::ChangeAgentSetting => self.choose(Choosing::AgentSetting),
             Action::ChangeTheme => self.choose(Choosing::Theme),
-            Action::CheckoutBranch => self.choose(Choosing::Branch),
+            Action::CheckoutBranch | Action::CreateBranch => self.choose(Choosing::Branch),
             Action::ChangeKeymap => self.choose(Choosing::Keymap),
             Action::RewindConversation => self.choose(Choosing::Rewind),
             Action::ForkConversation => self.choose(Choosing::Fork),
@@ -806,6 +806,19 @@ impl App {
             | Action::Push
             | Action::Fetch
             | Action::StashChanges
+            | Action::PullRebase
+            | Action::ForcePush
+            | Action::Sync
+            | Action::StageAll
+            | Action::UnstageAll
+            | Action::CommitAmend
+            | Action::ContinueOperation
+            | Action::SkipCommit
+            | Action::AbortOperation
+            | Action::StashApply
+            | Action::StashPop
+            | Action::StashDrop
+            | Action::ToggleGraph
             | Action::CloneRepository
             | Action::RefreshSourceControl => {
                 self.model

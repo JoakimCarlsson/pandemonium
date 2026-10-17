@@ -41,7 +41,7 @@ impl Choosing {
             Self::Rewind => "Select a message to rewind the conversation to before",
             Self::Restore => "Select a message to restore the files to before",
             Self::Fork => "Select a reply to fork the conversation after",
-            Self::Branch => "Select a branch to check out",
+            Self::Branch => "Select a branch to check out, or type a name to create one",
             Self::Help => "Type a prefix, or select one",
         }
     }
@@ -73,6 +73,8 @@ pub enum Then {
     Value(usize, String),
     /// Checks out the branch of this name.
     Checkout(String),
+    /// Makes a branch of this name and checks it out.
+    CreateBranch(String),
     /// Types this in the quick input, to list what it says.
     Type(&'static str),
 }
@@ -252,6 +254,25 @@ impl WorkspaceState {
         self
     }
 
+    /// `choices` with the choice to make a branch called `typed` last, when they list branches and none is called that.
+    pub(crate) fn with_new_branch(
+        choosing: Choosing,
+        mut choices: Vec<Choice>,
+        typed: &str,
+    ) -> Vec<Choice> {
+        choices.retain(|choice| !matches!(choice.then, Then::CreateBranch(_)));
+        let name = typed.trim();
+        let taken = choices.iter().any(|choice| choice.label == name);
+        if choosing == Choosing::Branch && !name.is_empty() && !taken {
+            choices.push(Choice::new(
+                format!("Create branch {name}"),
+                "",
+                Then::CreateBranch(name.to_owned()),
+            ));
+        }
+        choices
+    }
+
     /// The choices of the list open over the window renewed from the workspace, when it lists `choosing`, keeping what is typed.
     pub(crate) fn choices_renewed(&mut self, choosing: Choosing) {
         let renewed = self.choices_of(choosing);
@@ -264,6 +285,7 @@ impl WorkspaceState {
             } = &mut listing.items
             && *held == choosing
         {
+            let renewed = Self::with_new_branch(choosing, renewed, filter.text());
             *matched = crate::listing::matching_choices(&renewed, filter.text());
             *choices = renewed;
             listing.problem = choices.is_empty().then(|| choosing.empty().to_owned());
@@ -293,6 +315,14 @@ impl WorkspaceState {
                     self.git.trouble = None;
                     self.git.busy = Some("Switching branch…");
                     self.outbox.push(Outgoing::Checkout { session, branch });
+                }
+                self
+            }
+            Then::CreateBranch(name) => {
+                if let Some(session) = self.review_index() {
+                    self.git.trouble = None;
+                    self.git.busy = Some("Making branch…");
+                    self.outbox.push(Outgoing::CreateBranch { session, name });
                 }
                 self
             }

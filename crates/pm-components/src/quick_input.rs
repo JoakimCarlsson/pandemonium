@@ -118,7 +118,7 @@ fn row(listing: &Listing, place: usize, index: usize, picked: bool) -> Node {
                 _ => None,
             };
             let cells = commands.get(index).map_or_else(Vec::new, |(action, keys)| {
-                let mut cells = vec![marked(action.title(), query)];
+                let mut cells = vec![marked(&action.palette_title(), query)];
                 cells.extend(group.map(|(said, _)| separator(said)));
                 cells.extend(keys.as_deref().map(keycaps));
                 cells

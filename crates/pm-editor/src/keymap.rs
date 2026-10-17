@@ -153,6 +153,34 @@ pub enum Action {
     CloneRepository,
     /// Reads the changes and the graph again.
     RefreshSourceControl,
+    /// Pulls from the remote, replaying the branch's own commits on top.
+    PullRebase,
+    /// Pushes to the remote, overwriting only what was seen.
+    ForcePush,
+    /// Pulls from the remote and then pushes to it.
+    Sync,
+    /// Stages every change.
+    StageAll,
+    /// Unstages every change.
+    UnstageAll,
+    /// Rewrites the last commit with the staged changes.
+    CommitAmend,
+    /// Finishes the merge, rebase or cherry-pick that stopped.
+    ContinueOperation,
+    /// Leaves out the commit the rebase or cherry-pick stopped on.
+    SkipCommit,
+    /// Gives up the merge, rebase or cherry-pick that stopped.
+    AbortOperation,
+    /// Lists the stashes, to apply one and keep it.
+    StashApply,
+    /// Lists the stashes, to apply one and remove it.
+    StashPop,
+    /// Lists the stashes, to remove one.
+    StashDrop,
+    /// Makes a branch by the name typed and checks it out.
+    CreateBranch,
+    /// Shows or hides the graph of commits.
+    ToggleGraph,
     /// Goes to where the name at the caret is defined.
     GoToDefinition,
     /// Goes to where it is declared.
@@ -267,7 +295,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, in the order the keymap lists them.
-    pub const ALL: [Self; 125] = [
+    pub const ALL: [Self; 139] = [
         Self::CommandPalette,
         Self::OpenSettings,
         Self::GoToSession,
@@ -338,6 +366,20 @@ impl Action {
         Self::CheckoutBranch,
         Self::CloneRepository,
         Self::RefreshSourceControl,
+        Self::PullRebase,
+        Self::ForcePush,
+        Self::Sync,
+        Self::StageAll,
+        Self::UnstageAll,
+        Self::CommitAmend,
+        Self::ContinueOperation,
+        Self::SkipCommit,
+        Self::AbortOperation,
+        Self::StashApply,
+        Self::StashPop,
+        Self::StashDrop,
+        Self::CreateBranch,
+        Self::ToggleGraph,
         Self::GoToDefinition,
         Self::GoToDeclaration,
         Self::GoToTypeDefinition,
@@ -468,6 +510,20 @@ impl Action {
             Self::CheckoutBranch => "git_checkout",
             Self::CloneRepository => "git_clone",
             Self::RefreshSourceControl => "git_refresh",
+            Self::PullRebase => "git_pull_rebase",
+            Self::ForcePush => "git_force_push",
+            Self::Sync => "git_sync",
+            Self::StageAll => "git_stage_all",
+            Self::UnstageAll => "git_unstage_all",
+            Self::CommitAmend => "git_amend",
+            Self::ContinueOperation => "git_continue",
+            Self::SkipCommit => "git_skip",
+            Self::AbortOperation => "git_abort",
+            Self::StashApply => "git_stash_apply",
+            Self::StashPop => "git_stash_pop",
+            Self::StashDrop => "git_stash_drop",
+            Self::CreateBranch => "git_create_branch",
+            Self::ToggleGraph => "git_toggle_graph",
             Self::GoToDefinition => "go_to_definition",
             Self::GoToDeclaration => "go_to_declaration",
             Self::GoToTypeDefinition => "go_to_type_definition",
@@ -599,6 +655,20 @@ impl Action {
             Self::CheckoutBranch => "Checkout Branch",
             Self::CloneRepository => "Clone Repository",
             Self::RefreshSourceControl => "Refresh Source Control",
+            Self::PullRebase => "Pull (Rebase)",
+            Self::ForcePush => "Push (Force)",
+            Self::Sync => "Sync",
+            Self::StageAll => "Stage All Changes",
+            Self::UnstageAll => "Unstage All Changes",
+            Self::CommitAmend => "Commit (Amend)",
+            Self::ContinueOperation => "Continue Merge or Rebase",
+            Self::SkipCommit => "Skip Commit",
+            Self::AbortOperation => "Abort Merge or Rebase",
+            Self::StashApply => "Apply Stash",
+            Self::StashPop => "Pop Stash",
+            Self::StashDrop => "Drop Stash",
+            Self::CreateBranch => "Create Branch",
+            Self::ToggleGraph => "Toggle Commit Graph",
             Self::GoToDefinition => "Go to Definition",
             Self::GoToDeclaration => "Go to Declaration",
             Self::GoToTypeDefinition => "Go to Type Definition",
@@ -654,6 +724,14 @@ impl Action {
             Self::TerminalSelectAll => "Select All",
             Self::TerminalClear => "Clear",
             Self::KillTerminal => "Kill Terminal",
+        }
+    }
+
+    /// What the list of commands calls it: its title, after `Git: ` for the commands of source control.
+    pub fn palette_title(self) -> String {
+        match self.group() {
+            "Source Control" => format!("Git: {}", self.title()),
+            _ => self.title().to_owned(),
         }
     }
 
@@ -726,7 +804,21 @@ impl Action {
             | Self::StashChanges
             | Self::CheckoutBranch
             | Self::CloneRepository
-            | Self::RefreshSourceControl => "Source Control",
+            | Self::RefreshSourceControl
+            | Self::PullRebase
+            | Self::ForcePush
+            | Self::Sync
+            | Self::StageAll
+            | Self::UnstageAll
+            | Self::CommitAmend
+            | Self::ContinueOperation
+            | Self::SkipCommit
+            | Self::AbortOperation
+            | Self::StashApply
+            | Self::StashPop
+            | Self::StashDrop
+            | Self::CreateBranch
+            | Self::ToggleGraph => "Source Control",
             Self::GoToDefinition
             | Self::GoToDeclaration
             | Self::GoToTypeDefinition
@@ -796,6 +888,20 @@ impl Action {
                 | Self::CheckoutBranch
                 | Self::CloneRepository
                 | Self::RefreshSourceControl
+                | Self::PullRebase
+                | Self::ForcePush
+                | Self::Sync
+                | Self::StageAll
+                | Self::UnstageAll
+                | Self::CommitAmend
+                | Self::ContinueOperation
+                | Self::SkipCommit
+                | Self::AbortOperation
+                | Self::StashApply
+                | Self::StashPop
+                | Self::StashDrop
+                | Self::CreateBranch
+                | Self::ToggleGraph
                 | Self::ChangeModel
                 | Self::ChangeMode
                 | Self::ChangeAgentSetting
@@ -1000,6 +1106,20 @@ fn own() -> &'static [(Action, &'static [&'static str])] {
         (CheckoutBranch, &[]),
         (CloneRepository, &[]),
         (RefreshSourceControl, &[]),
+        (PullRebase, &[]),
+        (ForcePush, &[]),
+        (Sync, &[]),
+        (StageAll, &[]),
+        (UnstageAll, &[]),
+        (CommitAmend, &[]),
+        (ContinueOperation, &[]),
+        (SkipCommit, &[]),
+        (AbortOperation, &[]),
+        (StashApply, &[]),
+        (StashPop, &[]),
+        (StashDrop, &[]),
+        (CreateBranch, &[]),
+        (ToggleGraph, &[]),
         (ChangeModel, &[]),
         (ChangeMode, &[]),
         (ChangeAgentSetting, &[]),

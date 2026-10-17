@@ -278,7 +278,7 @@ fn matching_commands(
 ) -> (Vec<usize>, usize) {
     let typed = typed.trim().to_lowercase();
     let rank = |action: Action| {
-        let title = action.title().to_lowercase();
+        let title = action.palette_title().to_lowercase();
         if title.starts_with(&typed) {
             Some(0)
         } else if title.contains(&typed) {
@@ -907,8 +907,15 @@ impl WorkspaceState {
                 sessions, matched, ..
             } => *matched = matching_sessions(sessions, &query),
             Items::Choices {
-                choices, matched, ..
-            } => *matched = matching_choices(choices, &query),
+                choosing,
+                choices,
+                matched,
+                ..
+            } => {
+                *choices =
+                    WorkspaceState::with_new_branch(*choosing, std::mem::take(choices), &query);
+                *matched = matching_choices(choices, &query);
+            }
             Items::Commands {
                 commands,
                 matched,

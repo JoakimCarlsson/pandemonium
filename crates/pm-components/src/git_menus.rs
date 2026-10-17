@@ -429,6 +429,25 @@ impl WorkspaceState {
             Action::CheckoutBranch => Command::Checkout,
             Action::CloneRepository => Command::Clone,
             Action::RefreshSourceControl => Command::Refresh,
+            Action::PullRebase => Command::PullRebase,
+            Action::ForcePush => Command::ForcePush,
+            Action::StageAll => Command::StageAll,
+            Action::UnstageAll => Command::UnstageAll,
+            Action::CommitAmend => Command::Amend,
+            Action::ContinueOperation => Command::Commit,
+            Action::SkipCommit => Command::Skip,
+            Action::AbortOperation => Command::Abort,
+            Action::StashApply => Command::Stashes(StashAction::Apply),
+            Action::StashPop => Command::Stashes(StashAction::Pop),
+            Action::StashDrop => Command::Stashes(StashAction::Drop),
+            Action::Sync => {
+                self.remote("sync", "Syncing…");
+                return self;
+            }
+            Action::ToggleGraph => {
+                self.git.graph_open = !self.git.graph_open;
+                return self;
+            }
             _ => return self,
         };
         self.run(command, MenuKind::Source);
