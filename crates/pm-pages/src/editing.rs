@@ -174,6 +174,26 @@ impl Screen {
         self.in_workspace(|state| state.commands_requested(at))
     }
 
+    /// The screen listing the sessions of every project at `at`, to go to one.
+    pub fn sessions_requested(self, at: (f32, f32)) -> Self {
+        self.in_workspace(|state| state.sessions_requested(at))
+    }
+
+    /// The screen after the source control `action` of the keymap was carried out.
+    pub fn source_control(self, action: pm_editor::Action) -> Self {
+        self.in_workspace(|state| state.source_control(action))
+    }
+
+    /// The button that starts a new session in the project shown, when there is a project.
+    pub fn new_session_button(&self) -> Option<pm_input::FocusId> {
+        match self {
+            Self::Workspace(state) if !state.projects.is_empty() => Some(pm_input::FocusId(
+                pm_components::state::NEW_IN_BASE + state.current_project() as u64,
+            )),
+            _ => None,
+        }
+    }
+
     /// The screen after `action` was carried out from the quick input, which lists it among the commands used recently.
     pub fn command_used(self, action: pm_editor::Action) -> Self {
         self.in_workspace(|state| state.command_used(action))

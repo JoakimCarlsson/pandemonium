@@ -38,13 +38,15 @@ pub enum Quick {
     Outline,
     /// The lines of the files of the project holding what is typed, after `%`.
     Search,
+    /// The sessions of every project and the projects to start one in, typed with nothing before them; opened only by its own keys.
+    Sessions,
 }
 
 impl Quick {
     /// What is typed first to list this.
     pub const fn prefix(self) -> &'static str {
         match self {
-            Self::Files => "",
+            Self::Files | Self::Sessions => "",
             Self::Commands => ">",
             Self::Symbols => "#",
             Self::Outline => "@",
@@ -62,6 +64,15 @@ impl Quick {
             Self::Symbols => "Go to a symbol in the project",
             Self::Outline => "Go to a symbol in the file",
             Self::Search => "Search the text of the project",
+            Self::Sessions => "Go to a session, or a project to start one in",
+        }
+    }
+
+    /// What the quick input lists once `text` is typed in it while it lists this: what the first character of `text` says, but the sessions stay listed while nothing says otherwise.
+    fn after_typing(self, text: &str) -> Self {
+        match Self::of(text) {
+            Self::Files if self == Self::Sessions => Self::Sessions,
+            other => other,
         }
     }
 
@@ -154,6 +165,15 @@ pub enum Items {
         /// How many of `matched` were used recently.
         recent: usize,
     },
+    /// The sessions of every project, the latest changed first, then the projects to start one in, narrowed by what is typed, to go to one.
+    Sessions {
+        /// Each place to go to, with its name and what is said beside it.
+        sessions: Vec<(Destination, String, String)>,
+        /// What the titles are narrowed to.
+        filter: Field,
+        /// The sessions that match, best first, by place among `sessions`.
+        matched: Vec<usize>,
+    },
 }
 
 /// How many files the finder lists at most.
@@ -236,6 +256,42 @@ fn matching_commands(
     (matched, count)
 }
 
+/// A place the list of sessions goes to.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Destination {
+    /// A session, by its place among the workspace's.
+    Session(usize),
+    /// The page that starts a new session in a project, by its place among the workspace's.
+    Project(usize),
+}
+
+/// The places of `sessions` whose names or what is said beside them match `typed`, the sessions before the projects and each best first: a name starting with it, then one holding it, then one holding its letters in order, then what is said beside it that does, each in the order they are listed.
+fn matching_sessions(sessions: &[(Destination, String, String)], typed: &str) -> Vec<usize> {
+    let typed = typed.trim().to_lowercase();
+    let mut scored: Vec<(bool, u8, usize)> = sessions
+        .iter()
+        .enumerate()
+        .filter_map(|(place, (destination, title, beside))| {
+            let title = title.to_lowercase();
+            let rank = if title.starts_with(&typed) {
+                0
+            } else if title.contains(&typed) {
+                1
+            } else if narrows_to(&title, &typed) {
+                2
+            } else if narrows_to(&beside.to_lowercase(), &typed) {
+                3
+            } else {
+                return None;
+            };
+            let project = matches!(destination, Destination::Project(_));
+            Some((project, rank, place))
+        })
+        .collect();
+    scored.sort();
+    scored.into_iter().map(|(.., place)| place).collect()
+}
+
 /// The characters of `name` that `typed` matches, by their place among the characters of `name`, ignoring case: the run that holds it when `name` holds it whole, and otherwise its letters where they first come in order; none when they do not.
 pub fn matched_characters(name: &str, typed: &str) -> Vec<usize> {
     let name: Vec<char> = name.chars().flat_map(char::to_lowercase).collect();
@@ -290,7 +346,9 @@ impl Items {
                 .filter(|(_, item)| narrows_to(&item.name, self.query().trim()))
                 .map(|(place, _)| place)
                 .collect(),
-            Self::Files { matched, .. } | Self::Commands { matched, .. } => matched.clone(),
+            Self::Files { matched, .. }
+            | Self::Commands { matched, .. }
+            | Self::Sessions { matched, .. } => matched.clone(),
             Self::Problems { problems } => (0..problems.len()).collect(),
             Self::Symbols { locations, .. } | Self::Search { locations, .. } => {
                 (0..locations.len()).collect()
@@ -306,6 +364,7 @@ impl Items {
             Self::Symbols { .. } => Some(Quick::Symbols),
             Self::Outline { .. } => Some(Quick::Outline),
             Self::Search { .. } => Some(Quick::Search),
+            Self::Sessions { .. } => Some(Quick::Sessions),
             _ => None,
         }
     }
@@ -316,6 +375,7 @@ impl Items {
             Self::Outline { filter, .. }
             | Self::Files { filter, .. }
             | Self::Commands { filter, .. }
+            | Self::Sessions { filter, .. }
             | Self::Symbols { filter, .. }
             | Self::Search { filter, .. } => Some(filter),
             _ => None,
@@ -354,6 +414,7 @@ impl Items {
             Self::Outline { .. } => "Outline".to_owned(),
             Self::Files { .. } => "Files".to_owned(),
             Self::Commands { .. } => "Commands".to_owned(),
+            Self::Sessions { .. } => "Sessions".to_owned(),
             Self::Symbols { .. } => "Symbols".to_owned(),
             Self::Search { .. } => "Search".to_owned(),
             Self::Problems { .. } => "Problems".to_owned(),
@@ -463,9 +524,19 @@ impl WorkspaceState {
         self.quick_opened(Field::new(typed), at)
     }
 
+    /// Opens the quick input at `at` over the sessions of every project, the latest changed first, to go to one by typing part of its name.
+    pub fn sessions_requested(self, at: (f32, f32)) -> Self {
+        self.quick_as(Quick::Sessions, Field::new(""), at)
+    }
+
     /// The quick input at `at` holding `filter`, listing what its first character says, or saying why it cannot.
-    fn quick_opened(mut self, filter: Field, at: (f32, f32)) -> Self {
+    fn quick_opened(self, filter: Field, at: (f32, f32)) -> Self {
         let quick = Quick::of(filter.text());
+        self.quick_as(quick, filter, at)
+    }
+
+    /// The quick input at `at` holding `filter` and listing what `quick` says, or saying why it cannot.
+    fn quick_as(mut self, quick: Quick, filter: Field, at: (f32, f32)) -> Self {
         let query = filter
             .text()
             .strip_prefix(quick.prefix())
@@ -476,6 +547,45 @@ impl WorkspaceState {
         let mut problem = None;
         let mut answered = true;
         let items = match quick {
+            Quick::Sessions => {
+                let shown = match self.page {
+                    crate::state::Page::Session(index) => Some(index),
+                    _ => None,
+                };
+                let mut order: Vec<usize> = (0..self.sessions.len())
+                    .filter(|index| Some(*index) != shown && !self.sessions[*index].closed)
+                    .collect();
+                order.sort_by_key(|index| std::cmp::Reverse(self.sessions[*index].updated_at));
+                let projects = self.projects.iter().enumerate().map(|(index, project)| {
+                    (
+                        Destination::Project(index),
+                        project.name.clone(),
+                        String::new(),
+                    )
+                });
+                let sessions: Vec<(Destination, String, String)> = order
+                    .into_iter()
+                    .map(|index| {
+                        let session = &self.sessions[index];
+                        let project = self
+                            .projects
+                            .get(session.project)
+                            .map_or_else(String::new, |project| project.name.clone());
+                        let beside = format!("{project} · {}", session.age());
+                        (Destination::Session(index), session.title.clone(), beside)
+                    })
+                    .chain(projects)
+                    .collect();
+                if sessions.is_empty() {
+                    problem = Some("Add a project to start a session".to_owned());
+                }
+                let matched = matching_sessions(&sessions, &query);
+                Items::Sessions {
+                    sessions,
+                    filter,
+                    matched,
+                }
+            }
             Quick::Commands => {
                 let coding = self.shown_document().is_some();
                 let keymap = self.editor.keymap();
@@ -536,6 +646,7 @@ impl WorkspaceState {
                 let path = self
                     .shown_viewer()
                     .filter(|_| self.coding())
+                    .or_else(|| self.git.viewers.first())
                     .map(|viewer| viewer.path.clone())
                     .unwrap_or_default();
                 if path.is_empty() || session.is_none() {
@@ -618,9 +729,11 @@ impl WorkspaceState {
         {
             let mut changed = filter.clone();
             changed.apply(edit.clone());
-            if listing.items.quick() != Some(Quick::of(changed.text())) {
+            let held = listing.items.quick().unwrap_or(Quick::Files);
+            let wanted = held.after_typing(changed.text());
+            if held != wanted {
                 let at = listing.at;
-                return self.quick_opened(changed, at);
+                return self.quick_as(wanted, changed, at);
             }
         }
         let recent = self.recent_commands.clone();
@@ -631,20 +744,27 @@ impl WorkspaceState {
             Items::Outline { filter, .. } => filter.apply(edit),
             Items::Files { filter, .. }
             | Items::Commands { filter, .. }
+            | Items::Sessions { filter, .. }
             | Items::Symbols { filter, .. }
             | Items::Search { filter, .. } => filter.apply(edit),
             _ => return self,
         }
         let query = items.query().to_owned();
+        if query == before {
+            return self;
+        }
         match items {
             Items::Files { paths, matched, .. } => *matched = matching_files(paths, &query),
+            Items::Sessions {
+                sessions, matched, ..
+            } => *matched = matching_sessions(sessions, &query),
             Items::Commands {
                 commands,
                 matched,
                 recent: count,
                 ..
             } => (*matched, *count) = matching_commands(commands, &query, &recent),
-            Items::Symbols { path, .. } if query != before && !path.is_empty() => {
+            Items::Symbols { path, .. } if !path.is_empty() => {
                 let request = Outgoing::WorkspaceSymbols {
                     session,
                     path: path.clone(),
@@ -654,7 +774,7 @@ impl WorkspaceState {
                 listing.problem = None;
                 self.outbox.push(request);
             }
-            Items::Search { .. } if query != before && has_session && !query.is_empty() => {
+            Items::Search { .. } if has_session && !query.is_empty() => {
                 listing.answered = false;
                 listing.problem = None;
                 self.outbox.push(Outgoing::SearchFiles { session, query });
@@ -772,6 +892,15 @@ impl WorkspaceState {
                 None => self,
             },
             Items::Commands { .. } => self,
+            Items::Sessions { sessions, .. } => match sessions.get(index) {
+                Some((Destination::Session(session), ..)) => {
+                    self.after(FocusId(crate::state::SESSION_BASE + *session as u64))
+                }
+                Some((Destination::Project(project), ..)) => {
+                    self.after(FocusId(crate::state::NEW_IN_BASE + *project as u64))
+                }
+                None => self,
+            },
             Items::Actions { path, offered } => {
                 let usable = offered
                     .get(index)

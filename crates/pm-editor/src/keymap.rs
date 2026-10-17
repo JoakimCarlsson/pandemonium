@@ -17,6 +17,52 @@ pub enum Action {
     CommandPalette,
     /// Opens the settings.
     OpenSettings,
+    /// Lists the sessions, to go to one by typing part of its name.
+    GoToSession,
+    /// Starts a new session in the project shown.
+    NewSession,
+    /// Adds a project to the window.
+    AddProject,
+    /// Shows every session of every project.
+    ShowHistory,
+    /// Shows the extensions there are to install.
+    ShowExtensions,
+    /// Goes back to the page shown before.
+    WorkspaceBack,
+    /// Goes forward to the page gone back from.
+    WorkspaceForward,
+    /// Closes the window.
+    Quit,
+    /// Shows the conversation of the session.
+    ShowChat,
+    /// Shows what the session changed.
+    ShowDiff,
+    /// Stops the agent of the session.
+    StopAgent,
+    /// Shows or hides the terminal.
+    ToggleTerminal,
+    /// Opens another terminal.
+    NewTerminal,
+    /// Shows or hides the source control panel.
+    ToggleSourceControl,
+    /// Commits the staged changes.
+    Commit,
+    /// Commits the staged changes and pushes them.
+    CommitAndPush,
+    /// Pulls from the remote.
+    Pull,
+    /// Pushes to the remote.
+    Push,
+    /// Fetches from every remote.
+    Fetch,
+    /// Stashes the changes.
+    StashChanges,
+    /// Lists the branches, to check one out.
+    CheckoutBranch,
+    /// Clones a repository as a new project.
+    CloneRepository,
+    /// Reads the changes and the graph again.
+    RefreshSourceControl,
     /// Goes to where the name at the caret is defined.
     GoToDefinition,
     /// Goes to where it is declared.
@@ -131,9 +177,32 @@ pub enum Action {
 
 impl Action {
     /// Every action, in the order the keymap lists them.
-    pub const ALL: [Self; 57] = [
+    pub const ALL: [Self; 80] = [
         Self::CommandPalette,
         Self::OpenSettings,
+        Self::GoToSession,
+        Self::NewSession,
+        Self::AddProject,
+        Self::ShowHistory,
+        Self::ShowExtensions,
+        Self::WorkspaceBack,
+        Self::WorkspaceForward,
+        Self::Quit,
+        Self::ShowChat,
+        Self::ShowDiff,
+        Self::StopAgent,
+        Self::ToggleTerminal,
+        Self::NewTerminal,
+        Self::ToggleSourceControl,
+        Self::Commit,
+        Self::CommitAndPush,
+        Self::Pull,
+        Self::Push,
+        Self::Fetch,
+        Self::StashChanges,
+        Self::CheckoutBranch,
+        Self::CloneRepository,
+        Self::RefreshSourceControl,
         Self::GoToDefinition,
         Self::GoToDeclaration,
         Self::GoToTypeDefinition,
@@ -196,6 +265,29 @@ impl Action {
         match self {
             Self::CommandPalette => "command_palette",
             Self::OpenSettings => "open_settings",
+            Self::GoToSession => "go_to_session",
+            Self::NewSession => "new_session",
+            Self::AddProject => "add_project",
+            Self::ShowHistory => "show_history",
+            Self::ShowExtensions => "show_extensions",
+            Self::WorkspaceBack => "workspace_back",
+            Self::WorkspaceForward => "workspace_forward",
+            Self::Quit => "quit",
+            Self::ShowChat => "show_chat",
+            Self::ShowDiff => "show_diff",
+            Self::StopAgent => "stop_agent",
+            Self::ToggleTerminal => "toggle_terminal",
+            Self::NewTerminal => "new_terminal",
+            Self::ToggleSourceControl => "toggle_source_control",
+            Self::Commit => "git_commit",
+            Self::CommitAndPush => "git_commit_and_push",
+            Self::Pull => "git_pull",
+            Self::Push => "git_push",
+            Self::Fetch => "git_fetch",
+            Self::StashChanges => "git_stash",
+            Self::CheckoutBranch => "git_checkout",
+            Self::CloneRepository => "git_clone",
+            Self::RefreshSourceControl => "git_refresh",
             Self::GoToDefinition => "go_to_definition",
             Self::GoToDeclaration => "go_to_declaration",
             Self::GoToTypeDefinition => "go_to_type_definition",
@@ -259,6 +351,29 @@ impl Action {
         match self {
             Self::CommandPalette => "Show All Commands",
             Self::OpenSettings => "Open Settings",
+            Self::GoToSession => "Go to Session",
+            Self::NewSession => "New Session",
+            Self::AddProject => "Add Project",
+            Self::ShowHistory => "Show History",
+            Self::ShowExtensions => "Show Extensions",
+            Self::WorkspaceBack => "Go Back to Previous Page",
+            Self::WorkspaceForward => "Go Forward to Next Page",
+            Self::Quit => "Quit",
+            Self::ShowChat => "Show Chat",
+            Self::ShowDiff => "Show Diff",
+            Self::StopAgent => "Stop Agent",
+            Self::ToggleTerminal => "Toggle Terminal",
+            Self::NewTerminal => "New Terminal",
+            Self::ToggleSourceControl => "Toggle Source Control",
+            Self::Commit => "Commit",
+            Self::CommitAndPush => "Commit and Push",
+            Self::Pull => "Pull",
+            Self::Push => "Push",
+            Self::Fetch => "Fetch",
+            Self::StashChanges => "Stash Changes",
+            Self::CheckoutBranch => "Checkout Branch",
+            Self::CloneRepository => "Clone Repository",
+            Self::RefreshSourceControl => "Refresh Source Control",
             Self::GoToDefinition => "Go to Definition",
             Self::GoToDeclaration => "Go to Declaration",
             Self::GoToTypeDefinition => "Go to Type Definition",
@@ -321,6 +436,29 @@ impl Action {
     pub fn group(self) -> &'static str {
         match self {
             Self::CommandPalette | Self::OpenSettings => "Window",
+            Self::GoToSession
+            | Self::NewSession
+            | Self::AddProject
+            | Self::ShowHistory
+            | Self::ShowExtensions
+            | Self::WorkspaceBack
+            | Self::WorkspaceForward
+            | Self::Quit => "Window",
+            Self::ShowChat
+            | Self::ShowDiff
+            | Self::StopAgent
+            | Self::ToggleTerminal
+            | Self::NewTerminal
+            | Self::ToggleSourceControl => "Session",
+            Self::Commit
+            | Self::CommitAndPush
+            | Self::Pull
+            | Self::Push
+            | Self::Fetch
+            | Self::StashChanges
+            | Self::CheckoutBranch
+            | Self::CloneRepository
+            | Self::RefreshSourceControl => "Source Control",
             Self::GoToDefinition
             | Self::GoToDeclaration
             | Self::GoToTypeDefinition
@@ -367,7 +505,32 @@ impl Action {
             self,
             Self::CommandPalette
                 | Self::OpenSettings
+                | Self::GoToSession
+                | Self::NewSession
+                | Self::AddProject
+                | Self::ShowHistory
+                | Self::ShowExtensions
+                | Self::WorkspaceBack
+                | Self::WorkspaceForward
+                | Self::Quit
+                | Self::ShowChat
+                | Self::ShowDiff
+                | Self::StopAgent
+                | Self::ToggleTerminal
+                | Self::NewTerminal
+                | Self::ToggleSourceControl
+                | Self::Commit
+                | Self::CommitAndPush
+                | Self::Pull
+                | Self::Push
+                | Self::Fetch
+                | Self::StashChanges
+                | Self::CheckoutBranch
+                | Self::CloneRepository
+                | Self::RefreshSourceControl
                 | Self::FileFinder
+                | Self::Outline
+                | Self::ProjectSymbols
                 | Self::SearchProject
                 | Self::Problems
         )
@@ -446,6 +609,7 @@ impl Preset {
             Self::JetBrains => &[
                 (CommandPalette, &["ctrl+shift+a"]),
                 (OpenSettings, &["ctrl+alt+s"]),
+                (GoToSession, &["ctrl+e"]),
                 (GoToDefinition, &["ctrl+b"]),
                 (GoToTypeDefinition, &["ctrl+shift+b"]),
                 (GoToImplementation, &["ctrl+alt+b"]),
@@ -483,6 +647,7 @@ impl Preset {
                 (Problems, &["alt+6"]),
             ],
             Self::Sublime => &[
+                (GoToSession, &["ctrl+alt+p"]),
                 (GoToImplementation, &[]),
                 (FindReferences, &["shift+f12"]),
                 (MoveLineUp, &["ctrl+shift+up"]),
@@ -504,6 +669,29 @@ fn own() -> &'static [(Action, &'static [&'static str])] {
     &[
         (CommandPalette, &["ctrl+shift+p", "f1"]),
         (OpenSettings, &["ctrl+,"]),
+        (GoToSession, &["ctrl+r"]),
+        (NewSession, &["ctrl+n"]),
+        (AddProject, &[]),
+        (ShowHistory, &[]),
+        (ShowExtensions, &["ctrl+shift+x"]),
+        (WorkspaceBack, &["alt+left"]),
+        (WorkspaceForward, &["alt+right"]),
+        (Quit, &["ctrl+q"]),
+        (ShowChat, &[]),
+        (ShowDiff, &[]),
+        (StopAgent, &[]),
+        (ToggleTerminal, &["ctrl+`"]),
+        (NewTerminal, &["ctrl+shift+`"]),
+        (ToggleSourceControl, &["ctrl+shift+g"]),
+        (Commit, &[]),
+        (CommitAndPush, &[]),
+        (Pull, &[]),
+        (Push, &[]),
+        (Fetch, &[]),
+        (StashChanges, &[]),
+        (CheckoutBranch, &[]),
+        (CloneRepository, &[]),
+        (RefreshSourceControl, &[]),
         (GoToDefinition, &["f12"]),
         (GoToDeclaration, &[]),
         (GoToTypeDefinition, &["ctrl+f12"]),

@@ -189,6 +189,8 @@ pub(crate) fn rows(state: &WorkspaceState, room: f32) -> Vec<Node> {
     let mut rows: Vec<Node> = Vec::new();
     let groups = [
         "Window",
+        "Session",
+        "Source Control",
         "Navigation",
         "Code Intelligence",
         "Editing",

@@ -6,6 +6,7 @@ use pm_components::EditorCommand;
 use pm_components::assist::{
     HOVER_CARD, HOVER_LINK_BASE, HOVER_LINK_END, HOVER_TEXT, list_height, signature_height,
 };
+use pm_components::extensions::EXTENSIONS;
 use pm_components::find::{FIND_CASE, FIND_FIELD, FIND_REGEX, FIND_WORD, REPLACE_FIELD};
 use pm_components::line_edits::{GO_TO_LINE, GO_TO_LINE_BOX, LineEdit};
 use pm_components::listing::{
@@ -15,7 +16,9 @@ use pm_components::listing::{
 use pm_components::navigate::{RENAME_BOX, RENAME_SYMBOL};
 use pm_components::open_files::{EDITOR_FIELD, EDITOR_SAVE};
 use pm_components::quick_input::{FIELD_HEIGHT, QUICK_SHOWN};
-use pm_components::state::SETTINGS;
+use pm_components::state::{
+    ADD_PROJECT, HISTORY, NEW_TERMINAL, REVIEW, STOP, TAB_CHAT, TAB_DIFF, TERMINAL,
+};
 use pm_components::title_bar::{COMMAND_CENTER, TITLE_BAR_HEIGHT};
 use pm_editor::{Action, Chord, Keymap, Pressed};
 use pm_input::{FocusId, Key, KeyEvent};
@@ -655,7 +658,43 @@ impl App {
                     .update(|screen| *screen = std::mem::take(screen).commands_requested(at));
                 self.focus_listing();
             }
-            Action::OpenSettings => self.activate(SETTINGS),
+            Action::OpenSettings => self.open_settings(),
+            Action::GoToSession => {
+                let at = self.across_top();
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).sessions_requested(at));
+                self.focus_listing();
+            }
+            Action::NewSession => {
+                if let Some(id) = self.model.read(Screen::new_session_button) {
+                    self.activate(id);
+                }
+            }
+            Action::AddProject => self.activate(ADD_PROJECT),
+            Action::ShowHistory => self.activate(HISTORY),
+            Action::ShowExtensions => self.activate(EXTENSIONS),
+            Action::WorkspaceBack => self.navigate(-1),
+            Action::WorkspaceForward => self.navigate(1),
+            Action::Quit => self.closing = self.close_window(),
+            Action::ShowChat => self.activate(TAB_CHAT),
+            Action::ShowDiff => self.activate(TAB_DIFF),
+            Action::StopAgent => self.activate(STOP),
+            Action::ToggleTerminal => self.activate(TERMINAL),
+            Action::NewTerminal => self.activate(NEW_TERMINAL),
+            Action::ToggleSourceControl => self.activate(REVIEW),
+            Action::Commit
+            | Action::CommitAndPush
+            | Action::Pull
+            | Action::Push
+            | Action::Fetch
+            | Action::StashChanges
+            | Action::CheckoutBranch
+            | Action::CloneRepository
+            | Action::RefreshSourceControl => {
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).source_control(action));
+                self.deliver();
+            }
             _ => {}
         }
     }

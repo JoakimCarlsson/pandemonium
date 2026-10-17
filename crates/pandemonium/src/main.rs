@@ -77,6 +77,7 @@ fn main() {
             Some("folded") => Shot::Folded,
             Some("finder") => Shot::Finder,
             Some("commands") => Shot::Commands,
+            Some("sessions") => Shot::Sessions,
             Some("tabmenu") => Shot::TabMenu,
             Some("extensions") => Shot::Extensions,
             Some("workspace") => Shot::Workspace,

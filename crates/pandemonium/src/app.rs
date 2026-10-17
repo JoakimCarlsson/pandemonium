@@ -1593,10 +1593,6 @@ impl App {
         if !event.pressed {
             return;
         }
-        if event.key == Key::Character(',') && event.modifiers.control {
-            self.open_settings();
-            return;
-        }
         if self.recording_key(event)
             || self.terminal_key(event)
             || self.text_key(event)
@@ -1610,8 +1606,6 @@ impl App {
             return;
         }
         match event.key {
-            Key::ArrowLeft if event.modifiers.alt => self.navigate(-1),
-            Key::ArrowRight if event.modifiers.alt => self.navigate(1),
             Key::Escape if self.model.read(|screen| screen.settings_open()) => {
                 self.activate(SETTINGS_CLOSE)
             }

@@ -12,8 +12,8 @@ use pm_ui::{Node, node, text};
 use crate::assist::listing_cells;
 use crate::input::{Input, Size as InputSize};
 use crate::listing::{
-    Items, LISTING_BODY, LISTING_FILTER, LISTING_ROW_BASE, LISTING_WIDTH, Listing, Quick,
-    matched_characters,
+    Destination, Items, LISTING_BODY, LISTING_FILTER, LISTING_ROW_BASE, LISTING_WIDTH, Listing,
+    Quick, matched_characters,
 };
 use crate::parts::line;
 
@@ -92,6 +92,7 @@ fn empty_words(quick: Quick) -> &'static str {
         Quick::Files => "No matching files",
         Quick::Symbols | Quick::Outline => "No matching symbols",
         Quick::Search => "Type to search the text of the project",
+        Quick::Sessions => "No matching sessions",
     }
 }
 
@@ -130,6 +131,34 @@ fn row(listing: &Listing, place: usize, index: usize, picked: bool) -> Node {
                 ]
             });
             (cells, None)
+        }
+        Items::Sessions { sessions, .. } => {
+            let project = |index: usize| {
+                sessions
+                    .get(index)
+                    .is_some_and(|(destination, ..)| matches!(destination, Destination::Project(_)))
+            };
+            let before = place
+                .checked_sub(1)
+                .and_then(|earlier| listing.items.rows().get(earlier).copied());
+            let group = (project(index) && !before.is_some_and(project))
+                .then_some(("new session in", place > 0));
+            let cells = sessions
+                .get(index)
+                .map_or_else(Vec::new, |(_, title, beside)| {
+                    let mut cells = vec![marked(title, query)];
+                    cells.extend(group.map(|(said, _)| separator(said)));
+                    if !beside.is_empty() {
+                        cells.push(node().styles([flex_none()]).child(line(
+                            beside.clone(),
+                            12,
+                            1.4,
+                            Role::Subtle,
+                        )));
+                    }
+                    cells
+                });
+            (cells, group)
         }
         items => (listing_cells(items, index), None),
     };
