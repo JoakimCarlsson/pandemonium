@@ -96,7 +96,7 @@ pub const DIFF_SCROLL: FocusId = FocusId(7004);
 pub const TREE_SCROLL: FocusId = FocusId(7005);
 
 /// The first of the rows folding a folder of the changed files; the rest follow it.
-pub const FOLDER_BASE: u64 = 7100;
+pub const FOLDER_BASE: u64 = 7101;
 
 /// The first of the check boxes staging a folder of the changed files; the rest follow it.
 pub const FOLDER_STAGE_BASE: u64 = 7300;
@@ -2172,6 +2172,20 @@ impl WorkspaceState {
         } else if id >= STEP_BASE {
             let offset = (id - STEP_BASE) as usize;
             self.toggle_step(offset / 1000, offset % 1000);
+        } else if let Some(index) = position(
+            FILE_BASE,
+            self.review_session()
+                .map_or(0, |session| session.changes.len()),
+        )
+        .filter(|index| {
+            self.review_session()
+                .is_some_and(|held| held.changes[*index].conflicted)
+        }) {
+            if self.open().is_some() {
+                self.open_change(index);
+            } else {
+                self.request_resolver(index);
+            }
         } else if let Some(index) = position(FILE_BASE, self.change_count()) {
             self.open_change(index);
         } else if let Some(index) = position(STAGE_BASE, self.change_count()) {
@@ -2711,9 +2725,7 @@ impl WorkspaceState {
     pub(crate) fn open_change(&mut self, index: usize) {
         self.file = Some(index);
         self.select_change(index);
-        if self.request_resolver(index) {
-            return;
-        }
+        self.request_resolver(index);
         self.tab = Tab::Diff;
         if let Some(path) = self
             .open()

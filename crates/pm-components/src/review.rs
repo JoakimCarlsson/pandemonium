@@ -5,8 +5,8 @@ use pm_input::FocusId;
 use pm_style::{
     Color, Radius, Role, animate_spin, bg, border, border_b, border_color, border_l,
     cursor_pointer, flex, flex_1, flex_col, flex_none, font_medium, font_mono, gap, h, h_full,
-    items_center, justify_center, min_h, min_w_px, overflow_hidden, pb, px, py, relative, rounded,
-    w_full, w_px,
+    items_center, justify_center, min_h, min_w_px, overflow_hidden, pb, pl, px, py, relative,
+    rounded, w_full, w_px,
 };
 use pm_text::Shaper;
 use pm_ui::{Node, node};
@@ -411,40 +411,63 @@ pub fn review(state: &WorkspaceState, session: &Session, shaper: &mut Shaper) ->
         .child(
             band(12)
                 .styles([px(3)])
-                .child(panel_tab(
-                    "Source Control",
-                    REVIEW_CHANGES,
-                    state.review_tab == ReviewTab::Changes,
-                ))
-                .child(panel_tab(
-                    "Files",
-                    REVIEW_FILES,
-                    state.review_tab == ReviewTab::Files,
-                ))
-                .child(panel_tab(
-                    "Search",
-                    crate::project_search::REVIEW_SEARCH,
-                    state.review_tab == ReviewTab::Search,
-                ))
-                .child(spacer())
-                .children(
-                    state
-                        .git
-                        .operation
-                        .as_ref()
-                        .filter(|_| state.review_tab == ReviewTab::Changes)
-                        .map(|waiting| line(waiting.label(), 12, 1.4, Role::Muted)),
+                .child(
+                    node()
+                        .styles([
+                            flex(),
+                            items_center(),
+                            gap(2),
+                            flex_1(),
+                            min_w_px(0),
+                            overflow_hidden(),
+                        ])
+                        .child(panel_tab(
+                            "Source Control",
+                            REVIEW_CHANGES,
+                            state.review_tab == ReviewTab::Changes,
+                        ))
+                        .child(panel_tab(
+                            "Files",
+                            REVIEW_FILES,
+                            state.review_tab == ReviewTab::Files,
+                        ))
+                        .child(panel_tab(
+                            "Search",
+                            crate::project_search::REVIEW_SEARCH,
+                            state.review_tab == ReviewTab::Search,
+                        ))
+                        .child(
+                            match state
+                                .git
+                                .operation
+                                .as_ref()
+                                .filter(|_| state.review_tab == ReviewTab::Changes)
+                                .map(|waiting| waiting.label())
+                            {
+                                Some(label) => {
+                                    crate::parts::clipped(label.clone(), 12, Role::Muted)
+                                        .styles([pl(2)])
+                                        .tooltip(label)
+                                }
+                                None => spacer(),
+                            },
+                        ),
                 )
                 .children(
                     (state.review_tab == ReviewTab::Changes && !session.changes.is_empty()).then(
                         || {
                             Button::icon(IconName::GitCompare, OPEN_DIFF)
                                 .build()
+                                .styles([flex_none()])
                                 .tooltip("Open Changes")
                         },
                     ),
                 )
-                .child(Button::icon(IconName::PanelRight, REVIEW).build()),
+                .child(
+                    Button::icon(IconName::PanelRight, REVIEW)
+                        .build()
+                        .styles([flex_none()]),
+                ),
         )
         .child(band(10).child(branch_button(session, state.git.working)))
         .child(match state.review_tab {
