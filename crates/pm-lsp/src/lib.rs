@@ -43,6 +43,6 @@ pub use paths::{grammar_file, language_folder, local_root};
 pub use resolve::server_state;
 pub use types::{
     CodeAction, CodeLens, Completion, CompletionKind, Diagnostic, FileEdit, FoldRange, HintKind,
-    Hover, InlayHint, Location, Problem, Seek, SemanticToken, Severity, Signature, TextChange,
-    TokenKind, Triggers,
+    Hover, InlayHint, InlineValue, InlineValueKind, Location, Problem, Seek, SemanticToken,
+    Severity, Signature, TextChange, TokenKind, Triggers,
 };

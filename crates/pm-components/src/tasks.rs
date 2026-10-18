@@ -127,7 +127,7 @@ impl WorkspaceState {
         {
             held.task = Some(title);
         }
-        self.debug.shown = false;
+        self.bottom = crate::dock::BottomTab::Terminal;
         self.terminal = true;
         self.outbox.push(match how.clone() {
             Rerun::Task(task) => Outgoing::RunTask {

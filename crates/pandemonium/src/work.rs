@@ -211,6 +211,8 @@ enum Pending {
     SemanticTokens(usize, String, i32),
     /// What to show inside the lines of the file of the session at this position, at this path and version.
     InlayHints(usize, String, i32),
+    /// Which names of the file of the session at this position, at this path and version, to show the values of while a program is paused.
+    InlineValues(usize, String, i32),
     /// What to show at the end of the lines of the file of the session at this position, at this path and version.
     CodeLenses(usize, String, i32),
     /// What pressing a lens of a file of the session at this position came to.
@@ -1751,7 +1753,11 @@ impl Work {
                 self.refresh(model, session);
             }
             Pending::Entry(session, what) => {
-                if let Some(message) = failure {
+                if let Response::Edited { files } = response {
+                    model.update(|screen| {
+                        *screen = std::mem::take(screen).with_edited_files(session, files);
+                    });
+                } else if let Some(message) = failure {
                     let reason = format!("Could not {what}: {message}");
                     model.update(|screen| *screen = std::mem::take(screen).git_failed(&reason));
                 }
@@ -1886,6 +1892,7 @@ impl Work {
             | Pending::ProjectSearch(..)
             | Pending::SemanticTokens(..)
             | Pending::InlayHints(..)
+            | Pending::InlineValues(..)
             | Pending::CodeLenses(..)
             | Pending::LensPressed(_)
             | Pending::Renamed(_)

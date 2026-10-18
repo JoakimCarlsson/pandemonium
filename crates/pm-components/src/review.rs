@@ -21,8 +21,8 @@ use crate::graph::graph;
 use crate::parts::{clipped, glyph, line, spacer, wrap};
 use crate::sample::Session;
 use crate::state::{
-    COMMIT, COMMIT_MESSAGE, OPEN_DIFF, REVIEW, REVIEW_CHANGES, REVIEW_FILES, ReviewTab,
-    TREE_SCROLL, WorkspaceState,
+    COMMIT, COMMIT_MESSAGE, OPEN_DIFF, REVIEW_CHANGES, REVIEW_FILES, ReviewTab, TREE_SCROLL,
+    WorkspaceState,
 };
 use crate::tree_actions::{
     TREE_COLLAPSE, TREE_NEW_FILE, TREE_NEW_FOLDER, TREE_REFRESH, TREE_SPACE,
@@ -452,11 +452,6 @@ pub fn review(state: &WorkspaceState, session: &Session, shaper: &mut Shaper) ->
                                 .tooltip("Open Changes")
                         },
                     ),
-                )
-                .child(
-                    Button::icon(IconName::PanelRight, REVIEW)
-                        .build()
-                        .styles([flex_none()]),
                 ),
         )
         .child(band(10).child(branch_button(session, state.git.working)))

@@ -292,6 +292,9 @@ pub enum Response {
         /// Whether the server says what to show above a line.
         #[serde(default)]
         code_lens: bool,
+        /// Whether the server says which names to show the values of while a program is paused.
+        #[serde(default)]
+        inline_values: bool,
     },
     /// What could be written at a place.
     Completions {
@@ -317,6 +320,11 @@ pub enum Response {
     InlayHints {
         /// The hints, in the order of the file.
         hints: Vec<pm_lsp::InlayHint>,
+    },
+    /// Which stretches of a file to show the values of while a program is paused; none when the language server does not say.
+    InlineValues {
+        /// The stretches, with what each shows.
+        values: Vec<pm_lsp::InlineValue>,
     },
     /// What to show above the lines of a file; none when the language server does not say.
     CodeLenses {

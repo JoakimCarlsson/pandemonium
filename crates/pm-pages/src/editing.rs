@@ -284,9 +284,17 @@ impl Screen {
         self.in_workspace(|state| state.with_blame(session, path, line, blame))
     }
 
-    /// The screen listing what is wrong with the files of the project, at `at`.
-    pub fn problems_requested(self, at: (f32, f32)) -> Self {
-        self.in_workspace(|state| state.problems_requested(at))
+    /// The screen with the dock showing what is wrong with the files of the project.
+    pub fn problems_shown(self) -> Self {
+        self.in_workspace(|mut state| {
+            state.show_problems();
+            state
+        })
+    }
+
+    /// The screen after the list of problems in the dock was scrolled.
+    pub fn scrolled_problems(self, delta: f32, room: f32) -> Self {
+        self.in_workspace(|state| state.scrolled_problems(delta, room))
     }
 
     /// The screen after the server said what is wrong with the files of the project of the session at `session`.
@@ -822,6 +830,17 @@ impl Screen {
         hints: Vec<pm_protocol::InlayHint>,
     ) -> Self {
         self.in_workspace(|state| state.with_inlay_hints(session, path, version, hints))
+    }
+
+    /// The screen after the language server said which names of a file to show the values of while a program is paused.
+    pub fn with_inline_values(
+        self,
+        session: usize,
+        path: &str,
+        version: i32,
+        values: Vec<pm_protocol::InlineValue>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_inline_values(session, path, version, values))
     }
 
     /// The screen after the language server said what to show at the end of lines of a file.

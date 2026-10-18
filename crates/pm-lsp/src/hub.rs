@@ -13,8 +13,8 @@ use crate::install::{installed_manifest, language_of};
 use crate::manifest::ServerSpec;
 use crate::server::{DiagnosticsSink, Found, LanguageServer, Pressed, action_of, file_changes};
 use crate::types::{
-    CodeAction, CodeLens, Completion, Diagnostic, FileEdit, FoldRange, Hover, InlayHint, Location,
-    Problem, Seek, SemanticToken, Signature, TextChange, Triggers,
+    CodeAction, CodeLens, Completion, Diagnostic, FileEdit, FoldRange, Hover, InlayHint,
+    InlineValue, Location, Problem, Seek, SemanticToken, Signature, TextChange, Triggers,
 };
 use crate::uri::{file_uri, path_of};
 
@@ -421,6 +421,9 @@ impl Hub {
                     document.buffer.text(),
                 )?;
                 document.server = Some(server.clone());
+                if server.pulls_diagnostics() {
+                    LanguageServer::pull_diagnostics_soon(&server, &uri, document.buffer.version());
+                }
             }
         }
         let kept = self
@@ -446,6 +449,7 @@ impl Hub {
             semantic_tokens: server.has_semantic_tokens(),
             inlay_hints: server.has_inlay_hints(),
             code_lens: server.has_code_lens(),
+            inline_values: server.has_inline_values(),
         })
     }
 
@@ -479,6 +483,13 @@ impl Hub {
             }
             document.early.insert(version, changes);
             let lost = catch_up(document, &uri);
+            if let Some(server) = document
+                .server
+                .as_ref()
+                .filter(|server| server.pulls_diagnostics())
+            {
+                LanguageServer::pull_diagnostics_soon(server, &uri, document.buffer.version());
+            }
             self.changed.notify_all();
             lost
         };
@@ -825,6 +836,23 @@ impl Hub {
         server.semantic_tokens(&file_uri(&root.join(path)))
     }
 
+    /// Which stretches of the open file at `path` of the project at `root` within `range` to show the values of while the program is paused at `stopped` in the debugger's frame `frame`, once the file reaches `version`; none when its language server does not say.
+    pub fn inline_values(
+        &self,
+        root: &Path,
+        path: &str,
+        version: i32,
+        range: Span,
+        frame: i64,
+        stopped: Span,
+    ) -> Result<Vec<InlineValue>, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
+            return Ok(Vec::new());
+        };
+        server.inline_values(&file_uri(&root.join(path)), range, frame, stopped)
+    }
+
     /// What to show inside the lines of the open file at `path` of the project at `root` within `span`, once the file reaches `version`; none when its language server does not say.
     pub fn inlay_hints(
         &self,
@@ -921,6 +949,45 @@ impl Hub {
             return Err(format!("nothing at this place can be renamed to {name}"));
         }
         self.share_edits(root, &[edit])
+    }
+
+    /// The servers running for the project at `root`.
+    fn running(&self, root: &Path) -> Vec<Arc<LanguageServer>> {
+        let slots: Vec<Slot> = self
+            .servers
+            .lock()
+            .map(|servers| {
+                servers
+                    .iter()
+                    .filter(|((held, _), _)| held == root)
+                    .map(|(_, slot)| slot.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        slots
+            .iter()
+            .filter_map(|slot| slot.get()?.as_ref().ok().cloned())
+            .collect()
+    }
+
+    /// Asks the servers running for the project at `root` what has to change before the file or folder at `from` is renamed to `to`, both from the root of the project: files no client has open are changed on disk here, and the changes to the open ones are returned for the clients to make.
+    pub fn will_rename(&self, root: &Path, from: &str, to: &str) -> Result<Vec<FileEdit>, String> {
+        let (old, new) = (file_uri(&root.join(from)), file_uri(&root.join(to)));
+        let edits: Vec<Value> = self
+            .running(root)
+            .iter()
+            .filter_map(|server| server.will_rename(&old, &new).ok())
+            .filter(|edit| !edit.is_null())
+            .collect();
+        self.share_edits(root, &edits)
+    }
+
+    /// Tells the servers running for the project at `root` that the file or folder at `from` was renamed to `to`, both from the root of the project.
+    pub fn did_rename(&self, root: &Path, from: &str, to: &str) {
+        let (old, new) = (file_uri(&root.join(from)), file_uri(&root.join(to)));
+        for server in self.running(root) {
+            let _ = server.did_rename(&old, &new);
+        }
     }
 
     /// The changes the language server of the open file at `path` of the project at `root` offers for the stretch `span`, once the file reaches `version`; they are kept to be taken by their place in the list.

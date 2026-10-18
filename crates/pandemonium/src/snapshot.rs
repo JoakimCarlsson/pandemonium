@@ -236,6 +236,10 @@ pub enum Shot {
     Hovering,
     /// The same file with breakpoints in its gutter and a program paused on one, the debug tab open under it.
     Debugging,
+    /// The same file with the dock open on the list of what is wrong with the project.
+    Problems,
+    /// The same file with the sidebar hidden.
+    SidebarHidden,
     /// The same file with its menu open.
     EditorMenu,
     /// The same file with the places a name is used listed under the caret.
@@ -850,7 +854,52 @@ fn debugging() -> WorkspaceState {
             )],
         },
     });
-    state.debug.shown = true;
+    state.bottom = pm_components::dock::BottomTab::Debug;
+    state.terminal = true;
+    state
+}
+
+/// The Rust file with the dock open on the list of what is wrong with the project.
+fn problems() -> WorkspaceState {
+    let mut state = code();
+    let at = |line: u32, character: u32| pm_protocol::Position { line, character };
+    let problem = |path: &str, line: u32, severity, message: &str| pm_protocol::Problem {
+        path: path.to_owned(),
+        diagnostic: pm_protocol::Diagnostic {
+            span: pm_protocol::Span {
+                start: at(line, 4),
+                end: at(line, 9),
+            },
+            severity,
+            message: message.to_owned(),
+            source: Some("rustc".to_owned()),
+        },
+    };
+    let session = state.review_index().unwrap_or_default();
+    state = state.with_problems(
+        session,
+        vec![
+            problem(
+                CODE_PATH,
+                12,
+                pm_protocol::Severity::Error,
+                "mismatched types: expected `u32`, found `&str`",
+            ),
+            problem(
+                CODE_PATH,
+                17,
+                pm_protocol::Severity::Warning,
+                "unused variable: `label`",
+            ),
+            problem(
+                "src/main.rs",
+                3,
+                pm_protocol::Severity::Warning,
+                "unused import: `std::fmt`",
+            ),
+        ],
+    );
+    state.bottom = pm_components::dock::BottomTab::Problems;
     state.terminal = true;
     state
 }
@@ -1616,6 +1665,12 @@ impl Shot {
             Self::Completing => Screen::Workspace(completing()),
             Self::Hovering => Screen::Workspace(hovering()),
             Self::Debugging => Screen::Workspace(debugging()),
+            Self::Problems => Screen::Workspace(problems()),
+            Self::SidebarHidden => {
+                let mut state = code();
+                state.sidebar_open = false;
+                Screen::Workspace(state)
+            }
             Self::EditorMenu => Screen::Workspace(code().with_menu(EDITOR_FIELD, (420.0, 200.0))),
             Self::References => Screen::Workspace(references()),
             Self::Renaming => {

@@ -411,7 +411,7 @@ impl Screen {
     /// window `height` logical pixels tall.
     pub fn scrolled(self, x: f32, delta: f32, height: f32) -> Self {
         match self {
-            Self::Workspace(state) if x < state.sidebar_width => {
+            Self::Workspace(state) if x < state.sidebar_room() => {
                 Self::Workspace(state.scrolled(delta, height))
             }
             other => other,

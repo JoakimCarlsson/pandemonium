@@ -58,8 +58,12 @@ pub enum IconName {
     Sparkles,
     /// Two sheets: copy.
     Copy,
-    /// A window with a side panel.
+    /// A window with a panel along its left side.
+    PanelLeft,
+    /// A window with a panel along its right side.
     PanelRight,
+    /// A window with a panel along its bottom.
+    PanelBottom,
     /// A square cut down the middle: panes.
     SquareSplit,
     /// A triangle pointing right: run.
@@ -163,7 +167,9 @@ impl IconName {
             Self::Progress => Svg::new("progress", include_icon!("progress")),
             Self::Sparkles => Svg::new("sparkles", include_icon!("sparkles")),
             Self::Copy => Svg::new("copy", include_icon!("copy")),
+            Self::PanelLeft => Svg::new("panel_left", include_icon!("panel_left")),
             Self::PanelRight => Svg::new("panel_right", include_icon!("panel_right")),
+            Self::PanelBottom => Svg::new("panel_bottom", include_icon!("panel_bottom")),
             Self::SquareSplit => Svg::new("square_split", include_icon!("square_split")),
             Self::Play => Svg::new("play", include_icon!("play")),
             Self::More => Svg::new("more", include_icon!("more")),

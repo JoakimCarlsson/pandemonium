@@ -38,8 +38,8 @@ pub use pm_dap::{
 };
 pub use pm_lsp::{
     CodeAction, CodeLens, Completion, CompletionKind, Diagnostic, FileEdit, FoldRange, HintKind,
-    Hover, InlayHint, Location, Problem, Seek, SemanticToken, Severity, Signature, TextChange,
-    TokenKind, Triggers,
+    Hover, InlayHint, InlineValue, InlineValueKind, Location, Problem, Seek, SemanticToken,
+    Severity, Signature, TextChange, TokenKind, Triggers,
 };
 pub use pm_task::Task;
 pub use request::{AgentServer, Attachment, Login, McpServer, RegistryAgent, Request, ToolListing};

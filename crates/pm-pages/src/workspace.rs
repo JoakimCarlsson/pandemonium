@@ -32,7 +32,7 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
     let page = height - TITLE_BAR_HEIGHT;
     let planning = state.plan_shown().is_some();
     let reviewing = state.review_session().is_some() && state.review;
-    let sidebar_width = state.sidebar_width;
+    let sidebar_width = state.sidebar_room();
     let review_width = if reviewing { state.review_width } else { 0.0 };
     let main_width = state.pane_area((width, height)).width;
     let plan_width = width - sidebar_width - review_width - main_width;
@@ -50,7 +50,7 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
     };
     let mut body = node()
         .styles([flex(), flex_1(), w_full(), min_h(0)])
-        .child(sidebar::sidebar(state))
+        .children(state.sidebar_open.then(|| sidebar::sidebar(state)))
         .child(main);
     if let Some(source) = state.plan_shown() {
         body = body.child(plan::panel(state, source, plan_width, shaper));
@@ -69,11 +69,13 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
         ])
         .child(TitleBar::of(state).build())
         .child(body);
-    root = root.child(
-        Sash::column(SIDEBAR_SASH)
-            .at((sidebar_width, TITLE_BAR_HEIGHT), page)
-            .build(),
-    );
+    if state.sidebar_open {
+        root = root.child(
+            Sash::column(SIDEBAR_SASH)
+                .at((sidebar_width, TITLE_BAR_HEIGHT), page)
+                .build(),
+        );
+    }
     if planning {
         root = root.child(
             Sash::column(PLAN_SASH)

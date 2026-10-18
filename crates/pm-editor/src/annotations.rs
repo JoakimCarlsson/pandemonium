@@ -86,6 +86,8 @@ pub(crate) struct Annotations {
     pub(crate) hints: Said<Hint>,
     /// The lenses, in the order of the text.
     pub(crate) lenses: Said<Lens>,
+    /// The values of names at the end of the lines, while a program is paused, in the order of the text.
+    pub(crate) values: Vec<Hint>,
 }
 
 /// The place the byte `offset` moves to when `change` is made, or nothing when `change` replaced the text it stood in.
@@ -124,6 +126,12 @@ impl Document {
             None => false,
         });
         self.annotations.hints.items.retain_mut(|hint| {
+            moved(hint.offset, change).is_some_and(|offset| {
+                hint.offset = offset;
+                true
+            })
+        });
+        self.annotations.values.retain_mut(|hint| {
             moved(hint.offset, change).is_some_and(|offset| {
                 hint.offset = offset;
                 true
@@ -233,6 +241,42 @@ impl Document {
         let first = hints.partition_point(|hint| hint.offset < line.start);
         let last = hints.partition_point(|hint| hint.offset <= line.end);
         &hints[first..last.max(first)]
+    }
+
+    /// The text of the stretch `span` of the text.
+    pub fn text_of(&self, span: Span) -> &str {
+        &self.field.text()[self.range_of(span)]
+    }
+
+    /// The row of the text that the place `position` is in.
+    pub fn row_of(&self, position: Position) -> usize {
+        self.line_of(self.offset_of(position))
+    }
+
+    /// Shows `values`, a label for the end of each row, while a program is paused; an empty list takes them away.
+    pub fn show_values(&mut self, values: Vec<(usize, String)>) {
+        let hints: Vec<Hint> = values
+            .into_iter()
+            .map(|(row, label)| Hint {
+                offset: self.line(row).end,
+                label,
+                kind: HintKind::Value,
+                pad_left: true,
+                pad_right: false,
+            })
+            .collect();
+        if hints != self.annotations.values {
+            self.annotations.values = hints;
+        }
+    }
+
+    /// The values shown at the end of row `row`, in order.
+    pub fn values_on(&self, row: usize) -> &[Hint] {
+        let line = self.line(row);
+        let values = &self.annotations.values;
+        let first = values.partition_point(|hint| hint.offset < line.start);
+        let last = values.partition_point(|hint| hint.offset <= line.end);
+        &values[first..last.max(first)]
     }
 
     /// Takes in `lenses`, what to show with stretches of the text as the language server said for the text at `version`.

@@ -401,11 +401,14 @@ pub(crate) fn file_line(
         index + 1
     };
     let last = segments.len().saturating_sub(1);
-    let hints = if settings.inlay_hints {
-        document.hints_on(index)
+    let hints: Vec<&Hint> = if settings.inlay_hints {
+        document.hints_on(index).iter().collect()
     } else {
-        &[]
-    };
+        Vec::new()
+    }
+    .into_iter()
+    .chain(document.values_on(index))
+    .collect();
     let lenses = if settings.code_lens {
         document.lenses_on(index)
     } else {
@@ -419,6 +422,7 @@ pub(crate) fn file_line(
                 (absolute.start <= hint.offset && hint.offset < absolute.end)
                     || (place == last && hint.offset == absolute.end)
             })
+            .copied()
             .collect();
         let mut cuts: Vec<usize> = vec![segment.start];
         cuts.extend(standing.iter().map(|hint| hint.offset - line.start));
@@ -546,7 +550,7 @@ pub(crate) fn file_line(
 /// The text of `hint` written inside a line in a smaller, quieter hand than the code around it.
 fn hint_chip(hint: &Hint, font: u32) -> Node {
     let tone = match hint.kind {
-        HintKind::Type => Role::Subtle,
+        HintKind::Type | HintKind::Value => Role::Subtle,
         HintKind::Parameter | HintKind::Other => Role::Muted,
     };
     let mut chip = node().styles([
@@ -777,8 +781,8 @@ fn breadcrumbs(document: &Document) -> Option<String> {
     (!words.is_empty()).then(|| words.join("  ›  "))
 }
 
-/// How many errors and warnings the language server finds in `document`, as short words in their colours.
-fn tallies(document: &Document) -> Vec<Node> {
+/// How many errors and warnings the language server finds in `document`, as short words in their colours, pressed to show the problems of the project; nothing when it finds none.
+fn tallies(document: &Document) -> Option<Node> {
     let count = |wanted: Severity| {
         document
             .diagnostics
@@ -786,7 +790,7 @@ fn tallies(document: &Document) -> Vec<Node> {
             .filter(|diagnostic| diagnostic.severity == wanted)
             .count()
     };
-    [(Severity::Error, "error"), (Severity::Warning, "warning")]
+    let words: Vec<Node> = [(Severity::Error, "error"), (Severity::Warning, "warning")]
         .into_iter()
         .filter_map(|(severity, word)| {
             let found = count(severity);
@@ -800,7 +804,13 @@ fn tallies(document: &Document) -> Vec<Node> {
                 )
             })
         })
-        .collect()
+        .collect();
+    (!words.is_empty()).then(|| {
+        node()
+            .styles([flex(), items_center(), gap(2), cursor_pointer()])
+            .children(words)
+            .focusable(crate::state::BOTTOM_PROBLEMS_COUNT)
+    })
 }
 
 /// The strip above the file: its icon and name, and, while it is the file shown, `live`, the switch between its source and its rendering and the button that writes it when it has changes to write.

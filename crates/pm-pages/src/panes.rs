@@ -22,7 +22,7 @@ use pm_components::panes::{
 };
 use pm_components::parts::{glyph, line, spacer};
 use pm_components::sash::Sash;
-use pm_components::state::{Page, TAB_CHAT, TAB_DIFF, TERMINAL, WorkspaceState};
+use pm_components::state::{Page, TAB_CHAT, TAB_DIFF, WorkspaceState};
 use pm_components::title_bar::TITLE_BAR_HEIGHT;
 use pm_components::{
     Button, Changes, Conflict, chat, diff, input, overview, terminal, viewer, welcome,
@@ -148,16 +148,10 @@ fn strip_button(icon: IconName, id: FocusId, on: bool, hint: &str) -> Node {
         .focusable(id)
 }
 
-/// The buttons at the end of the strip of tabs: the one that shows or hides the terminal dock, filled while the dock shows, and the one that opens the menu of panes.
+/// The buttons at the end of the strip of tabs: the one that opens the menu of panes.
 fn strip_buttons(state: &WorkspaceState) -> Node {
     node()
         .styles([flex(), items_end(), gap(1)])
-        .child(strip_button(
-            IconName::Terminal,
-            TERMINAL,
-            state.terminal,
-            "Terminal",
-        ))
         .child(strip_button(
             IconName::SquareSplit,
             PANE_MENU,

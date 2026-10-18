@@ -485,6 +485,29 @@ impl Work {
                     Pending::InlayHints(session, asked, version),
                 );
             }
+            Outgoing::InlineValues {
+                session,
+                path,
+                version,
+                span,
+                frame,
+                stopped,
+            } => {
+                let asked = path.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::InlineValues {
+                        directory,
+                        path,
+                        version,
+                        span,
+                        frame,
+                        stopped,
+                    },
+                    Pending::InlineValues(session, asked, version),
+                );
+            }
             Outgoing::CodeLenses {
                 session,
                 path,
@@ -766,6 +789,7 @@ impl Work {
                         semantic_tokens,
                         inlay_hints,
                         code_lens,
+                        inline_values,
                     } => Ok(pm_protocol::Triggers {
                         completion: triggers,
                         signature,
@@ -776,6 +800,7 @@ impl Work {
                         semantic_tokens,
                         inlay_hints,
                         code_lens,
+                        inline_values,
                     }),
                     other => Err(Self::trouble_of(other)),
                 };
@@ -939,6 +964,16 @@ impl Work {
                 model.update(|screen| {
                     *screen =
                         std::mem::take(screen).with_inlay_hints(session, &path, version, hints);
+                });
+            }
+            (Pending::InlineValues(session, path, version), response) => {
+                let values = match response {
+                    Response::InlineValues { values } => values,
+                    _ => Vec::new(),
+                };
+                model.update(|screen| {
+                    *screen =
+                        std::mem::take(screen).with_inline_values(session, &path, version, values);
                 });
             }
             (Pending::CodeLenses(session, path, version), response) => {

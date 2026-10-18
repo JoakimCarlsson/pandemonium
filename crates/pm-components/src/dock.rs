@@ -9,9 +9,21 @@ use pm_terminal::{Emulator, Link};
 use crate::sample::Session;
 
 use crate::state::{
-    MAXIMIZE_TERMINAL, NEW_TERMINAL, Outgoing, TERMINAL, TERMINAL_CLOSE_BASE, TERMINAL_TAB_BASE,
-    WorkspaceState,
+    BOTTOM_PROBLEMS, BOTTOM_PROBLEMS_COUNT, BOTTOM_TERMINAL, MAXIMIZE_TERMINAL, NEW_TERMINAL,
+    Outgoing, PROBLEM_ROW_BASE, TERMINAL, TERMINAL_CLOSE_BASE, TERMINAL_TAB_BASE, WorkspaceState,
 };
+
+/// The tabs of the dock, one of which shows at a time.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum BottomTab {
+    /// What is wrong with the files of the project.
+    Problems,
+    /// The program being debugged.
+    Debug,
+    /// The shells.
+    #[default]
+    Terminal,
+}
 
 /// How many columns and lines a shell has before the dock has been measured.
 pub const FIRST_SIZE: (u16, u16) = (80, 24);
@@ -139,7 +151,7 @@ impl WorkspaceState {
 
     /// Starts a shell in the session the dock is about and shows the dock.
     fn open_terminal(&mut self) {
-        self.debug.shown = false;
+        self.bottom = BottomTab::Terminal;
         if let Some(session) = self.docked_position() {
             self.open_terminal_in(session, String::new());
         }
@@ -180,20 +192,96 @@ impl WorkspaceState {
             .and_then(|position| self.sessions.get(position))
     }
 
-    /// Shows or hides the dock, starting a first shell when it is shown for a session with none.
+    /// The tab of the dock showing: the one chosen, or the shells when the one chosen is the program being debugged and none is.
+    pub fn bottom_tab(&self) -> BottomTab {
+        match self.bottom {
+            BottomTab::Debug if !self.debug_docked() => BottomTab::Terminal,
+            tab => tab,
+        }
+    }
+
+    /// Shows or hides the dock, starting a first shell when it is shown for a session with none and the shells are what it shows.
     fn toggle_terminal(&mut self) {
         if self.terminal {
             self.terminal = false;
             return;
         }
         let empty = self
-            .open()
+            .docked()
             .is_none_or(|session| session.terminals.is_empty());
-        if empty && !self.debug_docked() {
+        if empty && self.bottom_tab() == BottomTab::Terminal {
             self.open_terminal();
         } else {
             self.terminal = true;
         }
+    }
+
+    /// Shows the dock with the shells in it, starting one when the session the dock is about has none.
+    fn show_terminal_tab(&mut self) {
+        self.bottom = BottomTab::Terminal;
+        let empty = self
+            .docked()
+            .is_none_or(|session| session.terminals.is_empty());
+        if empty {
+            self.open_terminal();
+        } else {
+            self.terminal = true;
+        }
+    }
+
+    /// Shows the dock with the list of problems in it, asking the server what is wrong.
+    pub fn show_problems(&mut self) {
+        self.bottom = BottomTab::Problems;
+        self.terminal = true;
+        self.problems_scroll = 0.0;
+        self.ask_problems();
+    }
+
+    /// Asks the server what is wrong with the files of the project of the session the dock is about, unless it was asked and has not answered.
+    pub(crate) fn ask_problems(&mut self) {
+        if self.problems_asked {
+            return;
+        }
+        if let Some(session) = self.docked_position() {
+            self.problems_asked = true;
+            self.outbox.push(Outgoing::Problems { session });
+        }
+    }
+
+    /// The state after the server said what is wrong with the files of the project of the session at `session`.
+    pub fn with_problems(mut self, session: usize, problems: Vec<pm_protocol::Problem>) -> Self {
+        self.problems_asked = false;
+        if self.docked_position() == Some(session) {
+            self.problems = problems;
+        }
+        self
+    }
+
+    /// Scrolls the list of problems by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
+    pub fn scrolled_problems(mut self, delta: f32, room: f32) -> Self {
+        self.problems_scroll = (self.problems_scroll + delta).clamp(0.0, room);
+        self
+    }
+
+    /// Goes to the place of the problem the reader pressed in the list, when they pressed one.
+    pub(crate) fn problem_revealed(mut self) -> Self {
+        let Some(index) = self.problem_picked.take() else {
+            return self;
+        };
+        let (Some(session), Some(problem)) =
+            (self.docked_position(), self.problems.get(index).cloned())
+        else {
+            return self;
+        };
+        self.go_to_location(
+            session,
+            pm_protocol::Location {
+                path: problem.path,
+                span: problem.diagnostic.span,
+                inside: true,
+                ..pm_protocol::Location::default()
+            },
+        )
     }
 
     /// Ends the shell at `index` of the session the dock is about, hiding the dock when it was the last.
@@ -209,7 +297,7 @@ impl WorkspaceState {
         session.terminal_active = session
             .terminal_active
             .min(session.terminals.len().saturating_sub(1));
-        if session.terminals.is_empty() && !self.debug_docked() {
+        if session.terminals.is_empty() && self.bottom_tab() == BottomTab::Terminal {
             self.terminal = false;
             self.terminal_maximized = false;
         }
@@ -221,6 +309,8 @@ impl WorkspaceState {
         match id {
             TERMINAL => self.toggle_terminal(),
             NEW_TERMINAL => self.open_terminal(),
+            BOTTOM_TERMINAL => self.show_terminal_tab(),
+            BOTTOM_PROBLEMS | BOTTOM_PROBLEMS_COUNT => self.show_problems(),
             MAXIMIZE_TERMINAL => self.terminal_maximized = !self.terminal_maximized,
             FocusId(number) => {
                 let count = self.docked().map_or(0, |session| session.terminals.len());
@@ -231,12 +321,18 @@ impl WorkspaceState {
                         .filter(|offset| *offset < count)
                 };
                 if let Some(index) = offset(TERMINAL_TAB_BASE) {
-                    self.debug.shown = false;
+                    self.bottom = BottomTab::Terminal;
                     if let Some(position) = self.docked_position() {
                         self.sessions[position].terminal_active = index;
                     }
                 } else if let Some(index) = offset(TERMINAL_CLOSE_BASE) {
                     self.close_terminal_tab(index);
+                } else if let Some(index) = number
+                    .checked_sub(PROBLEM_ROW_BASE)
+                    .map(|offset| offset as usize)
+                    .filter(|offset| *offset < self.problems.len())
+                {
+                    self.problem_picked = Some(index);
                 } else {
                     return false;
                 }
@@ -343,11 +439,7 @@ impl WorkspaceState {
                 .min(session.terminals.len().saturating_sub(1));
             if session.terminals.is_empty()
                 && open == Some(position)
-                && !self
-                    .debug
-                    .run
-                    .as_ref()
-                    .is_some_and(|run| run.session == position)
+                && self.bottom_tab() == BottomTab::Terminal
             {
                 self.terminal = false;
                 self.terminal_maximized = false;
@@ -478,7 +570,7 @@ impl WorkspaceState {
 
     /// Whether the dock shows a shell, and what its window holds: columns, lines and how far it is scrolled back.
     pub fn terminal_window(&self) -> Option<(usize, usize, usize)> {
-        if self.debug.shown && self.debug_docked() {
+        if self.bottom_tab() != BottomTab::Terminal {
             return None;
         }
         let tab = self.active_terminal()?;
@@ -490,6 +582,7 @@ impl WorkspaceState {
     pub fn takes_keyboard(id: FocusId) -> bool {
         id == TERMINAL
             || id == NEW_TERMINAL
+            || id == BOTTOM_TERMINAL
             || (TERMINAL_TAB_BASE..TERMINAL_CLOSE_BASE).contains(&id.0)
     }
 }

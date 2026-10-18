@@ -146,11 +146,6 @@ pub enum Items {
         /// The symbols, as the server last named them.
         locations: Vec<Location>,
     },
-    /// What the language servers say is wrong with the files of the project.
-    Problems {
-        /// What is wrong, the worst first.
-        problems: Vec<pm_protocol::Problem>,
-    },
     /// The lines of the files of the project holding what is typed.
     Search {
         /// What is looked for.
@@ -553,7 +548,6 @@ impl Items {
             Self::Line { lines, .. } => line_named(self.query(), *lines)
                 .map(|_| vec![0])
                 .unwrap_or_default(),
-            Self::Problems { problems } => (0..problems.len()).collect(),
             Self::Symbols { locations, .. } | Self::Search { locations, .. } => {
                 (0..locations.len()).collect()
             }
@@ -639,7 +633,6 @@ impl Items {
             Self::Choices { .. } => "Choices".to_owned(),
             Self::Symbols { .. } => "Symbols".to_owned(),
             Self::Search { .. } => "Search".to_owned(),
-            Self::Problems { .. } => "Problems".to_owned(),
         }
     }
 }
@@ -1136,34 +1129,6 @@ impl WorkspaceState {
         self
     }
 
-    /// Lists what the language servers say is wrong with the files of the project the review panel is about, at `at`.
-    pub fn problems_requested(mut self, at: (f32, f32)) -> Self {
-        let Some(session) = self.review_index() else {
-            return self;
-        };
-        self.outbox.push(Outgoing::Problems { session });
-        self.listing = Some(Listing::waiting(
-            session,
-            Items::Problems {
-                problems: Vec::new(),
-            },
-            at,
-        ));
-        self
-    }
-
-    /// The state after the server said what is wrong with the files of the project of the session at `session`.
-    pub fn with_problems(mut self, session: usize, problems: Vec<pm_protocol::Problem>) -> Self {
-        if let Some(listing) = self.listing.as_mut()
-            && listing.session == session
-            && matches!(listing.items, Items::Problems { .. })
-        {
-            listing.items = Items::Problems { problems };
-            listing.answered = true;
-        }
-        self
-    }
-
     /// The state after the server named `locations`, the symbols or the lines of the project found for `query`, when that is still what is typed.
     pub fn with_symbols(mut self, session: usize, query: &str, locations: Vec<Location>) -> Self {
         if let Some(listing) = self.listing.as_mut()
@@ -1219,18 +1184,6 @@ impl WorkspaceState {
                     None => self,
                 }
             }
-            Items::Problems { problems } => match problems.into_iter().nth(index) {
-                Some(problem) => self.go_to_location(
-                    session,
-                    Location {
-                        path: problem.path,
-                        span: problem.diagnostic.span,
-                        inside: true,
-                        ..Location::default()
-                    },
-                ),
-                None => self,
-            },
             Items::Files { paths, .. } => {
                 if let Some(path) = paths.get(index) {
                     self.remember_spot();

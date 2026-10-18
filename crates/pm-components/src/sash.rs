@@ -158,7 +158,7 @@ impl WorkspaceState {
             SIDEBAR_SASH => Some((self.sidebar_width, Grows::Right)),
             REVIEW_SASH => Some((self.review_width, Grows::Left)),
             PLAN_SASH => Some((
-                plan::width_in(self, window.0 - self.sidebar_width - self.review_width),
+                plan::width_in(self, window.0 - self.sidebar_room() - self.review_width),
                 Grows::Left,
             )),
             TERMINAL_SASH => Some((

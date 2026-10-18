@@ -14,7 +14,8 @@ use crate::rpc::{Handler, Rpc};
 use crate::snippet;
 use crate::types::{
     CodeAction, CodeLens, Completion, CompletionKind, Diagnostic, FoldRange, HintKind, Hover,
-    InlayHint, Seek, SemanticToken, Severity, Signature, TextChange, TokenKind,
+    InlayHint, InlineValue, InlineValueKind, Seek, SemanticToken, Severity, Signature, TextChange,
+    TokenKind,
 };
 use crate::uri::file_uri;
 
@@ -23,6 +24,9 @@ const STARTING: Duration = Duration::from_secs(60);
 
 /// How long a server may take to answer a question about a file.
 const ANSWERING: Duration = Duration::from_secs(10);
+
+/// How long changes to a file must stop coming before a server that gives diagnostics when asked is asked for them.
+const PULL_AFTER: Duration = Duration::from_millis(300);
 
 /// How long a server is given to stop before its process is ended.
 const STOPPING: Duration = Duration::from_secs(2);
@@ -94,6 +98,10 @@ pub(crate) struct LanguageServer {
     sync: u64,
     /// The characters after which it offers completions without being asked.
     triggers: Vec<String>,
+    /// Where the diagnostics it is asked for go, as the ones it publishes do.
+    sink: DiagnosticsSink,
+    /// For each file it is asked diagnostics of, by address: how many times it was asked for, to leave all but the last of a burst of changes unasked, and the result it last answered with.
+    pulled: Mutex<HashMap<String, (u64, Option<String>)>>,
 }
 
 /// The value at the dotted path `section` of `settings`, or nothing.
@@ -234,7 +242,8 @@ fn capabilities() -> Value {
             "executeCommand": {},
             "inlayHint": {"refreshSupport": false},
             "codeLens": {"refreshSupport": false},
-            "semanticTokens": {"refreshSupport": false}
+            "semanticTokens": {"refreshSupport": false},
+            "fileOperations": {"willRename": true, "didRename": true}
         },
         "textDocument": {
             "definition": {"linkSupport": true},
@@ -262,6 +271,7 @@ fn capabilities() -> Value {
                 "multilineTokenSupport": false
             },
             "inlayHint": {"dynamicRegistration": false},
+            "inlineValue": {"dynamicRegistration": false},
             "codeLens": {"dynamicRegistration": false},
             "rename": {"prepareSupport": false},
             "codeAction": {
@@ -291,7 +301,8 @@ fn capabilities() -> Value {
             "onTypeFormatting": {},
             "foldingRange": {"lineFoldingOnly": false},
             "linkedEditingRange": {},
-            "publishDiagnostics": {"versionSupport": true}
+            "publishDiagnostics": {"versionSupport": true},
+            "diagnostic": {"dynamicRegistration": false, "relatedDocumentSupport": false}
         },
         "window": {"workDoneProgress": false}
     })
@@ -403,7 +414,7 @@ impl LanguageServer {
             handler(
                 root,
                 spec.settings.clone(),
-                sink,
+                sink.clone(),
                 raw.clone(),
                 applied.clone(),
             ),
@@ -464,6 +475,8 @@ impl LanguageServer {
             applied,
             sync,
             triggers,
+            sink,
+            pulled: Mutex::new(HashMap::new()),
         })
     }
 
@@ -615,6 +628,141 @@ impl LanguageServer {
     /// Whether the server says what to show inside a line.
     pub(crate) fn has_inlay_hints(&self) -> bool {
         self.can("inlayHintProvider")
+    }
+
+    /// Whether the server takes part in renames of files: `operation` is `willRename` to be asked for edits before one, `didRename` to be told after.
+    fn takes_part_in(&self, operation: &str) -> bool {
+        self.abilities
+            .get("workspace")
+            .and_then(|workspace| workspace.get("fileOperations"))
+            .and_then(|operations| operations.get(operation))
+            .is_some_and(|options| !options.is_null())
+    }
+
+    /// The edit across the project that the server asks for before the file or folder at `from` is renamed to `to`, as it writes it; nothing when it takes no part in renames.
+    pub(crate) fn will_rename(&self, from: &str, to: &str) -> Result<Value, String> {
+        if !self.takes_part_in("willRename") {
+            return Ok(Value::Null);
+        }
+        self.rpc.request(
+            "workspace/willRenameFiles",
+            json!({"files": [{"oldUri": from, "newUri": to}]}),
+            ANSWERING,
+        )
+    }
+
+    /// Tells the server, when it takes part in renames, that the file or folder at `from` was renamed to `to`.
+    pub(crate) fn did_rename(&self, from: &str, to: &str) -> Result<(), String> {
+        if !self.takes_part_in("didRename") {
+            return Ok(());
+        }
+        self.rpc.notify(
+            "workspace/didRenameFiles",
+            json!({"files": [{"oldUri": from, "newUri": to}]}),
+        )
+    }
+
+    /// Whether the server gives the diagnostics of a file when asked, instead of publishing them.
+    pub(crate) fn pulls_diagnostics(&self) -> bool {
+        self.can("diagnosticProvider")
+    }
+
+    /// Asks the server for the diagnostics of the file at `uri`, which holds `version`, once changes have stopped coming for a moment, handing the answer to the sink; a newer ask of the same file before then takes its place.
+    pub(crate) fn pull_diagnostics_soon(server: &Arc<Self>, uri: &str, version: i32) {
+        let turn = {
+            let Ok(mut pulled) = server.pulled.lock() else {
+                return;
+            };
+            let held = pulled.entry(uri.to_owned()).or_default();
+            held.0 += 1;
+            held.0
+        };
+        let (server, uri) = (server.clone(), uri.to_owned());
+        std::thread::spawn(move || {
+            std::thread::sleep(PULL_AFTER);
+            let latest = server
+                .pulled
+                .lock()
+                .is_ok_and(|pulled| pulled.get(&uri).is_some_and(|held| held.0 == turn));
+            if latest {
+                let _ = server.pull_diagnostics(&uri, version);
+            }
+        });
+    }
+
+    /// Asks the server for the diagnostics of the file at `uri`, which holds `version`, and hands them to the sink; an answer that nothing changed gives again what it said before.
+    fn pull_diagnostics(&self, uri: &str, version: i32) -> Result<(), String> {
+        let before = self
+            .pulled
+            .lock()
+            .ok()
+            .and_then(|pulled| pulled.get(uri).and_then(|held| held.1.clone()));
+        let mut params = json!({"textDocument": {"uri": uri}});
+        if let Some(before) = before {
+            params["previousResultId"] = json!(before);
+        }
+        let answer = self
+            .rpc
+            .request("textDocument/diagnostic", params, ANSWERING)?;
+        if let Ok(mut pulled) = self.pulled.lock() {
+            pulled.entry(uri.to_owned()).or_default().1 = answer
+                .get("resultId")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+        }
+        let list = match answer.get("items").and_then(Value::as_array) {
+            Some(items) => {
+                if let Ok(mut held) = self.raw.lock() {
+                    held.insert(uri.to_owned(), items.clone());
+                }
+                items.clone()
+            }
+            None => self
+                .raw
+                .lock()
+                .ok()
+                .and_then(|held| held.get(uri).cloned())
+                .unwrap_or_default(),
+        };
+        (self.sink)(
+            uri.to_owned(),
+            Some(version),
+            list.iter().filter_map(diagnostic_of).collect(),
+        );
+        Ok(())
+    }
+
+    /// Whether the server says which names of a file to show the values of while a program is paused.
+    pub(crate) fn has_inline_values(&self) -> bool {
+        self.can("inlineValueProvider")
+    }
+
+    /// Which stretches of the file at `uri` within `range` to show the values of while the program is paused at `stopped`, in the frame the debugger calls `frame`.
+    pub(crate) fn inline_values(
+        &self,
+        uri: &str,
+        range: Span,
+        frame: i64,
+        stopped: Span,
+    ) -> Result<Vec<InlineValue>, String> {
+        if !self.has_inline_values() {
+            return Ok(Vec::new());
+        }
+        let answer = self.rpc.request(
+            "textDocument/inlineValue",
+            json!({
+                "textDocument": {"uri": uri},
+                "range": range_value(range),
+                "context": {"frameId": frame, "stoppedLocation": range_value(stopped)},
+            }),
+            ANSWERING,
+        )?;
+        Ok(answer
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(inline_value_of)
+            .collect())
     }
 
     /// Whether the server says what to show above a line.
@@ -1231,6 +1379,22 @@ fn token_kind(name: &str, fixed: bool) -> TokenKind {
         "variable" | "parameter" if fixed => TokenKind::Constant,
         _ => TokenKind::Variable,
     }
+}
+
+/// The inline value a server writes as `value`: text, a variable to look up or an expression to evaluate.
+fn inline_value_of(value: &Value) -> Option<InlineValue> {
+    let named = |key: &str| value.get(key).and_then(Value::as_str).map(str::to_owned);
+    let kind = if let Some(text) = named("text") {
+        InlineValueKind::Text(text)
+    } else if value.get("caseSensitiveLookup").is_some() {
+        InlineValueKind::Variable(named("variableName"))
+    } else {
+        InlineValueKind::Expression(named("expression"))
+    };
+    Some(InlineValue {
+        span: span_of(value.get("range")?)?,
+        kind,
+    })
 }
 
 /// The inlay hint a server writes as `value`.

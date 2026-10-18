@@ -698,10 +698,8 @@ impl App {
                     .focus(pm_components::project_search::PROJECT_SEARCH_FIELD);
             }
             Action::Problems => {
-                let at = self.across_top();
                 self.model
-                    .update(|screen| *screen = std::mem::take(screen).problems_requested(at));
-                self.focus_listing();
+                    .update(|screen| *screen = std::mem::take(screen).problems_shown());
             }
             Action::ToggleBreakpoint => {
                 self.model.update(|screen| {
