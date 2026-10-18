@@ -10,6 +10,7 @@ pub mod activity;
 pub mod adder;
 pub mod age;
 pub mod agent_list;
+pub mod annotations;
 pub mod arrange;
 pub mod assist;
 pub mod avatar;

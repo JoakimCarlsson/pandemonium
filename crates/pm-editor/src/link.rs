@@ -54,6 +54,7 @@ impl Document {
             return None;
         }
         let before = self.field.text();
+        let before_length = before.len();
         let mut text = before.to_owned();
         for range in ranges.iter().rev() {
             let from = range.start + at;
@@ -63,6 +64,7 @@ impl Document {
             text.replace_range(from..from + length, &change.text);
         }
         let growth = change.text.len() as isize - length as isize;
+        self.carry_blanks(ranges, growth);
         let earlier = ranges[..home].len() as isize;
         let caret = (caret as isize + growth * earlier).clamp(0, text.len() as isize) as usize;
         self.linked = Some(
@@ -76,6 +78,6 @@ impl Document {
                 })
                 .collect(),
         );
-        Some(Edit::Replace(0..before.len(), text, (caret, caret)))
+        Some(Edit::Replace(0..before_length, text, (caret, caret)))
     }
 }

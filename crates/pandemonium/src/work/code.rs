@@ -418,6 +418,73 @@ impl Work {
                     Pending::CodeActions(session, asked),
                 );
             }
+            Outgoing::SemanticTokens {
+                session,
+                path,
+                version,
+            } => {
+                let asked = path.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::SemanticTokens {
+                        directory,
+                        path,
+                        version,
+                    },
+                    Pending::SemanticTokens(session, asked, version),
+                );
+            }
+            Outgoing::InlayHints {
+                session,
+                path,
+                version,
+                span,
+            } => {
+                let asked = path.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::InlayHints {
+                        directory,
+                        path,
+                        version,
+                        span,
+                    },
+                    Pending::InlayHints(session, asked, version),
+                );
+            }
+            Outgoing::CodeLenses {
+                session,
+                path,
+                version,
+            } => {
+                let asked = path.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::CodeLenses {
+                        directory,
+                        path,
+                        version,
+                    },
+                    Pending::CodeLenses(session, asked, version),
+                );
+            }
+            Outgoing::PressCodeLens {
+                session,
+                path,
+                index,
+            } => self.ask_in_folder(
+                model,
+                session,
+                |directory| Request::PressCodeLens {
+                    directory,
+                    path,
+                    index,
+                },
+                Pending::LensPressed(session),
+            ),
             Outgoing::TakeCodeAction {
                 session,
                 path,
@@ -548,6 +615,9 @@ impl Work {
                         formats_ranges,
                         folds,
                         links,
+                        semantic_tokens,
+                        inlay_hints,
+                        code_lens,
                     } => Ok(pm_protocol::Triggers {
                         completion: triggers,
                         signature,
@@ -555,6 +625,9 @@ impl Work {
                         formats_ranges,
                         folds,
                         links,
+                        semantic_tokens,
+                        inlay_hints,
+                        code_lens,
                     }),
                     other => Err(Self::trouble_of(other)),
                 };
@@ -688,6 +761,50 @@ impl Work {
                 model.update(|screen| {
                     *screen =
                         std::mem::take(screen).with_highlights(session, &path, version, spans);
+                });
+            }
+            (Pending::SemanticTokens(session, path, version), response) => {
+                let tokens = match response {
+                    Response::SemanticTokens { tokens } => tokens,
+                    _ => Vec::new(),
+                };
+                model.update(|screen| {
+                    *screen = std::mem::take(screen)
+                        .with_semantic_tokens(session, &path, version, tokens);
+                });
+            }
+            (Pending::InlayHints(session, path, version), response) => {
+                let hints = match response {
+                    Response::InlayHints { hints } => hints,
+                    _ => Vec::new(),
+                };
+                model.update(|screen| {
+                    *screen =
+                        std::mem::take(screen).with_inlay_hints(session, &path, version, hints);
+                });
+            }
+            (Pending::CodeLenses(session, path, version), response) => {
+                let lenses = match response {
+                    Response::CodeLenses { lenses } => lenses,
+                    _ => Vec::new(),
+                };
+                model.update(|screen| {
+                    *screen =
+                        std::mem::take(screen).with_code_lenses(session, &path, version, lenses);
+                });
+            }
+            (Pending::LensPressed(session), Response::LensPressed { places, files }) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_lens_pressed(session, places, files);
+                });
+            }
+            (Pending::LensPressed(session), other) => {
+                let problem = Self::trouble_of(other);
+                model.update(|screen| {
+                    let taken = std::mem::take(screen);
+                    *screen = taken
+                        .listing_failed(problem.clone())
+                        .noted(session, &problem);
                 });
             }
             (Pending::Signature(session, path, version), response) => {

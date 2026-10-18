@@ -172,6 +172,10 @@ pub enum Seek {
     IncomingCalls,
     /// The functions the function calls.
     OutgoingCalls,
+    /// The types the type derives from.
+    Supertypes,
+    /// The types that derive from the type.
+    Subtypes,
 }
 
 impl Seek {
@@ -185,6 +189,8 @@ impl Seek {
             Self::References => "References",
             Self::IncomingCalls => "Incoming calls",
             Self::OutgoingCalls => "Outgoing calls",
+            Self::Supertypes => "Supertypes",
+            Self::Subtypes => "Subtypes",
         }
     }
 }
@@ -208,6 +214,96 @@ pub struct Triggers {
     /// Whether it says which stretches of a file are edited together.
     #[serde(default)]
     pub links: bool,
+    /// Whether it says what each name of a file is, so that the names can be coloured by it.
+    #[serde(default)]
+    pub semantic_tokens: bool,
+    /// Whether it says what to show inside a line, such as the type of a name or the name of a parameter.
+    #[serde(default)]
+    pub inlay_hints: bool,
+    /// Whether it says what to show above a line, such as how many times a function is used.
+    #[serde(default)]
+    pub code_lens: bool,
+}
+
+/// What a name of a file is, as a language server says and as it is coloured.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TokenKind {
+    /// A keyword or a modifier.
+    Keyword,
+    /// A function, a method or a macro.
+    Function,
+    /// A type, a namespace or a trait.
+    Type,
+    /// A string or a regular expression.
+    String,
+    /// A number, a constant or a member of an enumeration.
+    Constant,
+    /// A comment.
+    Comment,
+    /// A field or a property.
+    Property,
+    /// An operator.
+    Operator,
+    /// A variable or a parameter.
+    #[default]
+    Variable,
+}
+
+/// A stretch of one line that a language server says is a name of a kind.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct SemanticToken {
+    /// The line, counted from 0.
+    pub line: u32,
+    /// Where it starts in the line, in UTF-16 code units.
+    pub start: u32,
+    /// How long it is, in UTF-16 code units.
+    pub length: u32,
+    /// What it is.
+    pub kind: TokenKind,
+}
+
+/// What an inlay hint tells about the place it stands at.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HintKind {
+    /// The type of the name before it.
+    Type,
+    /// The name of the parameter the value after it is passed as.
+    Parameter,
+    /// Anything else.
+    #[default]
+    Other,
+}
+
+/// Text a language server says to show inside a line, at a place, that is not part of the file.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct InlayHint {
+    /// The place it stands at.
+    pub position: pm_buffer::Position,
+    /// What it shows.
+    pub label: String,
+    /// What it tells.
+    #[serde(default)]
+    pub kind: HintKind,
+    /// Whether a space stands before it.
+    #[serde(default)]
+    pub pad_left: bool,
+    /// Whether a space stands after it.
+    #[serde(default)]
+    pub pad_right: bool,
+}
+
+/// A line of text a language server says to show with a stretch of a file, such as how many times a function is used.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CodeLens {
+    /// The stretch it is about.
+    pub span: Span,
+    /// What it says.
+    pub title: String,
+    /// Whether pressing it does something.
+    #[serde(default)]
+    pub pressable: bool,
 }
 
 /// A block of lines a language server says can be folded: the line it starts on and the line it ends on, counted from 0.

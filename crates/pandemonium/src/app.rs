@@ -1066,6 +1066,24 @@ impl App {
         true
     }
 
+    /// Presses the lens at the end of a line of the file shown that the pointer is down on, and says whether it is on one.
+    fn press_lens(&mut self) -> bool {
+        let Some(at) = self.pointer.position else {
+            return false;
+        };
+        let Some(index) = self
+            .output
+            .hit(at)
+            .and_then(pm_components::annotations::lens_of)
+        else {
+            return false;
+        };
+        self.model.update(|state| {
+            *state = std::mem::take(state).lens_pressed(index, (at.0, at.1 + 12.0))
+        });
+        true
+    }
+
     /// Follows the pointer down to `y` while a bar is held: the box moves as far as the bar does along its track.
     fn drag_bar(&mut self, y: f32) {
         let Some((id, last)) = self.bar_drag else {
@@ -1134,7 +1152,9 @@ impl App {
             PointerEvent::Pressed(Button::Left) if self.grab_bar() => {
                 self.pressed_on = None;
             }
-            PointerEvent::Pressed(Button::Left) if self.grab_minimap() || self.press_sticky() => {
+            PointerEvent::Pressed(Button::Left)
+                if self.grab_minimap() || self.press_sticky() || self.press_lens() =>
+            {
                 self.pressed_on = None;
             }
             PointerEvent::Pressed(Button::Left) => {

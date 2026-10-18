@@ -236,6 +236,9 @@ impl WorkspaceState {
                     document.formats_ranges = triggers.formats_ranges;
                     document.folds_supported = triggers.folds;
                     document.links_supported = triggers.links;
+                    document.semantic_tokens_supported = triggers.semantic_tokens;
+                    document.inlay_hints_supported = triggers.inlay_hints;
+                    document.code_lens_supported = triggers.code_lens;
                     document.server_problem = None;
                 }
                 Err(problem) => {
@@ -362,6 +365,54 @@ impl WorkspaceState {
             return self;
         };
         self.file_edited(Edit::Paste(unit));
+        self
+    }
+
+    /// Handles Tab in the file shown: it moves to the next blank of the snippet being filled in, writes out the snippet or Emmet abbreviation before the caret, and otherwise types one level of indentation.
+    pub fn editor_tab(mut self) -> Self {
+        if let Some(edit) = self
+            .shown_text()
+            .and_then(|document| document.snippet_step(true))
+        {
+            self.file_edited(edit);
+            return self;
+        }
+        let settings = self.editor.clone();
+        let expansion = self
+            .shown_document()
+            .and_then(|document| document.expansion(&settings));
+        if let Some(expansion) = expansion {
+            self.file_edited(expansion.edit.clone());
+            if let Some(document) = self.shown_text() {
+                document.begin_snippet(expansion);
+            }
+            return self;
+        }
+        self.editor_indent()
+    }
+
+    /// Whether the blanks of a snippet are being filled in in the file shown.
+    pub fn snippet_active(&self) -> bool {
+        self.shown_document()
+            .is_some_and(|document| document.snippet_active())
+    }
+
+    /// Moves the caret of the file shown back to the previous blank of the snippet being filled in.
+    pub fn snippet_back(mut self) -> Self {
+        if let Some(edit) = self
+            .shown_text()
+            .and_then(|document| document.snippet_step(false))
+        {
+            self.file_edited(edit);
+        }
+        self
+    }
+
+    /// Stops filling in the blanks of the snippet in the file shown, leaving what was written.
+    pub fn snippet_ended(mut self) -> Self {
+        if let Some(document) = self.shown_text() {
+            document.end_snippet();
+        }
         self
     }
 

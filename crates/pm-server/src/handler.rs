@@ -814,6 +814,9 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                     formats_ranges: triggers.formats_ranges,
                     folds: triggers.folds,
                     links: triggers.links,
+                    semantic_tokens: triggers.semantic_tokens,
+                    inlay_hints: triggers.inlay_hints,
+                    code_lens: triggers.code_lens,
                 },
                 Err(reason) => failed(reason),
             }
@@ -1022,6 +1025,55 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             .code_actions(&place(&directory), &path, version, span)
         {
             Ok(actions) => Response::CodeActions { actions },
+            Err(reason) => failed(reason),
+        },
+        Request::SemanticTokens {
+            directory,
+            path,
+            version,
+        } => match core
+            .documents
+            .hub
+            .semantic_tokens(&place(&directory), &path, version)
+        {
+            Ok(tokens) => Response::SemanticTokens { tokens },
+            Err(reason) => failed(reason),
+        },
+        Request::InlayHints {
+            directory,
+            path,
+            version,
+            span,
+        } => match core
+            .documents
+            .hub
+            .inlay_hints(&place(&directory), &path, version, span)
+        {
+            Ok(hints) => Response::InlayHints { hints },
+            Err(reason) => failed(reason),
+        },
+        Request::CodeLenses {
+            directory,
+            path,
+            version,
+        } => match core
+            .documents
+            .hub
+            .code_lenses(&place(&directory), &path, version)
+        {
+            Ok(lenses) => Response::CodeLenses { lenses },
+            Err(reason) => failed(reason),
+        },
+        Request::PressCodeLens {
+            directory,
+            path,
+            index,
+        } => match core
+            .documents
+            .hub
+            .press_lens(&place(&directory), &path, index)
+        {
+            Ok((places, files)) => Response::LensPressed { places, files },
             Err(reason) => failed(reason),
         },
         Request::TakeCodeAction {

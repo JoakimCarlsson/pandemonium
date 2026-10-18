@@ -108,6 +108,20 @@ pub struct EditorSettings {
     pub format_on_type: bool,
     /// Whether typing in one of several stretches that belong together, such as the two names of a tag, types in the others too.
     pub linked_editing: bool,
+    /// Whether brackets that pair are coloured by how deeply they are nested.
+    pub bracket_colors: bool,
+    /// Whether names are coloured by what the language server says they are, over what the syntax says.
+    pub semantic_highlighting: bool,
+    /// Whether the language server's hints, such as the type of a name, are written inside the lines.
+    pub inlay_hints: bool,
+    /// Whether the language server's lenses, such as how many times a function is used, are shown beside the lines.
+    pub code_lens: bool,
+    /// Whether a word that is the name of a snippet is written out when Tab is pressed after it.
+    pub snippets_on_tab: bool,
+    /// Whether an Emmet abbreviation written in a markup or style file is written out when Tab is pressed after it.
+    pub emmet: bool,
+    /// The reader's own snippets, by the language they are for, or for every language under `*`.
+    pub snippets: std::collections::BTreeMap<String, Vec<crate::snippet::UserSnippet>>,
     /// Whether a map of the whole file is drawn beside it.
     pub minimap: bool,
     /// Whether the lines that open the blocks the first line shown is in stay at the top as the file scrolls.
@@ -174,6 +188,13 @@ impl Default for EditorSettings {
             format_on_save: true,
             format_on_type: true,
             linked_editing: true,
+            bracket_colors: true,
+            semantic_highlighting: true,
+            inlay_hints: true,
+            code_lens: true,
+            snippets_on_tab: true,
+            emmet: true,
+            snippets: std::collections::BTreeMap::new(),
             minimap: true,
             sticky_scroll: true,
             remove_trailing_whitespace_on_save: true,

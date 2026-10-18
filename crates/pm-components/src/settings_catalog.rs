@@ -90,6 +90,14 @@ pub enum Setting {
     InlineBlame,
     /// Whether the uses of the name at the caret are marked.
     Occurrences,
+    /// Whether brackets that pair are coloured by their depth.
+    BracketColors,
+    /// Whether names are coloured by what the language server says they are.
+    SemanticHighlighting,
+    /// Whether the language server's hints are written inside the lines.
+    InlayHints,
+    /// Whether the language server's lenses are shown beside the lines.
+    CodeLens,
     /// How the caret is drawn.
     CursorShape,
     /// Whether the caret blinks.
@@ -114,6 +122,10 @@ pub enum Setting {
     FormatOnType,
     /// Whether typing in a name edits the names that belong with it.
     LinkedEditing,
+    /// Whether Tab writes out the snippet a word is the name of.
+    SnippetsOnTab,
+    /// Whether Tab writes out an Emmet abbreviation in a markup or style file.
+    Emmet,
     /// Whether a map of the file shows beside it.
     Minimap,
     /// Whether the lines that open the blocks the view is in stay at its top.
@@ -200,7 +212,7 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting, in the order the pages show them.
-    pub const ALL: [Self; 75] = [
+    pub const ALL: [Self; 81] = [
         Self::Launch,
         Self::ConfirmClose,
         Self::CheckUpdates,
@@ -223,6 +235,10 @@ impl Setting {
         Self::GitGutter,
         Self::InlineBlame,
         Self::Occurrences,
+        Self::BracketColors,
+        Self::SemanticHighlighting,
+        Self::InlayHints,
+        Self::CodeLens,
         Self::Minimap,
         Self::StickyScroll,
         Self::CursorShape,
@@ -236,6 +252,8 @@ impl Setting {
         Self::ExtendComments,
         Self::FormatOnType,
         Self::LinkedEditing,
+        Self::SnippetsOnTab,
+        Self::Emmet,
         Self::FormatOnSave,
         Self::TrimWhitespace,
         Self::FinalNewline,
@@ -302,6 +320,10 @@ impl Setting {
             | Self::GitGutter
             | Self::InlineBlame
             | Self::Occurrences
+            | Self::BracketColors
+            | Self::SemanticHighlighting
+            | Self::InlayHints
+            | Self::CodeLens
             | Self::Minimap
             | Self::StickyScroll
             | Self::CursorShape
@@ -314,7 +336,9 @@ impl Setting {
             | Self::AutoIndent
             | Self::ExtendComments
             | Self::FormatOnType
-            | Self::LinkedEditing => Section::EditorEditing,
+            | Self::LinkedEditing
+            | Self::SnippetsOnTab
+            | Self::Emmet => Section::EditorEditing,
             Self::FormatOnSave | Self::TrimWhitespace | Self::FinalNewline | Self::Autosave => {
                 Section::EditorSaving
             }
@@ -452,6 +476,22 @@ impl Setting {
                 "Highlight uses of the name at the caret",
                 "Mark every place the name under the caret is used in the file.",
             ),
+            Self::BracketColors => (
+                "Colour brackets by depth",
+                "Colour each pair of brackets by how many pairs enclose it, so matching ones are easy to see.",
+            ),
+            Self::SemanticHighlighting => (
+                "Semantic highlighting",
+                "Colour names by what the language server says they are, over what the syntax says.",
+            ),
+            Self::InlayHints => (
+                "Inlay hints",
+                "Write what the language server infers inside the lines, such as the type of a name or the name of a parameter.",
+            ),
+            Self::CodeLens => (
+                "Code lens",
+                "Show what the language server says about a function or type at the end of its line, such as how many times it is used.",
+            ),
             Self::Minimap => (
                 "Minimap",
                 "Draw a map of the whole file beside it; press or drag on it to scroll.",
@@ -467,6 +507,14 @@ impl Setting {
             Self::LinkedEditing => (
                 "Linked editing",
                 "Typing in a name, such as a tag's, types in the names that belong with it too.",
+            ),
+            Self::SnippetsOnTab => (
+                "Snippets on Tab",
+                "Write out the snippet a word is the name of when Tab is pressed after it; Tab then moves between its blanks.",
+            ),
+            Self::Emmet => (
+                "Emmet abbreviations",
+                "Write out an abbreviation such as ul>li*3 in a markup or style file when Tab is pressed after it.",
             ),
             Self::CursorShape => (
                 "Cursor shape",

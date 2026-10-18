@@ -9,10 +9,13 @@
 //! commented, moved, duplicated and deleted, the selection grown along the
 //! syntax tree, text found and replaced, the completion picked, the edits that format the file. Nothing here sends anything or draws anything; the window does.
 
+mod annotations;
 mod complete;
 mod cursors;
+mod depth;
 mod document;
 mod edit;
+pub mod emmet;
 mod find;
 mod fold;
 mod format;
@@ -25,9 +28,11 @@ mod link;
 mod marks;
 mod pairs;
 mod settings;
+mod snippet;
 mod sticky;
 mod wrap;
 
+pub use annotations::{Hint, Lens};
 pub use document::{Completions, Document, HoverCard};
 pub use edit::Edited;
 pub use find::Query;
@@ -36,4 +41,5 @@ pub use gutter::LineChange;
 pub use jumps::{Jumps, Spot};
 pub use keymap::{Action, Chord, Keymap, Preset, Pressed, shown};
 pub use settings::{CursorShape, DiagnosticsShown, EditorSettings, SoftWrap};
+pub use snippet::{Expansion, UserSnippet};
 pub use wrap::segments;

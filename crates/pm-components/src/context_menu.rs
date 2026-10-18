@@ -44,6 +44,10 @@ pub enum EditorCommand {
     IncomingCalls,
     /// Lists the functions the function at the caret calls.
     OutgoingCalls,
+    /// Lists the types the type at the caret derives from.
+    Supertypes,
+    /// Lists the types that derive from the type at the caret.
+    Subtypes,
     /// Gives the thing at the caret a new name across the project.
     Rename,
     /// Formats the file as its language says.
@@ -66,7 +70,7 @@ pub enum EditorCommand {
 
 impl EditorCommand {
     /// Every command, in the order of their rows' names.
-    const ALL: [Self; 16] = [
+    const ALL: [Self; 18] = [
         Self::Definition,
         Self::Declaration,
         Self::TypeDefinition,
@@ -74,6 +78,8 @@ impl EditorCommand {
         Self::References,
         Self::IncomingCalls,
         Self::OutgoingCalls,
+        Self::Supertypes,
+        Self::Subtypes,
         Self::Rename,
         Self::Format,
         Self::FormatSelection,
@@ -209,8 +215,15 @@ pub fn editor_menu(
         None,
         EditorCommand::OutgoingCalls,
         coding,
-    )
-    .separator();
+    );
+    let menu = command(
+        menu,
+        "Show Supertypes",
+        None,
+        EditorCommand::Supertypes,
+        coding,
+    );
+    let menu = command(menu, "Show Subtypes", None, EditorCommand::Subtypes, coding).separator();
     let menu = command(
         menu,
         "Rename Symbol",

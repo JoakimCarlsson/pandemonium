@@ -40,4 +40,44 @@ impl Syntax {
         }
         best
     }
+
+    /// Every bracket of `text` that pairs with another, in order, with how many pairs enclose it; the two of a pair stand at the same depth.
+    pub fn bracket_depths(&self, text: &str) -> Vec<(Range<usize>, usize)> {
+        let Some(query) = self.grammar().brackets.as_ref() else {
+            return Vec::new();
+        };
+        let (Some(open), Some(close)) = (
+            query.capture_index_for_name("open"),
+            query.capture_index_for_name("close"),
+        ) else {
+            return Vec::new();
+        };
+        let mut found: Vec<(Range<usize>, bool)> = Vec::new();
+        let mut cursor = QueryCursor::new();
+        let mut matches = cursor.matches(query, self.tree.root_node(), text.as_bytes());
+        while let Some(pair) = matches.next() {
+            for capture in pair.captures() {
+                if capture.index == open {
+                    found.push((capture.node.byte_range(), true));
+                } else if capture.index == close {
+                    found.push((capture.node.byte_range(), false));
+                }
+            }
+        }
+        found.sort_by_key(|(range, _)| range.start);
+        found.dedup_by(|later, earlier| later.0 == earlier.0);
+        let mut depth = 0usize;
+        found
+            .into_iter()
+            .map(|(range, opens)| {
+                if opens {
+                    depth += 1;
+                    (range, depth - 1)
+                } else {
+                    depth = depth.saturating_sub(1);
+                    (range, depth)
+                }
+            })
+            .collect()
+    }
 }
