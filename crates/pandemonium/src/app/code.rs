@@ -237,6 +237,8 @@ impl App {
         self.model.update(|screen| {
             *screen = std::mem::take(screen)
                 .highlights_requested()
+                .folds_requested()
+                .links_requested()
                 .blame_requested()
         });
         None
@@ -353,6 +355,7 @@ impl App {
             *screen = match command {
                 EditorCommand::Rename => taken.rename_requested(caret, self.hung(caret, 72.0)),
                 EditorCommand::Format => taken.formatted_by_hand(),
+                EditorCommand::FormatSelection => taken.selection_formatted(),
                 EditorCommand::CodeActions => taken.code_actions_requested(at),
                 EditorCommand::CopyTrimmed => taken.copied_trimmed(),
                 EditorCommand::Reveal => taken.file_revealed(),
@@ -578,6 +581,7 @@ impl App {
             Action::IncomingCalls => Some(EditorCommand::IncomingCalls),
             Action::Rename => Some(EditorCommand::Rename),
             Action::Format => Some(EditorCommand::Format),
+            Action::FormatSelection => Some(EditorCommand::FormatSelection),
             Action::CodeActions => Some(EditorCommand::CodeActions),
             Action::RevealInFileManager => Some(EditorCommand::Reveal),
             _ => None,

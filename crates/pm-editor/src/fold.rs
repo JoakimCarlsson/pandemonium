@@ -107,10 +107,12 @@ impl Document {
         let line = self.line(self.line_of(caret));
         let leading = text[line.clone()].len() - text[line.clone()].trim_start().len();
         let from = (line.start + leading).min(text.len());
-        let range = match &self.syntax {
-            Some(syntax) => syntax.fold_range(from),
-            None => self.indented_block(self.line_of(caret)),
-        };
+        let range = self
+            .server_fold(self.line_of(caret))
+            .or_else(|| match &self.syntax {
+                Some(syntax) => syntax.fold_range(from),
+                None => self.indented_block(self.line_of(caret)),
+            });
         let Some(range) = range else {
             return false;
         };
@@ -130,6 +132,21 @@ impl Document {
             self.field.apply(pm_text::Edit::Place(fold.head, false));
         }
         true
+    }
+
+    /// The bytes of the smallest block of three lines or more the language server said can be folded that holds the line at `index`, while what it said is about the text as it is.
+    fn server_fold(&self, index: usize) -> Option<Range<usize>> {
+        if !self.has_server_folds() {
+            return None;
+        }
+        let last = self.lines().checked_sub(1)?;
+        self.server_folds
+            .1
+            .iter()
+            .map(|range| (range.start as usize, (range.end as usize).min(last)))
+            .filter(|(first, end)| *first <= index && index <= *end && *end > *first + 1)
+            .min_by_key(|(first, end)| end - first)
+            .map(|(first, end)| self.line(first).start..self.line(end).end)
     }
 
     /// The lines after the line at `index` that are indented deeper than it, with the line after them, as a byte range, for a file without a syntax tree.

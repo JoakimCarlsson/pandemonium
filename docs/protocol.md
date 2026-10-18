@@ -169,7 +169,10 @@ request with exactly one `response` carrying the same `id`.
 | `close_document` | `directory`, `path`                                                                            | `done`          |
 | `completion`   | `directory`, `path`, `version`, `position`, `trigger` (optional)                                 | `completions`   |
 | `hover`        | `directory`, `path`, `version`, `position`                                                       | `hovered`       |
-| `format`       | `directory`, `path`, `version`                                                                   | `formatted`     |
+| `format`       | `directory`, `path`, `version`, `range` (optional)                                               | `formatted`     |
+| `format_on_type` | `directory`, `path`, `version`, `position`, `character`                                        | `formatted`     |
+| `folding_ranges` | `directory`, `path`, `version`                                                                 | `folding_ranges` |
+| `linked_ranges` | `directory`, `path`, `version`, `position`                                                      | `linked_ranges` |
 | `definition`   | `directory`, `path`, `version`, `position`, `seek` (optional)                                    | `definitions`   |
 | `workspace_symbols` | `directory`, `path`, `query`                                                                | `definitions`   |
 | `search_files` | `directory`, `query`, `regex` (optional), `case` (optional)                                      | `definitions`   |
@@ -454,7 +457,16 @@ request with exactly one `response` carrying the same `id`.
   choosing it replaces, and `documentation` is markdown when the server sent
   it with the list. `hovered` holds `{text, span}` in markdown, or null.
 - **`format`:** the edits that format the open file at `version`, as its
-  language server gives them.
+  language server gives them; only the stretch `range` of it when that is
+  given, and none when the server formats whole files only.
+- **`format_on_type`:** the edits that format what was just typed, `character`
+  having been typed to reach `position`, as `formatted`; none when the server
+  does not format as one types.
+- **`folding_ranges`:** the blocks of the open file at `version` that can be
+  folded, as the language server gives them; none when it does not say.
+- **`linked_ranges`:** the stretches of the open file at `version` that are
+  edited together with the one at `position`, the one at `position` among
+  them, as the language server gives them; none when it knows of none.
 - **`definition`:** the places `seek` looks for from `position`: `definition`
   (the default), `declaration`, `type_definition`, `implementation`,
   `references`, `incoming_calls` or `outgoing_calls`. A file inside the folder
@@ -518,10 +530,12 @@ embedded context, and anything else as a link to the stored file.
 | `directory`  | `path`: a `clone` made   |
 | `extensions` | `extensions`: `[{id, name, kind, version, description, icon, color, hidden, suffixes, installed, busy, problem, server, local}]` |
 | `grammar`    | `{id, symbol, aliases, wasm, highlights, indents, outline, injections, brackets, indent, tabs, line_comment}` |
-| `opened`     | `triggers`: the characters after which the server offers completions; `signature`: those after which it tells what the call the caret is in looks like |
+| `opened`     | `triggers`: the characters after which the server offers completions; `signature`: those after which it tells what the call the caret is in looks like; `format`: those after which it formats what was typed; `formats_ranges`, `folds`, `links`: whether it formats a stretch, says what can be folded and says what is edited together |
 | `completions`| `items`: `[{label, detail, kind, text, span, filter, sort, documentation}]`, `kind` one of `function`, `variable`, `type`, `module`, `keyword`, `constant`, `snippet`, `other` |
 | `hovered`    | `hover`: `{text, span}` or null |
 | `formatted`  | `edits`: `[{span, text}]` |
+| `folding_ranges` | `ranges`: `[{start, end}]`, the first and last line of each block, counted from 0 |
+| `linked_ranges` | `spans`: the stretches edited together |
 | `definitions`| `locations`: `[{path, span, inside, text, language, name, line}]`; `name` names a calling or called function, `line` is the line the span starts on |
 | `code_actions` | `actions`: `[{title, kind, preferred, disabled}]` |
 | `highlights` | `spans`: the stretches of the file where the thing at `position` is used |

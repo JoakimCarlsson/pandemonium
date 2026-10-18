@@ -196,6 +196,27 @@ pub struct Triggers {
     pub completion: Vec<String>,
     /// Those after which it tells what the call the caret is in looks like.
     pub signature: Vec<String>,
+    /// Those after which it formats what was just typed.
+    #[serde(default)]
+    pub format: Vec<String>,
+    /// Whether it formats a stretch of a file.
+    #[serde(default)]
+    pub formats_ranges: bool,
+    /// Whether it says which blocks of a file can be folded.
+    #[serde(default)]
+    pub folds: bool,
+    /// Whether it says which stretches of a file are edited together.
+    #[serde(default)]
+    pub links: bool,
+}
+
+/// A block of lines a language server says can be folded: the line it starts on and the line it ends on, counted from 0.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct FoldRange {
+    /// The first line.
+    pub start: u32,
+    /// The last line.
+    pub end: u32,
 }
 
 /// What a language server says about the call the caret is in: the signature of what is called, and which of its parameters the caret is at.

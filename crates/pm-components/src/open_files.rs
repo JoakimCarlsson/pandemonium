@@ -634,7 +634,7 @@ impl WorkspaceState {
         match action {
             PREVIEW_SHOW => self.show_source(false),
             SOURCE_SHOW => self.show_source(true),
-            EDITOR_SAVE => self.format_then_save(true),
+            EDITOR_SAVE => self.format_then_save(true, None),
             EDITOR_FIELD => {}
             _ => return false,
         }

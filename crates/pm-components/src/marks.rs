@@ -29,6 +29,86 @@ impl WorkspaceState {
         self
     }
 
+    /// Asks the language server which blocks of the file shown can be folded, unless the text it was asked about is the text as it is.
+    pub fn folds_requested(mut self) -> Self {
+        let Some(session) = self.review_index() else {
+            return self;
+        };
+        let Some(path) = self.shown_viewer().map(|viewer| viewer.path.clone()) else {
+            return self;
+        };
+        let Some(document) = self
+            .shown_document()
+            .filter(|document| document.synced && document.folds_supported)
+            .filter(|document| document.server_folds_version() != Some(document.version))
+        else {
+            return self;
+        };
+        let request = Outgoing::FoldingRanges {
+            session,
+            path,
+            version: document.version,
+        };
+        self.outbox.push(request);
+        self
+    }
+
+    /// The state after the language server said which blocks of the file at `path` of the session at `session` can be folded, as the text was at `version`.
+    pub fn with_folds(
+        mut self,
+        session: usize,
+        path: &str,
+        version: i32,
+        ranges: Vec<pm_protocol::FoldRange>,
+    ) -> Self {
+        if let Some(document) = self.file_mut(session, path) {
+            document.take_folds(version, ranges);
+        }
+        self
+    }
+
+    /// Asks the language server which stretches are edited together with the one the caret of the file shown is in, when the setting is on and the caret is not in one already.
+    pub fn links_requested(mut self) -> Self {
+        if !self.editor.linked_editing {
+            return self;
+        }
+        let Some(session) = self.review_index() else {
+            return self;
+        };
+        let Some(path) = self.shown_viewer().map(|viewer| viewer.path.clone()) else {
+            return self;
+        };
+        let Some(document) = self
+            .shown_document()
+            .filter(|document| document.synced && document.links_supported)
+            .filter(|document| !document.field.is_read_only() && !document.is_linked())
+        else {
+            return self;
+        };
+        let request = Outgoing::LinkedRanges {
+            session,
+            path,
+            version: document.version,
+            position: document.position_of(document.field.caret()),
+        };
+        self.outbox.push(request);
+        self
+    }
+
+    /// The state after the language server said which stretches of the file at `path` of the session at `session` are edited together with the one the caret was in, as the text was at `version`.
+    pub fn with_links(
+        mut self,
+        session: usize,
+        path: &str,
+        version: i32,
+        spans: Vec<Span>,
+    ) -> Self {
+        if let Some(document) = self.file_mut(session, path) {
+            document.take_linked(version, spans);
+        }
+        self
+    }
+
     /// The state after the language server said where the thing at a place of the file at `path` of the session at `session` is used, as the text was at `version`.
     pub fn with_highlights(
         mut self,
