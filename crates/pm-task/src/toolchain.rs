@@ -128,14 +128,21 @@ fn rust() -> Vec<Toolchain> {
         .collect()
 }
 
-/// The toolchain of `language` whose programs are in the folder `bin`, called `name`, when it holds `program`.
-fn in_folder(language: &str, name: String, program: &str, bin: PathBuf) -> Option<Toolchain> {
+/// The toolchain of `language` whose programs are in the folder `bin`, called `name`, when it holds `program`; its program is run to ask for the version only when `trusted`, which a folder inside a project is not.
+fn in_folder(
+    language: &str,
+    name: String,
+    program: &str,
+    bin: PathBuf,
+    trusted: bool,
+) -> Option<Toolchain> {
     let binary = bin.join(program);
     binary.is_file().then(|| Toolchain {
         language: language.to_owned(),
         id: name.clone(),
-        detail: first_line(&binary, "--version")
-            .or_else(|| first_line(&binary, "version"))
+        detail: trusted
+            .then(|| first_line(&binary, "--version").or_else(|| first_line(&binary, "version")))
+            .flatten()
             .unwrap_or_else(|| bin.display().to_string()),
         name,
         path: vec![bin],
@@ -162,6 +169,7 @@ fn node() -> Vec<Toolchain> {
                     format!("nvm {name}"),
                     "node",
                     folder.join("bin"),
+                    true,
                 )
             })
             .chain(children(&fnm).into_iter().filter_map(|(name, folder)| {
@@ -170,6 +178,7 @@ fn node() -> Vec<Toolchain> {
                     format!("fnm {name}"),
                     "node",
                     folder.join("installation/bin"),
+                    true,
                 )
             })),
     );
@@ -183,6 +192,15 @@ fn environment_bin(folder: &Path) -> PathBuf {
     } else {
         folder.join("bin")
     }
+}
+
+/// The version of Python a virtual environment was made with, read from its `pyvenv.cfg` without running anything inside the project.
+fn venv_version(folder: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(folder.join("pyvenv.cfg")).ok()?;
+    text.lines().find_map(|line| {
+        let (key, value) = line.split_once('=')?;
+        matches!(key.trim(), "version" | "version_info").then(|| format!("Python {}", value.trim()))
+    })
 }
 
 /// The Python toolchains: the system's, the virtual environments the project in `root` keeps, and those pyenv keeps.
@@ -203,7 +221,10 @@ fn python(root: &Path) -> Vec<Toolchain> {
             format!("venv {name}"),
             program,
             environment_bin(&folder),
+            false,
         ) {
+            toolchain.detail =
+                venv_version(&folder).unwrap_or_else(|| folder.display().to_string());
             toolchain
                 .env
                 .insert("VIRTUAL_ENV".to_owned(), folder.display().to_string());
@@ -220,6 +241,7 @@ fn python(root: &Path) -> Vec<Toolchain> {
                         format!("pyenv {name}"),
                         program,
                         folder.join("bin"),
+                        true,
                     )
                 }),
         );
@@ -236,12 +258,15 @@ fn go() -> Vec<Toolchain> {
         "usr/local/go".to_owned(),
         program,
         PathBuf::from("/usr/local/go/bin"),
+        true,
     ));
     if let Some(home) = home() {
         found.extend(
             children(&home.join("sdk"))
                 .into_iter()
-                .filter_map(|(name, folder)| in_folder("go", name, program, folder.join("bin"))),
+                .filter_map(|(name, folder)| {
+                    in_folder("go", name, program, folder.join("bin"), true)
+                }),
         );
     }
     found
