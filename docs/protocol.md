@@ -12,19 +12,27 @@ document says what they mean and how a client behaves.
 
 ## Connecting
 
-A client reaches the server one of three ways. The protocol on the connection
-is the same in each.
+A client reaches the server one of six ways. The protocol on the connection
+is the same in each: only the way to the server's port differs.
 
 | Way    | What the client does                                                                                                                                                                                         |
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Local  | Reads `server.json` from the data folder for the port and token, connects to `ws://127.0.0.1:<port>/`. If nothing answers, starts `pandemonium-server --listen 127.0.0.1:0` apart from itself and reads again. |
 | Direct | Connects to `ws://<host>:<port>/` with a token it was given. The server must be started with `--listen <address> --token <token>`. The connection is not encrypted: use a trusted network such as Tailscale.    |
 | ssh    | Reads the remote `server.json` with `ssh <host> cat …`, opens a local port, and for each connection runs `ssh -W 127.0.0.1:<port> <host>` and pipes the bytes through. The server must already be running.      |
+| WSL    | On Windows, runs `wsl.exe -d <distro> --exec sh -c …` to read the distribution's `server.json`. When no server answers there, installs `pandemonium-server` with the installer if it is missing, starts it as a `wsl.exe` process of its own with `--listen 127.0.0.1:0`, so that it and the distribution outlive the client, and connects to `ws://127.0.0.1:<port>/` through WSL's localhost forwarding. |
+| Dev container | Reads the folder's `devcontainer.json` (`image`, `build`, `workspaceFolder`, `containerEnv`, `mounts`, `runArgs`, `postCreateCommand`), builds or pulls the image, and runs one container per folder, found again by its `pandemonium.folder` label, with the folder mounted at the workspace folder and port 6868 published on `127.0.0.1`. Installs and starts the server in it with `docker exec -d … --listen 0.0.0.0:6868`, reads its `server.json` with `docker exec`, and connects to the published port. Progress is reported step by step while this happens. |
+| Tunnel | Opens a local port and, for each connection, runs `cloudflared access tcp --hostname <hostname>` and pipes the bytes through it. The server's machine runs a named tunnel that points at the port the server listens on, so it only connects outward and opens no port. The token is the one the server was started with, kept by the client. |
 
 A project on another machine is addressed `ssh://<destination>/<folder>` for
-a server reached over ssh, and `tcp://<host>:<port>/<folder>` for one reached
-directly; the window keeps the token of each direct server in its own
-settings.
+a server reached over ssh, `tcp://<host>:<port>/<folder>` for one reached
+directly, `wsl://<distro>/<folder>` for one in a WSL distribution,
+`devcontainer://<host folder>/<folder>` for one in the dev container of a folder
+on this machine, and `tunnel://<hostname>/<folder>` for one behind a tunnel. The
+host folder of a dev container is written with `/` as `%2F`, `%` as `%25` and
+whitespace as `%XX`, so that it holds no slash; `<folder>` is the folder inside
+the container. The window keeps the token of each direct or tunnelled server in
+its own settings.
 
 A relay for phones, end-to-end encrypted, is planned and is not built.
 
@@ -200,7 +208,7 @@ request with exactly one `response` carrying the same `id`.
 | `read_conflict`| `directory`, `path`                                                                              | `conflict`      |
 | `resolve_conflict`| `directory`, `path`, `text`                                                                   | `done`          |
 | `revision_changes`| `directory`, `from` (optional), `to`                                                          | `revision_changes` |
-| `permalink`    | `directory`, `path`, `line` (optional)                                                           | `address`       |
+| `permalink`    | `directory`, `path`, `line` (optional), `end_line` (optional)                                    | `address`       |
 
 `agent` is an agent's id: `claude-code`, `codex` or `grok`.
 
@@ -287,6 +295,10 @@ request with exactly one `response` carrying the same `id`.
 - **`inspect`:** the files that differ from the last commit, with their diffs,
   and, when `base` is given, the messages of the commits the branch has that
   `base` has not, plus the branch and abbreviated head commit the folder is on.
+  Each change's `words` is `[{line, ranges}]`: for a removed or added line of its
+  diff, counted from 0 among the lines of `diff`, the `[start, end]` bytes of the
+  line, without its marker, that differ from the line paired with it in the same
+  run of changes.
 - **`set_accounts`:** keeps the logins and the login in use for each agent on
   the server's machine, and points the agents at them. `accounts` reads them
   back.
@@ -319,7 +331,10 @@ request with exactly one `response` carrying the same `id`.
 - **`machine_settings`, `save_machine_settings`:** what the reader set up for
   the work the server does on its machine, kept by the server, replaced whole by
   the save and put to work at once. `git` is `{auto_fetch, fetch_minutes,
-  branch_template, worktree_root}`: while `auto_fetch` is set the server runs
+  branch_template, worktree_root, hosts}`: `hosts` maps the host name of a
+  self-hosted git server to the layout its web addresses use (`github`,
+  `gitlab`, `bitbucket`, `gitea`, `azure`, `sourcehut` or `gitee`), which
+  `permalink` follows for a host whose name does not give it away; while `auto_fetch` is set the server runs
   `git fetch --all --prune` every `fetch_minutes` in the repositories of its
   open sessions and of the projects saved on its machine. `history` is
   `{enabled, days, megabytes}`: whether the server keeps a state of a file each
@@ -570,7 +585,7 @@ embedded context, and anything else as a link to the stored file.
 | `bytes`      | `bytes` (base64): what a file holds, `truncated`: whether it was cut short |
 | `identity`   | `default`, `selected`: who the agent is signed in as, or null |
 | `started`    | `session`, `directory`, `branch` (always null for now), `head` (null without a worktree) |
-| `inspected`  | `changes`: `[{path, diff, staged, untracked, index, worktree, conflicted, from}]`, `commits`: `[string]` or null, `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind}`, `operation`: `Merge`, `Rebase` or `CherryPick` with what git prepared, or null |
+| `inspected`  | `changes`: `[{path, diff, words, staged, untracked, index, worktree, conflicted, from}]`, `commits`: `[string]` or null, `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind}`, `operation`: `Merge`, `Rebase` or `CherryPick` with what git prepared, or null |
 | `projects`   | `paths`, `saved`                                          |
 | `choices`    | `choices`: `[[agent, setting, value]]`                    |
 | `agent_servers` | `servers`: `[{id, name, command, env, package, installer, home}]`                |

@@ -11,6 +11,19 @@ pub enum Reach {
     Direct,
     /// Through ssh to a machine where it already runs.
     Ssh,
+    /// Inside a Windows Subsystem for Linux distribution, where it is started when it is not running.
+    Wsl,
+    /// Inside the dev container of a folder on this machine, which is built and started first.
+    Container,
+    /// Through a tunnel that the server's machine makes outward, so that it opens no port.
+    Tunnel,
+}
+
+impl Reach {
+    /// Whether a server reached this way is let in with a token the window keeps, rather than one it reads from the machine.
+    pub fn keeps_token(self) -> bool {
+        matches!(self, Self::Direct | Self::Tunnel)
+    }
 }
 
 /// A server on another machine the reader told the window about.
@@ -21,9 +34,9 @@ pub struct KnownServer {
     pub name: String,
     /// How it is reached.
     pub reach: Reach,
-    /// Where it is: `host:port` for a direct one, the ssh destination for one reached over ssh.
+    /// Where it is: `host:port` for a direct one, the ssh destination for one reached over ssh, the distribution's name for one in WSL, the folder on this machine for one in a dev container, the tunnel's hostname for one behind a tunnel.
     pub address: String,
-    /// The token a direct one wants; ssh reads it from the machine.
+    /// The token a direct one or one behind a tunnel wants; the others read it from the machine.
     pub token: String,
 }
 
@@ -33,16 +46,24 @@ impl KnownServer {
         match self.reach {
             Reach::Direct => format!("{}{}", pm_protocol::DIRECT_SCHEME, self.address),
             Reach::Ssh => self.address.clone(),
+            Reach::Wsl => format!("{}{}", pm_protocol::WSL_SCHEME, self.address),
+            Reach::Container => format!(
+                "{}{}",
+                pm_protocol::CONTAINER_SCHEME,
+                pm_protocol::escape_folder(&self.address)
+            ),
+            Reach::Tunnel => format!("{}{}", pm_protocol::TUNNEL_SCHEME, self.address),
         }
     }
 
     /// The address of `folder` on it.
     pub fn project(&self, folder: &str) -> String {
         let folder = folder.trim_start_matches('/');
-        match self.reach {
-            Reach::Direct => format!("{}{}/{folder}", pm_protocol::DIRECT_SCHEME, self.address),
-            Reach::Ssh => format!("{}{}/{folder}", pm_protocol::SSH_SCHEME, self.address),
-        }
+        let host = match self.reach {
+            Reach::Ssh => format!("{}{}", pm_protocol::SSH_SCHEME, self.address),
+            _ => self.host(),
+        };
+        format!("{host}/{folder}")
     }
 }
 
@@ -67,7 +88,7 @@ impl ServerList {
     pub fn token_of(&self, address: &str) -> Option<&str> {
         self.known
             .iter()
-            .find(|server| server.reach == Reach::Direct && server.address == address)
+            .find(|server| server.reach.keeps_token() && server.address == address)
             .map(|server| server.token.as_str())
     }
 }

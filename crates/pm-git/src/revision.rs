@@ -76,9 +76,11 @@ pub fn revision_changes(
                 run(directory, &root)
             })
             .unwrap_or_default();
+        let diff = hunks(&shown);
         found.push(Change {
             path: path.to_owned(),
-            diff: hunks(&shown),
+            words: crate::words(&diff),
+            diff,
             staged: false,
             untracked: false,
             index: Some(letter),

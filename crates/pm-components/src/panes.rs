@@ -735,11 +735,7 @@ impl WorkspaceState {
     /// Every tab the page has, in order: the page, the diff while the session changed files, and the open files.
     fn pane_items(&self) -> Vec<Item> {
         let mut items = vec![Item::Page];
-        if matches!(self.page, Page::Session(_))
-            && self
-                .open()
-                .is_some_and(|session| !session.changes.is_empty())
-        {
+        if self.review_session().is_some() {
             items.push(Item::Diff);
         }
         if self.excerpts.is_some() {

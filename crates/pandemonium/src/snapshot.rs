@@ -84,6 +84,8 @@ pub enum Shot {
     Quitting,
     /// The workspace on the diff of its first session.
     Diff,
+    /// The workspace on the diff of its first session with the words that changed inside changed lines marked.
+    WordDiff,
     /// The workspace on the diff of its first session with a comment kept and another being written.
     Commenting,
     /// The workspace on the diff of its first session with the project's files listed in the review panel.
@@ -1122,6 +1124,29 @@ fn workspace_sample() -> WorkspaceState {
     WorkspaceState::sample()
 }
 
+/// The workspace on the diff of its first session, the words that changed inside its changed lines marked as the server tells them.
+fn word_diff() -> WorkspaceState {
+    let mut state = workspace_sample().after(TAB_DIFF);
+    for change in &mut state.sessions[0].changes {
+        let source = change
+            .diff
+            .iter()
+            .map(|line| {
+                let marker = match line.kind {
+                    pm_components::sample::Kind::Add => "+",
+                    pm_components::sample::Kind::Remove => "-",
+                    pm_components::sample::Kind::Context => " ",
+                    pm_components::sample::Kind::Hunk => "",
+                };
+                format!("{marker}{}", line.text)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        change.words = pm_git::words(&source);
+    }
+    state
+}
+
 /// The workspace on the diff with a comment kept on some lines and a box open to write another on a file.
 fn commenting() -> WorkspaceState {
     let state = workspace_sample()
@@ -1597,6 +1622,10 @@ impl Shot {
                 load_installed_grammar("rust");
                 Screen::Workspace(workspace().after(TAB_DIFF))
             }
+            Self::WordDiff => {
+                load_installed_grammar("rust");
+                Screen::Workspace(word_diff())
+            }
             Self::Commenting => Screen::Workspace(commenting()),
             Self::Files => Screen::Workspace(files()),
             Self::Source => Screen::Workspace(source()),
@@ -1918,6 +1947,24 @@ fn settings_sample() -> WorkspaceState {
             name: "Build box".to_owned(),
             reach: pm_config::Reach::Direct,
             address: "100.64.0.7:6868".to_owned(),
+            token: "secret".to_owned(),
+        },
+        pm_config::KnownServer {
+            name: "Ubuntu".to_owned(),
+            reach: pm_config::Reach::Wsl,
+            address: "Ubuntu".to_owned(),
+            token: String::new(),
+        },
+        pm_config::KnownServer {
+            name: "App container".to_owned(),
+            reach: pm_config::Reach::Container,
+            address: "/home/me/app".to_owned(),
+            token: String::new(),
+        },
+        pm_config::KnownServer {
+            name: "Home server".to_owned(),
+            reach: pm_config::Reach::Tunnel,
+            address: "home.example.com".to_owned(),
             token: "secret".to_owned(),
         },
     ];

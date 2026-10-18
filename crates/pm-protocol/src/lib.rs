@@ -12,7 +12,10 @@ mod message;
 mod request;
 mod response;
 
-pub use address::{DIRECT_SCHEME, SSH_SCHEME, direct_address, host_of, is_destination};
+pub use address::{
+    CONTAINER_SCHEME, DIRECT_SCHEME, Route, SSH_SCHEME, TUNNEL_SCHEME, WSL_SCHEME, escape_folder,
+    host_of, is_destination, route_of, unescape_folder,
+};
 pub use agents::builtin_agents;
 pub use credential::{Build, Credential, Target};
 pub use debug::{DebugAction, DebugAdapter, DebugFile, DebugInfo, DebugProcess, DebugScenario};

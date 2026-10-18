@@ -13,6 +13,7 @@ mod graph;
 mod operation;
 mod places;
 mod revision;
+mod words;
 
 pub use checkpoint::{checkpoint, restore};
 pub use conflict::{Sides, sides};
@@ -22,6 +23,7 @@ pub use graph::{Edge, Half, Lanes};
 pub use operation::{Operation, operation, step};
 pub use places::{clone, folders};
 pub use revision::revision_changes;
+pub use words::{Words, words};
 
 /// Where, under a repository, the worktrees made for tasks are kept.
 const WORKTREES: &str = ".pandemonium/worktrees";
@@ -39,6 +41,9 @@ pub struct Change {
     pub path: String,
     /// The lines of its diff, from the first hunk on, each starting with `@`, `+`, `-` or a space.
     pub diff: String,
+    /// The words that changed inside its removed and added lines.
+    #[serde(default)]
+    pub words: Vec<Words>,
     /// Whether the change is staged for the next commit.
     pub staged: bool,
     /// Whether the file is one git does not track yet.
@@ -442,6 +447,7 @@ pub fn changes(directory: &Path) -> Vec<Change> {
         };
         found.push(Change {
             path: path.to_owned(),
+            words: words(&diff),
             diff,
             staged: !untracked && !conflicted && index != ' ' && tree == ' ',
             untracked,

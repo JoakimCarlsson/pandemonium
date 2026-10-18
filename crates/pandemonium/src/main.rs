@@ -94,6 +94,7 @@ fn main() {
             Some("workspace") => Shot::Workspace,
             Some("quitting") => Shot::Quitting,
             Some("diff") => Shot::Diff,
+            Some("worddiff") => Shot::WordDiff,
             Some("commenting") => Shot::Commenting,
             Some("files") => Shot::Files,
             Some("source") => Shot::Source,

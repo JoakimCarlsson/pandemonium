@@ -534,6 +534,7 @@ impl Work {
                 session,
                 path,
                 line,
+                end_line,
                 open,
             } => self.ask_in_folder(
                 model,
@@ -542,6 +543,7 @@ impl Work {
                     directory,
                     path,
                     line,
+                    end_line,
                 },
                 Pending::Permalink(open),
             ),

@@ -730,7 +730,13 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             directory,
             path,
             line,
-        } => match pm_git::permalink(&place(&directory), &path, line) {
+            end_line,
+        } => match pm_git::permalink(
+            &place(&directory),
+            &path,
+            line.map(|first| (first, end_line.unwrap_or(first))),
+            &crate::machine::settings().git.hosts,
+        ) {
             Ok(url) => Response::Address { url },
             Err(reason) => failed(reason),
         },

@@ -204,6 +204,10 @@ pub enum Setting {
     GitBlame,
     /// Whether the change marks follow the editor or are off.
     GitGutterMarks,
+    /// Whether the words that changed inside a changed line of a diff are drawn apart.
+    GitWordDiff,
+    /// Which layout the addresses of self-hosted git servers use.
+    GitHosts,
     /// The agent new work is given to.
     DefaultAgent,
     /// The mode agents start in.
@@ -218,7 +222,7 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting, in the order the pages show them.
-    pub const ALL: [Self; 84] = [
+    pub const ALL: [Self; 86] = [
         Self::Launch,
         Self::ConfirmClose,
         Self::CheckUpdates,
@@ -298,6 +302,8 @@ impl Setting {
         Self::WorktreeFolder,
         Self::GitBlame,
         Self::GitGutterMarks,
+        Self::GitWordDiff,
+        Self::GitHosts,
         Self::DefaultAgent,
         Self::PermissionMode,
         Self::OnFinish,
@@ -384,7 +390,9 @@ impl Setting {
             | Self::BranchTemplate
             | Self::WorktreeFolder
             | Self::GitBlame
-            | Self::GitGutterMarks => Section::Git,
+            | Self::GitGutterMarks
+            | Self::GitWordDiff
+            | Self::GitHosts => Section::Git,
             Self::DefaultAgent | Self::PermissionMode | Self::OnFinish | Self::Notification => {
                 Section::Agents
             }
@@ -409,6 +417,7 @@ impl Setting {
             | Self::HistorySize
             | Self::BranchTemplate
             | Self::WorktreeFolder
+            | Self::GitHosts
             | Self::DefaultAgent
             | Self::PermissionMode => Keeper::Machine,
             _ => Keeper::Window,
@@ -706,6 +715,14 @@ impl Setting {
             Self::GitGutterMarks => (
                 "Change marks",
                 "Follow the editor's setting for marks beside changed lines, or turn them off here.",
+            ),
+            Self::GitWordDiff => (
+                "Highlight changed words",
+                "Mark the words that changed inside a changed line of a diff, not only the whole line.",
+            ),
+            Self::GitHosts => (
+                "Self-hosted git servers",
+                "The layout of permalinks for a server whose name does not give it away, as host=layout separated by commas; layouts are github, gitlab, bitbucket, gitea, azure, sourcehut and gitee.",
             ),
             Self::DefaultAgent => ("Default agent", "The agent new sessions start with."),
             Self::PermissionMode => (

@@ -652,7 +652,10 @@ fn file(
         section = section.child(comment_card(*at, comment, width));
     }
     let selected = target.and_then(|target| target.range);
-    let colours = DiffColours::of(&change.diff, file_language(&change.path).as_deref());
+    let mut colours = DiffColours::of(&change.diff, file_language(&change.path).as_deref());
+    if state.window.git.word_diff {
+        colours = colours.with_words(&change.diff, &change.words);
+    }
     let mut at = top + SECTION_CHROME + HEADER;
     let mut skipped = 0;
     for row in rows(change) {
