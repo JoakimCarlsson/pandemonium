@@ -76,7 +76,7 @@ server keeps what was allowed in its machine settings.
 | Capability     | Lets the extension                                                              |
 | -------------- | ------------------------------------------------------------------------------- |
 | `process`      | run programs: its language servers, debug adapters and tool servers, and from its module |
-| `download`     | download files: its languages' grammars and language servers, and from its module |
+| `download`     | download files: its languages' grammars and language servers, and from its module, and reach its tool servers by address; its module can fetch public addresses only, without following redirects |
 | `read-project` | read the files of the project a command runs in, from its module                |
 
 A capability is checked where it is used. A language server, a debug adapter or

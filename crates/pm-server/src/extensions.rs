@@ -122,19 +122,23 @@ fn adapters() -> Vec<pm_dap::Adapter> {
         .collect()
 }
 
-/// The tool servers the installed extensions bring, listed with the extension that brings each; one that is started as a program is switched off unless its extension may run programs.
+/// The tool servers the installed extensions bring, listed with the extension that brings each; one that is started as a program is switched off unless its extension may run programs, and one reached by address unless it may download.
 pub(crate) fn mcp_servers() -> Vec<McpServer> {
     pm_plugin::installed()
         .into_iter()
         .flat_map(|package| {
-            let allowed = grants_of(&package.id).allows(Capability::Process);
+            let grants = grants_of(&package.id);
             let extension = package.id.clone();
             package
                 .manifest
                 .mcp_servers
                 .into_iter()
                 .map(move |entry| McpServer {
-                    enabled: allowed || is_address(&entry.target),
+                    enabled: if is_address(&entry.target) {
+                        grants.allows(Capability::Download)
+                    } else {
+                        grants.allows(Capability::Process)
+                    },
                     name: entry.name,
                     target: entry.target,
                     env: entry.env.into_iter().collect(),

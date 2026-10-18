@@ -293,7 +293,7 @@ request with exactly one `response` carrying the same `id`.
   every client sees the same. `projects` says `saved: false` when the list was
   never saved, which means the app has not been set up yet. A project is an
   address of a folder on the server's machine, such as `~/code/app`.
-- **`mcp_servers`, extensions:** `mcp_servers` also lists the tool servers the extensions installed on the machine bring, each with `extension` set to the extension's folder name; `save_mcp_servers` leaves those out of what it keeps, and they go when the extension does. A tool server started as a program is `enabled: false` while its extension is not allowed to run programs.
+- **`mcp_servers`, extensions:** `mcp_servers` also lists the tool servers the extensions installed on the machine bring, each with `extension` set to the extension's folder name; `save_mcp_servers` leaves those out of what it keeps, and they go when the extension does. A tool server started as a program is `enabled: false` while its extension is not allowed to run programs, and one reached by address while it is not allowed to download.
 - **`agent_servers`, `mcp_servers`:** the agents the server can start and
   the tool servers every agent is started with, kept by the server and replaced
   whole by the matching `save_` request. The agents the app ships are in the list the first time it is asked for, and are changed or removed like any other; `package`, `installer` and `home` are optional. A tool server's `target` is an address

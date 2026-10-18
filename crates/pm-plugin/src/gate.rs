@@ -1,6 +1,7 @@
 //! What an extension's code is allowed to have the host do for it.
 
 use std::io::Read;
+use std::net::{IpAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -10,6 +11,60 @@ use pm_policy::{Capability, Grants};
 
 /// The most a download or a file read gives back, in bytes.
 const MOST_BYTES: u64 = 16 << 20;
+
+/// Whether `address` is somewhere on the public internet: not this machine, a private or link-local network, or another address that is not routed globally.
+fn is_global(address: IpAddr) -> bool {
+    match address {
+        IpAddr::V4(v4) => {
+            let [first, second, ..] = v4.octets();
+            !(v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || v4.is_multicast()
+                || (first == 100 && (64..128).contains(&second))
+                || first == 0)
+        }
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(mapped) => is_global(IpAddr::V4(mapped)),
+            None => {
+                let first = v6.segments()[0];
+                !(v6.is_loopback()
+                    || v6.is_unspecified()
+                    || v6.is_multicast()
+                    || first & 0xfe00 == 0xfc00
+                    || first & 0xffc0 == 0xfe80)
+            }
+        },
+    }
+}
+
+/// Nothing when every address the host of `url` resolves to is global, and why not otherwise.
+fn check_public(url: &str) -> Result<(), String> {
+    let uri: ureq::http::Uri = url
+        .parse()
+        .map_err(|_| format!("{url} is not an address"))?;
+    let host = uri
+        .host()
+        .ok_or_else(|| format!("{url} names no host"))?
+        .trim_matches(['[', ']']);
+    let port = uri
+        .port_u16()
+        .unwrap_or(if uri.scheme_str() == Some("https") {
+            443
+        } else {
+            80
+        });
+    let found: Vec<_> = (host, port)
+        .to_socket_addrs()
+        .map_err(|error| format!("could not resolve {host}: {error}"))?
+        .collect();
+    if found.is_empty() || found.iter().any(|address| !is_global(address.ip())) {
+        return Err(format!("{host} is not a public address"));
+    }
+    Ok(())
+}
 
 /// How long a download may take.
 const PATIENCE: Duration = Duration::from_secs(60);
@@ -81,7 +136,9 @@ impl Gate {
         if !url.starts_with("https://") && !url.starts_with("http://") {
             return Err(format!("{url} is not an http address"));
         }
+        check_public(url)?;
         let agent: ureq::Agent = ureq::Agent::config_builder()
+            .max_redirects(0)
             .timeout_global(Some(PATIENCE))
             .build()
             .into();
