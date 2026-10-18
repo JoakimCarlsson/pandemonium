@@ -213,6 +213,19 @@ pub enum Response {
         /// Each one, oldest first.
         terminals: Vec<TerminalInfo>,
     },
+    /// What a folder can be built, tested and run with.
+    Tasks {
+        /// Each one, those the project writes first.
+        tasks: Vec<crate::Task>,
+        /// Why the project's own file could not be read, when it could not.
+        #[serde(default)]
+        problem: Option<String>,
+    },
+    /// The toolchains a project can start its tasks and tools with.
+    Toolchains {
+        /// Each one, grouped by language.
+        toolchains: Vec<crate::ToolchainInfo>,
+    },
     /// The GitHub accounts and organizations whose repositories can be listed.
     Owners {
         /// The signed-in account first, then its organizations.

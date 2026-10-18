@@ -8,7 +8,7 @@
 //! text parsed with a grammar, kept up to date edit by edit; it answers what
 //! colour each stretch of a window of the text is, how deep a new line is
 //! indented, which bracket pairs with the one at the caret and which items
-//! enclose it. The [`registry`] holds the grammars loaded so far by name, so
+//! enclose it, and which places can be run. The [`registry`] holds the grammars loaded so far by name, so
 //! that a stretch written in another language can be highlighted in it.
 
 mod brackets;
@@ -19,6 +19,7 @@ mod indent;
 mod kind;
 mod outline;
 pub mod registry;
+mod runnables;
 mod select;
 mod syntax;
 
@@ -27,4 +28,5 @@ pub use highlight::Highlight;
 pub use indent::Indent;
 pub use kind::Kind;
 pub use outline::Item;
+pub use runnables::Runnable;
 pub use syntax::Syntax;

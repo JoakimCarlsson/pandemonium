@@ -2,7 +2,7 @@
 
 use pm_editor::Action;
 use pm_input::FocusId;
-use pm_protocol::{CodeAction, Location, Seek};
+use pm_protocol::{CodeAction, Location, Seek, Task};
 use pm_text::{Edit, Field};
 
 use crate::state::{Outgoing, WorkspaceState};
@@ -173,9 +173,11 @@ pub enum Items {
     Commands {
         /// Every command, with the keys it is bound to as they are shown.
         commands: Vec<(Action, Option<String>)>,
+        /// Every task of the project, which follow the commands in the places `matched` counts by.
+        tasks: Vec<Task>,
         /// What the titles are narrowed to.
         filter: Field,
-        /// The commands that match, the recently used first and then the best, by place among `commands`.
+        /// The commands that match, the recently used first and then the best, then the tasks that match, by place among `commands` and then `tasks`.
         matched: Vec<usize>,
         /// How many of `matched` were used recently.
         recent: usize,
@@ -340,6 +342,37 @@ fn matching_commands(
         .chain(scored.into_iter().map(|(_, place)| place))
         .collect();
     (matched, count)
+}
+
+/// The places of `tasks` whose names or commands match `typed`, best first: a name starting with it, then one holding it, then one holding its letters in order, then a command holding it, each in the order the tasks are listed; all of them when nothing is typed.
+fn matching_tasks(tasks: &[Task], typed: &str) -> Vec<usize> {
+    let typed = typed.trim().to_lowercase();
+    let mut scored: Vec<(u8, usize)> = tasks
+        .iter()
+        .enumerate()
+        .filter_map(|(place, task)| {
+            let title = task_title(task).to_lowercase();
+            let rank = if title.starts_with(&typed) {
+                0
+            } else if title.contains(&typed) {
+                1
+            } else if narrows_to(&title, &typed) {
+                2
+            } else if task.command.to_lowercase().contains(&typed) {
+                3
+            } else {
+                return None;
+            };
+            Some((rank, place))
+        })
+        .collect();
+    scored.sort();
+    scored.into_iter().map(|(_, place)| place).collect()
+}
+
+/// What the list of commands calls `task`.
+pub(crate) fn task_title(task: &Task) -> String {
+    format!("Run Task: {}", task.name)
 }
 
 /// A place the list of sessions goes to.
@@ -633,6 +666,34 @@ pub fn listing_row_of(id: FocusId) -> Option<usize> {
 }
 
 impl WorkspaceState {
+    /// The list of commands open over the window with its tasks as the workspace holds them now, keeping what is typed.
+    pub(crate) fn commands_renewed(&mut self) {
+        let tasks = self.tasks.tasks.clone();
+        if let Some(listing) = self.listing.as_mut()
+            && let Items::Commands {
+                commands,
+                tasks: held,
+                filter,
+                matched,
+                ..
+            } = &mut listing.items
+        {
+            let query = filter
+                .text()
+                .strip_prefix(Quick::Commands.prefix())
+                .unwrap_or_default()
+                .to_owned();
+            let offset = commands.len();
+            matched.retain(|place| *place < offset);
+            matched.extend(
+                matching_tasks(&tasks, &query)
+                    .into_iter()
+                    .map(|place| offset + place),
+            );
+            *held = tasks;
+        }
+    }
+
     /// Whether a list hangs over the file.
     pub fn listing_open(&self) -> bool {
         self.listing.is_some()
@@ -784,9 +845,20 @@ impl WorkspaceState {
                     .filter(|action| coding || action.everywhere())
                     .map(|action| (action, keymap.label(action)))
                     .collect();
-                let (matched, recent) = matching_commands(&commands, &query, &self.recent_commands);
+                let (mut matched, recent) =
+                    matching_commands(&commands, &query, &self.recent_commands);
+                let tasks = self.tasks.tasks.clone();
+                matched.extend(
+                    matching_tasks(&tasks, &query)
+                        .into_iter()
+                        .map(|place| commands.len() + place),
+                );
+                if session.is_some() {
+                    self.tasks_asked();
+                }
                 Items::Commands {
                     commands,
+                    tasks,
                     filter,
                     matched,
                     recent,
@@ -968,10 +1040,19 @@ impl WorkspaceState {
             }
             Items::Commands {
                 commands,
+                tasks,
                 matched,
                 recent: count,
                 ..
-            } => (*matched, *count) = matching_commands(commands, &query, &recent),
+            } => {
+                (*matched, *count) = matching_commands(commands, &query, &recent);
+                let offset = commands.len();
+                matched.extend(
+                    matching_tasks(tasks, &query)
+                        .into_iter()
+                        .map(|place| offset + place),
+                );
+            }
             Items::Symbols { path, .. } if !path.is_empty() => {
                 let request = Outgoing::WorkspaceSymbols {
                     session,
@@ -1101,7 +1182,17 @@ impl WorkspaceState {
                 Some(location) => self.go_to_location(session, location),
                 None => self,
             },
-            Items::Commands { .. } => self,
+            Items::Commands {
+                commands, tasks, ..
+            } => {
+                if let Some(task) = index
+                    .checked_sub(commands.len())
+                    .and_then(|place| tasks.into_iter().nth(place))
+                {
+                    self.task_run(task);
+                }
+                self
+            }
             Items::Line { lines, .. } => {
                 let Some(number) = line_named(&typed, lines) else {
                     return self;

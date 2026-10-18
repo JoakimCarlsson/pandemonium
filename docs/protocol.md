@@ -163,9 +163,14 @@ request with exactly one `response` carrying the same `id`.
 | `close_terminal`| `terminal`                                                                                      | `done`          |
 | `attach_terminal`| `terminal`, `after`                                                                            | `done`          |
 | `terminals`    | none                                                                                             | `terminals`     |
+| `tasks`        | `directory`                                                                                      | `tasks`         |
+| `run_task`     | `directory`, `project` (optional), `task`: a [task](#tasks), `columns`, `rows`                   | `terminal`      |
+| `run_runnable` | `directory`, `project` (optional), `path`, `kind`, `name`, `columns`, `rows`                     | `terminal`      |
+| `toolchains`   | `directory`, `project` (optional)                                                                | `toolchains`    |
+| `select_toolchain`| `project`, `language`, `toolchain` (optional)                                                 | `done`          |
 | `debug_scenarios`| `directory`, `file` (optional)                                                                 | `debug_scenarios` |
 | `debug_processes`| none                                                                                           | `debug_processes` |
-| `debug_start`  | `directory`, `file` (optional), `scenario`, `files`: `[{path, breakpoints}]`                     | `debug`         |
+| `debug_start`  | `directory`, `file` (optional), `scenario`, `files`: `[{path, breakpoints}]`, `project` (optional) | `debug`      |
 | `debug_attach` | `directory`, `adapter`, `pid`, `files`                                                           | `debug`         |
 | `debug_do`     | `debug`, `action`: `{action, ...}`                                                               | `done`          |
 | `debug_watch`  | `debug`                                                                                          | `debug`         |
@@ -598,7 +603,9 @@ embedded context, and anything else as a link to the stored file.
 | `sessions`   | `sessions`: `[SessionInfo]`                               |
 | `terminal`   | `terminal`: the number of the shell that was started      |
 | `terminals`  | `terminals`: `[{terminal, directory, columns, rows}]`, oldest first; `directory` is the address `open_terminal` was given |
-| `debug_scenarios` | `scenarios`: `[{label, adapter, installed, attach, source}]`, the order `debug_start` chooses by |
+| `tasks`      | `tasks`: `[Task]`, those the project writes first; `problem`: why its own file could not be read, when it could not |
+| `toolchains` | `toolchains`: `[{language, id, name, detail, selected}]`, grouped by language |
+| `debug_scenarios` | `scenarios`: `[{label, adapter, installed, attach, source, task}]`, the order `debug_start` chooses by; `task` is the task the scenario names to run first |
 | `debug_processes` | `adapters`: `[{id, name}]` installed, `processes`: `[{pid, name, command}]`, newest first |
 | `debug`      | `debug`: the number of the session, `view`: the [view](#debugging) of it now |
 | `debugs`     | `debugs`: `[{debug, directory, label}]`, oldest first      |
@@ -751,6 +758,58 @@ keeps its own emulator for them.
   (`"\r"` for Enter, `"\u001b[A"` for the up arrow), and the answers an
   emulator gives to the shell's queries.
 - A shell started in a session's folder belongs to that session in the window.
+
+## Tasks
+
+A task is what a project can be told to do: build, test, run. It is a value, so
+that the command palette, the gutter and the debugger share one way of running
+one.
+
+```json
+{ "name": "cargo test", "command": "cargo test", "folder": "", "env": {}, "group": "test", "language": "rust", "source": "Cargo.toml" }
+```
+
+- `name` is what the task is called, and what a debug scenario names the task it
+  needs first by. `command` is typed into a shell. `folder` is where it runs,
+  from the root of the project, and may not leave it. `env` is added to the
+  shell's environment. `group` is `build`, `test`, `run` or empty. `language` is
+  the family of the toolchain it runs with (`rust`, `javascript`, `python`,
+  `go`) or empty. `source` is where it was found. Only `name` and `command` are
+  required when a client sends one.
+- `tasks` lists them: those written in `.pandemonium.tasks.json` in the root of
+  the folder, `{"tasks": [{"name", "command", …}]}`, then those its manifests
+  imply: Cargo (`build`, `check`, `test`, `clippy`, `run`), the scripts of a
+  `package.json` run with the package manager its lockfile names, the targets of
+  a Makefile, Go modules and Python projects. A detected task a written one has
+  the name of is left out.
+- `run_task` starts the user's shell in the task's folder with the task's
+  environment and the toolchain chosen for its language, types the command into
+  it, and answers `terminal` as `open_terminal` does: the connection is attached
+  and the shell is one the server keeps, listed by `terminals`, until it exits or
+  is closed. `project` is the project the folder belongs to, which the toolchain
+  choice is kept for; the repository the folder is a worktree of when it is
+  missing, and the folder itself when it is not in one.
+- `run_runnable` does the same for a place a language marks as runnable in the
+  file `path`, such as a `main` or a test function. The language's
+  `config.toml` says what running each `kind` is, with `{name}` standing for
+  `name`, and the nearest folder above the file that holds the `marker` file it
+  names is the folder the command runs in. A language marks places with its
+  `runnables.scm`, whose captures `@run.<kind>` and `@name` clients read.
+- `toolchains` lists what is installed on the server's machine, and the virtual
+  environments the project keeps, for each language: the toolchains of rustup,
+  the Node.js versions nvm and fnm keep, Python found on the path, in the
+  project's `.venv` and in pyenv, and Go found on the path, in `/usr/local/go`
+  and in `~/sdk`. `system` is the one the machine's own path finds. `selected`
+  marks the one the project's language is set to, which is `system` until one is
+  chosen. `select_toolchain` chooses `toolchain` for `language` in `project`, or
+  clears the choice when it is missing. The choice is kept by the server and used
+  for the tasks it runs, including the one a debug scenario names, and for the
+  language servers it starts for the project.
+- A debug scenario that names a task, `preLaunchTask` in a `launch.json` or
+  `build` in `.zed/debug.json`, shows it as `task` in `debug_scenarios`. `debug_start`
+  runs that task to its end first and fails, with what the task printed last,
+  without starting the adapter when the task is not one of the project's or does
+  not succeed.
 
 ## Debugging
 

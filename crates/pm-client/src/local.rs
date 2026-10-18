@@ -39,7 +39,7 @@ fn running() -> Option<Target> {
     })
 }
 
-/// Stops the server on this machine when it runs an earlier build of this very program, or is too old to say what it runs, so that a rebuilt program is not served by the code it replaced. Its sessions are kept on disk and its agents start again on their next prompt.
+/// Stops the server on this machine when it runs another build than this program, or is too old to say what it runs, so that a rebuilt or freshly started program is never served by the code it replaced. Its sessions are kept on disk and its agents start again on their next prompt.
 fn retire_outdated() {
     let Some(held) = credential() else {
         return;
@@ -47,7 +47,7 @@ fn retire_outdated() {
     let address = format!("127.0.0.1:{}", held.port);
     let outdated = match (held.build, Build::current()) {
         (None, _) => true,
-        (Some(running), Some(current)) => running.superseded_by(&current),
+        (Some(running), Some(current)) => running.differs_from(&current),
         (Some(_), None) => false,
     };
     if !outdated || !listening(&address) || !terminate(held.pid) {

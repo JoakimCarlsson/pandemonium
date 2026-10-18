@@ -104,6 +104,20 @@ pub struct ServerSpec {
     pub origin: Option<std::path::PathBuf>,
 }
 
+/// What running one kind of runnable place of a language's files comes to.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RunnableSpec {
+    /// The kind of place the language's `runnables.scm` marks, such as `main` or `test`.
+    pub kind: String,
+    /// What running it is called, with `{name}` standing for the place's name.
+    pub label: String,
+    /// The command that runs it, with `{name}` standing for the place's name.
+    pub command: String,
+    /// The file that marks the folder the command runs in, such as `Cargo.toml`: the nearest folder above the file that holds it; the root of the project when nothing.
+    #[serde(default)]
+    pub marker: Option<String>,
+}
+
 /// A language: how its files are told apart, how they are edited, its grammar and its language server.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Manifest {
@@ -159,6 +173,9 @@ pub struct Manifest {
     /// The language server, when it has one.
     #[serde(default)]
     pub server: Option<ServerSpec>,
+    /// What running each kind of place its `runnables.scm` marks comes to.
+    #[serde(default, rename = "runnable")]
+    pub runnables: Vec<RunnableSpec>,
 }
 
 /// An extension is a language unless its manifest says otherwise.

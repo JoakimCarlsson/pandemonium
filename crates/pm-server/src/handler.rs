@@ -12,6 +12,7 @@ use crate::debugs;
 use crate::languages;
 use crate::queue::Prompt;
 use crate::sessions::{self, Meta};
+use crate::tasks;
 use crate::uploads;
 
 /// The list kept under `name`, empty when none was ever saved.
@@ -100,6 +101,21 @@ fn terminal_done(found: bool, terminal: u64) -> Response {
         Response::Done
     } else {
         failed(format!("no terminal is numbered {terminal}"))
+    }
+}
+
+/// `Terminal` for the shell a task was run in, which `connection` is sent what it prints, or a failure saying why it could not be run.
+fn run_started(
+    started: Result<u64, String>,
+    connection: &Arc<Connection>,
+    core: &Arc<Core>,
+) -> Response {
+    match started {
+        Ok(terminal) => {
+            core.attach_terminal(connection, terminal, 0);
+            Response::Terminal { terminal }
+        }
+        Err(reason) => failed(format!("could not run the task: {reason}")),
     }
 }
 
@@ -1218,6 +1234,57 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
         Request::Terminals => Response::Terminals {
             terminals: core.terminal_infos(),
         },
+        Request::Tasks { directory } => tasks::listed(&place(&directory)),
+        Request::RunTask {
+            directory,
+            project,
+            task,
+            columns,
+            rows,
+        } => run_started(
+            core.run_task(
+                &place(&directory),
+                &directory,
+                project.as_deref(),
+                &task,
+                (columns, rows),
+            ),
+            connection,
+            core,
+        ),
+        Request::RunRunnable {
+            directory,
+            project,
+            path,
+            kind,
+            name,
+            columns,
+            rows,
+        } => {
+            let root = place(&directory);
+            match tasks::runnable(&root, &path, &kind, &name) {
+                Ok(task) => run_started(
+                    core.run_task(
+                        &root,
+                        &directory,
+                        project.as_deref(),
+                        &task,
+                        (columns, rows),
+                    ),
+                    connection,
+                    core,
+                ),
+                Err(reason) => failed(reason),
+            }
+        }
+        Request::Toolchains { directory, project } => {
+            tasks::toolchains(&place(&directory), project.as_deref())
+        }
+        Request::SelectToolchain {
+            project,
+            language,
+            toolchain,
+        } => done(tasks::select(&project, &language, toolchain.as_deref())),
         Request::DebugScenarios { directory, file } => Response::DebugScenarios {
             scenarios: debugs::scenarios(&place(&directory), file.as_deref()),
         },
@@ -1233,10 +1300,11 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             file,
             scenario,
             files,
+            project,
         } => debug_started(core.debug_scenario(
             connection,
             &directory,
-            &place(&directory),
+            project.as_deref(),
             file.as_deref(),
             scenario,
             files,

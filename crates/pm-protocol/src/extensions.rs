@@ -69,6 +69,9 @@ pub struct GrammarBundle {
     pub injections: String,
     /// The brackets query.
     pub brackets: String,
+    /// The runnables query.
+    #[serde(default)]
+    pub runnables: String,
     /// How many columns one level of indentation is.
     pub indent: usize,
     /// Whether a level of indentation is a tab.

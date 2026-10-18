@@ -1,5 +1,6 @@
 //! Shells the server runs in pseudo-terminals, kept going when no client is attached.
 
+use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -65,8 +66,14 @@ fn shell_command() -> CommandBuilder {
 }
 
 impl Terminal {
-    /// Starts the reader's shell in `directory`, called `label` to clients, `columns` wide and `rows` tall.
-    fn start(directory: &Path, label: &str, columns: u16, rows: u16) -> Result<Self, String> {
+    /// Starts the reader's shell in `directory`, called `label` to clients, `columns` wide and `rows` tall, with `env` added to its environment.
+    fn start(
+        directory: &Path,
+        label: &str,
+        columns: u16,
+        rows: u16,
+        env: &BTreeMap<String, String>,
+    ) -> Result<Self, String> {
         let pair = native_pty_system()
             .openpty(size_of(columns, rows))
             .map_err(|error| error.to_string())?;
@@ -74,6 +81,9 @@ impl Terminal {
         command.cwd(directory);
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
+        for (name, value) in env {
+            command.env(name, value);
+        }
         let child = pair
             .slave
             .spawn_command(command)
@@ -185,7 +195,20 @@ impl Core {
         columns: u16,
         rows: u16,
     ) -> Result<u64, String> {
-        let terminal = Arc::new(Terminal::start(directory, label, columns, rows)?);
+        self.open_shell(directory, label, columns, rows, &BTreeMap::new(), None)
+    }
+
+    /// Starts a shell in `directory`, which clients know by `label`, with `env` added to its environment and `command`, when there is one, typed into it as the reader would type it; returns its number.
+    pub(crate) fn open_shell(
+        self: &Arc<Self>,
+        directory: &Path,
+        label: &str,
+        columns: u16,
+        rows: u16,
+        env: &BTreeMap<String, String>,
+        command: Option<&str>,
+    ) -> Result<u64, String> {
+        let terminal = Arc::new(Terminal::start(directory, label, columns, rows, env)?);
         let mut reader = terminal
             .master
             .lock()
@@ -195,6 +218,9 @@ impl Core {
         let number = self.next_terminal();
         if let Ok(mut held) = self.terminals.lock() {
             held.insert(number, terminal.clone());
+        }
+        if let Some(command) = command {
+            terminal.write(format!("{command}\n").as_bytes());
         }
         let core = self.clone();
         std::thread::spawn(move || {

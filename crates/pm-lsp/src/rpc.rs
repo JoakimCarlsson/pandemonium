@@ -1,6 +1,6 @@
 //! JSON-RPC with a language server over its standard input and output: requests matched to their answers, notifications both ways, and the server's own requests answered.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -70,22 +70,24 @@ fn receive(output: &mut impl BufRead) -> Option<Value> {
     serde_json::from_slice(&body).ok()
 }
 
-/// The path a server runs with: the folders `first` that exist, then the machine's.
-fn path_with(first: &[PathBuf]) -> Option<std::ffi::OsString> {
+/// The path a server runs with: the folders `first` that exist, then `base`, or the machine's own path when there is none.
+fn path_with(first: &[PathBuf], base: Option<std::ffi::OsString>) -> Option<std::ffi::OsString> {
     let existing = first.iter().filter(|folder| folder.is_dir()).cloned();
-    let machine = std::env::var_os("PATH")
+    let machine = base
+        .or_else(|| std::env::var_os("PATH"))
         .map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
         .unwrap_or_default();
     std::env::join_paths(existing.chain(machine)).ok()
 }
 
 impl Rpc {
-    /// Starts `program` with `arguments` in `folder`, with the folders `first` put first on its path, and talks to it on threads of its own, `handler` answering what it asks and taking in what it tells.
+    /// Starts `program` with `arguments` in `folder`, with the folders `first` put first on its path and the variables `env` set, and talks to it on threads of its own, `handler` answering what it asks and taking in what it tells.
     pub(crate) fn start(
         program: &Path,
         arguments: &[String],
         folder: &Path,
         first: &[PathBuf],
+        env: &BTreeMap<String, String>,
         handler: Handler,
     ) -> Result<Arc<Self>, String> {
         let mut command = Command::new(program);
@@ -95,7 +97,10 @@ impl Rpc {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        if let Some(path) = path_with(first) {
+        for (name, value) in env.iter().filter(|(name, _)| *name != "PATH") {
+            command.env(name, value);
+        }
+        if let Some(path) = path_with(first, env.get("PATH").map(std::ffi::OsString::from)) {
             command.env("PATH", path);
         }
         let mut child = command

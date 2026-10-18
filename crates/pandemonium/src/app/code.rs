@@ -710,6 +710,25 @@ impl App {
                 self.focus_listing();
                 self.deliver();
             }
+            Action::RunTask => {
+                let at = self.across_top();
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).tasks_requested(at));
+                self.focus_listing();
+                self.deliver();
+            }
+            Action::RerunTask => {
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).task_rerun());
+                self.deliver();
+            }
+            Action::SelectToolchain => {
+                let at = self.across_top();
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).toolchains_requested(at));
+                self.focus_listing();
+                self.deliver();
+            }
             Action::StopDebugging
             | Action::PauseDebugging
             | Action::StepOver
