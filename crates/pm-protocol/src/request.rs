@@ -765,6 +765,55 @@ pub enum Request {
         /// The place.
         position: pm_buffer::Position,
     },
+    /// What a folder can be debugged as, read from the debug files editors write there and from the file in front.
+    DebugScenarios {
+        /// The folder.
+        directory: String,
+        /// The file in front, from the root of the folder, when there is one.
+        #[serde(default)]
+        file: Option<String>,
+    },
+    /// The programs running on the server's machine that a debugger can attach to.
+    DebugProcesses,
+    /// Starts debugging a folder as one of the things `debug_scenarios` listed; the connection is told how it goes with `debug` messages.
+    DebugStart {
+        /// The folder.
+        directory: String,
+        /// The file in front, as it was when the list was asked for.
+        #[serde(default)]
+        file: Option<String>,
+        /// The scenario, by its place in the list.
+        scenario: usize,
+        /// The breakpoints to stop at, file by file.
+        #[serde(default)]
+        files: Vec<crate::DebugFile>,
+    },
+    /// Starts debugging a program that is running, with the adapter that is named.
+    DebugAttach {
+        /// The folder.
+        directory: String,
+        /// The adapter, by the name `debug_scenarios` gives it.
+        adapter: String,
+        /// The program's process number.
+        pid: u32,
+        /// The breakpoints to stop at, file by file.
+        #[serde(default)]
+        files: Vec<crate::DebugFile>,
+    },
+    /// Does something to a debugging session.
+    DebugDo {
+        /// The session.
+        debug: u64,
+        /// What is done.
+        action: crate::DebugAction,
+    },
+    /// Subscribes the connection to a debugging session and answers what it looks like now.
+    DebugWatch {
+        /// The session.
+        debug: u64,
+    },
+    /// The debugging sessions the server holds.
+    Debugs,
     /// Fetches a repository into a folder of its own, named after it.
     Clone {
         /// Where to fetch it from.

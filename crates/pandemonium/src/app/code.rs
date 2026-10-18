@@ -32,7 +32,7 @@ use pm_config::ThemeMode;
 use pm_editor::{Action, Chord, Keymap, Pressed};
 use pm_input::{FocusId, Key, KeyEvent};
 use pm_pages::Screen;
-use pm_protocol::Seek;
+use pm_protocol::{DebugAction, Seek};
 use pm_text::Edit;
 use pm_theme::Appearance;
 
@@ -682,6 +682,42 @@ impl App {
                 self.model
                     .update(|screen| *screen = std::mem::take(screen).problems_requested(at));
                 self.focus_listing();
+            }
+            Action::ToggleBreakpoint => {
+                self.model.update(|screen| {
+                    *screen = std::mem::take(screen).breakpoint_toggled_at_caret()
+                });
+                self.deliver();
+            }
+            Action::StartDebugging => {
+                let at = self.across_top();
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).debug_started(at));
+                self.focus_listing();
+                self.deliver();
+            }
+            Action::AttachDebugger => {
+                let at = self.across_top();
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).debug_attach_requested(at));
+                self.focus_listing();
+                self.deliver();
+            }
+            Action::StopDebugging
+            | Action::PauseDebugging
+            | Action::StepOver
+            | Action::StepInto
+            | Action::StepOut => {
+                let what = match action {
+                    Action::StopDebugging => DebugAction::Stop,
+                    Action::PauseDebugging => DebugAction::Pause,
+                    Action::StepOver => DebugAction::StepOver,
+                    Action::StepInto => DebugAction::StepIn,
+                    _ => DebugAction::StepOut,
+                };
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).debug_do(what));
+                self.deliver();
             }
             Action::Save => self.activate(EDITOR_SAVE),
             Action::CommandPalette => {

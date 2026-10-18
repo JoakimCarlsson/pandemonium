@@ -548,6 +548,49 @@ pub enum Outgoing {
         /// The channel the window follows.
         channel: pm_config::Channel,
     },
+    /// Asks the server what the folder of the session at this position can be debugged as.
+    DebugScenarios {
+        /// The session, by position.
+        session: usize,
+        /// The file in front, from the root of the session's folder.
+        file: Option<String>,
+    },
+    /// Asks the server on the machine of the session at this position for the programs a debugger can attach to.
+    DebugProcesses {
+        /// The session, by position.
+        session: usize,
+    },
+    /// Starts debugging the folder of the session at this position as one of the things listed.
+    DebugStart {
+        /// The session, by position.
+        session: usize,
+        /// The file in front, as it was when the list was asked for.
+        file: Option<String>,
+        /// The scenario, by its place in the list.
+        scenario: usize,
+        /// The breakpoints to stop at, file by file.
+        files: Vec<pm_protocol::DebugFile>,
+    },
+    /// Starts debugging a program that is running on the machine of the session at this position.
+    DebugAttach {
+        /// The session, by position.
+        session: usize,
+        /// The adapter, by the name the server gives it.
+        adapter: String,
+        /// The program's process number.
+        pid: u32,
+        /// The breakpoints to stop at, file by file.
+        files: Vec<pm_protocol::DebugFile>,
+    },
+    /// Does something to the program debugged in the folder of the session at this position.
+    DebugDo {
+        /// The session, by position.
+        session: usize,
+        /// The debugging session, by the number the server gave it.
+        debug: u64,
+        /// What is done.
+        action: pm_protocol::DebugAction,
+    },
     /// Starts a shell for the tab, in the folder of the session at this position.
     OpenTerminal {
         /// The session, by position.
@@ -1244,6 +1287,8 @@ pub struct WorkspaceState {
     pub code_view: Option<(f32, f32)>,
     /// Whether the reader asked to close the window and nothing is left to ask first.
     pub quitting: bool,
+    /// The breakpoints and the program being debugged.
+    pub debug: crate::debug::DebugState,
     /// What the window keeps of its own.
     pub window: pm_config::WindowSettings,
     /// Whether the window's own settings kept between runs were put in, so that what is shown is not mistaken for them before.
@@ -1378,6 +1423,7 @@ impl WorkspaceState {
             editor_loaded: false,
             code_view: None,
             quitting: false,
+            debug: crate::debug::DebugState::default(),
             window: pm_config::WindowSettings::default(),
             window_loaded: false,
             machine: pm_protocol::MachineSettings::default(),
@@ -1484,6 +1530,10 @@ impl WorkspaceState {
             return self.completion_taken(Some(place as usize));
         }
         if action == crate::assist::COMPLETION_BODY || action == crate::assist::HOVER_CARD {
+            return self;
+        }
+        if let Some((file, line)) = crate::debug::breakpoint_of(action) {
+            self.toggle_breakpoint(file, line);
             return self;
         }
         if let Some(line) = crate::viewer::fold_of(action) {
@@ -1601,7 +1651,7 @@ impl WorkspaceState {
         self.sync_context();
         self.refresh_files();
         self.ask_log_once();
-        self
+        self.debug_revealed()
     }
 
     /// The state after `edit` is made to the field named `id`.
@@ -1633,6 +1683,9 @@ impl WorkspaceState {
             }
             crate::find::FIND_FIELD => return self.find_typed(edit),
             crate::listing::LISTING_FILTER => return self.listing_filtered(edit),
+            crate::debug::DEBUG_CONSOLE_FIELD | crate::debug::DEBUG_WATCH_FIELD => {
+                self.debug_field_edited(id, edit)
+            }
             crate::find::REPLACE_FIELD => return self.replacement_typed(edit),
             ENTRY_FIELD => {
                 if let Some((_, field)) = self.git.naming.as_mut() {
@@ -1682,6 +1735,8 @@ impl WorkspaceState {
             crate::line_edits::GO_TO_LINE => self.going_to.as_ref().map(|going| &going.field),
             crate::find::FIND_FIELD => self.finding.as_ref().map(|finding| &finding.query),
             crate::listing::LISTING_FILTER => self.listing_filter(),
+            crate::debug::DEBUG_CONSOLE_FIELD => Some(&self.debug.console),
+            crate::debug::DEBUG_WATCH_FIELD => Some(&self.debug.watch),
             crate::find::REPLACE_FIELD => self.finding.as_ref().map(|finding| &finding.replacement),
             HISTORY_SEARCH => Some(&self.history_search),
             crate::extensions::EXTENSIONS_SEARCH => Some(&self.extensions_page.search),
@@ -1710,6 +1765,8 @@ impl WorkspaceState {
             || id == crate::line_edits::GO_TO_LINE
             || id == crate::find::FIND_FIELD
             || id == crate::listing::LISTING_FILTER
+            || id == crate::debug::DEBUG_CONSOLE_FIELD
+            || id == crate::debug::DEBUG_WATCH_FIELD
             || id == crate::find::REPLACE_FIELD
             || id == HISTORY_SEARCH
             || id == crate::extensions::EXTENSIONS_SEARCH
@@ -1735,6 +1792,8 @@ impl WorkspaceState {
             crate::line_edits::GO_TO_LINE => crate::line_edits::GO_TO_LINE_SUBMIT,
             crate::find::FIND_FIELD => crate::find::FIND_NEXT,
             crate::listing::LISTING_FILTER => crate::listing::LISTING_TAKE,
+            crate::debug::DEBUG_CONSOLE_FIELD => crate::debug::DEBUG_CONSOLE_SUBMIT,
+            crate::debug::DEBUG_WATCH_FIELD => crate::debug::DEBUG_WATCH_ADD,
             crate::find::REPLACE_FIELD => crate::find::REPLACE_ONE,
             HISTORY_SEARCH => HISTORY,
             ADDER_FIELD => ADDER_SUBMIT,
@@ -1891,6 +1950,9 @@ impl WorkspaceState {
             return;
         }
         if self.press_terminal(FocusId(id)) {
+            return;
+        }
+        if self.press_debug(FocusId(id)) {
             return;
         }
         if self.press_choice(id) {

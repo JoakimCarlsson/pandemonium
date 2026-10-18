@@ -155,6 +155,13 @@ request with exactly one `response` carrying the same `id`.
 | `close_terminal`| `terminal`                                                                                      | `done`          |
 | `attach_terminal`| `terminal`, `after`                                                                            | `done`          |
 | `terminals`    | none                                                                                             | `terminals`     |
+| `debug_scenarios`| `directory`, `file` (optional)                                                                 | `debug_scenarios` |
+| `debug_processes`| none                                                                                           | `debug_processes` |
+| `debug_start`  | `directory`, `file` (optional), `scenario`, `files`: `[{path, breakpoints}]`                     | `debug`         |
+| `debug_attach` | `directory`, `adapter`, `pid`, `files`                                                           | `debug`         |
+| `debug_do`     | `debug`, `action`: `{action, ...}`                                                               | `done`          |
+| `debug_watch`  | `debug`                                                                                          | `debug`         |
+| `debugs`       | none                                                                                             | `debugs`        |
 | `owners`       | none                                                                                             | `owners`        |
 | `repositories` | `owner`, `organization`                                                                          | `repositories`  |
 | `folders`      | `path`                                                                                           | `folders`       |
@@ -512,6 +519,10 @@ embedded context, and anything else as a link to the stored file.
 | `sessions`   | `sessions`: `[SessionInfo]`                               |
 | `terminal`   | `terminal`: the number of the shell that was started      |
 | `terminals`  | `terminals`: `[{terminal, directory, columns, rows}]`, oldest first; `directory` is the address `open_terminal` was given |
+| `debug_scenarios` | `scenarios`: `[{label, adapter, installed, attach, source}]`, the order `debug_start` chooses by |
+| `debug_processes` | `adapters`: `[{id, name}]` installed, `processes`: `[{pid, name, command}]`, newest first |
+| `debug`      | `debug`: the number of the session, `view`: the [view](#debugging) of it now |
+| `debugs`     | `debugs`: `[{debug, directory, label}]`, oldest first      |
 | `owners`     | `owners`: `[{login, organization}]`                       |
 | `repositories` | `repositories`: `[{name, description, private, url}]`   |
 | `folders`    | `path`: absolute, `names`: the folders inside it           |
@@ -652,6 +663,43 @@ keeps its own emulator for them.
   (`"\r"` for Enter, `"\u001b[A"` for the up arrow), and the answers an
   emulator gives to the shell's queries.
 - A shell started in a session's folder belongs to that session in the window.
+
+## Debugging
+
+A program is debugged by a debug adapter the server runs beside the folder, over
+the Debug Adapter Protocol. The server keeps the session going when no client is
+attached, and tells the connections watching it what it looks like after it
+moves on.
+
+```json
+{ "type": "debug", "debug": 1, "view": { "label": "Python: Current File", "standing": "stopped", "reason": "breakpoint", "threads": [], "thread": 1, "frames": [], "frame": 7, "scopes": [], "variables": [], "watches": [], "watched": [], "lines": [], "line_count": 0, "placed": [] }, "events": [{ "paused": { "id": 7, "name": "main", "path": "/home/me/app/main.py", "line": 11, "column": 0 } }] }
+```
+
+- `debug_scenarios` lists what a folder can be debugged as: the configurations
+  of `.vscode/launch.json` and `.zed/debug.json`, and what the file in front can
+  be run as without any written. `debug_start` chooses one by its place in that
+  list, with `file` the same as it was asked for, and sets `files` as the
+  breakpoints, lines counted from zero, before the program runs.
+- `debug_attach` joins the process `pid` with the adapter `adapter` names, one of
+  those `debug_processes` lists.
+- `debug` (message): sent to the connection that started the session, and to
+  those that `debug_watch` it, whenever the session moved on. Messages that come
+  close together are told once. `view` is everything a window draws: `standing`
+  (`starting`, `running`, `stopped` or `ended`), the threads, the stack of the
+  thread paused with the frame being looked at, its scopes and the `variables`
+  asked about as `[reference, [variable]]`, the watch expressions and their last
+  results, the last 500 lines of the console and where the adapter put each
+  file's breakpoints. `events` says what the window acts on: `paused` with the
+  frame, `start_refused` with the adapter's reason, or `ended`.
+- `debug_do` takes `action`: `continue`, `pause`, `step_over`, `step_in`,
+  `step_out`, `stop`, `select_frame` with `frame`, `expand` with `reference`,
+  `evaluate` with `expression`, `set_watches` with `watches` and
+  `set_breakpoints` with `path` and `breakpoints`
+  (`[{line, condition, hits, log}]`).
+- A session ends when the program does or `stop` is sent; the last message has
+  `standing: "ended"` and the server forgets it.
+- `debugs` lists the sessions the server holds, for a client that attaches after
+  a restart of the window; `debug_watch` subscribes to one and answers its view.
 
 ## Extensions
 

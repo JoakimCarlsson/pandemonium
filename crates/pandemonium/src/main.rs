@@ -65,6 +65,7 @@ fn main() {
             Some("softwrap") => Shot::SoftWrap,
             Some("completing") => Shot::Completing,
             Some("hovering") => Shot::Hovering,
+            Some("debugging") => Shot::Debugging,
             Some("editormenu") => Shot::EditorMenu,
             Some("references") => Shot::References,
             Some("renaming") => Shot::Renaming,

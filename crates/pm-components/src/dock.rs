@@ -133,6 +133,7 @@ impl WorkspaceState {
 
     /// Starts a shell in the session the dock is about and shows the dock.
     fn open_terminal(&mut self) {
+        self.debug.shown = false;
         if let Some(session) = self.docked_position() {
             self.open_terminal_in(session, String::new());
         }
@@ -159,6 +160,14 @@ impl WorkspaceState {
             .filter(|position| *position < self.sessions.len())
     }
 
+    /// Whether the dock is about the session whose folder a program is debugged in, so that it has the debug tab.
+    pub fn debug_docked(&self) -> bool {
+        match (&self.debug.run, self.docked_position()) {
+            (Some(run), Some(position)) => run.session == position,
+            _ => false,
+        }
+    }
+
     /// The session the dock is about, if there is one.
     pub fn docked(&self) -> Option<&Session> {
         self.docked_position()
@@ -174,7 +183,7 @@ impl WorkspaceState {
         let empty = self
             .open()
             .is_none_or(|session| session.terminals.is_empty());
-        if empty {
+        if empty && !self.debug_docked() {
             self.open_terminal();
         } else {
             self.terminal = true;
@@ -194,7 +203,7 @@ impl WorkspaceState {
         session.terminal_active = session
             .terminal_active
             .min(session.terminals.len().saturating_sub(1));
-        if session.terminals.is_empty() {
+        if session.terminals.is_empty() && !self.debug_docked() {
             self.terminal = false;
             self.terminal_maximized = false;
         }
@@ -216,6 +225,7 @@ impl WorkspaceState {
                         .filter(|offset| *offset < count)
                 };
                 if let Some(index) = offset(TERMINAL_TAB_BASE) {
+                    self.debug.shown = false;
                     if let Some(position) = self.docked_position() {
                         self.sessions[position].terminal_active = index;
                     }
@@ -325,7 +335,14 @@ impl WorkspaceState {
             session.terminal_active = session
                 .terminal_active
                 .min(session.terminals.len().saturating_sub(1));
-            if session.terminals.is_empty() && open == Some(position) {
+            if session.terminals.is_empty()
+                && open == Some(position)
+                && !self
+                    .debug
+                    .run
+                    .as_ref()
+                    .is_some_and(|run| run.session == position)
+            {
                 self.terminal = false;
                 self.terminal_maximized = false;
             }
@@ -441,6 +458,9 @@ impl WorkspaceState {
         let Some(session) = self.docked() else {
             return;
         };
+        if self.debug_docked() {
+            return;
+        }
         let on_host = self
             .projects
             .get(session.project)
@@ -452,6 +472,9 @@ impl WorkspaceState {
 
     /// Whether the dock shows a shell, and what its window holds: columns, lines and how far it is scrolled back.
     pub fn terminal_window(&self) -> Option<(usize, usize, usize)> {
+        if self.debug.shown && self.debug_docked() {
+            return None;
+        }
         let tab = self.active_terminal()?;
         let emulator = tab.emulator.read();
         Some((emulator.columns(), emulator.rows(), tab.back))

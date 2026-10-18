@@ -305,6 +305,30 @@ pub enum Response {
         /// What it says, or nothing when it says nothing.
         hover: Option<pm_lsp::Hover>,
     },
+    /// What a folder can be debugged as.
+    DebugScenarios {
+        /// Each one, in the order a client chooses by.
+        scenarios: Vec<crate::DebugScenario>,
+    },
+    /// The programs a debugger can attach to, the newest first, and the adapters that can attach to them.
+    DebugProcesses {
+        /// The adapters installed on the machine.
+        adapters: Vec<crate::DebugAdapter>,
+        /// Each one.
+        processes: Vec<crate::DebugProcess>,
+    },
+    /// A debugging session was started, or is being watched.
+    Debug {
+        /// The session.
+        debug: u64,
+        /// What it looks like now.
+        view: crate::DebugView,
+    },
+    /// The debugging sessions the server holds.
+    Debugs {
+        /// Each one, oldest first.
+        debugs: Vec<crate::DebugInfo>,
+    },
     /// The folder a repository was cloned into.
     Directory {
         /// Its path on the server's machine.

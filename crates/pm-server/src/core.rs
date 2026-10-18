@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex};
 use pm_acp::{Agent, Chat, Event};
 use pm_protocol::{ServerMessage, SessionInfo};
 
+use crate::debugs::Debugging;
 use crate::documents::Documents;
 use crate::folders::Folders;
 use crate::languages::Installs;
@@ -152,6 +153,10 @@ pub(crate) struct Core {
     pub(crate) terminals: Mutex<HashMap<u64, Arc<Terminal>>>,
     /// The number the next shell gets.
     next_terminal: AtomicU64,
+    /// The programs being debugged, by number.
+    pub(crate) debugs: Mutex<HashMap<u64, Arc<Debugging>>>,
+    /// The number the next debugging session gets.
+    next_debug: AtomicU64,
     /// The files clients have open for their language servers.
     pub(crate) documents: Documents,
     /// What the server knows of installing languages.
@@ -169,6 +174,8 @@ impl Core {
             connections: Mutex::new(Vec::new()),
             terminals: Mutex::new(HashMap::new()),
             next_terminal: AtomicU64::new(1),
+            debugs: Mutex::new(HashMap::new()),
+            next_debug: AtomicU64::new(1),
             documents: Documents::new(),
             installs: Installs::default(),
             folders: Folders::new(),
@@ -183,6 +190,11 @@ impl Core {
     /// The number for a new shell.
     pub(crate) fn next_terminal(&self) -> u64 {
         self.next_terminal.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// The number for a new debugging session.
+    pub(crate) fn next_debug(&self) -> u64 {
+        self.next_debug.fetch_add(1, Ordering::Relaxed)
     }
 
     /// Holds again the sessions kept on disk, without their agents, and numbers new ones after them.

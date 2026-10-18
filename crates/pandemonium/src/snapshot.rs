@@ -232,6 +232,8 @@ pub enum Shot {
     Completing,
     /// The same file with the card about a place that has something wrong with it.
     Hovering,
+    /// The same file with breakpoints in its gutter and a program paused on one, the debug tab open under it.
+    Debugging,
     /// The same file with its menu open.
     EditorMenu,
     /// The same file with the places a name is used listed under the caret.
@@ -442,6 +444,126 @@ fn completing() -> WorkspaceState {
             item("IntoIter", "struct IntoIter<K, V>", Type),
         ],
     )
+}
+
+/// The Rust file with two breakpoints set and the program paused on the first, its stack, variables, watch and console in the dock.
+fn debugging() -> WorkspaceState {
+    use pm_protocol::{
+        Breakpoint, DebugCategory, DebugFrame, DebugLine, DebugScope, DebugThread, DebugView,
+        DebugWatched, Placed, Standing, Variable,
+    };
+    let mut state = code();
+    let root = state
+        .sessions
+        .first()
+        .map(|session| session.directory.clone())
+        .unwrap_or_default();
+    let path = std::path::PathBuf::from(&root).join(CODE_PATH);
+    let frame = |id: i64, name: &str, line: usize| DebugFrame {
+        id,
+        name: name.to_owned(),
+        path: Some(path.clone()),
+        line,
+        column: 0,
+    };
+    let variable = |name: &str, value: &str, kind: &str, reference: i64| Variable {
+        name: name.to_owned(),
+        value: value.to_owned(),
+        kind: Some(kind.to_owned()),
+        reference,
+    };
+    let line = |category: DebugCategory, text: &str| DebugLine {
+        category,
+        text: text.to_owned(),
+    };
+    state.debug.breakpoints.insert(
+        (0, CODE_PATH.to_owned()),
+        vec![
+            Breakpoint {
+                line: 17,
+                ..Breakpoint::default()
+            },
+            Breakpoint {
+                line: 24,
+                condition: Some("id > 3".to_owned()),
+                ..Breakpoint::default()
+            },
+        ],
+    );
+    state.debug.watches = vec!["root".to_owned(), "names.len()".to_owned()];
+    state.debug.unfolded.insert(7);
+    state.debug.run = Some(pm_components::debug::Run {
+        session: 0,
+        debug: 1,
+        view: DebugView {
+            label: "Run pandemonium".to_owned(),
+            standing: Standing::Stopped,
+            reason: Some("breakpoint 1".to_owned()),
+            threads: vec![DebugThread {
+                id: 1,
+                name: "main".to_owned(),
+            }],
+            thread: Some(1),
+            frames: vec![
+                frame(1, "Session::new", 17),
+                frame(2, "start", 211),
+                frame(3, "main", 31),
+            ],
+            frame: Some(1),
+            scopes: vec![DebugScope {
+                name: "Locals".to_owned(),
+                reference: 5,
+                expensive: false,
+            }],
+            variables: vec![
+                (
+                    5,
+                    vec![
+                        variable("id", "4", "u64", 0),
+                        variable("root", "\"/home/me/code\"", "PathBuf", 0),
+                        variable("names", "HashMap { len: 2 }", "HashMap<String, usize>", 7),
+                    ],
+                ),
+                (
+                    7,
+                    vec![
+                        variable("main", "0", "usize", 0),
+                        variable("lib", "1", "usize", 0),
+                    ],
+                ),
+            ],
+            watches: vec!["root".to_owned(), "names.len()".to_owned()],
+            watched: vec![
+                DebugWatched {
+                    expression: "root".to_owned(),
+                    value: Ok(variable("root", "\"/home/me/code\"", "PathBuf", 0)),
+                },
+                DebugWatched {
+                    expression: "names.len()".to_owned(),
+                    value: Err("no method named `len`".to_owned()),
+                },
+            ],
+            lines: vec![
+                line(DebugCategory::Console, "Launched target/debug/pandemonium"),
+                line(DebugCategory::Stdout, "listening on 6868"),
+                line(DebugCategory::Stderr, "warning: token is sent in the clear"),
+                line(DebugCategory::Asked, "id + 1"),
+                line(DebugCategory::Answer, "5"),
+            ],
+            line_count: 5,
+            placed: vec![(
+                path.clone(),
+                vec![Placed {
+                    line: 24,
+                    verified: false,
+                    message: None,
+                }],
+            )],
+        },
+    });
+    state.debug.shown = true;
+    state.terminal = true;
+    state
 }
 
 /// The Rust file with the card about the string that does not fit its type open over it.
@@ -1040,6 +1162,7 @@ impl Shot {
             }
             Self::Completing => Screen::Workspace(completing()),
             Self::Hovering => Screen::Workspace(hovering()),
+            Self::Debugging => Screen::Workspace(debugging()),
             Self::EditorMenu => Screen::Workspace(code().with_menu(EDITOR_FIELD, (420.0, 200.0))),
             Self::References => Screen::Workspace(references()),
             Self::Renaming => {

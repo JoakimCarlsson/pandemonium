@@ -9,6 +9,7 @@ mod connection;
 mod conversation;
 mod core;
 mod credential;
+mod debugs;
 mod documents;
 mod entries;
 mod fetch;

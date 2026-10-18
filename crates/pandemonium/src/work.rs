@@ -20,6 +20,7 @@ use pm_state::State;
 use crate::view::View;
 
 mod code;
+mod debug;
 mod machine;
 pub(crate) mod picture;
 mod watch;
@@ -209,6 +210,18 @@ enum Pending {
     Revision(usize, String),
     /// The edits that format the file of the session at this position, at this path and version, and whether it is written afterwards.
     Formatted(usize, String, i32, bool),
+    /// What the folder of the session at this position can be debugged as.
+    DebugScenarios(usize),
+    /// The programs a debugger can attach to on the machine of the session at this position.
+    DebugProcesses(usize),
+    /// The program debugged for the session at this position was started.
+    DebugStarted(usize),
+    /// The programs the server of this machine debugs.
+    Debugs(Host),
+    /// A program the server still debugs, picked up for the session at this position.
+    DebugWatched(usize),
+    /// The program with this number, which the window shows, watched again after the connection was made anew.
+    DebugRewatched(u64),
 }
 
 impl Pending {
@@ -1113,6 +1126,11 @@ impl Work {
                 Outgoing::SaveMachineSettings(settings) => self.save_machine_settings(settings),
                 Outgoing::LatestRelease { channel } => self.ask_release(channel),
                 Outgoing::Notify { title, body, how } => crate::notify::tell(how, &title, &body),
+                debugging @ (Outgoing::DebugScenarios { .. }
+                | Outgoing::DebugProcesses { .. }
+                | Outgoing::DebugStart { .. }
+                | Outgoing::DebugAttach { .. }
+                | Outgoing::DebugDo { .. }) => self.deliver_debug(model, debugging),
                 code => self.deliver_code(model, code),
             }
         }
@@ -1141,6 +1159,7 @@ impl Work {
                         self.watched.remove(&host);
                         self.ask(&host, Request::Sessions, Pending::Sessions(host.clone()));
                         self.share_extensions(model, &host);
+                        self.ask_debugs(&host);
                         model.update(|screen| {
                             *screen = std::mem::take(screen).reopen_documents(&host);
                         });
@@ -1184,6 +1203,13 @@ impl Work {
                             model.update(|screen| screen.terminal_exited(tab));
                         }
                     }
+                    Incoming::Debug {
+                        debug,
+                        view,
+                        events,
+                    } => model.update(|screen| {
+                        *screen = std::mem::take(screen).with_debug(debug, view, events);
+                    }),
                     Incoming::SessionAdded(info) => self.adopt(model, &host, vec![info]),
                     Incoming::SessionClosed(number) => {
                         if let Some(position) = self.positions.get(&(host.clone(), number)).copied()
@@ -1794,6 +1820,12 @@ impl Work {
             | Pending::Revision(..)
             | Pending::Formatted(..)
             | Pending::Extensions => self.answered_code(model, host, pending, response),
+            Pending::DebugScenarios(_)
+            | Pending::DebugProcesses(_)
+            | Pending::DebugStarted(_)
+            | Pending::Debugs(_)
+            | Pending::DebugWatched(_)
+            | Pending::DebugRewatched(_) => self.answered_debug(model, pending, response),
             Pending::MachineSettings | Pending::LatestRelease => {
                 self.answered_machine(model, pending, response)
             }

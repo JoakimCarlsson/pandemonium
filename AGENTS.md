@@ -94,7 +94,9 @@ One crate per layer, each depending only on the layers below it.
   after a folder changes; a release build reads the folders from the repository
   at its own release tag, a debug build from its checkout, and either from
   `PANDEMONIUM_LANGUAGES` when it is set.
-- **Domain:** `pm-acp` (agents over the Agent Client Protocol), `pm-git`,
+- **Domain:** `pm-acp` (agents over the Agent Client Protocol), `pm-dap`
+  (programs debugged through debug adapters over the Debug Adapter Protocol:
+  the adapters, what a folder can be debugged as, and a running session), `pm-git`,
   `pm-store` (persistence under the data directory). The server uses them; the
   window does not.
 - **Settings:** `pm-config`: what the window keeps of its own (how it opens,

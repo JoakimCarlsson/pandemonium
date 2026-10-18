@@ -320,6 +320,7 @@ impl WorkspaceState {
             }
         }
         self.sessions = kept;
+        self.remap_debug(&moved);
         self.page = match self.page {
             Page::Session(position) => match moved.get(position).copied().flatten() {
                 Some(position) => Page::Session(position),

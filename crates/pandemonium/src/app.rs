@@ -10,6 +10,7 @@ use pm_acp::{Login, Standing};
 use pm_components::adder::{ADDER_DOWN, ADDER_ESCAPE, ADDER_UP};
 use pm_components::arrange::{is_project_menu_item, is_session_menu_item};
 use pm_components::assist::HOVER_SCROLL;
+use pm_components::debug::{DEBUG_CONSOLE_SCROLL, DEBUG_STACK_SCROLL, DEBUG_VARIABLES_SCROLL};
 use pm_components::diff::gutter_of;
 use pm_components::extensions::{EXTENSIONS_SCROLL, INSTALL_EXTENSION};
 use pm_components::git_controls::{GRAPH_SCROLL, Pick, REVIEW_DISMISS, VIEWER_SCROLL};
@@ -960,6 +961,9 @@ impl App {
                 HOVER_SCROLL => std::mem::take(state).scrolled_hover(pixels, room),
                 VIEWER_SCROLL => std::mem::take(state).scrolled_viewer(pixels, room),
                 GRAPH_SCROLL => std::mem::take(state).scrolled_graph(pixels, room),
+                DEBUG_STACK_SCROLL | DEBUG_VARIABLES_SCROLL | DEBUG_CONSOLE_SCROLL => {
+                    std::mem::take(state).scrolled_debug(id, pixels, room)
+                }
                 id => match pm_components::panes::peek_of(id) {
                     Some(index) => std::mem::take(state).scrolled_peek(index, pixels, room),
                     None => std::mem::take(state).scrolled_chat(pixels, room),
