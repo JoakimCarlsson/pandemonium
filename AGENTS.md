@@ -73,6 +73,10 @@ One crate per layer, each depending only on the layers below it.
 - **Client:** `pm-client`: one connection to a server that is dialled again when
   it drops, plus finding and starting the server on this machine.
 - **Transport:** `pm-ssh`: reaches a server on another machine through ssh.
+  `pm-transport`: the sibling transports, a distribution of Windows Subsystem
+  for Linux, a dev container and a tunnel that opens no port, and the bridge
+  that carries a local port through a program's standard streams; the first two
+  start the server themselves.
 - **Terminal:** `pm-terminal`: the emulator a client keeps for a shell the server
   runs: escape sequences parsed into a grid of cells with scrollback and
   selection. `pm-components` draws it as the terminal dock.

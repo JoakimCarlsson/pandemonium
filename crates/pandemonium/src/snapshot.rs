@@ -84,6 +84,8 @@ pub enum Shot {
     Quitting,
     /// The workspace on the diff of its first session.
     Diff,
+    /// The workspace on the diff of its first session with the words that changed inside changed lines marked.
+    WordDiff,
     /// The workspace on the diff of its first session with a comment kept and another being written.
     Commenting,
     /// The workspace on the diff of its first session with the project's files listed in the review panel.
@@ -242,8 +244,14 @@ pub enum Shot {
     Renaming,
     /// The same file with the changes the language server offers at the caret listed.
     CodeActions,
-    /// The same file with the commits that changed it listed.
+    /// The same file with the commits that changed it, and the states it was saved in, listed as one timeline.
     FileHistory,
+    /// The same file set against a state it was saved in, its changed lines edited in place.
+    Timeline,
+    /// A file a merge stopped on, with both sides of each conflict and the result under them.
+    Conflict,
+    /// The files a session changed as one view, each folded away from its header and edited in place.
+    Changes,
     /// The same file with the caret in a call, its signature over it and the uses of a name marked.
     Signing,
     /// The same file with brackets coloured by depth, names coloured by what the language server says they are, hints inside lines and lenses at the ends of lines.
@@ -881,6 +889,93 @@ fn signing() -> WorkspaceState {
     )
 }
 
+/// The text of the new side of `change`: its lines as the hunks give them, with a placeholder line where the file goes unseen between them.
+fn new_side_text(change: &pm_components::sample::Change) -> String {
+    use pm_components::sample::Kind;
+    let mut lines: Vec<String> = Vec::new();
+    for entry in &change.diff {
+        match entry.kind {
+            Kind::Hunk => {
+                let start = entry
+                    .text
+                    .split_whitespace()
+                    .find(|part| part.starts_with('+'))
+                    .and_then(|part| part[1..].split(',').next()?.parse::<usize>().ok())
+                    .unwrap_or(1);
+                while lines.len() + 1 < start {
+                    lines.push("    // …".to_owned());
+                }
+            }
+            Kind::Context | Kind::Add => lines.push(entry.text.clone()),
+            Kind::Remove => {}
+        }
+    }
+    lines.join("\n") + "\n"
+}
+
+/// The session's changed files opened as one view, each file read from the folder and its changed lines edited in place.
+fn changes() -> WorkspaceState {
+    for id in ["rust", "markdown", "markdown-inline"] {
+        load_installed_grammar(id);
+    }
+    let state = workspace_sample().after(TAB_DIFF).changes_opened();
+    let session = state.review_index().unwrap_or_default();
+    let files: Vec<(String, String)> = state
+        .sessions
+        .get(session)
+        .map(|held| {
+            held.changes
+                .iter()
+                .map(|change| (change.path.clone(), new_side_text(change)))
+                .collect()
+        })
+        .unwrap_or_default();
+    files.into_iter().fold(state, |state, (path, text)| {
+        let language = pm_lsp::language_of(&path);
+        state.with_file(session, &path, false, Ok((Some(text), false, language)))
+    })
+}
+
+/// The Rust file set against a state it was saved in a while ago, its changed lines edited in place.
+fn timeline() -> WorkspaceState {
+    let state = code();
+    let older = state
+        .shown_document()
+        .map(|document| document.field.text().to_owned())
+        .unwrap_or_default()
+        .replace("const LIMIT: usize = 64;", "const LIMIT: usize = 32;")
+        .replace("HashMap::with_capacity(LIMIT)", "HashMap::new()")
+        .replace(
+            "    /// How many names the session knows.\n    pub fn count(&self) -> usize {\n        self.names.len()\n    }\n",
+            "    pub fn len(&self) -> usize {\n        self.names.len()\n    }\n",
+        );
+    state.timeline_opened(0, CODE_PATH, "25m ago".to_owned(), older)
+}
+
+/// A file a merge stopped on, with two places where the sides disagree, and the result under them.
+fn conflict() -> WorkspaceState {
+    load_installed_grammar("rust");
+    let path = "crates/pandemonium/src/session.rs";
+    let ours = "pub struct Session {\n    pub id: u64,\n    pub root: PathBuf,\n    checkpoints: Vec<Checkpoint>,\n}\n";
+    let theirs = "pub struct Session {\n    pub id: u64,\n    pub root: PathBuf,\n    titles: Vec<String>,\n}\n";
+    let merged = "use std::path::PathBuf;\n\n/// A session of an agent.\n<<<<<<< HEAD\npub struct Session {\n    pub id: u64,\n    pub root: PathBuf,\n    checkpoints: Vec<Checkpoint>,\n}\n=======\npub struct Session {\n    pub id: u64,\n    pub root: PathBuf,\n    titles: Vec<String>,\n}\n>>>>>>> origin/main\n\nimpl Session {\n    pub fn new(id: u64, root: PathBuf) -> Self {\n<<<<<<< HEAD\n        Self { id, root, checkpoints: Vec::new() }\n=======\n        Self { id, root, titles: Vec::new() }\n>>>>>>> origin/main\n    }\n}\n";
+    workspace_sample()
+        .after(TAB_DIFF)
+        .with_conflict(
+            0,
+            path,
+            Some(ours.to_owned()),
+            Some(theirs.to_owned()),
+            None,
+        )
+        .with_file(
+            0,
+            path,
+            false,
+            Ok((Some(merged.to_owned()), false, Some("rust".to_owned()))),
+        )
+}
+
 /// The Rust file with the changes the language server offers at the caret listed.
 fn code_actions() -> WorkspaceState {
     let state = code().code_actions_requested((330.0, 470.0));
@@ -911,14 +1006,31 @@ fn code_actions() -> WorkspaceState {
 /// The Rust file with the commits that changed it listed.
 fn file_history() -> WorkspaceState {
     let state = code().file_history_requested((330.0, 470.0));
-    let commit = |id: &str, author: &str, when: &str, summary: &str| pm_git::FileCommit {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs() as i64);
+    let commit = |id: &str, author: &str, when: &str, ago: i64, summary: &str| pm_git::FileCommit {
         object: format!("{id}0000000000000000000000000000000"),
         id: id.to_owned(),
         author: author.to_owned(),
         when: when.to_owned(),
+        time: now - ago,
         summary: summary.to_owned(),
         path: CODE_PATH.to_owned(),
     };
+    let saved = |ago: i64, size: u64| pm_protocol::LocalVersion {
+        id: ((now - ago) * 1000) as u64,
+        size,
+    };
+    let state = state.with_local_history(
+        0,
+        CODE_PATH,
+        vec![
+            saved(90, 1_204),
+            saved(25 * 60, 1_187),
+            saved(70 * 60, 1_102),
+        ],
+    );
     state.with_file_history(
         0,
         CODE_PATH,
@@ -927,24 +1039,28 @@ fn file_history() -> WorkspaceState {
                 "54149c90",
                 "Joakim Carlsson",
                 "10 minutes ago",
+                600,
                 "Add go to definition, formatting and jumps",
             ),
             commit(
                 "514332d8",
                 "Joakim Carlsson",
                 "2 hours ago",
+                7_200,
                 "Reopen files browsed on a project page",
             ),
             commit(
                 "e3e796f4",
                 "Joakim Carlsson",
                 "3 days ago",
+                259_200,
                 "Add language support: tree-sitter highlighting",
             ),
             commit(
                 "81f70099",
                 "Joakim Carlsson",
                 "2 weeks ago",
+                1_209_600,
                 "Add the nightly channel for pre-releases",
             ),
         ],
@@ -1041,6 +1157,29 @@ fn sample_languages() -> Vec<pm_protocol::ExtensionInfo> {
 /// The workspace of made-up sessions.
 fn workspace_sample() -> WorkspaceState {
     WorkspaceState::sample()
+}
+
+/// The workspace on the diff of its first session, the words that changed inside its changed lines marked as the server tells them.
+fn word_diff() -> WorkspaceState {
+    let mut state = workspace_sample().after(TAB_DIFF);
+    for change in &mut state.sessions[0].changes {
+        let source = change
+            .diff
+            .iter()
+            .map(|line| {
+                let marker = match line.kind {
+                    pm_components::sample::Kind::Add => "+",
+                    pm_components::sample::Kind::Remove => "-",
+                    pm_components::sample::Kind::Context => " ",
+                    pm_components::sample::Kind::Hunk => "",
+                };
+                format!("{marker}{}", line.text)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        change.words = pm_git::words(&source);
+    }
+    state
 }
 
 /// The workspace on the diff with a comment kept on some lines and a box open to write another on a file.
@@ -1413,6 +1552,9 @@ impl Shot {
             }
             Self::CodeActions => Screen::Workspace(code_actions()),
             Self::FileHistory => Screen::Workspace(file_history()),
+            Self::Timeline => Screen::Workspace(timeline()),
+            Self::Conflict => Screen::Workspace(conflict()),
+            Self::Changes => Screen::Workspace(changes()),
             Self::Signing => Screen::Workspace(signing()),
             Self::Annotated => Screen::Workspace(annotated()),
             Self::ProjectSearch => Screen::Workspace(project_search()),
@@ -1523,6 +1665,10 @@ impl Shot {
             Self::Diff => {
                 load_installed_grammar("rust");
                 Screen::Workspace(workspace().after(TAB_DIFF))
+            }
+            Self::WordDiff => {
+                load_installed_grammar("rust");
+                Screen::Workspace(word_diff())
             }
             Self::Commenting => Screen::Workspace(commenting()),
             Self::Files => Screen::Workspace(files()),
@@ -1846,6 +1992,24 @@ fn settings_sample() -> WorkspaceState {
             name: "Build box".to_owned(),
             reach: pm_config::Reach::Direct,
             address: "100.64.0.7:6868".to_owned(),
+            token: "secret".to_owned(),
+        },
+        pm_config::KnownServer {
+            name: "Ubuntu".to_owned(),
+            reach: pm_config::Reach::Wsl,
+            address: "Ubuntu".to_owned(),
+            token: String::new(),
+        },
+        pm_config::KnownServer {
+            name: "App container".to_owned(),
+            reach: pm_config::Reach::Container,
+            address: "/home/me/app".to_owned(),
+            token: String::new(),
+        },
+        pm_config::KnownServer {
+            name: "Home server".to_owned(),
+            reach: pm_config::Reach::Tunnel,
+            address: "home.example.com".to_owned(),
             token: "secret".to_owned(),
         },
     ];

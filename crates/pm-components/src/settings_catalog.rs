@@ -190,6 +190,12 @@ pub enum Setting {
     AutoFetch,
     /// How often it does.
     FetchInterval,
+    /// Whether the server keeps a state of a file each time it is saved.
+    LocalHistory,
+    /// How many days those states are kept.
+    HistoryDays,
+    /// How many megabytes of those states a project may take up.
+    HistorySize,
     /// What a new session's branch is called.
     BranchTemplate,
     /// Where worktrees are made.
@@ -198,6 +204,10 @@ pub enum Setting {
     GitBlame,
     /// Whether the change marks follow the editor or are off.
     GitGutterMarks,
+    /// Whether the words that changed inside a changed line of a diff are drawn apart.
+    GitWordDiff,
+    /// Which layout the addresses of self-hosted git servers use.
+    GitHosts,
     /// The agent new work is given to.
     DefaultAgent,
     /// The mode agents start in.
@@ -212,7 +222,7 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting, in the order the pages show them.
-    pub const ALL: [Self; 81] = [
+    pub const ALL: [Self; 86] = [
         Self::Launch,
         Self::ConfirmClose,
         Self::CheckUpdates,
@@ -285,10 +295,15 @@ impl Setting {
         Self::CopyOnSelect,
         Self::AutoFetch,
         Self::FetchInterval,
+        Self::LocalHistory,
+        Self::HistoryDays,
+        Self::HistorySize,
         Self::BranchTemplate,
         Self::WorktreeFolder,
         Self::GitBlame,
         Self::GitGutterMarks,
+        Self::GitWordDiff,
+        Self::GitHosts,
         Self::DefaultAgent,
         Self::PermissionMode,
         Self::OnFinish,
@@ -369,10 +384,15 @@ impl Setting {
             | Self::CopyOnSelect => Section::Terminal,
             Self::AutoFetch
             | Self::FetchInterval
+            | Self::LocalHistory
+            | Self::HistoryDays
+            | Self::HistorySize
             | Self::BranchTemplate
             | Self::WorktreeFolder
             | Self::GitBlame
-            | Self::GitGutterMarks => Section::Git,
+            | Self::GitGutterMarks
+            | Self::GitWordDiff
+            | Self::GitHosts => Section::Git,
             Self::DefaultAgent | Self::PermissionMode | Self::OnFinish | Self::Notification => {
                 Section::Agents
             }
@@ -392,8 +412,12 @@ impl Setting {
             | Self::ShellArguments
             | Self::AutoFetch
             | Self::FetchInterval
+            | Self::LocalHistory
+            | Self::HistoryDays
+            | Self::HistorySize
             | Self::BranchTemplate
             | Self::WorktreeFolder
+            | Self::GitHosts
             | Self::DefaultAgent
             | Self::PermissionMode => Keeper::Machine,
             _ => Keeper::Window,
@@ -664,6 +688,18 @@ impl Setting {
                 "Fetch every",
                 "How many minutes pass between one fetch and the next.",
             ),
+            Self::LocalHistory => (
+                "Local history",
+                "Keep a state of each file every time it is saved, to compare with and restore in the timeline of the file.",
+            ),
+            Self::HistoryDays => (
+                "Keep local history for",
+                "How many days a saved state is kept before it is removed.",
+            ),
+            Self::HistorySize => (
+                "Local history size",
+                "How many megabytes of saved states one project may take up; the oldest are removed past it.",
+            ),
             Self::BranchTemplate => (
                 "Session branch name",
                 "What a new session's branch is called; {title} stands for its title. Empty works on no branch.",
@@ -679,6 +715,14 @@ impl Setting {
             Self::GitGutterMarks => (
                 "Change marks",
                 "Follow the editor's setting for marks beside changed lines, or turn them off here.",
+            ),
+            Self::GitWordDiff => (
+                "Highlight changed words",
+                "Mark the words that changed inside a changed line of a diff, not only the whole line.",
+            ),
+            Self::GitHosts => (
+                "Self-hosted git servers",
+                "The layout of permalinks for a server whose name does not give it away, as host=layout separated by commas; layouts are github, gitlab, bitbucket, gitea, azure, sourcehut and gitee.",
             ),
             Self::DefaultAgent => ("Default agent", "The agent new sessions start with."),
             Self::PermissionMode => (

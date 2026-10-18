@@ -332,6 +332,21 @@ pub enum Response {
         /// The commits.
         commits: Vec<pm_git::FileCommit>,
     },
+    /// The states a file was kept in, newest first.
+    LocalHistory {
+        /// The states.
+        versions: Vec<crate::LocalVersion>,
+    },
+    /// The versions of a file left in conflict.
+    Conflict {
+        /// What each side holds, and what the working folder does.
+        files: crate::ConflictFiles,
+    },
+    /// The files a commit or a branch changed.
+    RevisionChanges {
+        /// The files, with their diffs.
+        changes: Vec<Change>,
+    },
     /// A web address.
     Address {
         /// The address.

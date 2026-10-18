@@ -6,12 +6,16 @@ mod bytes;
 mod credential;
 mod debug;
 mod extensions;
+mod history;
 mod machine;
 mod message;
 mod request;
 mod response;
 
-pub use address::{DIRECT_SCHEME, SSH_SCHEME, direct_address, host_of, is_destination};
+pub use address::{
+    CONTAINER_SCHEME, DIRECT_SCHEME, Route, SSH_SCHEME, TUNNEL_SCHEME, WSL_SCHEME, escape_folder,
+    host_of, is_destination, route_of, unescape_folder,
+};
 pub use agents::builtin_agents;
 pub use credential::{Build, Credential, Target};
 pub use debug::{DebugAction, DebugAdapter, DebugFile, DebugInfo, DebugProcess, DebugScenario};
@@ -19,9 +23,10 @@ pub use extensions::{
     CAPABILITIES, ExtensionAssets, ExtensionCommand, ExtensionIcon, ExtensionIconTheme,
     ExtensionInfo, ExtensionTheme, GrammarBundle,
 };
+pub use history::{ConflictFiles, LocalVersion};
 pub use machine::{
-    AgentPreferences, ExtensionPreferences, FETCH_MINUTES, GitPreferences, LanguagePreferences,
-    MachineSettings, ShellPreferences,
+    AgentPreferences, ExtensionPreferences, FETCH_MINUTES, GitPreferences, HISTORY_DAYS,
+    HISTORY_MEGABYTES, HistoryPreferences, LanguagePreferences, MachineSettings, ShellPreferences,
 };
 pub use message::{ClientMessage, ServerMessage};
 pub use pm_buffer::{Position, Span};

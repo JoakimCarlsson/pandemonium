@@ -35,3 +35,4 @@ pm-style.workspace = true
 resvg = "0.48.1"
 mermaid-svg = "0.7.0"
 latex-rust = "2.1.1"
+pm-transport.workspace = true

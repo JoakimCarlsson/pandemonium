@@ -96,7 +96,7 @@ pub const DIFF_SCROLL: FocusId = FocusId(7004);
 pub const TREE_SCROLL: FocusId = FocusId(7005);
 
 /// The first of the rows folding a folder of the changed files; the rest follow it.
-pub const FOLDER_BASE: u64 = 7100;
+pub const FOLDER_BASE: u64 = 7101;
 
 /// The first of the check boxes staging a folder of the changed files; the rest follow it.
 pub const FOLDER_STAGE_BASE: u64 = 7300;
@@ -551,6 +551,8 @@ pub enum Outgoing {
         path: String,
         /// The line, counted from 1, or nothing for the whole file.
         line: Option<usize>,
+        /// The last line of the range that starts at `line`, counted from 1, or nothing for the one line.
+        end_line: Option<usize>,
         /// Whether the address is opened in the browser rather than copied.
         open: bool,
     },
@@ -560,6 +562,51 @@ pub enum Outgoing {
         session: usize,
         /// The file.
         path: String,
+    },
+    /// Asks for the states a file of the session at this position was kept in each time it was saved.
+    LocalHistory {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+    },
+    /// Reads one of the states a file of the session at this position was kept in, to set the file against it.
+    ReadVersion {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The state, by the number the history gave it.
+        version: u64,
+        /// How long ago it was saved, as it is said.
+        when: String,
+    },
+    /// Asks for the versions of a conflicted file of the session at this position, to open the resolver on it.
+    ReadConflict {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+    },
+    /// Writes a conflicted file of the session at this position as it was resolved, and stages it.
+    ResolveConflict {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// What the file holds once resolved.
+        text: String,
+    },
+    /// Asks for the files a commit changed, or a branch changed since it left another, in the folder of the session at this position.
+    RevisionChanges {
+        /// The session, by position.
+        session: usize,
+        /// The branch or commit to count from; the commit's own parent when nothing.
+        from: Option<String>,
+        /// The commit or branch.
+        to: String,
+        /// What the view of the files is called.
+        label: String,
     },
     /// Reads a file of the session at this position as a commit left it, to show it read only.
     ReadRevision {
@@ -2171,6 +2218,20 @@ impl WorkspaceState {
         } else if id >= STEP_BASE {
             let offset = (id - STEP_BASE) as usize;
             self.toggle_step(offset / 1000, offset % 1000);
+        } else if let Some(index) = position(
+            FILE_BASE,
+            self.review_session()
+                .map_or(0, |session| session.changes.len()),
+        )
+        .filter(|index| {
+            self.review_session()
+                .is_some_and(|held| held.changes[*index].conflicted)
+        }) {
+            if self.open().is_some() {
+                self.open_change(index);
+            } else {
+                self.request_resolver(index);
+            }
         } else if let Some(index) = position(FILE_BASE, self.change_count()) {
             self.open_change(index);
         } else if let Some(index) = position(STAGE_BASE, self.change_count()) {
@@ -2710,6 +2771,7 @@ impl WorkspaceState {
     pub(crate) fn open_change(&mut self, index: usize) {
         self.file = Some(index);
         self.select_change(index);
+        self.request_resolver(index);
         self.tab = Tab::Diff;
         if let Some(path) = self
             .open()
@@ -2718,14 +2780,14 @@ impl WorkspaceState {
         {
             self.closed_diffs.remove(&path);
         }
-        self.diff_scroll = self.open().map_or(0.0, |session| {
+        self.diff_scroll = self.review_session().map_or(0.0, |session| {
             crate::diff::offset_of(self, session, index, DIFF_WIDTH)
         });
     }
 
     /// Folds the folder at `position` of the open session's changes, or unfolds it.
     fn fold_change_folder(&mut self, position: usize) {
-        let key = self.open().and_then(|session| {
+        let key = self.review_session().and_then(|session| {
             crate::change_list::folder_table(&session.changes)
                 .get(position)
                 .map(|folder| crate::change_list::fold_key(folder.group, &folder.path))
@@ -2737,7 +2799,7 @@ impl WorkspaceState {
 
     /// Stages everything under the folder at `position` of the open session's changes, or unstages it when all of it is staged.
     fn stage_change_folder(&mut self, position: usize) {
-        let files = self.open().and_then(|session| {
+        let files = self.review_session().and_then(|session| {
             crate::change_list::folder_table(&session.changes)
                 .into_iter()
                 .nth(position)
@@ -2897,6 +2959,7 @@ impl WorkspaceState {
                 .iter()
                 .map(|found| {
                     let mut change = Change::new(&found.path, &found.diff);
+                    change.words.clone_from(&found.words);
                     change.staged = found.index.is_some() || found.staged;
                     change.unstaged = found.worktree.is_some() || !found.staged;
                     change.untracked = found.untracked;

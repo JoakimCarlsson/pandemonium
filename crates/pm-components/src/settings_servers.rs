@@ -725,7 +725,7 @@ fn summary(section: Section) -> &'static str {
             "An open standard that lets AI use external tools and services. MCP servers provide tools for file operations, databases, APIs, and more."
         }
         Section::Servers => {
-            "The servers the window works with: the one on this machine, ones reached straight at their address and ones reached over ssh."
+            "The servers the window works with: the one on this machine, and ones reached at their address, over ssh, inside WSL or a dev container, or through a tunnel."
         }
         Section::Results => "",
     }

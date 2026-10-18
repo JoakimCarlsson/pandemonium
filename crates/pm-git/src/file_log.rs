@@ -1,5 +1,6 @@
 //! A file's own history, the commits that changed it, the address of one of its lines on the repository's host, and the lines of a repository's files that hold some text.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use crate::{inside, run};
@@ -18,6 +19,9 @@ pub struct FileCommit {
     pub author: String,
     /// How long ago it was written, as git says it.
     pub when: String,
+    /// When it was written, in seconds since the epoch.
+    #[serde(default)]
+    pub time: i64,
     /// The first line of the commit message.
     pub summary: String,
     /// The path the file had in the commit, which differs from its path now when it was moved since.
@@ -35,7 +39,7 @@ pub fn file_history(directory: &Path, path: &str) -> Result<Vec<FileCommit>, Str
             &count,
             "--follow",
             "--name-only",
-            "--format=%x1e%H%x09%h%x09%an%x09%ar%x09%s",
+            "--format=%x1e%H%x09%h%x09%an%x09%ar%x09%at%x09%s",
             "--",
             path,
         ],
@@ -44,11 +48,12 @@ pub fn file_history(directory: &Path, path: &str) -> Result<Vec<FileCommit>, Str
         .split('\u{1e}')
         .filter_map(|entry| {
             let mut lines = entry.lines();
-            let mut fields = lines.next()?.splitn(5, '\t');
+            let mut fields = lines.next()?.splitn(6, '\t');
             let object = fields.next()?.to_owned();
             let id = fields.next()?.to_owned();
             let author = fields.next()?.to_owned();
             let when = fields.next()?.to_owned();
+            let time = fields.next()?.parse().unwrap_or_default();
             let summary = fields.next().unwrap_or_default().to_owned();
             let named = lines
                 .map(str::trim)
@@ -60,6 +65,7 @@ pub fn file_history(directory: &Path, path: &str) -> Result<Vec<FileCommit>, Str
                 id,
                 author,
                 when,
+                time,
                 summary,
                 path: named,
             })
@@ -91,8 +97,114 @@ fn web_address(remote: &str) -> Option<String> {
     Some(format!("https://{host}/{rest}"))
 }
 
-/// The web address of `path`, at line `line` counted from 1 when one is given, in the repository `directory` is in, at the commit checked out, on the host its remote is on: the remote the branch follows, `origin`, or the first there is.
-pub fn permalink(directory: &Path, path: &str, line: Option<usize>) -> Result<String, String> {
+/// How one kind of host lays out the web address of a file, as templates in which `{web}` is the address of the repository, `{commit}` the commit, `{file}` the path of the file, `{start}` and `{end}` the first and last line and `{after}` the line past the last.
+struct Layout {
+    /// What a self-hosted server is told to use it as in the settings.
+    id: &'static str,
+    /// Parts of a host name that say it is a host of this kind.
+    names: &'static [&'static str],
+    /// The address of the whole file.
+    file: &'static str,
+    /// The address of one line.
+    line: &'static str,
+    /// The address of a range of lines.
+    range: &'static str,
+}
+
+/// The kinds of host there are, the first whose name a host has winning.
+const LAYOUTS: &[Layout] = &[
+    Layout {
+        id: "gitlab",
+        names: &["gitlab"],
+        file: "{web}/-/blob/{commit}/{file}",
+        line: "{web}/-/blob/{commit}/{file}#L{start}",
+        range: "{web}/-/blob/{commit}/{file}#L{start}-{end}",
+    },
+    Layout {
+        id: "bitbucket",
+        names: &["bitbucket"],
+        file: "{web}/src/{commit}/{file}",
+        line: "{web}/src/{commit}/{file}#lines-{start}",
+        range: "{web}/src/{commit}/{file}#lines-{start}:{end}",
+    },
+    Layout {
+        id: "gitea",
+        names: &["codeberg", "gitea", "forgejo"],
+        file: "{web}/src/commit/{commit}/{file}",
+        line: "{web}/src/commit/{commit}/{file}#L{start}",
+        range: "{web}/src/commit/{commit}/{file}#L{start}-L{end}",
+    },
+    Layout {
+        id: "azure",
+        names: &["dev.azure.com", "visualstudio.com"],
+        file: "{web}?path=/{file}&version=GC{commit}",
+        line: "{web}?path=/{file}&version=GC{commit}&line={start}&lineEnd={after}&lineStartColumn=1&lineEndColumn=1",
+        range: "{web}?path=/{file}&version=GC{commit}&line={start}&lineEnd={after}&lineStartColumn=1&lineEndColumn=1",
+    },
+    Layout {
+        id: "sourcehut",
+        names: &["sr.ht"],
+        file: "{web}/tree/{commit}/item/{file}",
+        line: "{web}/tree/{commit}/item/{file}#L{start}",
+        range: "{web}/tree/{commit}/item/{file}#L{start}-{end}",
+    },
+    Layout {
+        id: "gitee",
+        names: &["gitee"],
+        file: "{web}/blob/{commit}/{file}",
+        line: "{web}/blob/{commit}/{file}#L{start}",
+        range: "{web}/blob/{commit}/{file}#L{start}-{end}",
+    },
+    Layout {
+        id: "github",
+        names: &["github"],
+        file: "{web}/blob/{commit}/{file}",
+        line: "{web}/blob/{commit}/{file}#L{start}",
+        range: "{web}/blob/{commit}/{file}#L{start}-L{end}",
+    },
+];
+
+/// The layout of the host `host`: the one `chosen` names for exactly that host, else the one its name gives away, else GitHub's, which most hosts that name nothing follow.
+fn layout_of<'a>(host: &str, chosen: &BTreeMap<String, String>) -> &'a Layout {
+    let host = host.to_lowercase();
+    let by_setting = chosen
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(&host))
+        .and_then(|(_, id)| {
+            LAYOUTS
+                .iter()
+                .find(|layout| layout.id.eq_ignore_ascii_case(id))
+        });
+    by_setting
+        .or_else(|| {
+            LAYOUTS
+                .iter()
+                .find(|layout| layout.names.iter().any(|name| host.contains(name)))
+        })
+        .unwrap_or(&LAYOUTS[LAYOUTS.len() - 1])
+}
+
+/// The address `web` of a repository on Azure DevOps with the host's ssh form, `ssh.dev.azure.com/v3/organisation/project/repository`, turned into the form of its pages, `dev.azure.com/organisation/project/_git/repository`.
+fn azure_pages(web: &str) -> String {
+    let Some(rest) = web.strip_prefix("https://ssh.dev.azure.com/v3/") else {
+        return web.to_owned();
+    };
+    let mut parts = rest.splitn(3, '/');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(organisation), Some(project), Some(repository)) => {
+            format!("https://dev.azure.com/{organisation}/{project}/_git/{repository}")
+        }
+        _ => web.to_owned(),
+    }
+}
+
+/// The web address of `path` in the repository `directory` is in, at the commit checked out, on the host its remote is on: the remote the branch follows, `origin`, or the first there is. `lines` narrows it to a line, or to a range of lines, as the first and the last counted from 1; `hosts` says which layout the servers it names use.
+pub fn permalink(
+    directory: &Path,
+    path: &str,
+    lines: Option<(usize, usize)>,
+    hosts: &BTreeMap<String, String>,
+) -> Result<String, String> {
     let path = inside(path)?;
     let followed = run(
         directory,
@@ -133,19 +245,25 @@ pub fn permalink(directory: &Path, path: &str, line: Option<usize>) -> Result<St
         .strip_prefix("https://")
         .and_then(|rest| rest.split('/').next())
         .unwrap_or_default();
-    let (page, anchor) = if host.contains("gitlab") {
-        (format!("{web}/-/blob/{commit}/{file}"), "#L")
-    } else if host.contains("bitbucket") {
-        (format!("{web}/src/{commit}/{file}"), "#lines-")
-    } else if host.contains("codeberg") || host.contains("gitea") || host.contains("forgejo") {
-        (format!("{web}/src/commit/{commit}/{file}"), "#L")
+    let layout = layout_of(host, hosts);
+    let web = if layout.id == "azure" {
+        azure_pages(&web)
     } else {
-        (format!("{web}/blob/{commit}/{file}"), "#L")
+        web
     };
-    Ok(match line {
-        Some(line) => format!("{page}{anchor}{line}"),
-        None => page,
-    })
+    let template = match lines {
+        None => layout.file,
+        Some((start, end)) if start >= end => layout.line,
+        Some(_) => layout.range,
+    };
+    let (start, end) = lines.map_or((0, 0), |(start, end)| (start, end.max(start)));
+    Ok(template
+        .replace("{web}", &web)
+        .replace("{commit}", &commit)
+        .replace("{file}", &file)
+        .replace("{start}", &start.to_string())
+        .replace("{end}", &end.to_string())
+        .replace("{after}", &(end + 1).to_string()))
 }
 
 /// One line of a file of a repository that a search found.
