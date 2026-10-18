@@ -2676,14 +2676,14 @@ impl WorkspaceState {
         {
             self.closed_diffs.remove(&path);
         }
-        self.diff_scroll = self.open().map_or(0.0, |session| {
+        self.diff_scroll = self.review_session().map_or(0.0, |session| {
             crate::diff::offset_of(self, session, index, DIFF_WIDTH)
         });
     }
 
     /// Folds the folder at `position` of the open session's changes, or unfolds it.
     fn fold_change_folder(&mut self, position: usize) {
-        let key = self.open().and_then(|session| {
+        let key = self.review_session().and_then(|session| {
             crate::change_list::folder_table(&session.changes)
                 .get(position)
                 .map(|folder| crate::change_list::fold_key(folder.group, &folder.path))
@@ -2695,7 +2695,7 @@ impl WorkspaceState {
 
     /// Stages everything under the folder at `position` of the open session's changes, or unstages it when all of it is staged.
     fn stage_change_folder(&mut self, position: usize) {
-        let files = self.open().and_then(|session| {
+        let files = self.review_session().and_then(|session| {
             crate::change_list::folder_table(&session.changes)
                 .into_iter()
                 .nth(position)
