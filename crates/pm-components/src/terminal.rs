@@ -6,23 +6,24 @@ use pm_config::TerminalCursor;
 use pm_icon::IconName;
 use pm_style::typography::{FontFamily, LineHeight, TypographyStyle};
 use pm_style::{
-    Color, Radius, Role, Sides, bg, border_b, border_color, border_t, border_width, code_px,
-    cursor_pointer, cursor_text, flex, flex_1, flex_col, flex_none, font_bold, font_mono, gap, h,
-    h_px, italic, items_center, leading_ratio, line_through, min_h, overflow_hidden, pr, px,
-    rounded, text_color, underline, w_full,
+    Color, Radius, Role, Sides, bg, border_b, border_color, border_l, border_t, border_width,
+    code_px, cursor_pointer, cursor_text, flex, flex_1, flex_col, flex_none, font_bold, font_mono,
+    gap, h, h_px, italic, items_center, leading_ratio, line_through, min_h, min_w_px,
+    overflow_hidden, pr, px, rounded, text_color, underline, w_full, w_px,
 };
 use pm_terminal::{Cell, Color as Paint, Emulator, Flags, Link};
 use pm_text::Shaper;
 use pm_ui::{Node, node, retained, text};
 
 use crate::Button;
-use crate::dock::TerminalTab;
+use crate::dock::{BottomTab, TerminalTab};
 use crate::parts::{glyph, line, spacer};
 use crate::sample::Session;
 use crate::state::{
-    MAXIMIZE_TERMINAL, NEW_TERMINAL, TERMINAL, TERMINAL_BODY, TERMINAL_CLOSE_BASE,
-    TERMINAL_TAB_BASE, WorkspaceState,
+    BOTTOM_PROBLEMS, BOTTOM_TERMINAL, MAXIMIZE_TERMINAL, NEW_TERMINAL, TERMINAL, TERMINAL_BODY,
+    TERMINAL_CLOSE_BASE, TERMINAL_TAB_BASE, WorkspaceState,
 };
+use pm_input::FocusId;
 
 /// How tall the dock is until it is dragged taller or shorter, in logical pixels.
 pub const HEIGHT: f32 = 280.0;
@@ -105,6 +106,9 @@ pub fn height(state: &WorkspaceState, page: f32) -> f32 {
     height.clamp(HEIGHTS.0, tallest(page))
 }
 
+/// How wide the list of shells at the right of the dock is, in logical pixels.
+const SHELL_LIST_WIDTH: f32 = 160.0;
+
 /// The dock of `session`, on a page `width` wide and `page` tall.
 pub fn terminal(
     state: &WorkspaceState,
@@ -113,6 +117,8 @@ pub fn terminal(
     page: f32,
     shaper: &mut Shaper,
 ) -> Node {
+    let shown = state.bottom_tab();
+    let (errors, warnings) = crate::problems_panel::tally(state);
     let mut strip = node().styles([
         flex(),
         items_center(),
@@ -123,17 +129,32 @@ pub fn terminal(
         border_b(),
         border_color(Role::Border),
     ]);
-    let debugging = state.debug_docked();
-    if debugging {
-        strip = strip.child(debug_tab_button(state.debug.shown));
-    }
-    for (index, tab) in session.terminals.iter().enumerate() {
-        let shown = index == session.terminal_active && !(debugging && state.debug.shown);
-        strip = strip.child(tab_button(index, tab, shown));
+    strip = strip.child(pane_tab(
+        "Problems",
+        Some(errors + warnings).filter(|count| *count > 0),
+        shown == BottomTab::Problems,
+        BOTTOM_PROBLEMS,
+    ));
+    if state.debug_docked() {
+        strip = strip.child(pane_tab(
+            "Debug Console",
+            None,
+            shown == BottomTab::Debug,
+            crate::debug::DEBUG_TAB,
+        ));
     }
     strip = strip
-        .child(Button::icon(IconName::Plus, NEW_TERMINAL).build())
-        .child(spacer())
+        .child(pane_tab(
+            "Terminal",
+            None,
+            shown == BottomTab::Terminal,
+            BOTTOM_TERMINAL,
+        ))
+        .child(spacer());
+    if shown == BottomTab::Terminal {
+        strip = strip.child(Button::icon(IconName::Plus, NEW_TERMINAL).build());
+    }
+    strip = strip
         .child(
             Button::icon(
                 if state.terminal_maximized {
@@ -158,21 +179,35 @@ pub fn terminal(
             border_color(Role::Border),
         ])
         .child(strip);
-    if debugging && state.debug.shown {
-        dock = dock.child(crate::debug_panel::debug_tab(state));
-    } else if let Some(tab) = session.terminals.get(session.terminal_active) {
-        dock = dock.child(window(
-            tab,
-            width - 2.0 * PADDING_X,
-            Look::of(state),
-            shaper,
-        ));
+    match shown {
+        BottomTab::Problems => dock = dock.child(crate::problems_panel::problems_tab(state)),
+        BottomTab::Debug => dock = dock.child(crate::debug_panel::debug_tab(state)),
+        BottomTab::Terminal => {
+            if let Some(tab) = session.terminals.get(session.terminal_active) {
+                let listed = session.terminals.len() > 1;
+                let room = if listed {
+                    width - SHELL_LIST_WIDTH
+                } else {
+                    width
+                };
+                let mut body = node().styles([flex(), flex_1(), min_h(0)]).child(window(
+                    tab,
+                    room - 2.0 * PADDING_X,
+                    Look::of(state),
+                    shaper,
+                ));
+                if listed {
+                    body = body.child(shell_list(session));
+                }
+                dock = dock.child(body);
+            }
+        }
     }
     dock
 }
 
-/// The tab of the program being debugged, filled while it is the one shown.
-fn debug_tab_button(shown: bool) -> Node {
+/// A tab of the dock named `label`, filled while it is the one showing, with how many things it holds when it holds any.
+fn pane_tab(label: &str, count: Option<usize>, shown: bool, id: FocusId) -> Node {
     let tone = if shown { Role::Text } else { Role::Muted };
     let mut styles = vec![
         flex(),
@@ -181,7 +216,6 @@ fn debug_tab_button(shown: bool) -> Node {
         h(8),
         px(3),
         rounded(Radius::Lg),
-        text_color(tone),
         cursor_pointer(),
     ];
     if shown {
@@ -189,23 +223,51 @@ fn debug_tab_button(shown: bool) -> Node {
     } else {
         styles.push(bg(Role::SurfaceHover).hover());
     }
-    node()
-        .styles(styles)
-        .child(glyph(IconName::Bug, 3.5, tone))
-        .child(line("Debug", 13, 1.4, tone))
-        .focusable(crate::debug::DEBUG_TAB)
+    let mut tab = node().styles(styles).child(line(label, 13, 1.4, tone));
+    if let Some(count) = count {
+        tab = tab.child(
+            node()
+                .styles([
+                    flex(),
+                    items_center(),
+                    px(1.5),
+                    rounded(Radius::Lg),
+                    bg(Role::Accent),
+                ])
+                .child(line(count.to_string(), 11, 1.3, Role::OnAccent)),
+        );
+    }
+    tab.focusable(id)
 }
 
-/// The tab of the shell at `index`: its name, pressed to show it, and the button that ends it.
-fn tab_button(index: usize, tab: &TerminalTab, shown: bool) -> Node {
+/// The shells of `session` as a list at the right of the dock, the one showing marked, each with the button that ends it.
+fn shell_list(session: &Session) -> Node {
+    let mut list = node().styles([
+        flex(),
+        flex_col(),
+        flex_none(),
+        w_px(SHELL_LIST_WIDTH),
+        min_h(0),
+        overflow_hidden(),
+        border_l(),
+        border_color(Role::Border),
+    ]);
+    for (index, tab) in session.terminals.iter().enumerate() {
+        list = list.child(shell_row(index, tab, index == session.terminal_active));
+    }
+    list
+}
+
+/// The row of the shell at `index`: its name, pressed to show it, and the button that ends it.
+fn shell_row(index: usize, tab: &TerminalTab, shown: bool) -> Node {
     let tone = if shown { Role::Text } else { Role::Muted };
     let mut styles = vec![
         flex(),
         items_center(),
         gap(2),
-        h(8),
+        h(7),
         pr(1),
-        rounded(Radius::Lg),
+        flex_none(),
         text_color(tone),
     ];
     if shown {
@@ -216,10 +278,13 @@ fn tab_button(index: usize, tab: &TerminalTab, shown: bool) -> Node {
     let name = node()
         .styles([
             flex(),
+            flex_1(),
             items_center(),
             gap(2),
-            h(8),
+            h(7),
             pm_style::pl(3),
+            min_w_px(0),
+            overflow_hidden(),
             cursor_pointer(),
         ])
         .child(glyph(IconName::Terminal, 3.5, tone))

@@ -67,6 +67,7 @@ pub mod parts;
 pub mod plan;
 pub mod popover;
 pub mod preview;
+pub mod problems_panel;
 pub mod progress;
 pub mod project;
 pub mod project_search;

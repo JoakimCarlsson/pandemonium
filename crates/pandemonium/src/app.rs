@@ -22,6 +22,7 @@ use pm_components::overview::OVERVIEW_SCROLL;
 use pm_components::panes::{PANE_MENU, split_row_of};
 use pm_components::sash::Grows;
 use pm_components::settings::{SETTINGS_CLOSE, SETTINGS_NAV_SCROLL, SETTINGS_SCROLL, is_settings};
+use pm_components::state::PROBLEMS_SCROLL;
 use pm_components::state::{COMMENT_CANCEL, COMMENT_FIELD};
 use pm_components::terminal_menu::TerminalCommand;
 use pm_components::title_bar::{COMMAND_CENTER, GO_BACK, GO_FORWARD};
@@ -971,6 +972,7 @@ impl App {
                     std::mem::take(state).scrolled_excerpts(pixels, room)
                 }
                 GRAPH_SCROLL => std::mem::take(state).scrolled_graph(pixels, room),
+                PROBLEMS_SCROLL => std::mem::take(state).scrolled_problems(pixels, room),
                 DEBUG_STACK_SCROLL | DEBUG_VARIABLES_SCROLL | DEBUG_CONSOLE_SCROLL => {
                     std::mem::take(state).scrolled_debug(id, pixels, room)
                 }

@@ -272,6 +272,9 @@ impl WorkspaceState {
             })
             .map(|(place, _)| place)
             .collect();
+        if self.terminal {
+            self.ask_problems();
+        }
         for session in sessions {
             if let Some(document) = self.file_mut(session, path) {
                 document.diagnostics = diagnostics.clone();

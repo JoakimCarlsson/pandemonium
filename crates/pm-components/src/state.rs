@@ -207,6 +207,18 @@ pub const NEW_TERMINAL: FocusId = FocusId(324);
 /// Makes the terminal dock taller, or gives it its height back.
 pub const MAXIMIZE_TERMINAL: FocusId = FocusId(325);
 
+/// The dock's tab listing what is wrong with the files of the project.
+pub const BOTTOM_PROBLEMS: FocusId = FocusId(20_200_000);
+
+/// The dock's tab showing the shells.
+pub const BOTTOM_TERMINAL: FocusId = FocusId(20_200_001);
+
+/// The list of problems in the dock, which scrolls.
+pub const PROBLEMS_SCROLL: FocusId = FocusId(20_200_002);
+
+/// The first of the rows of the dock's list of problems; the rest follow it.
+pub const PROBLEM_ROW_BASE: u64 = 20_201_000;
+
 /// The first of the tabs showing one of the dock's shells; the rest follow it.
 pub const TERMINAL_TAB_BASE: u64 = 5000;
 
@@ -1376,6 +1388,16 @@ pub struct WorkspaceState {
     pub terminal: bool,
     /// Whether the terminal is taller than usual.
     pub terminal_maximized: bool,
+    /// Which tab of the dock is showing.
+    pub bottom: crate::dock::BottomTab,
+    /// What is wrong with the files of the project of the session the dock is about, as the server last said.
+    pub problems: Vec<pm_protocol::Problem>,
+    /// Whether the server was asked what is wrong with the files and has not answered.
+    pub problems_asked: bool,
+    /// How far down the list of problems is scrolled, in logical pixels.
+    pub problems_scroll: f32,
+    /// The problem of the list the reader pressed, whose place is to be shown.
+    pub problem_picked: Option<usize>,
     /// How tall the terminal dock is while it is not maximized, in logical pixels.
     pub terminal_height: f32,
     /// How many columns and lines the dock's window last held.
@@ -1597,6 +1619,11 @@ impl WorkspaceState {
             overview_scroll: 0.0,
             terminal: false,
             terminal_maximized: false,
+            bottom: crate::dock::BottomTab::default(),
+            problems: Vec::new(),
+            problems_asked: false,
+            problems_scroll: 0.0,
+            problem_picked: None,
             terminal_height: crate::terminal::HEIGHT,
             terminal_size: crate::dock::FIRST_SIZE,
             next_terminal: 1,
@@ -1919,7 +1946,7 @@ impl WorkspaceState {
         self.sync_context();
         self.refresh_files();
         self.ask_log_once();
-        self.debug_revealed()
+        self.debug_revealed().problem_revealed()
     }
 
     /// The state after `edit` is made to the field named `id`.

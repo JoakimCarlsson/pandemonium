@@ -147,8 +147,6 @@ pub struct DebugState {
     pub run: Option<Run>,
     /// The session a start is waiting on the server for.
     pub starting: Option<usize>,
-    /// Whether the dock shows the debug tab rather than a shell.
-    pub shown: bool,
     /// What the folder can be debugged as, as the server last listed it.
     pub scenarios: Vec<DebugScenario>,
     /// The file in front when the scenarios were asked for.
@@ -588,7 +586,7 @@ impl WorkspaceState {
                     debug,
                     view,
                 });
-                self.debug.shown = true;
+                self.bottom = crate::dock::BottomTab::Debug;
                 self.terminal = true;
                 if !self.debug.watches.is_empty() {
                     self.outbox.push(Outgoing::DebugDo {
@@ -706,7 +704,7 @@ impl WorkspaceState {
         }
         match id {
             DEBUG_TAB => {
-                self.debug.shown = true;
+                self.bottom = crate::dock::BottomTab::Debug;
                 true
             }
             DEBUG_CONSOLE_SUBMIT => {

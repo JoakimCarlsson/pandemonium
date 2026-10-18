@@ -284,9 +284,17 @@ impl Screen {
         self.in_workspace(|state| state.with_blame(session, path, line, blame))
     }
 
-    /// The screen listing what is wrong with the files of the project, at `at`.
-    pub fn problems_requested(self, at: (f32, f32)) -> Self {
-        self.in_workspace(|state| state.problems_requested(at))
+    /// The screen with the dock showing what is wrong with the files of the project.
+    pub fn problems_shown(self) -> Self {
+        self.in_workspace(|mut state| {
+            state.show_problems();
+            state
+        })
+    }
+
+    /// The screen after the list of problems in the dock was scrolled.
+    pub fn scrolled_problems(self, delta: f32, room: f32) -> Self {
+        self.in_workspace(|state| state.scrolled_problems(delta, room))
     }
 
     /// The screen after the server said what is wrong with the files of the project of the session at `session`.

@@ -632,28 +632,6 @@ pub(crate) fn listing_cells(items: &Items, index: usize) -> Vec<Node> {
                 tag(place_name(location), 11, Role::Subtle),
             ]
         }
-        Items::Problems { problems } => {
-            let Some(problem) = problems.get(index) else {
-                return Vec::new();
-            };
-            let diagnostic = &problem.diagnostic;
-            let first = diagnostic.message.lines().next().unwrap_or_default();
-            let name = problem.path.rsplit('/').next().unwrap_or(&problem.path);
-            vec![
-                node().styles([
-                    size(2),
-                    rounded(4.0),
-                    flex_none(),
-                    bg(severity_role(diagnostic.severity)),
-                ]),
-                cell(first.to_owned(), 12, Role::Text, false),
-                tag(
-                    format!("{name}:{}", diagnostic.span.start.line + 1),
-                    11,
-                    Role::Subtle,
-                ),
-            ]
-        }
         Items::Files { paths, .. } => {
             let Some(path) = paths.get(index) else {
                 return Vec::new();

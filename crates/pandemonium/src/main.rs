@@ -66,6 +66,7 @@ fn main() {
             Some("completing") => Shot::Completing,
             Some("hovering") => Shot::Hovering,
             Some("debugging") => Shot::Debugging,
+            Some("problems") => Shot::Problems,
             Some("editormenu") => Shot::EditorMenu,
             Some("references") => Shot::References,
             Some("renaming") => Shot::Renaming,
