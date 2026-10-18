@@ -9,13 +9,15 @@ pub enum ServerChoice {
     Off,
     /// This command, written as on a command line, is started in place of the one it comes with.
     Command(String),
+    /// No language server is started, for this reason: the extension that brought the language is not allowed to run programs.
+    Refused(String),
 }
 
 impl ServerChoice {
     /// The server a language whose own is `own`, written in `language`, is read by under this choice.
     pub fn applied(&self, language: &str, own: Option<ServerSpec>) -> Option<ServerSpec> {
         match self {
-            Self::Off => None,
+            Self::Off | Self::Refused(_) => None,
             Self::Command(line) => {
                 let mut words = line.split_whitespace().map(str::to_owned);
                 let command = words.next()?;

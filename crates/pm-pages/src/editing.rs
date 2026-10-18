@@ -860,6 +860,50 @@ impl Screen {
         self.in_workspace(|state| state.extension_picked(path))
     }
 
+    /// The screen after the server of `host` said what the extension in the folder `path` is, to be installed once the reader allows it what it asks.
+    pub fn with_extension_preview(self, path: String, extension: ExtensionInfo) -> Self {
+        self.in_workspace(|state| state.with_extension_preview(path, extension))
+    }
+
+    /// The screen after the server said why the folder chosen cannot be installed.
+    pub fn with_extension_problem(self, problem: String) -> Self {
+        self.in_workspace(|state| state.with_extension_problem(problem))
+    }
+
+    /// The screen after the server of `host` said what its extensions bring that the window uses itself.
+    pub fn with_extension_assets(
+        self,
+        host: &Option<String>,
+        assets: pm_protocol::ExtensionAssets,
+    ) -> Self {
+        self.in_workspace(|state| state.with_extension_assets(host, assets))
+    }
+
+    /// The screen after a command of an extension came to `prompt`.
+    pub fn with_command_result(self, prompt: Option<String>) -> Self {
+        self.in_workspace(|state| state.with_command_result(prompt))
+    }
+
+    /// The command an extension brings that taking the row `row` of the list over the file, or the row picked when there is none, runs, with the machine it runs on.
+    pub fn extension_command_taken(
+        &self,
+        row: Option<usize>,
+    ) -> Option<(Option<String>, pm_protocol::ExtensionCommand)> {
+        match self {
+            Self::Workspace(state) => state.extension_command_taken(row),
+            Self::Onboarding(_) => None,
+        }
+    }
+
+    /// The screen after the command `command` of the extensions of `host` was taken.
+    pub fn extension_command_run(
+        self,
+        host: Option<String>,
+        command: pm_protocol::ExtensionCommand,
+    ) -> Self {
+        self.in_workspace(|state| state.extension_command_run(host, command))
+    }
+
     /// The screen after the extensions page is scrolled by `delta` logical pixels, with `room` pixels to scroll.
     pub fn scrolled_extensions(self, delta: f32, room: f32) -> Self {
         self.in_workspace(|state| state.scrolled_extensions(delta, room))

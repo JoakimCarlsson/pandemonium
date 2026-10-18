@@ -690,6 +690,9 @@ impl App {
                 let _ = clipboard.set_text(text);
             }
         }
+        if chosen_family(&self.saved_window.appearance) != self.family {
+            self.apply_appearance();
+        }
     }
 
     /// Writes the editor's settings to disk when they differ from what was last written.

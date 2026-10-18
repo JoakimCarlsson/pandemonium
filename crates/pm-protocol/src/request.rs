@@ -52,6 +52,9 @@ pub struct McpServer {
     /// Whether agents are given it; a server switched off stays listed.
     #[serde(default = "enabled")]
     pub enabled: bool,
+    /// The extension that brings it, by folder name, when one does; such a server is listed but is not kept with the others, and goes when the extension does.
+    #[serde(default)]
+    pub extension: Option<String>,
 }
 
 /// Servers are given to agents unless they were switched off.
@@ -684,6 +687,38 @@ pub enum Request {
     InstallExtension {
         /// The folder.
         path: String,
+        /// What the reader allows an extension package to do, by the names of capabilities; ignored for a language folder.
+        #[serde(default)]
+        grants: Vec<String>,
+    },
+    /// What the extension package in a folder of the server's machine carries and asks to be allowed, without installing it.
+    InspectExtension {
+        /// The folder.
+        path: String,
+    },
+    /// Allows an installed extension a capability, or takes it back; every client is told with `extensions_changed`.
+    GrantExtension {
+        /// The extension, by folder name.
+        id: String,
+        /// The capability, by name.
+        capability: String,
+        /// Whether it is allowed.
+        granted: bool,
+    },
+    /// What the installed extensions bring that a window uses itself: themes, icon themes and commands.
+    ExtensionAssets,
+    /// Runs a command an extension brings.
+    RunExtensionCommand {
+        /// The extension, by folder name.
+        extension: String,
+        /// The command.
+        command: String,
+        /// What was typed after the command's name.
+        #[serde(default)]
+        argument: String,
+        /// The project folder it runs in, when it runs in one.
+        #[serde(default)]
+        directory: Option<String>,
     },
     /// Takes an extension off the server's machine.
     RemoveExtension {

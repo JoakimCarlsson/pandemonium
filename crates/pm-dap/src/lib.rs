@@ -23,7 +23,7 @@ mod state;
 mod view;
 mod wire;
 
-pub use adapter::{ADAPTERS, Adapter, Connect};
+pub use adapter::{Adapter, Connect, adapters, set_extension_adapters};
 pub use attach::{Process, processes};
 pub use scenario::{Request, Scenario, scenarios};
 pub use session::{Notify, Session};

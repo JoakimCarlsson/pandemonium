@@ -292,6 +292,8 @@ pub enum Shot {
     TabMenu,
     /// The extensions page, some installed, one being installed, one that failed and one of the reader's own.
     Extensions,
+    /// The extensions page asking whether to install an extension, with what it asks to be allowed.
+    ExtensionInstall,
 }
 
 /// Loads the grammar of the language `id` installed on this machine, if it is, and learns the endings of the files written in it, so a snapshot can highlight with it.
@@ -1140,6 +1142,37 @@ fn file_history() -> WorkspaceState {
     )
 }
 
+/// The sample extension package: it brings a language, a theme, a debug adapter, a tool server and a command, and asks to run programs and download files, of which only running programs is allowed once it is `installed`.
+fn sample_extension(installed: bool) -> pm_protocol::ExtensionInfo {
+    pm_protocol::ExtensionInfo {
+        id: "hello".to_owned(),
+        name: "Hello".to_owned(),
+        kind: "extension".to_owned(),
+        version: "0.1.0".to_owned(),
+        description:
+            "A sample extension: a language, a theme, a debug adapter, a tool server and a command."
+                .to_owned(),
+        installed,
+        local: true,
+        provides: [
+            "language: Hello Config",
+            "theme: Hello Dusk",
+            "debug adapter: Hello",
+            "tool server: hello-tools",
+            "command: Say hello",
+        ]
+        .map(str::to_owned)
+        .to_vec(),
+        requests: ["process", "download"].map(str::to_owned).to_vec(),
+        granted: if installed {
+            vec!["process".to_owned()]
+        } else {
+            Vec::new()
+        },
+        ..Default::default()
+    }
+}
+
 /// The languages a server on this machine could list: some installed, one being installed and one that failed.
 fn sample_languages() -> Vec<pm_protocol::ExtensionInfo> {
     let language =
@@ -1164,8 +1197,10 @@ fn sample_languages() -> Vec<pm_protocol::ExtensionInfo> {
             problem: None,
             server: None,
             local: false,
+            ..Default::default()
         };
     vec![
+        sample_extension(true),
         pm_protocol::ExtensionInfo {
             server: Some("gopls v0.24.0".to_owned()),
             ..language("go", "Go", "go", true)
@@ -1690,6 +1725,15 @@ impl Shot {
                     .after(pm_components::extensions::EXTENSIONS)
                     .with_extensions(sample_languages()),
             ),
+            Self::ExtensionInstall => Screen::Workspace(
+                welcome()
+                    .after(pm_components::extensions::EXTENSIONS)
+                    .with_extensions(sample_languages())
+                    .with_extension_preview(
+                        "~/code/pandemonium/extensions/hello".to_owned(),
+                        sample_extension(false),
+                    ),
+            ),
             Self::Onboarding(step) => Screen::Onboarding(OnboardingState {
                 step,
                 projects: if step == Step::Project {
@@ -1926,6 +1970,7 @@ impl Shot {
                         description: "Up-to-date code docs for any prompt".to_owned(),
                         website: "https://context7.com".to_owned(),
                         enabled: true,
+                        extension: None,
                     }])
                     .with_tool_listings(
                         "",

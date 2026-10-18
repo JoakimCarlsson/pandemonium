@@ -248,6 +248,20 @@ pub enum Response {
         /// Each one, by name; hidden ones included.
         extensions: Vec<crate::ExtensionInfo>,
     },
+    /// What an extension package in a folder carries and asks for, not installed.
+    ExtensionPreview {
+        /// The extension; `provides` and `requests` say what it carries and what it asks.
+        extension: crate::ExtensionInfo,
+    },
+    /// What the installed extensions bring that a window uses itself.
+    ExtensionAssets(crate::ExtensionAssets),
+    /// What a command an extension brings came to.
+    ExtensionCommand {
+        /// The text to put in the prompt box, when the command gives some.
+        prompt: Option<String>,
+        /// A line to tell the reader, when the command has one.
+        message: Option<String>,
+    },
     /// An installed language's grammar and queries.
     Grammar(crate::GrammarBundle),
     /// A file was opened for its language server.

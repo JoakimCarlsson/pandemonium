@@ -119,6 +119,7 @@ impl Core {
                 problem: None,
                 server: None,
                 local: listing.local,
+                ..ExtensionInfo::default()
             })
             .collect();
         for (id, manifest) in &installed {
@@ -135,7 +136,13 @@ impl Core {
                 });
             }
         }
+        let owners = crate::extensions::language_owners();
+        for package in pm_plugin::installed() {
+            infos.retain(|info| info.id != package.id);
+            infos.push(crate::extensions::describe(&package, true));
+        }
         for info in &mut infos {
+            info.owner = owners.get(&info.id).map(|package| package.id.clone());
             if let Some(manifest) = installed.get(&info.id) {
                 info.installed = true;
                 info.server = manifest.server.as_ref().map(pm_lsp::server_state);
@@ -164,6 +171,16 @@ impl Core {
             };
         }
         self.tell_extensions();
+    }
+
+    /// Notes that installing the extension package `id` is doing `step`, or nothing once it is over, and tells every client.
+    pub(crate) fn note_busy_package(&self, id: &str, step: Option<&str>) {
+        self.note_busy(id, step);
+    }
+
+    /// Notes why installing the extension package `id` went wrong, or that it did not.
+    pub(crate) fn note_problem_package(&self, id: &str, problem: Option<String>) {
+        self.note_problem(id, problem);
     }
 
     /// Notes why installing `id` went wrong, or that it did not.

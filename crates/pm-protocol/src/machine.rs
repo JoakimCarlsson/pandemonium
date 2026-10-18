@@ -129,6 +129,14 @@ impl LanguagePreferences {
     }
 }
 
+/// What the reader allowed one extension to do on the server's machine; nothing is allowed until it is granted.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ExtensionPreferences {
+    /// The capabilities granted, by name: `process`, `download`, `read-project`.
+    pub granted: Vec<String>,
+}
+
 /// What the reader set up for the work a server does on its machine.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -143,12 +151,32 @@ pub struct MachineSettings {
     pub shell: ShellPreferences,
     /// How each language is handled, by the language's id; a language not named is as it comes.
     pub languages: BTreeMap<String, LanguagePreferences>,
+    /// What each extension is allowed to do, by the extension's folder name; an extension not named is allowed nothing.
+    pub extensions: BTreeMap<String, ExtensionPreferences>,
 }
 
 impl MachineSettings {
     /// How the language `id` is handled.
     pub fn language(&self, id: &str) -> LanguagePreferences {
         self.languages.get(id).cloned().unwrap_or_default()
+    }
+
+    /// The capabilities granted to the extension `id`, by name.
+    pub fn granted(&self, id: &str) -> Vec<String> {
+        self.extensions
+            .get(id)
+            .map(|held| held.granted.clone())
+            .unwrap_or_default()
+    }
+
+    /// The settings with the extension `id` granted exactly `granted`, leaving it out when that is nothing.
+    pub fn set_granted(&mut self, id: &str, granted: Vec<String>) {
+        if granted.is_empty() {
+            self.extensions.remove(id);
+        } else {
+            self.extensions
+                .insert(id.to_owned(), ExtensionPreferences { granted });
+        }
     }
 
     /// The settings with the language `id` handled as `preferences`, leaving it out when that is as it comes.

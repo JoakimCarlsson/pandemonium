@@ -167,8 +167,9 @@ impl WorkspaceState {
                 pm_theme::families()
                     .into_iter()
                     .map(|family| {
-                        Choice::new(family.name, "", Then::Theme(family.name.to_owned()))
-                            .current(family.name == held)
+                        let current = family.name == *held;
+                        Choice::new(family.name.clone(), "", Then::Theme(family.name))
+                            .current(current)
                     })
                     .collect()
             }

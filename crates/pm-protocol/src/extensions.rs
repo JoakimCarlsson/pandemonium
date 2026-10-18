@@ -44,6 +44,92 @@ pub struct ExtensionInfo {
     /// Whether it is a folder of the reader's own rather than one the list offers.
     #[serde(default)]
     pub local: bool,
+    /// The extension that installed it, for a language that came with one.
+    #[serde(default)]
+    pub owner: Option<String>,
+    /// What an extension package carries, one line for each thing, such as `theme: Hello Dusk`; empty for a language.
+    #[serde(default)]
+    pub provides: Vec<String>,
+    /// What an extension package asks to be allowed, by the names of capabilities.
+    #[serde(default)]
+    pub requests: Vec<String>,
+    /// What the reader allowed it, by the names of capabilities.
+    #[serde(default)]
+    pub granted: Vec<String>,
+}
+
+/// The ids of the capabilities an extension may ask for, with what each lets it do.
+pub const CAPABILITIES: [(&str, &str); 3] = [
+    ("process", "Run programs on this machine"),
+    ("download", "Download files from the network"),
+    ("read-project", "Read the files of a project"),
+];
+
+/// A command an extension brings, for the command palette and the slash of the prompt box.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ExtensionCommand {
+    /// The extension that brings it, by folder name.
+    pub extension: String,
+    /// What it is called behind the slash and run by.
+    pub id: String,
+    /// What the palette shows.
+    pub title: String,
+    /// What it does, in a line.
+    #[serde(default)]
+    pub description: String,
+}
+
+/// A theme an extension brings: a colour for each role it names, in a dark and a light variant, over the default theme.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ExtensionTheme {
+    /// The extension that brings it, by folder name.
+    pub extension: String,
+    /// What the reader calls it.
+    pub name: String,
+    /// The colour of each role of the dark variant, as `#rrggbb` or `#rrggbbaa`, by the role's name.
+    #[serde(default)]
+    pub dark: Vec<(String, String)>,
+    /// The colour of each role of the light variant.
+    #[serde(default)]
+    pub light: Vec<(String, String)>,
+}
+
+/// One icon of an icon theme.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ExtensionIcon {
+    /// The ending of the file names it is for, without the dot.
+    pub suffix: String,
+    /// The icon, as an SVG document.
+    pub svg: String,
+    /// The colour it is tinted, as `#rrggbb`.
+    #[serde(default)]
+    pub color: Option<String>,
+}
+
+/// An icon theme an extension brings.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ExtensionIconTheme {
+    /// The extension that brings it, by folder name.
+    pub extension: String,
+    /// What the reader calls it.
+    pub name: String,
+    /// Its icons.
+    #[serde(default)]
+    pub icons: Vec<ExtensionIcon>,
+}
+
+/// What the installed extensions bring that the window itself uses.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ExtensionAssets {
+    /// The themes.
+    #[serde(default)]
+    pub themes: Vec<ExtensionTheme>,
+    /// The icon themes.
+    #[serde(default)]
+    pub icon_themes: Vec<ExtensionIconTheme>,
+    /// The commands.
+    #[serde(default)]
+    pub commands: Vec<ExtensionCommand>,
 }
 
 /// An installed language's grammar and queries, which a client highlights its files with.

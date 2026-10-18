@@ -522,7 +522,20 @@ impl App {
             return false;
         }
         let Some(action) = self.model.read(|screen| screen.command_taken(row)) else {
-            return false;
+            let Some((host, command)) = self
+                .model
+                .read(|screen| screen.extension_command_taken(row))
+            else {
+                return false;
+            };
+            self.model.update(|screen| {
+                *screen = std::mem::take(screen)
+                    .listing_closed()
+                    .extension_command_run(host, command)
+            });
+            self.leave_listing();
+            self.deliver();
+            return true;
         };
         self.model.update(|screen| {
             *screen = std::mem::take(screen).listing_closed().command_used(action)

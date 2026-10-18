@@ -20,11 +20,14 @@ pub use address::{
 pub use agents::builtin_agents;
 pub use credential::{Build, Credential, Target};
 pub use debug::{DebugAction, DebugAdapter, DebugFile, DebugInfo, DebugProcess, DebugScenario};
-pub use extensions::{ExtensionInfo, GrammarBundle};
+pub use extensions::{
+    CAPABILITIES, ExtensionAssets, ExtensionCommand, ExtensionIcon, ExtensionIconTheme,
+    ExtensionInfo, ExtensionTheme, GrammarBundle,
+};
 pub use history::{ConflictFiles, LocalVersion};
 pub use machine::{
-    AgentPreferences, FETCH_MINUTES, GitPreferences, HISTORY_DAYS, HISTORY_MEGABYTES,
-    HistoryPreferences, LanguagePreferences, MachineSettings, ShellPreferences,
+    AgentPreferences, ExtensionPreferences, FETCH_MINUTES, GitPreferences, HISTORY_DAYS,
+    HISTORY_MEGABYTES, HistoryPreferences, LanguagePreferences, MachineSettings, ShellPreferences,
 };
 pub use message::{ClientMessage, ServerMessage};
 pub use pm_buffer::{Position, Span};

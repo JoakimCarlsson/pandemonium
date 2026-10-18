@@ -163,6 +163,15 @@ pub fn add_extension(source: &Path) -> Result<String, String> {
         .map(|name| name.to_string_lossy().into_owned())
         .filter(|name| !name.is_empty() && !name.starts_with('.'))
         .ok_or_else(|| format!("{} is not a folder to install", source.display()))?;
+    add_folder(source, &id)?;
+    Ok(id)
+}
+
+/// Copies the language folder `source` into the folder of languages of your own as `id`, in place of one of the same name, so that the list offers it beside the ones it comes with.
+pub fn add_folder(source: &Path, id: &str) -> Result<(), String> {
+    if id.is_empty() || id.starts_with('.') || id.contains(['/', '\\']) {
+        return Err(format!("{id} is not the name of a language"));
+    }
     Manifest::read(source)?;
     let root = local_root()?;
     let staging = root.join(format!(".{id}.partial"));
@@ -177,10 +186,21 @@ pub fn add_extension(source: &Path) -> Result<String, String> {
                 .map_err(|error| format!("could not copy {}: {error}", entry.path().display()))?;
         }
     }
-    let folder = root.join(&id);
+    let folder = root.join(id);
     let _ = std::fs::remove_dir_all(&folder);
-    std::fs::rename(&staging, &folder).map_err(|error| error.to_string())?;
-    Ok(id)
+    std::fs::rename(&staging, &folder).map_err(|error| error.to_string())
+}
+
+/// Takes the language folder `id` out of the folder of languages of your own.
+pub fn remove_folder(id: &str) -> Result<(), String> {
+    if id.is_empty() || id.starts_with('.') || id.contains(['/', '\\']) {
+        return Err(format!("{id} is not the name of a language"));
+    }
+    let folder = local_root()?.join(id);
+    if !folder.exists() {
+        return Ok(());
+    }
+    std::fs::remove_dir_all(&folder).map_err(|error| format!("could not remove {id}: {error}"))
 }
 
 /// Takes the language `id` off this machine; its language server stays, for other languages that use it.

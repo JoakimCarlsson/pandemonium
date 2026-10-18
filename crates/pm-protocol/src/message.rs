@@ -7,6 +7,7 @@ use crate::{Request, Response, SessionInfo};
 
 /// A message from a client to the server.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[allow(clippy::large_enum_variant)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientMessage {
     /// The first message of a connection: which protocol the client speaks and the token that lets it in.

@@ -2,7 +2,7 @@
 
 use pm_editor::Action;
 use pm_input::FocusId;
-use pm_protocol::{CodeAction, Location, Seek, Task};
+use pm_protocol::{CodeAction, ExtensionCommand, Location, Seek, Task};
 use pm_text::{Edit, Field};
 
 use crate::state::{Outgoing, WorkspaceState};
@@ -175,6 +175,8 @@ pub enum Items {
         commands: Vec<(Action, Option<String>)>,
         /// Every task of the project, which follow the commands in the places `matched` counts by.
         tasks: Vec<Task>,
+        /// The commands extensions bring for the machine the prompt is for, each with that machine; they follow the tasks in the places `matched` counts by.
+        extras: Vec<(Option<String>, ExtensionCommand)>,
         /// What the titles are narrowed to.
         filter: Field,
         /// The commands that match, the recently used first and then the best, then the tasks that match, by place among `commands` and then `tasks`.
@@ -342,6 +344,30 @@ fn matching_commands(
         .chain(scored.into_iter().map(|(_, place)| place))
         .collect();
     (matched, count)
+}
+
+/// The places of `extras` whose titles match `typed`, best first: a title starting with it, then one holding it, then one holding its letters in order, each in the order the commands are listed.
+fn matching_extras(extras: &[(Option<String>, ExtensionCommand)], typed: &str) -> Vec<usize> {
+    let typed = typed.trim().to_lowercase();
+    let mut scored: Vec<(u8, usize)> = extras
+        .iter()
+        .enumerate()
+        .filter_map(|(place, (_, command))| {
+            let title = command.title.to_lowercase();
+            let rank = if title.starts_with(&typed) {
+                0
+            } else if title.contains(&typed) {
+                1
+            } else if narrows_to(&title, &typed) {
+                2
+            } else {
+                return None;
+            };
+            Some((rank, place))
+        })
+        .collect();
+    scored.sort();
+    scored.into_iter().map(|(_, place)| place).collect()
 }
 
 /// The places of `tasks` whose names or commands match `typed`, best first: a name starting with it, then one holding it, then one holding its letters in order, then a command holding it, each in the order the tasks are listed; all of them when nothing is typed.
@@ -853,12 +879,19 @@ impl WorkspaceState {
                         .into_iter()
                         .map(|place| commands.len() + place),
                 );
+                let extras = self.extension_commands();
+                matched.extend(
+                    matching_extras(&extras, &query)
+                        .into_iter()
+                        .map(|place| commands.len() + tasks.len() + place),
+                );
                 if session.is_some() {
                     self.tasks_asked();
                 }
                 Items::Commands {
                     commands,
                     tasks,
+                    extras,
                     filter,
                     matched,
                     recent,
@@ -975,6 +1008,27 @@ impl WorkspaceState {
         commands.get(index).map(|(action, _)| *action)
     }
 
+    /// The command an extension brings that taking the row `row` of the list, or the row picked when there is none, runs, with the machine it runs on, when the list holds commands and that row is one of them.
+    pub fn extension_command_taken(
+        &self,
+        row: Option<usize>,
+    ) -> Option<(Option<String>, ExtensionCommand)> {
+        let listing = self.listing.as_ref()?;
+        let Items::Commands {
+            commands,
+            tasks,
+            extras,
+            ..
+        } = &listing.items
+        else {
+            return None;
+        };
+        let index = *listing.items.rows().get(row.unwrap_or(listing.picked))?;
+        extras
+            .get(index.checked_sub(commands.len() + tasks.len())?)
+            .cloned()
+    }
+
     /// The field narrowing the list, when the list has one.
     pub fn listing_filter(&self) -> Option<&Field> {
         self.listing.as_ref()?.items.filter()
@@ -1041,6 +1095,7 @@ impl WorkspaceState {
             Items::Commands {
                 commands,
                 tasks,
+                extras,
                 matched,
                 recent: count,
                 ..
@@ -1051,6 +1106,11 @@ impl WorkspaceState {
                     matching_tasks(tasks, &query)
                         .into_iter()
                         .map(|place| offset + place),
+                );
+                matched.extend(
+                    matching_extras(extras, &query)
+                        .into_iter()
+                        .map(|place| offset + tasks.len() + place),
                 );
             }
             Items::Symbols { path, .. } if !path.is_empty() => {

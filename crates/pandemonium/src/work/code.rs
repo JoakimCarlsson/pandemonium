@@ -56,7 +56,9 @@ impl Work {
             Screen::Workspace(state) => state
                 .extensions
                 .iter()
-                .filter(|language| language.installed && !language.hidden)
+                .filter(|language| {
+                    language.installed && !language.hidden && language.kind != "extension"
+                })
                 .map(|language| language.id.clone())
                 .collect(),
             Screen::Onboarding(_) => Vec::new(),
@@ -64,6 +66,15 @@ impl Work {
         if !ids.is_empty() {
             self.ask(host, Request::InstallExtensions { ids }, Pending::Nothing);
         }
+    }
+
+    /// Asks the server of `host` what its extensions bring that the window uses itself.
+    pub(super) fn ask_extension_assets(&mut self, host: &Host) {
+        self.ask(
+            host,
+            Request::ExtensionAssets,
+            Pending::ExtensionAssets(host.clone()),
+        );
     }
 
     /// Asks the server of the session at `session` for the grammar of `language`, unless it was asked for it before.
@@ -651,9 +662,56 @@ impl Work {
                     );
                 }
             }
-            Outgoing::InstallExtension { path } => {
-                self.ask(&None, Request::InstallExtension { path }, Pending::Nothing);
+            Outgoing::InspectExtension { path } => {
+                self.ask(
+                    &None,
+                    Request::InspectExtension { path: path.clone() },
+                    Pending::ExtensionPreview(path),
+                );
             }
+            Outgoing::InstallExtension { path, grants } => {
+                self.ask(
+                    &None,
+                    Request::InstallExtension { path, grants },
+                    Pending::Nothing,
+                );
+            }
+            Outgoing::RemovePackage { id } => {
+                self.ask(&None, Request::RemoveExtension { id }, Pending::Nothing);
+            }
+            Outgoing::GrantExtension {
+                id,
+                capability,
+                granted,
+            } => {
+                self.ask(
+                    &None,
+                    Request::GrantExtension {
+                        id,
+                        capability,
+                        granted,
+                    },
+                    Pending::Nothing,
+                );
+            }
+            Outgoing::ExtensionAssets { host } => self.ask_extension_assets(&host),
+            Outgoing::RunExtensionCommand {
+                host,
+                extension,
+                command,
+                argument,
+                directory,
+                session,
+            } => self.ask(
+                &host,
+                Request::RunExtensionCommand {
+                    extension,
+                    command,
+                    argument,
+                    directory,
+                },
+                Pending::ExtensionCommand(session),
+            ),
             Outgoing::RemoveExtension { id } => {
                 for host in self.hosts() {
                     self.ask(
@@ -993,10 +1051,47 @@ impl Work {
             (Pending::Permalink(_), other) => {
                 eprintln!("no permalink: {}", Self::trouble_of(other));
             }
+            (Pending::ExtensionPreview(path), Response::ExtensionPreview { extension }) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_extension_preview(path, extension);
+                });
+            }
+            (Pending::ExtensionPreview(_), other) => {
+                let problem = Self::trouble_of(other);
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_extension_problem(problem)
+                });
+            }
+            (Pending::ExtensionAssets(host), Response::ExtensionAssets(assets)) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_extension_assets(&host, assets);
+                });
+            }
+            (
+                Pending::ExtensionCommand(session),
+                Response::ExtensionCommand { prompt, message },
+            ) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_command_result(prompt);
+                    if let (Some(session), Some(message)) = (session, &message) {
+                        *screen = std::mem::take(screen).noted(session, message);
+                    }
+                });
+            }
+            (Pending::ExtensionCommand(session), other) => {
+                let problem = Self::trouble_of(other);
+                match session {
+                    Some(session) => model.update(|screen| {
+                        *screen = std::mem::take(screen).noted(session, &problem);
+                    }),
+                    None => eprintln!("extension command failed: {problem}"),
+                }
+            }
             (Pending::Extensions, Response::Extensions { extensions }) => {
                 model.update(|screen| {
                     *screen = std::mem::take(screen).with_extensions(extensions);
                 });
+                self.ask_extension_assets(&None);
                 for remote in self.hosts().into_iter().filter(Option::is_some) {
                     self.share_extensions(model, &remote);
                 }

@@ -128,10 +128,10 @@ request with exactly one `response` carrying the same `id`.
 | `agent_servers`| none                                                                                             | `agent_servers` |
 | `save_agent_servers`| `servers`: `[{id, name, command, env, package, installer, home}]`, `env`: `[[name, value]]`                                | `done`          |
 | `mcp_servers`  | none                                                                                             | `mcp_servers`   |
-| `save_mcp_servers`| `servers`: `[{name, target, env, description, website, enabled}]`, `env`: `[[name, value]]`                                     | `done`          |
+| `save_mcp_servers`| `servers`: `[{name, target, env, description, website, enabled, extension}]`, `env`: `[[name, value]]`                                     | `done`          |
 | `watch_folders`| `directories`: `[string]`                                                                       | `done`          |
 | `machine_settings`| none                                                                                          | `machine_settings` |
-| `save_machine_settings`| `settings`: `{git, history, agents, shell, languages}`                                   | `done`          |
+| `save_machine_settings`| `settings`: `{git, history, agents, shell, languages, extensions}`                       | `done`          |
 | `latest_release`| `channel`: `stable` or `nightly`                                                                 | `latest_release` |
 | `registry_agents`| none                                                                                             | `registry_agents`|
 | `search_tools` | `query`                                                                                          | `tool_listings` |
@@ -182,7 +182,11 @@ request with exactly one `response` carrying the same `id`.
 | `extensions`   | none                                                                                             | `extensions`    |
 | `install_extensions` | `ids`                                                                                       | `done`          |
 | `remove_extension` | `id`                                                                                          | `done`          |
-| `install_extension` | `path`                                                                                      | `done`          |
+| `install_extension` | `path`, `grants` (optional)                                                                 | `done`          |
+| `inspect_extension` | `path`                                                                                      | `extension_preview` |
+| `grant_extension` | `id`, `capability`, `granted`                                                                 | `done`          |
+| `extension_assets` | none                                                                                         | `extension_assets` |
+| `run_extension_command` | `extension`, `command`, `argument` (optional), `directory` (optional)                   | `extension_command` |
 | `grammar`      | `language`                                                                                       | `grammar`       |
 | `open_document`| `directory`, `path`, `language`, `version`, `text`                                               | `opened`        |
 | `change_document` | `directory`, `path`, `version`, `changes`: `[{span, text}]`                                   | `done`          |
@@ -311,6 +315,7 @@ request with exactly one `response` carrying the same `id`.
   every client sees the same. `projects` says `saved: false` when the list was
   never saved, which means the app has not been set up yet. A project is an
   address of a folder on the server's machine, such as `~/code/app`.
+- **`mcp_servers`, extensions:** `mcp_servers` also lists the tool servers the extensions installed on the machine bring, each with `extension` set to the extension's folder name; `save_mcp_servers` leaves those out of what it keeps, and they go when the extension does. A tool server started as a program is `enabled: false` while its extension is not allowed to run programs, and one reached by address while it is not allowed to download.
 - **`agent_servers`, `mcp_servers`:** the agents the server can start and
   the tool servers every agent is started with, kept by the server and replaced
   whole by the matching `save_` request. The agents the app ships are in the list the first time it is asked for, and are changed or removed like any other; `package`, `installer` and `home` are optional. A tool server's `target` is an address
@@ -349,7 +354,9 @@ request with exactly one `response` carrying the same `id`.
   `{default_agent, permission_mode}`, each optional: the agent a client offers
   first for new work, by id, and the mode new sessions start in. `shell` is
   `{program, arguments}`, the shell `open_terminal` starts when `program` is not
-  empty. `languages` maps a language's id to `{tab_size, hard_tabs,
+  empty. `extensions` maps an extension's folder name to `{granted}`, the
+  capabilities it was allowed; `save_machine_settings` does not change it, only
+  `install_extension` and `grant_extension` do. `languages` maps a language's id to `{tab_size, hard_tabs,
   format_on_save, server_off, server_command}`: the first three are for clients
   to edit with and are optional; `server_off` keeps the language server from
   reading the language, and a `server_command` is started in place of the one
@@ -487,13 +494,43 @@ request with exactly one `response` carrying the same `id`.
   checksum of every package, and `go install` runs with Go's checksum database
   enforced. Every client is
   told how it goes with `extensions_changed`.
-- **`install_extension`:** copies the files of the folder at `path` on the
-  server's machine into `local-languages`, under the folder's name and in place
-  of one of the same name, and installs it as `install_extensions` does. Fails
-  when the folder holds no `config.toml` that reads as a language, the only kind
-  of extension so far.
-- **`remove_extension`:** takes the language off the machine; its language
-  server stays, for other languages that use it.
+- **`install_extension`:** installs the folder at `path` on the server's
+  machine. A folder holding an `extension.toml` is an extension package, which
+  [`docs/extensions.md`](extensions.md) describes: its folder is kept under
+  `extensions` in the server's data folder, each language it carries is
+  installed through the language index as `<extension>-<folder>`, and `grants`,
+  the names of the capabilities it asks for that the reader allows
+  (`process`, `download`, `read-project`), are saved in the machine settings.
+  Everything else a package carries is read from the kept folder when it is
+  used. A language that has to download its grammar or its language server is
+  not installed unless `download` is granted, and the reason comes back as the
+  extension's `problem`. A folder holding only a `config.toml` that reads as a
+  language is copied into `local-languages` under the folder's name, in place of
+  one of the same name, and installed as `install_extensions` does.
+- **`inspect_extension`:** reads the folder at `path` on the server's machine
+  without installing it, to show the reader what it `provides` and what it
+  `requests` before they allow it anything. A language folder answers with no
+  requests.
+- **`grant_extension`:** allows the installed extension `id` the capability
+  `capability`, or takes it back when `granted` is false; it must be one the
+  extension's manifest asks for. Every client is told with
+  `extensions_changed`. Allowing `download` installs what the extension could
+  not before.
+- **`extension_assets`:** what the installed extensions bring that a client uses
+  itself: themes, icon themes and commands. A theme is a colour as `#rrggbb` or
+  `#rrggbbaa` for each role it names, by the role's name such as
+  `surface-hover`, in a dark and a light variant; roles it leaves out keep the
+  default theme's. An icon theme gives an SVG, and a tint, for the endings of
+  file names.
+- **`run_extension_command`:** runs the command `command` of the extension
+  `extension` in the folder `directory` when there is one, and answers what it
+  came to: a `prompt` for the client to put in its prompt box and a `message` for
+  the reader. A command whose code asks to do something its extension was not
+  allowed is not stopped from finishing: the thing is refused, and the refusal
+  is what the code does with it.
+- **`remove_extension`:** takes the extension off the machine, with the
+  languages it installed and what was allowed it; a language's server stays, for
+  other languages that use it.
 - **`grammar`:** the grammar and queries of an installed language, found by its
   folder name or a name a code fence calls it, as `{id, symbol, aliases, wasm,
   highlights, indents, outline, injections, brackets, indent, tabs,
@@ -594,8 +631,8 @@ embedded context, and anything else as a link to the stored file.
 | `projects`   | `paths`, `saved`                                          |
 | `choices`    | `choices`: `[[agent, setting, value]]`                    |
 | `agent_servers` | `servers`: `[{id, name, command, env, package, installer, home}]`                |
-| `mcp_servers` | `servers`: `[{name, target, env, description, website, enabled}]`                     |
-| `machine_settings` | `settings`: `{git, history, agents, shell, languages}`, as `save_machine_settings` takes them |
+| `mcp_servers` | `servers`: `[{name, target, env, description, website, enabled, extension}]`          |
+| `machine_settings` | `settings`: `{git, history, agents, shell, languages, extensions}`, as `save_machine_settings` takes them |
 | `latest_release` | `version`: the version, or for `nightly` the day it was made, or null when none was found; `url`: its page |
 | `registry_agents` | `agents`: `[{id, name, version, description, website, command, env}]` |
 | `tool_listings` | `listings`: `[{id, title, description, name, target, env, inputs, asks, website}]` |
@@ -613,7 +650,10 @@ embedded context, and anything else as a link to the stored file.
 | `repositories` | `repositories`: `[{name, description, private, url}]`   |
 | `folders`    | `path`: absolute, `names`: the folders inside it           |
 | `directory`  | `path`: a `clone` made   |
-| `extensions` | `extensions`: `[{id, name, kind, version, description, icon, color, hidden, suffixes, installed, busy, problem, server, local}]` |
+| `extensions` | `extensions`: `[{id, name, kind, version, description, icon, color, hidden, suffixes, installed, busy, problem, server, local, owner, provides, requests, granted}]` |
+| `extension_preview` | `extension`: one entry as `extensions` lists them, not installed, with what it `provides` and `requests` |
+| `extension_assets` | `themes`: `[{extension, name, dark, light}]`, `icon_themes`: `[{extension, name, icons: [{suffix, svg, color}]}]`, `commands`: `[{extension, id, title, description}]` |
+| `extension_command` | `prompt`: the text to put in the prompt box, `message`: a line to tell the reader; each is optional |
 | `grammar`    | `{id, symbol, aliases, wasm, highlights, indents, outline, injections, brackets, indent, tabs, line_comment}` |
 | `opened`     | `triggers`: the characters after which the server offers completions; `signature`: those after which it tells what the call the caret is in looks like; `format`: those after which it formats what was typed; `formats_ranges`, `folds`, `links`, `semantic_tokens`, `inlay_hints`, `code_lens`: whether it formats a stretch, says what can be folded, says what is edited together, says what each name is, says what to show inside lines and says what to show with stretches |
 | `completions`| `items`: `[{label, detail, kind, text, span, filter, sort, documentation}]`, `kind` one of `function`, `variable`, `type`, `module`, `keyword`, `constant`, `snippet`, `other` |
@@ -864,9 +904,10 @@ moves on.
   opened, replacing what it found before. `severity` is `error`, `warning`,
   `information` or `hint`; `version` is the version of the text it is about,
   when the server says.
-- `extensions_changed`: sent to every client when a language was installed or
-  removed, or installing one moved on, with every extension as `extensions`
-  lists them.
+- `extensions_changed`: sent to every client when a language or an extension
+  was installed, removed or allowed something, or installing one moved on,
+  with every extension as `extensions` lists them. A client that uses what
+  extensions bring asks for `extension_assets` again.
 
 ## Compatibility
 

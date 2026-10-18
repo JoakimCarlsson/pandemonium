@@ -1,0 +1,6 @@
+name = "Hello Icons"
+
+[[icons]]
+suffix = "hello"
+file = "icons/hello.svg"
+color = "#7fc9be"
