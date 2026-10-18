@@ -103,6 +103,15 @@ pub enum ServerMessage {
         /// The folder, as the connection named it.
         directory: String,
     },
+    /// A debugging session moved on: what it looks like now, and what the window should act on.
+    Debug {
+        /// The session.
+        debug: u64,
+        /// What it looks like now.
+        view: crate::DebugView,
+        /// What happened since the last message, oldest first.
+        events: Vec<crate::DebugEvent>,
+    },
     /// The extensions changed: one was installed or removed, or installing one moved on. Sent to every client.
     ExtensionsChanged {
         /// Every extension, as `extensions` lists them.

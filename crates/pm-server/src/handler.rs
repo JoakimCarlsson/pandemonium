@@ -8,6 +8,7 @@ use pm_protocol::{Attachment, Request, Response, ServerMessage};
 
 use crate::conversation;
 use crate::core::{Connection, Core, Session, Told, now};
+use crate::debugs;
 use crate::languages;
 use crate::queue::Prompt;
 use crate::sessions::{self, Meta};
@@ -99,6 +100,23 @@ fn terminal_done(found: bool, terminal: u64) -> Response {
         Response::Done
     } else {
         failed(format!("no terminal is numbered {terminal}"))
+    }
+}
+
+/// `Debug` for a debugging session that was started, or a failure saying why it was not.
+fn debug_started(started: Result<(u64, pm_protocol::DebugView), String>) -> Response {
+    match started {
+        Ok((debug, view)) => Response::Debug { debug, view },
+        Err(reason) => failed(format!("could not start debugging: {reason}")),
+    }
+}
+
+/// `Done` when a request about a debugging session found it, and a failure saying there is none otherwise.
+fn debug_done(found: bool, debug: u64) -> Response {
+    if found {
+        Response::Done
+    } else {
+        failed(format!("no debugging session is numbered {debug}"))
     }
 }
 
@@ -1064,6 +1082,50 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
         }
         Request::Terminals => Response::Terminals {
             terminals: core.terminal_infos(),
+        },
+        Request::DebugScenarios { directory, file } => Response::DebugScenarios {
+            scenarios: debugs::scenarios(&place(&directory), file.as_deref()),
+        },
+        Request::DebugProcesses => {
+            let (adapters, processes) = debugs::processes();
+            Response::DebugProcesses {
+                adapters,
+                processes,
+            }
+        }
+        Request::DebugStart {
+            directory,
+            file,
+            scenario,
+            files,
+        } => debug_started(core.debug_scenario(
+            connection,
+            &directory,
+            &place(&directory),
+            file.as_deref(),
+            scenario,
+            files,
+        )),
+        Request::DebugAttach {
+            directory,
+            adapter,
+            pid,
+            files,
+        } => debug_started(core.debug_attach(
+            connection,
+            &directory,
+            &place(&directory),
+            &adapter,
+            pid,
+            files,
+        )),
+        Request::DebugDo { debug, action } => debug_done(core.debug_do(debug, action), debug),
+        Request::DebugWatch { debug } => match core.watch_debug(connection, debug) {
+            Some(view) => Response::Debug { debug, view },
+            None => failed(format!("no debugging session is numbered {debug}")),
+        },
+        Request::Debugs => Response::Debugs {
+            debugs: core.debug_infos(),
         },
         Request::Commit {
             directory,

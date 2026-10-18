@@ -23,6 +23,8 @@ pub mod choices;
 pub mod code_box;
 pub mod composer;
 pub mod context_menu;
+pub mod debug;
+pub mod debug_panel;
 pub mod diff;
 pub mod diff_syntax;
 pub mod dock;

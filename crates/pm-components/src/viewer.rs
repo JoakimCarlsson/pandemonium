@@ -2,12 +2,14 @@
 
 use std::ops::Range;
 
+use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_protocol::Severity;
 use pm_style::{
     Radius, Role, bg, border_b, border_color, code_px, cursor_pointer, cursor_text, flex, flex_1,
-    flex_col, flex_none, font_mono, gap, h, h_px, items_center, justify_end, leading_ratio, min_h,
-    min_w_px, ml, overflow_hidden, pr, px, py, relative, rounded, text_color, w, w_px,
+    flex_col, flex_none, font_mono, gap, h, h_px, items_center, justify_center, justify_end,
+    leading_ratio, min_h, min_w_px, ml, overflow_hidden, pr, px, py, relative, rounded,
+    rounded_full, text_color, w, w_px,
 };
 use pm_text::Shaper;
 use pm_treesitter::{Highlight, Kind};
@@ -15,11 +17,12 @@ use pm_ui::{Mark, Node, Paint, node, text};
 
 use crate::Button;
 use crate::button::{Size, Variant};
+use crate::debug::{Dot, Gutter, breakpoint_mark};
 use crate::file_icon::file_icon;
 use crate::git_controls::VIEWER_SCROLL;
 use crate::open_files::{Contents, EDITOR_FIELD, EDITOR_SAVE, FILE_TAB_BASE, STRIP, Viewer};
 use crate::panes::PEEK_SCROLL_BASE;
-use crate::parts::{line, spacer};
+use crate::parts::{glyph, line, spacer};
 use crate::state::WorkspaceState;
 use pm_editor::{Document, EditorSettings, LineChange};
 
@@ -197,6 +200,38 @@ fn change_bar(change: Option<LineChange>, height: f32) -> Node {
     }
 }
 
+/// How tall the rows of a line broken into `segments` are together, in logical pixels.
+fn document_row(settings: &EditorSettings, segments: &[Range<usize>]) -> f32 {
+    settings.row_height() * segments.len().max(1) as f32
+}
+
+/// How wide the cell for the breakpoint of a line is, in logical pixels.
+pub const BREAKPOINT_CELL: f32 = 16.0;
+
+/// The cell before a line number that sets or clears the breakpoint on the line when pressed, and shows the breakpoint, or the arrow where the program is paused.
+fn breakpoint_cell(file: usize, index: usize, gutter: &Gutter, height: f32) -> Node {
+    let cell = node()
+        .styles([
+            flex(),
+            items_center(),
+            justify_center(),
+            flex_none(),
+            w_px(BREAKPOINT_CELL),
+            h_px(height),
+            cursor_pointer(),
+        ])
+        .focusable(breakpoint_mark(file, index));
+    let dot =
+        |role: Role| node().styles([w_px(9.0), h_px(9.0), flex_none(), rounded_full(), bg(role)]);
+    match (gutter.dot(index), gutter.paused == Some(index)) {
+        (Some(Dot::Plain), _) => cell.child(dot(Role::Danger)),
+        (Some(Dot::Conditional), _) => cell.child(dot(Role::Warning)),
+        (Some(Dot::Unplaced), _) => cell.child(dot(Role::Subtle)),
+        (None, true) => cell.child(glyph(IconName::ArrowRight, 3.5, Role::Warning)),
+        (None, false) => cell,
+    }
+}
+
 /// How the carets of a file are drawn, as `settings` say.
 fn caret_look(settings: &EditorSettings) -> pm_ui::CaretLook {
     pm_ui::CaretLook {
@@ -238,16 +273,31 @@ fn marks_in(marks: &[Mark], segment: &Range<usize>, first: bool, last: bool) -> 
         .collect()
 }
 
+/// What stands beside a line: who last changed it, and the cell that sets its breakpoint.
+struct Beside {
+    /// Who last changed the line, when it is said.
+    blamed: Option<String>,
+    /// The cell before the line number.
+    breakpoint: Node,
+    /// Whether a program being debugged is paused on the line.
+    paused: bool,
+}
+
 /// One numbered line of the file, broken into the rows `segments` of it hold, with the caret and selection placed in it for the field `owner`, coloured by `marks`.
 fn file_line(
     document: &Document,
     index: usize,
     marks: Vec<Mark>,
     segments: Vec<Range<usize>>,
-    blamed: Option<String>,
+    beside: Beside,
     settings: &EditorSettings,
     owner: FocusId,
 ) -> Node {
+    let Beside {
+        blamed,
+        breakpoint,
+        paused,
+    } = beside;
     let line = document.line(index);
     let text_of = &document.field.text()[line.clone()];
     let caret = document.field.caret();
@@ -316,11 +366,14 @@ fn file_line(
             flex_none(),
             overflow_hidden(),
         ])
+        .child(breakpoint)
         .child(change_bar(
             document.line_change(index).filter(|_| settings.git_gutter),
             height * segments.len().max(1) as f32,
         ));
-    if settings.current_line_highlight
+    if paused {
+        row = row.styles([bg(Role::SurfaceActive)]);
+    } else if settings.current_line_highlight
         && index == caret_line
         && document.field.selection().is_none()
     {
@@ -443,6 +496,10 @@ struct Look<'a> {
     columns: Option<usize>,
     /// The field whose caret and selection the lines hold.
     owner: FocusId,
+    /// The open file the lines are of, which names its marks.
+    file: usize,
+    /// The breakpoints and the paused line of the file.
+    gutter: &'a Gutter,
 }
 
 /// The lines of `document` that are in or near a view `height` tall scrolled `scroll` down, drawn as `look` says, with a blank for those above and below.
@@ -453,6 +510,8 @@ fn visible(document: &Document, scroll: f32, height: f32, look: &Look) -> Vec<No
         settings,
         columns,
         owner,
+        file,
+        gutter,
     } = *look;
     let row = settings.row_height();
     let total = document.wrapped_rows(columns);
@@ -491,12 +550,18 @@ fn visible(document: &Document, scroll: f32, height: f32, look: &Look) -> Vec<No
                     }));
                     let segments = document.line_segments(index, columns);
                     drawn += segments.len();
+                    let cell =
+                        breakpoint_cell(file, index, gutter, document_row(settings, &segments));
                     file_line(
                         document,
                         index,
                         marks,
                         segments,
-                        blamed(index),
+                        Beside {
+                            blamed: blamed(index),
+                            breakpoint: cell,
+                            paused: gutter.paused == Some(index),
+                        },
                         settings,
                         owner,
                     )
@@ -704,6 +769,8 @@ pub fn file_view(
                         },
                         columns: state.wrap_columns(),
                         owner,
+                        file: index,
+                        gutter: &state.gutter_of(index),
                     },
                 ));
             if document.truncated {

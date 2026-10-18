@@ -2457,6 +2457,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "pm-dap"
+version = "0.13.0-rc.3"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "pm-decoration"
 version = "0.13.0-rc.3"
 dependencies = [
@@ -2572,6 +2580,7 @@ dependencies = [
  "base64",
  "pm-acp",
  "pm-buffer",
+ "pm-dap",
  "pm-git",
  "pm-lsp",
  "serde",
@@ -2602,6 +2611,7 @@ dependencies = [
  "getrandom 0.4.3",
  "notify",
  "pm-acp",
+ "pm-dap",
  "pm-git",
  "pm-lsp",
  "pm-protocol",

@@ -126,6 +126,18 @@ pub enum IconName {
     GitPush,
     /// Rings around a dot: the current place.
     Target,
+    /// A beetle: debugging.
+    Bug,
+    /// A triangle against a bar: run the paused program on.
+    Continue,
+    /// Two bars: pause the running program.
+    Pause,
+    /// An arrow down onto a line: step into a call.
+    StepInto,
+    /// An arrow up off a line: step out of a call.
+    StepOut,
+    /// An arc over a dot: step over a line.
+    StepOver,
 }
 
 impl IconName {
@@ -185,6 +197,12 @@ impl IconName {
             Self::GitPull => Svg::new("git_pull", include_icon!("git_pull")),
             Self::GitPush => Svg::new("git_push", include_icon!("git_push")),
             Self::Target => Svg::new("target", include_icon!("target")),
+            Self::Bug => Svg::new("bug", include_icon!("bug")),
+            Self::Continue => Svg::new("continue", include_icon!("continue")),
+            Self::Pause => Svg::new("pause", include_icon!("pause")),
+            Self::StepInto => Svg::new("step_into", include_icon!("step_into")),
+            Self::StepOut => Svg::new("step_out", include_icon!("step_out")),
+            Self::StepOver => Svg::new("step_over", include_icon!("step_over")),
         }
     }
 }

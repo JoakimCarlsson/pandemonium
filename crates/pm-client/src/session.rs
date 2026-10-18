@@ -58,6 +58,15 @@ pub enum Incoming {
         /// What is wrong.
         diagnostics: Vec<pm_protocol::Diagnostic>,
     },
+    /// A program debugged on the server moved on.
+    Debug {
+        /// The debugging session.
+        debug: u64,
+        /// What it looks like now.
+        view: pm_protocol::DebugView,
+        /// What happened since the last message.
+        events: Vec<pm_protocol::DebugEvent>,
+    },
     /// The languages changed; these are all of them now.
     ExtensionsChanged(Vec<pm_protocol::ExtensionInfo>),
     /// The files of a folder this client watches changed; this is the folder, as the client named it.
@@ -407,6 +416,17 @@ fn converse(
                             path,
                             version,
                             diagnostics,
+                        });
+                    }
+                    ServerMessage::Debug {
+                        debug,
+                        view,
+                        events,
+                    } => {
+                        let _ = reporter.send(Incoming::Debug {
+                            debug,
+                            view,
+                            events,
                         });
                     }
                     ServerMessage::ExtensionsChanged { extensions } => {

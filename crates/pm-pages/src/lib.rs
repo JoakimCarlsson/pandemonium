@@ -1,5 +1,6 @@
 //! The pages of the window: what the reader sees on first launch, and the workspace they work in.
 
+mod debugging;
 mod editing;
 mod onboarding;
 mod panes;

@@ -132,7 +132,8 @@ impl WorkspaceState {
         let fitting = self.code_view.map(|(width, cell)| {
             let scale = pm_style::step_scale();
             let numbers = if self.editor.line_numbers { 13.0 } else { 2.0 };
-            let gutter = 3.0 + (numbers + 4.0) * 4.0 * scale + 12.0;
+            let gutter =
+                3.0 + (numbers + 4.0) * 4.0 * scale + 12.0 + crate::viewer::BREAKPOINT_CELL;
             (((width - gutter) / cell.max(1.0)).floor() as usize).max(10)
         });
         match self.editor.soft_wrap {

@@ -129,6 +129,22 @@ pub enum Action {
     OpenTerminalHere,
     /// Lists the functions it calls.
     OutgoingCalls,
+    /// Sets or clears the breakpoint on the caret's line.
+    ToggleBreakpoint,
+    /// Lists what the project can be debugged as, or runs the paused program on.
+    StartDebugging,
+    /// Lists the programs running, to attach a debugger to one.
+    AttachDebugger,
+    /// Ends the program being debugged.
+    StopDebugging,
+    /// Pauses the program being debugged.
+    PauseDebugging,
+    /// Runs the paused program to the next line.
+    StepOver,
+    /// Runs the paused program into the call on its line.
+    StepInto,
+    /// Runs the paused program out of the frame it is in.
+    StepOut,
     /// Copies the selection without the indentation its lines share.
     CopyWithoutIndentation,
     /// Undoes the last change to the file.
@@ -297,7 +313,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, in the order the keymap lists them.
-    pub const ALL: [Self; 140] = [
+    pub const ALL: [Self; 148] = [
         Self::CommandPalette,
         Self::OpenSettings,
         Self::GoToSession,
@@ -356,6 +372,14 @@ impl Action {
         Self::FileHistory,
         Self::OpenTerminalHere,
         Self::OutgoingCalls,
+        Self::ToggleBreakpoint,
+        Self::StartDebugging,
+        Self::AttachDebugger,
+        Self::StopDebugging,
+        Self::PauseDebugging,
+        Self::StepOver,
+        Self::StepInto,
+        Self::StepOut,
         Self::CopyWithoutIndentation,
         Self::Undo,
         Self::Redo,
@@ -501,6 +525,14 @@ impl Action {
             Self::FileHistory => "file_history",
             Self::OpenTerminalHere => "open_terminal_here",
             Self::OutgoingCalls => "outgoing_calls",
+            Self::ToggleBreakpoint => "toggle_breakpoint",
+            Self::StartDebugging => "start_debugging",
+            Self::AttachDebugger => "attach_debugger",
+            Self::StopDebugging => "stop_debugging",
+            Self::PauseDebugging => "pause_debugging",
+            Self::StepOver => "step_over",
+            Self::StepInto => "step_into",
+            Self::StepOut => "step_out",
             Self::CopyWithoutIndentation => "copy_without_indentation",
             Self::Undo => "undo",
             Self::Redo => "redo",
@@ -647,6 +679,14 @@ impl Action {
             Self::FileHistory => "Show File History",
             Self::OpenTerminalHere => "Open Terminal at File",
             Self::OutgoingCalls => "Show Outgoing Calls",
+            Self::ToggleBreakpoint => "Toggle Breakpoint",
+            Self::StartDebugging => "Start Debugging",
+            Self::AttachDebugger => "Attach Debugger to Process",
+            Self::StopDebugging => "Stop Debugging",
+            Self::PauseDebugging => "Pause Debugging",
+            Self::StepOver => "Step Over",
+            Self::StepInto => "Step Into",
+            Self::StepOut => "Step Out",
             Self::CopyWithoutIndentation => "Copy Without Indentation",
             Self::Undo => "Undo",
             Self::Redo => "Redo",
@@ -798,6 +838,14 @@ impl Action {
             | Self::FileHistory
             | Self::OpenTerminalHere => "File",
             Self::OutgoingCalls => "Navigation",
+            Self::ToggleBreakpoint
+            | Self::StartDebugging
+            | Self::AttachDebugger
+            | Self::StopDebugging
+            | Self::PauseDebugging
+            | Self::StepOver
+            | Self::StepInto
+            | Self::StepOut => "Debug",
             Self::CopyWithoutIndentation | Self::Undo | Self::Redo => "Editing",
             Self::CommandPalette | Self::OpenSettings => "Window",
             Self::GoToSession
@@ -898,6 +946,13 @@ impl Action {
                 | Self::ToggleTerminal
                 | Self::NewTerminal
                 | Self::ToggleSourceControl
+                | Self::StartDebugging
+                | Self::AttachDebugger
+                | Self::StopDebugging
+                | Self::PauseDebugging
+                | Self::StepOver
+                | Self::StepInto
+                | Self::StepOut
                 | Self::Commit
                 | Self::CommitAndPush
                 | Self::Pull
@@ -1181,6 +1236,14 @@ fn own() -> &'static [(Action, &'static [&'static str])] {
         (FileHistory, &[]),
         (OpenTerminalHere, &[]),
         (OutgoingCalls, &[]),
+        (ToggleBreakpoint, &["f9"]),
+        (StartDebugging, &["f5"]),
+        (AttachDebugger, &[]),
+        (StopDebugging, &["shift+f5"]),
+        (PauseDebugging, &["f6"]),
+        (StepOver, &["f10"]),
+        (StepInto, &["f11"]),
+        (StepOut, &["shift+f11"]),
         (CopyWithoutIndentation, &[]),
         (Undo, &[]),
         (Redo, &[]),

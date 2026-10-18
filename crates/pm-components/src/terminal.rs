@@ -123,8 +123,13 @@ pub fn terminal(
         border_b(),
         border_color(Role::Border),
     ]);
+    let debugging = state.debug_docked();
+    if debugging {
+        strip = strip.child(debug_tab_button(state.debug.shown));
+    }
     for (index, tab) in session.terminals.iter().enumerate() {
-        strip = strip.child(tab_button(index, tab, index == session.terminal_active));
+        let shown = index == session.terminal_active && !(debugging && state.debug.shown);
+        strip = strip.child(tab_button(index, tab, shown));
     }
     strip = strip
         .child(Button::icon(IconName::Plus, NEW_TERMINAL).build())
@@ -153,7 +158,9 @@ pub fn terminal(
             border_color(Role::Border),
         ])
         .child(strip);
-    if let Some(tab) = session.terminals.get(session.terminal_active) {
+    if debugging && state.debug.shown {
+        dock = dock.child(crate::debug_panel::debug_tab(state));
+    } else if let Some(tab) = session.terminals.get(session.terminal_active) {
         dock = dock.child(window(
             tab,
             width - 2.0 * PADDING_X,
@@ -162,6 +169,31 @@ pub fn terminal(
         ));
     }
     dock
+}
+
+/// The tab of the program being debugged, filled while it is the one shown.
+fn debug_tab_button(shown: bool) -> Node {
+    let tone = if shown { Role::Text } else { Role::Muted };
+    let mut styles = vec![
+        flex(),
+        items_center(),
+        gap(2),
+        h(8),
+        px(3),
+        rounded(Radius::Lg),
+        text_color(tone),
+        cursor_pointer(),
+    ];
+    if shown {
+        styles.push(bg(Role::SurfaceSelected));
+    } else {
+        styles.push(bg(Role::SurfaceHover).hover());
+    }
+    node()
+        .styles(styles)
+        .child(glyph(IconName::Bug, 3.5, tone))
+        .child(line("Debug", 13, 1.4, tone))
+        .focusable(crate::debug::DEBUG_TAB)
 }
 
 /// The tab of the shell at `index`: its name, pressed to show it, and the button that ends it.

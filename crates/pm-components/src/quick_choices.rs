@@ -28,6 +28,10 @@ pub enum Choosing {
     Branch,
     /// What to type to list something else.
     Help,
+    /// What the folder can be debugged as.
+    DebugScenario,
+    /// A program running on the machine to attach a debugger to.
+    DebugProcess,
 }
 
 impl Choosing {
@@ -43,6 +47,8 @@ impl Choosing {
             Self::Fork => "Select a reply to fork the conversation after",
             Self::Branch => "Select a branch to check out, or type a name to create one",
             Self::Help => "Type a prefix, or select one",
+            Self::DebugScenario => "Select what to debug",
+            Self::DebugProcess => "Select a program to attach to",
         }
     }
 
@@ -54,6 +60,10 @@ impl Choosing {
             Self::Rewind | Self::Restore => "No messages of yours in this conversation",
             Self::Fork => "No replies of the agent's in this conversation",
             Self::Branch => "No branches",
+            Self::DebugScenario => {
+                "Nothing to debug: write a launch.json, or open a Python or Go file"
+            }
+            Self::DebugProcess => "No programs to attach to, or no debug adapter installed",
         }
     }
 }
@@ -77,6 +87,10 @@ pub enum Then {
     CreateBranch(String),
     /// Types this in the quick input, to list what it says.
     Type(&'static str),
+    /// Starts debugging as the scenario at this place in the list the server gave.
+    DebugStart(usize),
+    /// Attaches a debugger to the process with this number.
+    DebugAttach(u32),
 }
 
 /// One thing to pick.
@@ -212,6 +226,33 @@ impl WorkspaceState {
                     Choice::new(name.clone(), "", Then::Checkout(name.clone())).current(place == 0)
                 })
                 .collect(),
+            Choosing::DebugScenario => self
+                .debug
+                .scenarios
+                .iter()
+                .enumerate()
+                .map(|(index, scenario)| {
+                    let detail = if scenario.installed {
+                        scenario.adapter.clone()
+                    } else {
+                        format!("{} (not installed)", scenario.adapter)
+                    };
+                    Choice::new(scenario.label.clone(), detail, Then::DebugStart(index))
+                })
+                .collect(),
+            Choosing::DebugProcess => self
+                .debug
+                .processes
+                .1
+                .iter()
+                .map(|process| {
+                    Choice::new(
+                        format!("{} ({})", process.name, process.pid),
+                        process.command.clone(),
+                        Then::DebugAttach(process.pid),
+                    )
+                })
+                .collect(),
             Choosing::Help => PREFIXES
                 .into_iter()
                 .map(|(prefix, said)| {
@@ -327,6 +368,14 @@ impl WorkspaceState {
                 self
             }
             Then::Type(prefix) => self.quick_typed(prefix, at),
+            Then::DebugStart(index) => {
+                self.debug_scenario_taken(index);
+                self
+            }
+            Then::DebugAttach(pid) => {
+                self.debug_process_taken(pid);
+                self
+            }
         }
     }
 
