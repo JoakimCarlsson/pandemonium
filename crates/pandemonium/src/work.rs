@@ -196,6 +196,14 @@ enum Pending {
     Highlights(usize, String, i32),
     /// The signature of the call a place of the file of the session at this position, at this path and version, is in.
     Signature(usize, String, i32),
+    /// What each name of the file of the session at this position, at this path and version, is.
+    SemanticTokens(usize, String, i32),
+    /// What to show inside the lines of the file of the session at this position, at this path and version.
+    InlayHints(usize, String, i32),
+    /// What to show at the end of the lines of the file of the session at this position, at this path and version.
+    CodeLenses(usize, String, i32),
+    /// What pressing a lens of a file of the session at this position came to.
+    LensPressed(usize),
     /// The edits that rename something across the project of the session at this position.
     Renamed(usize),
     /// The changes the language server offers for the file of the session at this position, at this path.
@@ -1816,6 +1824,10 @@ impl Work {
             | Pending::Blame(..)
             | Pending::Highlights(..)
             | Pending::Signature(..)
+            | Pending::SemanticTokens(..)
+            | Pending::InlayHints(..)
+            | Pending::CodeLenses(..)
+            | Pending::LensPressed(_)
             | Pending::Renamed(_)
             | Pending::CodeActions(..)
             | Pending::TookAction(_)

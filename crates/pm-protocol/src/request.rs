@@ -781,6 +781,44 @@ pub enum Request {
         /// The stretch.
         span: pm_buffer::Span,
     },
+    /// What each name of an open file is, once the file reaches `version`.
+    SemanticTokens {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The version of the text the names are in.
+        version: i32,
+    },
+    /// What to show inside the lines of an open file within a stretch, once the file reaches `version`.
+    InlayHints {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The version of the text the hints are about.
+        version: i32,
+        /// The stretch the hints are wanted for.
+        span: pm_buffer::Span,
+    },
+    /// What to show above the lines of an open file, once the file reaches `version`.
+    CodeLenses {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The version of the text the lenses are about.
+        version: i32,
+    },
+    /// Presses one of the lenses last offered for an open file.
+    PressCodeLens {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The lens, by its place in the list offered.
+        index: usize,
+    },
     /// Takes one of the changes last offered for an open file.
     TakeCodeAction {
         /// The folder.

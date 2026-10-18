@@ -425,6 +425,44 @@ pub enum Outgoing {
         /// What the names are matched against.
         query: String,
     },
+    /// Asks the language server what each name of a file of the session at this position is.
+    SemanticTokens {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The version of the text the names are in.
+        version: i32,
+    },
+    /// Asks the language server what to show inside the lines of a file of the session at this position.
+    InlayHints {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The version of the text the hints are about.
+        version: i32,
+        /// The stretch the hints are wanted for.
+        span: pm_protocol::Span,
+    },
+    /// Asks the language server what to show above the lines of a file of the session at this position.
+    CodeLenses {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The version of the text the lenses are about.
+        version: i32,
+    },
+    /// Presses one of the lenses the language server last gave for a file of the session at this position.
+    PressCodeLens {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The lens, by its place in the list given.
+        index: usize,
+    },
     /// Asks the language server where the thing at a place of a file of the session at this position is used in that file.
     Highlights {
         /// The session, by position.

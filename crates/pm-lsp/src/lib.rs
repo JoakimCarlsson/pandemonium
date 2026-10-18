@@ -37,6 +37,7 @@ pub use manifest::{Archive, Download, Install, InstallKind, Manifest, Pinned, Se
 pub use paths::{grammar_file, language_folder, local_root};
 pub use resolve::server_state;
 pub use types::{
-    CodeAction, Completion, CompletionKind, Diagnostic, FileEdit, FoldRange, Hover, Location,
-    Problem, Seek, Severity, Signature, TextChange, Triggers,
+    CodeAction, CodeLens, Completion, CompletionKind, Diagnostic, FileEdit, FoldRange, HintKind,
+    Hover, InlayHint, Location, Problem, Seek, SemanticToken, Severity, Signature, TextChange,
+    TokenKind, Triggers,
 };

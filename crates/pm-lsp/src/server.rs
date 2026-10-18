@@ -13,8 +13,8 @@ use crate::resolve::{found, managed};
 use crate::rpc::{Handler, Rpc};
 use crate::snippet;
 use crate::types::{
-    CodeAction, Completion, CompletionKind, Diagnostic, FoldRange, Hover, Seek, Severity,
-    Signature, TextChange,
+    CodeAction, CodeLens, Completion, CompletionKind, Diagnostic, FoldRange, HintKind, Hover,
+    InlayHint, Seek, SemanticToken, Severity, Signature, TextChange, TokenKind,
 };
 use crate::uri::file_uri;
 
@@ -38,6 +38,47 @@ type Applied = Arc<Mutex<Vec<Value>>>;
 
 /// A place a server names: the address of the file, the stretch, and what the place is called when it says.
 pub(crate) type Found = (String, Span, Option<String>);
+
+/// What pressing a code lens came to.
+pub(crate) enum Pressed {
+    /// Places to show, as for the lens that counts the uses of a name.
+    Places(Vec<Found>),
+    /// Edits the server asked to have made, as it wrote them.
+    Edits(Vec<Value>),
+}
+
+/// The kinds of names a client says it understands, in the order of the legend a server answers with its own.
+const TOKEN_TYPES: [&str; 23] = [
+    "namespace",
+    "type",
+    "class",
+    "enum",
+    "interface",
+    "struct",
+    "typeParameter",
+    "parameter",
+    "variable",
+    "property",
+    "enumMember",
+    "event",
+    "function",
+    "method",
+    "macro",
+    "keyword",
+    "modifier",
+    "comment",
+    "string",
+    "number",
+    "regexp",
+    "operator",
+    "decorator",
+];
+
+/// The most hints a client is given for one file.
+const MOST_HINTS: usize = 4000;
+
+/// The most lenses a client is given for one file, and the most a server is asked to fill in.
+const MOST_LENSES: usize = 300;
 
 /// A running language server.
 pub(crate) struct LanguageServer {
@@ -184,12 +225,16 @@ fn completion_of(item: &Value, default_span: Option<Span>) -> Option<Completion>
 fn capabilities() -> Value {
     json!({
         "general": {"positionEncodings": ["utf-16"]},
+        "experimental": {"commands": {"commands": ["rust-analyzer.showReferences"]}},
         "workspace": {
             "configuration": true,
             "workspaceFolders": true,
             "applyEdit": true,
             "workspaceEdit": {"documentChanges": true},
-            "executeCommand": {}
+            "executeCommand": {},
+            "inlayHint": {"refreshSupport": false},
+            "codeLens": {"refreshSupport": false},
+            "semanticTokens": {"refreshSupport": false}
         },
         "textDocument": {
             "definition": {"linkSupport": true},
@@ -207,6 +252,17 @@ fn capabilities() -> Value {
                 "contextSupport": true
             },
             "callHierarchy": {},
+            "typeHierarchy": {},
+            "semanticTokens": {
+                "requests": {"range": false, "full": true},
+                "tokenTypes": TOKEN_TYPES,
+                "tokenModifiers": ["declaration", "definition", "readonly", "static", "deprecated", "abstract", "async", "modification", "documentation", "defaultLibrary"],
+                "formats": ["relative"],
+                "overlappingTokenSupport": false,
+                "multilineTokenSupport": false
+            },
+            "inlayHint": {"dynamicRegistration": false},
+            "codeLens": {"dynamicRegistration": false},
             "rename": {"prepareSupport": false},
             "codeAction": {
                 "codeActionLiteralSupport": {
@@ -541,6 +597,28 @@ impl LanguageServer {
         self.can("linkedEditingRangeProvider")
     }
 
+    /// Whether the server says what each name of a file is.
+    pub(crate) fn has_semantic_tokens(&self) -> bool {
+        self.can("semanticTokensProvider")
+            && self
+                .abilities
+                .get("semanticTokensProvider")
+                .is_some_and(|provider| match provider.get("full") {
+                    Some(full) => !full.is_null() && full.as_bool() != Some(false),
+                    None => false,
+                })
+    }
+
+    /// Whether the server says what to show inside a line.
+    pub(crate) fn has_inlay_hints(&self) -> bool {
+        self.can("inlayHintProvider")
+    }
+
+    /// Whether the server says what to show above a line.
+    pub(crate) fn has_code_lens(&self) -> bool {
+        self.can("codeLensProvider")
+    }
+
     /// The characters after which the server formats what was just typed.
     pub(crate) fn format_triggers(&self) -> Vec<String> {
         let provider = self.abilities.get("documentOnTypeFormattingProvider");
@@ -694,26 +772,47 @@ impl LanguageServer {
                     .request("textDocument/references", params, ANSWERING)?;
                 return Ok(places_of(answer));
             }
-            Seek::IncomingCalls | Seek::OutgoingCalls => return self.calls(at, seek),
+            Seek::IncomingCalls | Seek::OutgoingCalls | Seek::Supertypes | Seek::Subtypes => {
+                return self.hierarchy(at, seek);
+            }
         };
         Ok(places_of(self.rpc.request(method, at, ANSWERING)?))
     }
 
-    /// The functions that call, or are called by, the function at the place `at`, as `seek` says.
-    fn calls(&self, at: Value, seek: Seek) -> Result<Vec<Found>, String> {
-        let prepared = self
-            .rpc
-            .request("textDocument/prepareCallHierarchy", at, ANSWERING)?;
-        let (method, side) = if seek == Seek::IncomingCalls {
-            ("callHierarchy/incomingCalls", "from")
-        } else {
-            ("callHierarchy/outgoingCalls", "to")
+    /// The functions or types related to the one at the place `at` as `seek` says: the functions that call it or are called by it, the types it derives from or that derive from it.
+    fn hierarchy(&self, at: Value, seek: Seek) -> Result<Vec<Found>, String> {
+        let (prepare, method, side) = match seek {
+            Seek::IncomingCalls => (
+                "textDocument/prepareCallHierarchy",
+                "callHierarchy/incomingCalls",
+                Some("from"),
+            ),
+            Seek::OutgoingCalls => (
+                "textDocument/prepareCallHierarchy",
+                "callHierarchy/outgoingCalls",
+                Some("to"),
+            ),
+            Seek::Supertypes => (
+                "textDocument/prepareTypeHierarchy",
+                "typeHierarchy/supertypes",
+                None,
+            ),
+            _ => (
+                "textDocument/prepareTypeHierarchy",
+                "typeHierarchy/subtypes",
+                None,
+            ),
         };
+        let prepared = self.rpc.request(prepare, at, ANSWERING)?;
         let mut found = Vec::new();
         for item in prepared.as_array().into_iter().flatten() {
-            let calls = self.rpc.request(method, json!({"item": item}), ANSWERING)?;
-            for call in calls.as_array().into_iter().flatten() {
-                let Some(other) = call.get(side) else {
+            let related = self.rpc.request(method, json!({"item": item}), ANSWERING)?;
+            for entry in related.as_array().into_iter().flatten() {
+                let other = match side {
+                    Some(side) => entry.get(side),
+                    None => Some(entry),
+                };
+                let Some(other) = other else {
                     continue;
                 };
                 let (Some(address), Some(span)) = (
@@ -772,6 +871,180 @@ impl LanguageServer {
             .flatten()
             .filter_map(|item| span_of(item.get("range")?))
             .collect())
+    }
+
+    /// What each name of the file at `uri` is, as the server says, one token to a stretch of a line.
+    pub(crate) fn semantic_tokens(&self, uri: &str) -> Result<Vec<SemanticToken>, String> {
+        if !self.has_semantic_tokens() {
+            return Ok(Vec::new());
+        }
+        let legend = self
+            .abilities
+            .get("semanticTokensProvider")
+            .and_then(|provider| provider.get("legend"));
+        let names = |key: &str| -> Vec<String> {
+            legend
+                .and_then(|legend| legend.get(key))
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|name| name.as_str().map(str::to_owned))
+                .collect()
+        };
+        let (types, modifiers) = (names("tokenTypes"), names("tokenModifiers"));
+        let answer = self.rpc.request(
+            "textDocument/semanticTokens/full",
+            json!({"textDocument": {"uri": uri}}),
+            ANSWERING,
+        )?;
+        let data: Vec<u64> = answer
+            .get("data")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_u64)
+            .collect();
+        let (mut line, mut start) = (0u32, 0u32);
+        let mut tokens = Vec::with_capacity(data.len() / 5);
+        for group in data.as_chunks::<5>().0 {
+            let (delta_line, delta_start) = (group[0] as u32, group[1] as u32);
+            line += delta_line;
+            start = if delta_line == 0 {
+                start + delta_start
+            } else {
+                delta_start
+            };
+            let name = types.get(group[3] as usize).map_or("", String::as_str);
+            let has = |wanted: &str| {
+                modifiers
+                    .iter()
+                    .position(|held| held == wanted)
+                    .is_some_and(|bit| group[4] >> bit & 1 == 1)
+            };
+            tokens.push(SemanticToken {
+                line,
+                start,
+                length: group[2] as u32,
+                kind: token_kind(name, has("readonly") || has("static")),
+            });
+        }
+        Ok(tokens)
+    }
+
+    /// What to show inside the lines of the file at `uri` within `span`, as the server says.
+    pub(crate) fn inlay_hints(&self, uri: &str, span: Span) -> Result<Vec<InlayHint>, String> {
+        if !self.has_inlay_hints() {
+            return Ok(Vec::new());
+        }
+        let answer = self.rpc.request(
+            "textDocument/inlayHint",
+            json!({"textDocument": {"uri": uri}, "range": range_value(span)}),
+            ANSWERING,
+        )?;
+        Ok(answer
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(hint_of)
+            .take(MOST_HINTS)
+            .collect())
+    }
+
+    /// The lines of text the server says to show with stretches of the file at `uri`, and each as the server wrote it, to be pressed by its place in the list; a lens the server has yet to fill in is asked to.
+    pub(crate) fn code_lenses(&self, uri: &str) -> Result<(Vec<CodeLens>, Vec<Value>), String> {
+        if !self.has_code_lens() {
+            return Ok((Vec::new(), Vec::new()));
+        }
+        let answer = self.rpc.request(
+            "textDocument/codeLens",
+            json!({"textDocument": {"uri": uri}}),
+            ANSWERING,
+        )?;
+        let resolves = self
+            .abilities
+            .get("codeLensProvider")
+            .and_then(|provider| provider.get("resolveProvider"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let mut lenses = Vec::new();
+        let mut raw = Vec::new();
+        for lens in answer.as_array().into_iter().flatten().take(MOST_LENSES) {
+            let lens = if lens.get("command").is_none() && resolves {
+                self.rpc
+                    .request("codeLens/resolve", lens.clone(), ANSWERING)?
+            } else {
+                lens.clone()
+            };
+            let (Some(span), Some(title)) = (
+                lens.get("range").and_then(span_of),
+                lens.get("command")
+                    .and_then(|command| command.get("title"))
+                    .and_then(Value::as_str)
+                    .filter(|title| !title.is_empty()),
+            ) else {
+                continue;
+            };
+            lenses.push(CodeLens {
+                span,
+                title: title.to_owned(),
+                pressable: self.presses(&lens),
+            });
+            raw.push(lens);
+        }
+        Ok((lenses, raw))
+    }
+
+    /// Whether pressing `lens`, as the server wrote it, does something: it shows places, or the server carries out its command.
+    fn presses(&self, lens: &Value) -> bool {
+        let Some(command) = lens
+            .get("command")
+            .and_then(|command| command.get("command"))
+            .and_then(Value::as_str)
+        else {
+            return false;
+        };
+        shows_places(command)
+            || self
+                .abilities
+                .get("executeCommandProvider")
+                .and_then(|provider| provider.get("commands"))
+                .and_then(Value::as_array)
+                .is_some_and(|commands| commands.iter().any(|held| held.as_str() == Some(command)))
+    }
+
+    /// Carries out the command of `lens`, as the server wrote it: the places it points to, or the edits the server makes.
+    pub(crate) fn press_lens(&self, lens: &Value) -> Result<Pressed, String> {
+        let command = lens
+            .get("command")
+            .ok_or_else(|| "that lens says nothing to do".to_owned())?;
+        let name = command
+            .get("command")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let arguments = command.get("arguments").cloned().unwrap_or(json!([]));
+        if shows_places(name) {
+            let places = arguments
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find_map(|argument| argument.as_array().filter(|list| !list.is_empty()))
+                .cloned()
+                .unwrap_or_default();
+            return Ok(Pressed::Places(places_of(Value::Array(places))));
+        }
+        if let Ok(mut held) = self.applied.lock() {
+            held.clear();
+        }
+        self.rpc.request(
+            "workspace/executeCommand",
+            json!({"command": name, "arguments": arguments}),
+            ANSWERING,
+        )?;
+        let mut edits = Vec::new();
+        if let Ok(mut held) = self.applied.lock() {
+            edits.append(&mut held);
+        }
+        Ok(Pressed::Edits(edits))
     }
 
     /// The characters after which the server tells what the call the caret is in looks like.
@@ -932,6 +1205,66 @@ impl LanguageServer {
     pub(crate) fn stop(&self) {
         self.rpc.stop(STOPPING);
     }
+}
+
+/// What a name a server calls `name` is, as it is coloured, a variable that `fixed` is a constant.
+fn token_kind(name: &str, fixed: bool) -> TokenKind {
+    match name {
+        "namespace" | "type" | "class" | "enum" | "interface" | "struct" | "typeParameter"
+        | "builtinType" | "typeAlias" | "trait" | "lifetime" | "union" => TokenKind::Type,
+        "function" | "method" | "macro" | "decorator" | "derive" | "attribute" | "event" => {
+            TokenKind::Function
+        }
+        "keyword" | "modifier" | "selfKeyword" | "selfTypeKeyword" | "controlFlow" => {
+            TokenKind::Keyword
+        }
+        "string" | "regexp" | "escapeSequence" | "formatSpecifier" | "character" => {
+            TokenKind::String
+        }
+        "number" | "enumMember" | "boolean" | "constant" | "const" => TokenKind::Constant,
+        "comment" => TokenKind::Comment,
+        "property" | "field" => TokenKind::Property,
+        "operator" | "punctuation" => TokenKind::Operator,
+        "variable" | "parameter" if fixed => TokenKind::Constant,
+        _ => TokenKind::Variable,
+    }
+}
+
+/// The inlay hint a server writes as `value`.
+fn hint_of(value: &Value) -> Option<InlayHint> {
+    let position = value.get("position")?;
+    let label = match value.get("label")? {
+        Value::String(label) => label.clone(),
+        Value::Array(parts) => parts
+            .iter()
+            .filter_map(|part| part.get("value").and_then(Value::as_str))
+            .collect(),
+        _ => return None,
+    };
+    if label.trim().is_empty() {
+        return None;
+    }
+    let flag = |key: &str| value.get(key).and_then(Value::as_bool).unwrap_or(false);
+    Some(InlayHint {
+        position: Position::new(
+            position.get("line")?.as_u64()? as u32,
+            position.get("character")?.as_u64()? as u32,
+        ),
+        label,
+        kind: match value.get("kind").and_then(Value::as_u64) {
+            Some(1) => HintKind::Type,
+            Some(2) => HintKind::Parameter,
+            _ => HintKind::Other,
+        },
+        pad_left: flag("paddingLeft"),
+        pad_right: flag("paddingRight"),
+    })
+}
+
+/// Whether the command a server calls `name` only asks the client to show the places it counted, rather than something the server does.
+fn shows_places(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name.ends_with("showreferences") || name.ends_with("findreferences")
 }
 
 /// What a code action the server writes as `value` is to the reader.

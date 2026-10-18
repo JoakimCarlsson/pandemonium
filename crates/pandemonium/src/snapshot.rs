@@ -246,6 +246,8 @@ pub enum Shot {
     FileHistory,
     /// The same file with the caret in a call, its signature over it and the uses of a name marked.
     Signing,
+    /// The same file with brackets coloured by depth, names coloured by what the language server says they are, hints inside lines and lenses at the ends of lines.
+    Annotated,
     /// The same file with the bar for finding and replacing open on a word it holds several times.
     Finding,
     /// The same file with its outline listed, narrowed by a letter typed.
@@ -399,6 +401,111 @@ fn code() -> WorkspaceState {
                 when: (pm_components::age::now() / 1000) as i64 - 3 * 86_400,
                 summary: "Reopen files browsed on a project page".to_owned(),
             },
+        )
+}
+
+/// The Rust file with what its language server says to show in and beside its lines: what each name is, hints inside lines and lenses at the ends of lines.
+fn annotated() -> WorkspaceState {
+    let state = code();
+    let (text, version) = state
+        .shown_document()
+        .map(|document| (document.field.text().to_owned(), document.version))
+        .unwrap_or_default();
+    let place = |line: &str, word: &str| {
+        let row = text
+            .lines()
+            .position(|held| held.contains(line))
+            .unwrap_or(0);
+        let column = text
+            .lines()
+            .nth(row)
+            .and_then(|held| held.find(word))
+            .unwrap_or(0);
+        (row as u32, column as u32, column as u32 + word.len() as u32)
+    };
+    let token = |line: &str, word: &str, kind: pm_protocol::TokenKind| {
+        let (line, start, end) = place(line, word);
+        pm_protocol::SemanticToken {
+            line,
+            start,
+            length: end - start,
+            kind,
+        }
+    };
+    let hint = |line: &str, word: &str, label: &str, kind: pm_protocol::HintKind, after: bool| {
+        let (row, start, end) = place(line, word);
+        pm_protocol::InlayHint {
+            position: pm_protocol::Position::new(row, if after { end } else { start }),
+            label: label.to_owned(),
+            kind,
+            pad_left: after,
+            pad_right: !after,
+        }
+    };
+    let lens = |line: &str, word: &str, title: &str, pressable: bool| {
+        let (row, start, end) = place(line, word);
+        pm_protocol::CodeLens {
+            span: pm_protocol::Span::new(
+                pm_protocol::Position::new(row, start),
+                pm_protocol::Position::new(row, end),
+            ),
+            title: title.to_owned(),
+            pressable,
+        }
+    };
+    state
+        .with_opened(
+            0,
+            CODE_PATH,
+            Ok(pm_protocol::Triggers {
+                semantic_tokens: true,
+                inlay_hints: true,
+                code_lens: true,
+                ..Default::default()
+            }),
+        )
+        .with_semantic_tokens(
+            0,
+            CODE_PATH,
+            version,
+            vec![
+                token("with_capacity", "HashMap", pm_protocol::TokenKind::Type),
+                token("with_capacity", "LIMIT", pm_protocol::TokenKind::Constant),
+                token("let names", "names", pm_protocol::TokenKind::Variable),
+                token("Self { id", "root", pm_protocol::TokenKind::Variable),
+                token("self.names.len", "len", pm_protocol::TokenKind::Function),
+            ],
+        )
+        .with_inlay_hints(
+            0,
+            CODE_PATH,
+            version,
+            vec![
+                hint(
+                    "let names",
+                    "names",
+                    ": HashMap<String, usize>",
+                    pm_protocol::HintKind::Type,
+                    true,
+                ),
+                hint(
+                    "with_capacity",
+                    "LIMIT",
+                    "capacity:",
+                    pm_protocol::HintKind::Parameter,
+                    false,
+                ),
+            ],
+        )
+        .with_code_lenses(
+            0,
+            CODE_PATH,
+            version,
+            vec![
+                lens("pub struct Session", "Session", "3 implementations", true),
+                lens("pub fn count", "count", "2 references", true),
+                lens("pub fn new", "new", "Run", false),
+            ],
         )
 }
 
@@ -1178,6 +1285,7 @@ impl Shot {
             Self::CodeActions => Screen::Workspace(code_actions()),
             Self::FileHistory => Screen::Workspace(file_history()),
             Self::Signing => Screen::Workspace(signing()),
+            Self::Annotated => Screen::Workspace(annotated()),
             Self::TabMenu => Screen::Workspace(code().with_tab_menu(0, (500.0, 52.0))),
             Self::Finder => {
                 let mut state = code();

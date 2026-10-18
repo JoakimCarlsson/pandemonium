@@ -180,6 +180,10 @@ request with exactly one `response` carrying the same `id`.
 | `format_on_type` | `directory`, `path`, `version`, `position`, `character`                                        | `formatted`     |
 | `folding_ranges` | `directory`, `path`, `version`                                                                 | `folding_ranges` |
 | `linked_ranges` | `directory`, `path`, `version`, `position`                                                      | `linked_ranges` |
+| `semantic_tokens` | `directory`, `path`, `version`                                                                | `semantic_tokens` |
+| `inlay_hints`  | `directory`, `path`, `version`, `span`                                                           | `inlay_hints`   |
+| `code_lenses`  | `directory`, `path`, `version`                                                                   | `code_lenses`   |
+| `press_code_lens` | `directory`, `path`, `index`                                                                  | `lens_pressed`  |
 | `definition`   | `directory`, `path`, `version`, `position`, `seek` (optional)                                    | `definitions`   |
 | `workspace_symbols` | `directory`, `path`, `query`                                                                | `definitions`   |
 | `search_files` | `directory`, `query`, `regex` (optional), `case` (optional)                                      | `definitions`   |
@@ -474,9 +478,23 @@ request with exactly one `response` carrying the same `id`.
 - **`linked_ranges`:** the stretches of the open file at `version` that are
   edited together with the one at `position`, the one at `position` among
   them, as the language server gives them; none when it knows of none.
+- **`semantic_tokens`:** what each name of the open file at `version` is, as
+  the language server says, one token to a stretch of a line; none when it
+  does not say.
+- **`inlay_hints`:** what to show inside the lines of the open file at
+  `version` within `span`, as the language server says; none when it does not
+  say.
+- **`code_lenses`:** what to show with stretches of the open file at
+  `version`, as the language server says, each already filled in by the
+  server. The server keeps the list as given, and `press_code_lens` takes one
+  by its place in it.
+- **`press_code_lens`:** presses one of the lenses last given for the open
+  file: the places it points to when it counts uses, and otherwise the
+  changes the language server made carrying out its command, as for
+  `take_code_action`.
 - **`definition`:** the places `seek` looks for from `position`: `definition`
   (the default), `declaration`, `type_definition`, `implementation`,
-  `references`, `incoming_calls` or `outgoing_calls`. A file inside the folder
+  `references`, `incoming_calls`, `outgoing_calls`, `supertypes` or `subtypes`. A file inside the folder
   is named by its path from the root; one outside it by its absolute path, with
   the whole text it holds for the first four, to be shown read only.
 - **`rename`, `take_code_action`:** carry out an edit across the folder. Files
@@ -541,12 +559,16 @@ embedded context, and anything else as a link to the stored file.
 | `directory`  | `path`: a `clone` made   |
 | `extensions` | `extensions`: `[{id, name, kind, version, description, icon, color, hidden, suffixes, installed, busy, problem, server, local}]` |
 | `grammar`    | `{id, symbol, aliases, wasm, highlights, indents, outline, injections, brackets, indent, tabs, line_comment}` |
-| `opened`     | `triggers`: the characters after which the server offers completions; `signature`: those after which it tells what the call the caret is in looks like; `format`: those after which it formats what was typed; `formats_ranges`, `folds`, `links`: whether it formats a stretch, says what can be folded and says what is edited together |
+| `opened`     | `triggers`: the characters after which the server offers completions; `signature`: those after which it tells what the call the caret is in looks like; `format`: those after which it formats what was typed; `formats_ranges`, `folds`, `links`, `semantic_tokens`, `inlay_hints`, `code_lens`: whether it formats a stretch, says what can be folded, says what is edited together, says what each name is, says what to show inside lines and says what to show with stretches |
 | `completions`| `items`: `[{label, detail, kind, text, span, filter, sort, documentation}]`, `kind` one of `function`, `variable`, `type`, `module`, `keyword`, `constant`, `snippet`, `other` |
 | `hovered`    | `hover`: `{text, span}` or null |
 | `formatted`  | `edits`: `[{span, text}]` |
 | `folding_ranges` | `ranges`: `[{start, end}]`, the first and last line of each block, counted from 0 |
 | `linked_ranges` | `spans`: the stretches edited together |
+| `semantic_tokens` | `tokens`: `[{line, start, length, kind}]`, `start` and `length` in UTF-16 code units, `kind` one of `keyword`, `function`, `type`, `string`, `constant`, `comment`, `property`, `operator`, `variable` |
+| `inlay_hints` | `hints`: `[{position, label, kind, pad_left, pad_right}]`, `kind` one of `type`, `parameter`, `other` |
+| `code_lenses` | `lenses`: `[{span, title, pressable}]` |
+| `lens_pressed` | `places`: as `locations` of `definitions`; `files`: as of `edited` |
 | `definitions`| `locations`: `[{path, span, inside, text, language, name, line}]`; `name` names a calling or called function, `line` is the line the span starts on |
 | `code_actions` | `actions`: `[{title, kind, preferred, disabled}]` |
 | `highlights` | `spans`: the stretches of the file where the thing at `position` is used |

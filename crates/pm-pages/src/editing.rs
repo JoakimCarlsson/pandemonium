@@ -710,6 +710,79 @@ impl Screen {
         self.in_workspace(WorkspaceState::editor_indent)
     }
 
+    /// The screen after Tab in the file shown: the next blank of the snippet being filled in, the snippet or Emmet abbreviation before the caret written out, or one level of indentation.
+    pub fn editor_tab(self) -> Self {
+        self.in_workspace(WorkspaceState::editor_tab)
+    }
+
+    /// Whether the blanks of a snippet are being filled in in the file shown.
+    pub fn snippet_active(&self) -> bool {
+        self.workspace_is(WorkspaceState::snippet_active)
+    }
+
+    /// The screen with the caret of the file shown moved back to the previous blank of the snippet being filled in.
+    pub fn snippet_back(self) -> Self {
+        self.in_workspace(WorkspaceState::snippet_back)
+    }
+
+    /// The screen with the snippet being filled in in the file shown let go, what was written staying.
+    pub fn snippet_ended(self) -> Self {
+        self.in_workspace(WorkspaceState::snippet_ended)
+    }
+
+    /// The screen asking the language server what it says to show in and beside the lines of the file shown.
+    pub fn annotations_requested(self) -> Self {
+        self.in_workspace(WorkspaceState::annotations_requested)
+    }
+
+    /// The screen after the language server said what each name of a file is.
+    pub fn with_semantic_tokens(
+        self,
+        session: usize,
+        path: &str,
+        version: i32,
+        tokens: Vec<pm_protocol::SemanticToken>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_semantic_tokens(session, path, version, tokens))
+    }
+
+    /// The screen after the language server said what to show inside the lines of a file.
+    pub fn with_inlay_hints(
+        self,
+        session: usize,
+        path: &str,
+        version: i32,
+        hints: Vec<pm_protocol::InlayHint>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_inlay_hints(session, path, version, hints))
+    }
+
+    /// The screen after the language server said what to show at the end of lines of a file.
+    pub fn with_code_lenses(
+        self,
+        session: usize,
+        path: &str,
+        version: i32,
+        lenses: Vec<pm_protocol::CodeLens>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_code_lenses(session, path, version, lenses))
+    }
+
+    /// The screen after a press on the lens at `index` of the file shown, what it points to being listed at `at`.
+    pub fn lens_pressed(self, index: usize, at: (f32, f32)) -> Self {
+        self.in_workspace(|state| state.lens_pressed(index, at))
+    }
+
+    /// The screen after pressing a lens came to showing `places`, or to the server making `files`.
+    pub fn with_lens_pressed(
+        self,
+        session: usize,
+        places: Vec<pm_protocol::Location>,
+        files: Vec<pm_protocol::FileEdit>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_lens_pressed(session, places, files))
+    }
+
     /// The screen with `character` typed into the file shown.
     pub fn editor_typed(self, character: char) -> Self {
         self.in_workspace(|state| state.editor_typed(character))

@@ -129,6 +129,10 @@ pub enum Action {
     OpenTerminalHere,
     /// Lists the functions it calls.
     OutgoingCalls,
+    /// Lists the types the type at the caret derives from.
+    ShowSupertypes,
+    /// Lists the types that derive from the type at the caret.
+    ShowSubtypes,
     /// Sets or clears the breakpoint on the caret's line.
     ToggleBreakpoint,
     /// Lists what the project can be debugged as, or runs the paused program on.
@@ -313,7 +317,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, in the order the keymap lists them.
-    pub const ALL: [Self; 148] = [
+    pub const ALL: [Self; 150] = [
         Self::CommandPalette,
         Self::OpenSettings,
         Self::GoToSession,
@@ -372,6 +376,8 @@ impl Action {
         Self::FileHistory,
         Self::OpenTerminalHere,
         Self::OutgoingCalls,
+        Self::ShowSupertypes,
+        Self::ShowSubtypes,
         Self::ToggleBreakpoint,
         Self::StartDebugging,
         Self::AttachDebugger,
@@ -525,6 +531,8 @@ impl Action {
             Self::FileHistory => "file_history",
             Self::OpenTerminalHere => "open_terminal_here",
             Self::OutgoingCalls => "outgoing_calls",
+            Self::ShowSupertypes => "show_supertypes",
+            Self::ShowSubtypes => "show_subtypes",
             Self::ToggleBreakpoint => "toggle_breakpoint",
             Self::StartDebugging => "start_debugging",
             Self::AttachDebugger => "attach_debugger",
@@ -679,6 +687,8 @@ impl Action {
             Self::FileHistory => "Show File History",
             Self::OpenTerminalHere => "Open Terminal at File",
             Self::OutgoingCalls => "Show Outgoing Calls",
+            Self::ShowSupertypes => "Show Supertypes",
+            Self::ShowSubtypes => "Show Subtypes",
             Self::ToggleBreakpoint => "Toggle Breakpoint",
             Self::StartDebugging => "Start Debugging",
             Self::AttachDebugger => "Attach Debugger to Process",
@@ -837,7 +847,7 @@ impl Action {
             | Self::OpenPermalink
             | Self::FileHistory
             | Self::OpenTerminalHere => "File",
-            Self::OutgoingCalls => "Navigation",
+            Self::OutgoingCalls | Self::ShowSupertypes | Self::ShowSubtypes => "Navigation",
             Self::ToggleBreakpoint
             | Self::StartDebugging
             | Self::AttachDebugger
@@ -1236,6 +1246,8 @@ fn own() -> &'static [(Action, &'static [&'static str])] {
         (FileHistory, &[]),
         (OpenTerminalHere, &[]),
         (OutgoingCalls, &[]),
+        (ShowSupertypes, &[]),
+        (ShowSubtypes, &[]),
         (ToggleBreakpoint, &["f9"]),
         (StartDebugging, &["f5"]),
         (AttachDebugger, &[]),

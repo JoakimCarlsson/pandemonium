@@ -4,7 +4,7 @@ use std::ops::Range;
 
 use pm_icon::IconName;
 use pm_input::FocusId;
-use pm_protocol::Severity;
+use pm_protocol::{HintKind, Severity};
 use pm_style::{
     Radius, Role, bg, border_b, border_color, code_px, cursor_pointer, cursor_text, flex, flex_1,
     flex_col, flex_none, font_mono, gap, h, h_px, items_center, justify_center, justify_end,
@@ -16,6 +16,7 @@ use pm_treesitter::{Highlight, Kind};
 use pm_ui::{Mark, Node, Paint, node, text};
 
 use crate::Button;
+use crate::annotations::lens_mark;
 use crate::button::{Size, Variant};
 use crate::debug::{Dot, Gutter, breakpoint_mark};
 use crate::file_icon::file_icon;
@@ -24,7 +25,7 @@ use crate::open_files::{Contents, EDITOR_FIELD, EDITOR_SAVE, FILE_TAB_BASE, STRI
 use crate::panes::PEEK_SCROLL_BASE;
 use crate::parts::{glyph, line, spacer};
 use crate::state::WorkspaceState;
-use pm_editor::{Document, EditorSettings, LineChange};
+use pm_editor::{Document, EditorSettings, Hint, Lens, LineChange};
 
 /// How wide a view of a file must be, in logical pixels, for a minimap to be drawn beside it.
 const MINIMAP_ROOM: f32 = 420.0;
@@ -86,6 +87,51 @@ pub(crate) fn severity_role(severity: Severity) -> Role {
     }
 }
 
+/// The colours brackets are drawn in, one for each level of nesting, going round again after the last.
+const BRACKET_ROLES: [Role; 4] = [
+    Role::SyntaxType,
+    Role::SyntaxKeyword,
+    Role::SyntaxFunction,
+    Role::SyntaxString,
+];
+
+/// The colour a bracket enclosed by `depth` pairs is drawn in.
+fn bracket_role(depth: usize) -> Role {
+    BRACKET_ROLES[depth % BRACKET_ROLES.len()]
+}
+
+/// Puts `role` over the stretch `range` of the coloured letters in `marks`, cutting the stretches it falls on short and leaving the rest of them as they were.
+fn recolor(marks: &mut Vec<Mark>, range: Range<usize>, role: Role) {
+    let mut kept = Vec::with_capacity(marks.len() + 1);
+    for mark in marks.drain(..) {
+        let overlaps = mark.paint == Paint::Ink
+            && mark.range.start < range.end
+            && range.start < mark.range.end;
+        if !overlaps {
+            kept.push(mark);
+            continue;
+        }
+        for piece in [
+            mark.range.start..range.start.max(mark.range.start),
+            range.end.min(mark.range.end)..mark.range.end,
+        ] {
+            if piece.start < piece.end {
+                kept.push(Mark {
+                    range: piece,
+                    color: mark.color,
+                    paint: Paint::Ink,
+                });
+            }
+        }
+    }
+    kept.push(Mark {
+        range,
+        color: role.into(),
+        paint: Paint::Ink,
+    });
+    *marks = kept;
+}
+
 /// The marks of line `index` of `document`: its highlighted stretches in their colours, the brackets `pair` paired at the caret behind a box, and what the language server finds wrong under a wavy line.
 fn line_marks(
     document: &Document,
@@ -127,6 +173,11 @@ fn line_marks(
             })
         })
         .collect();
+    if settings.bracket_colors {
+        for (range, depth) in document.brackets_on(index) {
+            recolor(&mut marks, range, bracket_role(depth));
+        }
+    }
     marks.extend(pair.iter().filter_map(|bracket| {
         clipped(&Some(bracket.clone()), &line).map(|range| Mark {
             range,
@@ -316,43 +367,86 @@ fn file_line(
         index + 1
     };
     let last = segments.len().saturating_sub(1);
+    let hints = if settings.inlay_hints {
+        document.hints_on(index)
+    } else {
+        &[]
+    };
+    let lenses = if settings.code_lens {
+        document.lenses_on(index)
+    } else {
+        &[]
+    };
     let rows = segments.iter().enumerate().map(|(place, segment)| {
         let absolute = line.start + segment.start..line.start + segment.end;
-        let mut content = text(&text_of[segment.clone()])
-            .styles([
-                code_px(font),
-                leading_ratio(1.4),
-                font_mono(),
-                text_color(Role::Text),
-                flex_none(),
-            ])
-            .field_line(owner, absolute.start)
-            .marks(marks_in(&marks, segment, place == 0, place == last))
-            .caret_look(caret_look(settings));
-        let holds_caret = (absolute.start..absolute.end).contains(&caret)
-            || (place == last && caret == absolute.end);
-        if holds_caret {
-            content = content.caret(caret - absolute.start, owner);
+        let standing: Vec<&Hint> = hints
+            .iter()
+            .filter(|hint| {
+                (absolute.start <= hint.offset && hint.offset < absolute.end)
+                    || (place == last && hint.offset == absolute.end)
+            })
+            .collect();
+        let mut cuts: Vec<usize> = vec![segment.start];
+        cuts.extend(standing.iter().map(|hint| hint.offset - line.start));
+        cuts.push(segment.end);
+        let pieces = cuts.len() - 1;
+        let mut held = node().styles([
+            flex(),
+            items_center(),
+            h_px(height),
+            flex_none(),
+            min_w_px(0),
+        ]);
+        for (step, bounds) in cuts.windows(2).enumerate() {
+            let piece = bounds[0]..bounds[1];
+            let piece_absolute = line.start + piece.start..line.start + piece.end;
+            let ends_segment = step + 1 == pieces;
+            let mut content = text(&text_of[piece.clone()])
+                .styles([
+                    code_px(font),
+                    leading_ratio(1.4),
+                    font_mono(),
+                    text_color(Role::Text),
+                    flex_none(),
+                ])
+                .field_line(owner, piece_absolute.start)
+                .marks(marks_in(
+                    &marks,
+                    &piece,
+                    place == 0 && step == 0,
+                    place == last && ends_segment,
+                ))
+                .caret_look(caret_look(settings));
+            let after_start = if step == 0 {
+                piece_absolute.start <= caret
+            } else {
+                piece_absolute.start < caret
+            };
+            let before_end = if ends_segment {
+                caret < piece_absolute.end || (place == last && caret == piece_absolute.end)
+            } else {
+                caret <= piece_absolute.end
+            };
+            let holds_caret = after_start && before_end;
+            if holds_caret {
+                content = content.caret(caret - piece_absolute.start, owner);
+            }
+            if let Some(range) = clipped(&document.field.selection(), &piece_absolute) {
+                content = content.selection(range, owner);
+            }
+            if let Some(range) = clipped(&document.field.marked(), &piece_absolute) {
+                content = content.marked(range, owner);
+            }
+            held = held.child(content);
+            if let Some(hint) = standing.get(step) {
+                held = held.child(hint_chip(hint, font));
+            }
         }
-        if let Some(range) = clipped(&document.field.selection(), &absolute) {
-            content = content.selection(range, owner);
-        }
-        if let Some(range) = clipped(&document.field.marked(), &absolute) {
-            content = content.marked(range, owner);
-        }
-        let held = node()
-            .styles([
-                flex(),
-                items_center(),
-                h_px(height),
-                flex_none(),
-                min_w_px(0),
-            ])
-            .child(content);
         if place < last {
             return held;
         }
         held.children(document.is_folded_at(index).then(|| fold_chip(index)))
+            .children(lenses.iter().map(|lens| lens_chip(lens, font)))
             .children(blamed.clone().map(|said| {
                 node()
                     .styles([flex_none(), ml(8), min_w_px(0), overflow_hidden()])
@@ -413,6 +507,47 @@ fn file_line(
             ])
             .children(rows),
     )
+}
+
+/// The text of `hint` written inside a line in a smaller, quieter hand than the code around it.
+fn hint_chip(hint: &Hint, font: u32) -> Node {
+    let tone = match hint.kind {
+        HintKind::Type => Role::Subtle,
+        HintKind::Parameter | HintKind::Other => Role::Muted,
+    };
+    let mut chip = node().styles([
+        flex(),
+        items_center(),
+        flex_none(),
+        px(1.0),
+        rounded(Radius::Sm),
+        bg(Role::Surface),
+    ]);
+    if hint.pad_left {
+        chip = chip.styles([ml(1)]);
+    }
+    chip.child(line(&hint.label, (font - 1).max(8), 1.2, tone).styles([font_mono(), flex_none()]))
+}
+
+/// The text of `lens` at the end of its line, pressed to do what the server says when it can be.
+fn lens_chip(lens: &Lens, font: u32) -> Node {
+    let chip = node().styles([
+        flex(),
+        items_center(),
+        flex_none(),
+        ml(4),
+        px(1.5),
+        h(4),
+        rounded(Radius::Sm),
+    ]);
+    let words = line(&lens.title, (font - 1).max(8), 1.2, Role::Subtle).styles([flex_none()]);
+    if lens.pressable {
+        chip.styles([cursor_pointer(), bg(Role::SurfaceHover).hover()])
+            .focusable(lens_mark(lens.index))
+            .child(words)
+    } else {
+        chip.child(words)
+    }
 }
 
 /// The first of the marks standing for folded lines, each following it by the index of the line it is on.

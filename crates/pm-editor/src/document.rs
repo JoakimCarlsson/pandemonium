@@ -118,6 +118,12 @@ pub struct Document {
     pub folds_supported: bool,
     /// Whether the language server says which stretches of the file are edited together.
     pub links_supported: bool,
+    /// Whether the language server says what each name of the file is.
+    pub semantic_tokens_supported: bool,
+    /// Whether the language server says what to show inside the lines of the file.
+    pub inlay_hints_supported: bool,
+    /// Whether the language server says what to show above the lines of the file.
+    pub code_lens_supported: bool,
     /// Why the language server could not read the file, when it could not.
     pub server_problem: Option<String>,
     /// What the language server finds wrong with the file.
@@ -144,10 +150,32 @@ pub struct Document {
     pub(crate) server_folds: (i32, Vec<pm_protocol::FoldRange>),
     /// The stretches that are edited together with the one the caret is in, as bytes of the text, while the caret is in one.
     pub(crate) linked: Option<Vec<Range<usize>>>,
+    /// The snippet whose blanks are being filled in, while one is.
+    pub(crate) snippet: Option<crate::snippet::Session>,
+    /// What the language server said to show in and beside the text.
+    pub(crate) annotations: crate::annotations::Annotations,
+    /// The brackets worked out last, with their depth.
+    pub(crate) depths: crate::depth::DepthCache,
     /// The highlights worked out last.
     painted: HighlightCache,
     /// The highlights worked out last for the minimap.
     mapped: HighlightCache,
+}
+
+/// The kind of highlight a name a language server calls `kind` is drawn as.
+fn kind_of(kind: pm_protocol::TokenKind) -> Kind {
+    use pm_protocol::TokenKind;
+    match kind {
+        TokenKind::Keyword => Kind::Keyword,
+        TokenKind::Function => Kind::Function,
+        TokenKind::Type => Kind::Type,
+        TokenKind::String => Kind::String,
+        TokenKind::Constant => Kind::Constant,
+        TokenKind::Comment => Kind::Comment,
+        TokenKind::Property => Kind::Property,
+        TokenKind::Operator => Kind::Operator,
+        TokenKind::Variable => Kind::Variable,
+    }
 }
 
 /// A fingerprint of `text`.
@@ -190,6 +218,9 @@ impl Document {
             formats_ranges: false,
             folds_supported: false,
             links_supported: false,
+            semantic_tokens_supported: false,
+            inlay_hints_supported: false,
+            code_lens_supported: false,
             server_problem: None,
             diagnostics: Vec::new(),
             completion: None,
@@ -203,6 +234,9 @@ impl Document {
             folds: Vec::new(),
             server_folds: (0, Vec::new()),
             linked: None,
+            snippet: None,
+            annotations: crate::annotations::Annotations::default(),
+            depths: crate::depth::DepthCache::default(),
             painted: HighlightCache::default(),
             mapped: HighlightCache::default(),
         }
@@ -220,6 +254,7 @@ impl Document {
         if let Some(syntax) = &mut self.syntax {
             syntax.edit(&change, before_lines, self.field.text(), &self.lines);
         }
+        self.carry_annotations(&change);
         if self.base.is_some() {
             self.compare_with_base();
         }
@@ -371,7 +406,7 @@ impl Document {
         let window =
             self.lines.start(first, text)..self.line(last.saturating_sub(1).max(first)).end;
         let mut spans = vec![Vec::new(); last.saturating_sub(first)];
-        for highlight in syntax.highlights(text, window) {
+        for highlight in syntax.highlights(text, window.clone()) {
             let mut row = self.line_of(highlight.range.start);
             while row < last && row >= first {
                 let line = self.line(row);
@@ -388,6 +423,39 @@ impl Document {
                 }
                 row += 1;
             }
+        }
+        for (range, kind) in self.names_in(window) {
+            let row = self.line_of(range.start);
+            if row < first || row >= last {
+                continue;
+            }
+            let line = self.line(row);
+            let (low, high) = (
+                range.start - line.start,
+                range.end.min(line.end) - line.start,
+            );
+            if low >= high {
+                continue;
+            }
+            let held = &mut spans[row - first];
+            *held = held
+                .drain(..)
+                .flat_map(|(held, tone)| {
+                    let before = held.start..held.end.min(low);
+                    let after = held.start.max(high)..held.end;
+                    let apart = held.end <= low || held.start >= high;
+                    let pieces = if apart {
+                        vec![held]
+                    } else {
+                        vec![before, after]
+                    };
+                    pieces
+                        .into_iter()
+                        .filter(|piece| piece.start < piece.end)
+                        .map(move |piece| (piece, tone))
+                })
+                .collect();
+            held.push((low..high, kind_of(*kind)));
         }
         Painted {
             revision: syntax.revision(),

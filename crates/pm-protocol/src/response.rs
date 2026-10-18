@@ -256,6 +256,15 @@ pub enum Response {
         /// Whether the server says which stretches of a file are edited together.
         #[serde(default)]
         links: bool,
+        /// Whether the server says what each name of a file is.
+        #[serde(default)]
+        semantic_tokens: bool,
+        /// Whether the server says what to show inside a line.
+        #[serde(default)]
+        inlay_hints: bool,
+        /// Whether the server says what to show above a line.
+        #[serde(default)]
+        code_lens: bool,
     },
     /// What could be written at a place.
     Completions {
@@ -271,6 +280,28 @@ pub enum Response {
     FoldingRanges {
         /// The blocks, as the server gives them.
         ranges: Vec<pm_lsp::FoldRange>,
+    },
+    /// What each name of a file is, one token to a stretch of a line; none when the language server does not say.
+    SemanticTokens {
+        /// The tokens, in the order of the file.
+        tokens: Vec<pm_lsp::SemanticToken>,
+    },
+    /// What to show inside the lines of a file; none when the language server does not say.
+    InlayHints {
+        /// The hints, in the order of the file.
+        hints: Vec<pm_lsp::InlayHint>,
+    },
+    /// What to show above the lines of a file; none when the language server does not say.
+    CodeLenses {
+        /// The lenses, in the order the server gave them, which is the order they are pressed by.
+        lenses: Vec<pm_lsp::CodeLens>,
+    },
+    /// What pressing a lens came to.
+    LensPressed {
+        /// The places it points to, to be shown, as the uses of a name are.
+        places: Vec<pm_lsp::Location>,
+        /// The changes it made to the open files, for the client to make.
+        files: Vec<pm_lsp::FileEdit>,
     },
     /// The stretches of a file that are edited together with the one at a place; none when there are none.
     LinkedRanges {

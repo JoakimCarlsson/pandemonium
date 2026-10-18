@@ -11,10 +11,10 @@ use serde_json::Value;
 use crate::choice::ServerChoice;
 use crate::install::{installed_manifest, language_of};
 use crate::manifest::ServerSpec;
-use crate::server::{DiagnosticsSink, Found, LanguageServer, action_of, file_changes};
+use crate::server::{DiagnosticsSink, Found, LanguageServer, Pressed, action_of, file_changes};
 use crate::types::{
-    CodeAction, Completion, Diagnostic, FileEdit, FoldRange, Hover, Location, Problem, Seek,
-    Signature, TextChange, Triggers,
+    CodeAction, CodeLens, Completion, Diagnostic, FileEdit, FoldRange, Hover, InlayHint, Location,
+    Problem, Seek, SemanticToken, Signature, TextChange, Triggers,
 };
 use crate::uri::{file_uri, path_of};
 
@@ -91,6 +91,8 @@ pub struct Hub {
     waiting: Mutex<HashMap<(PathBuf, String), Edits>>,
     /// The changes last offered for each open file, as its server wrote them, with that server, by project and path.
     actions: Mutex<HashMap<(PathBuf, String), Offered>>,
+    /// The lenses last offered for each open file, as its server wrote them, with that server, by project and path.
+    lenses: Mutex<HashMap<(PathBuf, String), Offered>>,
     /// The language servers the reader chose other than the ones languages come with, by language.
     choices: Mutex<HashMap<String, ServerChoice>>,
     /// Where diagnostics of open files go.
@@ -178,6 +180,7 @@ impl Hub {
             addresses: Mutex::new(HashMap::new()),
             waiting: Mutex::new(HashMap::new()),
             actions: Mutex::new(HashMap::new()),
+            lenses: Mutex::new(HashMap::new()),
             choices: Mutex::new(HashMap::new()),
             sink,
         })
@@ -420,6 +423,9 @@ impl Hub {
             formats_ranges: server.formats_ranges(),
             folds: server.folds(),
             links: server.links(),
+            semantic_tokens: server.has_semantic_tokens(),
+            inlay_hints: server.has_inlay_hints(),
+            code_lens: server.has_code_lens(),
         })
     }
 
@@ -485,6 +491,9 @@ impl Hub {
         }
         if let Ok(mut actions) = self.actions.lock() {
             actions.remove(&key);
+        }
+        if let Ok(mut lenses) = self.lenses.lock() {
+            lenses.remove(&key);
         }
         let (Some(server), Some(spec)) = (document.server, document.spec) else {
             return;
@@ -780,6 +789,83 @@ impl Hub {
             return Ok(Vec::new());
         };
         server.highlights(&file_uri(&root.join(path)), position)
+    }
+
+    /// What each name of the open file at `path` of the project at `root` is, once the file reaches `version`; none when its language server does not say.
+    pub fn semantic_tokens(
+        &self,
+        root: &Path,
+        path: &str,
+        version: i32,
+    ) -> Result<Vec<SemanticToken>, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
+            return Ok(Vec::new());
+        };
+        server.semantic_tokens(&file_uri(&root.join(path)))
+    }
+
+    /// What to show inside the lines of the open file at `path` of the project at `root` within `span`, once the file reaches `version`; none when its language server does not say.
+    pub fn inlay_hints(
+        &self,
+        root: &Path,
+        path: &str,
+        version: i32,
+        span: Span,
+    ) -> Result<Vec<InlayHint>, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
+            return Ok(Vec::new());
+        };
+        server.inlay_hints(&file_uri(&root.join(path)), span)
+    }
+
+    /// The lines of text to show with stretches of the open file at `path` of the project at `root`, once the file reaches `version`; they are kept to be pressed by their place in the list.
+    pub fn code_lenses(
+        &self,
+        root: &Path,
+        path: &str,
+        version: i32,
+    ) -> Result<Vec<CodeLens>, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
+            return Ok(Vec::new());
+        };
+        let (lenses, raw) = server.code_lenses(&file_uri(&root.join(path)))?;
+        if let Ok(mut held) = self.lenses.lock() {
+            held.insert(key, (server, raw));
+        }
+        Ok(lenses)
+    }
+
+    /// Presses the `index`-th lens last offered for the open file at `path` of the project at `root`: the places it points to, as to be shown, or the changes the press made to the open files, files no client has open being changed on disk here.
+    pub fn press_lens(
+        &self,
+        root: &Path,
+        path: &str,
+        index: usize,
+    ) -> Result<(Vec<Location>, Vec<FileEdit>), String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let (server, lens) = self
+            .lenses
+            .lock()
+            .ok()
+            .and_then(|held| {
+                let (server, offered) = held.get(&key)?;
+                Some((server.clone(), offered.get(index)?.clone()))
+            })
+            .ok_or_else(|| "that lens is no longer offered".to_owned())?;
+        match server.press_lens(&lens)? {
+            Pressed::Places(found) => {
+                let mut texts: HashMap<PathBuf, Option<String>> = HashMap::new();
+                let places = found
+                    .into_iter()
+                    .filter_map(|place| self.location(root, place, Seek::References, &mut texts))
+                    .collect();
+                Ok((places, Vec::new()))
+            }
+            Pressed::Edits(edits) => Ok((Vec::new(), self.share_edits(root, &edits)?)),
+        }
     }
 
     /// The signature of the call at `position` of the open file at `path` of the project at `root`, once the file reaches `version`.

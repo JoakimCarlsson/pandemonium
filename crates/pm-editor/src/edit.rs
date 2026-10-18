@@ -23,6 +23,9 @@ impl Document {
     /// Makes `edit`, and says what it calls for when it changed the text; an edit that only moved the caret narrows the completions open and calls for nothing.
     pub fn edit(&mut self, edit: Edit) -> Option<Edited> {
         let edit = self.mirrored(edit);
+        if self.linked.is_none() {
+            self.snippet = None;
+        }
         let before = self.field.text().to_owned();
         let before_lines: Lines = self.line_index().clone();
         let caret_line = self.line_of(self.field.caret());

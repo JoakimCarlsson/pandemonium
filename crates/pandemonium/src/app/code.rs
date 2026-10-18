@@ -237,6 +237,7 @@ impl App {
         self.model.update(|screen| {
             *screen = std::mem::take(screen)
                 .highlights_requested()
+                .annotations_requested()
                 .folds_requested()
                 .links_requested()
                 .blame_requested()
@@ -343,6 +344,8 @@ impl App {
             EditorCommand::References => Some(Seek::References),
             EditorCommand::IncomingCalls => Some(Seek::IncomingCalls),
             EditorCommand::OutgoingCalls => Some(Seek::OutgoingCalls),
+            EditorCommand::Supertypes => Some(Seek::Supertypes),
+            EditorCommand::Subtypes => Some(Seek::Subtypes),
             _ => None,
         };
         if let Some(seek) = seek {
@@ -837,6 +840,8 @@ impl App {
             Action::FileHistory => self.editor_command(EditorCommand::FileHistory),
             Action::OpenTerminalHere => self.editor_command(EditorCommand::OpenTerminal),
             Action::OutgoingCalls => self.editor_command(EditorCommand::OutgoingCalls),
+            Action::ShowSupertypes => self.editor_command(EditorCommand::Supertypes),
+            Action::ShowSubtypes => self.editor_command(EditorCommand::Subtypes),
             Action::CopyWithoutIndentation => self.editor_command(EditorCommand::CopyTrimmed),
             Action::Undo => self.edit_field(EDITOR_FIELD, Edit::Undo),
             Action::Redo => self.edit_field(EDITOR_FIELD, Edit::Redo),
@@ -1007,21 +1012,33 @@ impl App {
         let modifiers = event.modifiers;
         let command = modifiers.control || modifiers.logo;
         let spanning = self.model.read(Screen::selection_spans_lines);
+        if event.key == Key::Tab
+            && modifiers.shift
+            && !command
+            && self.model.read(Screen::snippet_active)
+        {
+            self.model
+                .update(|screen| *screen = std::mem::take(screen).snippet_back());
+            self.show_editor_caret();
+            return true;
+        }
         if let Some(what) = Self::line_edit_of(&event, spanning) {
             self.model
                 .update(|screen| *screen = std::mem::take(screen).lines_edited(what));
             self.show_editor_caret();
             return true;
         }
-        let (completing, hovering, listing, signing, finding) = self.model.read(|screen| {
-            (
-                screen.completion_open(),
-                screen.hover_open(),
-                screen.listing_open(),
-                screen.signature_open(),
-                screen.find_open(),
-            )
-        });
+        let (completing, hovering, listing, signing, finding, snippeting) =
+            self.model.read(|screen| {
+                (
+                    screen.completion_open(),
+                    screen.hover_open(),
+                    screen.listing_open(),
+                    screen.signature_open(),
+                    screen.find_open(),
+                    screen.snippet_active(),
+                )
+            });
         let several = self.model.read(|screen| {
             screen
                 .field(EDITOR_FIELD)
@@ -1060,13 +1077,14 @@ impl App {
                 }
                 Key::Escape if completing => Some(screen.completion_closed()),
                 Key::Escape if signing => Some(screen.signature_closed()),
+                Key::Escape if snippeting => Some(screen.snippet_ended()),
                 Key::Escape if finding => Some(screen.find_closed()),
                 Key::Escape if several => Some(screen.lines_edited(LineEdit::OnlyCaret)),
                 Key::Escape if hovering => Some(screen.hover_closed()),
                 Key::Enter if !command && !modifiers.shift && !modifiers.alt => {
                     Some(screen.editor_newline())
                 }
-                Key::Tab if !modifiers.shift && !command => Some(screen.editor_indent()),
+                Key::Tab if !modifiers.shift && !command => Some(screen.editor_tab()),
                 _ => match keys::edit(&event) {
                     Some(Edit::Insert(character)) if !command => {
                         Some(screen.editor_typed(character))
