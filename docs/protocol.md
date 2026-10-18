@@ -676,7 +676,7 @@ moves on.
 ```
 
 - `debug_scenarios` lists what a folder can be debugged as: the configurations
-  of `.vscode/launch.json` and `.zed/debug.json`, and what the file in front can
+  of `.pandemonium.launch.json`, `.vscode/launch.json` and `.zed/debug.json`, and what the file in front can
   be run as without any written. `debug_start` chooses one by its place in that
   list, with `file` the same as it was asked for, and sets `files` as the
   breakpoints, lines counted from zero, before the program runs.

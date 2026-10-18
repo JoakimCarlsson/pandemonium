@@ -15,6 +15,9 @@ use crate::adapter::Adapter;
 /// Where VS Code writes a worktree's debug configurations.
 const VS_CODE: &str = ".vscode/launch.json";
 
+/// Where a worktree writes its own, in the same form as VS Code's.
+const OWN: &str = ".pandemonium.launch.json";
+
 /// Where Zed writes them.
 const ZED: &str = ".zed/debug.json";
 
@@ -90,9 +93,14 @@ impl Scenario {
 /// short and are edited by hand between one debugging run and the next.
 pub fn scenarios(root: &Path, file: Option<&Path>) -> Vec<Scenario> {
     let words = Words::new(root, file);
-    let mut found = read(root, VS_CODE)
-        .map(|file| vs_code(&file, &words))
+    let mut found = read(root, OWN)
+        .map(|file| vs_code(&file, OWN, &words))
         .unwrap_or_default();
+    found.extend(
+        read(root, VS_CODE)
+            .map(|file| vs_code(&file, VS_CODE, &words))
+            .unwrap_or_default(),
+    );
     found.extend(
         read(root, ZED)
             .map(|file| zed(&file, &words))
@@ -108,9 +116,9 @@ fn read(root: &Path, relative: &str) -> Option<Value> {
     serde_json::from_str(&plain_json(&written)).ok()
 }
 
-/// The scenarios a VS Code `launch.json` holds.
-fn vs_code(file: &Value, words: &Words) -> Vec<Scenario> {
-    let source = PathBuf::from(VS_CODE);
+/// The scenarios a `launch.json` written in VS Code's form holds, read from the file at `path`.
+fn vs_code(file: &Value, path: &str, words: &Words) -> Vec<Scenario> {
+    let source = PathBuf::from(path);
     file.get("configurations")
         .and_then(Value::as_array)
         .into_iter()
