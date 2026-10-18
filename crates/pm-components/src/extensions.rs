@@ -56,6 +56,12 @@ const EXTENSIONS_END: u64 = 9_100_000;
 /// How wide the page's column is at most, in logical pixels.
 const PAGE_WIDTH: f32 = 860.0;
 
+/// How long a line of what an extension brings may be in a row, in characters.
+const ROW_LINE: usize = 80;
+
+/// How long a line of what an extension brings may be on the card asking about it, in characters.
+const CARD_LINE: usize = 100;
+
 /// How long a reason a row has room for, in characters.
 const PROBLEM_LENGTH: usize = 96;
 
@@ -109,6 +115,21 @@ fn shortened(words: &str, most: usize) -> String {
     }
     let kept: String = words.chars().take(most - 1).collect();
     format!("{}…", kept.trim_end())
+}
+
+/// `items` joined with ` · ` and broken into lines of at most `most` characters, each item whole.
+fn wrapped(items: &[String], most: usize) -> Vec<String> {
+    let mut lines: Vec<String> = Vec::new();
+    for item in items {
+        match lines.last_mut() {
+            Some(last) if last.chars().count() + 3 + item.chars().count() <= most => {
+                last.push_str(" · ");
+                last.push_str(item);
+            }
+            _ => lines.push(item.clone()),
+        }
+    }
+    lines
 }
 
 /// What an extension is doing or has, in words, and the colour they are drawn in; nothing for one that is only available.
@@ -459,8 +480,9 @@ pub(crate) fn row(extension: &ExtensionInfo, action: FocusId) -> Node {
     } else {
         format!("{}  {}", extension.description, endings(extension))
     };
-    let brings = (!extension.provides.is_empty())
-        .then(|| line(extension.provides.join(" · "), 12, 1.4, Role::Subtle));
+    let brings = wrapped(&extension.provides, ROW_LINE)
+        .into_iter()
+        .map(|said| line(said, 12, 1.4, Role::Subtle));
     let owner = extension
         .owner
         .as_ref()
@@ -537,8 +559,9 @@ fn preview_card(preview: &Preview) -> Node {
                 .then(|| line(extension.description.clone(), 12, 1.4, Role::Muted)),
         )
         .children(
-            (!extension.provides.is_empty())
-                .then(|| line(extension.provides.join(" · "), 12, 1.4, Role::Subtle)),
+            wrapped(&extension.provides, CARD_LINE)
+                .into_iter()
+                .map(|said| line(said, 12, 1.4, Role::Subtle)),
         )
         .child(line("It asks to be allowed to", 12, 1.4, Role::Subtle))
         .children(extension.requests.iter().enumerate().map(|(which, asked)| {
