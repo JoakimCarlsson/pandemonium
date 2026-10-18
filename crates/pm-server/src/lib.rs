@@ -24,6 +24,7 @@ mod queue;
 mod releases;
 mod rewind;
 mod sessions;
+mod tasks;
 mod terminals;
 mod uploads;
 

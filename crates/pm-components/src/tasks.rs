@@ -1,0 +1,289 @@
+//! Tasks as the workspace holds them: what the project can be built, tested and run with, the last one run, the toolchains installed on its machine, and what the reader does with them.
+
+use pm_input::FocusId;
+use pm_protocol::{Task, ToolchainInfo};
+use pm_text::Field;
+
+use crate::listing::{Items, Listing};
+use crate::quick_choices::Choosing;
+use crate::state::{Outgoing, WorkspaceState};
+
+/// The first of the marks in the gutter that run a place of a file; each file shown has [`RUN_LINES`] after its own base.
+pub const RUN_BASE: u64 = 6_000_000_000_000;
+
+/// How many lines one file has room for among the run marks of the gutter.
+pub const RUN_LINES: u64 = 1_000_000;
+
+/// How many files have room among the run marks of the gutter.
+const RUN_FILES: u64 = 1000;
+
+/// The mark in the gutter of the line `line` of the open file at `file` that runs the place that starts there.
+pub fn run_mark(file: usize, line: usize) -> FocusId {
+    FocusId(RUN_BASE + file as u64 * RUN_LINES + line as u64)
+}
+
+/// The open file and the line the gutter run mark `id` is on.
+pub fn run_of(id: FocusId) -> Option<(usize, usize)> {
+    let offset =
+        id.0.checked_sub(RUN_BASE)
+            .filter(|offset| *offset < RUN_FILES * RUN_LINES)?;
+    Some(((offset / RUN_LINES) as usize, (offset % RUN_LINES) as usize))
+}
+
+/// What was last run, which running it again does as it was done.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Rerun {
+    /// A task of the project.
+    Task(Task),
+    /// A place of a file that a language marks as runnable.
+    Runnable {
+        /// The file, from the root of the session's folder.
+        path: String,
+        /// What kind of place it is.
+        kind: String,
+        /// What it is called.
+        name: String,
+    },
+}
+
+/// What the workspace holds of tasks and toolchains.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TaskState {
+    /// What the folder of the session being worked in can be built, tested and run with, as the server last listed it.
+    pub tasks: Vec<Task>,
+    /// Why the project's own task file could not be read, when it could not.
+    pub problem: Option<String>,
+    /// The toolchains installed, as the server last listed them.
+    pub toolchains: Vec<ToolchainInfo>,
+    /// What was run last.
+    pub last: Option<Rerun>,
+}
+
+/// The language `family` as a reader knows it.
+fn language_name(family: &str) -> String {
+    match family {
+        "javascript" => "Node.js".to_owned(),
+        "go" => "Go".to_owned(),
+        other => {
+            let mut letters = other.chars();
+            letters
+                .next()
+                .map(|first| first.to_uppercase().chain(letters).collect())
+                .unwrap_or_default()
+        }
+    }
+}
+
+impl WorkspaceState {
+    /// Asks the server what the folder of the session being worked in can be built, tested and run with.
+    pub(crate) fn tasks_asked(&mut self) {
+        if let Some(session) = self.review_index() {
+            self.outbox.push(Outgoing::Tasks { session });
+        }
+    }
+
+    /// The state after the server listed the tasks of the folder of the session at `session`, and why the project's own file could not be read when it could not.
+    pub fn with_tasks(mut self, session: usize, tasks: Vec<Task>, problem: Option<String>) -> Self {
+        if self.review_index() == Some(session) {
+            self.tasks.tasks = tasks;
+            self.tasks.problem = problem;
+            self.commands_renewed();
+            self.choices_renewed(Choosing::Task);
+            if let Some(listing) = self.listing.as_mut()
+                && listing.session == session
+            {
+                listing.answered = true;
+                if matches!(
+                    listing.items,
+                    Items::Choices {
+                        choosing: Choosing::Task,
+                        ..
+                    }
+                ) {
+                    listing.problem = self.tasks.problem.clone();
+                }
+            }
+        }
+        self
+    }
+
+    /// Runs `how` in a new shell of the dock, in the folder of the session being worked in, and shows the dock.
+    fn run_in_terminal(&mut self, how: Rerun) {
+        let Some(session) = self.review_index() else {
+            return;
+        };
+        let (columns, rows) = self.terminal_size;
+        let Some(tab) = self.add_terminal(session, columns, rows) else {
+            return;
+        };
+        let title = match &how {
+            Rerun::Task(task) => task.name.clone(),
+            Rerun::Runnable { name, .. } => name.clone(),
+        };
+        if let Some(held) = self
+            .sessions
+            .get_mut(session)
+            .and_then(|held| held.terminals.iter_mut().find(|held| held.id == tab))
+        {
+            held.task = Some(title);
+        }
+        self.debug.shown = false;
+        self.terminal = true;
+        self.outbox.push(match how.clone() {
+            Rerun::Task(task) => Outgoing::RunTask {
+                session,
+                task,
+                tab,
+                columns,
+                rows,
+            },
+            Rerun::Runnable { path, kind, name } => Outgoing::RunRunnable {
+                session,
+                path,
+                kind,
+                name,
+                tab,
+                columns,
+                rows,
+            },
+        });
+        self.tasks.last = Some(how);
+    }
+
+    /// Runs `task` in the dock.
+    pub(crate) fn task_run(&mut self, task: Task) {
+        self.run_in_terminal(Rerun::Task(task));
+    }
+
+    /// Runs the task at `index` of those listed in the dock.
+    pub(crate) fn task_taken(&mut self, index: usize) {
+        if let Some(task) = self.tasks.tasks.get(index).cloned() {
+            self.task_run(task);
+        }
+    }
+
+    /// Runs again what was run last, when something was.
+    pub fn task_rerun(mut self) -> Self {
+        if let Some(last) = self.tasks.last.clone() {
+            self.run_in_terminal(last);
+        }
+        self
+    }
+
+    /// Runs the place that starts on `line` of the open file at `file`, when the language marks one there.
+    pub(crate) fn runnable_run(&mut self, file: usize, line: usize) {
+        let Some(viewer) = self.git.viewers.get(file).filter(|viewer| !viewer.head) else {
+            return;
+        };
+        let path = viewer.path.clone();
+        let Some(place) = self.shown_runnable(file, line) else {
+            return;
+        };
+        self.run_in_terminal(Rerun::Runnable {
+            path,
+            kind: place.kind,
+            name: place.name,
+        });
+    }
+
+    /// The runnable place that starts on `line` of the open file at `file`.
+    fn shown_runnable(&self, file: usize, line: usize) -> Option<pm_treesitter::Runnable> {
+        let document = match &self.git.viewers.get(file)?.contents {
+            crate::open_files::Contents::Text(document) => document,
+            _ => return None,
+        };
+        document
+            .runnables()
+            .iter()
+            .find(|(held, _)| *held == line)
+            .map(|(_, place)| place.clone())
+    }
+
+    /// The lines of the open file at `file` where a place that can be run starts.
+    pub fn run_lines_of(&self, file: usize) -> Vec<usize> {
+        let Some(viewer) = self.git.viewers.get(file).filter(|viewer| !viewer.head) else {
+            return Vec::new();
+        };
+        match &viewer.contents {
+            crate::open_files::Contents::Text(document) => {
+                let mut lines: Vec<usize> =
+                    document.runnables().iter().map(|(line, _)| *line).collect();
+                lines.dedup();
+                lines
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Lists the tasks of the folder of the session being worked in at `at`, to run one.
+    pub fn tasks_requested(mut self, at: (f32, f32)) -> Self {
+        let Some(session) = self.review_index() else {
+            return self;
+        };
+        self.tasks_asked();
+        let answered = !self.tasks.tasks.is_empty();
+        let mut opened = self.choices_requested(Choosing::Task, at);
+        if let Some(listing) = opened.listing.as_mut() {
+            listing.answered = answered;
+            listing.session = session;
+        }
+        opened
+    }
+
+    /// Lists the toolchains installed on the machine of the session being worked in at `at`, to choose the one a language is run with.
+    pub fn toolchains_requested(mut self, at: (f32, f32)) -> Self {
+        let Some(session) = self.review_index() else {
+            return self;
+        };
+        self.outbox.push(Outgoing::Toolchains { session });
+        self.listing = Some(Listing {
+            session,
+            items: Items::Choices {
+                choosing: Choosing::Toolchain,
+                choices: Vec::new(),
+                filter: Field::new(""),
+                matched: Vec::new(),
+            },
+            picked: 0,
+            answered: false,
+            problem: None,
+            at,
+            quick: true,
+        });
+        self
+    }
+
+    /// The state after the server listed the toolchains of the machine of the session at `session`.
+    pub fn with_toolchains(mut self, session: usize, toolchains: Vec<ToolchainInfo>) -> Self {
+        self.tasks.toolchains = toolchains;
+        self.choices_renewed(Choosing::Toolchain);
+        if let Some(listing) = self.listing.as_mut()
+            && listing.session == session
+        {
+            listing.answered = true;
+        }
+        self
+    }
+
+    /// Has the project of the session being worked in run `language` with the toolchain `id`, or with the machine's own path when there is none.
+    pub(crate) fn toolchain_taken(&mut self, language: String, id: Option<String>) {
+        let Some(session) = self.review_index() else {
+            return;
+        };
+        for held in &mut self.tasks.toolchains {
+            if held.language == language {
+                held.selected = held.id == id.as_deref().unwrap_or("system");
+            }
+        }
+        self.outbox.push(Outgoing::SelectToolchain {
+            session,
+            language,
+            toolchain: id,
+        });
+    }
+
+    /// The name `language`, by family, is shown under in the list of toolchains.
+    pub(crate) fn toolchain_language(language: &str) -> String {
+        language_name(language)
+    }
+}

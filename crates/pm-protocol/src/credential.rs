@@ -43,9 +43,9 @@ impl Build {
         })
     }
 
-    /// Whether `self` is an older or newer build of the same program file as `other`.
-    pub fn superseded_by(&self, other: &Self) -> bool {
-        self.program == other.program && self.modified != other.modified
+    /// Whether `self` is another build than `other`: a different program file, such as a build run from a checkout beside an installed one, or the same file written at another time.
+    pub fn differs_from(&self, other: &Self) -> bool {
+        self.program != other.program || self.modified != other.modified
     }
 }
 

@@ -607,6 +607,61 @@ pub enum Request {
     },
     /// Every shell the server holds.
     Terminals,
+    /// What a folder can be built, tested and run with: the tasks its manifests imply and those it writes in its own file.
+    Tasks {
+        /// The folder.
+        directory: String,
+    },
+    /// Runs a task in a shell in the task's folder, which keeps running until it exits or is closed, whoever is connected; the connection is sent what it prints, as for `open_terminal`.
+    RunTask {
+        /// The folder the task belongs to.
+        directory: String,
+        /// The project the folder is part of, whose choice of toolchains the task runs with; the folder itself when nothing.
+        #[serde(default)]
+        project: Option<String>,
+        /// The task, as `tasks` listed it.
+        task: Box<crate::Task>,
+        /// How many characters wide the window of the shell is.
+        columns: u16,
+        /// How many lines tall the window of the shell is.
+        rows: u16,
+    },
+    /// Runs the thing a language marks as runnable in a file, such as a test function, in a shell as `run_task` does.
+    RunRunnable {
+        /// The folder.
+        directory: String,
+        /// The project the folder is part of, as for `run_task`.
+        #[serde(default)]
+        project: Option<String>,
+        /// The file, from the root of the folder.
+        path: String,
+        /// What the language calls it: `main`, `test` or `module`.
+        kind: String,
+        /// Its name in the file.
+        name: String,
+        /// How many characters wide the window of the shell is.
+        columns: u16,
+        /// How many lines tall the window of the shell is.
+        rows: u16,
+    },
+    /// The toolchains installed on the server's machine and those the project keeps, and which each language of the project is set to use.
+    Toolchains {
+        /// The folder.
+        directory: String,
+        /// The project the folder is part of; the folder itself when nothing.
+        #[serde(default)]
+        project: Option<String>,
+    },
+    /// Chooses the toolchain a language of a project starts its tasks and tools with, or lets the machine's own path decide when nothing is chosen.
+    SelectToolchain {
+        /// The project.
+        project: String,
+        /// The language, by family: `rust`, `javascript`, `python` or `go`.
+        language: String,
+        /// The toolchain, by the id `toolchains` gave it.
+        #[serde(default)]
+        toolchain: Option<String>,
+    },
     /// The GitHub accounts and organizations whose repositories the account `gh` is signed in to on the server's machine can list.
     Owners,
     /// The GitHub repositories of an account or organization.
@@ -941,6 +996,9 @@ pub enum Request {
         /// The breakpoints to stop at, file by file.
         #[serde(default)]
         files: Vec<crate::DebugFile>,
+        /// The project the folder is part of, whose toolchains the scenario's task runs with; the folder itself when nothing.
+        #[serde(default)]
+        project: Option<String>,
     },
     /// Starts debugging a program that is running, with the adapter that is named.
     DebugAttach {

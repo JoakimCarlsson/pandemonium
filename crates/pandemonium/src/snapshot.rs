@@ -274,6 +274,12 @@ pub enum Shot {
     Finder,
     /// The same file with the list of every command open, narrowed by what is typed.
     Commands,
+    /// The same file with the list of every command open over the tasks the project's manifests imply.
+    Tasks,
+    /// A file with a `main` and tests, with the run button of each in the gutter.
+    RunButtons,
+    /// The same file with the list of toolchains installed open.
+    Toolchains,
     /// The same file with the list of the other sessions open.
     Sessions,
     /// The same file with the quick input listing what can be typed first.
@@ -308,6 +314,7 @@ fn load_installed_grammar(id: &str) {
         outline: read("outline.scm"),
         injections: read("injections.scm"),
         brackets: read("brackets.scm"),
+        runnables: read("runnables.scm"),
     };
     let editing = pm_treesitter::Editing {
         indent: manifest.indent,
@@ -661,6 +668,74 @@ fn completing() -> WorkspaceState {
 }
 
 /// The Rust file with two breakpoints set and the program paused on the first, its stack, variables, watch and console in the dock.
+/// What the manifests of a project with a Cargo manifest, a Makefile and npm scripts imply, and a task it writes itself.
+fn sample_tasks() -> Vec<pm_protocol::Task> {
+    let task = |name: &str, command: &str, group: &str, source: &str| pm_protocol::Task {
+        name: name.to_owned(),
+        command: command.to_owned(),
+        group: group.to_owned(),
+        source: source.to_owned(),
+        ..pm_protocol::Task::default()
+    };
+    vec![
+        task(
+            "release notes",
+            "scripts/notes.sh",
+            "",
+            ".pandemonium.tasks.json",
+        ),
+        task(
+            "cargo build",
+            "cargo build --workspace",
+            "build",
+            "Cargo.toml",
+        ),
+        task(
+            "cargo check",
+            "cargo check --workspace",
+            "build",
+            "Cargo.toml",
+        ),
+        task("cargo test", "cargo test --workspace", "test", "Cargo.toml"),
+        task("make: lint", "make lint", "", "Makefile"),
+        task("make: run", "make run", "run", "Makefile"),
+        task("npm: build", "npm run build", "build", "package.json"),
+        task("npm: dev", "npm run dev", "run", "package.json"),
+    ]
+}
+
+/// The toolchains a machine with rustup, two Node.js versions and a virtual environment has.
+fn sample_toolchains() -> Vec<pm_protocol::ToolchainInfo> {
+    let toolchain =
+        |language: &str, id: &str, detail: &str, selected: bool| pm_protocol::ToolchainInfo {
+            language: language.to_owned(),
+            id: id.to_owned(),
+            name: id.to_owned(),
+            detail: detail.to_owned(),
+            selected,
+        };
+    vec![
+        toolchain("rust", "stable-x86_64-unknown-linux-gnu", "default", true),
+        toolchain("rust", "nightly-x86_64-unknown-linux-gnu", "", false),
+        toolchain("javascript", "system", "v22.11.0", true),
+        toolchain("javascript", "nvm v20.18.0", "v20.18.0", false),
+        toolchain("python", "system", "Python 3.13.1", true),
+        toolchain("python", "venv .venv", "Python 3.12.7", false),
+    ]
+}
+
+/// A file with a `main`, a test and a module of tests, so that the gutter shows a run button beside each.
+fn runnable() -> WorkspaceState {
+    let state = code();
+    let text = "use std::path::PathBuf;\n\n/// Where the session works.\npub fn root() -> PathBuf {\n    PathBuf::from(\".\")\n}\n\nfn main() {\n    println!(\"{}\", root().display());\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn finds_the_root() {\n        assert_eq!(root(), PathBuf::from(\".\"));\n    }\n\n    #[test]\n    fn shows_the_root() {\n        assert!(!root().display().to_string().is_empty());\n    }\n}\n";
+    state.with_file(
+        0,
+        CODE_PATH,
+        false,
+        Ok((Some(text.to_owned()), false, Some("rust".to_owned()))),
+    )
+}
+
 fn debugging() -> WorkspaceState {
     use pm_protocol::{
         Breakpoint, DebugCategory, DebugFrame, DebugLine, DebugScope, DebugThread, DebugView,
@@ -1591,6 +1666,21 @@ impl Shot {
                 pm_components::listing::LISTING_FILTER,
                 Edit::Paste(":12".to_owned()),
             )),
+            Self::Tasks => Screen::Workspace(
+                code()
+                    .with_tasks(0, sample_tasks(), None)
+                    .commands_requested((340.0, 0.0))
+                    .edited(
+                        pm_components::listing::LISTING_FILTER,
+                        Edit::Paste("task".to_owned()),
+                    ),
+            ),
+            Self::RunButtons => Screen::Workspace(runnable()),
+            Self::Toolchains => Screen::Workspace(
+                code()
+                    .toolchains_requested((340.0, 0.0))
+                    .with_toolchains(0, sample_toolchains()),
+            ),
             Self::Sessions => Screen::Workspace(code().sessions_requested((340.0, 0.0))),
             Self::Commands => Screen::Workspace(
                 code()

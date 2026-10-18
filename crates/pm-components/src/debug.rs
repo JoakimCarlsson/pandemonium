@@ -113,6 +113,8 @@ pub struct Gutter {
     pub marks: Vec<(usize, Dot)>,
     /// The line the program is paused on.
     pub paused: Option<usize>,
+    /// The lines where a place that can be run starts.
+    pub runs: Vec<usize>,
 }
 
 impl Gutter {
@@ -344,7 +346,11 @@ impl WorkspaceState {
                 (breakpoint.line, how)
             })
             .collect();
-        Gutter { marks, paused }
+        Gutter {
+            marks,
+            paused,
+            runs: self.run_lines_of(file),
+        }
     }
 
     /// Sets or clears the breakpoint on `line` of the open file at `file`.

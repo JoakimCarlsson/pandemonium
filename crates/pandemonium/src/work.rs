@@ -23,6 +23,7 @@ mod code;
 mod debug;
 mod machine;
 pub(crate) mod picture;
+mod tasks;
 mod watch;
 
 /// The most files listed for the list behind an `@`.
@@ -242,6 +243,10 @@ enum Pending {
     DebugProcesses(usize),
     /// The program debugged for the session at this position was started.
     DebugStarted(usize),
+    /// What the folder of the session at this position can be built, tested and run with.
+    Tasks(usize),
+    /// The toolchains installed on the machine of the session at this position.
+    Toolchains(usize),
     /// The programs the server of this machine debugs.
     Debugs(Host),
     /// A program the server still debugs, picked up for the session at this position.
@@ -1169,6 +1174,11 @@ impl Work {
                 | Outgoing::DebugStart { .. }
                 | Outgoing::DebugAttach { .. }
                 | Outgoing::DebugDo { .. }) => self.deliver_debug(model, debugging),
+                tasking @ (Outgoing::Tasks { .. }
+                | Outgoing::RunTask { .. }
+                | Outgoing::RunRunnable { .. }
+                | Outgoing::Toolchains { .. }
+                | Outgoing::SelectToolchain { .. }) => self.deliver_tasks(model, tasking),
                 code => self.deliver_code(model, code),
             }
         }
@@ -1901,6 +1911,9 @@ impl Work {
             | Pending::Debugs(_)
             | Pending::DebugWatched(_)
             | Pending::DebugRewatched(_) => self.answered_debug(model, pending, response),
+            Pending::Tasks(_) | Pending::Toolchains(_) => {
+                self.answered_tasks(model, pending, response)
+            }
             Pending::MachineSettings | Pending::LatestRelease => {
                 self.answered_machine(model, pending, response)
             }

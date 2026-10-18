@@ -13,7 +13,7 @@ use crate::assist::listing_cells;
 use crate::input::{Input, Size as InputSize};
 use crate::listing::{
     Destination, Items, LISTING_BODY, LISTING_FILTER, LISTING_ROW_BASE, LISTING_WIDTH, Listing,
-    Quick, line_named, matched_characters,
+    Quick, line_named, matched_characters, task_title,
 };
 use crate::parts::{glyph, line};
 use pm_icon::IconName;
@@ -110,14 +110,34 @@ fn row(listing: &Listing, place: usize, index: usize, picked: bool) -> Node {
     let (cells, group) = match &listing.items {
         Items::Commands {
             commands,
+            tasks,
             extras,
             recent,
             ..
         } => {
+            let shown = listing.items.rows();
+            let is_task = |place: usize| {
+                shown.get(place).is_some_and(|held| {
+                    (commands.len()..commands.len() + tasks.len()).contains(held)
+                })
+            };
+            let is_extra = |place: usize| {
+                shown
+                    .get(place)
+                    .is_some_and(|held| *held >= commands.len() + tasks.len())
+            };
             let group = match (*recent, place) {
+                (_, place) if is_task(place) && (place == 0 || !is_task(place - 1)) => {
+                    Some(("tasks", place > 0))
+                }
+                (_, place) if is_extra(place) && (place == 0 || !is_extra(place - 1)) => {
+                    Some(("extensions", place > 0))
+                }
                 (0, _) => None,
                 (_, 0) => Some(("recently used", false)),
-                (recent, place) if place == recent => Some(("other commands", true)),
+                (recent, place) if place == recent && !is_task(place) && !is_extra(place) => {
+                    Some(("other commands", true))
+                }
                 _ => None,
             };
             let cells = match commands.get(index) {
@@ -127,14 +147,27 @@ fn row(listing: &Listing, place: usize, index: usize, picked: bool) -> Node {
                     cells.extend(keys.as_deref().map(keycaps));
                     cells
                 }
-                None => extras
-                    .get(index - commands.len())
-                    .map_or_else(Vec::new, |(_, command)| {
-                        vec![
-                            marked(&command.title, query),
-                            separator(&format!("extension {}", command.extension)),
-                        ]
-                    }),
+                None => match tasks.get(index - commands.len()) {
+                    Some(task) => {
+                        let mut cells = vec![marked(&task_title(task), query)];
+                        cells.extend(group.map(|(said, _)| separator(said)));
+                        cells.push(node().styles([flex_none(), overflow_hidden()]).child(line(
+                            task.command.clone(),
+                            12,
+                            1.4,
+                            Role::Subtle,
+                        )));
+                        cells
+                    }
+                    None => extras
+                        .get(index - commands.len() - tasks.len())
+                        .map_or_else(Vec::new, |(_, command)| {
+                            let mut cells = vec![marked(&command.title, query)];
+                            cells.extend(group.map(|(said, _)| separator(said)));
+                            cells.push(separator(&format!("extension {}", command.extension)));
+                            cells
+                        }),
+                },
             };
             (cells, group)
         }

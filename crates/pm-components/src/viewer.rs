@@ -25,6 +25,7 @@ use crate::open_files::{Contents, EDITOR_FIELD, EDITOR_SAVE, FILE_TAB_BASE, STRI
 use crate::panes::PEEK_SCROLL_BASE;
 use crate::parts::{glyph, line, spacer};
 use crate::state::WorkspaceState;
+use crate::tasks::run_mark;
 use pm_editor::{Document, EditorSettings, Hint, Lens, LineChange};
 
 /// How wide a view of a file must be, in logical pixels, for a minimap to be drawn beside it.
@@ -259,8 +260,41 @@ pub(crate) fn document_row(settings: &EditorSettings, segments: &[Range<usize>])
 /// How wide the cell for the breakpoint of a line is, in logical pixels.
 pub const BREAKPOINT_CELL: f32 = 16.0;
 
-/// The cell before a line number that sets or clears the breakpoint on the line when pressed, and shows the breakpoint, or the arrow where the program is paused.
+/// How wide the cell for the run button of a line is, in logical pixels, in a file that has places that can be run.
+pub const RUN_CELL: f32 = 16.0;
+
+/// The cell before the breakpoint of a line that runs the place that starts on the line when pressed, and is empty on the lines where none starts.
+fn run_cell(file: usize, index: usize, gutter: &Gutter, height: f32) -> Node {
+    let cell = node().styles([
+        flex(),
+        items_center(),
+        justify_center(),
+        flex_none(),
+        w_px(RUN_CELL),
+        h_px(height),
+    ]);
+    if !gutter.runs.contains(&index) {
+        return cell;
+    }
+    cell.styles([cursor_pointer()])
+        .focusable(run_mark(file, index))
+        .child(glyph(IconName::Play, 3.5, Role::Success))
+}
+
+/// The cells before a line number: the run button when the file has places that can be run, and the cell that sets or clears the breakpoint on the line when pressed, which shows the breakpoint, or the arrow where the program is paused.
 pub(crate) fn breakpoint_cell(file: usize, index: usize, gutter: &Gutter, height: f32) -> Node {
+    let cell = breakpoint_only(file, index, gutter, height);
+    if gutter.runs.is_empty() {
+        return cell;
+    }
+    node()
+        .styles([flex(), flex_none(), h_px(height)])
+        .child(run_cell(file, index, gutter, height))
+        .child(cell)
+}
+
+/// The cell before a line number that sets or clears the breakpoint on the line when pressed, and shows the breakpoint, or the arrow where the program is paused.
+fn breakpoint_only(file: usize, index: usize, gutter: &Gutter, height: f32) -> Node {
     let cell = node()
         .styles([
             flex(),

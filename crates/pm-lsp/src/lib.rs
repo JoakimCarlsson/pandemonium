@@ -30,13 +30,15 @@ mod types;
 mod uri;
 
 pub use choice::ServerChoice;
-pub use hub::{Hub, Published, Sink, rank, score};
+pub use hub::{Environment, Hub, Published, Sink, rank, score};
 pub use index::{Index, Listing, build_index};
 pub use install::{
     add_extension, add_folder, install, installed, installed_manifest, language_of, remove,
     remove_folder,
 };
-pub use manifest::{Archive, Download, Install, InstallKind, Manifest, Pinned, ServerSpec};
+pub use manifest::{
+    Archive, Download, Install, InstallKind, Manifest, Pinned, RunnableSpec, ServerSpec,
+};
 pub use paths::{grammar_file, language_folder, local_root};
 pub use resolve::server_state;
 pub use types::{

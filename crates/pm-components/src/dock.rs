@@ -81,18 +81,23 @@ pub struct TerminalTab {
     pub composing: String,
     /// The link under the pointer while Ctrl is held, underlined as what a press opens.
     pub link: Option<Link>,
+    /// What the task run in it is called, when it was started to run one.
+    pub task: Option<String>,
 }
 
 impl TerminalTab {
     /// What the tab is called.
     pub fn name(&self) -> String {
-        format!("Terminal {}", self.label)
+        match &self.task {
+            Some(task) => task.clone(),
+            None => format!("Terminal {}", self.label),
+        }
     }
 }
 
 impl WorkspaceState {
     /// Makes a tab for a new shell of the session at `session`, `columns` by `rows`, and makes it the one showing.
-    fn add_terminal(&mut self, session: usize, columns: u16, rows: u16) -> Option<u64> {
+    pub(crate) fn add_terminal(&mut self, session: usize, columns: u16, rows: u16) -> Option<u64> {
         let id = self.next_terminal;
         let held = self.sessions.get_mut(session)?;
         let label = held
@@ -115,6 +120,7 @@ impl WorkspaceState {
             exited: false,
             composing: String::new(),
             link: None,
+            task: None,
         });
         held.terminal_active = held.terminals.len() - 1;
         self.next_terminal += 1;

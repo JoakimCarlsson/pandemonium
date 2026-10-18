@@ -49,6 +49,9 @@ pub struct Published {
 /// What is done with what servers say is wrong with open files.
 pub type Sink = Arc<dyn Fn(Published) + Send + Sync>;
 
+/// What a server is started with besides the machine's own environment, for the project at a folder and the server of a spec: the variables to set, among them the `PATH` to run it with.
+pub type Environment = Arc<dyn Fn(&Path, &ServerSpec) -> BTreeMap<String, String> + Send + Sync>;
+
 /// Edits by the version they make.
 type Edits = BTreeMap<i32, Vec<TextChange>>;
 
@@ -97,6 +100,8 @@ pub struct Hub {
     choices: Mutex<HashMap<String, ServerChoice>>,
     /// Where diagnostics of open files go.
     sink: Sink,
+    /// What servers are started with.
+    environment: Environment,
 }
 
 /// How well `filter`, what a completion is matched by, matches the word `typed`: lower is better, nothing when it does not match.
@@ -171,7 +176,7 @@ fn catch_up(document: &mut Document, uri: &str) -> Option<ServerSpec> {
 
 impl Hub {
     /// A hub with no files open, handing what servers say is wrong with open files to `sink`.
-    pub fn new(sink: Sink) -> Arc<Self> {
+    pub fn new(sink: Sink, environment: Environment) -> Arc<Self> {
         Arc::new(Self {
             documents: Mutex::new(HashMap::new()),
             changed: Condvar::new(),
@@ -183,6 +188,7 @@ impl Hub {
             lenses: Mutex::new(HashMap::new()),
             choices: Mutex::new(HashMap::new()),
             sink,
+            environment,
         })
     }
 
@@ -310,7 +316,13 @@ impl Hub {
                 .clone();
             let started = slot
                 .get_or_init(|| {
-                    LanguageServer::start(spec, root, self.diagnostics_sink()).map(Arc::new)
+                    LanguageServer::start(
+                        spec,
+                        root,
+                        &(self.environment)(root, spec),
+                        self.diagnostics_sink(),
+                    )
+                    .map(Arc::new)
                 })
                 .clone();
             match started {

@@ -1,6 +1,6 @@
 //! One running language server: started for a project, told of the files open in it, and asked for completions and hovers.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -361,10 +361,11 @@ impl LanguageServer {
     pub(crate) fn start(
         spec: &ServerSpec,
         root: &Path,
+        env: &BTreeMap<String, String>,
         sink: DiagnosticsSink,
     ) -> Result<Self, String> {
         let first_try = match found(spec, Some(root)) {
-            Some(program) => match Self::start_program(&program, spec, root, sink.clone()) {
+            Some(program) => match Self::start_program(&program, spec, root, env, sink.clone()) {
                 Ok(server) => return Ok(server),
                 Err(reason) if spec.install.is_some() => Some(reason),
                 Err(reason) => return Err(reason),
@@ -375,7 +376,7 @@ impl LanguageServer {
             Some(before) => format!("{before}; {reason}"),
             None => reason,
         })?;
-        Self::start_program(&program, spec, root, sink)
+        Self::start_program(&program, spec, root, env, sink)
     }
 
     /// Starts `program` as the server of `spec` for the project at `root` and sets it up.
@@ -383,6 +384,7 @@ impl LanguageServer {
         program: &Path,
         spec: &ServerSpec,
         root: &Path,
+        env: &BTreeMap<String, String>,
         sink: DiagnosticsSink,
     ) -> Result<Self, String> {
         let first: Vec<PathBuf> = spec
@@ -397,6 +399,7 @@ impl LanguageServer {
             &spec.args,
             root,
             &first,
+            env,
             handler(
                 root,
                 spec.settings.clone(),

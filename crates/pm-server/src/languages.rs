@@ -46,6 +46,7 @@ pub(crate) fn grammar(name: &str) -> Result<GrammarBundle, String> {
         outline: query("outline.scm"),
         injections: query("injections.scm"),
         brackets: query("brackets.scm"),
+        runnables: query("runnables.scm"),
         symbol: manifest.grammar,
         aliases: manifest.aliases,
         indent: manifest.indent,

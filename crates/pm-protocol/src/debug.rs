@@ -15,6 +15,9 @@ pub struct DebugScenario {
     pub attach: bool,
     /// The file it was read from, from the root of the folder, or nothing for one the server offers on its own.
     pub source: Option<String>,
+    /// The task it runs, by name, and must see finish before it starts.
+    #[serde(default)]
+    pub task: Option<String>,
 }
 
 /// A program running on the server's machine that a debugger can attach to.

@@ -21,6 +21,7 @@ fn compile(bundle: &GrammarBundle) -> Result<Arc<Grammar>, String> {
             outline: bundle.outline.clone(),
             injections: bundle.injections.clone(),
             brackets: bundle.brackets.clone(),
+            runnables: bundle.runnables.clone(),
         },
         Editing {
             indent: bundle.indent,

@@ -32,6 +32,10 @@ pub enum Choosing {
     DebugScenario,
     /// A program running on the machine to attach a debugger to.
     DebugProcess,
+    /// A task of the project to run.
+    Task,
+    /// A toolchain to run a language of the project with.
+    Toolchain,
 }
 
 impl Choosing {
@@ -49,6 +53,8 @@ impl Choosing {
             Self::Help => "Type a prefix, or select one",
             Self::DebugScenario => "Select what to debug",
             Self::DebugProcess => "Select a program to attach to",
+            Self::Task => "Select a task to run",
+            Self::Toolchain => "Select a toolchain for its language",
         }
     }
 
@@ -64,6 +70,10 @@ impl Choosing {
                 "Nothing to debug: write a launch.json, or open a Python or Go file"
             }
             Self::DebugProcess => "No programs to attach to, or no debug adapter installed",
+            Self::Task => {
+                "No tasks: add a Cargo.toml, package.json or Makefile, or write .pandemonium.tasks.json"
+            }
+            Self::Toolchain => "No toolchains found on this machine",
         }
     }
 }
@@ -91,6 +101,10 @@ pub enum Then {
     DebugStart(usize),
     /// Attaches a debugger to the process with this number.
     DebugAttach(u32),
+    /// Runs the task at this place in the list the server gave.
+    RunTask(usize),
+    /// Runs this language with this toolchain from now on, or with the machine's own path when there is none.
+    Toolchain(String, Option<String>),
 }
 
 /// One thing to pick.
@@ -254,6 +268,38 @@ impl WorkspaceState {
                     )
                 })
                 .collect(),
+            Choosing::Task => self
+                .tasks
+                .tasks
+                .iter()
+                .enumerate()
+                .map(|(index, task)| {
+                    Choice::new(
+                        task.name.clone(),
+                        task.command.clone(),
+                        Then::RunTask(index),
+                    )
+                })
+                .collect(),
+            Choosing::Toolchain => self
+                .tasks
+                .toolchains
+                .iter()
+                .map(|toolchain| {
+                    let label = format!(
+                        "{}: {}",
+                        Self::toolchain_language(&toolchain.language),
+                        toolchain.name
+                    );
+                    let chosen = (toolchain.id != "system").then(|| toolchain.id.clone());
+                    Choice::new(
+                        label,
+                        toolchain.detail.clone(),
+                        Then::Toolchain(toolchain.language.clone(), chosen),
+                    )
+                    .current(toolchain.selected)
+                })
+                .collect(),
             Choosing::Help => PREFIXES
                 .into_iter()
                 .map(|(prefix, said)| {
@@ -375,6 +421,14 @@ impl WorkspaceState {
             }
             Then::DebugAttach(pid) => {
                 self.debug_process_taken(pid);
+                self
+            }
+            Then::RunTask(index) => {
+                self.task_taken(index);
+                self
+            }
+            Then::Toolchain(language, id) => {
+                self.toolchain_taken(language, id);
                 self
             }
         }

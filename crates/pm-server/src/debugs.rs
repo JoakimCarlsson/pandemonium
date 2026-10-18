@@ -82,6 +82,7 @@ fn described(scenario: &Scenario) -> DebugScenario {
             .source
             .as_ref()
             .map(|path| path.to_string_lossy().into_owned()),
+        task: scenario.before.clone(),
     }
 }
 
@@ -168,20 +169,25 @@ impl Core {
         Ok((debug, view))
     }
 
-    /// Starts debugging in `directory` as the scenario at `index` of what `file` makes of it.
+    /// Starts debugging in `directory`, part of the project `project`, as the scenario at `index` of what `file` makes of it, once the task it names has finished; nothing starts when that task fails.
     pub(crate) fn debug_scenario(
         self: &Arc<Self>,
         connection: &Arc<Connection>,
         directory: &str,
-        root: &Path,
+        project: Option<&str>,
         file: Option<&str>,
         index: usize,
         files: Vec<DebugFile>,
     ) -> Result<(u64, DebugView), String> {
+        let root = crate::handler::place(directory);
+        let root = root.as_path();
         let scenario = scenarios_of(root, file)
             .into_iter()
             .nth(index)
             .ok_or_else(|| "that is not something the folder can be debugged as".to_owned())?;
+        if let Some(task) = &scenario.before {
+            crate::tasks::finish_named(root, project, task)?;
+        }
         self.start_debug(connection, directory, root, scenario, files)
     }
 

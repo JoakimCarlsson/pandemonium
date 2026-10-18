@@ -27,6 +27,7 @@ mod lines;
 mod link;
 mod marks;
 mod pairs;
+mod runs;
 mod settings;
 mod snippet;
 mod sticky;

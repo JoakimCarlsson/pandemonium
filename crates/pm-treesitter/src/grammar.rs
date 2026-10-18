@@ -21,6 +21,8 @@ pub struct Queries {
     pub injections: String,
     /// Which tokens are brackets that pair up: `brackets.scm`.
     pub brackets: String,
+    /// Which nodes are places that can be run, such as a `main` or a test: `runnables.scm`.
+    pub runnables: String,
 }
 
 /// How a language's files are edited.
@@ -94,6 +96,8 @@ pub struct Grammar {
     pub(crate) injections: Option<Query>,
     /// The brackets query, when the language has one.
     pub(crate) brackets: Option<Query>,
+    /// The runnables query, when the language has one.
+    pub(crate) runnables: Option<Query>,
     /// How its files are edited.
     editing: Editing,
 }
@@ -144,6 +148,7 @@ impl Grammar {
             outline: compile(&language, &queries.outline, "outline.scm")?,
             injections: compile(&language, &queries.injections, "injections.scm")?,
             brackets: compile(&language, &queries.brackets, "brackets.scm")?,
+            runnables: compile(&language, &queries.runnables, "runnables.scm")?,
             highlights,
             kinds,
             language,

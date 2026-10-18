@@ -139,6 +139,12 @@ pub enum Action {
     StartDebugging,
     /// Lists the programs running, to attach a debugger to one.
     AttachDebugger,
+    /// Lists the tasks of the project, to run one in the terminal.
+    RunTask,
+    /// Runs the task last run again.
+    RerunTask,
+    /// Lists the toolchains installed, to choose the one a language of the project is run with.
+    SelectToolchain,
     /// Ends the program being debugged.
     StopDebugging,
     /// Pauses the program being debugged.
@@ -317,7 +323,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, in the order the keymap lists them.
-    pub const ALL: [Self; 150] = [
+    pub const ALL: [Self; 153] = [
         Self::CommandPalette,
         Self::OpenSettings,
         Self::GoToSession,
@@ -381,6 +387,9 @@ impl Action {
         Self::ToggleBreakpoint,
         Self::StartDebugging,
         Self::AttachDebugger,
+        Self::RunTask,
+        Self::RerunTask,
+        Self::SelectToolchain,
         Self::StopDebugging,
         Self::PauseDebugging,
         Self::StepOver,
@@ -536,6 +545,9 @@ impl Action {
             Self::ToggleBreakpoint => "toggle_breakpoint",
             Self::StartDebugging => "start_debugging",
             Self::AttachDebugger => "attach_debugger",
+            Self::RunTask => "run_task",
+            Self::RerunTask => "rerun_task",
+            Self::SelectToolchain => "select_toolchain",
             Self::StopDebugging => "stop_debugging",
             Self::PauseDebugging => "pause_debugging",
             Self::StepOver => "step_over",
@@ -691,6 +703,9 @@ impl Action {
             Self::ShowSubtypes => "Show Subtypes",
             Self::ToggleBreakpoint => "Toggle Breakpoint",
             Self::StartDebugging => "Start Debugging",
+            Self::RunTask => "Run Task",
+            Self::RerunTask => "Rerun Last Task",
+            Self::SelectToolchain => "Select Toolchain",
             Self::AttachDebugger => "Attach Debugger to Process",
             Self::StopDebugging => "Stop Debugging",
             Self::PauseDebugging => "Pause Debugging",
@@ -856,6 +871,7 @@ impl Action {
             | Self::StepOver
             | Self::StepInto
             | Self::StepOut => "Debug",
+            Self::RunTask | Self::RerunTask | Self::SelectToolchain => "Tasks",
             Self::CopyWithoutIndentation | Self::Undo | Self::Redo => "Editing",
             Self::CommandPalette | Self::OpenSettings => "Window",
             Self::GoToSession
@@ -958,6 +974,9 @@ impl Action {
                 | Self::ToggleSourceControl
                 | Self::StartDebugging
                 | Self::AttachDebugger
+                | Self::RunTask
+                | Self::RerunTask
+                | Self::SelectToolchain
                 | Self::StopDebugging
                 | Self::PauseDebugging
                 | Self::StepOver
@@ -1251,6 +1270,9 @@ fn own() -> &'static [(Action, &'static [&'static str])] {
         (ToggleBreakpoint, &["f9"]),
         (StartDebugging, &["f5"]),
         (AttachDebugger, &[]),
+        (RunTask, &["ctrl+alt+shift+r"]),
+        (RerunTask, &["ctrl+alt+r"]),
+        (SelectToolchain, &[]),
         (StopDebugging, &["shift+f5"]),
         (PauseDebugging, &["f6"]),
         (StepOver, &["f10"]),

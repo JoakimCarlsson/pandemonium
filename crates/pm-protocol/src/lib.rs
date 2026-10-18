@@ -11,6 +11,7 @@ mod machine;
 mod message;
 mod request;
 mod response;
+mod task;
 
 pub use address::{
     CONTAINER_SCHEME, DIRECT_SCHEME, Route, SSH_SCHEME, TUNNEL_SCHEME, WSL_SCHEME, escape_folder,
@@ -40,8 +41,10 @@ pub use pm_lsp::{
     Hover, InlayHint, Location, Problem, Seek, SemanticToken, Severity, Signature, TextChange,
     TokenKind, Triggers,
 };
+pub use pm_task::Task;
 pub use request::{AgentServer, Attachment, Login, McpServer, RegistryAgent, Request, ToolListing};
 pub use response::{Response, SessionInfo, TerminalInfo};
+pub use task::ToolchainInfo;
 
 /// The version of the protocol this build speaks; clients and servers refuse each other when they differ.
 pub const VERSION: u32 = 1;

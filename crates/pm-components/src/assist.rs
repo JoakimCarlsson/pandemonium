@@ -685,21 +685,31 @@ pub(crate) fn listing_cells(items: &Items, index: usize) -> Vec<Node> {
             ]
         }
         Items::Commands {
-            commands, extras, ..
-        } => {
-            let Some((action, keys)) = commands.get(index) else {
-                let Some((_, command)) = extras.get(index - commands.len()) else {
-                    return Vec::new();
-                };
-                return vec![
-                    cell(command.title.clone(), 12, Role::Text, false),
-                    tag(format!("extension {}", command.extension), 11, Role::Subtle),
-                ];
-            };
-            let mut cells = vec![cell(action.title(), 12, Role::Text, false)];
-            cells.extend(keys.clone().map(|keys| tag(keys, 11, Role::Subtle)));
-            cells
-        }
+            commands,
+            tasks,
+            extras,
+            ..
+        } => match commands.get(index) {
+            Some((action, keys)) => {
+                let mut cells = vec![cell(action.title(), 12, Role::Text, false)];
+                cells.extend(keys.clone().map(|keys| tag(keys, 11, Role::Subtle)));
+                cells
+            }
+            None => match tasks.get(index - commands.len()) {
+                Some(task) => vec![
+                    cell(crate::listing::task_title(task), 12, Role::Text, false),
+                    tag(task.command.clone(), 11, Role::Subtle),
+                ],
+                None => extras
+                    .get(index - commands.len() - tasks.len())
+                    .map_or_else(Vec::new, |(_, command)| {
+                        vec![
+                            cell(command.title.clone(), 12, Role::Text, false),
+                            tag(format!("extension {}", command.extension), 11, Role::Subtle),
+                        ]
+                    }),
+            },
+        },
         Items::Outline { items, .. } => {
             let Some(item) = items.get(index) else {
                 return Vec::new();

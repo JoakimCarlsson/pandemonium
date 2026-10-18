@@ -644,12 +644,13 @@
       "server": "rust-analyzer",
       "files": {
         "brackets.scm": "914f67dd435081dc1e4744104acda3ddc62c8dce73706f1117223c488b9de5e7",
-        "config.toml": "d7a08869237d4d9574a1d2079ff1503605a8d8aaca386e1a6f9e002c782fa712",
+        "config.toml": "17e1ffcb937a32363e849c9af3bdb93c6730b21cb4db4c4989e84ac99503405b",
         "highlights.scm": "48a60820fe574a37494db0f7decb2fbf586235be9d5110557b7c37c710256277",
         "icon.svg": "641040fc553ae4db835a47b49fd2690dcc9fadc84da024e3fc63c4322e3d11be",
         "indents.scm": "75b96136a0eda604b13de69a37c9329ad2ef79e715b6d458f393fed854caf95a",
         "injections.scm": "24e830e374ec2d6ba3c77a51b0924bf331e4b3ad29403ece0ddce138d03e3684",
-        "outline.scm": "0a7c5d8454d6ba5eba16711a4d7fe0bfb772c6c35bff23c84449437efdab9546"
+        "outline.scm": "0a7c5d8454d6ba5eba16711a4d7fe0bfb772c6c35bff23c84449437efdab9546",
+        "runnables.scm": "3237ca119b236793689f517db5c09b11bba6014eb7af077f9adb3ba9922c95d6"
       },
       "local": false
     },
