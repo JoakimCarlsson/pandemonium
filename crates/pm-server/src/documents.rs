@@ -25,23 +25,28 @@ impl Documents {
     pub(crate) fn new() -> Self {
         let openers: Arc<Mutex<HashMap<(PathBuf, String), Openers>>> = Arc::default();
         let reached = openers.clone();
-        let hub = Hub::new(Arc::new(move |published: Published| {
-            let Some((directory, connections)) = reached.lock().ok().and_then(|held| {
-                held.get(&(published.root.clone(), published.path.clone()))
-                    .cloned()
-            }) else {
-                return;
-            };
-            let message = ServerMessage::Diagnostics {
-                directory,
-                path: published.path,
-                version: published.version,
-                diagnostics: published.diagnostics,
-            };
-            for connection in connections {
-                let _ = connection.outbox.send(message.clone());
-            }
-        }));
+        let hub = Hub::new(
+            Arc::new(move |published: Published| {
+                let Some((directory, connections)) = reached.lock().ok().and_then(|held| {
+                    held.get(&(published.root.clone(), published.path.clone()))
+                        .cloned()
+                }) else {
+                    return;
+                };
+                let message = ServerMessage::Diagnostics {
+                    directory,
+                    path: published.path,
+                    version: published.version,
+                    diagnostics: published.diagnostics,
+                };
+                for connection in connections {
+                    let _ = connection.outbox.send(message.clone());
+                }
+            }),
+            Arc::new(|root: &std::path::Path, spec: &pm_lsp::ServerSpec| {
+                crate::tasks::server_environment(root, spec)
+            }),
+        );
         let documents = Self { hub, openers };
         documents.settings_changed(&crate::machine::settings());
         documents

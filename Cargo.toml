@@ -38,6 +38,7 @@ pm-buffer = { path = "crates/pm-buffer" }
 pm-treesitter = { path = "crates/pm-treesitter" }
 pm-lsp = { path = "crates/pm-lsp" }
 pm-dap = { path = "crates/pm-dap" }
+pm-task = { path = "crates/pm-task" }
 pm-editor = { path = "crates/pm-editor" }
 pm-config = { path = "crates/pm-config" }
 

@@ -13,7 +13,7 @@ use crate::assist::listing_cells;
 use crate::input::{Input, Size as InputSize};
 use crate::listing::{
     Destination, Items, LISTING_BODY, LISTING_FILTER, LISTING_ROW_BASE, LISTING_WIDTH, Listing,
-    Quick, line_named, matched_characters,
+    Quick, line_named, matched_characters, task_title,
 };
 use crate::parts::{glyph, line};
 use pm_icon::IconName;
@@ -109,20 +109,46 @@ fn row(listing: &Listing, place: usize, index: usize, picked: bool) -> Node {
     let query = listing.items.query();
     let (cells, group) = match &listing.items {
         Items::Commands {
-            commands, recent, ..
+            commands,
+            tasks,
+            recent,
+            ..
         } => {
+            let shown = listing.items.rows();
+            let is_task =
+                |place: usize| shown.get(place).is_some_and(|held| *held >= commands.len());
             let group = match (*recent, place) {
+                (_, place) if is_task(place) && (place == 0 || !is_task(place - 1)) => {
+                    Some(("tasks", place > 0))
+                }
                 (0, _) => None,
                 (_, 0) => Some(("recently used", false)),
-                (recent, place) if place == recent => Some(("other commands", true)),
+                (recent, place) if place == recent && !is_task(place) => {
+                    Some(("other commands", true))
+                }
                 _ => None,
             };
-            let cells = commands.get(index).map_or_else(Vec::new, |(action, keys)| {
-                let mut cells = vec![marked(&action.palette_title(), query)];
-                cells.extend(group.map(|(said, _)| separator(said)));
-                cells.extend(keys.as_deref().map(keycaps));
-                cells
-            });
+            let cells = match commands.get(index) {
+                Some((action, keys)) => {
+                    let mut cells = vec![marked(&action.palette_title(), query)];
+                    cells.extend(group.map(|(said, _)| separator(said)));
+                    cells.extend(keys.as_deref().map(keycaps));
+                    cells
+                }
+                None => tasks
+                    .get(index - commands.len())
+                    .map_or_else(Vec::new, |task| {
+                        let mut cells = vec![marked(&task_title(task), query)];
+                        cells.extend(group.map(|(said, _)| separator(said)));
+                        cells.push(node().styles([flex_none(), overflow_hidden()]).child(line(
+                            task.command.clone(),
+                            12,
+                            1.4,
+                            Role::Subtle,
+                        )));
+                        cells
+                    }),
+            };
             (cells, group)
         }
         Items::Files { paths, recent, .. } => {

@@ -93,6 +93,7 @@ pub mod steps;
 pub mod sticky;
 pub mod tab_menu;
 pub mod tally;
+pub mod tasks;
 pub mod terminal;
 pub mod terminal_keys;
 pub mod terminal_menu;

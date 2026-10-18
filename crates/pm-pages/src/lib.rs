@@ -5,6 +5,7 @@ mod editing;
 mod onboarding;
 mod panes;
 mod screen;
+mod tasking;
 mod workspace;
 
 pub use onboarding::{

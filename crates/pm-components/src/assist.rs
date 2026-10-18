@@ -674,14 +674,23 @@ pub(crate) fn listing_cells(items: &Items, index: usize) -> Vec<Node> {
                 tag(beside.clone(), 11, Role::Subtle),
             ]
         }
-        Items::Commands { commands, .. } => {
-            let Some((action, keys)) = commands.get(index) else {
-                return Vec::new();
-            };
-            let mut cells = vec![cell(action.title(), 12, Role::Text, false)];
-            cells.extend(keys.clone().map(|keys| tag(keys, 11, Role::Subtle)));
-            cells
-        }
+        Items::Commands {
+            commands, tasks, ..
+        } => match commands.get(index) {
+            Some((action, keys)) => {
+                let mut cells = vec![cell(action.title(), 12, Role::Text, false)];
+                cells.extend(keys.clone().map(|keys| tag(keys, 11, Role::Subtle)));
+                cells
+            }
+            None => tasks
+                .get(index - commands.len())
+                .map_or_else(Vec::new, |task| {
+                    vec![
+                        cell(crate::listing::task_title(task), 12, Role::Text, false),
+                        tag(task.command.clone(), 11, Role::Subtle),
+                    ]
+                }),
+        },
         Items::Outline { items, .. } => {
             let Some(item) = items.get(index) else {
                 return Vec::new();

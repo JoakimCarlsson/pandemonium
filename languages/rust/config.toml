@@ -57,3 +57,21 @@ url = "https://github.com/rust-lang/rust-analyzer/releases/download/2026-10-12/r
 sha256 = "b053585692c2848acfa8e9ddf5f85bdc3741f3b23c51b72717ba0b391910b5fe"
 archive = "zip"
 member = "rust-analyzer.exe"
+
+[[runnable]]
+kind = "main"
+label = "Run {name}"
+command = "cargo run"
+marker = "Cargo.toml"
+
+[[runnable]]
+kind = "test"
+label = "Test {name}"
+command = "cargo test {name} -- --nocapture"
+marker = "Cargo.toml"
+
+[[runnable]]
+kind = "module"
+label = "Test module {name}"
+command = "cargo test {name}::"
+marker = "Cargo.toml"

@@ -2583,6 +2583,7 @@ dependencies = [
  "pm-dap",
  "pm-git",
  "pm-lsp",
+ "pm-task",
  "serde",
  "serde_json",
 ]
@@ -2616,6 +2617,7 @@ dependencies = [
  "pm-lsp",
  "pm-protocol",
  "pm-store",
+ "pm-task",
  "portable-pty",
  "serde",
  "serde_json",
@@ -2660,6 +2662,15 @@ dependencies = [
  "pm-layout",
  "pm-primitives",
  "pm-typography",
+]
+
+[[package]]
+name = "pm-task"
+version = "0.13.0-rc.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "toml",
 ]
 
 [[package]]

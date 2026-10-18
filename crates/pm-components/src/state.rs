@@ -675,6 +675,55 @@ pub enum Outgoing {
         /// What is done.
         action: pm_protocol::DebugAction,
     },
+    /// Asks the server what the folder of the session at this position can be built, tested and run with.
+    Tasks {
+        /// The session, by position.
+        session: usize,
+    },
+    /// Runs a task in the shell of a tab, in the folder of the session at this position.
+    RunTask {
+        /// The session, by position.
+        session: usize,
+        /// The task.
+        task: pm_protocol::Task,
+        /// The tab, by the name this window knows it by.
+        tab: u64,
+        /// How many columns wide its window is.
+        columns: u16,
+        /// How many lines tall its window is.
+        rows: u16,
+    },
+    /// Runs a place of a file that its language marks as runnable in the shell of a tab, in the folder of the session at this position.
+    RunRunnable {
+        /// The session, by position.
+        session: usize,
+        /// The file, from the root of the session's folder.
+        path: String,
+        /// What kind of place it is.
+        kind: String,
+        /// What it is called.
+        name: String,
+        /// The tab, by the name this window knows it by.
+        tab: u64,
+        /// How many columns wide its window is.
+        columns: u16,
+        /// How many lines tall its window is.
+        rows: u16,
+    },
+    /// Asks the machine of the session at this position which toolchains it has.
+    Toolchains {
+        /// The session, by position.
+        session: usize,
+    },
+    /// Has the machine of the session at this position run a language of the session's project with a toolchain.
+    SelectToolchain {
+        /// The session, by position.
+        session: usize,
+        /// The language, by family.
+        language: String,
+        /// The toolchain, by the id the server gave it, or nothing for the machine's own path.
+        toolchain: Option<String>,
+    },
     /// Starts a shell for the tab, in the folder of the session at this position.
     OpenTerminal {
         /// The session, by position.
@@ -1385,6 +1434,8 @@ pub struct WorkspaceState {
     pub quitting: bool,
     /// The breakpoints and the program being debugged.
     pub debug: crate::debug::DebugState,
+    /// What the project can be built, tested and run with.
+    pub tasks: crate::tasks::TaskState,
     /// What the window keeps of its own.
     pub window: pm_config::WindowSettings,
     /// Whether the window's own settings kept between runs were put in, so that what is shown is not mistaken for them before.
@@ -1524,6 +1575,7 @@ impl WorkspaceState {
             code_view: None,
             quitting: false,
             debug: crate::debug::DebugState::default(),
+            tasks: crate::tasks::TaskState::default(),
             window: pm_config::WindowSettings::default(),
             window_loaded: false,
             machine: pm_protocol::MachineSettings::default(),
@@ -1634,6 +1686,10 @@ impl WorkspaceState {
         }
         if let Some((file, line)) = crate::debug::breakpoint_of(action) {
             self.toggle_breakpoint(file, line);
+            return self;
+        }
+        if let Some((file, line)) = crate::tasks::run_of(action) {
+            self.runnable_run(file, line);
             return self;
         }
         if let Some(line) = crate::viewer::fold_of(action) {

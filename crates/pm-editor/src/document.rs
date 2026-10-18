@@ -156,6 +156,8 @@ pub struct Document {
     pub(crate) annotations: crate::annotations::Annotations,
     /// The brackets worked out last, with their depth.
     pub(crate) depths: crate::depth::DepthCache,
+    /// The runnable places worked out last.
+    pub(crate) runs: crate::runs::RunCache,
     /// The highlights worked out last.
     painted: HighlightCache,
     /// The highlights worked out last for the minimap.
@@ -237,6 +239,7 @@ impl Document {
             snippet: None,
             annotations: crate::annotations::Annotations::default(),
             depths: crate::depth::DepthCache::default(),
+            runs: crate::runs::RunCache::default(),
             painted: HighlightCache::default(),
             mapped: HighlightCache::default(),
         }
