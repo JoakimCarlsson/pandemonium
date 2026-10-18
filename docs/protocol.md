@@ -195,7 +195,7 @@ request with exactly one `response` carrying the same `id`.
 | `code_actions` | `directory`, `path`, `version`, `span`                                                           | `code_actions`  |
 | `take_code_action` | `directory`, `path`, `index`                                                                 | `edited`        |
 | `file_history` | `directory`, `path`                                                                              | `file_history`  |
-| `permalink`    | `directory`, `path`, `line` (optional)                                                           | `address`       |
+| `permalink`    | `directory`, `path`, `line` (optional), `end_line` (optional)                                    | `address`       |
 
 `agent` is an agent's id: `claude-code`, `codex` or `grok`.
 
@@ -282,6 +282,10 @@ request with exactly one `response` carrying the same `id`.
 - **`inspect`:** the files that differ from the last commit, with their diffs,
   and, when `base` is given, the messages of the commits the branch has that
   `base` has not, plus the branch and abbreviated head commit the folder is on.
+  Each change's `words` is `[{line, ranges}]`: for a removed or added line of its
+  diff, counted from 0 among the lines of `diff`, the `[start, end]` bytes of the
+  line, without its marker, that differ from the line paired with it in the same
+  run of changes.
 - **`set_accounts`:** keeps the logins and the login in use for each agent on
   the server's machine, and points the agents at them. `accounts` reads them
   back.
@@ -314,7 +318,10 @@ request with exactly one `response` carrying the same `id`.
 - **`machine_settings`, `save_machine_settings`:** what the reader set up for
   the work the server does on its machine, kept by the server, replaced whole by
   the save and put to work at once. `git` is `{auto_fetch, fetch_minutes,
-  branch_template, worktree_root}`: while `auto_fetch` is set the server runs
+  branch_template, worktree_root, hosts}`: `hosts` maps the host name of a
+  self-hosted git server to the layout its web addresses use (`github`,
+  `gitlab`, `bitbucket`, `gitea`, `azure`, `sourcehut` or `gitee`), which
+  `permalink` follows for a host whose name does not give it away; while `auto_fetch` is set the server runs
   `git fetch --all --prune` every `fetch_minutes` in the repositories of its
   open sessions and of the projects saved on its machine. `agents` is
   `{default_agent, permission_mode}`, each optional: the agent a client offers
@@ -536,7 +543,7 @@ embedded context, and anything else as a link to the stored file.
 | `bytes`      | `bytes` (base64): what a file holds, `truncated`: whether it was cut short |
 | `identity`   | `default`, `selected`: who the agent is signed in as, or null |
 | `started`    | `session`, `directory`, `branch` (always null for now), `head` (null without a worktree) |
-| `inspected`  | `changes`: `[{path, diff, staged, untracked, index, worktree, conflicted, from}]`, `commits`: `[string]` or null, `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind}`, `operation`: `Merge`, `Rebase` or `CherryPick` with what git prepared, or null |
+| `inspected`  | `changes`: `[{path, diff, words, staged, untracked, index, worktree, conflicted, from}]`, `commits`: `[string]` or null, `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind}`, `operation`: `Merge`, `Rebase` or `CherryPick` with what git prepared, or null |
 | `projects`   | `paths`, `saved`                                          |
 | `choices`    | `choices`: `[[agent, setting, value]]`                    |
 | `agent_servers` | `servers`: `[{id, name, command, env, package, installer, home}]`                |

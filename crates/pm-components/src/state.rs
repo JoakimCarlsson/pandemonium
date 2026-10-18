@@ -551,6 +551,8 @@ pub enum Outgoing {
         path: String,
         /// The line, counted from 1, or nothing for the whole file.
         line: Option<usize>,
+        /// The last line of the range that starts at `line`, counted from 1, or nothing for the one line.
+        end_line: Option<usize>,
         /// Whether the address is opened in the browser rather than copied.
         open: bool,
     },
@@ -2853,6 +2855,7 @@ impl WorkspaceState {
                 .iter()
                 .map(|found| {
                     let mut change = Change::new(&found.path, &found.diff);
+                    change.words.clone_from(&found.words);
                     change.staged = found.index.is_some() || found.staged;
                     change.unstaged = found.worktree.is_some() || !found.staged;
                     change.untracked = found.untracked;

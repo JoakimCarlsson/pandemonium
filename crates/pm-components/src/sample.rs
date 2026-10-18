@@ -107,6 +107,8 @@ pub struct Change {
     pub path: String,
     /// The lines of its diff.
     pub diff: Vec<DiffLine>,
+    /// The words that changed inside the removed and added lines of its diff.
+    pub words: Vec<pm_git::Words>,
     /// Whether the reader has read it.
     pub viewed: bool,
     /// Whether some of it is in the index, which is what the next commit takes.
@@ -161,6 +163,7 @@ impl Change {
         Self {
             path: path.to_owned(),
             diff,
+            words: Vec::new(),
             viewed: false,
             staged: false,
             unstaged: true,

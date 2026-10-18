@@ -2493,6 +2493,7 @@ version = "0.13.0-rc.4"
 dependencies = [
  "serde",
  "serde_json",
+ "similar",
 ]
 
 [[package]]
