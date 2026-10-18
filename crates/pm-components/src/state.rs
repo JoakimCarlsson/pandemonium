@@ -1291,6 +1291,8 @@ pub struct WorkspaceState {
     pub panes: crate::panes::Panes,
     /// The panes of each session other than the one whose files are open now, by its position.
     pub pane_stash: std::collections::HashMap<usize, crate::panes::Panes>,
+    /// The search of the review panel of every session but the one being worked in, by session.
+    pub search_stash: std::collections::HashMap<usize, crate::project_search::ProjectSearch>,
     /// The tab being dragged to another pane, if one is.
     pub pane_drag: Option<crate::panes::PaneDrag>,
     /// Where the menu of panes opened, while it is open.
@@ -1468,6 +1470,7 @@ impl WorkspaceState {
             tab_stash: std::collections::HashMap::new(),
             panes: crate::panes::Panes::default(),
             pane_stash: std::collections::HashMap::new(),
+            search_stash: std::collections::HashMap::new(),
             pane_drag: None,
             pane_menu: None,
             chat_back: 0.0,

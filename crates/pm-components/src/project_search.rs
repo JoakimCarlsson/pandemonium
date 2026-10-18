@@ -213,7 +213,10 @@ impl WorkspaceState {
         regex: bool,
         hits: Result<Vec<Location>, String>,
     ) -> Self {
-        let search = &mut self.project_search;
+        let search = match self.search_stash.get_mut(&session) {
+            Some(kept) => kept,
+            None => &mut self.project_search,
+        };
         let answers = search.asked.as_ref() == Some(&(session, query.to_owned(), case, regex));
         if !answers {
             return self;

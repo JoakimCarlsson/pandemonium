@@ -299,6 +299,8 @@ impl WorkspaceState {
             }
             self.pane_stash
                 .insert(before, std::mem::take(&mut self.panes));
+            self.search_stash
+                .insert(before, std::mem::take(&mut self.project_search));
         } else {
             self.files_owner = now;
             return;
@@ -309,6 +311,9 @@ impl WorkspaceState {
         }
         if let Some(panes) = now.and_then(|now| self.pane_stash.remove(&now)) {
             self.panes = panes;
+        }
+        if let Some(search) = now.and_then(|now| self.search_stash.remove(&now)) {
+            self.project_search = search;
         }
         self.files_owner = now;
         if let (Page::Session(session), Some(tab)) =
