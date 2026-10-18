@@ -487,7 +487,7 @@ pub(crate) fn file_line(
             .children(lenses.iter().map(|lens| lens_chip(lens, font)))
             .children(blamed.clone().map(|said| {
                 node()
-                    .styles([flex_none(), ml(8), min_w_px(0), overflow_hidden()])
+                    .styles([flex_1(), ml(8), min_w_px(0), overflow_hidden()])
                     .child(crate::parts::line(said, font, 1.4, Role::Subtle))
             }))
     });

@@ -6,7 +6,7 @@ use pm_protocol::{DebugCategory, DebugView, Standing};
 use pm_style::{
     Color, Role, bg, border_b, border_color, border_l, cursor_pointer, flex, flex_1, flex_col,
     flex_none, font_mono, gap, h, items_center, min_h, min_w_px, overflow_hidden, pl, px, py,
-    text_color, w_px,
+    text_color, truncate, w_px,
 };
 use pm_ui::{Node, node, text};
 
@@ -19,7 +19,7 @@ use crate::debug::{
     DEBUG_WATCH_REMOVE_BASE, Run, variable_rows,
 };
 use crate::input::{Input, Size as InputSize};
-use crate::parts::{glyph, line, spacer};
+use crate::parts::{glyph, line};
 use crate::state::WorkspaceState;
 
 /// How wide the list of the stack is, in logical pixels.
@@ -173,7 +173,7 @@ fn stack(state: &WorkspaceState, run: &Run) -> Node {
             .unwrap_or_default();
         body = body.child(row(
             vec![
-                line(frame.name.clone(), 12, 1.4, Role::Text).styles([font_mono(), flex_none()]),
+                line(frame.name.clone(), 12, 1.4, Role::Text).styles([font_mono(), min_w_px(0)]),
                 line(place, 12, 1.4, Role::Subtle).styles([flex_none()]),
             ],
             Some(FocusId(DEBUG_FRAME_BASE + index as u64)),
@@ -208,12 +208,15 @@ fn variable_row(index: usize, entry: &crate::debug::VariableRow) -> Node {
     if !entry.value.is_empty() {
         content.push(line("=", 12, 1.4, Role::Subtle).styles([flex_none()]));
         content.push(
-            line(entry.value.clone(), 12, 1.4, Role::SyntaxString)
-                .styles([font_mono(), flex_none()]),
+            line(entry.value.clone(), 12, 1.4, Role::SyntaxString).styles([
+                font_mono(),
+                flex_1(),
+                min_w_px(0),
+            ]),
         );
     }
     if let Some(kind) = &entry.kind {
-        content.push(line(kind.clone(), 11, 1.4, Role::Subtle).styles([flex_none()]));
+        content.push(line(kind.clone(), 11, 1.4, Role::Subtle).styles([min_w_px(0)]));
     }
     row(
         content,
@@ -264,8 +267,7 @@ fn variables(state: &WorkspaceState, run: &Run) -> Node {
             vec![
                 line(expression.clone(), 12, 1.4, Role::Text).styles([font_mono(), flex_none()]),
                 line("=", 12, 1.4, Role::Subtle).styles([flex_none()]),
-                line(shown.0, 12, 1.4, shown.1).styles([font_mono(), flex_none()]),
-                spacer(),
+                line(shown.0, 12, 1.4, shown.1).styles([font_mono(), flex_1(), min_w_px(0)]),
                 Button::icon(
                     IconName::Close,
                     FocusId(DEBUG_WATCH_REMOVE_BASE + index as u64),
@@ -316,6 +318,7 @@ fn console(state: &WorkspaceState, run: &Run) -> Node {
             font_mono(),
             text_color(console_tone(entry.category)),
             flex_none(),
+            truncate(),
         ]));
     }
     let ask = node().styles([px(2), py(1), flex_none()]).child(

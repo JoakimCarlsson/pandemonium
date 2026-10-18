@@ -4,7 +4,8 @@ use pm_input::FocusId;
 use pm_style::{
     Radius, Role, Utility, bg, border, border_color, cursor_not_allowed, cursor_text, flex, flex_1,
     flex_col, flex_none, font_mono, h, h_full, items_center, leading_ratio, min_h, min_w_px,
-    opacity, overflow_hidden, pb, pt, px, ring, ring_color, rounded, text_color, text_px, w_full,
+    opacity, overflow_hidden, pb, pt, px, ring, ring_color, rounded, text_color, text_px, truncate,
+    w_full,
 };
 use pm_text::{Field, Shaper};
 use pm_ui::{Line, Node, node, text, wrap};
@@ -161,6 +162,9 @@ impl<'a> Input<'a> {
         let mut line = text(content)
             .styles([text_px(font), leading_ratio(1.4), text_color(tone)])
             .caret(caret, self.id);
+        if shown.is_empty() {
+            line = line.styles([truncate(), min_w_px(0)]);
+        }
         if self.variant == Variant::Default {
             line = line.styles([font_mono()]);
         } else {
@@ -256,7 +260,7 @@ impl<'a> Input<'a> {
             return column.child(
                 text(self.placeholder)
                     .styles(typography())
-                    .styles([text_color(Role::Subtle), flex_none()])
+                    .styles([text_color(Role::Subtle), truncate(), min_w_px(0)])
                     .caret(0, self.id)
                     .field_line(self.id, 0),
             );

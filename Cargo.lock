@@ -2753,6 +2753,7 @@ dependencies = [
  "pm-style",
  "pm-text",
  "pm-theme",
+ "pm-typography",
 ]
 
 [[package]]
