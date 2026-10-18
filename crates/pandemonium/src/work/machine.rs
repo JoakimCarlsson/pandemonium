@@ -50,12 +50,12 @@ impl Work {
         );
     }
 
-    /// Learns the tokens of the servers reached straight at their address, from the servers the window knows.
+    /// Learns the tokens of the servers reached straight at their address or through a tunnel, from the servers the window knows.
     pub fn set_servers(&mut self, servers: &pm_config::ServerList) {
         self.tokens = servers
             .known
             .iter()
-            .filter(|server| server.reach == pm_config::Reach::Direct)
+            .filter(|server| server.reach.keeps_token())
             .map(|server| (server.address.clone(), server.token.clone()))
             .collect();
     }

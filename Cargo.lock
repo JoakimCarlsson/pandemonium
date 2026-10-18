@@ -2289,6 +2289,7 @@ dependencies = [
  "pm-style",
  "pm-text",
  "pm-theme",
+ "pm-transport",
  "pm-treesitter",
  "pm-ui",
  "resvg",
@@ -2636,6 +2637,7 @@ name = "pm-ssh"
 version = "0.13.0-rc.4"
 dependencies = [
  "pm-protocol",
+ "pm-transport",
  "serde_json",
 ]
 
@@ -2682,6 +2684,14 @@ name = "pm-theme"
 version = "0.13.0-rc.4"
 dependencies = [
  "pm-color",
+]
+
+[[package]]
+name = "pm-transport"
+version = "0.13.0-rc.4"
+dependencies = [
+ "pm-protocol",
+ "serde_json",
 ]
 
 [[package]]

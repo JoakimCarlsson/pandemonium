@@ -1803,6 +1803,24 @@ fn settings_sample() -> WorkspaceState {
             address: "100.64.0.7:6868".to_owned(),
             token: "secret".to_owned(),
         },
+        pm_config::KnownServer {
+            name: "Ubuntu".to_owned(),
+            reach: pm_config::Reach::Wsl,
+            address: "Ubuntu".to_owned(),
+            token: String::new(),
+        },
+        pm_config::KnownServer {
+            name: "App container".to_owned(),
+            reach: pm_config::Reach::Container,
+            address: "/home/me/app".to_owned(),
+            token: String::new(),
+        },
+        pm_config::KnownServer {
+            name: "Home server".to_owned(),
+            reach: pm_config::Reach::Tunnel,
+            address: "home.example.com".to_owned(),
+            token: "secret".to_owned(),
+        },
     ];
     let fonts = |names: &[&str]| names.iter().map(|name| (*name).to_owned()).collect();
     welcome()

@@ -36,7 +36,7 @@ pub const MACHINE_ADDRESS: FocusId = FocusId(20_000_074);
 /// The box the form's token is written in.
 pub const MACHINE_TOKEN: FocusId = FocusId(20_000_075);
 
-/// The first of the choices of how the form's server is reached; the other follows it.
+/// The first of the choices of how the form's server is reached; the others follow it.
 const MACHINE_REACH_BASE: u64 = 20_000_076;
 
 /// The first of the buttons changing or taking out a server; each server has two after its own base, its place among them times two.
@@ -46,7 +46,13 @@ const MACHINE_ROW_BASE: u64 = 20_005_000;
 const MACHINE_ROW_END: u64 = 20_005_400;
 
 /// How the servers can be reached, in the order the form offers them.
-const REACHES: [Reach; 2] = [Reach::Direct, Reach::Ssh];
+const REACHES: [Reach; 5] = [
+    Reach::Direct,
+    Reach::Ssh,
+    Reach::Wsl,
+    Reach::Container,
+    Reach::Tunnel,
+];
 
 /// A server being described: which one of the list it replaces, and the boxes it is written in.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -59,7 +65,7 @@ pub struct MachineForm {
     reach: Reach,
     /// Where it is.
     address: Field,
-    /// The token a direct one wants.
+    /// The token a direct one or one behind a tunnel wants.
     token: Field,
 }
 
@@ -83,9 +89,10 @@ impl MachineForm {
             name: name.to_owned(),
             reach: self.reach,
             address: address.to_owned(),
-            token: match self.reach {
-                Reach::Direct => self.token.text().trim().to_owned(),
-                Reach::Ssh => String::new(),
+            token: if self.reach.keeps_token() {
+                self.token.text().trim().to_owned()
+            } else {
+                String::new()
             },
         })
     }
@@ -106,7 +113,10 @@ impl WorkspaceState {
             }
             MACHINE_CANCEL => self.settings_page.server_form = None,
             MACHINE_SAVE => self.save_machine(),
-            FocusId(number) if (MACHINE_REACH_BASE..MACHINE_REACH_BASE + 2).contains(&number) => {
+            FocusId(number)
+                if (MACHINE_REACH_BASE..MACHINE_REACH_BASE + REACHES.len() as u64)
+                    .contains(&number) =>
+            {
                 if let Some(form) = self.settings_page.server_form.as_mut() {
                     form.reach = REACHES[(number - MACHINE_REACH_BASE) as usize];
                 }
@@ -207,9 +217,15 @@ fn form_node(form: &MachineForm) -> Node {
     let (address_label, address_hint) = match form.reach {
         Reach::Direct => ("Address", "host:port, e.g. 100.64.0.7:6868"),
         Reach::Ssh => ("SSH destination", "user@host, or a host of ~/.ssh/config"),
+        Reach::Wsl => ("Distribution", "As wsl.exe -l lists it, e.g. Ubuntu"),
+        Reach::Container => (
+            "Folder with a devcontainer.json",
+            "A folder on this machine, e.g. /home/me/app",
+        ),
+        Reach::Tunnel => ("Tunnel hostname", "e.g. build.example.com"),
     };
     let reach = choices(
-        &["Direct address", "SSH host"],
+        &["Direct", "SSH", "WSL", "Dev container", "Tunnel"],
         REACHES
             .iter()
             .position(|held| *held == form.reach)
@@ -231,7 +247,7 @@ fn form_node(form: &MachineForm) -> Node {
             MACHINE_ADDRESS,
             address_hint,
         ));
-    if form.reach == Reach::Direct {
+    if form.reach.keeps_token() {
         fields = fields.child(labelled(
             "Token",
             &form.token,
@@ -300,6 +316,9 @@ fn reach_of(server: &KnownServer) -> String {
     match server.reach {
         Reach::Direct => format!("Direct · {}", server.address),
         Reach::Ssh => format!("SSH · {}", server.address),
+        Reach::Wsl => format!("WSL · {}", server.address),
+        Reach::Container => format!("Dev container · {}", server.address),
+        Reach::Tunnel => format!("Tunnel · {}", server.address),
     }
 }
 
