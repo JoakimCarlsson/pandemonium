@@ -55,12 +55,8 @@ fn is_global(address: IpAddr) -> bool {
             if first == 0x2002 {
                 return is_global(IpAddr::V4(embedded(segments[1], segments[2])));
             }
-            !(v6.is_multicast()
-                || first & 0xfe00 == 0xfc00
-                || first & 0xffc0 == 0xfe80
-                || first & 0xffc0 == 0xfec0
-                || (first == 0x2001 && (segments[1] == 0 || segments[1] == 0xdb8))
-                || first == 0x0100)
+            first & 0xe000 == 0x2000
+                && !(first == 0x2001 && (segments[1] == 0 || segments[1] == 0xdb8))
         }
     }
 }
