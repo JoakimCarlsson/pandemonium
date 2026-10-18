@@ -5,8 +5,8 @@ use pm_input::FocusId;
 use pm_style::{
     Color, Radius, Role, animate_spin, bg, border, border_b, border_color, border_l,
     cursor_pointer, flex, flex_1, flex_col, flex_none, font_medium, font_mono, gap, h, h_full,
-    items_center, justify_center, min_h, min_w_px, overflow_hidden, pb, pl, px, py, relative,
-    rounded, w_full, w_px,
+    items_center, justify_center, min_h, min_w_px, overflow_hidden, pb, px, py, relative, rounded,
+    w_full, w_px,
 };
 use pm_text::Shaper;
 use pm_ui::{Node, node};
@@ -441,23 +441,7 @@ pub fn review(state: &WorkspaceState, session: &Session, shaper: &mut Shaper) ->
                             IconName::Search,
                             crate::project_search::REVIEW_SEARCH,
                             state.review_tab == ReviewTab::Search,
-                        ))
-                        .child(
-                            match state
-                                .git
-                                .operation
-                                .as_ref()
-                                .filter(|_| state.review_tab == ReviewTab::Changes)
-                                .map(|waiting| waiting.label())
-                            {
-                                Some(label) => {
-                                    crate::parts::clipped(label.clone(), 12, Role::Muted)
-                                        .styles([pl(2)])
-                                        .tooltip(label)
-                                }
-                                None => spacer(),
-                            },
-                        ),
+                        )),
                 )
                 .children(
                     (state.review_tab == ReviewTab::Changes && !session.changes.is_empty()).then(
