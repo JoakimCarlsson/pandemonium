@@ -244,6 +244,18 @@ pub enum Response {
         /// The characters after which the server tells what the call the caret is in looks like.
         #[serde(default)]
         signature: Vec<String>,
+        /// The characters after which the server formats what was just typed.
+        #[serde(default)]
+        format: Vec<String>,
+        /// Whether the server formats a stretch of a file.
+        #[serde(default)]
+        formats_ranges: bool,
+        /// Whether the server says which blocks of a file can be folded.
+        #[serde(default)]
+        folds: bool,
+        /// Whether the server says which stretches of a file are edited together.
+        #[serde(default)]
+        links: bool,
     },
     /// What could be written at a place.
     Completions {
@@ -254,6 +266,16 @@ pub enum Response {
     Formatted {
         /// The edits, in any order; they do not overlap.
         edits: Vec<pm_lsp::TextChange>,
+    },
+    /// The blocks of lines of a file that can be folded.
+    FoldingRanges {
+        /// The blocks, as the server gives them.
+        ranges: Vec<pm_lsp::FoldRange>,
+    },
+    /// The stretches of a file that are edited together with the one at a place; none when there are none.
+    LinkedRanges {
+        /// The stretches, the one at the place among them.
+        spans: Vec<pm_buffer::Span>,
     },
     /// Where the thing at a place is defined.
     Definitions {

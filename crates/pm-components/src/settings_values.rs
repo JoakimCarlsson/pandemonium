@@ -128,6 +128,10 @@ impl Setting {
             Self::GitGutter => Control::Switch(editor.git_gutter),
             Self::InlineBlame => Control::Switch(editor.inline_blame),
             Self::Occurrences => Control::Switch(editor.occurrence_highlights),
+            Self::Minimap => Control::Switch(editor.minimap),
+            Self::StickyScroll => Control::Switch(editor.sticky_scroll),
+            Self::FormatOnType => Control::Switch(editor.format_on_type),
+            Self::LinkedEditing => Control::Switch(editor.linked_editing),
             Self::CursorShape => Control::Choice(
                 &["Bar", "Block", "Underline"],
                 place_of(
@@ -348,6 +352,10 @@ impl Setting {
             Self::GitGutter => editor.git_gutter ^= true,
             Self::InlineBlame => editor.inline_blame ^= true,
             Self::Occurrences => editor.occurrence_highlights ^= true,
+            Self::Minimap => editor.minimap ^= true,
+            Self::StickyScroll => editor.sticky_scroll ^= true,
+            Self::FormatOnType => editor.format_on_type ^= true,
+            Self::LinkedEditing => editor.linked_editing ^= true,
             Self::CursorShape => {
                 let shapes = [CursorShape::Bar, CursorShape::Block, CursorShape::Underline];
                 editor.cursor_shape = chosen(&shapes, option);
@@ -688,6 +696,10 @@ impl Setting {
             Self::GitGutter => editor.git_gutter = source.git_gutter,
             Self::InlineBlame => editor.inline_blame = source.inline_blame,
             Self::Occurrences => editor.occurrence_highlights = source.occurrence_highlights,
+            Self::Minimap => editor.minimap = source.minimap,
+            Self::StickyScroll => editor.sticky_scroll = source.sticky_scroll,
+            Self::FormatOnType => editor.format_on_type = source.format_on_type,
+            Self::LinkedEditing => editor.linked_editing = source.linked_editing,
             Self::CursorShape => editor.cursor_shape = source.cursor_shape,
             Self::CursorBlink => editor.cursor_blink = source.cursor_blink,
             Self::SoftWrap => editor.soft_wrap = source.soft_wrap,

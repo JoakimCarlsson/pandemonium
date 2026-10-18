@@ -16,6 +16,7 @@ use pm_components::extensions::{EXTENSIONS_SCROLL, INSTALL_EXTENSION};
 use pm_components::git_controls::{GRAPH_SCROLL, Pick, REVIEW_DISMISS, VIEWER_SCROLL};
 use pm_components::git_menus::MenuKind;
 use pm_components::message_menu::is_message_menu_item;
+use pm_components::minimap::MINIMAP;
 use pm_components::open_files::{EDITOR_FIELD, STRIP};
 use pm_components::overview::OVERVIEW_SCROLL;
 use pm_components::panes::{PANE_MENU, split_row_of};
@@ -126,6 +127,8 @@ pub struct App {
     pressed_on: Option<FocusId>,
     /// The scrolling box whose bar is held down, and where the pointer last was along it.
     bar_drag: Option<(FocusId, f32)>,
+    /// Whether the pointer is down on the minimap, so that moving it scrolls the file.
+    minimap_drag: bool,
     /// The handle on the edge of a panel being dragged, where the pointer went down on it, how big the panel was, and which way the handle grows it.
     sash_drag: Option<(FocusId, (f32, f32), f32, Grows)>,
     /// The settings window and what it keeps, while settings are open and it is not standing in for the main window.
@@ -328,6 +331,7 @@ impl Default for App {
             output: Output::default(),
             pressed_on: None,
             bar_drag: None,
+            minimap_drag: false,
             sash_drag: None,
             settings_surface: None,
             on_settings: false,
@@ -1017,6 +1021,51 @@ impl App {
         self.bar_drag.is_some()
     }
 
+    /// Takes hold of the minimap when the pointer is down on it, scrolling the file shown to where it is, and says whether it did.
+    fn grab_minimap(&mut self) -> bool {
+        let Some((_, y)) = self.pointer.position else {
+            return false;
+        };
+        let on = self.pointer.position.and_then(|at| self.output.hit(at));
+        self.minimap_drag = on == Some(MINIMAP);
+        if self.minimap_drag {
+            self.drag_minimap(y);
+        }
+        self.minimap_drag
+    }
+
+    /// Scrolls the file shown so its view is centred on the point of the minimap `y` logical pixels down the window, while the minimap is held.
+    fn drag_minimap(&mut self, y: f32) {
+        if !self.minimap_drag {
+            return;
+        }
+        let find = |id: FocusId| self.output.regions.iter().find(|region| region.id == id);
+        let (Some(map), Some(view)) = (find(MINIMAP), find(VIEWER_SCROLL)) else {
+            return;
+        };
+        let (down, height, shown) = (y - map.rect.y, map.rect.height, view.rect.height);
+        let room = self
+            .output
+            .scrollers
+            .iter()
+            .find(|scroller| scroller.id == VIEWER_SCROLL)
+            .map_or(f32::MAX, |scroller| scroller.room);
+        self.model.update(|state| {
+            *state = std::mem::take(state).minimap_pressed(down, height, shown, room)
+        });
+    }
+
+    /// Goes to the line kept at the top of the file shown that the pointer is down on, and says whether it is on one.
+    fn press_sticky(&mut self) -> bool {
+        let on = self.pointer.position.and_then(|at| self.output.hit(at));
+        let Some(above) = on.and_then(pm_components::sticky::sticky_of) else {
+            return false;
+        };
+        self.model
+            .update(|state| *state = std::mem::take(state).sticky_pressed(above));
+        true
+    }
+
     /// Follows the pointer down to `y` while a bar is held: the box moves as far as the bar does along its track.
     fn drag_bar(&mut self, y: f32) {
         let Some((id, last)) = self.bar_drag else {
@@ -1085,6 +1134,9 @@ impl App {
             PointerEvent::Pressed(Button::Left) if self.grab_bar() => {
                 self.pressed_on = None;
             }
+            PointerEvent::Pressed(Button::Left) if self.grab_minimap() || self.press_sticky() => {
+                self.pressed_on = None;
+            }
             PointerEvent::Pressed(Button::Left) => {
                 self.terminal_press();
                 let on = self.pointer.position.and_then(|at| self.output.hit(at));
@@ -1144,6 +1196,7 @@ impl App {
             PointerEvent::Moved(x, y) => {
                 self.editor_pointer_moved(x, y);
                 self.drag_bar(y);
+                self.drag_minimap(y);
                 self.drag_sash((x, y));
                 self.drag_comment((x, y));
                 self.drag_project((x, y));
@@ -1159,6 +1212,7 @@ impl App {
             }
             PointerEvent::Released(Button::Left) => {
                 self.bar_drag = None;
+                self.minimap_drag = false;
                 self.sash_drag = None;
                 self.end_comment_drag();
                 self.dragging = None;

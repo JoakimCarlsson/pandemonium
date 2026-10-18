@@ -222,6 +222,10 @@ enum Pending {
     DebugWatched(usize),
     /// The program with this number, which the window shows, watched again after the connection was made anew.
     DebugRewatched(u64),
+    /// Which blocks of the file of the session at this position, at this path and version, can be folded.
+    FoldingRanges(usize, String, i32),
+    /// Which stretches of the file of the session at this position, at this path and version, are edited together with the one at a place.
+    LinkedRanges(usize, String, i32),
 }
 
 impl Pending {
@@ -1819,6 +1823,8 @@ impl Work {
             | Pending::FileHistory(..)
             | Pending::Revision(..)
             | Pending::Formatted(..)
+            | Pending::FoldingRanges(..)
+            | Pending::LinkedRanges(..)
             | Pending::Extensions => self.answered_code(model, host, pending, response),
             Pending::DebugScenarios(_)
             | Pending::DebugProcesses(_)

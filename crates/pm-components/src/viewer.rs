@@ -26,6 +26,9 @@ use crate::parts::{glyph, line, spacer};
 use crate::state::WorkspaceState;
 use pm_editor::{Document, EditorSettings, LineChange};
 
+/// How wide a view of a file must be, in logical pixels, for a minimap to be drawn beside it.
+const MINIMAP_ROOM: f32 = 420.0;
+
 /// How far beyond the view, above and below, lines are still built, in logical pixels.
 const OVERSCAN: f32 = 100.0;
 
@@ -793,35 +796,70 @@ pub fn file_view(
         .child(strip(viewer, live))
         .child(
             node()
-                .styles([flex(), flex_1(), min_h(0), overflow_hidden(), relative()])
+                .styles([flex(), flex_1(), min_h(0), overflow_hidden()])
                 .child(
                     node()
                         .styles([
                             flex(),
-                            flex_col(),
                             flex_1(),
                             min_w_px(0),
                             min_h(0),
                             overflow_hidden(),
+                            relative(),
                         ])
-                        .scroll_from_start(scroller, viewer.scroll)
-                        .child(body),
+                        .child(
+                            node()
+                                .styles([
+                                    flex(),
+                                    flex_col(),
+                                    flex_1(),
+                                    min_w_px(0),
+                                    min_h(0),
+                                    overflow_hidden(),
+                                ])
+                                .scroll_from_start(scroller, viewer.scroll)
+                                .child(body),
+                        )
+                        .children(match &viewer.contents {
+                            Contents::Text(document) if source => {
+                                crate::scroll_marks::scroll_marks(document, &found.0, &state.editor)
+                            }
+                            _ => None,
+                        })
+                        .children(match &viewer.contents {
+                            Contents::Text(document) if source => crate::sticky::sticky(
+                                document,
+                                viewer.scroll,
+                                state.wrap_columns(),
+                                &state.editor,
+                            ),
+                            _ => None,
+                        })
+                        .children(state.finding.as_ref().filter(|_| live).and_then(|finding| {
+                            match &viewer.contents {
+                                Contents::Text(document) if source => Some(crate::find::find_bar(
+                                    finding,
+                                    document,
+                                    state.editor.smartcase,
+                                )),
+                                _ => None,
+                            }
+                        })),
                 )
                 .children(match &viewer.contents {
-                    Contents::Text(document) if source => {
-                        crate::scroll_marks::scroll_marks(document, &found.0, &state.editor)
+                    Contents::Text(document)
+                        if source && state.editor.minimap && width >= MINIMAP_ROOM =>
+                    {
+                        Some(crate::minimap::minimap(
+                            document,
+                            viewer.scroll,
+                            lines_height,
+                            state.editor.row_height(),
+                            state.wrap_columns(),
+                            lines_height,
+                        ))
                     }
                     _ => None,
-                })
-                .children(state.finding.as_ref().filter(|_| live).and_then(|finding| {
-                    match &viewer.contents {
-                        Contents::Text(document) if source => Some(crate::find::find_bar(
-                            finding,
-                            document,
-                            state.editor.smartcase,
-                        )),
-                        _ => None,
-                    }
-                })),
+                }),
         )
 }

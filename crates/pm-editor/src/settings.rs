@@ -104,6 +104,14 @@ pub struct EditorSettings {
     pub extend_comment_on_newline: bool,
     /// Whether the file is formatted as its language says when it is saved.
     pub format_on_save: bool,
+    /// Whether what was just typed is formatted as its language says.
+    pub format_on_type: bool,
+    /// Whether typing in one of several stretches that belong together, such as the two names of a tag, types in the others too.
+    pub linked_editing: bool,
+    /// Whether a map of the whole file is drawn beside it.
+    pub minimap: bool,
+    /// Whether the lines that open the blocks the first line shown is in stay at the top as the file scrolls.
+    pub sticky_scroll: bool,
     /// Whether spaces at the ends of lines are taken off when the file is saved.
     pub remove_trailing_whitespace_on_save: bool,
     /// Whether the file is made to end with a line break when it is saved.
@@ -164,6 +172,10 @@ impl Default for EditorSettings {
             auto_indent: true,
             extend_comment_on_newline: true,
             format_on_save: true,
+            format_on_type: true,
+            linked_editing: true,
+            minimap: true,
+            sticky_scroll: true,
             remove_trailing_whitespace_on_save: true,
             ensure_final_newline_on_save: true,
             autosave: false,

@@ -132,6 +132,21 @@ impl Screen {
         self.in_workspace(WorkspaceState::formatted_by_hand)
     }
 
+    /// The screen after a press or drag on the minimap scrolled the file shown.
+    pub fn minimap_pressed(self, y: f32, height: f32, view: f32, room: f32) -> Self {
+        self.in_workspace(|state| state.minimap_pressed(y, height, view, room))
+    }
+
+    /// The screen after the line kept at the top of the file shown with this many lines above it was pressed.
+    pub fn sticky_pressed(self, above: usize) -> Self {
+        self.in_workspace(|state| state.sticky_pressed(above))
+    }
+
+    /// The screen with the selection of the file shown formatted as its language says, without writing it.
+    pub fn selection_formatted(self) -> Self {
+        self.in_workspace(WorkspaceState::selection_formatted)
+    }
+
     /// The screen after the language server gave the edits that format a file.
     pub fn with_formatted(
         self,
@@ -512,6 +527,38 @@ impl Screen {
         spans: Vec<pm_protocol::Span>,
     ) -> Self {
         self.in_workspace(|state| state.with_highlights(session, path, version, spans))
+    }
+
+    /// The screen asking the language server which blocks of the file shown can be folded.
+    pub fn folds_requested(self) -> Self {
+        self.in_workspace(WorkspaceState::folds_requested)
+    }
+
+    /// The screen after the language server said which blocks of a file can be folded.
+    pub fn with_folds(
+        self,
+        session: usize,
+        path: &str,
+        version: i32,
+        ranges: Vec<pm_protocol::FoldRange>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_folds(session, path, version, ranges))
+    }
+
+    /// The screen asking the language server which stretches are edited together with the one the caret of the file shown is in.
+    pub fn links_requested(self) -> Self {
+        self.in_workspace(WorkspaceState::links_requested)
+    }
+
+    /// The screen after the language server said which stretches of a file are edited together with the one the caret was in.
+    pub fn with_links(
+        self,
+        session: usize,
+        path: &str,
+        version: i32,
+        spans: Vec<pm_protocol::Span>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_links(session, path, version, spans))
     }
 
     /// The screen after the language server said what the call a place of a file is in looks like.

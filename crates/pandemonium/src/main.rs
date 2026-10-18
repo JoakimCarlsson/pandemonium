@@ -76,6 +76,7 @@ fn main() {
             Some("outline") => Shot::Outline,
             Some("cursors") => Shot::Cursors,
             Some("folded") => Shot::Folded,
+            Some("sticky") => Shot::Sticky,
             Some("finder") => Shot::Finder,
             Some("commands") => Shot::Commands,
             Some("sessions") => Shot::Sessions,

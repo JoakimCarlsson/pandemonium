@@ -21,9 +21,11 @@ mod indent;
 mod jumps;
 mod keymap;
 mod lines;
+mod link;
 mod marks;
 mod pairs;
 mod settings;
+mod sticky;
 mod wrap;
 
 pub use document::{Completions, Document, HoverCard};

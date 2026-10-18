@@ -346,6 +346,41 @@ pub enum Outgoing {
         version: i32,
         /// Whether the file is written to the folder once it is formatted.
         save: bool,
+        /// The stretch to format, when only a stretch is.
+        range: Option<pm_protocol::Span>,
+    },
+    /// Asks the language server for the edits that format what was just typed in a file of the session at this position.
+    FormatOnType {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The version of the text the edits are for.
+        version: i32,
+        /// The place the caret is at after the character.
+        position: pm_protocol::Position,
+        /// The character typed.
+        character: String,
+    },
+    /// Asks the language server which blocks of a file of the session at this position can be folded.
+    FoldingRanges {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The version of the text the blocks are about.
+        version: i32,
+    },
+    /// Asks the language server which stretches of a file of the session at this position are edited together with the one at a place.
+    LinkedRanges {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The version of the text the place is in.
+        version: i32,
+        /// The place.
+        position: pm_protocol::Position,
     },
     /// Asks the language server where the thing at a place of a file of the session at this position is defined.
     Definition {

@@ -640,7 +640,7 @@ pub enum Request {
         #[serde(default)]
         trigger: Option<String>,
     },
-    /// The edits that format an open file as its language says, once the file reaches `version`.
+    /// The edits that format an open file as its language says, or only a stretch of it, once the file reaches `version`.
     Format {
         /// The folder.
         directory: String,
@@ -648,6 +648,42 @@ pub enum Request {
         path: String,
         /// The version of the text the edits are made to.
         version: i32,
+        /// The stretch to format; the whole file when there is none.
+        #[serde(default)]
+        range: Option<pm_buffer::Span>,
+    },
+    /// The edits that format what was just typed in an open file, once the file reaches `version`.
+    FormatOnType {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The version of the text the place is in.
+        version: i32,
+        /// The place the caret is at after the character.
+        position: pm_buffer::Position,
+        /// The character typed.
+        character: String,
+    },
+    /// The blocks of lines of an open file that can be folded, once the file reaches `version`.
+    FoldingRanges {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The version of the text the blocks are about.
+        version: i32,
+    },
+    /// The stretches of an open file that are edited together with the one at a place, once the file reaches `version`.
+    LinkedRanges {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The version of the text the place is in.
+        version: i32,
+        /// The place.
+        position: pm_buffer::Position,
     },
     /// The places looked for from a place of an open file, once the file reaches `version`: where the thing there is defined, unless `seek` names something else.
     Definition {

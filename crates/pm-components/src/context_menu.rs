@@ -48,6 +48,8 @@ pub enum EditorCommand {
     Rename,
     /// Formats the file as its language says.
     Format,
+    /// Formats the selection as its language says.
+    FormatSelection,
     /// Lists the changes the language server offers at the caret.
     CodeActions,
     /// Copies the selection with the indentation its lines share taken off.
@@ -64,7 +66,7 @@ pub enum EditorCommand {
 
 impl EditorCommand {
     /// Every command, in the order of their rows' names.
-    const ALL: [Self; 15] = [
+    const ALL: [Self; 16] = [
         Self::Definition,
         Self::Declaration,
         Self::TypeDefinition,
@@ -74,6 +76,7 @@ impl EditorCommand {
         Self::OutgoingCalls,
         Self::Rename,
         Self::Format,
+        Self::FormatSelection,
         Self::CodeActions,
         Self::CopyTrimmed,
         Self::Reveal,
@@ -103,6 +106,7 @@ impl EditorCommand {
             Self::IncomingCalls => Action::IncomingCalls,
             Self::Rename => Action::Rename,
             Self::Format => Action::Format,
+            Self::FormatSelection => Action::FormatSelection,
             Self::CodeActions => Action::CodeActions,
             Self::Reveal => Action::RevealInFileManager,
             _ => return None,
@@ -151,6 +155,7 @@ pub fn editor_menu(
     keymap: &pm_editor::Keymap,
 ) -> Node {
     let editable = !field.is_read_only();
+    let selected = field.selection().is_some();
     let command = |menu: Menu, label: &str, _: Option<&str>, which: EditorCommand, on: bool| {
         let keys = which.action().and_then(|action| keymap.label(action));
         menu.item(label, keys.as_deref(), which.id(), !on)
@@ -219,6 +224,13 @@ pub fn editor_menu(
         Some("Alt+Shift+F"),
         EditorCommand::Format,
         coding && editable,
+    );
+    let menu = command(
+        menu,
+        "Format Selection",
+        Some("Ctrl+K Ctrl+F"),
+        EditorCommand::FormatSelection,
+        coding && editable && selected,
     );
     let menu = command(
         menu,

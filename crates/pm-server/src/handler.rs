@@ -810,6 +810,10 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                 Ok(triggers) => Response::Opened {
                     triggers: triggers.completion,
                     signature: triggers.signature,
+                    format: triggers.format,
+                    formats_ranges: triggers.formats_ranges,
+                    folds: triggers.folds,
+                    links: triggers.links,
                 },
                 Err(reason) => failed(reason),
             }
@@ -848,12 +852,54 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             directory,
             path,
             version,
+            range,
         } => match core
             .documents
             .hub
-            .format(&place(&directory), &path, version)
+            .format(&place(&directory), &path, version, range)
         {
             Ok(edits) => Response::Formatted { edits },
+            Err(reason) => failed(reason),
+        },
+        Request::FormatOnType {
+            directory,
+            path,
+            version,
+            position,
+            character,
+        } => match core.documents.hub.format_on_type(
+            &place(&directory),
+            &path,
+            version,
+            position,
+            &character,
+        ) {
+            Ok(edits) => Response::Formatted { edits },
+            Err(reason) => failed(reason),
+        },
+        Request::FoldingRanges {
+            directory,
+            path,
+            version,
+        } => match core
+            .documents
+            .hub
+            .folding_ranges(&place(&directory), &path, version)
+        {
+            Ok(ranges) => Response::FoldingRanges { ranges },
+            Err(reason) => failed(reason),
+        },
+        Request::LinkedRanges {
+            directory,
+            path,
+            version,
+            position,
+        } => match core
+            .documents
+            .hub
+            .linked_ranges(&place(&directory), &path, version, position)
+        {
+            Ok(spans) => Response::LinkedRanges { spans },
             Err(reason) => failed(reason),
         },
         Request::Definition {

@@ -13,8 +13,8 @@ use crate::resolve::{found, managed};
 use crate::rpc::{Handler, Rpc};
 use crate::snippet;
 use crate::types::{
-    CodeAction, Completion, CompletionKind, Diagnostic, Hover, Seek, Severity, Signature,
-    TextChange,
+    CodeAction, Completion, CompletionKind, Diagnostic, FoldRange, Hover, Seek, Severity,
+    Signature, TextChange,
 };
 use crate::uri::file_uri;
 
@@ -230,6 +230,11 @@ fn capabilities() -> Value {
                 "contextSupport": true
             },
             "hover": {"contentFormat": ["markdown", "plaintext"]},
+            "formatting": {},
+            "rangeFormatting": {},
+            "onTypeFormatting": {},
+            "foldingRange": {"lineFoldingOnly": false},
+            "linkedEditingRange": {},
             "publishDiagnostics": {"versionSupport": true}
         },
         "window": {"workDoneProgress": false}
@@ -514,22 +519,52 @@ impl LanguageServer {
         }))
     }
 
-    /// The edits that format the whole file at `uri`, indented by `indent` columns a level, with tabs when `tabs`, each a stretch of the text as it is now and what replaces it.
-    pub(crate) fn formatting(
-        &self,
-        uri: &str,
-        indent: usize,
-        tabs: bool,
-    ) -> Result<Vec<TextChange>, String> {
-        let answer = self.rpc.request(
-            "textDocument/formatting",
-            json!({
-                "textDocument": {"uri": uri},
-                "options": {"tabSize": indent, "insertSpaces": !tabs, "trimTrailingWhitespace": true, "insertFinalNewline": true},
-            }),
-            ANSWERING,
-        )?;
-        Ok(answer
+    /// Whether the server answers `provider`, one of the abilities it named when it started.
+    fn can(&self, provider: &str) -> bool {
+        self.abilities
+            .get(provider)
+            .is_some_and(|ability| !ability.is_null() && ability.as_bool() != Some(false))
+    }
+
+    /// Whether the server formats a stretch of a file.
+    pub(crate) fn formats_ranges(&self) -> bool {
+        self.can("documentRangeFormattingProvider")
+    }
+
+    /// Whether the server says which blocks of a file can be folded.
+    pub(crate) fn folds(&self) -> bool {
+        self.can("foldingRangeProvider")
+    }
+
+    /// Whether the server says which stretches of a file are edited together.
+    pub(crate) fn links(&self) -> bool {
+        self.can("linkedEditingRangeProvider")
+    }
+
+    /// The characters after which the server formats what was just typed.
+    pub(crate) fn format_triggers(&self) -> Vec<String> {
+        let provider = self.abilities.get("documentOnTypeFormattingProvider");
+        let first = provider
+            .and_then(|provider| provider.get("firstTriggerCharacter"))
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let more = provider
+            .and_then(|provider| provider.get("moreTriggerCharacter"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|value| value.as_str().map(str::to_owned));
+        first.into_iter().chain(more).collect()
+    }
+
+    /// The options a server formats with: `indent` columns a level, tabs when `tabs`.
+    fn format_options(indent: usize, tabs: bool) -> Value {
+        json!({"tabSize": indent, "insertSpaces": !tabs, "trimTrailingWhitespace": true, "insertFinalNewline": true})
+    }
+
+    /// The edits a server answered a formatting request with, each a stretch of the text as it is now and what replaces it.
+    fn edits_of(answer: &Value) -> Vec<TextChange> {
+        answer
             .as_array()
             .map(|edits| {
                 edits
@@ -542,7 +577,100 @@ impl LanguageServer {
                     })
                     .collect()
             })
-            .unwrap_or_default())
+            .unwrap_or_default()
+    }
+
+    /// The edits that format the file at `uri`, or only the stretch `range` of it, indented by `indent` columns a level, with tabs when `tabs`, each a stretch of the text as it is now and what replaces it; none when the server cannot format a stretch.
+    pub(crate) fn formatting(
+        &self,
+        uri: &str,
+        range: Option<Span>,
+        indent: usize,
+        tabs: bool,
+    ) -> Result<Vec<TextChange>, String> {
+        let options = Self::format_options(indent, tabs);
+        let answer = match range {
+            Some(range) if self.formats_ranges() => self.rpc.request(
+                "textDocument/rangeFormatting",
+                json!({"textDocument": {"uri": uri}, "range": range_value(range), "options": options}),
+                ANSWERING,
+            )?,
+            Some(_) => return Ok(Vec::new()),
+            None => self.rpc.request(
+                "textDocument/formatting",
+                json!({"textDocument": {"uri": uri}, "options": options}),
+                ANSWERING,
+            )?,
+        };
+        Ok(Self::edits_of(&answer))
+    }
+
+    /// The edits that format what was just typed, the character `typed` at `position` of the file at `uri`; none when the server does not format as one types.
+    pub(crate) fn formatting_on_type(
+        &self,
+        uri: &str,
+        position: Position,
+        typed: &str,
+        indent: usize,
+        tabs: bool,
+    ) -> Result<Vec<TextChange>, String> {
+        if !self.can("documentOnTypeFormattingProvider") {
+            return Ok(Vec::new());
+        }
+        let answer = self.rpc.request(
+            "textDocument/onTypeFormatting",
+            json!({
+                "textDocument": {"uri": uri},
+                "position": position_value(position),
+                "ch": typed,
+                "options": Self::format_options(indent, tabs),
+            }),
+            ANSWERING,
+        )?;
+        Ok(Self::edits_of(&answer))
+    }
+
+    /// The blocks of lines of the file at `uri` that can be folded, as the server gives them.
+    pub(crate) fn folding_ranges(&self, uri: &str) -> Result<Vec<FoldRange>, String> {
+        if !self.folds() {
+            return Ok(Vec::new());
+        }
+        let answer = self.rpc.request(
+            "textDocument/foldingRange",
+            json!({"textDocument": {"uri": uri}}),
+            ANSWERING,
+        )?;
+        Ok(answer
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|range| {
+                Some(FoldRange {
+                    start: range.get("startLine")?.as_u64()? as u32,
+                    end: range.get("endLine")?.as_u64()? as u32,
+                })
+            })
+            .filter(|range| range.end > range.start)
+            .collect())
+    }
+
+    /// The stretches of the file at `uri` that are edited together with the one at `position`, the one at `position` among them, as the server gives them; none when it knows of none.
+    pub(crate) fn linked_ranges(&self, uri: &str, position: Position) -> Result<Vec<Span>, String> {
+        if !self.links() {
+            return Ok(Vec::new());
+        }
+        let answer = self.rpc.request(
+            "textDocument/linkedEditingRange",
+            json!({"textDocument": {"uri": uri}, "position": position_value(position)}),
+            ANSWERING,
+        )?;
+        Ok(answer
+            .get("ranges")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(span_of)
+            .collect())
     }
 
     /// The places `seek` looks for from `position` of the file at `uri`, as the addresses and stretches the server gives, with the names of the functions for calls.
