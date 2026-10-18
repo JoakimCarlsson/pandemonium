@@ -18,6 +18,9 @@ pub struct FileCommit {
     pub author: String,
     /// How long ago it was written, as git says it.
     pub when: String,
+    /// When it was written, in seconds since the epoch.
+    #[serde(default)]
+    pub time: i64,
     /// The first line of the commit message.
     pub summary: String,
     /// The path the file had in the commit, which differs from its path now when it was moved since.
@@ -35,7 +38,7 @@ pub fn file_history(directory: &Path, path: &str) -> Result<Vec<FileCommit>, Str
             &count,
             "--follow",
             "--name-only",
-            "--format=%x1e%H%x09%h%x09%an%x09%ar%x09%s",
+            "--format=%x1e%H%x09%h%x09%an%x09%ar%x09%at%x09%s",
             "--",
             path,
         ],
@@ -44,11 +47,12 @@ pub fn file_history(directory: &Path, path: &str) -> Result<Vec<FileCommit>, Str
         .split('\u{1e}')
         .filter_map(|entry| {
             let mut lines = entry.lines();
-            let mut fields = lines.next()?.splitn(5, '\t');
+            let mut fields = lines.next()?.splitn(6, '\t');
             let object = fields.next()?.to_owned();
             let id = fields.next()?.to_owned();
             let author = fields.next()?.to_owned();
             let when = fields.next()?.to_owned();
+            let time = fields.next()?.parse().unwrap_or_default();
             let summary = fields.next().unwrap_or_default().to_owned();
             let named = lines
                 .map(str::trim)
@@ -60,6 +64,7 @@ pub fn file_history(directory: &Path, path: &str) -> Result<Vec<FileCommit>, Str
                 id,
                 author,
                 when,
+                time,
                 summary,
                 path: named,
             })

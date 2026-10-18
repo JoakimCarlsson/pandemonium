@@ -1,5 +1,6 @@
 //! What floats over the file shown while code is written in it: the list of completions at the caret and the card saying what is known about a place.
 
+use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_protocol::CompletionKind;
 use pm_style::{
@@ -19,7 +20,7 @@ use crate::listing::{
 };
 use crate::markdown::Markdown;
 use crate::navigate::{RENAME_BOX, RENAME_SYMBOL, Renaming};
-use crate::parts::line;
+use crate::parts::{glyph, line};
 use crate::state::WorkspaceState;
 use crate::viewer::severity_role;
 use pm_editor::{Completions, HoverCard};
@@ -605,6 +606,15 @@ fn place_name(location: &pm_protocol::Location) -> String {
     format!("{name}:{}", location.span.start.line + 1)
 }
 
+/// How big a file of `bytes` bytes is, in the largest unit that keeps the number above one.
+fn size_label(bytes: u64) -> String {
+    match bytes {
+        0..1024 => format!("{bytes} B"),
+        1024..1_048_576 => format!("{:.1} KB", bytes as f64 / 1024.0),
+        _ => format!("{:.1} MB", bytes as f64 / 1_048_576.0),
+    }
+}
+
 /// The cells of the `index`-th row of `items`.
 pub(crate) fn listing_cells(items: &Items, index: usize) -> Vec<Node> {
     match items {
@@ -729,19 +739,43 @@ pub(crate) fn listing_cells(items: &Items, index: usize) -> Vec<Node> {
             }
             cells
         }
-        Items::History { commits, .. } => {
-            let Some(commit) = commits.get(index) else {
-                return Vec::new();
-            };
-            vec![
-                cell(commit.summary.clone(), 12, Role::Text, false),
-                tag(
-                    format!("{} · {} · {}", commit.id, commit.author, commit.when),
-                    11,
-                    Role::Subtle,
-                ),
-            ]
-        }
+        Items::History {
+            commits, versions, ..
+        } => match crate::listing::moments(commits, versions).get(index) {
+            Some(crate::listing::Moment::Commit(place)) => {
+                let Some(commit) = commits.get(*place) else {
+                    return Vec::new();
+                };
+                vec![
+                    glyph(IconName::GitCommit, 3.5, Role::Muted),
+                    cell(commit.summary.clone(), 12, Role::Text, false),
+                    tag(
+                        format!("{} · {} · {}", commit.id, commit.author, commit.when),
+                        11,
+                        Role::Subtle,
+                    ),
+                ]
+            }
+            Some(crate::listing::Moment::Saved(place)) => {
+                let Some(version) = versions.get(*place) else {
+                    return Vec::new();
+                };
+                vec![
+                    glyph(IconName::History, 3.5, Role::Muted),
+                    cell("Saved", 12, Role::Text, false),
+                    tag(
+                        format!(
+                            "{} · {}",
+                            crate::age::label(version.id, crate::age::now()),
+                            size_label(version.size)
+                        ),
+                        11,
+                        Role::Subtle,
+                    ),
+                ]
+            }
+            None => Vec::new(),
+        },
     }
 }
 

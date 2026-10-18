@@ -6,18 +6,22 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 mod checkpoint;
+mod conflict;
 mod file_log;
 mod github;
 mod graph;
 mod operation;
 mod places;
+mod revision;
 
 pub use checkpoint::{checkpoint, restore};
+pub use conflict::{Sides, sides};
 pub use file_log::{Blame, FileCommit, Found, blame, file_history, permalink, search};
 pub use github::{Owner, Repository, owners, repositories};
 pub use graph::{Edge, Half, Lanes};
 pub use operation::{Operation, operation, step};
 pub use places::{clone, folders};
+pub use revision::revision_changes;
 
 /// Where, under a repository, the worktrees made for tasks are kept.
 const WORKTREES: &str = ".pandemonium/worktrees";

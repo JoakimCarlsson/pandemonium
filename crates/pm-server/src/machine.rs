@@ -56,7 +56,7 @@ pub(crate) fn with_mode(settings: &[(String, String)]) -> Vec<(String, String)> 
 }
 
 /// The repositories the server works for: those of the sessions it holds that are not closed, and the projects saved on its machine.
-fn repositories(core: &Core) -> Vec<PathBuf> {
+fn repositories(core: &Core) -> BTreeSet<PathBuf> {
     let mut found: BTreeSet<PathBuf> = BTreeSet::new();
     if let Ok(sessions) = core.sessions.lock() {
         found.extend(
@@ -77,6 +77,36 @@ fn repositories(core: &Core) -> Vec<PathBuf> {
         .into_iter()
         .filter(|repository| pm_git::is_repository(repository))
         .collect()
+}
+
+/// How often the states kept of saved files are swept for those that are too old or too many.
+const SWEEP_EVERY: Duration = Duration::from_secs(10 * 60);
+
+/// The folders the server works in: the folders of its open sessions and the repositories of the projects saved on its machine.
+fn work_folders(core: &Core) -> BTreeSet<PathBuf> {
+    let mut found = repositories(core);
+    if let Ok(sessions) = core.sessions.lock() {
+        found.extend(
+            sessions
+                .values()
+                .filter(|session| !session.meta.closed)
+                .map(|session| session.directory.clone()),
+        );
+    }
+    found
+}
+
+/// Starts the thread that removes the states kept of saved files once they are older or take up more than the settings allow, as the server starts and then every few minutes.
+pub(crate) fn start_sweeping(core: Arc<Core>) {
+    std::thread::spawn(move || {
+        loop {
+            let history = settings().history;
+            for folder in work_folders(&core) {
+                let _ = crate::local_history::sweep(&folder, &history);
+            }
+            std::thread::sleep(SWEEP_EVERY);
+        }
+    });
 }
 
 /// Starts the thread that fetches every repository the server works for as often as the settings say, while they say to.

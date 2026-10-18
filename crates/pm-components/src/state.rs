@@ -561,6 +561,51 @@ pub enum Outgoing {
         /// The file.
         path: String,
     },
+    /// Asks for the states a file of the session at this position was kept in each time it was saved.
+    LocalHistory {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+    },
+    /// Reads one of the states a file of the session at this position was kept in, to set the file against it.
+    ReadVersion {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The state, by the number the history gave it.
+        version: u64,
+        /// How long ago it was saved, as it is said.
+        when: String,
+    },
+    /// Asks for the versions of a conflicted file of the session at this position, to open the resolver on it.
+    ReadConflict {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+    },
+    /// Writes a conflicted file of the session at this position as it was resolved, and stages it.
+    ResolveConflict {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// What the file holds once resolved.
+        text: String,
+    },
+    /// Asks for the files a commit changed, or a branch changed since it left another, in the folder of the session at this position.
+    RevisionChanges {
+        /// The session, by position.
+        session: usize,
+        /// The branch or commit to count from; the commit's own parent when nothing.
+        from: Option<String>,
+        /// The commit or branch.
+        to: String,
+        /// What the view of the files is called.
+        label: String,
+    },
     /// Reads a file of the session at this position as a commit left it, to show it read only.
     ReadRevision {
         /// The session, by position.
@@ -2666,6 +2711,9 @@ impl WorkspaceState {
     pub(crate) fn open_change(&mut self, index: usize) {
         self.file = Some(index);
         self.select_change(index);
+        if self.request_resolver(index) {
+            return;
+        }
         self.tab = Tab::Diff;
         if let Some(path) = self
             .open()

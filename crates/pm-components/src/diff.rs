@@ -12,6 +12,7 @@ use pm_ui::{Mark, Node, node, text};
 
 use crate::button::{Size, Variant};
 use crate::diff_syntax::{DiffColours, shown};
+use crate::excerpts::EXCERPTS_OPEN_CHANGES;
 use crate::file_icon::{file_icon, file_language};
 use crate::parts::{glyph, line, spacer, wrap};
 use crate::sample::{Change, Comment, DiffLine, Kind, Range, Session};
@@ -738,6 +739,13 @@ fn summary(session: &Session) -> Node {
                 .build(),
         )
         .child(spacer())
+        .child(
+            Button::new("Edit in place", EXCERPTS_OPEN_CHANGES)
+                .with_icon(IconName::Pencil)
+                .variant(Variant::Ghost)
+                .size(Size::Sm)
+                .build(),
+        )
         .child(line(
             format!("{viewed} of {count} viewed"),
             12,

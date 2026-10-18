@@ -13,7 +13,7 @@ use pm_ui::{Node, node};
 
 use pm_components::Menu;
 use pm_components::button::{Size, Variant};
-use pm_components::excerpts::{self, EXCERPTS_CLOSE, TAB_EXCERPTS};
+use pm_components::excerpts::{self, EXCERPTS_CLOSE, Source, TAB_EXCERPTS};
 use pm_components::file_icon::file_icon;
 use pm_components::open_files::{FILE_CLOSE_BASE, FILE_TAB_BASE, Viewer};
 use pm_components::panes::{
@@ -24,7 +24,9 @@ use pm_components::parts::{glyph, line, spacer};
 use pm_components::sash::Sash;
 use pm_components::state::{Page, TAB_CHAT, TAB_DIFF, TERMINAL, WorkspaceState};
 use pm_components::title_bar::TITLE_BAR_HEIGHT;
-use pm_components::{Button, chat, diff, input, overview, terminal, viewer, welcome};
+use pm_components::{
+    Button, Changes, Conflict, chat, diff, input, overview, terminal, viewer, welcome,
+};
 
 /// How much of a window's height the conversation keeps for something other than the room above the prompt box, in logical pixels.
 const CHAT_CHROME: f32 = 230.0;
@@ -105,15 +107,15 @@ fn viewer_tab(viewer: &Viewer, index: usize, shown: bool) -> Node {
     .focusable(FocusId(FILE_TAB_BASE + index as u64))
 }
 
-/// The tab of the excerpts: a magnifying glass and what was searched for, with a button that closes them.
+/// The tab of the excerpts: a glyph and what they are of, with a button that closes them.
 fn excerpts_tab(state: &WorkspaceState, shown: bool) -> Option<Node> {
     let excerpts = state.excerpts.as_ref()?;
     let tone = if shown { Role::Text } else { Role::Muted };
     Some(
         node()
             .styles(tab_styles(shown))
-            .child(glyph(IconName::Search, 3.5, tone))
-            .child(line(format!("Search: {}", excerpts.text), 13, 1.4, tone))
+            .child(glyph(excerpts.icon(), 3.5, tone))
+            .child(line(excerpts.title(), 13, 1.4, tone))
             .child(
                 Button::icon(IconName::Close, EXCERPTS_CLOSE)
                     .size(pm_components::button::Size::Icon)
@@ -274,11 +276,22 @@ fn item_view(
         (Item::Page, _, _) => starting_page(state, width, area.height, shaper),
         (Item::Diff, _, Some(session)) => diff::diff(state, session, width, tall),
         (Item::Diff, _, None) => node(),
-        (Item::Excerpts, _, _) => excerpts::excerpts_view(state, tall),
+        (Item::Excerpts, _, _) => excerpts_item(state, width, tall),
         (Item::File { .. }, _, _) => match viewer_of(state, item) {
             Some((index, _)) => viewer::file_view(state, index, width, tall, shaper),
             None => node(),
         },
+    }
+}
+
+/// The excerpts shown in a pane `width` by `height` logical pixels: the resolver for a file in conflict, the view of changes for what a change set or a timeline holds, and the lines around the hits for a search.
+fn excerpts_item(state: &WorkspaceState, width: f32, height: f32) -> Node {
+    match state.excerpts.as_ref().map(|excerpts| &excerpts.source) {
+        Some(Source::Conflict(_)) => Conflict::new(state, width, height).build(),
+        Some(Source::Changes | Source::Timeline { .. } | Source::Revision { .. }) => {
+            Changes::new(state, height).build()
+        }
+        _ => excerpts::excerpts_view(state, height),
     }
 }
 

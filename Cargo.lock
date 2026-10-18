@@ -2445,6 +2445,7 @@ dependencies = [
  "pm-treesitter",
  "pm-ui",
  "serde_json",
+ "similar",
 ]
 
 [[package]]

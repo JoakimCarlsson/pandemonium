@@ -17,6 +17,7 @@ mod folders;
 mod handler;
 mod languages;
 mod listener;
+mod local_history;
 mod machine;
 mod queue;
 mod releases;
