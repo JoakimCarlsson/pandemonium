@@ -824,6 +824,17 @@ impl Screen {
         self.in_workspace(|state| state.with_inlay_hints(session, path, version, hints))
     }
 
+    /// The screen after the language server said which names of a file to show the values of while a program is paused.
+    pub fn with_inline_values(
+        self,
+        session: usize,
+        path: &str,
+        version: i32,
+        values: Vec<pm_protocol::InlineValue>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_inline_values(session, path, version, values))
+    }
+
     /// The screen after the language server said what to show at the end of lines of a file.
     pub fn with_code_lenses(
         self,

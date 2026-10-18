@@ -173,6 +173,8 @@ pub struct DebugState {
     pub trouble: Option<String>,
     /// The frame the reader chose in the stack, whose line is to be shown.
     pub reveal: Option<(usize, pm_protocol::DebugFrame)>,
+    /// Which names of the file the program is paused in the language server said to show the values of, and what they were asked for.
+    pub inline: Option<crate::inline_values::InlineAsked>,
 }
 
 /// One row of the variables: a scope of the frame or a variable, at its depth.
@@ -294,6 +296,15 @@ impl WorkspaceState {
             return Some(project.directory().to_string_lossy().into_owned());
         }
         Some(held.directory.clone())
+    }
+
+    /// The path of the file at `path`, from the root of the folder of the session at `session`, when it is inside it.
+    pub(crate) fn debug_relative(&self, session: usize, path: &std::path::Path) -> Option<String> {
+        let root = self.debug_root(session)?;
+        let path = path.to_string_lossy();
+        path.strip_prefix(root.trim_end_matches(['/', '\\']))
+            .map(|rest| rest.trim_start_matches(['/', '\\']).to_owned())
+            .filter(|relative| !relative.is_empty() && relative.len() < path.len())
     }
 
     /// The path of the file shown, from the root of the session's folder, when it is the folder's own and not the last commit's.
@@ -619,16 +630,10 @@ impl WorkspaceState {
 
     /// Shows the line a program paused on, in the session's folder, when the file is in it.
     fn debug_paused(self, session: usize, frame: pm_protocol::DebugFrame) -> Self {
-        let Some(root) = self.debug_root(session) else {
-            return self;
-        };
-        let Some(path) = frame.path.as_ref().map(|path| path.to_string_lossy()) else {
-            return self;
-        };
-        let Some(relative) = path
-            .strip_prefix(root.trim_end_matches(['/', '\\']))
-            .map(|rest| rest.trim_start_matches(['/', '\\']).to_owned())
-            .filter(|relative| !relative.is_empty() && relative.len() < path.len())
+        let Some(relative) = frame
+            .path
+            .as_deref()
+            .and_then(|path| self.debug_relative(session, path))
         else {
             return self;
         };

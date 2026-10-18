@@ -936,6 +936,21 @@ pub enum Request {
         /// The stretch the hints are wanted for.
         span: pm_buffer::Span,
     },
+    /// Which stretches of an open file to show the values of while a program is paused, once the file reaches `version`.
+    InlineValues {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The version of the text the stretches are about.
+        version: i32,
+        /// The stretch the values are wanted for.
+        span: pm_buffer::Span,
+        /// The frame of the stack the debugger is looking at, by the number the adapter gave it.
+        frame: i64,
+        /// Where the program is paused.
+        stopped: pm_buffer::Span,
+    },
     /// What to show above the lines of an open file, once the file reaches `version`.
     CodeLenses {
         /// The folder.

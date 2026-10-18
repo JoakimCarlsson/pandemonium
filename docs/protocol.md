@@ -150,7 +150,7 @@ request with exactly one `response` carrying the same `id`.
 | `checkout`     | `directory`, `branch`                                                                            | `done`          |
 | `create_branch`| `directory`, `name`                                                                              | `done`          |
 | `create_entry` | `directory`, `path`, `folder`                                                                    | `done`          |
-| `rename_entry` | `directory`, `from`, `to`                                                                        | `done`          |
+| `rename_entry` | `directory`, `from`, `to`                                                                        | `done`, or `edited` |
 | `copy_entry`   | `directory`, `from`, `into`                                                                      | `done`          |
 | `remove_entry` | `directory`, `path`                                                                              | `done`          |
 | `write_file`   | `directory`, `path`, `text`                                                                      | `done`          |
@@ -199,6 +199,7 @@ request with exactly one `response` carrying the same `id`.
 | `linked_ranges` | `directory`, `path`, `version`, `position`                                                      | `linked_ranges` |
 | `semantic_tokens` | `directory`, `path`, `version`                                                                | `semantic_tokens` |
 | `inlay_hints`  | `directory`, `path`, `version`, `span`                                                           | `inlay_hints`   |
+| `inline_values` | `directory`, `path`, `version`, `span`, `frame`, `stopped`                                      | `inline_values` |
 | `code_lenses`  | `directory`, `path`, `version`                                                                   | `code_lenses`   |
 | `press_code_lens` | `directory`, `path`, `index`                                                                  | `lens_pressed`  |
 | `definition`   | `directory`, `path`, `version`, `position`, `seek` (optional)                                    | `definitions`   |
@@ -423,7 +424,10 @@ request with exactly one `response` carrying the same `id`.
   `path` (from the root of `directory`) and the folders above it; a name that
   is taken is refused.
 - **`rename_entry`:** renames or moves `from` to `to`, both from the root of
-  `directory`; a name that is taken is refused.
+  `directory`; a name that is taken is refused. Language servers running for
+  the folder are asked first for the edits the rename calls for, such as the
+  imports that name the file; the answer is `edited` when some of them are to
+  files a client has open, and `done` otherwise.
 - **`copy_entry`:** copies `from` into the folder `into` (empty for the root of
   `directory`), under `name copy.ext`, `name copy 2.ext` and so on when the name
   is taken.
@@ -575,6 +579,10 @@ request with exactly one `response` carrying the same `id`.
 - **`inlay_hints`:** what to show inside the lines of the open file at
   `version` within `span`, as the language server says; none when it does not
   say.
+- **`inline_values`:** which stretches of the open file at `version` within
+  `span` to show the values of while the program is paused at `stopped`, in
+  the debugger's `frame`, as the language server says; none when it does not
+  say.
 - **`code_lenses`:** what to show with stretches of the open file at
   `version`, as the language server says, each already filled in by the
   server. The server keeps the list as given, and `press_code_lens` takes one
@@ -655,14 +663,15 @@ embedded context, and anything else as a link to the stored file.
 | `extension_assets` | `themes`: `[{extension, name, dark, light}]`, `icon_themes`: `[{extension, name, icons: [{suffix, svg, color}]}]`, `commands`: `[{extension, id, title, description}]` |
 | `extension_command` | `prompt`: the text to put in the prompt box, `message`: a line to tell the reader; each is optional |
 | `grammar`    | `{id, symbol, aliases, wasm, highlights, indents, outline, injections, brackets, indent, tabs, line_comment}` |
-| `opened`     | `triggers`: the characters after which the server offers completions; `signature`: those after which it tells what the call the caret is in looks like; `format`: those after which it formats what was typed; `formats_ranges`, `folds`, `links`, `semantic_tokens`, `inlay_hints`, `code_lens`: whether it formats a stretch, says what can be folded, says what is edited together, says what each name is, says what to show inside lines and says what to show with stretches |
+| `opened`     | `triggers`: the characters after which the server offers completions; `signature`: those after which it tells what the call the caret is in looks like; `format`: those after which it formats what was typed; `formats_ranges`, `folds`, `links`, `semantic_tokens`, `inlay_hints`, `code_lens`, `inline_values`: whether it formats a stretch, says what can be folded, says what is edited together, says what each name is, says what to show inside lines, says what to show with stretches and says which names to show the values of while a program is paused |
 | `completions`| `items`: `[{label, detail, kind, text, span, filter, sort, documentation}]`, `kind` one of `function`, `variable`, `type`, `module`, `keyword`, `constant`, `snippet`, `other` |
 | `hovered`    | `hover`: `{text, span}` or null |
 | `formatted`  | `edits`: `[{span, text}]` |
 | `folding_ranges` | `ranges`: `[{start, end}]`, the first and last line of each block, counted from 0 |
 | `linked_ranges` | `spans`: the stretches edited together |
 | `semantic_tokens` | `tokens`: `[{line, start, length, kind}]`, `start` and `length` in UTF-16 code units, `kind` one of `keyword`, `function`, `type`, `string`, `constant`, `comment`, `property`, `operator`, `variable` |
-| `inlay_hints` | `hints`: `[{position, label, kind, pad_left, pad_right}]`, `kind` one of `type`, `parameter`, `other` |
+| `inlay_hints` | `hints`: `[{position, label, kind, pad_left, pad_right}]`, `kind` one of `type`, `parameter`, `other`, `value` |
+| `inline_values` | `values`: `[{span, kind, text}]`, `kind` one of `text` (`text` is the text), `variable` (`text` the name, or none for the one the span spells), `expression` (`text` the expression, or none for the one the span spells) |
 | `code_lenses` | `lenses`: `[{span, title, pressable}]` |
 | `lens_pressed` | `places`: as `locations` of `definitions`; `files`: as of `edited` |
 | `definitions`| `locations`: `[{path, span, inside, text, language, name, line}]`; `name` names a calling or called function, `line` is the line the span starts on |

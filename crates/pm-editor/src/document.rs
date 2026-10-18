@@ -124,6 +124,8 @@ pub struct Document {
     pub inlay_hints_supported: bool,
     /// Whether the language server says what to show above the lines of the file.
     pub code_lens_supported: bool,
+    /// Whether the language server says which names of the file to show the values of while a program is paused.
+    pub inline_values_supported: bool,
     /// Why the language server could not read the file, when it could not.
     pub server_problem: Option<String>,
     /// What the language server finds wrong with the file.
@@ -223,6 +225,7 @@ impl Document {
             semantic_tokens_supported: false,
             inlay_hints_supported: false,
             code_lens_supported: false,
+            inline_values_supported: false,
             server_problem: None,
             diagnostics: Vec::new(),
             completion: None,

@@ -47,6 +47,7 @@ pub mod git_prompts;
 pub mod graph;
 pub mod hearing;
 pub mod history;
+pub mod inline_values;
 pub mod input;
 pub mod inquiry;
 pub mod jumps;

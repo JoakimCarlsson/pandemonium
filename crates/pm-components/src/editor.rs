@@ -239,6 +239,7 @@ impl WorkspaceState {
                     document.semantic_tokens_supported = triggers.semantic_tokens;
                     document.inlay_hints_supported = triggers.inlay_hints;
                     document.code_lens_supported = triggers.code_lens;
+                    document.inline_values_supported = triggers.inline_values;
                     document.server_problem = None;
                 }
                 Err(problem) => {

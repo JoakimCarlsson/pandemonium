@@ -223,6 +223,30 @@ pub struct Triggers {
     /// Whether it says what to show above a line, such as how many times a function is used.
     #[serde(default)]
     pub code_lens: bool,
+    /// Whether it says which names of a file to show the values of while a program is paused.
+    #[serde(default)]
+    pub inline_values: bool,
+}
+
+/// What a language server says a stretch of a file shows while the program being debugged is paused.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "text", rename_all = "snake_case")]
+pub enum InlineValueKind {
+    /// Text to show as it is.
+    Text(String),
+    /// The value of the variable of this name, or of the one the stretch spells when no name is given.
+    Variable(Option<String>),
+    /// What this expression comes to, or the stretch when no expression is given.
+    Expression(Option<String>),
+}
+
+/// A stretch of a file whose value is shown at the end of its line while the program being debugged is paused.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct InlineValue {
+    /// The stretch.
+    pub span: pm_buffer::Span,
+    /// What it shows.
+    pub kind: InlineValueKind,
 }
 
 /// What a name of a file is, as a language server says and as it is coloured.
@@ -274,6 +298,8 @@ pub enum HintKind {
     /// Anything else.
     #[default]
     Other,
+    /// What a name holds while the program being debugged is paused.
+    Value,
 }
 
 /// Text a language server says to show inside a line, at a place, that is not part of the file.

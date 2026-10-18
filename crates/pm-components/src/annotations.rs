@@ -78,7 +78,7 @@ impl WorkspaceState {
             });
         }
         self.outbox.extend(asking);
-        self
+        self.inline_values_requested()
     }
 
     /// The state after the language server said what each name of the file at `path` of the session at `session` is, as the text was at `version`.

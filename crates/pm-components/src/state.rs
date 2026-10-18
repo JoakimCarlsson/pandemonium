@@ -456,6 +456,21 @@ pub enum Outgoing {
         /// The stretch the hints are wanted for.
         span: pm_protocol::Span,
     },
+    /// Asks the language server which names of a file of the session at this position to show the values of while the program is paused.
+    InlineValues {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The version of the text the stretches are about.
+        version: i32,
+        /// The stretch the values are wanted for.
+        span: pm_protocol::Span,
+        /// The frame of the stack the debugger is looking at.
+        frame: i64,
+        /// Where the program is paused.
+        stopped: pm_protocol::Span,
+    },
     /// Asks the language server what to show above the lines of a file of the session at this position.
     CodeLenses {
         /// The session, by position.

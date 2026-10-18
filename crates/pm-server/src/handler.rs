@@ -727,7 +727,22 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             directory,
             from,
             to,
-        } => done(crate::entries::rename(&place(&directory), &from, &to)),
+        } => {
+            let root = place(&directory);
+            let hub = &core.documents.hub;
+            let files = hub.will_rename(&root, &from, &to).unwrap_or_default();
+            match crate::entries::rename(&root, &from, &to) {
+                Ok(()) => {
+                    hub.did_rename(&root, &from, &to);
+                    if files.is_empty() {
+                        Response::Done
+                    } else {
+                        Response::Edited { files }
+                    }
+                }
+                Err(reason) => failed(reason),
+            }
+        }
         Request::CopyEntry {
             directory,
             from,
@@ -955,6 +970,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                     semantic_tokens: triggers.semantic_tokens,
                     inlay_hints: triggers.inlay_hints,
                     code_lens: triggers.code_lens,
+                    inline_values: triggers.inline_values,
                 },
                 Err(reason) => failed(reason),
             }
@@ -1188,6 +1204,24 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             .inlay_hints(&place(&directory), &path, version, span)
         {
             Ok(hints) => Response::InlayHints { hints },
+            Err(reason) => failed(reason),
+        },
+        Request::InlineValues {
+            directory,
+            path,
+            version,
+            span,
+            frame,
+            stopped,
+        } => match core.documents.hub.inline_values(
+            &place(&directory),
+            &path,
+            version,
+            span,
+            frame,
+            stopped,
+        ) {
+            Ok(values) => Response::InlineValues { values },
             Err(reason) => failed(reason),
         },
         Request::CodeLenses {
