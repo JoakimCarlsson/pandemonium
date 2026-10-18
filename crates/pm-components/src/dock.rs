@@ -9,8 +9,8 @@ use pm_terminal::{Emulator, Link};
 use crate::sample::Session;
 
 use crate::state::{
-    BOTTOM_PROBLEMS, BOTTOM_TERMINAL, MAXIMIZE_TERMINAL, NEW_TERMINAL, Outgoing, PROBLEM_ROW_BASE,
-    TERMINAL, TERMINAL_CLOSE_BASE, TERMINAL_TAB_BASE, WorkspaceState,
+    BOTTOM_PROBLEMS, BOTTOM_PROBLEMS_COUNT, BOTTOM_TERMINAL, MAXIMIZE_TERMINAL, NEW_TERMINAL,
+    Outgoing, PROBLEM_ROW_BASE, TERMINAL, TERMINAL_CLOSE_BASE, TERMINAL_TAB_BASE, WorkspaceState,
 };
 
 /// The tabs of the dock, one of which shows at a time.
@@ -207,7 +207,7 @@ impl WorkspaceState {
             return;
         }
         let empty = self
-            .open()
+            .docked()
             .is_none_or(|session| session.terminals.is_empty());
         if empty && self.bottom_tab() == BottomTab::Terminal {
             self.open_terminal();
@@ -310,7 +310,7 @@ impl WorkspaceState {
             TERMINAL => self.toggle_terminal(),
             NEW_TERMINAL => self.open_terminal(),
             BOTTOM_TERMINAL => self.show_terminal_tab(),
-            BOTTOM_PROBLEMS => self.show_problems(),
+            BOTTOM_PROBLEMS | BOTTOM_PROBLEMS_COUNT => self.show_problems(),
             MAXIMIZE_TERMINAL => self.terminal_maximized = !self.terminal_maximized,
             FocusId(number) => {
                 let count = self.docked().map_or(0, |session| session.terminals.len());

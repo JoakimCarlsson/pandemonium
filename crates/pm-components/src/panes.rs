@@ -712,7 +712,7 @@ impl WorkspaceState {
         } else {
             0.0
         };
-        let beside = window.0 - self.sidebar_width - review;
+        let beside = window.0 - self.sidebar_room() - review;
         let plan = if self.plan_shown().is_some() {
             crate::plan::width_in(self, beside)
         } else {
@@ -725,7 +725,7 @@ impl WorkspaceState {
             0.0
         };
         Area {
-            x: self.sidebar_width,
+            x: self.sidebar_room(),
             y: crate::title_bar::TITLE_BAR_HEIGHT,
             width: beside - plan,
             height: page - dock,

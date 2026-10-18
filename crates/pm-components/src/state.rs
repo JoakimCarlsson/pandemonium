@@ -210,6 +210,12 @@ pub const MAXIMIZE_TERMINAL: FocusId = FocusId(325);
 /// The dock's tab listing what is wrong with the files of the project.
 pub const BOTTOM_PROBLEMS: FocusId = FocusId(20_200_000);
 
+/// The count of errors and warnings above a file, which shows the dock's tab of problems.
+pub const BOTTOM_PROBLEMS_COUNT: FocusId = FocusId(20_200_003);
+
+/// The button in the title bar that shows and hides the sidebar of projects and sessions.
+pub const SIDEBAR_TOGGLE: FocusId = FocusId(20_200_004);
+
 /// The dock's tab showing the shells.
 pub const BOTTOM_TERMINAL: FocusId = FocusId(20_200_001);
 
@@ -1388,6 +1394,8 @@ pub struct WorkspaceState {
     pub terminal: bool,
     /// Whether the terminal is taller than usual.
     pub terminal_maximized: bool,
+    /// Whether the sidebar of projects and sessions is showing.
+    pub sidebar_open: bool,
     /// Which tab of the dock is showing.
     pub bottom: crate::dock::BottomTab,
     /// What is wrong with the files of the project of the session the dock is about, as the server last said.
@@ -1619,6 +1627,7 @@ impl WorkspaceState {
             overview_scroll: 0.0,
             terminal: false,
             terminal_maximized: false,
+            sidebar_open: true,
             bottom: crate::dock::BottomTab::default(),
             problems: Vec::new(),
             problems_asked: false,
@@ -1774,6 +1783,15 @@ impl WorkspaceState {
         matches!(self.page, Page::New(_)) && !self.projects.is_empty()
     }
 
+    /// How much room the sidebar takes from the left of the window, in logical pixels: its width while it shows and nothing while it is hidden.
+    pub fn sidebar_room(&self) -> f32 {
+        if self.sidebar_open {
+            self.sidebar_width
+        } else {
+            0.0
+        }
+    }
+
     /// The session on screen, if the page is one.
     pub fn open(&self) -> Option<&Session> {
         match self.page {
@@ -1923,6 +1941,7 @@ impl WorkspaceState {
                 self.press_terminal(action);
             }
             REVIEW => self.review = !self.review,
+            SIDEBAR_TOGGLE => self.sidebar_open = !self.sidebar_open,
             REVIEW_CHANGES => self.show_review_tab(ReviewTab::Changes),
             REVIEW_FILES => self.show_review_tab(ReviewTab::Files),
             COMMENT_ADD => self.add_comment(),

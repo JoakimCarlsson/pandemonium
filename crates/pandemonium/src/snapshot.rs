@@ -238,6 +238,8 @@ pub enum Shot {
     Debugging,
     /// The same file with the dock open on the list of what is wrong with the project.
     Problems,
+    /// The same file with the sidebar hidden.
+    SidebarHidden,
     /// The same file with its menu open.
     EditorMenu,
     /// The same file with the places a name is used listed under the caret.
@@ -1664,6 +1666,11 @@ impl Shot {
             Self::Hovering => Screen::Workspace(hovering()),
             Self::Debugging => Screen::Workspace(debugging()),
             Self::Problems => Screen::Workspace(problems()),
+            Self::SidebarHidden => {
+                let mut state = code();
+                state.sidebar_open = false;
+                Screen::Workspace(state)
+            }
             Self::EditorMenu => Screen::Workspace(code().with_menu(EDITOR_FIELD, (420.0, 200.0))),
             Self::References => Screen::Workspace(references()),
             Self::Renaming => {

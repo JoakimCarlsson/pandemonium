@@ -781,8 +781,8 @@ fn breadcrumbs(document: &Document) -> Option<String> {
     (!words.is_empty()).then(|| words.join("  ›  "))
 }
 
-/// How many errors and warnings the language server finds in `document`, as short words in their colours.
-fn tallies(document: &Document) -> Vec<Node> {
+/// How many errors and warnings the language server finds in `document`, as short words in their colours, pressed to show the problems of the project; nothing when it finds none.
+fn tallies(document: &Document) -> Option<Node> {
     let count = |wanted: Severity| {
         document
             .diagnostics
@@ -790,7 +790,7 @@ fn tallies(document: &Document) -> Vec<Node> {
             .filter(|diagnostic| diagnostic.severity == wanted)
             .count()
     };
-    [(Severity::Error, "error"), (Severity::Warning, "warning")]
+    let words: Vec<Node> = [(Severity::Error, "error"), (Severity::Warning, "warning")]
         .into_iter()
         .filter_map(|(severity, word)| {
             let found = count(severity);
@@ -804,7 +804,13 @@ fn tallies(document: &Document) -> Vec<Node> {
                 )
             })
         })
-        .collect()
+        .collect();
+    (!words.is_empty()).then(|| {
+        node()
+            .styles([flex(), items_center(), gap(2), cursor_pointer()])
+            .children(words)
+            .focusable(crate::state::BOTTOM_PROBLEMS_COUNT)
+    })
 }
 
 /// The strip above the file: its icon and name, and, while it is the file shown, `live`, the switch between its source and its rendering and the button that writes it when it has changes to write.

@@ -13,7 +13,7 @@ use crate::Button;
 use crate::listing::{LISTING_WIDTH, QUICK_INSET};
 use crate::parts::{clipped, glyph};
 use crate::quick_input::FIELD_HEIGHT;
-use crate::state::{Page, SETTINGS, WorkspaceState};
+use crate::state::{Page, REVIEW, SETTINGS, SIDEBAR_TOGGLE, TERMINAL, WorkspaceState};
 
 /// How tall the bar is, in logical pixels.
 pub const TITLE_BAR_HEIGHT: f32 = 40.0;
@@ -61,6 +61,12 @@ pub struct TitleBar {
     place: Option<String>,
     /// Whether closing is the only control of the window the bar holds.
     close_only: bool,
+    /// Whether the bottom pane is showing, which fills the button that shows and hides it.
+    panel_open: bool,
+    /// Whether the sidebar is showing, which fills the button that shows and hides it.
+    sidebar_open: bool,
+    /// Whether the review panel is showing, which fills the button that shows and hides it.
+    review_open: bool,
 }
 
 impl TitleBar {
@@ -81,6 +87,9 @@ impl TitleBar {
     pub fn of(state: &WorkspaceState) -> Self {
         Self {
             place: Some(whereabouts(state)),
+            panel_open: state.terminal,
+            sidebar_open: state.sidebar_open,
+            review_open: state.review && state.review_session().is_some(),
             ..Self::default()
         }
     }
@@ -111,6 +120,30 @@ impl TitleBar {
                 pm_style::h_full(),
             ])
             .children(navigation.then(|| {
+                layout_toggle(
+                    IconName::PanelLeft,
+                    SIDEBAR_TOGGLE,
+                    "Toggle Primary Side Bar",
+                    self.sidebar_open,
+                )
+            }))
+            .children(navigation.then(|| {
+                layout_toggle(
+                    IconName::PanelBottom,
+                    TERMINAL,
+                    "Toggle Panel",
+                    self.panel_open,
+                )
+            }))
+            .children(navigation.then(|| {
+                layout_toggle(
+                    IconName::PanelRight,
+                    REVIEW,
+                    "Toggle Review Panel",
+                    self.review_open,
+                )
+            }))
+            .children(navigation.then(|| {
                 Button::icon(IconName::Settings, SETTINGS)
                     .build()
                     .tooltip("Open Settings")
@@ -131,6 +164,16 @@ impl TitleBar {
             .child(leading)
             .children(self.place.map(command_center))
             .child(trailing)
+    }
+}
+
+/// The button of the title bar that shows or hides the part of the window `icon` pictures, filled while it shows.
+fn layout_toggle(icon: IconName, id: FocusId, words: &str, open: bool) -> Node {
+    let toggle = Button::icon(icon, id).build().tooltip(words);
+    if open {
+        toggle.styles([bg(Role::SurfaceSelected)])
+    } else {
+        toggle
     }
 }
 
