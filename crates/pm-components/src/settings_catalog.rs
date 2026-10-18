@@ -190,6 +190,12 @@ pub enum Setting {
     AutoFetch,
     /// How often it does.
     FetchInterval,
+    /// Whether the server keeps a state of a file each time it is saved.
+    LocalHistory,
+    /// How many days those states are kept.
+    HistoryDays,
+    /// How many megabytes of those states a project may take up.
+    HistorySize,
     /// What a new session's branch is called.
     BranchTemplate,
     /// Where worktrees are made.
@@ -216,7 +222,7 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting, in the order the pages show them.
-    pub const ALL: [Self; 83] = [
+    pub const ALL: [Self; 86] = [
         Self::Launch,
         Self::ConfirmClose,
         Self::CheckUpdates,
@@ -289,6 +295,9 @@ impl Setting {
         Self::CopyOnSelect,
         Self::AutoFetch,
         Self::FetchInterval,
+        Self::LocalHistory,
+        Self::HistoryDays,
+        Self::HistorySize,
         Self::BranchTemplate,
         Self::WorktreeFolder,
         Self::GitBlame,
@@ -375,6 +384,9 @@ impl Setting {
             | Self::CopyOnSelect => Section::Terminal,
             Self::AutoFetch
             | Self::FetchInterval
+            | Self::LocalHistory
+            | Self::HistoryDays
+            | Self::HistorySize
             | Self::BranchTemplate
             | Self::WorktreeFolder
             | Self::GitBlame
@@ -400,6 +412,9 @@ impl Setting {
             | Self::ShellArguments
             | Self::AutoFetch
             | Self::FetchInterval
+            | Self::LocalHistory
+            | Self::HistoryDays
+            | Self::HistorySize
             | Self::BranchTemplate
             | Self::WorktreeFolder
             | Self::GitHosts
@@ -672,6 +687,18 @@ impl Setting {
             Self::FetchInterval => (
                 "Fetch every",
                 "How many minutes pass between one fetch and the next.",
+            ),
+            Self::LocalHistory => (
+                "Local history",
+                "Keep a state of each file every time it is saved, to compare with and restore in the timeline of the file.",
+            ),
+            Self::HistoryDays => (
+                "Keep local history for",
+                "How many days a saved state is kept before it is removed.",
+            ),
+            Self::HistorySize => (
+                "Local history size",
+                "How many megabytes of saved states one project may take up; the oldest are removed past it.",
             ),
             Self::BranchTemplate => (
                 "Session branch name",

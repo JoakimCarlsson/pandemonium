@@ -220,6 +220,14 @@ enum Pending {
     FileHistory(usize, String),
     /// A file of the session at this position as a commit left it, shown under this name.
     Revision(usize, String),
+    /// The states the file of the session at this position, at this path, was saved in.
+    LocalHistory(usize, String),
+    /// A state the file of the session at this position, at this path, was saved in, saved this long ago.
+    Version(usize, String, String),
+    /// The versions of the conflicted file of the session at this position, at this path.
+    Conflict(usize, String),
+    /// The files a commit or a branch changed in the folder of the session at this position, shown under this name.
+    Revisions(usize, String),
     /// The edits that format the file of the session at this position, at this path and version, and whether it is written afterwards.
     Formatted(usize, String, i32, bool),
     /// What the folder of the session at this position can be debugged as.
@@ -1868,6 +1876,10 @@ impl Work {
             | Pending::Permalink(_)
             | Pending::FileHistory(..)
             | Pending::Revision(..)
+            | Pending::LocalHistory(..)
+            | Pending::Version(..)
+            | Pending::Conflict(..)
+            | Pending::Revisions(..)
             | Pending::Formatted(..)
             | Pending::FoldingRanges(..)
             | Pending::LinkedRanges(..)

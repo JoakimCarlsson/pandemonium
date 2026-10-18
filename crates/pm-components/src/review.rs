@@ -71,13 +71,15 @@ fn nothing(message: &str) -> Node {
         .child(line(message, 13, 1.4, Role::Subtle))
 }
 
-/// One of the two tabs at the top of the panel, filled while it is the one shown.
-fn panel_tab(label: &str, id: FocusId, shown: bool) -> Node {
+/// One of the tabs at the top of the panel, a glyph that says its name when the pointer rests on it, filled while it is the one shown.
+fn panel_tab(label: &str, icon: IconName, id: FocusId, shown: bool) -> Node {
     let mut styles = vec![
         flex(),
         items_center(),
         h(8),
         px(3),
+        min_w_px(0),
+        overflow_hidden(),
         rounded(Radius::Lg),
         cursor_pointer(),
     ];
@@ -90,7 +92,8 @@ fn panel_tab(label: &str, id: FocusId, shown: bool) -> Node {
     };
     node()
         .styles(styles)
-        .child(line(label, 13, 1.4, tone))
+        .child(glyph(icon, 3.5, tone))
+        .tooltip(label)
         .focusable(id)
 }
 
@@ -411,40 +414,50 @@ pub fn review(state: &WorkspaceState, session: &Session, shaper: &mut Shaper) ->
         .child(
             band(12)
                 .styles([px(3)])
-                .child(panel_tab(
-                    "Source Control",
-                    REVIEW_CHANGES,
-                    state.review_tab == ReviewTab::Changes,
-                ))
-                .child(panel_tab(
-                    "Files",
-                    REVIEW_FILES,
-                    state.review_tab == ReviewTab::Files,
-                ))
-                .child(panel_tab(
-                    "Search",
-                    crate::project_search::REVIEW_SEARCH,
-                    state.review_tab == ReviewTab::Search,
-                ))
-                .child(spacer())
-                .children(
-                    state
-                        .git
-                        .operation
-                        .as_ref()
-                        .filter(|_| state.review_tab == ReviewTab::Changes)
-                        .map(|waiting| line(waiting.label(), 12, 1.4, Role::Muted)),
+                .child(
+                    node()
+                        .styles([
+                            flex(),
+                            items_center(),
+                            gap(2),
+                            flex_1(),
+                            min_w_px(0),
+                            overflow_hidden(),
+                        ])
+                        .child(panel_tab(
+                            "Source Control",
+                            IconName::Git,
+                            REVIEW_CHANGES,
+                            state.review_tab == ReviewTab::Changes,
+                        ))
+                        .child(panel_tab(
+                            "Files",
+                            IconName::Folder,
+                            REVIEW_FILES,
+                            state.review_tab == ReviewTab::Files,
+                        ))
+                        .child(panel_tab(
+                            "Search",
+                            IconName::Search,
+                            crate::project_search::REVIEW_SEARCH,
+                            state.review_tab == ReviewTab::Search,
+                        )),
                 )
                 .children(
                     (state.review_tab == ReviewTab::Changes && !session.changes.is_empty()).then(
                         || {
                             Button::icon(IconName::GitCompare, OPEN_DIFF)
                                 .build()
+                                .styles([flex_none()])
                                 .tooltip("Open Changes")
                         },
                     ),
                 )
-                .child(Button::icon(IconName::PanelRight, REVIEW).build()),
+                .child(
+                    Button::icon(IconName::PanelRight, REVIEW)
+                        .build()
+                        .styles([flex_none()]),
+                ),
         )
         .child(band(10).child(branch_button(session, state.git.working)))
         .child(match state.review_tab {

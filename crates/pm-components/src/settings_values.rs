@@ -262,6 +262,9 @@ impl Setting {
             Self::CopyOnSelect => Control::Switch(window.terminal.copy_on_select),
             Self::AutoFetch => Control::Switch(machine.git.auto_fetch),
             Self::FetchInterval => Control::Number(format!("{} min", machine.git.fetch_minutes)),
+            Self::LocalHistory => Control::Switch(machine.history.enabled),
+            Self::HistoryDays => Control::Number(format!("{} days", machine.history.days)),
+            Self::HistorySize => Control::Number(format!("{} MB", machine.history.megabytes)),
             Self::BranchTemplate => Control::Text("No branch, e.g. pm/{title}"),
             Self::WorktreeFolder => Control::Text("Inside each project"),
             Self::GitBlame => Control::Choice(
@@ -462,6 +465,15 @@ impl Setting {
             Self::FetchInterval => {
                 machine.git.fetch_minutes =
                     stepped(machine.git.fetch_minutes.into(), 5, option, 1, 240) as u32;
+            }
+            Self::LocalHistory => machine.history.enabled ^= true,
+            Self::HistoryDays => {
+                machine.history.days =
+                    stepped(machine.history.days.into(), 5, option, 1, 3650) as u32;
+            }
+            Self::HistorySize => {
+                machine.history.megabytes =
+                    stepped(machine.history.megabytes.into(), 64, option, 16, 65_536) as u32;
             }
             Self::GitBlame => {
                 window.git.blame = [GitMarks::FollowEditor, GitMarks::Off][option.min(1)]
@@ -791,6 +803,9 @@ impl Setting {
             Self::CopyOnSelect => window.terminal.copy_on_select = own.terminal.copy_on_select,
             Self::AutoFetch => machine.git.auto_fetch = kept.git.auto_fetch,
             Self::FetchInterval => machine.git.fetch_minutes = kept.git.fetch_minutes,
+            Self::LocalHistory => machine.history.enabled = kept.history.enabled,
+            Self::HistoryDays => machine.history.days = kept.history.days,
+            Self::HistorySize => machine.history.megabytes = kept.history.megabytes,
             Self::BranchTemplate => machine
                 .git
                 .branch_template

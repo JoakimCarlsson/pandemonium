@@ -96,7 +96,7 @@ pub const DIFF_SCROLL: FocusId = FocusId(7004);
 pub const TREE_SCROLL: FocusId = FocusId(7005);
 
 /// The first of the rows folding a folder of the changed files; the rest follow it.
-pub const FOLDER_BASE: u64 = 7100;
+pub const FOLDER_BASE: u64 = 7101;
 
 /// The first of the check boxes staging a folder of the changed files; the rest follow it.
 pub const FOLDER_STAGE_BASE: u64 = 7300;
@@ -562,6 +562,51 @@ pub enum Outgoing {
         session: usize,
         /// The file.
         path: String,
+    },
+    /// Asks for the states a file of the session at this position was kept in each time it was saved.
+    LocalHistory {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+    },
+    /// Reads one of the states a file of the session at this position was kept in, to set the file against it.
+    ReadVersion {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The state, by the number the history gave it.
+        version: u64,
+        /// How long ago it was saved, as it is said.
+        when: String,
+    },
+    /// Asks for the versions of a conflicted file of the session at this position, to open the resolver on it.
+    ReadConflict {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+    },
+    /// Writes a conflicted file of the session at this position as it was resolved, and stages it.
+    ResolveConflict {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// What the file holds once resolved.
+        text: String,
+    },
+    /// Asks for the files a commit changed, or a branch changed since it left another, in the folder of the session at this position.
+    RevisionChanges {
+        /// The session, by position.
+        session: usize,
+        /// The branch or commit to count from; the commit's own parent when nothing.
+        from: Option<String>,
+        /// The commit or branch.
+        to: String,
+        /// What the view of the files is called.
+        label: String,
     },
     /// Reads a file of the session at this position as a commit left it, to show it read only.
     ReadRevision {
@@ -2129,6 +2174,20 @@ impl WorkspaceState {
         } else if id >= STEP_BASE {
             let offset = (id - STEP_BASE) as usize;
             self.toggle_step(offset / 1000, offset % 1000);
+        } else if let Some(index) = position(
+            FILE_BASE,
+            self.review_session()
+                .map_or(0, |session| session.changes.len()),
+        )
+        .filter(|index| {
+            self.review_session()
+                .is_some_and(|held| held.changes[*index].conflicted)
+        }) {
+            if self.open().is_some() {
+                self.open_change(index);
+            } else {
+                self.request_resolver(index);
+            }
         } else if let Some(index) = position(FILE_BASE, self.change_count()) {
             self.open_change(index);
         } else if let Some(index) = position(STAGE_BASE, self.change_count()) {
@@ -2668,6 +2727,7 @@ impl WorkspaceState {
     pub(crate) fn open_change(&mut self, index: usize) {
         self.file = Some(index);
         self.select_change(index);
+        self.request_resolver(index);
         self.tab = Tab::Diff;
         if let Some(path) = self
             .open()

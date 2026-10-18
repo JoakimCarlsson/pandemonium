@@ -6,6 +6,7 @@ mod bytes;
 mod credential;
 mod debug;
 mod extensions;
+mod history;
 mod machine;
 mod message;
 mod request;
@@ -19,9 +20,10 @@ pub use agents::builtin_agents;
 pub use credential::{Build, Credential, Target};
 pub use debug::{DebugAction, DebugAdapter, DebugFile, DebugInfo, DebugProcess, DebugScenario};
 pub use extensions::{ExtensionInfo, GrammarBundle};
+pub use history::{ConflictFiles, LocalVersion};
 pub use machine::{
-    AgentPreferences, FETCH_MINUTES, GitPreferences, LanguagePreferences, MachineSettings,
-    ShellPreferences,
+    AgentPreferences, FETCH_MINUTES, GitPreferences, HISTORY_DAYS, HISTORY_MEGABYTES,
+    HistoryPreferences, LanguagePreferences, MachineSettings, ShellPreferences,
 };
 pub use message::{ClientMessage, ServerMessage};
 pub use pm_buffer::{Position, Span};

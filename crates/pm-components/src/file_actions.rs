@@ -121,11 +121,16 @@ impl WorkspaceState {
             session,
             path: path.clone(),
         });
+        self.outbox.push(Outgoing::LocalHistory {
+            session,
+            path: path.clone(),
+        });
         self.listing = Some(Listing::waiting(
             session,
             Items::History {
                 path,
                 commits: Vec::new(),
+                versions: Vec::new(),
             },
             at,
         ));
@@ -142,12 +147,27 @@ impl WorkspaceState {
         if let Some(listing) = self.listing.as_mut().filter(|held| {
             held.session == session
                 && matches!(&held.items, Items::History { path: wanted, .. } if wanted == path)
-        }) {
-            listing.items = Items::History {
-                path: path.to_owned(),
-                commits,
-            };
+        }) && let Items::History { commits: held, .. } = &mut listing.items
+        {
+            *held = commits;
             listing.answered = true;
+        }
+        self
+    }
+
+    /// The state after the server listed `versions`, the states the file at `path` of the session at `session` was saved in.
+    pub fn with_local_history(
+        mut self,
+        session: usize,
+        path: &str,
+        versions: Vec<pm_protocol::LocalVersion>,
+    ) -> Self {
+        if let Some(listing) = self.listing.as_mut().filter(|held| {
+            held.session == session
+                && matches!(&held.items, Items::History { path: wanted, .. } if wanted == path)
+        }) && let Items::History { versions: held, .. } = &mut listing.items
+        {
+            *held = versions;
         }
         self
     }

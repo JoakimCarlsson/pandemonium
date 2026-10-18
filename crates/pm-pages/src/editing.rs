@@ -709,6 +709,43 @@ impl Screen {
         self.in_workspace(|state| state.with_file_history(session, path, commits))
     }
 
+    /// The screen after the server listed the states the file at `path` of the session at `session` was saved in.
+    pub fn with_local_history(
+        self,
+        session: usize,
+        path: &str,
+        versions: Vec<pm_protocol::LocalVersion>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_local_history(session, path, versions))
+    }
+
+    /// The screen opening the file at `path` of the session at `session` against `text`, what it held in a state saved `when`.
+    pub fn timeline_opened(self, session: usize, path: &str, when: String, text: String) -> Self {
+        self.in_workspace(|state| state.timeline_opened(session, path, when, text))
+    }
+
+    /// The screen after the server gave the sides of the conflicted file at `path` of the session at `session`, opening the resolver on it.
+    pub fn with_conflict(
+        self,
+        session: usize,
+        path: &str,
+        files: pm_protocol::ConflictFiles,
+    ) -> Self {
+        self.in_workspace(|state| {
+            state.with_conflict(session, path, files.ours, files.theirs, files.base)
+        })
+    }
+
+    /// The screen opening the files `changes`, which a commit or a branch changed, as one view named `label`.
+    pub fn revision_opened(
+        self,
+        session: usize,
+        label: String,
+        changes: Vec<pm_git::Change>,
+    ) -> Self {
+        self.in_workspace(|state| state.revision_opened(session, label, changes))
+    }
+
     /// The screen showing a file of the session at `session` read only, as a commit left it.
     pub fn with_revision(
         self,
