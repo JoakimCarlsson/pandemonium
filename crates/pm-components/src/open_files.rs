@@ -301,6 +301,9 @@ impl WorkspaceState {
                 .insert(before, std::mem::take(&mut self.panes));
             self.search_stash
                 .insert(before, std::mem::take(&mut self.project_search));
+            let prompt = std::mem::replace(&mut self.prompt, crate::state::prompt_field(""));
+            self.prompt_stash
+                .insert(before, (prompt, std::mem::take(&mut self.attachments)));
         } else {
             self.files_owner = now;
             return;
@@ -314,6 +317,10 @@ impl WorkspaceState {
         }
         if let Some(search) = now.and_then(|now| self.search_stash.remove(&now)) {
             self.project_search = search;
+        }
+        if let Some((prompt, attachments)) = now.and_then(|now| self.prompt_stash.remove(&now)) {
+            self.prompt = prompt;
+            self.attachments = attachments;
         }
         self.files_owner = now;
         if let (Page::Session(session), Some(tab)) =

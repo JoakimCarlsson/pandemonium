@@ -1291,6 +1291,8 @@ pub struct WorkspaceState {
     pub panes: crate::panes::Panes,
     /// The panes of each session other than the one whose files are open now, by its position.
     pub pane_stash: std::collections::HashMap<usize, crate::panes::Panes>,
+    /// What was typed in the prompt, and the files attached to it, for every session but the one being worked in, by session, so that coming back to one finds its message as it was left.
+    pub prompt_stash: std::collections::HashMap<usize, (Field, Vec<String>)>,
     /// The search of the review panel of every session but the one being worked in, by session.
     pub search_stash: std::collections::HashMap<usize, crate::project_search::ProjectSearch>,
     /// The tab being dragged to another pane, if one is.
@@ -1471,6 +1473,7 @@ impl WorkspaceState {
             panes: crate::panes::Panes::default(),
             pane_stash: std::collections::HashMap::new(),
             search_stash: std::collections::HashMap::new(),
+            prompt_stash: std::collections::HashMap::new(),
             pane_drag: None,
             pane_menu: None,
             chat_back: 0.0,
