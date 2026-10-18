@@ -31,6 +31,7 @@ pm-acp = { path = "crates/pm-acp" }
 pm-store = { path = "crates/pm-store" }
 pm-client = { path = "crates/pm-client" }
 pm-ssh = { path = "crates/pm-ssh" }
+pm-transport = { path = "crates/pm-transport" }
 pm-server = { path = "crates/pm-server" }
 pm-markdown = { path = "crates/pm-markdown" }
 pm-terminal = { path = "crates/pm-terminal" }

@@ -35,7 +35,7 @@ impl Project {
         })
     }
 
-    /// The machine the project is on when it is not this one: the destination of an `ssh://destination/folder` address.
+    /// The machine the project is on when it is not this one: the part of its address before the folder, such as the destination of an `ssh://destination/folder` address.
     pub fn host(&self) -> Option<String> {
         pm_protocol::host_of(&self.path).map(|(host, _)| host.to_owned())
     }

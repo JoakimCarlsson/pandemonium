@@ -12,19 +12,27 @@ document says what they mean and how a client behaves.
 
 ## Connecting
 
-A client reaches the server one of three ways. The protocol on the connection
-is the same in each.
+A client reaches the server one of six ways. The protocol on the connection
+is the same in each: only the way to the server's port differs.
 
 | Way    | What the client does                                                                                                                                                                                         |
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Local  | Reads `server.json` from the data folder for the port and token, connects to `ws://127.0.0.1:<port>/`. If nothing answers, starts `pandemonium-server --listen 127.0.0.1:0` apart from itself and reads again. |
 | Direct | Connects to `ws://<host>:<port>/` with a token it was given. The server must be started with `--listen <address> --token <token>`. The connection is not encrypted: use a trusted network such as Tailscale.    |
 | ssh    | Reads the remote `server.json` with `ssh <host> cat …`, opens a local port, and for each connection runs `ssh -W 127.0.0.1:<port> <host>` and pipes the bytes through. The server must already be running.      |
+| WSL    | On Windows, runs `wsl.exe -d <distro> --exec sh -c …` to read the distribution's `server.json`. When no server answers there, installs `pandemonium-server` with the installer if it is missing, starts it as a `wsl.exe` process of its own with `--listen 127.0.0.1:0`, so that it and the distribution outlive the client, and connects to `ws://127.0.0.1:<port>/` through WSL's localhost forwarding. |
+| Dev container | Reads the folder's `devcontainer.json` (`image`, `build`, `workspaceFolder`, `containerEnv`, `mounts`, `runArgs`, `postCreateCommand`), builds or pulls the image, and runs one container per folder, found again by its `pandemonium.folder` label, with the folder mounted at the workspace folder and port 6868 published on `127.0.0.1`. Installs and starts the server in it with `docker exec -d … --listen 0.0.0.0:6868`, reads its `server.json` with `docker exec`, and connects to the published port. Progress is reported step by step while this happens. |
+| Tunnel | Opens a local port and, for each connection, runs `cloudflared access tcp --hostname <hostname>` and pipes the bytes through it. The server's machine runs a named tunnel that points at the port the server listens on, so it only connects outward and opens no port. The token is the one the server was started with, kept by the client. |
 
 A project on another machine is addressed `ssh://<destination>/<folder>` for
-a server reached over ssh, and `tcp://<host>:<port>/<folder>` for one reached
-directly; the window keeps the token of each direct server in its own
-settings.
+a server reached over ssh, `tcp://<host>:<port>/<folder>` for one reached
+directly, `wsl://<distro>/<folder>` for one in a WSL distribution,
+`devcontainer://<host folder>/<folder>` for one in the dev container of a folder
+on this machine, and `tunnel://<hostname>/<folder>` for one behind a tunnel. The
+host folder of a dev container is written with `/` as `%2F`, `%` as `%25` and
+whitespace as `%XX`, so that it holds no slash; `<folder>` is the folder inside
+the container. The window keeps the token of each direct or tunnelled server in
+its own settings.
 
 A relay for phones, end-to-end encrypted, is planned and is not built.
 
