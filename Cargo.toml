@@ -40,6 +40,10 @@ pm-lsp = { path = "crates/pm-lsp" }
 pm-dap = { path = "crates/pm-dap" }
 pm-editor = { path = "crates/pm-editor" }
 pm-config = { path = "crates/pm-config" }
+pm-policy = { path = "crates/pm-policy" }
+pm-plugin-api = { path = "crates/pm-plugin-api" }
+pm-wasm = { path = "crates/pm-wasm" }
+pm-plugin = { path = "crates/pm-plugin" }
 
 [profile.dist]
 inherits = "release"

@@ -2,6 +2,7 @@
 
 use pm_acp::{Discovery, Setting, Slash};
 use pm_input::FocusId;
+use pm_protocol::ExtensionCommand;
 
 use crate::state::{
     ACCOUNT, ACCOUNT_BASE, AGENT_TOGGLE, APPROVALS_CHIP, ATTACHED_BASE, Activity, BRANCH_BASE,
@@ -100,7 +101,7 @@ impl WorkspaceState {
     }
 
     /// The commands or skills offered behind a slash or a dollar sign that fit what has been typed, with which it was.
-    pub fn slash_matches(&self) -> Vec<(char, &Slash)> {
+    pub fn slash_matches(&self) -> Vec<(char, Slash)> {
         let typed = self.prompt.text();
         let Some(prefix) = typed.chars().next() else {
             return Vec::new();
@@ -120,15 +121,35 @@ impl WorkspaceState {
             _ => return Vec::new(),
         };
         let rest = rest.to_lowercase();
+        let brought: Vec<Slash> = match prefix {
+            '/' => self
+                .extension_commands()
+                .into_iter()
+                .map(|(_, command)| Slash {
+                    name: format!("{}:{}", command.extension, command.id),
+                    description: command.description,
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
         source
             .iter()
+            .cloned()
+            .chain(brought)
             .filter(|command| command.name.to_lowercase().starts_with(&rest))
             .map(|command| (prefix, command))
             .collect()
     }
 
+    /// The command an extension brings that the name `name` typed behind a slash stands for, with the machine it runs on.
+    fn extension_command_named(&self, name: &str) -> Option<(Option<String>, ExtensionCommand)> {
+        self.extension_commands()
+            .into_iter()
+            .find(|(_, command)| format!("{}:{}", command.extension, command.id) == name)
+    }
+
     /// The machine and folder the prompt is for: the open session's, or the project being started in.
-    fn prompt_place(&self) -> Option<(Option<String>, String)> {
+    pub(crate) fn prompt_place(&self) -> Option<(Option<String>, String)> {
         match self.open() {
             Some(session) => Some((
                 self.projects.get(session.project)?.host(),
@@ -359,10 +380,16 @@ impl WorkspaceState {
             }
             return;
         }
-        let chosen = self
-            .slash_matches()
-            .get(index)
-            .map(|(prefix, command)| format!("{prefix}{} ", command.name));
+        let taken = self.slash_matches().get(index).cloned();
+        if let Some((_, command)) = &taken
+            && let Some((host, brought)) = self.extension_command_named(&command.name)
+        {
+            self.prompt = prompt_field("");
+            self.slash = 0;
+            self.run_extension_command(host, brought);
+            return;
+        }
+        let chosen = taken.map(|(prefix, command)| format!("{prefix}{} ", command.name));
         if let Some(typed) = chosen {
             self.prompt = prompt_field(&typed);
             self.slash = 0;

@@ -7,11 +7,13 @@
 //! the other.
 
 mod builtin;
+mod extension;
 mod family;
 mod fonts;
 mod theme;
 
-pub use builtin::{default_family, families, family_named};
+pub use builtin::{default_family, families, family_named, shipped_families};
+pub use extension::{family_from_colours, set_extension_families};
 pub use family::{Appearance, ThemeFamily};
 pub use fonts::Fonts;
 pub use theme::Theme;

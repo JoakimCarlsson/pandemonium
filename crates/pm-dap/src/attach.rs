@@ -53,7 +53,7 @@ impl Adapter {
     /// Builds an attach scenario using this adapter's process-id convention.
     pub fn attach(self, pid: u32) -> Scenario {
         let mut config = Map::new();
-        match self.id {
+        match self.id.as_str() {
             "gdb" | "lldb-dap" => {
                 config.insert("pid".into(), json!(pid));
             }
@@ -68,7 +68,7 @@ impl Adapter {
         }
         Scenario {
             label: format!("Attach to {pid}"),
-            kind: self.id.to_owned(),
+            kind: self.id.clone(),
             adapter: Some(self),
             request: Request::Attach,
             before: None,

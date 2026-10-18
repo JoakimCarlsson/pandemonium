@@ -180,7 +180,7 @@ pub(crate) enum Sent {
 /// What the adapter has said, and what it has not been told yet.
 pub(crate) struct State {
     /// The adapter's name in unsupported-feature messages.
-    pub adapter_name: &'static str,
+    pub adapter_name: String,
     /// What the adapter said it can do, once the handshake has said it.
     pub capabilities: Value,
     /// Where the session has got to.
@@ -228,7 +228,7 @@ impl State {
     /// The state of a session about to start, with `breakpoints` to set.
     pub(crate) fn new(
         breakpoints: BTreeMap<PathBuf, Vec<Breakpoint>>,
-        adapter_name: &'static str,
+        adapter_name: String,
     ) -> Self {
         Self {
             adapter_name,

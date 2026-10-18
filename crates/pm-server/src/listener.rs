@@ -43,6 +43,7 @@ pub fn run(settings: Settings) -> std::io::Result<()> {
     let core = Core::new();
     core.load();
     crate::machine::start_fetching(core.clone());
+    core.extensions_changed();
     crate::folders::start(core.clone());
     let watching = core.clone();
     std::thread::spawn(move || {

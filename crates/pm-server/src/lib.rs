@@ -12,6 +12,7 @@ mod credential;
 mod debugs;
 mod documents;
 mod entries;
+mod extensions;
 mod fetch;
 mod folders;
 mod handler;

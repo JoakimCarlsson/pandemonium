@@ -80,7 +80,7 @@ impl Scenario {
     /// What the adapter is told to launch or attach with.
     pub(crate) fn arguments(&self) -> Value {
         let mut config = self.config.clone();
-        if let Some(adapter) = self.adapter {
+        if let Some(adapter) = &self.adapter {
             adapter.prepare(&mut config);
         }
         Value::Object(config)

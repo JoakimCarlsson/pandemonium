@@ -182,6 +182,12 @@ enum Pending {
     Hovered(usize, String, pm_protocol::Position),
     /// The extensions the server on this machine can install.
     Extensions,
+    /// What the extension package in this folder carries and asks to be allowed.
+    ExtensionPreview(String),
+    /// What the extensions of the server of this machine bring that the window uses itself.
+    ExtensionAssets(Host),
+    /// What a command an extension brings came to, to tell in this session.
+    ExtensionCommand(Option<usize>),
     /// The places looked for from a place in a file of the session at this position.
     Definitions(usize, pm_protocol::Seek),
     /// Who last changed this line of the file of the session at this position, at this path.
@@ -1173,6 +1179,7 @@ impl Work {
                         self.watched.remove(&host);
                         self.ask(&host, Request::Sessions, Pending::Sessions(host.clone()));
                         self.share_extensions(model, &host);
+                        self.ask_extension_assets(&host);
                         self.ask_debugs(&host);
                         model.update(|screen| {
                             *screen = std::mem::take(screen).reopen_documents(&host);
@@ -1255,6 +1262,7 @@ impl Work {
                         self.folder_changed(model, &host, &directory);
                     }
                     Incoming::ExtensionsChanged(extensions) => {
+                        self.ask_extension_assets(&host);
                         model.update(|screen| {
                             *screen =
                                 std::mem::take(screen).with_host_extensions(&host, &extensions);
@@ -1840,7 +1848,10 @@ impl Work {
             | Pending::Formatted(..)
             | Pending::FoldingRanges(..)
             | Pending::LinkedRanges(..)
-            | Pending::Extensions => self.answered_code(model, host, pending, response),
+            | Pending::Extensions
+            | Pending::ExtensionPreview(_)
+            | Pending::ExtensionAssets(_)
+            | Pending::ExtensionCommand(_) => self.answered_code(model, host, pending, response),
             Pending::DebugScenarios(_)
             | Pending::DebugProcesses(_)
             | Pending::DebugStarted(_)

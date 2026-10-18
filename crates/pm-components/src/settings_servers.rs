@@ -413,6 +413,7 @@ impl WorkspaceState {
                         description: form.description,
                         website: form.website,
                         enabled: true,
+                        extension: None,
                     }),
                 }
                 self.outbox.push(Outgoing::SaveMcpServers(servers.clone()));
@@ -457,6 +458,7 @@ impl WorkspaceState {
                     description: offered.description,
                     website: offered.website,
                     enabled: true,
+                    extension: None,
                 });
                 self.outbox.push(Outgoing::SaveMcpServers(
                     self.settings_servers.tools.clone(),
@@ -495,7 +497,12 @@ impl WorkspaceState {
 
     /// Switches the `index`-th tool server on or off, and has the server keep the list.
     fn toggle_server(&mut self, index: usize) {
-        if let Some(tool) = self.settings_servers.tools.get_mut(index) {
+        if let Some(tool) = self
+            .settings_servers
+            .tools
+            .get_mut(index)
+            .filter(|tool| tool.extension.is_none())
+        {
             tool.enabled = !tool.enabled;
             self.outbox.push(Outgoing::SaveMcpServers(
                 self.settings_servers.tools.clone(),
@@ -541,7 +548,13 @@ impl WorkspaceState {
                     .push(Outgoing::SaveAgentServers(servers.clone()));
                 self.set_agents(servers);
             }
-            Some(Section::McpServers) if index < self.settings_servers.tools.len() => {
+            Some(Section::McpServers)
+                if self
+                    .settings_servers
+                    .tools
+                    .get(index)
+                    .is_some_and(|tool| tool.extension.is_none()) =>
+            {
                 self.settings_servers.tools.remove(index);
                 self.outbox.push(Outgoing::SaveMcpServers(
                     self.settings_servers.tools.clone(),
@@ -624,6 +637,18 @@ pub fn server_menu(state: &WorkspaceState) -> Option<Node> {
     Some(match state.settings? {
         Section::McpServers => {
             let tool = state.settings_servers.tools.get(open.index)?;
+            if tool.extension.is_some() {
+                return Some(
+                    menu.item("Copy Configuration (JSON)", None, SETTINGS_MENU_COPY, false)
+                        .item(
+                            "Open Website",
+                            None,
+                            SETTINGS_MENU_WEBSITE,
+                            tool.website.is_empty(),
+                        )
+                        .build(),
+                );
+            }
             menu.item(
                 if tool.enabled { "Disable" } else { "Enable" },
                 None,
@@ -1144,7 +1169,12 @@ fn installed_rows(state: &WorkspaceState, section: Section, needle: &str) -> Vec
                 } else {
                     vec![("Disabled", Role::Subtle)]
                 },
-                description: tool.description.clone(),
+                description: match &tool.extension {
+                    Some(extension) => {
+                        format!("From the {extension} extension. {}", tool.description)
+                    }
+                    None => tool.description.clone(),
+                },
                 detail: reach_of(&tool.target, tool.env.len()),
                 place: Some(index),
                 enabled: Some(tool.enabled),

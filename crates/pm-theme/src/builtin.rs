@@ -135,22 +135,29 @@ fn dusk_light() -> Theme {
 /// The family the app ships, in both appearances.
 pub fn default_family() -> ThemeFamily {
     ThemeFamily {
-        name: "Default",
+        name: "Default".to_owned(),
         dark: dark(),
         light: light(),
     }
 }
 
 /// Every family the app ships, the default first.
-pub fn families() -> Vec<ThemeFamily> {
+pub fn shipped_families() -> Vec<ThemeFamily> {
     vec![
         default_family(),
         ThemeFamily {
-            name: "Dusk",
+            name: "Dusk".to_owned(),
             dark: dusk_dark(),
             light: dusk_light(),
         },
     ]
+}
+
+/// Every family there is: those the app ships, the default first, then those extensions brought.
+pub fn families() -> Vec<ThemeFamily> {
+    let mut every = shipped_families();
+    every.extend(crate::extension::extension_families());
+    every
 }
 
 /// The family called `name`, or the default when none is.

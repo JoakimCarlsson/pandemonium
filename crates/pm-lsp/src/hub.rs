@@ -371,6 +371,14 @@ impl Hub {
         if let Ok(mut addresses) = self.addresses.lock() {
             addresses.insert(uri.clone(), key.clone());
         }
+        if let Some(ServerChoice::Refused(reason)) = self
+            .choices
+            .lock()
+            .ok()
+            .and_then(|choices| choices.get(language).cloned())
+        {
+            return Err(reason);
+        }
         let Some(spec) = self.chosen(language, manifest.server) else {
             return Ok(Triggers::default());
         };

@@ -590,10 +590,51 @@ pub enum Outgoing {
         /// The extensions, by folder name.
         ids: Vec<String>,
     },
-    /// Has the server on this machine install the extension in a folder of this machine.
+    /// Asks the server on this machine what the extension in a folder of this machine carries and asks to be allowed, before anything is installed.
+    InspectExtension {
+        /// The folder.
+        path: String,
+    },
+    /// Has the server on this machine install the extension in a folder of this machine, with the capabilities the reader allowed it.
     InstallExtension {
         /// The folder.
         path: String,
+        /// What the reader allowed, by the names of capabilities.
+        grants: Vec<String>,
+    },
+    /// Has the server on this machine take an extension package off; the packages of other machines are theirs.
+    RemovePackage {
+        /// The extension, by folder name.
+        id: String,
+    },
+    /// Allows an extension installed on this machine a capability, or takes it back.
+    GrantExtension {
+        /// The extension, by folder name.
+        id: String,
+        /// The capability, by name.
+        capability: String,
+        /// Whether it is allowed.
+        granted: bool,
+    },
+    /// Asks the server of a machine for the themes, icon themes and commands its extensions bring.
+    ExtensionAssets {
+        /// The machine, as projects name it; nothing for this one.
+        host: Option<String>,
+    },
+    /// Runs a command an extension of a machine brings, to put what it comes to in the prompt box.
+    RunExtensionCommand {
+        /// The machine, as projects name it; nothing for this one.
+        host: Option<String>,
+        /// The extension, by folder name.
+        extension: String,
+        /// The command.
+        command: String,
+        /// What was typed after its name.
+        argument: String,
+        /// The project folder it runs in, when it runs in one.
+        directory: Option<String>,
+        /// The session open when it was taken, by position, to tell what it came to in.
+        session: Option<usize>,
     },
     /// Has the server on this machine take an extension off.
     RemoveExtension {
@@ -1355,6 +1396,8 @@ pub struct WorkspaceState {
     pub extensions: Vec<pm_protocol::ExtensionInfo>,
     /// What the extensions page remembers.
     pub extensions_page: crate::extensions::ExtensionsPage,
+    /// What the extensions of each machine bring that the window uses itself, by machine; nothing for this one.
+    pub extension_assets: std::collections::BTreeMap<Option<String>, pm_protocol::ExtensionAssets>,
     /// Where the caret was before each jump to a definition, to go back to.
     pub jumps: pm_editor::Jumps,
     /// The list hanging over the file shown, when one is open.
@@ -1509,6 +1552,7 @@ impl WorkspaceState {
             unfolded: Vec::new(),
             extensions: Vec::new(),
             extensions_page: crate::extensions::ExtensionsPage::default(),
+            extension_assets: std::collections::BTreeMap::new(),
             jumps: pm_editor::Jumps::default(),
             listing: None,
             recent_commands: Vec::new(),

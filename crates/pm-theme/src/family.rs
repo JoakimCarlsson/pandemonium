@@ -15,7 +15,7 @@ pub enum Appearance {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ThemeFamily {
     /// The family's name.
-    pub name: &'static str,
+    pub name: String,
     /// The variant for dark surfaces.
     pub dark: Theme,
     /// The variant for light surfaces.

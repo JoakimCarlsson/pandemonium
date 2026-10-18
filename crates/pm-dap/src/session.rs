@@ -78,12 +78,18 @@ impl Session {
         breakpoints: BTreeMap<PathBuf, Vec<Breakpoint>>,
         notify: Notify,
     ) -> io::Result<Self> {
-        let adapter = scenario.adapter.ok_or_else(|| {
+        let adapter = scenario.adapter.clone().ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::Unsupported,
                 format!("no debug adapter for `{}`", scenario.kind),
             )
         })?;
+        if let Some(reason) = &adapter.denied {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                reason.clone(),
+            ));
+        }
         let program = adapter.program().ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
@@ -110,7 +116,7 @@ impl Session {
         let process = Arc::new(Mutex::new(Some(process)));
         let (outbox, queued) = mpsc::channel();
         let wire = Wire::new(outbox);
-        let state = Arc::new(Mutex::new(State::new(breakpoints, adapter.name)));
+        let state = Arc::new(Mutex::new(State::new(breakpoints, adapter.name.clone())));
         let reader = Reader {
             process: process.clone(),
             state: state.clone(),
@@ -939,7 +945,7 @@ fn send_breakpoints(wire: &Wire, state: &Mutex<State>, path: &Path, lines: &[Bre
         .unwrap_or_default();
     let (capabilities, adapter_name) = {
         let state = lock(state);
-        (state.capabilities.clone(), state.adapter_name)
+        (state.capabilities.clone(), state.adapter_name.clone())
     };
     let mut unsupported = Vec::new();
     let breakpoints = lines

@@ -109,7 +109,10 @@ fn row(listing: &Listing, place: usize, index: usize, picked: bool) -> Node {
     let query = listing.items.query();
     let (cells, group) = match &listing.items {
         Items::Commands {
-            commands, recent, ..
+            commands,
+            extras,
+            recent,
+            ..
         } => {
             let group = match (*recent, place) {
                 (0, _) => None,
@@ -117,12 +120,22 @@ fn row(listing: &Listing, place: usize, index: usize, picked: bool) -> Node {
                 (recent, place) if place == recent => Some(("other commands", true)),
                 _ => None,
             };
-            let cells = commands.get(index).map_or_else(Vec::new, |(action, keys)| {
-                let mut cells = vec![marked(&action.palette_title(), query)];
-                cells.extend(group.map(|(said, _)| separator(said)));
-                cells.extend(keys.as_deref().map(keycaps));
-                cells
-            });
+            let cells = match commands.get(index) {
+                Some((action, keys)) => {
+                    let mut cells = vec![marked(&action.palette_title(), query)];
+                    cells.extend(group.map(|(said, _)| separator(said)));
+                    cells.extend(keys.as_deref().map(keycaps));
+                    cells
+                }
+                None => extras
+                    .get(index - commands.len())
+                    .map_or_else(Vec::new, |(_, command)| {
+                        vec![
+                            marked(&command.title, query),
+                            separator(&format!("extension {}", command.extension)),
+                        ]
+                    }),
+            };
             (cells, group)
         }
         Items::Files { paths, recent, .. } => {

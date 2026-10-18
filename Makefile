@@ -1,4 +1,4 @@
-.PHONY: fmt lint run install install-server release languages
+.PHONY: fmt lint run install install-server release languages extension-sample
 
 fmt:
 	cargo fmt --all
@@ -20,3 +20,10 @@ release:
 
 languages:
 	cargo run -p pm-server --bin pandemonium-server -- --index-languages languages
+
+extension-sample:
+	cargo build --release --target wasm32-unknown-unknown --manifest-path extensions/hello-guest/Cargo.toml --target-dir build/hello-guest
+	rm -rf build/extensions/hello
+	mkdir -p build/extensions
+	cp -r extensions/hello build/extensions/hello
+	cp build/hello-guest/wasm32-unknown-unknown/release/hello_guest.wasm build/extensions/hello/extension.wasm

@@ -15,10 +15,13 @@ pub use address::{DIRECT_SCHEME, SSH_SCHEME, direct_address, host_of, is_destina
 pub use agents::builtin_agents;
 pub use credential::{Build, Credential, Target};
 pub use debug::{DebugAction, DebugAdapter, DebugFile, DebugInfo, DebugProcess, DebugScenario};
-pub use extensions::{ExtensionInfo, GrammarBundle};
+pub use extensions::{
+    CAPABILITIES, ExtensionAssets, ExtensionCommand, ExtensionIcon, ExtensionIconTheme,
+    ExtensionInfo, ExtensionTheme, GrammarBundle,
+};
 pub use machine::{
-    AgentPreferences, FETCH_MINUTES, GitPreferences, LanguagePreferences, MachineSettings,
-    ShellPreferences,
+    AgentPreferences, ExtensionPreferences, FETCH_MINUTES, GitPreferences, LanguagePreferences,
+    MachineSettings, ShellPreferences,
 };
 pub use message::{ClientMessage, ServerMessage};
 pub use pm_buffer::{Position, Span};

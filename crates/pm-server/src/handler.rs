@@ -516,11 +516,18 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             },
             Err(reason) => failed(reason),
         },
-        Request::McpServers => match stored_list("mcp-servers") {
-            Ok(servers) => Response::McpServers { servers },
+        Request::McpServers => match stored_list::<pm_protocol::McpServer>("mcp-servers") {
+            Ok(mut servers) => {
+                servers.retain(|server| server.extension.is_none());
+                servers.extend(crate::extensions::mcp_servers());
+                Response::McpServers { servers }
+            }
             Err(reason) => failed(reason),
         },
-        Request::SaveMcpServers { servers } => saved_list("mcp-servers", &servers),
+        Request::SaveMcpServers { mut servers } => {
+            servers.retain(|server| server.extension.is_none());
+            saved_list("mcp-servers", &servers)
+        }
         Request::WatchFolders { directories } => {
             core.folders.watch(connection, directories);
             Response::Done
@@ -528,7 +535,8 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
         Request::MachineSettings => Response::MachineSettings {
             settings: crate::machine::settings(),
         },
-        Request::SaveMachineSettings { settings } => {
+        Request::SaveMachineSettings { mut settings } => {
+            settings.extensions = crate::machine::settings().extensions;
             let answer = crate::machine::save(&settings);
             core.documents.settings_changed(&settings);
             answer
@@ -780,14 +788,45 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             core.install_extensions(ids);
             Response::Done
         }
-        Request::RemoveExtension { id } => done(core.remove_extension(&id)),
-        Request::InstallExtension { path } => match pm_lsp::add_extension(&place(&path)) {
-            Ok(id) => {
-                core.install_extensions(vec![id]);
-                Response::Done
+        Request::RemoveExtension { id } => {
+            if pm_plugin::named(&id).is_some() {
+                done(core.remove_package(&id))
+            } else {
+                done(core.remove_extension(&id))
             }
+        }
+        Request::InstallExtension { path, grants } => {
+            let folder = place(&path);
+            if folder.join(pm_plugin::MANIFEST).is_file() {
+                core.install_package(&path, grants)
+            } else {
+                match pm_lsp::add_extension(&folder) {
+                    Ok(id) => {
+                        core.install_extensions(vec![id]);
+                        Response::Done
+                    }
+                    Err(reason) => failed(reason),
+                }
+            }
+        }
+        Request::InspectExtension { path } => match pm_plugin::inspect(&place(&path)) {
+            Ok(package) => Response::ExtensionPreview {
+                extension: crate::extensions::describe(&package, false),
+            },
             Err(reason) => failed(reason),
         },
+        Request::GrantExtension {
+            id,
+            capability,
+            granted,
+        } => done(core.grant(&id, &capability, granted)),
+        Request::ExtensionAssets => Response::ExtensionAssets(crate::extensions::assets()),
+        Request::RunExtensionCommand {
+            extension,
+            command,
+            argument,
+            directory,
+        } => core.run_extension_command(&extension, &command, &argument, directory.as_deref()),
         Request::Grammar { language } => match languages::grammar(&language) {
             Ok(bundle) => Response::Grammar(bundle),
             Err(reason) => failed(reason),

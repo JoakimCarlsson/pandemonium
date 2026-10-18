@@ -674,9 +674,17 @@ pub(crate) fn listing_cells(items: &Items, index: usize) -> Vec<Node> {
                 tag(beside.clone(), 11, Role::Subtle),
             ]
         }
-        Items::Commands { commands, .. } => {
+        Items::Commands {
+            commands, extras, ..
+        } => {
             let Some((action, keys)) = commands.get(index) else {
-                return Vec::new();
+                let Some((_, command)) = extras.get(index - commands.len()) else {
+                    return Vec::new();
+                };
+                return vec![
+                    cell(command.title.clone(), 12, Role::Text, false),
+                    tag(format!("extension {}", command.extension), 11, Role::Subtle),
+                ];
             };
             let mut cells = vec![cell(action.title(), 12, Role::Text, false)];
             cells.extend(keys.clone().map(|keys| tag(keys, 11, Role::Subtle)));

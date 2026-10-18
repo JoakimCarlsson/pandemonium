@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 
 use pm_icon::{IconName, Svg};
-use pm_protocol::ExtensionInfo;
+use pm_protocol::{ExtensionIconTheme, ExtensionInfo};
 use pm_style::{Color, Role, size, text_color};
 use pm_ui::{Node, node};
 
@@ -23,6 +23,12 @@ type Learned = HashMap<Option<String>, HashMap<String, Known>>;
 
 /// What was learned from the languages installed on the machines reached.
 static LEARNED: LazyLock<Mutex<Learned>> = LazyLock::new(Default::default);
+
+/// The icons the icon themes of each machine give the endings of file names: by machine, then by ending.
+type Themed = HashMap<Option<String>, HashMap<String, (Svg, Color)>>;
+
+/// What was learned from the icon themes installed on the machines reached.
+static THEMED: LazyLock<Mutex<Themed>> = LazyLock::new(Default::default);
 
 /// The colour `hex`, written `#rrggbb`, names.
 fn colour_of(hex: &str) -> Option<Color> {
@@ -65,14 +71,43 @@ pub fn learn_languages(host: &Option<String>, extensions: &[ExtensionInfo]) {
     }
 }
 
-/// What `read` finds in what the installed language of the file `path` names says of it, on the first machine where it finds something.
-fn learned_of<T>(path: &str, read: impl Fn(&Known) -> Option<T>) -> Option<T> {
-    let suffix = path
-        .rsplit(['/', '\\'])
+/// Takes in the icon themes installed on `host`, in place of those it had before; a later theme's icon for an ending replaces an earlier one's.
+pub fn learn_icon_themes(host: &Option<String>, themes: &[ExtensionIconTheme]) {
+    let mut endings = HashMap::new();
+    for theme in themes {
+        for icon in &theme.icons {
+            let tone = icon
+                .color
+                .as_deref()
+                .and_then(colour_of)
+                .unwrap_or_else(|| Color::from(Role::Muted));
+            let svg = Svg::arrived(
+                &format!(
+                    "icon-theme-{}-{}-{}",
+                    theme.extension, theme.name, icon.suffix
+                ),
+                &icon.svg,
+            );
+            endings.insert(icon.suffix.to_lowercase(), (svg, tone));
+        }
+    }
+    if let Ok(mut themed) = THEMED.lock() {
+        themed.insert(host.clone(), endings);
+    }
+}
+
+/// The ending of the name of the file `path`, in lower case; empty when it has none.
+fn suffix_of(path: &str) -> String {
+    path.rsplit(['/', '\\'])
         .next()
         .and_then(|name| name.rsplit_once('.'))
         .map(|(_, suffix)| suffix.to_lowercase())
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+/// What `read` finds in what the installed language of the file `path` names says of it, on the first machine where it finds something.
+fn learned_of<T>(path: &str, read: impl Fn(&Known) -> Option<T>) -> Option<T> {
+    let suffix = suffix_of(path);
     LEARNED.lock().ok().and_then(|learned| {
         learned
             .values()
@@ -87,7 +122,14 @@ pub fn file_language(path: &str) -> Option<String> {
 
 /// The icon and colour of the file `path` names: its installed language's, or a plain muted file.
 pub fn file_kind(path: &str) -> (Svg, Color) {
-    learned_of(path, |known| known.icon)
+    let suffix = suffix_of(path);
+    let themed = THEMED.lock().ok().and_then(|themed| {
+        themed
+            .values()
+            .find_map(|endings| endings.get(&suffix).copied())
+    });
+    themed
+        .or_else(|| learned_of(path, |known| known.icon))
         .unwrap_or_else(|| (IconName::File.svg(), Color::from(Role::Muted)))
 }
 

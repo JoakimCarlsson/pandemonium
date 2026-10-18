@@ -64,6 +64,8 @@ impl Documents {
                 Some((language.clone(), choice))
             })
             .collect();
+        let mut choices: HashMap<String, pm_lsp::ServerChoice> = choices;
+        choices.extend(crate::extensions::refused_servers());
         self.hub.choose_servers(choices);
     }
 

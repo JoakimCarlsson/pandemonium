@@ -74,8 +74,9 @@ fn described(scenario: &Scenario) -> DebugScenario {
         label: scenario.label.clone(),
         adapter: scenario
             .adapter
-            .map_or_else(|| scenario.kind.clone(), |adapter| adapter.name.to_owned()),
-        installed: scenario.adapter.is_some_and(Adapter::installed),
+            .as_ref()
+            .map_or_else(|| scenario.kind.clone(), |adapter| adapter.name.clone()),
+        installed: scenario.adapter.as_ref().is_some_and(Adapter::installed),
         attach: scenario.request == pm_dap::Request::Attach,
         source: scenario
             .source
@@ -96,12 +97,12 @@ pub(crate) fn scenarios(root: &Path, file: Option<&str>) -> Vec<DebugScenario> {
 
 /// The programs running here, and the adapters installed that could attach to one.
 pub(crate) fn processes() -> (Vec<DebugAdapter>, Vec<DebugProcess>) {
-    let adapters = pm_dap::ADAPTERS
-        .iter()
-        .filter(|adapter| adapter.installed())
+    let adapters = pm_dap::adapters()
+        .into_iter()
+        .filter(|adapter| adapter.denied.is_none() && adapter.installed())
         .map(|adapter| DebugAdapter {
-            id: adapter.id.to_owned(),
-            name: adapter.name.to_owned(),
+            id: adapter.id,
+            name: adapter.name,
         })
         .collect();
     let processes = pm_dap::processes()
@@ -194,9 +195,7 @@ impl Core {
         pid: u32,
         files: Vec<DebugFile>,
     ) -> Result<(u64, DebugView), String> {
-        let adapter = pm_dap::ADAPTERS
-            .iter()
-            .find(|held| held.id == adapter)
+        let adapter = pm_dap::Adapter::with_id(adapter)
             .ok_or_else(|| format!("there is no debug adapter called {adapter}"))?;
         self.start_debug(connection, directory, root, adapter.attach(pid), files)
     }

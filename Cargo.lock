@@ -2560,14 +2560,32 @@ dependencies = [
 [[package]]
 name = "pm-plugin"
 version = "0.13.0-rc.4"
+dependencies = [
+ "pm-lsp",
+ "pm-plugin-api",
+ "pm-policy",
+ "pm-store",
+ "pm-wasm",
+ "serde",
+ "serde_json",
+ "toml",
+ "ureq",
+]
 
 [[package]]
 name = "pm-plugin-api"
 version = "0.13.0-rc.4"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "pm-policy"
 version = "0.13.0-rc.4"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "pm-primitives"
@@ -2614,6 +2632,8 @@ dependencies = [
  "pm-dap",
  "pm-git",
  "pm-lsp",
+ "pm-plugin",
+ "pm-policy",
  "pm-protocol",
  "pm-store",
  "portable-pty",
@@ -2715,6 +2735,11 @@ dependencies = [
 [[package]]
 name = "pm-wasm"
 version = "0.13.0-rc.4"
+dependencies = [
+ "pm-plugin-api",
+ "serde_json",
+ "wasmtime",
+]
 
 [[package]]
 name = "png"

@@ -19,6 +19,7 @@ make install        # build and install the window as pandemonium-preview
 make install-server # build and install only the headless pandemonium-server
 make release VERSION=x.y.z  # bump, tag and push; CI builds and publishes
 make languages      # write languages/languages.json after a language folder changes
+make extension-sample # build the sample extension into build/extensions/hello
 ```
 
 **Verify a change:** build, then draw the screen you touched. `pandemonium
@@ -104,11 +105,18 @@ One crate per layer, each depending only on the layers below it.
   the servers it knows), read from and written to one file. What a server acts
   on is `pm_protocol::MachineSettings`, kept by each server; the settings window
   edits both, every setting a row of `pm-components`' catalogue.
+- **Extensions:** `pm-policy` (the capabilities an extension may hold, denied
+  until the reader grants them), `pm-plugin-api` (the versioned, append-only
+  contract between the editor and an extension's module), `pm-wasm` (the
+  sandbox that runs a module under a budget) and `pm-plugin` (the manifest, the
+  installed extensions, installing one through the language index and running
+  its commands). An extension lives on the server of its machine; its themes,
+  icon themes and command names are read by the window. `docs/extensions.md`
+  describes the package.
 - **Binary:** `pandemonium`: the event loop, the window and the threads that
   talk to the servers. It wires the layers and implements none of them.
 - **Not built yet** (one doc comment each): `pm-session`, `pm-review`,
-  `pm-mcp`, `pm-policy`, `pm-plugin`, `pm-plugin-api`, `pm-wasm`,
-  `pm-agent-library`.
+  `pm-mcp`, `pm-agent-library`.
 
 ## Hard rules
 
