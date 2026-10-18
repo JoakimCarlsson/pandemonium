@@ -551,6 +551,8 @@ pub enum Outgoing {
         path: String,
         /// The line, counted from 1, or nothing for the whole file.
         line: Option<usize>,
+        /// The last line of the range that starts at `line`, counted from 1, or nothing for the one line.
+        end_line: Option<usize>,
         /// Whether the address is opened in the browser rather than copied.
         open: bool,
     },
@@ -2674,14 +2676,14 @@ impl WorkspaceState {
         {
             self.closed_diffs.remove(&path);
         }
-        self.diff_scroll = self.open().map_or(0.0, |session| {
+        self.diff_scroll = self.review_session().map_or(0.0, |session| {
             crate::diff::offset_of(self, session, index, DIFF_WIDTH)
         });
     }
 
     /// Folds the folder at `position` of the open session's changes, or unfolds it.
     fn fold_change_folder(&mut self, position: usize) {
-        let key = self.open().and_then(|session| {
+        let key = self.review_session().and_then(|session| {
             crate::change_list::folder_table(&session.changes)
                 .get(position)
                 .map(|folder| crate::change_list::fold_key(folder.group, &folder.path))
@@ -2693,7 +2695,7 @@ impl WorkspaceState {
 
     /// Stages everything under the folder at `position` of the open session's changes, or unstages it when all of it is staged.
     fn stage_change_folder(&mut self, position: usize) {
-        let files = self.open().and_then(|session| {
+        let files = self.review_session().and_then(|session| {
             crate::change_list::folder_table(&session.changes)
                 .into_iter()
                 .nth(position)
@@ -2853,6 +2855,7 @@ impl WorkspaceState {
                 .iter()
                 .map(|found| {
                     let mut change = Change::new(&found.path, &found.diff);
+                    change.words.clone_from(&found.words);
                     change.staged = found.index.is_some() || found.staged;
                     change.unstaged = found.worktree.is_some() || !found.staged;
                     change.untracked = found.untracked;

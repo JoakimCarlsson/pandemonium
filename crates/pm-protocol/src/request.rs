@@ -391,6 +391,9 @@ pub enum Request {
         /// The line, counted from 1, or nothing for the whole file.
         #[serde(default)]
         line: Option<usize>,
+        /// The last line of a range that starts at `line`, counted from 1, or nothing for the one line.
+        #[serde(default)]
+        end_line: Option<usize>,
     },
     /// Replaces the contents of a file of a folder with text, making the file when it is not there.
     WriteFile {

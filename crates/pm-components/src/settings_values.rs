@@ -272,6 +272,8 @@ impl Setting {
                 FOLLOW,
                 place_of(&[GitMarks::FollowEditor, GitMarks::Off], &window.git.gutter),
             ),
+            Self::GitWordDiff => Control::Switch(window.git.word_diff),
+            Self::GitHosts => Control::Text("e.g. git.example.com=gitlab"),
             Self::DefaultAgent => {
                 let options = self.options(state);
                 let picked = self.picked(state).unwrap_or(0);
@@ -467,6 +469,7 @@ impl Setting {
             Self::GitGutterMarks => {
                 window.git.gutter = [GitMarks::FollowEditor, GitMarks::Off][option.min(1)];
             }
+            Self::GitWordDiff => window.git.word_diff ^= true,
             Self::PermissionMode => {
                 machine.agents.permission_mode = chosen(&MODE_IDS, option).map(str::to_owned);
             }
@@ -492,6 +495,7 @@ impl Setting {
             | Self::ShellArguments
             | Self::BranchTemplate
             | Self::WorktreeFolder
+            | Self::GitHosts
             | Self::DefaultAgent
             | Self::DefaultServer => {}
         }
@@ -628,6 +632,7 @@ impl Setting {
                 | Self::ShellArguments
                 | Self::BranchTemplate
                 | Self::WorktreeFolder
+                | Self::GitHosts
         )
     }
 
@@ -640,6 +645,7 @@ impl Setting {
             Self::ShellArguments => machine.shell.arguments.clone(),
             Self::BranchTemplate => machine.git.branch_template.clone(),
             Self::WorktreeFolder => machine.git.worktree_root.clone(),
+            Self::GitHosts => machine.git.hosts_text(),
             _ => String::new(),
         }
     }
@@ -660,6 +666,7 @@ impl Setting {
             Self::ShellArguments => machine.shell.arguments = text,
             Self::BranchTemplate => machine.git.branch_template = text,
             Self::WorktreeFolder => machine.git.worktree_root = text,
+            Self::GitHosts => machine.git.set_hosts_text(&text),
             _ => {}
         }
     }
@@ -794,6 +801,8 @@ impl Setting {
                 .clone_from(&kept.git.worktree_root),
             Self::GitBlame => window.git.blame = own.git.blame,
             Self::GitGutterMarks => window.git.gutter = own.git.gutter,
+            Self::GitWordDiff => window.git.word_diff = own.git.word_diff,
+            Self::GitHosts => machine.git.hosts.clone_from(&kept.git.hosts),
             Self::DefaultAgent => machine
                 .agents
                 .default_agent

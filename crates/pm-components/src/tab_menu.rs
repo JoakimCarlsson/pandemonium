@@ -199,6 +199,7 @@ impl WorkspaceState {
                         session,
                         path,
                         line: None,
+                        end_line: None,
                         open: command == TabCommand::OpenPermalink,
                     });
                 }

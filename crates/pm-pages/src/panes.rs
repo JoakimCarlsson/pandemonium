@@ -272,8 +272,10 @@ fn item_view(
         }
         (Item::Page, Page::Project(project), _) => overview::overview(state, project),
         (Item::Page, _, _) => starting_page(state, width, area.height, shaper),
-        (Item::Diff, _, Some(session)) => diff::diff(state, session, width, tall),
-        (Item::Diff, _, None) => node(),
+        (Item::Diff, _, _) => match state.review_session() {
+            Some(session) => diff::diff(state, session, width, tall),
+            None => node(),
+        },
         (Item::Excerpts, _, _) => excerpts::excerpts_view(state, tall),
         (Item::File { .. }, _, _) => match viewer_of(state, item) {
             Some((index, _)) => viewer::file_view(state, index, width, tall, shaper),
