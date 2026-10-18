@@ -232,6 +232,10 @@ impl WorkspaceState {
                 Ok(triggers) => {
                     document.triggers = triggers.completion;
                     document.signature_triggers = triggers.signature;
+                    document.format_triggers = triggers.format;
+                    document.formats_ranges = triggers.formats_ranges;
+                    document.folds_supported = triggers.folds;
+                    document.links_supported = triggers.links;
                     document.server_problem = None;
                 }
                 Err(problem) => {
@@ -542,26 +546,32 @@ impl WorkspaceState {
         self
     }
 
-    /// Asks the language server to format the file shown, and writes it to the folder afterwards when `save`; a file no language server reads is written as it is.
-    pub(crate) fn format_then_save(&mut self, save: bool) {
+    /// Asks the language server to format the file shown, or only the stretch `range` of it, and writes it to the folder afterwards when `save`; a file no language server reads is written as it is.
+    pub(crate) fn format_then_save(&mut self, save: bool, range: Option<std::ops::Range<usize>>) {
         let Some((session, viewer)) = self.shown_mut() else {
             return;
         };
         let path = viewer.path.clone();
         let asking = document_of(viewer)
             .filter(|document| document.synced && !document.field.is_read_only())
-            .map(|document| (document.version, document.language.clone()));
+            .map(|document| {
+                let span = range.map(|range| {
+                    pm_protocol::Span::new(
+                        document.position_of(range.start),
+                        document.position_of(range.end),
+                    )
+                });
+                (document.version, document.language.clone(), span)
+            });
         let formats =
             |language: &Option<String>| !save || self.formats_on_save(language.as_deref());
-        match asking
-            .filter(|(_, language)| formats(language))
-            .map(|(version, _)| version)
-        {
-            Some(version) => self.outbox.push(Outgoing::Format {
+        match asking.filter(|(_, language, _)| formats(language)) {
+            Some((version, _, range)) => self.outbox.push(Outgoing::Format {
                 session,
                 path,
                 version,
                 save,
+                range,
             }),
             None if save => self.save_file(),
             None => {}
@@ -570,7 +580,19 @@ impl WorkspaceState {
 
     /// The state with the file shown formatted as its language says, without writing it.
     pub fn formatted_by_hand(mut self) -> Self {
-        self.format_then_save(false);
+        self.format_then_save(false, None);
+        self
+    }
+
+    /// The state with the selection of the file shown formatted as its language says, without writing the file; nothing happens when nothing is selected or its language server formats whole files only.
+    pub fn selection_formatted(mut self) -> Self {
+        let selection = self
+            .shown_document()
+            .filter(|document| document.formats_ranges)
+            .and_then(|document| document.field.selection());
+        if selection.is_some() {
+            self.format_then_save(false, selection);
+        }
         self
     }
 
@@ -733,6 +755,15 @@ fn edit_viewer(
     }
     if !settings.completions_on_input && edited.ask.is_some() {
         document.completion = None;
+    }
+    if let Some(character) = edited.format.filter(|_| settings.format_on_type) {
+        told.push(Outgoing::FormatOnType {
+            session,
+            path: path.clone(),
+            version,
+            position,
+            character: character.to_string(),
+        });
     }
     if edited.signature && settings.signature_help {
         told.push(Outgoing::Signature {

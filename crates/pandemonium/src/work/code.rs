@@ -185,6 +185,7 @@ impl Work {
                 path,
                 version,
                 save,
+                range,
             } => {
                 let asked = path.clone();
                 self.ask_in_folder(
@@ -194,8 +195,66 @@ impl Work {
                         directory,
                         path,
                         version,
+                        range,
                     },
                     Pending::Formatted(session, asked, version, save),
+                );
+            }
+            Outgoing::FormatOnType {
+                session,
+                path,
+                version,
+                position,
+                character,
+            } => {
+                let asked = path.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::FormatOnType {
+                        directory,
+                        path,
+                        version,
+                        position,
+                        character,
+                    },
+                    Pending::Formatted(session, asked, version, false),
+                );
+            }
+            Outgoing::FoldingRanges {
+                session,
+                path,
+                version,
+            } => {
+                let asked = path.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::FoldingRanges {
+                        directory,
+                        path,
+                        version,
+                    },
+                    Pending::FoldingRanges(session, asked, version),
+                );
+            }
+            Outgoing::LinkedRanges {
+                session,
+                path,
+                version,
+                position,
+            } => {
+                let asked = path.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::LinkedRanges {
+                        directory,
+                        path,
+                        version,
+                        position,
+                    },
+                    Pending::LinkedRanges(session, asked, version),
                 );
             }
             Outgoing::Definition {
@@ -485,9 +544,17 @@ impl Work {
                     Response::Opened {
                         triggers,
                         signature,
+                        format,
+                        formats_ranges,
+                        folds,
+                        links,
                     } => Ok(pm_protocol::Triggers {
                         completion: triggers,
                         signature,
+                        format,
+                        formats_ranges,
+                        folds,
+                        links,
                     }),
                     other => Err(Self::trouble_of(other)),
                 };
@@ -531,6 +598,24 @@ impl Work {
                         std::mem::take(screen).with_formatted(session, &path, version, edits, save);
                 });
             }
+            (
+                Pending::FoldingRanges(session, path, version),
+                Response::FoldingRanges { ranges },
+            ) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_folds(session, &path, version, ranges);
+                });
+            }
+            (Pending::LinkedRanges(session, path, version), response) => {
+                let spans = match response {
+                    Response::LinkedRanges { spans } => spans,
+                    _ => Vec::new(),
+                };
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_links(session, &path, version, spans);
+                });
+            }
+            (Pending::FoldingRanges(..), _) => {}
             (Pending::Definitions(session, seek), Response::Definitions { locations }) => {
                 model.update(|screen| {
                     *screen = std::mem::take(screen).with_places(session, seek, locations);

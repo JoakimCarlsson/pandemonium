@@ -21,8 +21,8 @@ pub use machine::{
 pub use message::{ClientMessage, ServerMessage};
 pub use pm_buffer::{Position, Span};
 pub use pm_lsp::{
-    CodeAction, Completion, CompletionKind, Diagnostic, FileEdit, Hover, Location, Problem, Seek,
-    Severity, Signature, TextChange, Triggers,
+    CodeAction, Completion, CompletionKind, Diagnostic, FileEdit, FoldRange, Hover, Location,
+    Problem, Seek, Severity, Signature, TextChange, Triggers,
 };
 pub use request::{AgentServer, Attachment, Login, McpServer, RegistryAgent, Request, ToolListing};
 pub use response::{Response, SessionInfo, TerminalInfo};

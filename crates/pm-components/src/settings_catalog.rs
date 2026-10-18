@@ -110,6 +110,14 @@ pub enum Setting {
     ExtendComments,
     /// Whether saving formats.
     FormatOnSave,
+    /// Whether typing formats what was typed.
+    FormatOnType,
+    /// Whether typing in a name edits the names that belong with it.
+    LinkedEditing,
+    /// Whether a map of the file shows beside it.
+    Minimap,
+    /// Whether the lines that open the blocks the view is in stay at its top.
+    StickyScroll,
     /// Whether saving takes off trailing spaces.
     TrimWhitespace,
     /// Whether saving ends the file with a line break.
@@ -192,7 +200,7 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting, in the order the pages show them.
-    pub const ALL: [Self; 71] = [
+    pub const ALL: [Self; 75] = [
         Self::Launch,
         Self::ConfirmClose,
         Self::CheckUpdates,
@@ -215,6 +223,8 @@ impl Setting {
         Self::GitGutter,
         Self::InlineBlame,
         Self::Occurrences,
+        Self::Minimap,
+        Self::StickyScroll,
         Self::CursorShape,
         Self::CursorBlink,
         Self::SoftWrap,
@@ -224,6 +234,8 @@ impl Setting {
         Self::AutoSurround,
         Self::AutoIndent,
         Self::ExtendComments,
+        Self::FormatOnType,
+        Self::LinkedEditing,
         Self::FormatOnSave,
         Self::TrimWhitespace,
         Self::FinalNewline,
@@ -290,6 +302,8 @@ impl Setting {
             | Self::GitGutter
             | Self::InlineBlame
             | Self::Occurrences
+            | Self::Minimap
+            | Self::StickyScroll
             | Self::CursorShape
             | Self::CursorBlink => Section::EditorAppearance,
             Self::SoftWrap
@@ -298,7 +312,9 @@ impl Setting {
             | Self::AutoClose
             | Self::AutoSurround
             | Self::AutoIndent
-            | Self::ExtendComments => Section::EditorEditing,
+            | Self::ExtendComments
+            | Self::FormatOnType
+            | Self::LinkedEditing => Section::EditorEditing,
             Self::FormatOnSave | Self::TrimWhitespace | Self::FinalNewline | Self::Autosave => {
                 Section::EditorSaving
             }
@@ -435,6 +451,22 @@ impl Setting {
             Self::Occurrences => (
                 "Highlight uses of the name at the caret",
                 "Mark every place the name under the caret is used in the file.",
+            ),
+            Self::Minimap => (
+                "Minimap",
+                "Draw a map of the whole file beside it; press or drag on it to scroll.",
+            ),
+            Self::StickyScroll => (
+                "Sticky scroll",
+                "Keep the lines that open the blocks the top line is in at the top of the view.",
+            ),
+            Self::FormatOnType => (
+                "Format on type",
+                "Format what was just typed as its language says, when its language server can.",
+            ),
+            Self::LinkedEditing => (
+                "Linked editing",
+                "Typing in a name, such as a tag's, types in the names that belong with it too.",
             ),
             Self::CursorShape => (
                 "Cursor shape",

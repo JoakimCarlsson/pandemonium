@@ -13,8 +13,8 @@ use crate::install::{installed_manifest, language_of};
 use crate::manifest::ServerSpec;
 use crate::server::{DiagnosticsSink, Found, LanguageServer, action_of, file_changes};
 use crate::types::{
-    CodeAction, Completion, Diagnostic, FileEdit, Hover, Location, Problem, Seek, Signature,
-    TextChange, Triggers,
+    CodeAction, Completion, Diagnostic, FileEdit, FoldRange, Hover, Location, Problem, Seek,
+    Signature, TextChange, Triggers,
 };
 use crate::uri::{file_uri, path_of};
 
@@ -416,6 +416,10 @@ impl Hub {
         Ok(Triggers {
             completion: server.triggers().to_vec(),
             signature: server.signature_triggers(),
+            format: server.format_triggers(),
+            formats_ranges: server.formats_ranges(),
+            folds: server.folds(),
+            links: server.links(),
         })
     }
 
@@ -555,16 +559,73 @@ impl Hub {
         server.hover(&file_uri(&root.join(path)), position)
     }
 
-    /// The edits that format the open file at `path` of the project at `root` as its language says, once it reaches `version`, each a stretch of the text at that version and what replaces it; none when its language server cannot format.
-    pub fn format(&self, root: &Path, path: &str, version: i32) -> Result<Vec<TextChange>, String> {
+    /// How a level of indentation is written in the file at `path`: the columns it is and whether it is a tab, as its language says.
+    fn indentation_of(path: &str) -> (usize, bool) {
+        language_of(path)
+            .and_then(|id| installed_manifest(&id))
+            .map_or((4, false), |manifest| (manifest.indent, manifest.tabs))
+    }
+
+    /// The edits that format the open file at `path` of the project at `root`, or only the stretch `range` of it, as its language says, once it reaches `version`, each a stretch of the text at that version and what replaces it; none when its language server cannot format.
+    pub fn format(
+        &self,
+        root: &Path,
+        path: &str,
+        version: i32,
+        range: Option<Span>,
+    ) -> Result<Vec<TextChange>, String> {
         let key = (root.to_path_buf(), path.to_owned());
         let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
             return Ok(Vec::new());
         };
-        let manifest = language_of(path).and_then(|id| installed_manifest(&id));
-        let (indent, tabs) =
-            manifest.map_or((4, false), |manifest| (manifest.indent, manifest.tabs));
-        server.formatting(&file_uri(&root.join(path)), indent, tabs)
+        let (indent, tabs) = Self::indentation_of(path);
+        server.formatting(&file_uri(&root.join(path)), range, indent, tabs)
+    }
+
+    /// The edits that format what was just typed, the character `typed` at `position` of the open file at `path` of the project at `root`, once it reaches `version`; none when its language server does not format as one types.
+    pub fn format_on_type(
+        &self,
+        root: &Path,
+        path: &str,
+        version: i32,
+        position: Position,
+        typed: &str,
+    ) -> Result<Vec<TextChange>, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
+            return Ok(Vec::new());
+        };
+        let (indent, tabs) = Self::indentation_of(path);
+        server.formatting_on_type(&file_uri(&root.join(path)), position, typed, indent, tabs)
+    }
+
+    /// The blocks of lines of the open file at `path` of the project at `root` that can be folded, once it reaches `version`; none when its language server does not say.
+    pub fn folding_ranges(
+        &self,
+        root: &Path,
+        path: &str,
+        version: i32,
+    ) -> Result<Vec<FoldRange>, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
+            return Ok(Vec::new());
+        };
+        server.folding_ranges(&file_uri(&root.join(path)))
+    }
+
+    /// The stretches of the open file at `path` of the project at `root` that are edited together with the one at `position`, once it reaches `version`; none when its language server knows of none.
+    pub fn linked_ranges(
+        &self,
+        root: &Path,
+        path: &str,
+        version: i32,
+        position: Position,
+    ) -> Result<Vec<Span>, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
+            return Ok(Vec::new());
+        };
+        server.linked_ranges(&file_uri(&root.join(path)), position)
     }
 
     /// The places `seek` looks for from `position` of the open file at `path` of the project at `root`, once the file reaches `version`: files inside the project by their path from its root, and files outside it with what they hold, to be shown read only; each with the line it starts on.

@@ -110,6 +110,14 @@ pub struct Document {
     pub triggers: Vec<String>,
     /// The characters after which the language server tells what the call the caret is in looks like.
     pub signature_triggers: Vec<String>,
+    /// The characters after which the language server formats what was just typed.
+    pub format_triggers: Vec<String>,
+    /// Whether the language server formats a stretch of the file.
+    pub formats_ranges: bool,
+    /// Whether the language server says which blocks of the file can be folded.
+    pub folds_supported: bool,
+    /// Whether the language server says which stretches of the file are edited together.
+    pub links_supported: bool,
     /// Why the language server could not read the file, when it could not.
     pub server_problem: Option<String>,
     /// What the language server finds wrong with the file.
@@ -132,8 +140,14 @@ pub struct Document {
     pub(crate) line_changes: Vec<Option<crate::gutter::LineChange>>,
     /// The blocks folded away.
     pub folds: Vec<crate::fold::Fold>,
+    /// The blocks the language server said can be folded, for the version of the text they are about.
+    pub(crate) server_folds: (i32, Vec<pm_protocol::FoldRange>),
+    /// The stretches that are edited together with the one the caret is in, as bytes of the text, while the caret is in one.
+    pub(crate) linked: Option<Vec<Range<usize>>>,
     /// The highlights worked out last.
     painted: HighlightCache,
+    /// The highlights worked out last for the minimap.
+    mapped: HighlightCache,
 }
 
 /// A fingerprint of `text`.
@@ -172,6 +186,10 @@ impl Document {
             version: 0,
             triggers: Vec::new(),
             signature_triggers: Vec::new(),
+            format_triggers: Vec::new(),
+            formats_ranges: false,
+            folds_supported: false,
+            links_supported: false,
             server_problem: None,
             diagnostics: Vec::new(),
             completion: None,
@@ -183,7 +201,10 @@ impl Document {
             base: None,
             line_changes: Vec::new(),
             folds: Vec::new(),
+            server_folds: (0, Vec::new()),
+            linked: None,
             painted: HighlightCache::default(),
+            mapped: HighlightCache::default(),
         }
     }
 
@@ -270,6 +291,7 @@ impl Document {
     /// Forgets the highlights worked out last, as when the grammar of a language a stretch of the text is written in was loaded since.
     pub fn repaint(&mut self) {
         self.painted = HighlightCache::default();
+        self.mapped = HighlightCache::default();
     }
 
     /// Takes in `syntax`, the text parsed with the grammar of the document's language.
@@ -294,10 +316,35 @@ impl Document {
 
     /// The highlighted stretches of each line of `lines`, as offsets into the line, worked out again only when the text was parsed again or the lines fall outside the ones worked out last.
     pub fn highlights(&self, lines: Range<usize>) -> Vec<Vec<(Range<usize>, Kind)>> {
+        self.highlights_kept(&self.painted, lines)
+    }
+
+    /// The highlighted stretches of each line of `lines` for the minimap, kept apart from the ones the lines in view keep so that drawing both does not work either out again.
+    pub fn minimap_highlights(&self, lines: Range<usize>) -> Vec<Vec<(Range<usize>, Kind)>> {
+        self.highlights_kept(&self.mapped, lines)
+    }
+
+    /// The highlighted stretches of the line at `index`, as offsets into the line, worked out for that line alone and not kept.
+    pub fn line_highlights(&self, index: usize) -> Vec<(Range<usize>, Kind)> {
+        let Some(syntax) = &self.syntax else {
+            return Vec::new();
+        };
+        self.painted_window(syntax, index, (index + 1).min(self.lines()))
+            .spans
+            .pop()
+            .unwrap_or_default()
+    }
+
+    /// The highlighted stretches of each line of `lines`, from what `kept` holds when it covers them and from the text parsed otherwise, in which case it is made to hold them and the lines near them.
+    fn highlights_kept(
+        &self,
+        kept: &HighlightCache,
+        lines: Range<usize>,
+    ) -> Vec<Vec<(Range<usize>, Kind)>> {
         let Some(syntax) = &self.syntax else {
             return vec![Vec::new(); lines.len()];
         };
-        let Ok(mut painted) = self.painted.0.lock() else {
+        let Ok(mut painted) = kept.0.lock() else {
             return vec![Vec::new(); lines.len()];
         };
         let stale = painted.revision != syntax.revision()
@@ -306,34 +353,7 @@ impl Document {
         if stale {
             let first = lines.start.saturating_sub(HIGHLIGHT_MARGIN);
             let last = (lines.end + HIGHLIGHT_MARGIN).min(self.lines());
-            let text = self.field.text();
-            let window =
-                self.lines.start(first, text)..self.line(last.saturating_sub(1).max(first)).end;
-            let mut spans = vec![Vec::new(); last.saturating_sub(first)];
-            for highlight in syntax.highlights(text, window) {
-                let mut row = self.line_of(highlight.range.start);
-                while row < last && row >= first {
-                    let line = self.line(row);
-                    if line.start > highlight.range.end {
-                        break;
-                    }
-                    let low = highlight.range.start.max(line.start);
-                    let high = highlight.range.end.min(line.end);
-                    if low < high {
-                        spans[row - first]
-                            .push((low - line.start..high - line.start, highlight.kind));
-                    }
-                    if highlight.range.end <= line.end + 1 {
-                        break;
-                    }
-                    row += 1;
-                }
-            }
-            *painted = Painted {
-                revision: syntax.revision(),
-                lines: first..last,
-                spans,
-            };
+            *painted = self.painted_window(syntax, first, last);
         }
         lines
             .map(|row| {
@@ -343,6 +363,37 @@ impl Document {
                     .unwrap_or_default()
             })
             .collect()
+    }
+
+    /// The highlights of the lines from `first` until `last`, worked out from `syntax`.
+    fn painted_window(&self, syntax: &Syntax, first: usize, last: usize) -> Painted {
+        let text = self.field.text();
+        let window =
+            self.lines.start(first, text)..self.line(last.saturating_sub(1).max(first)).end;
+        let mut spans = vec![Vec::new(); last.saturating_sub(first)];
+        for highlight in syntax.highlights(text, window) {
+            let mut row = self.line_of(highlight.range.start);
+            while row < last && row >= first {
+                let line = self.line(row);
+                if line.start > highlight.range.end {
+                    break;
+                }
+                let low = highlight.range.start.max(line.start);
+                let high = highlight.range.end.min(line.end);
+                if low < high {
+                    spans[row - first].push((low - line.start..high - line.start, highlight.kind));
+                }
+                if highlight.range.end <= line.end + 1 {
+                    break;
+                }
+                row += 1;
+            }
+        }
+        Painted {
+            revision: syntax.revision(),
+            lines: first..last,
+            spans,
+        }
     }
 
     /// The diagnostics that touch line `row`, each with the stretch of the line it covers, as offsets into the line.

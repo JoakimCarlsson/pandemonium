@@ -15,11 +15,14 @@ pub struct Edited {
     pub ask: Option<Option<String>>,
     /// Whether to ask the language server what the call the caret is in looks like: a character that opens or separates arguments was typed, or the signature showing follows the text.
     pub signature: bool,
+    /// The character typed that the language server formats after, when one was and the file is read by it.
+    pub format: Option<char>,
 }
 
 impl Document {
     /// Makes `edit`, and says what it calls for when it changed the text; an edit that only moved the caret narrows the completions open and calls for nothing.
     pub fn edit(&mut self, edit: Edit) -> Option<Edited> {
+        let edit = self.mirrored(edit);
         let before = self.field.text().to_owned();
         let before_lines: Lines = self.line_index().clone();
         let caret_line = self.line_of(self.field.caret());
@@ -57,6 +60,13 @@ impl Document {
                         .iter()
                         .any(|held| held.ends_with(character))
                 }));
+        let format = typed
+            .filter(|character| {
+                self.format_triggers
+                    .iter()
+                    .any(|held| held.ends_with(*character))
+            })
+            .filter(|_| self.synced);
         let reopen = self.refilter(trigger.is_some());
         let ask = match (trigger, reopen) {
             (Some(character), _) => Some(Some(character.to_string())),
@@ -72,6 +82,7 @@ impl Document {
             change: told,
             ask,
             signature,
+            format,
         })
     }
 

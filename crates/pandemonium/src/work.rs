@@ -209,6 +209,10 @@ enum Pending {
     Revision(usize, String),
     /// The edits that format the file of the session at this position, at this path and version, and whether it is written afterwards.
     Formatted(usize, String, i32, bool),
+    /// Which blocks of the file of the session at this position, at this path and version, can be folded.
+    FoldingRanges(usize, String, i32),
+    /// Which stretches of the file of the session at this position, at this path and version, are edited together with the one at a place.
+    LinkedRanges(usize, String, i32),
 }
 
 impl Pending {
@@ -1793,6 +1797,8 @@ impl Work {
             | Pending::FileHistory(..)
             | Pending::Revision(..)
             | Pending::Formatted(..)
+            | Pending::FoldingRanges(..)
+            | Pending::LinkedRanges(..)
             | Pending::Extensions => self.answered_code(model, host, pending, response),
             Pending::MachineSettings | Pending::LatestRelease => {
                 self.answered_machine(model, pending, response)

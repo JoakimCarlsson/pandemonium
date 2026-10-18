@@ -252,6 +252,8 @@ pub enum Shot {
     Cursors,
     /// The same file with the body of a function folded away.
     Folded,
+    /// The same file scrolled into a method, the lines that open its blocks kept at the top.
+    Sticky,
     /// The finder for the files of the project, narrowed by what is typed.
     Finder,
     /// The same file with the list of every command open, narrowed by what is typed.
@@ -378,6 +380,7 @@ fn code() -> WorkspaceState {
             Ok(pm_protocol::Triggers {
                 completion: vec![".".to_owned(), ":".to_owned()],
                 signature: vec!["(".to_owned(), ",".to_owned()],
+                ..Default::default()
             }),
         )
         .with_diagnostics(&None, &directory, CODE_PATH, diagnostics);
@@ -1098,6 +1101,7 @@ impl Shot {
             Self::Folded => Screen::Workspace(
                 code().lines_edited(pm_components::line_edits::LineEdit::Fold),
             ),
+            Self::Sticky => Screen::Workspace(code().scrolled_viewer(360.0, 10_000.0)),
             Self::Cursors => {
                 let state = code();
                 let at = state

@@ -197,6 +197,8 @@ pub enum Action {
     Rename,
     /// Formats the file.
     Format,
+    /// Formats the selection.
+    FormatSelection,
     /// Lists the changes the language server offers.
     CodeActions,
     /// Shows what the language server says about it.
@@ -295,7 +297,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, in the order the keymap lists them.
-    pub const ALL: [Self; 139] = [
+    pub const ALL: [Self; 140] = [
         Self::CommandPalette,
         Self::OpenSettings,
         Self::GoToSession,
@@ -390,6 +392,7 @@ impl Action {
         Self::GoForward,
         Self::Rename,
         Self::Format,
+        Self::FormatSelection,
         Self::CodeActions,
         Self::Hover,
         Self::Complete,
@@ -532,6 +535,7 @@ impl Action {
             Self::IncomingCalls => "incoming_calls",
             Self::Rename => "rename",
             Self::Format => "format",
+            Self::FormatSelection => "format_selection",
             Self::CodeActions => "code_actions",
             Self::Hover => "hover",
             Self::Complete => "complete",
@@ -677,6 +681,7 @@ impl Action {
             Self::IncomingCalls => "Show Incoming Calls",
             Self::Rename => "Rename Symbol",
             Self::Format => "Format Buffer",
+            Self::FormatSelection => "Format Selection",
             Self::CodeActions => "Show Code Actions",
             Self::Hover => "Show Hover",
             Self::Complete => "Show Completions",
@@ -850,6 +855,7 @@ impl Action {
             | Self::Problems => "Navigation",
             Self::Rename
             | Self::Format
+            | Self::FormatSelection
             | Self::CodeActions
             | Self::Hover
             | Self::Complete
@@ -1186,6 +1192,7 @@ fn own() -> &'static [(Action, &'static [&'static str])] {
         (IncomingCalls, &["alt+shift+h"]),
         (Rename, &["f2"]),
         (Format, &["ctrl+shift+i", "alt+shift+f"]),
+        (FormatSelection, &["ctrl+k ctrl+f"]),
         (CodeActions, &["ctrl+."]),
         (Hover, &["ctrl+k ctrl+i"]),
         (Complete, &["ctrl+space"]),
