@@ -79,7 +79,7 @@ pub struct Bootstrap {
 /// How long the window waits for the server on this machine to say what it keeps.
 const BOOTSTRAP_WAIT: std::time::Duration = std::time::Duration::from_secs(4);
 
-/// A machine the servers run on: nothing for this one, or the destination ssh is given for another.
+/// A machine the servers run on: nothing for this one, or how a project's address names another.
 type Host = Option<String>;
 
 /// What a thread that did some of the work reports back.
@@ -94,6 +94,8 @@ enum Job {
     Figure(u64, Result<Drawing, String>),
     /// The server on this machine was found or reached, or could not be.
     Server(Host, Result<Target, String>),
+    /// The server of this machine is being brought up, and has got this far.
+    Starting(Host, String),
     /// The grammar of the language with this folder name was compiled, or could not be.
     Grammar(String, Result<(), String>),
 }
@@ -219,6 +221,14 @@ enum Pending {
     FileHistory(usize, String),
     /// A file of the session at this position as a commit left it, shown under this name.
     Revision(usize, String),
+    /// The states the file of the session at this position, at this path, was saved in.
+    LocalHistory(usize, String),
+    /// A state the file of the session at this position, at this path, was saved in, saved this long ago.
+    Version(usize, String, String),
+    /// The versions of the conflicted file of the session at this position, at this path.
+    Conflict(usize, String),
+    /// The files a commit or a branch changed in the folder of the session at this position, shown under this name.
+    Revisions(usize, String),
     /// The edits that format the file of the session at this position, at this path and version, and whether it is written afterwards.
     Formatted(usize, String, i32, bool),
     /// What the folder of the session at this position can be debugged as.
@@ -304,7 +314,7 @@ pub struct Work {
     links: HashMap<Host, Link>,
     /// What every server is to work by, once the server on this machine said.
     machine: Option<pm_protocol::MachineSettings>,
-    /// The tokens of the servers reached straight at their address, by address.
+    /// The tokens of the servers reached straight at their address or through a tunnel, by address.
     tokens: HashMap<String, String>,
     /// The number of the last event each session had when the window first listed it, by machine and number; the events up to it are history, not news.
     history: HashMap<(Host, u64), u64>,
@@ -476,18 +486,26 @@ impl Work {
         if !self.links.contains_key(host) {
             self.links.insert(host.clone(), Link::default());
             let host = host.clone();
-            let direct = host
-                .as_deref()
-                .and_then(pm_protocol::direct_address)
-                .map(|address| Target {
-                    address: address.to_owned(),
-                    token: self.tokens.get(address).cloned().unwrap_or_default(),
-                });
+            let tokens = self.tokens.clone();
             self.spawn(move |reporter| {
-                let target = match (&host, direct) {
-                    (_, Some(direct)) => Ok(direct),
-                    (None, None) => pm_client::local(),
-                    (Some(destination), None) => pm_ssh::remote(destination),
+                let progress = |text: &str| {
+                    let _ = reporter.send(Job::Starting(host.clone(), text.to_owned()));
+                };
+                let target = match pm_protocol::route_of(host.as_deref()) {
+                    pm_protocol::Route::Local => pm_client::local(),
+                    pm_protocol::Route::Direct(address) => Ok(Target {
+                        address: address.to_owned(),
+                        token: tokens.get(address).cloned().unwrap_or_default(),
+                    }),
+                    pm_protocol::Route::Ssh(destination) => pm_ssh::remote(destination),
+                    pm_protocol::Route::Wsl(distro) => pm_transport::wsl(distro, &progress),
+                    pm_protocol::Route::Container(folder) => {
+                        pm_transport::container(&folder, &progress)
+                    }
+                    pm_protocol::Route::Tunnel(hostname) => pm_transport::tunnel(
+                        hostname,
+                        tokens.get(hostname).map_or("", String::as_str),
+                    ),
                 };
                 let _ = reporter.send(Job::Server(host, target));
             });
@@ -1168,7 +1186,9 @@ impl Work {
         self.ask_wanted_grammars(model);
         self.watch_shown(model);
         while let Ok(job) = self.jobs.try_recv() {
-            self.pending.set(self.pending.get().saturating_sub(1));
+            if !matches!(job, Job::Starting(..)) {
+                self.pending.set(self.pending.get().saturating_sub(1));
+            }
             self.finish(model, job);
         }
         let hosts: Vec<Host> = self.links.keys().cloned().collect();
@@ -1355,6 +1375,25 @@ impl Work {
                 link.client = Some(client);
             }
             Job::Grammar(language, outcome) => self.grammar_compiled(model, &language, outcome),
+            Job::Starting(host, text) => {
+                let Some(link) = self.links.get(&host) else {
+                    return;
+                };
+                let starting: Vec<usize> = link
+                    .backlog
+                    .iter()
+                    .filter_map(|(_, pending)| match pending {
+                        Pending::Start(session) => Some(*session),
+                        _ => None,
+                    })
+                    .collect();
+                for session in starting {
+                    let line = format!("{text}\n");
+                    model.update(|screen| {
+                        *screen = std::mem::take(screen).heard(session, Event::Thought(line));
+                    });
+                }
+            }
             Job::Server(host, Err(reason)) => {
                 eprintln!("{reason}");
                 let Some(link) = self.links.remove(&host) else {
@@ -1847,6 +1886,10 @@ impl Work {
             | Pending::Permalink(_)
             | Pending::FileHistory(..)
             | Pending::Revision(..)
+            | Pending::LocalHistory(..)
+            | Pending::Version(..)
+            | Pending::Conflict(..)
+            | Pending::Revisions(..)
             | Pending::Formatted(..)
             | Pending::FoldingRanges(..)
             | Pending::LinkedRanges(..)

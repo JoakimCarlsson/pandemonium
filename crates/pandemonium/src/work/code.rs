@@ -535,6 +535,7 @@ impl Work {
                 session,
                 path,
                 line,
+                end_line,
                 open,
             } => self.ask_in_folder(
                 model,
@@ -543,6 +544,7 @@ impl Work {
                     directory,
                     path,
                     line,
+                    end_line,
                 },
                 Pending::Permalink(open),
             ),
@@ -555,6 +557,74 @@ impl Work {
                     Pending::FileHistory(session, asked),
                 );
             }
+            Outgoing::LocalHistory { session, path } => {
+                let asked = path.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::LocalHistory { directory, path },
+                    Pending::LocalHistory(session, asked),
+                );
+            }
+            Outgoing::ReadVersion {
+                session,
+                path,
+                version,
+                when,
+            } => {
+                let asked = path.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::ReadVersion {
+                        directory,
+                        path,
+                        version,
+                    },
+                    Pending::Version(session, asked, when),
+                );
+            }
+            Outgoing::ReadConflict { session, path } => {
+                let asked = path.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::ReadConflict { directory, path },
+                    Pending::Conflict(session, asked),
+                );
+            }
+            Outgoing::ResolveConflict {
+                session,
+                path,
+                text,
+            } => {
+                let written = path.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::ResolveConflict {
+                        directory,
+                        path,
+                        text,
+                    },
+                    Pending::Write(session, written),
+                );
+            }
+            Outgoing::RevisionChanges {
+                session,
+                from,
+                to,
+                label,
+            } => self.ask_in_folder(
+                model,
+                session,
+                |directory| Request::RevisionChanges {
+                    directory,
+                    from,
+                    to,
+                },
+                Pending::Revisions(session, label),
+            ),
             Outgoing::ReadRevision {
                 session,
                 path,
@@ -879,6 +949,44 @@ impl Work {
                 });
             }
             (Pending::Revision(session, label), other) => {
+                let problem = format!("{label}: {}", Self::trouble_of(other));
+                model.update(|screen| *screen = std::mem::take(screen).noted(session, &problem));
+            }
+            (Pending::LocalHistory(session, path), Response::LocalHistory { versions }) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_local_history(session, &path, versions);
+                });
+            }
+            (Pending::LocalHistory(..), _) => {}
+            (
+                Pending::Version(session, path, when),
+                Response::File {
+                    text: Some(text), ..
+                },
+            ) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).timeline_opened(session, &path, when, text);
+                });
+            }
+            (Pending::Version(session, path, _), other) => {
+                let problem = format!("{path}: {}", Self::trouble_of(other));
+                model.update(|screen| *screen = std::mem::take(screen).noted(session, &problem));
+            }
+            (Pending::Conflict(session, path), Response::Conflict { files }) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_conflict(session, &path, files);
+                });
+            }
+            (Pending::Conflict(session, path), other) => {
+                let problem = format!("{path}: {}", Self::trouble_of(other));
+                model.update(|screen| *screen = std::mem::take(screen).noted(session, &problem));
+            }
+            (Pending::Revisions(session, label), Response::RevisionChanges { changes }) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).revision_opened(session, label, changes);
+                });
+            }
+            (Pending::Revisions(session, label), other) => {
                 let problem = format!("{label}: {}", Self::trouble_of(other));
                 model.update(|screen| *screen = std::mem::take(screen).noted(session, &problem));
             }

@@ -382,6 +382,48 @@ pub enum Request {
         /// The path, from the root of the folder.
         path: String,
     },
+    /// The states a file of a folder was kept in each time it was saved, newest first.
+    LocalHistory {
+        /// The folder.
+        directory: String,
+        /// The path, from the root of the folder.
+        path: String,
+    },
+    /// Reads one of the states a file of a folder was kept in.
+    ReadVersion {
+        /// The folder.
+        directory: String,
+        /// The path, from the root of the folder.
+        path: String,
+        /// The state, by the number the history gave it.
+        version: u64,
+    },
+    /// The versions of a file of a folder that a merge, a rebase or a cherry-pick stopped on.
+    ReadConflict {
+        /// The folder.
+        directory: String,
+        /// The path, from the root of the folder.
+        path: String,
+    },
+    /// Writes `text` as what a conflicted file of a folder is resolved to, and stages the file.
+    ResolveConflict {
+        /// The folder.
+        directory: String,
+        /// The path, from the root of the folder.
+        path: String,
+        /// What the file holds afterwards.
+        text: String,
+    },
+    /// The files a commit changed, or that a branch changed since it left another, with their diffs.
+    RevisionChanges {
+        /// The folder.
+        directory: String,
+        /// The branch or commit to count from; the commit's own parent when nothing.
+        #[serde(default)]
+        from: Option<String>,
+        /// The commit or branch.
+        to: String,
+    },
     /// The web address of a file of a folder, or of a line of it, on the host of its repository, at the commit checked out.
     Permalink {
         /// The folder.
@@ -391,6 +433,9 @@ pub enum Request {
         /// The line, counted from 1, or nothing for the whole file.
         #[serde(default)]
         line: Option<usize>,
+        /// The last line of a range that starts at `line`, counted from 1, or nothing for the one line.
+        #[serde(default)]
+        end_line: Option<usize>,
     },
     /// Replaces the contents of a file of a folder with text, making the file when it is not there.
     WriteFile {

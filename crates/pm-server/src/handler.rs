@@ -746,7 +746,13 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             directory,
             path,
             line,
-        } => match pm_git::permalink(&place(&directory), &path, line) {
+            end_line,
+        } => match pm_git::permalink(
+            &place(&directory),
+            &path,
+            line.map(|first| (first, end_line.unwrap_or(first))),
+            &crate::machine::settings().git.hosts,
+        ) {
             Ok(url) => Response::Address { url },
             Err(reason) => failed(reason),
         },
@@ -788,7 +794,84 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             directory,
             path,
             text,
-        } => done(crate::entries::write(&place(&directory), &path, &text)),
+        } => {
+            let folder = place(&directory);
+            let written = crate::entries::write(&folder, &path, &text);
+            if written.is_ok() {
+                let _ = crate::local_history::record(
+                    &folder,
+                    &path,
+                    &text,
+                    &crate::machine::settings().history,
+                );
+            }
+            done(written)
+        }
+        Request::LocalHistory { directory, path } => match crate::local_history::versions(
+            &place(&directory),
+            &path,
+            &crate::machine::settings().history,
+        ) {
+            Ok(versions) => Response::LocalHistory { versions },
+            Err(reason) => failed(reason),
+        },
+        Request::ReadVersion {
+            directory,
+            path,
+            version,
+        } => match crate::local_history::read(&place(&directory), &path, version) {
+            Ok(text) => Response::File {
+                text: Some(text),
+                truncated: false,
+                language: pm_lsp::language_of(&path),
+            },
+            Err(reason) => failed(reason),
+        },
+        Request::ReadConflict { directory, path } => {
+            let folder = place(&directory);
+            match (
+                pm_git::sides(&folder, &path),
+                pm_git::read_at(&folder, &path, None),
+            ) {
+                (
+                    Ok(_),
+                    Ok(pm_git::Contents::Text {
+                        truncated: true, ..
+                    }),
+                ) => failed(format!("{path} is too large to resolve here")),
+                (Ok(sides), Ok(pm_git::Contents::Text { text, .. })) => Response::Conflict {
+                    files: pm_protocol::ConflictFiles {
+                        ours: sides.ours,
+                        theirs: sides.theirs,
+                        base: sides.base,
+                        merged: text,
+                        language: pm_lsp::language_of(&path),
+                    },
+                },
+                (Err(reason), _) => failed(reason),
+                (_, Ok(pm_git::Contents::Binary)) => failed(format!("{path} is not text")),
+                (_, Err(reason)) => failed(reason),
+            }
+        }
+        Request::ResolveConflict {
+            directory,
+            path,
+            text,
+        } => {
+            let folder = place(&directory);
+            done(
+                crate::entries::write(&folder, &path, &text)
+                    .and_then(|()| pm_git::stage(&folder, &[path])),
+            )
+        }
+        Request::RevisionChanges {
+            directory,
+            from,
+            to,
+        } => match pm_git::revision_changes(&place(&directory), from.as_deref(), &to) {
+            Ok(changes) => Response::RevisionChanges { changes },
+            Err(reason) => failed(reason),
+        },
         Request::Extensions => Response::Extensions {
             extensions: core.extension_infos(true),
         },

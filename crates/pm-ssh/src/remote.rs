@@ -1,7 +1,5 @@
 //! Reaching a server on another machine through ssh, without anything but ssh on the way.
 
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
 use std::process::{Command, Stdio};
 
 use pm_protocol::{Credential, Target, is_destination};
@@ -47,49 +45,6 @@ fn credential(destination: &str) -> Result<Credential, String> {
         .map_err(|error| format!("{destination} left an unreadable credential: {error}"))
 }
 
-/// Carries one connection through ssh to `port` on `destination`, until either end closes.
-fn carry(connection: TcpStream, destination: &str, port: u16) {
-    let Ok(mut child) = Command::new("ssh")
-        .args(options())
-        .args(["-W", &format!("127.0.0.1:{port}"), "--", destination])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-    else {
-        return;
-    };
-    let (Some(mut to_remote), Some(mut from_remote)) = (child.stdin.take(), child.stdout.take())
-    else {
-        return;
-    };
-    let Ok(mut read_side) = connection.try_clone() else {
-        return;
-    };
-    let mut write_side = connection;
-    let upward = std::thread::spawn(move || {
-        let mut buffer = [0u8; 16 * 1024];
-        while let Ok(count) = read_side.read(&mut buffer) {
-            if count == 0
-                || to_remote.write_all(&buffer[..count]).is_err()
-                || to_remote.flush().is_err()
-            {
-                break;
-            }
-        }
-    });
-    let mut buffer = [0u8; 16 * 1024];
-    while let Ok(count) = from_remote.read(&mut buffer) {
-        if count == 0 || write_side.write_all(&buffer[..count]).is_err() {
-            break;
-        }
-    }
-    let _ = write_side.shutdown(std::net::Shutdown::Both);
-    let _ = child.kill();
-    let _ = upward.join();
-    let _ = child.wait();
-}
-
 /// The server running on `destination`, reached through a local port that carries each connection over ssh.
 ///
 /// Nothing is installed or started on the remote machine: the server has to
@@ -101,17 +56,16 @@ pub fn remote(destination: &str) -> Result<Target, String> {
         ));
     }
     let held = credential(destination)?;
-    let listener = TcpListener::bind("127.0.0.1:0").map_err(|error| error.to_string())?;
-    let local = listener.local_addr().map_err(|error| error.to_string())?;
     let (destination, port) = (destination.to_owned(), held.port);
-    std::thread::spawn(move || {
-        for connection in listener.incoming().flatten() {
-            let destination = destination.clone();
-            std::thread::spawn(move || carry(connection, &destination, port));
-        }
-    });
+    let address = pm_transport::bridge(move || {
+        let mut command = Command::new("ssh");
+        command
+            .args(options())
+            .args(["-W", &format!("127.0.0.1:{port}"), "--", &destination]);
+        command
+    })?;
     Ok(Target {
-        address: local.to_string(),
+        address,
         token: held.token,
     })
 }

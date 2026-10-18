@@ -7,7 +7,7 @@ lint:
 	cargo clippy --workspace --all-targets -- -D warnings
 
 run:
-	cargo run -p pandemonium
+	XDG_DATA_HOME="$${XDG_DATA_HOME:-$$HOME/.local/share/pandemonium-dev}" cargo run -p pandemonium
 
 install:
 	scripts/install-preview.sh

@@ -43,6 +43,14 @@ pub struct OpenMenu {
 enum Command {
     /// Shows the diff of the file.
     OpenChanges,
+    /// Opens the resolver on the file that is in conflict.
+    Resolve,
+    /// Opens every changed file as one view, edited in place.
+    ReviewChanges,
+    /// Opens every file the session's own commits changed as one view.
+    ReviewBranch,
+    /// Opens every file the commit changed as one view.
+    ShowCommit,
     /// Reads the file as it is in the folder.
     OpenFile,
     /// Reads the file as it is in the last commit.
@@ -254,6 +262,11 @@ impl WorkspaceState {
                 };
                 vec![
                     row_if("Open Changes", Command::OpenChanges, count == 1),
+                    row_if(
+                        "Resolve Conflict",
+                        Command::Resolve,
+                        count == 1 && acting.iter().all(|change| change.conflicted),
+                    ),
                     row_if("Open File", Command::OpenFile, count == 1),
                     row_if(
                         "Open File (HEAD)",
@@ -293,6 +306,17 @@ impl WorkspaceState {
                     row("Force Push", Command::ForcePush),
                     Entry::Rule,
                     row("Refresh", Command::Refresh),
+                    row_if(
+                        "Review All Changes",
+                        Command::ReviewChanges,
+                        self.change_count() > 0,
+                    ),
+                    row_if(
+                        "Review Branch Changes",
+                        Command::ReviewBranch,
+                        self.review_session()
+                            .is_some_and(|session| session.base.is_some()),
+                    ),
                 ];
                 entries.extend(self.commit_entries());
                 entries.extend([
@@ -317,6 +341,7 @@ impl WorkspaceState {
                     .unwrap_or_default();
                 let known = self.git.history.get(commit).is_some();
                 vec![
+                    row_if("Show Changes", Command::ShowCommit, known),
                     row_if(
                         format!("Cherry-Pick into {branch}"),
                         Command::CherryPick,
@@ -461,6 +486,40 @@ impl WorkspaceState {
             Command::OpenChanges => {
                 if let [index] = acting.as_slice() {
                     self.open_change(*index);
+                }
+            }
+            Command::Resolve => {
+                if let [index] = acting.as_slice() {
+                    self.request_resolver(*index);
+                }
+            }
+            Command::ReviewChanges => {
+                *self = std::mem::replace(self, WorkspaceState::new(&[])).changes_opened();
+            }
+            Command::ReviewBranch => {
+                if let (Some(session), Some(base)) = (
+                    self.review_index(),
+                    self.review_session()
+                        .and_then(|session| session.base.clone()),
+                ) {
+                    self.outbox.push(Outgoing::RevisionChanges {
+                        session,
+                        label: format!("Changes since {base}"),
+                        from: Some(base),
+                        to: "HEAD".to_owned(),
+                    });
+                }
+            }
+            Command::ShowCommit => {
+                if let (MenuKind::History(row), Some(session)) = (kind, self.review_index())
+                    && let Some(commit) = self.git.history.get(row)
+                {
+                    self.outbox.push(Outgoing::RevisionChanges {
+                        session,
+                        label: format!("Commit {}", commit.id),
+                        from: None,
+                        to: commit.id.clone(),
+                    });
                 }
             }
             Command::OpenFile | Command::OpenHead => {

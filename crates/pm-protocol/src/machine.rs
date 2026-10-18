@@ -7,6 +7,12 @@ use serde::{Deserialize, Serialize};
 /// How often a server fetches as it comes, in minutes.
 pub const FETCH_MINUTES: u32 = 15;
 
+/// How many days a server keeps the states of a file as they come.
+pub const HISTORY_DAYS: u32 = 30;
+
+/// How many megabytes of kept states a server holds for one project as they come.
+pub const HISTORY_MEGABYTES: u32 = 256;
+
 /// How a server runs git for the projects on its machine.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -19,6 +25,29 @@ pub struct GitPreferences {
     pub branch_template: String,
     /// The folder worktrees are made in, one folder per project inside it; empty for a folder inside each project.
     pub worktree_root: String,
+    /// The layout of a self-hosted server's web addresses, by the server's host name, for the servers whose name does not give it away: `github`, `gitlab`, `bitbucket`, `gitea`, `azure`, `sourcehut` or `gitee`.
+    pub hosts: BTreeMap<String, String>,
+}
+
+impl GitPreferences {
+    /// The hosts and their layouts written as `host=layout`, separated by commas.
+    pub fn hosts_text(&self) -> String {
+        self.hosts
+            .iter()
+            .map(|(host, layout)| format!("{host}={layout}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// Replaces the hosts with those `text` names, written as `host=layout` separated by commas; a part that is not written so is left out.
+    pub fn set_hosts_text(&mut self, text: &str) {
+        self.hosts = text
+            .split([',', '\n'])
+            .filter_map(|part| part.split_once('='))
+            .map(|(host, layout)| (host.trim().to_lowercase(), layout.trim().to_lowercase()))
+            .filter(|(host, layout)| !host.is_empty() && !layout.is_empty())
+            .collect();
+    }
 }
 
 impl Default for GitPreferences {
@@ -29,6 +58,30 @@ impl Default for GitPreferences {
             fetch_minutes: FETCH_MINUTES,
             branch_template: String::new(),
             worktree_root: String::new(),
+            hosts: BTreeMap::new(),
+        }
+    }
+}
+
+/// How long and how much a server keeps of the states a file was saved in.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HistoryPreferences {
+    /// Whether it keeps a state of a file each time the file is saved.
+    pub enabled: bool,
+    /// How many days a state is kept; older ones are removed.
+    pub days: u32,
+    /// How many megabytes the states of one project may take up; the oldest are removed past it.
+    pub megabytes: u32,
+}
+
+impl Default for HistoryPreferences {
+    /// Local history as it comes: kept, for a month, up to a quarter of a gigabyte per project.
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            days: HISTORY_DAYS,
+            megabytes: HISTORY_MEGABYTES,
         }
     }
 }
@@ -82,6 +135,8 @@ impl LanguagePreferences {
 pub struct MachineSettings {
     /// How it runs git.
     pub git: GitPreferences,
+    /// How long it keeps the states a file was saved in.
+    pub history: HistoryPreferences,
     /// What new sessions start with.
     pub agents: AgentPreferences,
     /// The shell it opens.

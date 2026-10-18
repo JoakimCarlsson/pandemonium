@@ -262,6 +262,9 @@ impl Setting {
             Self::CopyOnSelect => Control::Switch(window.terminal.copy_on_select),
             Self::AutoFetch => Control::Switch(machine.git.auto_fetch),
             Self::FetchInterval => Control::Number(format!("{} min", machine.git.fetch_minutes)),
+            Self::LocalHistory => Control::Switch(machine.history.enabled),
+            Self::HistoryDays => Control::Number(format!("{} days", machine.history.days)),
+            Self::HistorySize => Control::Number(format!("{} MB", machine.history.megabytes)),
             Self::BranchTemplate => Control::Text("No branch, e.g. pm/{title}"),
             Self::WorktreeFolder => Control::Text("Inside each project"),
             Self::GitBlame => Control::Choice(
@@ -272,6 +275,8 @@ impl Setting {
                 FOLLOW,
                 place_of(&[GitMarks::FollowEditor, GitMarks::Off], &window.git.gutter),
             ),
+            Self::GitWordDiff => Control::Switch(window.git.word_diff),
+            Self::GitHosts => Control::Text("e.g. git.example.com=gitlab"),
             Self::DefaultAgent => {
                 let options = self.options(state);
                 let picked = self.picked(state).unwrap_or(0);
@@ -461,12 +466,22 @@ impl Setting {
                 machine.git.fetch_minutes =
                     stepped(machine.git.fetch_minutes.into(), 5, option, 1, 240) as u32;
             }
+            Self::LocalHistory => machine.history.enabled ^= true,
+            Self::HistoryDays => {
+                machine.history.days =
+                    stepped(machine.history.days.into(), 5, option, 1, 3650) as u32;
+            }
+            Self::HistorySize => {
+                machine.history.megabytes =
+                    stepped(machine.history.megabytes.into(), 64, option, 16, 65_536) as u32;
+            }
             Self::GitBlame => {
                 window.git.blame = [GitMarks::FollowEditor, GitMarks::Off][option.min(1)]
             }
             Self::GitGutterMarks => {
                 window.git.gutter = [GitMarks::FollowEditor, GitMarks::Off][option.min(1)];
             }
+            Self::GitWordDiff => window.git.word_diff ^= true,
             Self::PermissionMode => {
                 machine.agents.permission_mode = chosen(&MODE_IDS, option).map(str::to_owned);
             }
@@ -492,6 +507,7 @@ impl Setting {
             | Self::ShellArguments
             | Self::BranchTemplate
             | Self::WorktreeFolder
+            | Self::GitHosts
             | Self::DefaultAgent
             | Self::DefaultServer => {}
         }
@@ -628,6 +644,7 @@ impl Setting {
                 | Self::ShellArguments
                 | Self::BranchTemplate
                 | Self::WorktreeFolder
+                | Self::GitHosts
         )
     }
 
@@ -640,6 +657,7 @@ impl Setting {
             Self::ShellArguments => machine.shell.arguments.clone(),
             Self::BranchTemplate => machine.git.branch_template.clone(),
             Self::WorktreeFolder => machine.git.worktree_root.clone(),
+            Self::GitHosts => machine.git.hosts_text(),
             _ => String::new(),
         }
     }
@@ -660,6 +678,7 @@ impl Setting {
             Self::ShellArguments => machine.shell.arguments = text,
             Self::BranchTemplate => machine.git.branch_template = text,
             Self::WorktreeFolder => machine.git.worktree_root = text,
+            Self::GitHosts => machine.git.set_hosts_text(&text),
             _ => {}
         }
     }
@@ -784,6 +803,9 @@ impl Setting {
             Self::CopyOnSelect => window.terminal.copy_on_select = own.terminal.copy_on_select,
             Self::AutoFetch => machine.git.auto_fetch = kept.git.auto_fetch,
             Self::FetchInterval => machine.git.fetch_minutes = kept.git.fetch_minutes,
+            Self::LocalHistory => machine.history.enabled = kept.history.enabled,
+            Self::HistoryDays => machine.history.days = kept.history.days,
+            Self::HistorySize => machine.history.megabytes = kept.history.megabytes,
             Self::BranchTemplate => machine
                 .git
                 .branch_template
@@ -794,6 +816,8 @@ impl Setting {
                 .clone_from(&kept.git.worktree_root),
             Self::GitBlame => window.git.blame = own.git.blame,
             Self::GitGutterMarks => window.git.gutter = own.git.gutter,
+            Self::GitWordDiff => window.git.word_diff = own.git.word_diff,
+            Self::GitHosts => machine.git.hosts.clone_from(&kept.git.hosts),
             Self::DefaultAgent => machine
                 .agents
                 .default_agent

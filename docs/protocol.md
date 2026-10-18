@@ -12,19 +12,27 @@ document says what they mean and how a client behaves.
 
 ## Connecting
 
-A client reaches the server one of three ways. The protocol on the connection
-is the same in each.
+A client reaches the server one of six ways. The protocol on the connection
+is the same in each: only the way to the server's port differs.
 
 | Way    | What the client does                                                                                                                                                                                         |
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Local  | Reads `server.json` from the data folder for the port and token, connects to `ws://127.0.0.1:<port>/`. If nothing answers, starts `pandemonium-server --listen 127.0.0.1:0` apart from itself and reads again. |
 | Direct | Connects to `ws://<host>:<port>/` with a token it was given. The server must be started with `--listen <address> --token <token>`. The connection is not encrypted: use a trusted network such as Tailscale.    |
 | ssh    | Reads the remote `server.json` with `ssh <host> cat …`, opens a local port, and for each connection runs `ssh -W 127.0.0.1:<port> <host>` and pipes the bytes through. The server must already be running.      |
+| WSL    | On Windows, runs `wsl.exe -d <distro> --exec sh -c …` to read the distribution's `server.json`. When no server answers there, installs `pandemonium-server` with the installer if it is missing, starts it as a `wsl.exe` process of its own with `--listen 127.0.0.1:0`, so that it and the distribution outlive the client, and connects to `ws://127.0.0.1:<port>/` through WSL's localhost forwarding. |
+| Dev container | Reads the folder's `devcontainer.json` (`image`, `build`, `workspaceFolder`, `containerEnv`, `mounts`, `runArgs`, `postCreateCommand`), builds or pulls the image, and runs one container per folder, found again by its `pandemonium.folder` label, with the folder mounted at the workspace folder and port 6868 published on `127.0.0.1`. Installs and starts the server in it with `docker exec -d … --listen 0.0.0.0:6868`, reads its `server.json` with `docker exec`, and connects to the published port. Progress is reported step by step while this happens. |
+| Tunnel | Opens a local port and, for each connection, runs `cloudflared access tcp --hostname <hostname>` and pipes the bytes through it. The server's machine runs a named tunnel that points at the port the server listens on, so it only connects outward and opens no port. The token is the one the server was started with, kept by the client. |
 
 A project on another machine is addressed `ssh://<destination>/<folder>` for
-a server reached over ssh, and `tcp://<host>:<port>/<folder>` for one reached
-directly; the window keeps the token of each direct server in its own
-settings.
+a server reached over ssh, `tcp://<host>:<port>/<folder>` for one reached
+directly, `wsl://<distro>/<folder>` for one in a WSL distribution,
+`devcontainer://<host folder>/<folder>` for one in the dev container of a folder
+on this machine, and `tunnel://<hostname>/<folder>` for one behind a tunnel. The
+host folder of a dev container is written with `/` as `%2F`, `%` as `%25` and
+whitespace as `%XX`, so that it holds no slash; `<folder>` is the folder inside
+the container. The window keeps the token of each direct or tunnelled server in
+its own settings.
 
 A relay for phones, end-to-end encrypted, is planned and is not built.
 
@@ -123,7 +131,7 @@ request with exactly one `response` carrying the same `id`.
 | `save_mcp_servers`| `servers`: `[{name, target, env, description, website, enabled}]`, `env`: `[[name, value]]`                                     | `done`          |
 | `watch_folders`| `directories`: `[string]`                                                                       | `done`          |
 | `machine_settings`| none                                                                                          | `machine_settings` |
-| `save_machine_settings`| `settings`: `{git, agents, shell, languages}`                                            | `done`          |
+| `save_machine_settings`| `settings`: `{git, history, agents, shell, languages}`                                   | `done`          |
 | `latest_release`| `channel`: `stable` or `nightly`                                                                 | `latest_release` |
 | `registry_agents`| none                                                                                             | `registry_agents`|
 | `search_tools` | `query`                                                                                          | `tool_listings` |
@@ -200,7 +208,12 @@ request with exactly one `response` carrying the same `id`.
 | `code_actions` | `directory`, `path`, `version`, `span`                                                           | `code_actions`  |
 | `take_code_action` | `directory`, `path`, `index`                                                                 | `edited`        |
 | `file_history` | `directory`, `path`                                                                              | `file_history`  |
-| `permalink`    | `directory`, `path`, `line` (optional)                                                           | `address`       |
+| `local_history`| `directory`, `path`                                                                              | `local_history` |
+| `read_version` | `directory`, `path`, `version`                                                                   | `file`          |
+| `read_conflict`| `directory`, `path`                                                                              | `conflict`      |
+| `resolve_conflict`| `directory`, `path`, `text`                                                                   | `done`          |
+| `revision_changes`| `directory`, `from` (optional), `to`                                                          | `revision_changes` |
+| `permalink`    | `directory`, `path`, `line` (optional), `end_line` (optional)                                    | `address`       |
 
 `agent` is an agent's id: `claude-code`, `codex` or `grok`.
 
@@ -287,6 +300,10 @@ request with exactly one `response` carrying the same `id`.
 - **`inspect`:** the files that differ from the last commit, with their diffs,
   and, when `base` is given, the messages of the commits the branch has that
   `base` has not, plus the branch and abbreviated head commit the folder is on.
+  Each change's `words` is `[{line, ranges}]`: for a removed or added line of its
+  diff, counted from 0 among the lines of `diff`, the `[start, end]` bytes of the
+  line, without its marker, that differ from the line paired with it in the same
+  run of changes.
 - **`set_accounts`:** keeps the logins and the login in use for each agent on
   the server's machine, and points the agents at them. `accounts` reads them
   back.
@@ -319,9 +336,16 @@ request with exactly one `response` carrying the same `id`.
 - **`machine_settings`, `save_machine_settings`:** what the reader set up for
   the work the server does on its machine, kept by the server, replaced whole by
   the save and put to work at once. `git` is `{auto_fetch, fetch_minutes,
-  branch_template, worktree_root}`: while `auto_fetch` is set the server runs
+  branch_template, worktree_root, hosts}`: `hosts` maps the host name of a
+  self-hosted git server to the layout its web addresses use (`github`,
+  `gitlab`, `bitbucket`, `gitea`, `azure`, `sourcehut` or `gitee`), which
+  `permalink` follows for a host whose name does not give it away; while `auto_fetch` is set the server runs
   `git fetch --all --prune` every `fetch_minutes` in the repositories of its
-  open sessions and of the projects saved on its machine. `agents` is
+  open sessions and of the projects saved on its machine. `history` is
+  `{enabled, days, megabytes}`: whether the server keeps a state of a file each
+  time it is written with `write_file`, how many days it keeps it and how many
+  megabytes of states one project may take up (30 days and 256 megabytes when
+  not set). `agents` is
   `{default_agent, permission_mode}`, each optional: the agent a client offers
   first for new work, by id, and the mode new sessions start in. `shell` is
   `{program, arguments}`, the shell `open_terminal` starts when `program` is not
@@ -400,7 +424,32 @@ request with exactly one `response` carrying the same `id`.
   path of these four must stay inside `directory`.
 - **`write_file`:** replaces the contents of `path` (from the root of
   `directory`, which must stay inside it) with `text`, making the file when it is
-  not there. A folder is refused.
+  not there. A folder is refused. When the write succeeds and `directory` is in a
+  repository, the server keeps `text` as one more state of the file (see
+  `local_history`).
+- **`local_history`, `read_version`:** every `write_file` keeps the text it wrote
+  in the git folder of the worktree `directory` is in, beside the worktree, so
+  the states outlive the client that saved them and any other client reaches
+  them. `local_history` lists the states kept of `path`, newest first, after
+  removing those older than `history.days` of the machine settings;
+  `read_version` answers `file` with the state `version` names, which is the
+  `id` the list gave. A folder that is in no repository keeps no states and
+  answers `failed`. Past `history.megabytes`, or `history.days`, the server
+  removes the oldest states of the project, when a state is kept, when one is
+  listed and every ten minutes; with `history.enabled` off it keeps none.
+- **`read_conflict`, `resolve_conflict`:** while a merge, a rebase or a
+  cherry-pick is stopped on a conflicted `path`, `read_conflict` answers
+  `conflict` with the versions the index keeps, which are the common ancestor
+  (`base`), the branch being worked on (`ours`) and the incoming side
+  (`theirs`), and with `merged`, what the working folder holds. It fails for a
+  file that is not in conflict, not text or larger than a client reads whole.
+  `resolve_conflict` writes `text` as the file, as `write_file` does, and
+  stages it, which is what concludes the conflict for that file.
+- **`revision_changes`:** the files a commit changed with their diffs, when
+  `from` is not given: `to` against its first parent, or against nothing for a
+  commit that has none. With `from`, the files `to` changed since it left
+  `from`, as `git diff from...to` says; `to` and `from` are names of commits or
+  branches.
 - **`read_file`:** reads `path` from the working folder or, when `head`, from
   the last commit, or from the commit `revision` names by its object name. The response holds no text for a file that is not text, and
   names the installed language the file is written in, by the endings and names
@@ -541,12 +590,12 @@ embedded context, and anything else as a link to the stored file.
 | `bytes`      | `bytes` (base64): what a file holds, `truncated`: whether it was cut short |
 | `identity`   | `default`, `selected`: who the agent is signed in as, or null |
 | `started`    | `session`, `directory`, `branch` (always null for now), `head` (null without a worktree) |
-| `inspected`  | `changes`: `[{path, diff, staged, untracked, index, worktree, conflicted, from}]`, `commits`: `[string]` or null, `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind}`, `operation`: `Merge`, `Rebase` or `CherryPick` with what git prepared, or null |
+| `inspected`  | `changes`: `[{path, diff, words, staged, untracked, index, worktree, conflicted, from}]`, `commits`: `[string]` or null, `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind}`, `operation`: `Merge`, `Rebase` or `CherryPick` with what git prepared, or null |
 | `projects`   | `paths`, `saved`                                          |
 | `choices`    | `choices`: `[[agent, setting, value]]`                    |
 | `agent_servers` | `servers`: `[{id, name, command, env, package, installer, home}]`                |
 | `mcp_servers` | `servers`: `[{name, target, env, description, website, enabled}]`                     |
-| `machine_settings` | `settings`: `{git, agents, shell, languages}`, as `save_machine_settings` takes them |
+| `machine_settings` | `settings`: `{git, history, agents, shell, languages}`, as `save_machine_settings` takes them |
 | `latest_release` | `version`: the version, or for `nightly` the day it was made, or null when none was found; `url`: its page |
 | `registry_agents` | `agents`: `[{id, name, version, description, website, command, env}]` |
 | `tool_listings` | `listings`: `[{id, title, description, name, target, env, inputs, asks, website}]` |
@@ -583,7 +632,10 @@ embedded context, and anything else as a link to the stored file.
 | `problems`   | `problems`: `[{path, diagnostic}]`, what the language servers last said is wrong with each file of the folder, open or not, the worst first |
 | `signature`  | `signature`: `{label, active, documentation, others}` or null; `active` is the byte range of `label` naming the parameter the place is at, `others` how many more signatures there are |
 | `edited`     | `files`: `[{path, changes: [{span, text}]}]` |
-| `file_history` | `commits`: `[{object, id, author, when, summary, path}]`, newest first, following the file back through moves; `path` is what it was called in that commit |
+| `file_history` | `commits`: `[{object, id, author, when, time, summary, path}]`, newest first, following the file back through moves; `path` is what it was called in that commit and `time` when it was written, in seconds since the Unix epoch |
+| `local_history` | `versions`: `[{id, size}]`, the states the file was kept in each time it was saved, newest first; `id` is when it was kept, in milliseconds since the Unix epoch, and `size` how many bytes it held |
+| `conflict`   | `files`: `{ours, theirs, base, merged, language}`: what each side of a conflicted file holds, each text or null for a side that has no such file, `merged` the file as the working folder holds it with the markers git wrote, `language` as of `file` |
+| `revision_changes` | `changes`: `[{path, diff, staged, untracked, index, worktree, conflicted, from}]`, as of `inspected`, for each file a commit or a branch changed |
 | `address`    | `url`: the web address of the file, at the line when one is given, on the host of the repository's remote, at the commit checked out |
 
 ## Changes other clients make

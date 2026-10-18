@@ -121,12 +121,14 @@ pub enum Items {
         /// The changes, in the order the server gave them.
         offered: Vec<CodeAction>,
     },
-    /// The commits that changed a file.
+    /// The commits that changed a file, and the states it was saved in, as one timeline.
     History {
         /// The file.
         path: String,
         /// The commits, newest first.
         commits: Vec<pm_git::FileCommit>,
+        /// The states it was saved in, newest first.
+        versions: Vec<pm_protocol::LocalVersion>,
     },
     /// The items of the file shown, as its outline lists them, narrowed by what is typed.
     Outline {
@@ -209,6 +211,35 @@ pub enum Items {
         /// The choices that match, best first, by place among `choices`.
         matched: Vec<usize>,
     },
+}
+
+/// One row of the timeline of a file.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Moment {
+    /// The commit at this place among the commits.
+    Commit(usize),
+    /// The state saved at this place among the states.
+    Saved(usize),
+}
+
+/// The commits and the saved states of a file as one timeline, the latest first.
+pub fn moments(
+    commits: &[pm_git::FileCommit],
+    versions: &[pm_protocol::LocalVersion],
+) -> Vec<Moment> {
+    let mut timeline: Vec<(i64, Moment)> = commits
+        .iter()
+        .enumerate()
+        .map(|(place, commit)| (commit.time.saturating_mul(1000), Moment::Commit(place)))
+        .chain(
+            versions
+                .iter()
+                .enumerate()
+                .map(|(place, version)| (version.id as i64, Moment::Saved(place))),
+        )
+        .collect();
+    timeline.sort_by_key(|(time, _)| std::cmp::Reverse(*time));
+    timeline.into_iter().map(|(_, moment)| moment).collect()
 }
 
 /// How many files the finder lists at most.
@@ -480,7 +511,9 @@ impl Items {
         match self {
             Self::Places { locations, .. } => (0..locations.len()).collect(),
             Self::Actions { offered, .. } => (0..offered.len()).collect(),
-            Self::History { commits, .. } => (0..commits.len()).collect(),
+            Self::History {
+                commits, versions, ..
+            } => (0..commits.len() + versions.len()).collect(),
             Self::Outline { items, .. } => items
                 .iter()
                 .enumerate()
@@ -570,7 +603,7 @@ impl Items {
             Self::Actions { .. } => "Code actions".to_owned(),
             Self::History { path, .. } => {
                 let name = path.rsplit('/').next().unwrap_or(path);
-                format!("History of {name}")
+                format!("Timeline of {name}")
             }
             Self::Outline { .. } => "Outline".to_owned(),
             Self::Files { .. } => "Files".to_owned(),
@@ -1199,14 +1232,33 @@ impl WorkspaceState {
                 }
                 self
             }
-            Items::History { commits, .. } => {
-                if let Some(commit) = commits.into_iter().nth(index) {
-                    self.outbox.push(Outgoing::ReadRevision {
-                        session,
-                        label: format!("{} @ {}", commit.path, commit.id),
-                        path: commit.path,
-                        revision: commit.object,
-                    });
+            Items::History {
+                path,
+                commits,
+                versions,
+            } => {
+                match moments(&commits, &versions).get(index).copied() {
+                    Some(Moment::Commit(place)) => {
+                        if let Some(commit) = commits.into_iter().nth(place) {
+                            self.outbox.push(Outgoing::ReadRevision {
+                                session,
+                                label: format!("{} @ {}", commit.path, commit.id),
+                                path: commit.path,
+                                revision: commit.object,
+                            });
+                        }
+                    }
+                    Some(Moment::Saved(place)) => {
+                        if let Some(version) = versions.get(place) {
+                            self.outbox.push(Outgoing::ReadVersion {
+                                session,
+                                path,
+                                version: version.id,
+                                when: crate::age::label(version.id, crate::age::now()),
+                            });
+                        }
+                    }
+                    None => {}
                 }
                 self
             }

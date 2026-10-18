@@ -68,21 +68,33 @@ impl WorkspaceState {
         self
     }
 
-    /// Copies the web address of the caret's line of the file shown on the host of its repository, at the commit checked out.
+    /// Copies the web address of the caret's line of the file shown, or of the lines the selection covers, on the host of its repository, at the commit checked out.
     pub fn permalink_requested(mut self) -> Self {
         let Some((session, path)) = self.shown_file() else {
             return self;
         };
-        let Some(line) = self
-            .shown_document()
-            .map(|document| document.line_of(document.field.caret()) + 1)
-        else {
+        let Some((line, end_line)) = self.shown_document().map(|document| {
+            let caret = document.field.caret();
+            let selected = document.field.selection().unwrap_or(caret..caret);
+            let last = if selected.end > selected.start
+                && document.field.text().as_bytes()[selected.end - 1] == b'\n'
+            {
+                selected.end - 1
+            } else {
+                selected.end
+            };
+            (
+                document.line_of(selected.start) + 1,
+                document.line_of(last) + 1,
+            )
+        }) else {
             return self;
         };
         self.outbox.push(Outgoing::Permalink {
             session,
             path,
             line: Some(line),
+            end_line: Some(end_line),
             open: false,
         });
         self
@@ -109,11 +121,16 @@ impl WorkspaceState {
             session,
             path: path.clone(),
         });
+        self.outbox.push(Outgoing::LocalHistory {
+            session,
+            path: path.clone(),
+        });
         self.listing = Some(Listing::waiting(
             session,
             Items::History {
                 path,
                 commits: Vec::new(),
+                versions: Vec::new(),
             },
             at,
         ));
@@ -130,12 +147,27 @@ impl WorkspaceState {
         if let Some(listing) = self.listing.as_mut().filter(|held| {
             held.session == session
                 && matches!(&held.items, Items::History { path: wanted, .. } if wanted == path)
-        }) {
-            listing.items = Items::History {
-                path: path.to_owned(),
-                commits,
-            };
+        }) && let Items::History { commits: held, .. } = &mut listing.items
+        {
+            *held = commits;
             listing.answered = true;
+        }
+        self
+    }
+
+    /// The state after the server listed `versions`, the states the file at `path` of the session at `session` was saved in.
+    pub fn with_local_history(
+        mut self,
+        session: usize,
+        path: &str,
+        versions: Vec<pm_protocol::LocalVersion>,
+    ) -> Self {
+        if let Some(listing) = self.listing.as_mut().filter(|held| {
+            held.session == session
+                && matches!(&held.items, Items::History { path: wanted, .. } if wanted == path)
+        }) && let Items::History { versions: held, .. } = &mut listing.items
+        {
+            *held = versions;
         }
         self
     }

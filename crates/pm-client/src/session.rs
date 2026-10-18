@@ -85,7 +85,7 @@ pub enum Incoming {
 /// What the owner asks of the connection thread.
 enum Order {
     /// Sends the request under this id.
-    Send(u64, Request),
+    Send(u64, Box<Request>),
     /// Watches the session, which has events numbered up to the second number already.
     Watch(u64, u64),
     /// Watches the shell, whose output up to the second number, in bytes, the caller already has.
@@ -133,7 +133,7 @@ impl Client {
     /// Sends `request` and returns the id its answer will carry.
     pub fn request(&self, request: Request) -> u64 {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
-        let _ = self.orders.send(Order::Send(id, request));
+        let _ = self.orders.send(Order::Send(id, Box::new(request)));
         id
     }
 
@@ -319,6 +319,7 @@ fn converse(
         loop {
             match ordered.try_recv() {
                 Ok(Order::Send(id, request)) => {
+                    let request = *request;
                     memory.waiting.push((id, request.clone()));
                     if let Err(reason) = send(socket, &ClientMessage::Request { id, request }) {
                         return Some(reason);

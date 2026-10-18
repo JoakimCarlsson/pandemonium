@@ -17,12 +17,14 @@ pub mod avatar;
 pub mod branch_menu;
 pub mod button;
 pub mod change_list;
+pub mod changes;
 pub mod chat;
 pub mod checkbox;
 pub mod chip;
 pub mod choices;
 pub mod code_box;
 pub mod composer;
+pub mod conflict;
 pub mod context_menu;
 pub mod debug;
 pub mod debug_panel;
@@ -108,9 +110,11 @@ pub mod welcome;
 
 pub use avatar::Avatar;
 pub use button::Button;
+pub use changes::Changes;
 pub use checkbox::Checkbox;
 pub use chip::Chip;
 pub use code_box::CodeBox;
+pub use conflict::Conflict;
 pub use context_menu::{
     ContextMenu, EDITOR_MENU_HEIGHT, EditorCommand, MENU_COPY, MENU_CUT, MENU_PASTE, MENU_REDO,
     MENU_SELECT_ALL, MENU_UNDO, editor_menu, is_menu_item,
