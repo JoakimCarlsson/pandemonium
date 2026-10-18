@@ -451,11 +451,16 @@ pub fn chat(
     if let Some(ask) = asking.filter(|ask| ask.plan.is_none()) {
         messages = messages.child(question(ask));
     } else if asking.is_none() && session.inquiry.is_none() && session.status == Status::Working {
+        let label = if session.echoes > 0 {
+            "Sending prompt…"
+        } else {
+            "Thinking…"
+        };
         messages = messages.child(
             node()
                 .styles([flex(), items_center(), gap(2)])
                 .child(status_icon(session.shown()))
-                .child(line("Thinking…", 13, 1.4, Role::Muted)),
+                .child(line(label, 13, 1.4, Role::Muted)),
         );
     }
     if session.status == Status::Review && !session.changes.is_empty() {
