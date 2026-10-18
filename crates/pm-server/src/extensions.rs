@@ -264,7 +264,8 @@ impl Core {
         self.note_busy_package(&id, Some("Installing"));
         std::thread::spawn(move || {
             let progress = |_: &str, step: &str| core.note_busy_package(&id, Some(step));
-            let outcome = pm_plugin::install(&source, &granted, &progress);
+            let outcome =
+                pm_plugin::install(&source, &granted, &|| core.extensions_changed(), &progress);
             core.note_problem_package(
                 &id,
                 match outcome {

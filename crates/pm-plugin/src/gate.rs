@@ -1,69 +1,94 @@
 //! What an extension's code is allowed to have the host do for it.
 
 use std::io::Read;
-use std::net::{IpAddr, ToSocketAddrs};
+use std::net::IpAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
 use pm_plugin_api::{Host, HostCall, ProcessOutput};
 use pm_policy::{Capability, Grants};
+use ureq::unversioned::resolver::{DefaultResolver, ResolvedSocketAddrs, Resolver};
+use ureq::unversioned::transport::{DefaultConnector, NextTimeout};
 
 /// The most a download or a file read gives back, in bytes.
 const MOST_BYTES: u64 = 16 << 20;
 
-/// Whether `address` is somewhere on the public internet: not this machine, a private or link-local network, or another address that is not routed globally.
+/// Whether `address` is somewhere on the public internet: not this machine, a private, link-local, shared, documentation, benchmarking or reserved range, and, for an IPv6 address that carries an IPv4 one, not that one either.
 fn is_global(address: IpAddr) -> bool {
     match address {
         IpAddr::V4(v4) => {
-            let [first, second, ..] = v4.octets();
+            let [first, second, third, _] = v4.octets();
             !(v4.is_loopback()
                 || v4.is_private()
                 || v4.is_link_local()
                 || v4.is_unspecified()
                 || v4.is_broadcast()
                 || v4.is_multicast()
+                || first == 0
+                || first >= 240
                 || (first == 100 && (64..128).contains(&second))
-                || first == 0)
+                || (first == 192 && second == 0 && third <= 2)
+                || (first == 198 && (18..20).contains(&second))
+                || (first == 198 && second == 51 && third == 100)
+                || (first == 203 && second == 0 && third == 113))
         }
-        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
-            Some(mapped) => is_global(IpAddr::V4(mapped)),
-            None => {
-                let first = v6.segments()[0];
-                !(v6.is_loopback()
-                    || v6.is_unspecified()
-                    || v6.is_multicast()
-                    || first & 0xfe00 == 0xfc00
-                    || first & 0xffc0 == 0xfe80)
+        IpAddr::V6(v6) => {
+            let segments = v6.segments();
+            let first = segments[0];
+            let embedded = |high: u16, low: u16| {
+                let [a, b] = high.to_be_bytes();
+                let [c, d] = low.to_be_bytes();
+                std::net::Ipv4Addr::new(a, b, c, d)
+            };
+            if let Some(mapped) = v6.to_ipv4_mapped() {
+                return is_global(IpAddr::V4(mapped));
             }
-        },
+            if segments[..6] == [0; 6] {
+                return !v6.is_unspecified()
+                    && !v6.is_loopback()
+                    && is_global(IpAddr::V4(embedded(segments[6], segments[7])));
+            }
+            if segments[..6] == [0x64, 0xff9b, 0, 0, 0, 0] {
+                return is_global(IpAddr::V4(embedded(segments[6], segments[7])));
+            }
+            if first == 0x2002 {
+                return is_global(IpAddr::V4(embedded(segments[1], segments[2])));
+            }
+            !(v6.is_multicast()
+                || first & 0xfe00 == 0xfc00
+                || first & 0xffc0 == 0xfe80
+                || first & 0xffc0 == 0xfec0
+                || (first == 0x2001 && (segments[1] == 0 || segments[1] == 0xdb8))
+                || first == 0x0100)
+        }
     }
 }
 
-/// Nothing when every address the host of `url` resolves to is global, and why not otherwise.
-fn check_public(url: &str) -> Result<(), String> {
-    let uri: ureq::http::Uri = url
-        .parse()
-        .map_err(|_| format!("{url} is not an address"))?;
-    let host = uri
-        .host()
-        .ok_or_else(|| format!("{url} names no host"))?
-        .trim_matches(['[', ']']);
-    let port = uri
-        .port_u16()
-        .unwrap_or(if uri.scheme_str() == Some("https") {
-            443
-        } else {
-            80
-        });
-    let found: Vec<_> = (host, port)
-        .to_socket_addrs()
-        .map_err(|error| format!("could not resolve {host}: {error}"))?
-        .collect();
-    if found.is_empty() || found.iter().any(|address| !is_global(address.ip())) {
-        return Err(format!("{host} is not a public address"));
+/// A resolver that hands the connection only public addresses, so that what is checked is what is connected to: a host that resolves to anything that is not public is refused whole.
+#[derive(Debug, Default)]
+struct PublicResolver {
+    /// The resolver that does the lookup.
+    inner: DefaultResolver,
+}
+
+impl Resolver for PublicResolver {
+    /// Resolves `uri` and refuses it unless every address it resolves to is public.
+    fn resolve(
+        &self,
+        uri: &ureq::http::Uri,
+        config: &ureq::config::Config,
+        timeout: NextTimeout,
+    ) -> Result<ResolvedSocketAddrs, ureq::Error> {
+        let found = self.inner.resolve(uri, config, timeout)?;
+        if found.iter().any(|address| !is_global(address.ip())) {
+            return Err(ureq::Error::Io(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "the host is not a public address",
+            )));
+        }
+        Ok(found)
     }
-    Ok(())
 }
 
 /// How long a download may take.
@@ -136,12 +161,16 @@ impl Gate {
         if !url.starts_with("https://") && !url.starts_with("http://") {
             return Err(format!("{url} is not an http address"));
         }
-        check_public(url)?;
-        let agent: ureq::Agent = ureq::Agent::config_builder()
+        let config = ureq::Agent::config_builder()
             .max_redirects(0)
+            .proxy(None)
             .timeout_global(Some(PATIENCE))
-            .build()
-            .into();
+            .build();
+        let agent = ureq::Agent::with_parts(
+            config,
+            DefaultConnector::default(),
+            PublicResolver::default(),
+        );
         let mut body = agent
             .get(url)
             .call()

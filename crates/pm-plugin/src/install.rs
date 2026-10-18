@@ -53,12 +53,13 @@ fn fetches(folder: &Path) -> bool {
             .is_some_and(|server| server.install.is_some())
 }
 
-/// Installs the extension in the folder `source`: keeps its folder, then installs each language it adds through the language index like any other, telling `progress` the language and what is being done.
+/// Installs the extension in the folder `source`: keeps its folder, calls `kept` so that what the extension may do is enforced before any of its languages exist, then installs each language it adds through the language index like any other, telling `progress` the language and what is being done.
 ///
 /// A language that has to fetch files is not installed unless `grants` allow downloading; that, and a language server that could not be installed, come back in the problems while the rest of the extension is installed.
 pub fn install(
     source: &Path,
     grants: &Grants,
+    kept: &dyn Fn(),
     progress: &dyn Fn(&str, &str),
 ) -> Result<Installed, String> {
     let package = Package::read(source)?;
@@ -76,24 +77,25 @@ pub fn install(
     } else {
         let _ = std::fs::remove_dir_all(&staging);
     }
-    let kept = Package::read(&folder)?;
+    let package = Package::read(&folder)?;
+    kept();
     let mut problems = Vec::new();
-    for (language, from) in kept.languages() {
+    for (language, from) in package.languages() {
         if fetches(&from)
             && let Err(denied) = grants.check(Capability::Download)
         {
             problems.push(format!("{language} was not installed: {denied}"));
             continue;
         }
-        progress(&kept.id, "Adding its languages");
+        progress(&package.id, "Adding its languages");
         pm_lsp::add_folder(&from, &language)?;
-        match pm_lsp::install(&language, &|_, step| progress(&kept.id, step)) {
+        match pm_lsp::install(&language, &|_, step| progress(&package.id, step)) {
             Ok(more) => problems.extend(more),
             Err(reason) => problems.push(format!("{language}: {reason}")),
         }
     }
     Ok(Installed {
-        id: kept.id,
+        id: package.id,
         problems,
     })
 }
