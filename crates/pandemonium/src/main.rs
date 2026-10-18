@@ -73,6 +73,8 @@ fn main() {
             Some("filehistory") => Shot::FileHistory,
             Some("signing") => Shot::Signing,
             Some("annotated") => Shot::Annotated,
+            Some("project-search") => Shot::ProjectSearch,
+            Some("excerpts") => Shot::Excerpts,
             Some("finding") => Shot::Finding,
             Some("outline") => Shot::Outline,
             Some("cursors") => Shot::Cursors,

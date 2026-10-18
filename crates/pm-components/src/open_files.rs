@@ -61,6 +61,8 @@ pub struct Viewer {
     pub source: bool,
     /// The text of a vector picture drawn, or why it could not be, once it has been tried.
     pub drawn: Option<Result<pm_ui::Picture, String>>,
+    /// Whether it is open only for the excerpts, which leaves its tab out of the strip.
+    pub hidden: bool,
 }
 
 /// Where a file was left when the window closed: what it held that was not saved, and the caret.
@@ -158,7 +160,7 @@ impl WorkspaceState {
         self.git
             .shown
             .and_then(|index| self.git.viewers.get(index))
-            .filter(|_| self.tab == Tab::File)
+            .filter(|_| matches!(self.tab, Tab::File | Tab::Excerpts))
     }
 
     /// The text of the file whose tab is showing, if it holds text.
@@ -184,7 +186,10 @@ impl WorkspaceState {
             .iter()
             .position(|viewer| viewer.path == path && viewer.head == head);
         let shown = match held {
-            Some(index) => index,
+            Some(index) => {
+                self.git.viewers[index].hidden = false;
+                index
+            }
             None => {
                 let viewer = Viewer {
                     path: path.clone(),
@@ -197,6 +202,7 @@ impl WorkspaceState {
                     pinned: false,
                     source: false,
                     drawn: None,
+                    hidden: false,
                 };
                 self.outbox.push(match Rendering::of(&path) {
                     Some(Rendering::Picture) => Outgoing::ReadPicture {
@@ -237,6 +243,37 @@ impl WorkspaceState {
         self.tab = Tab::File;
     }
 
+    /// Makes sure the file at `path` of the session at `session` is open, reading it when it is not, in a tab that is left out of the strip, and returns its position.
+    pub(crate) fn load_hidden_viewer(&mut self, session: usize, path: &str) -> usize {
+        if let Some(index) = self
+            .git
+            .viewers
+            .iter()
+            .position(|viewer| viewer.path == path && !viewer.head)
+        {
+            return index;
+        }
+        self.outbox.push(Outgoing::ReadFile {
+            session,
+            path: path.to_owned(),
+            head: false,
+        });
+        self.git.viewers.push(Viewer {
+            path: path.to_owned(),
+            head: false,
+            contents: Contents::Loading,
+            scroll: 0.0,
+            preview: false,
+            left: None,
+            jump: None,
+            pinned: false,
+            source: false,
+            drawn: None,
+            hidden: true,
+        });
+        self.git.viewers.len() - 1
+    }
+
     /// Starts the controls over, keeping the files open, which belong to the folder being worked in and are swapped by [`Self::sync_files_owner`].
     pub(crate) fn fresh_git(&mut self) {
         let viewers = std::mem::take(&mut self.git.viewers);
@@ -251,6 +288,9 @@ impl WorkspaceState {
         let now = self.review_index();
         if now == self.files_owner {
             return;
+        }
+        if self.excerpts.is_some() {
+            *self = std::mem::replace(self, Self::new(&[])).excerpts_closed();
         }
         if let Some(before) = self.files_owner {
             let tabs = (std::mem::take(&mut self.git.viewers), self.git.shown.take());

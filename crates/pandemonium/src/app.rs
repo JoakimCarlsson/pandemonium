@@ -964,6 +964,9 @@ impl App {
                 OVERVIEW_SCROLL => std::mem::take(state).scrolled_overview(pixels, room),
                 HOVER_SCROLL => std::mem::take(state).scrolled_hover(pixels, room),
                 VIEWER_SCROLL => std::mem::take(state).scrolled_viewer(pixels, room),
+                pm_components::excerpts::EXCERPTS_SCROLL => {
+                    std::mem::take(state).scrolled_excerpts(pixels, room)
+                }
                 GRAPH_SCROLL => std::mem::take(state).scrolled_graph(pixels, room),
                 DEBUG_STACK_SCROLL | DEBUG_VARIABLES_SCROLL | DEBUG_CONSOLE_SCROLL => {
                     std::mem::take(state).scrolled_debug(id, pixels, room)
@@ -1190,6 +1193,7 @@ impl App {
                         .update(|state| *state = std::mem::take(state).without_menu());
                 }
                 self.pressed_on = self.pointer.position.and_then(|at| self.output.hit(at));
+                self.press_excerpt();
                 self.text_press();
                 if self.pressed_on != Some(ENTRY_FIELD)
                     && self.model.read(|screen| screen.is_naming())
@@ -1463,6 +1467,25 @@ impl App {
         };
         self.model
             .update(|state| *state = std::mem::take(state).with_menu(id, (x, y)));
+    }
+
+    /// Takes a press on the lines of a file in the excerpts that is not the one being edited: the file becomes the one edited and its caret goes where the pointer is.
+    fn press_excerpt(&mut self) {
+        let (Some(id), Some((x, y))) = (self.pressed_on, self.pointer.position) else {
+            return;
+        };
+        let Some(index) = self.model.read(|screen| screen.excerpt_owner_of(id)) else {
+            return;
+        };
+        let offset = self.output.offset_in(id, x, y);
+        self.model
+            .update(|screen| *screen = std::mem::take(screen).excerpt_file_shown(index));
+        self.pressed_on = Some(EDITOR_FIELD);
+        self.focus.focus(EDITOR_FIELD);
+        if let Some(offset) = offset {
+            self.edit_field(EDITOR_FIELD, Edit::Place(offset, false));
+            self.dragging = Some(EDITOR_FIELD);
+        }
     }
 
     /// Takes a press inside the field `id`: focuses it, puts the caret where

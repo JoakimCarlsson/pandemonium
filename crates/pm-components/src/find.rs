@@ -270,7 +270,7 @@ impl WorkspaceState {
 }
 
 /// A switch of the bar, `label` in the font for code, lit when `on`.
-fn switch(label: &str, id: FocusId, on: bool) -> Node {
+pub(crate) fn switch(label: &str, id: FocusId, on: bool) -> Node {
     let mut held = node()
         .styles([
             flex(),

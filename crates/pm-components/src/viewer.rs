@@ -133,7 +133,7 @@ fn recolor(marks: &mut Vec<Mark>, range: Range<usize>, role: Role) {
 }
 
 /// The marks of line `index` of `document`: its highlighted stretches in their colours, the brackets `pair` paired at the caret behind a box, and what the language server finds wrong under a wavy line.
-fn line_marks(
+pub(crate) fn line_marks(
     document: &Document,
     index: usize,
     spans: Vec<(Range<usize>, Kind)>,
@@ -252,7 +252,7 @@ fn change_bar(change: Option<LineChange>, height: f32) -> Node {
 }
 
 /// How tall the rows of a line broken into `segments` are together, in logical pixels.
-fn document_row(settings: &EditorSettings, segments: &[Range<usize>]) -> f32 {
+pub(crate) fn document_row(settings: &EditorSettings, segments: &[Range<usize>]) -> f32 {
     settings.row_height() * segments.len().max(1) as f32
 }
 
@@ -260,7 +260,7 @@ fn document_row(settings: &EditorSettings, segments: &[Range<usize>]) -> f32 {
 pub const BREAKPOINT_CELL: f32 = 16.0;
 
 /// The cell before a line number that sets or clears the breakpoint on the line when pressed, and shows the breakpoint, or the arrow where the program is paused.
-fn breakpoint_cell(file: usize, index: usize, gutter: &Gutter, height: f32) -> Node {
+pub(crate) fn breakpoint_cell(file: usize, index: usize, gutter: &Gutter, height: f32) -> Node {
     let cell = node()
         .styles([
             flex(),
@@ -325,17 +325,17 @@ fn marks_in(marks: &[Mark], segment: &Range<usize>, first: bool, last: bool) -> 
 }
 
 /// What stands beside a line: who last changed it, and the cell that sets its breakpoint.
-struct Beside {
+pub(crate) struct Beside {
     /// Who last changed the line, when it is said.
-    blamed: Option<String>,
+    pub(crate) blamed: Option<String>,
     /// The cell before the line number.
-    breakpoint: Node,
+    pub(crate) breakpoint: Node,
     /// Whether a program being debugged is paused on the line.
-    paused: bool,
+    pub(crate) paused: bool,
 }
 
 /// One numbered line of the file, broken into the rows `segments` of it hold, with the caret and selection placed in it for the field `owner`, coloured by `marks`.
-fn file_line(
+pub(crate) fn file_line(
     document: &Document,
     index: usize,
     marks: Vec<Mark>,

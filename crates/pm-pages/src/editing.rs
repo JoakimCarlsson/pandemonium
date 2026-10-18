@@ -473,6 +473,36 @@ impl Screen {
         }
     }
 
+    /// The position among the open files of the file whose lines in the excerpts the element `id` holds.
+    pub fn excerpt_owner_of(&self, id: pm_input::FocusId) -> Option<usize> {
+        match self {
+            Self::Workspace(state) => state.excerpt_owner_of(id),
+            Self::Onboarding(_) => None,
+        }
+    }
+
+    /// The screen with the file at `index` among the open files made the one edited in the excerpts.
+    pub fn excerpt_file_shown(self, index: usize) -> Self {
+        self.in_workspace(|state| state.excerpt_file_shown(index))
+    }
+
+    /// The screen with the search of the project open in the review panel.
+    pub fn project_search_opened(self) -> Self {
+        self.in_workspace(WorkspaceState::project_search_opened)
+    }
+
+    /// The screen after the server answered a search of the project of the session at `session` for `query`, with `hits` or with why it could not.
+    pub fn with_project_search(
+        self,
+        session: usize,
+        query: &str,
+        case: bool,
+        regex: bool,
+        hits: Result<Vec<pm_protocol::Location>, String>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_project_search(session, query, case, regex, hits))
+    }
+
     /// The screen with the bar for finding in the file shown open, with the row for replacing when `replacing`.
     pub fn find_opened(self, replacing: bool) -> Self {
         self.in_workspace(|state| state.find_opened(replacing))

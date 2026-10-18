@@ -248,6 +248,10 @@ pub enum Shot {
     Signing,
     /// The same file with brackets coloured by depth, names coloured by what the language server says they are, hints inside lines and lenses at the ends of lines.
     Annotated,
+    /// The review panel on its search tab, with the hits of a search for a word, grouped by file.
+    ProjectSearch,
+    /// The hits of a search as excerpts of three files, one under another, edited in place.
+    Excerpts,
     /// The same file with the bar for finding and replacing open on a word it holds several times.
     Finding,
     /// The same file with its outline listed, narrowed by a letter typed.
@@ -401,6 +405,96 @@ fn code() -> WorkspaceState {
                 when: (pm_components::age::now() / 1000) as i64 - 3 * 86_400,
                 summary: "Reopen files browsed on a project page".to_owned(),
             },
+        )
+}
+
+/// The review panel on its search tab, after a search for `names` that found lines in three files.
+fn project_search() -> WorkspaceState {
+    let hit = |path: &str, line: u32, column: u32, text: &str| pm_protocol::Location {
+        path: path.to_owned(),
+        span: pm_protocol::Span::new(
+            pm_protocol::Position::new(line, column),
+            pm_protocol::Position::new(line, column),
+        ),
+        inside: true,
+        line: Some(text.to_owned()),
+        ..pm_protocol::Location::default()
+    };
+    let mut state = code().project_search_opened();
+    for character in "names".chars() {
+        state = state.project_search_typed(pm_text::Edit::Insert(character));
+    }
+    let session = state.review_index().unwrap_or_default();
+    state.with_project_search(
+        session,
+        "names",
+        false,
+        false,
+        Ok(vec![
+            hit(
+                CODE_PATH,
+                8,
+                4,
+                "    names: HashMap<String, usize>,",
+            ),
+            hit(
+                CODE_PATH,
+                16,
+                12,
+                "        let names = HashMap::with_capacity(LIMIT);",
+            ),
+            hit(
+                CODE_PATH,
+                23,
+                13,
+                "        self.names.len()",
+            ),
+            hit(
+                "crates/pm-lsp/src/hub.rs",
+                120,
+                30,
+                "    /// The names of the servers the reader chose, kept for the length of the session and written out again when the project is opened.",
+            ),
+            hit("docs/protocol.md", 41, 9, "- **`names`:** every name"),
+        ]),
+    )
+}
+
+/// The hits of the search for `names` opened as excerpts, the files they come from read.
+fn excerpts() -> WorkspaceState {
+    let long = |line: usize, text: &str| {
+        (0..140)
+            .map(|row| {
+                if row == line {
+                    text.to_owned()
+                } else {
+                    format!("    let value_{row} = {row};")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+    let state = project_search().excerpts_opened();
+    let session = state.review_index().unwrap_or_default();
+    state
+        .with_file(
+            session,
+            "crates/pm-lsp/src/hub.rs",
+            false,
+            Ok((
+                Some(long(
+                    120,
+                    "    /// The names of the servers the reader chose.",
+                )),
+                false,
+                Some("rust".to_owned()),
+            )),
+        )
+        .with_file(
+            session,
+            "docs/protocol.md",
+            false,
+            Ok((Some(long(41, "- **`names`:** every name")), false, None)),
         )
 }
 
@@ -1286,6 +1380,8 @@ impl Shot {
             Self::FileHistory => Screen::Workspace(file_history()),
             Self::Signing => Screen::Workspace(signing()),
             Self::Annotated => Screen::Workspace(annotated()),
+            Self::ProjectSearch => Screen::Workspace(project_search()),
+            Self::Excerpts => Screen::Workspace(excerpts()),
             Self::TabMenu => Screen::Workspace(code().with_tab_menu(0, (500.0, 52.0))),
             Self::Finder => {
                 let mut state = code();

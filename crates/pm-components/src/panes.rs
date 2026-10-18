@@ -53,6 +53,8 @@ pub enum Item {
     Page,
     /// The files the agent changed.
     Diff,
+    /// The lines around the hits of a search.
+    Excerpts,
     /// An open file, read from the last commit when `head`.
     File {
         /// The file, from the root of the repository.
@@ -625,7 +627,7 @@ impl Layout {
         };
         for item in missing {
             let to = match item {
-                Item::Page | Item::Diff => home,
+                Item::Page | Item::Diff | Item::Excerpts => home,
                 Item::File { .. } => files,
             };
             if let Some(group) = layout.groups_mut().into_iter().nth(to) {
@@ -740,10 +742,19 @@ impl WorkspaceState {
         {
             items.push(Item::Diff);
         }
-        items.extend(self.git.viewers.iter().map(|viewer| Item::File {
-            path: viewer.path.clone(),
-            head: viewer.head,
-        }));
+        if self.excerpts.is_some() {
+            items.push(Item::Excerpts);
+        }
+        items.extend(
+            self.git
+                .viewers
+                .iter()
+                .filter(|viewer| !viewer.hidden)
+                .map(|viewer| Item::File {
+                    path: viewer.path.clone(),
+                    head: viewer.head,
+                }),
+        );
         items
     }
 
@@ -755,6 +766,7 @@ impl WorkspaceState {
                 head: viewer.head,
             }),
             Tab::Diff if self.pane_items().contains(&Item::Diff) => Item::Diff,
+            Tab::Excerpts if self.excerpts.is_some() => Item::Excerpts,
             _ => Item::Page,
         }
     }
@@ -824,6 +836,7 @@ impl WorkspaceState {
         match id {
             TAB_CHAT => Some(Item::Page),
             TAB_DIFF => Some(Item::Diff),
+            crate::excerpts::TAB_EXCERPTS => Some(Item::Excerpts),
             _ => {
                 let index = id.0.checked_sub(FILE_TAB_BASE)? as usize;
                 let viewer = self.git.viewers.get(index)?;
@@ -841,6 +854,7 @@ impl WorkspaceState {
         match item {
             Item::Page => self.tab = Tab::Chat,
             Item::Diff => self.tab = Tab::Diff,
+            Item::Excerpts => self.tab = Tab::Excerpts,
             Item::File { .. } => {
                 if let Some(index) = self.viewer_index(item) {
                     self.git.shown = Some(index);
