@@ -298,6 +298,25 @@ impl Work {
                 |directory| Request::Problems { directory },
                 Pending::Problems(session),
             ),
+            Outgoing::SearchProject {
+                session,
+                query,
+                case,
+                regex,
+            } => {
+                let asked = query.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::SearchFiles {
+                        directory,
+                        query,
+                        regex,
+                        case,
+                    },
+                    Pending::ProjectSearch(session, asked, case, regex),
+                );
+            }
             Outgoing::SearchFiles { session, query } => {
                 let asked = query.clone();
                 self.ask_in_folder(
@@ -733,6 +752,16 @@ impl Work {
                 };
                 model.update(|screen| {
                     *screen = std::mem::take(screen).with_problems(session, problems)
+                });
+            }
+            (Pending::ProjectSearch(session, query, case, regex), response) => {
+                let hits = match response {
+                    Response::Definitions { locations } => Ok(locations),
+                    other => Err(Self::trouble_of(other)),
+                };
+                model.update(|screen| {
+                    *screen = std::mem::take(screen)
+                        .with_project_search(session, &query, case, regex, hits);
                 });
             }
             (Pending::Symbols(session, query), response) => {

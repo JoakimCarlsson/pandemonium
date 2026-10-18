@@ -301,8 +301,28 @@ impl WorkspaceState {
         if viewer.rendering().is_some() {
             return;
         }
+        let place = match &viewer.contents {
+            Contents::Text(document) => Some((
+                viewer.path.clone(),
+                document.lines(),
+                document.line_of(
+                    document
+                        .field
+                        .selection()
+                        .map_or(document.field.caret(), |r| r.start),
+                ),
+            )),
+            _ => None,
+        };
         let told = edit_viewer(session, viewer, edit, &settings);
+        let lines_after = match &viewer.contents {
+            Contents::Text(document) => document.lines(),
+            _ => 0,
+        };
         self.outbox.extend(told);
+        if let Some((path, lines_before, at)) = place {
+            self.excerpts_followed(&path, at, lines_after as isize - lines_before as isize);
+        }
     }
 
     /// Makes `changes`, each a stretch of the text as it is now and what replaces it, to the open file at `path` of the session at `session`, whether its tab is showing or not.
@@ -705,6 +725,7 @@ impl WorkspaceState {
             self.git.shown = Some(index);
             self.tab = crate::state::Tab::File;
             if let Some(viewer) = self.git.viewers.get_mut(index) {
+                viewer.hidden = false;
                 match document_of(viewer) {
                     Some(document) => {
                         let scroll =
@@ -743,6 +764,7 @@ impl WorkspaceState {
             pinned: false,
             source: false,
             drawn: None,
+            hidden: false,
         };
         let index = match self.git.viewers.iter().position(|held| held.preview) {
             Some(index) => {

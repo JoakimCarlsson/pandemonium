@@ -196,6 +196,8 @@ enum Pending {
     Highlights(usize, String, i32),
     /// The signature of the call a place of the file of the session at this position, at this path and version, is in.
     Signature(usize, String, i32),
+    /// The hits of a search of the project of the session at this position for a text, matching case or not, as a regular expression or not.
+    ProjectSearch(usize, String, bool, bool),
     /// What each name of the file of the session at this position, at this path and version, is.
     SemanticTokens(usize, String, i32),
     /// What to show inside the lines of the file of the session at this position, at this path and version.
@@ -1824,6 +1826,7 @@ impl Work {
             | Pending::Blame(..)
             | Pending::Highlights(..)
             | Pending::Signature(..)
+            | Pending::ProjectSearch(..)
             | Pending::SemanticTokens(..)
             | Pending::InlayHints(..)
             | Pending::CodeLenses(..)

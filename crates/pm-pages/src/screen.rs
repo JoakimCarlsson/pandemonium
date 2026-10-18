@@ -791,6 +791,14 @@ impl Screen {
         matches!(self, Self::Workspace(state) if state.review_overlay_open())
     }
 
+    /// The screen after the excerpts are scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
+    pub fn scrolled_excerpts(self, delta: f32, room: f32) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.scrolled_excerpts(delta, room)),
+            other => other,
+        }
+    }
+
     /// The screen after the file being read is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
     pub fn scrolled_viewer(self, delta: f32, room: f32) -> Self {
         match self {

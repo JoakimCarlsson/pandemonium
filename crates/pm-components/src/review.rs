@@ -421,6 +421,11 @@ pub fn review(state: &WorkspaceState, session: &Session, shaper: &mut Shaper) ->
                     REVIEW_FILES,
                     state.review_tab == ReviewTab::Files,
                 ))
+                .child(panel_tab(
+                    "Search",
+                    crate::project_search::REVIEW_SEARCH,
+                    state.review_tab == ReviewTab::Search,
+                ))
                 .child(spacer())
                 .children(
                     state
@@ -445,6 +450,7 @@ pub fn review(state: &WorkspaceState, session: &Session, shaper: &mut Shaper) ->
         .child(match state.review_tab {
             ReviewTab::Changes => changes(state, session, shaper),
             ReviewTab::Files => files(state),
+            ReviewTab::Search => crate::project_search::panel(state),
         })
         .children(
             state

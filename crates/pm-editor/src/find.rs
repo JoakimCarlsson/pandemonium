@@ -24,6 +24,15 @@ pub struct Query {
 }
 
 impl Query {
+    /// The first stretch of `text` the query finds; nothing when it finds none or cannot be used.
+    pub fn first_in(&self, text: &str) -> Option<Range<usize>> {
+        let pattern = self.pattern().ok()??;
+        pattern
+            .find(text)
+            .filter(|found| !found.is_empty())
+            .map(|found| found.range())
+    }
+
     /// The regular expression that finds what is looked for, or why it cannot be made; nothing for an empty query.
     fn pattern(&self) -> Result<Option<Regex>, String> {
         if self.text.is_empty() {

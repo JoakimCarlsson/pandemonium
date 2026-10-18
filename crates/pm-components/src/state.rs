@@ -409,6 +409,17 @@ pub enum Outgoing {
         /// The session, by position.
         session: usize,
     },
+    /// Asks for the lines of the files of the project of the session at this position that hold some text, as the search of the review panel does.
+    SearchProject {
+        /// The session, by position.
+        session: usize,
+        /// What is looked for.
+        query: String,
+        /// Whether upper and lower case must match.
+        case: bool,
+        /// Whether the query is a regular expression.
+        regex: bool,
+    },
     /// Asks for the lines of the files of the project of the session at this position that hold some text.
     SearchFiles {
         /// The session, by position.
@@ -1130,6 +1141,8 @@ pub enum Tab {
     Diff,
     /// A file being read.
     File,
+    /// The lines around the hits of a search, from every file, edited in place.
+    Excerpts,
 }
 
 /// About how wide the diff is, in logical pixels, when scrolling it to a file, which only the height of the notes on the files above depends on.
@@ -1142,6 +1155,8 @@ pub enum ReviewTab {
     Changes,
     /// Every file of the project.
     Files,
+    /// The text of every file of the project, searched for.
+    Search,
 }
 
 /// What a comment being started or written is about.
@@ -1179,6 +1194,10 @@ pub struct WorkspaceState {
     pub git: GitControls,
     /// What the review panel lists.
     pub review_tab: ReviewTab,
+    /// The search of the review panel and what it found.
+    pub project_search: crate::project_search::ProjectSearch,
+    /// The hits of a search shown as one document, while they are.
+    pub excerpts: Option<crate::excerpts::Excerpts>,
     /// The folders of the project's files that are folded away, by path.
     pub closed_tree: std::collections::HashSet<String>,
     /// The folders of the changed files that are folded away, by group and path.
@@ -1272,6 +1291,10 @@ pub struct WorkspaceState {
     pub panes: crate::panes::Panes,
     /// The panes of each session other than the one whose files are open now, by its position.
     pub pane_stash: std::collections::HashMap<usize, crate::panes::Panes>,
+    /// What was typed in the prompt, and the files attached to it, for every session but the one being worked in, by session, so that coming back to one finds its message as it was left.
+    pub prompt_stash: std::collections::HashMap<usize, (Field, Vec<String>)>,
+    /// The search of the review panel of every session but the one being worked in, by session.
+    pub search_stash: std::collections::HashMap<usize, crate::project_search::ProjectSearch>,
     /// The tab being dragged to another pane, if one is.
     pub pane_drag: Option<crate::panes::PaneDrag>,
     /// Where the menu of panes opened, while it is open.
@@ -1403,6 +1426,8 @@ impl WorkspaceState {
             review: true,
             git: GitControls::default(),
             review_tab: ReviewTab::Changes,
+            project_search: crate::project_search::ProjectSearch::default(),
+            excerpts: None,
             closed_tree: std::collections::HashSet::new(),
             closed_folders: std::collections::HashSet::new(),
             closed_diffs: std::collections::HashSet::new(),
@@ -1447,6 +1472,8 @@ impl WorkspaceState {
             tab_stash: std::collections::HashMap::new(),
             panes: crate::panes::Panes::default(),
             pane_stash: std::collections::HashMap::new(),
+            search_stash: std::collections::HashMap::new(),
+            prompt_stash: std::collections::HashMap::new(),
             pane_drag: None,
             pane_menu: None,
             chat_back: 0.0,
@@ -1640,6 +1667,12 @@ impl WorkspaceState {
         if crate::find::is_find_part(action) {
             return self.find_pressed(action);
         }
+        if crate::excerpts::is_excerpt_part(action) {
+            return self.excerpts_pressed(action);
+        }
+        if crate::project_search::is_search_part(action) {
+            return self.project_search_pressed(action);
+        }
         if action == crate::line_edits::GO_TO_LINE_SUBMIT {
             return self.go_to_line_submitted();
         }
@@ -1755,6 +1788,9 @@ impl WorkspaceState {
                 }
             }
             crate::find::FIND_FIELD => return self.find_typed(edit),
+            crate::project_search::PROJECT_SEARCH_FIELD => {
+                return self.project_search_typed(edit);
+            }
             crate::listing::LISTING_FILTER => return self.listing_filtered(edit),
             crate::debug::DEBUG_CONSOLE_FIELD | crate::debug::DEBUG_WATCH_FIELD => {
                 self.debug_field_edited(id, edit)
@@ -1807,6 +1843,7 @@ impl WorkspaceState {
             }
             crate::line_edits::GO_TO_LINE => self.going_to.as_ref().map(|going| &going.field),
             crate::find::FIND_FIELD => self.finding.as_ref().map(|finding| &finding.query),
+            crate::project_search::PROJECT_SEARCH_FIELD => Some(&self.project_search.query),
             crate::listing::LISTING_FILTER => self.listing_filter(),
             crate::debug::DEBUG_CONSOLE_FIELD => Some(&self.debug.console),
             crate::debug::DEBUG_WATCH_FIELD => Some(&self.debug.watch),
@@ -1837,6 +1874,7 @@ impl WorkspaceState {
             || id == crate::navigate::RENAME_SYMBOL
             || id == crate::line_edits::GO_TO_LINE
             || id == crate::find::FIND_FIELD
+            || id == crate::project_search::PROJECT_SEARCH_FIELD
             || id == crate::listing::LISTING_FILTER
             || id == crate::debug::DEBUG_CONSOLE_FIELD
             || id == crate::debug::DEBUG_WATCH_FIELD
@@ -1864,6 +1902,7 @@ impl WorkspaceState {
             crate::navigate::RENAME_SYMBOL => crate::navigate::RENAME_SYMBOL_SUBMIT,
             crate::line_edits::GO_TO_LINE => crate::line_edits::GO_TO_LINE_SUBMIT,
             crate::find::FIND_FIELD => crate::find::FIND_NEXT,
+            crate::project_search::PROJECT_SEARCH_FIELD => crate::project_search::PROJECT_SEARCH_GO,
             crate::listing::LISTING_FILTER => crate::listing::LISTING_TAKE,
             crate::debug::DEBUG_CONSOLE_FIELD => crate::debug::DEBUG_CONSOLE_SUBMIT,
             crate::debug::DEBUG_WATCH_FIELD => crate::debug::DEBUG_WATCH_ADD,

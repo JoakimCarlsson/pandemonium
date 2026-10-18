@@ -13,6 +13,7 @@ use pm_ui::{Node, node};
 
 use pm_components::Menu;
 use pm_components::button::{Size, Variant};
+use pm_components::excerpts::{self, EXCERPTS_CLOSE, TAB_EXCERPTS};
 use pm_components::file_icon::file_icon;
 use pm_components::open_files::{FILE_CLOSE_BASE, FILE_TAB_BASE, Viewer};
 use pm_components::panes::{
@@ -104,6 +105,24 @@ fn viewer_tab(viewer: &Viewer, index: usize, shown: bool) -> Node {
     .focusable(FocusId(FILE_TAB_BASE + index as u64))
 }
 
+/// The tab of the excerpts: a magnifying glass and what was searched for, with a button that closes them.
+fn excerpts_tab(state: &WorkspaceState, shown: bool) -> Option<Node> {
+    let excerpts = state.excerpts.as_ref()?;
+    let tone = if shown { Role::Text } else { Role::Muted };
+    Some(
+        node()
+            .styles(tab_styles(shown))
+            .child(glyph(IconName::Search, 3.5, tone))
+            .child(line(format!("Search: {}", excerpts.text), 13, 1.4, tone))
+            .child(
+                Button::icon(IconName::Close, EXCERPTS_CLOSE)
+                    .size(pm_components::button::Size::Icon)
+                    .build(),
+            )
+            .focusable(TAB_EXCERPTS),
+    )
+}
+
 /// A square button in the strip of tabs holding only `icon`, filled while `on`, saying `hint` when the pointer rests on it.
 fn strip_button(icon: IconName, id: FocusId, on: bool, hint: &str) -> Node {
     let mut styles = vec![
@@ -187,6 +206,7 @@ fn item_tab(state: &WorkspaceState, item: &Item, shown: bool) -> Option<Node> {
             Some(tab(icon, &label, TAB_CHAT, shown))
         }
         Item::Diff => Some(tab(IconName::GitCompare, "Diff", TAB_DIFF, shown)),
+        Item::Excerpts => excerpts_tab(state, shown),
         Item::File { .. } => {
             viewer_of(state, item).map(|(index, viewer)| viewer_tab(viewer, index, shown))
         }
@@ -254,6 +274,7 @@ fn item_view(
         (Item::Page, _, _) => starting_page(state, width, area.height, shaper),
         (Item::Diff, _, Some(session)) => diff::diff(state, session, width, tall),
         (Item::Diff, _, None) => node(),
+        (Item::Excerpts, _, _) => excerpts::excerpts_view(state, tall),
         (Item::File { .. }, _, _) => match viewer_of(state, item) {
             Some((index, _)) => viewer::file_view(state, index, width, tall, shaper),
             None => node(),

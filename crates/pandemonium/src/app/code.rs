@@ -679,10 +679,10 @@ impl App {
                 self.focus_listing();
             }
             Action::SearchProject => {
-                let at = self.across_top();
                 self.model
-                    .update(|screen| *screen = std::mem::take(screen).search_requested(at));
-                self.focus_listing();
+                    .update(|screen| *screen = std::mem::take(screen).project_search_opened());
+                self.focus
+                    .focus(pm_components::project_search::PROJECT_SEARCH_FIELD);
             }
             Action::Problems => {
                 let at = self.across_top();
