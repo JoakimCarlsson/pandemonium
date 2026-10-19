@@ -2,6 +2,7 @@
 
 use pm_acp::Progress;
 use pm_icon::IconName;
+use pm_input::FocusId;
 use pm_style::primitives::{Length, Sides};
 use pm_style::{
     Radius, Role, absolute, animate_spin, bg, border, border_color, cursor_pointer, flex, flex_col,
@@ -10,14 +11,24 @@ use pm_style::{
 };
 use pm_ui::{Node, node};
 
-use crate::Chip;
+use crate::Button;
 use crate::Tally;
+use crate::button::Variant;
 use crate::parts::{clipped, glyph, line};
 use crate::sample::{Session, Step};
+use crate::size::Size;
 use crate::state::{
     APPROVALS_CHIP, Activity, OPEN_DIFF, PLAN_CHIP, SHELLS_CHIP, SUBAGENTS_CHIP, WorkspaceState,
 };
 use crate::steps::{elapsed, plan, question, subagents};
+
+/// A pill in the strip of activity that says what there is, filled while it is the one open, answering to `id`.
+fn chip(label: impl Into<String>, id: FocusId) -> Button {
+    Button::new(label, id)
+        .variant(Variant::Outline)
+        .round()
+        .size(Size::Xs)
+}
 
 /// The plan the agent keeps, the latest one of its replies, if it keeps one.
 fn latest_plan(session: &Session) -> Option<&[pm_acp::PlanStep]> {
@@ -151,7 +162,7 @@ pub fn activity(state: &WorkspaceState, session: &Session) -> Option<Node> {
     }
     if awaiting > 0 {
         bar = bar.child(
-            Chip::new(format!("{awaiting} awaiting approval"), APPROVALS_CHIP)
+            chip(format!("{awaiting} awaiting approval"), APPROVALS_CHIP)
                 .mark(node().styles([size(1.5), rounded_full(), bg(Role::Danger)]))
                 .selected(state.activity == Some(Activity::Approvals))
                 .build(),
@@ -163,15 +174,15 @@ pub fn activity(state: &WorkspaceState, session: &Session) -> Option<Node> {
             .filter(|item| item.progress == Progress::Done)
             .count();
         bar = bar.child(
-            Chip::new(format!("{done}/{} tasks", items.len()), PLAN_CHIP)
-                .icon(IconName::CheckCircle)
+            chip(format!("{done}/{} tasks", items.len()), PLAN_CHIP)
+                .with_icon(IconName::CheckCircle)
                 .selected(state.activity == Some(Activity::Plan))
                 .build(),
         );
     }
     if working_agents > 0 {
         bar = bar.child(
-            Chip::new(format!("{working_agents} running"), SUBAGENTS_CHIP)
+            chip(format!("{working_agents} running"), SUBAGENTS_CHIP)
                 .mark(glyph(IconName::Loading, 3.5, Role::Muted).styles([animate_spin()]))
                 .selected(state.activity == Some(Activity::Subagents))
                 .build(),
@@ -180,7 +191,7 @@ pub fn activity(state: &WorkspaceState, session: &Session) -> Option<Node> {
     if !session.shells.is_empty() {
         let count = session.shells.len();
         bar = bar.child(
-            Chip::new(
+            chip(
                 format!(
                     "{count} {} running",
                     if count == 1 { "command" } else { "commands" }

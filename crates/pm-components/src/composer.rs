@@ -12,6 +12,7 @@ use pm_style::{
 use pm_text::Shaper;
 use pm_ui::{Node, node, text};
 
+use crate::Popover;
 use crate::parts::{line, spacer};
 use crate::plan::proposal;
 use crate::popover::{anchored, heading, row};
@@ -24,7 +25,6 @@ use crate::state::{
 };
 use crate::usage;
 use crate::{Button, Checkbox, Input, Stepper, button, checkbox, input};
-use crate::{Chip, Popover, chip};
 
 /// The shadow under the prompt box: a soft, wide one that lifts it off the page.
 const COMPOSER_SHADOW: [ShadowLayer; 1] = [ShadowLayer::new(0.0, 8.0, 30.0, 0.0, 0.18, false)];
@@ -470,11 +470,12 @@ fn send_buttons(working: bool, empty: bool) -> Vec<Node> {
 
 /// A button in the prompt box's strip that names a setting's current value and opens its menu.
 fn chip(label: &str, icon: Option<IconName>, id: FocusId, open: bool) -> Node {
-    let chip = Chip::new(label, id)
-        .variant(chip::Variant::Ghost)
+    let chip = Button::new(label, id)
+        .variant(button::Variant::Ghost)
+        .size(Size::Xs)
         .selected(open);
     match icon {
-        Some(icon) => chip.icon(icon),
+        Some(icon) => chip.with_icon(icon),
         None => chip,
     }
     .build()

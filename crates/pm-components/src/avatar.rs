@@ -42,7 +42,7 @@ impl Avatar {
         Self::new(&project.name, project.color())
     }
 
-    /// The avatar at `size`: a square 20, 24 or 32px on a side.
+    /// The avatar at `size`: a square 16, 20, 24 or 32px on a side.
     pub fn size(mut self, size: Size) -> Self {
         self.size = size;
         self
@@ -51,6 +51,7 @@ impl Avatar {
     /// The node that draws the avatar.
     pub fn build(self) -> Node {
         let (side, font) = match self.size {
+            Size::Xs => (4.0, 11),
             Size::Sm => (5.0, 13),
             Size::Md => (6.0, 15),
             Size::Lg => (8.0, 18),

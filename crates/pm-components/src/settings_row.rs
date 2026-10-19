@@ -10,6 +10,8 @@ use pm_style::{
 use pm_text::Field;
 use pm_ui::{Node, node};
 
+use crate::Button;
+use crate::button::Variant;
 use crate::input::Input;
 use crate::parts::{clipped, glyph, line, wrap};
 use crate::size::Size;
@@ -109,20 +111,11 @@ pub const NUMBER_WIDTH: f32 = 136.0;
 
 /// The number `shown` between the buttons `smaller` and `bigger` that change it.
 pub fn number(shown: String, smaller: FocusId, bigger: FocusId) -> Node {
-    let button = |label: &'static str, id: FocusId| {
-        node()
-            .styles([
-                flex(),
-                items_center(),
-                justify_center(),
-                w_px(28.0),
-                h(7),
-                rounded(Radius::Sm),
-                cursor_pointer(),
-                bg(Role::SurfaceHover).hover(),
-            ])
-            .focusable(id)
-            .child(line(label, 14, 1.2, Role::Text))
+    let button = |icon: IconName, id: FocusId| {
+        Button::icon(icon, id)
+            .size(Size::Sm)
+            .tone(Role::Text)
+            .build()
     };
     node()
         .styles([
@@ -136,45 +129,28 @@ pub fn number(shown: String, smaller: FocusId, bigger: FocusId) -> Node {
             border(),
             border_color(Role::Border),
         ])
-        .child(button("−", smaller))
+        .child(button(IconName::Minus, smaller))
         .child(
             node()
                 .styles([flex(), justify_center(), w_px(64.0)])
                 .child(line(shown, 12, 1.4, Role::Text).styles([font_mono()])),
         )
-        .child(button("+", bigger))
+        .child(button(IconName::Plus, bigger))
 }
 
 /// The button saying `shown`, the choice picked, `width` logical pixels wide, that opens the list of choices, answering to `id`; its chevron points down while the list is `open`.
 pub fn picker(shown: &str, width: f32, id: FocusId, open: bool) -> Node {
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            justify_between(),
-            gap(2),
-            flex_none(),
-            w_px(width),
-            h(8),
-            px(3),
-            rounded(Radius::Md),
-            border(),
-            border_color(if open { Role::Focused } else { Role::Border }),
-            bg(Role::Surface),
-            bg(Role::SurfaceHover).hover(),
-            cursor_pointer(),
-        ])
-        .focusable(id)
-        .child(clipped(shown, 12, Role::Text))
-        .child(glyph(
-            if open {
-                IconName::ChevronDown
-            } else {
-                IconName::ChevronRight
-            },
-            3.5,
-            Role::Muted,
-        ))
+    Button::new(shown, id)
+        .variant(Variant::Field)
+        .size(Size::Sm)
+        .width(width)
+        .selected(open)
+        .trailing_icon(if open {
+            IconName::ChevronDown
+        } else {
+            IconName::ChevronRight
+        })
+        .build()
 }
 
 /// The open list of `options` under a row, `picked` marked, each answering to the name `id_of` gives its place among all of them, narrowed by what `filter` holds when they are many.
@@ -253,19 +229,7 @@ pub fn text_box(field: &Field, id: FocusId, placeholder: &str) -> Node {
 
 /// The button that puts a setting back as it comes, answering to `id`.
 fn reset_button(id: FocusId) -> Node {
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            justify_center(),
-            flex_none(),
-            size(6),
-            rounded(Radius::Sm),
-            cursor_pointer(),
-            bg(Role::SurfaceHover).hover(),
-        ])
-        .focusable(id)
-        .child(glyph(IconName::Undo, 3.5, Role::Muted))
+    Button::icon(IconName::Undo, id).size(Size::Xs).build()
 }
 
 /// A row being described: what the setting is called and does, its control and how wide that is, the button that resets it and what opens under it.

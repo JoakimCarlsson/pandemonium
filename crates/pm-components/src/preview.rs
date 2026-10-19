@@ -8,7 +8,8 @@ use pm_style::{
 use pm_text::Shaper;
 use pm_ui::{Node, Picture, node};
 
-use crate::chip::{Chip, Variant};
+use crate::Button;
+use crate::button::Variant;
 use crate::figures::Figures;
 use crate::markdown::Markdown;
 use crate::open_files::{Contents, STRIP, Viewer};
@@ -103,16 +104,16 @@ pub fn switch(viewer: &Viewer) -> Option<Node> {
         node()
             .styles([flex(), items_center(), gap(1), flex_none()])
             .child(
-                Chip::new("Preview", PREVIEW_SHOW)
+                Button::new("Preview", PREVIEW_SHOW)
                     .variant(Variant::Ghost)
-                    .size(Size::Sm)
+                    .size(Size::Xs)
                     .selected(shown)
                     .build(),
             )
             .child(
-                Chip::new("Source", SOURCE_SHOW)
+                Button::new("Source", SOURCE_SHOW)
                     .variant(Variant::Ghost)
-                    .size(Size::Sm)
+                    .size(Size::Xs)
                     .selected(!shown)
                     .build(),
             ),

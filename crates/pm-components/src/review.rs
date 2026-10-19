@@ -4,14 +4,14 @@ use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
     Color, Radius, Role, animate_spin, bg, border, border_b, border_color, border_l,
-    cursor_pointer, flex, flex_1, flex_col, flex_none, font_medium, font_mono, gap, h, h_full,
-    items_center, justify_center, min_h, min_w_px, overflow_hidden, pb, px, py, relative, rounded,
-    w_full, w_px,
+    cursor_pointer, flex, flex_1, flex_col, flex_none, font_medium, gap, h, h_full, items_center,
+    justify_center, min_h, min_w_px, overflow_hidden, pb, px, py, relative, rounded, w_full, w_px,
 };
 use pm_text::Shaper;
 use pm_ui::{Node, node};
 
 use crate::branch_menu::branch_menu;
+use crate::button::Variant;
 use crate::git_controls::{
     BRANCH_BUTTON, CHANGES_MORE, CHANGES_REFRESH, CHANGES_TOGGLE, COMMIT_CHEVRON, Primary,
     TROUBLE_DISMISS,
@@ -73,28 +73,12 @@ fn nothing(message: &str) -> Node {
 
 /// One of the tabs at the top of the panel, a glyph that says its name when the pointer rests on it, filled while it is the one shown.
 fn panel_tab(label: &str, icon: IconName, id: FocusId, shown: bool) -> Node {
-    let mut styles = vec![
-        flex(),
-        items_center(),
-        h(8),
-        px(3),
-        min_w_px(0),
-        overflow_hidden(),
-        rounded(Radius::Lg),
-        cursor_pointer(),
-    ];
-    let tone = if shown {
-        styles.push(bg(Role::SurfaceSelected));
-        Role::Text
-    } else {
-        styles.push(bg(Role::SurfaceHover).hover());
-        Role::Muted
-    };
-    node()
-        .styles(styles)
-        .child(glyph(icon, 3.5, tone))
+    Button::icon(icon, id)
+        .size(Size::Md)
+        .tone(if shown { Role::Text } else { Role::Muted })
+        .selected(shown)
+        .build()
         .tooltip(label)
-        .focusable(id)
 }
 
 /// The line above the tree: what it lists, and the buttons that make a file or folder, read it again and fold it.
@@ -374,27 +358,20 @@ fn branch_button(session: &Session, working: bool) -> Node {
     if session.branch.is_empty() {
         return clipped("Not a Git repository", 12, Role::Subtle);
     }
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            gap(2),
-            h(8),
-            px(2),
-            pm_style::flex_1(),
-            pm_style::min_w_px(0),
-            rounded(Radius::Lg),
-            cursor_pointer(),
-            bg(Role::SurfaceHover).hover(),
-        ])
-        .child(glyph(IconName::GitFork, 3.5, Role::Muted))
-        .child(clipped(&session.branch, 12, Role::Text).styles([font_mono()]))
-        .child(if working {
-            glyph(IconName::Loading, 3.5, Role::Muted).styles([animate_spin()])
+    Button::new(&session.branch, BRANCH_BUTTON)
+        .variant(Variant::Ghost)
+        .size(Size::Sm)
+        .tone(Role::Text)
+        .with_icon(IconName::GitFork)
+        .monospace()
+        .fill()
+        .trailing_icon(if working {
+            IconName::Loading
         } else {
-            glyph(IconName::ChevronDown, 3.5, Role::Muted)
+            IconName::ChevronDown
         })
-        .focusable(BRANCH_BUTTON)
+        .spinning(working)
+        .build()
 }
 
 /// The review panel for `session`.

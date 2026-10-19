@@ -6,6 +6,8 @@
 /// component says in its own documentation what the steps measure.
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
 pub enum Size {
+    /// The tightest step: sits inside a strip of controls or a line of text.
+    Xs,
     /// The snug step: sits inside a row or a narrow column.
     Sm,
     /// The usual step.

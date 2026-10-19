@@ -165,9 +165,11 @@ impl<'a> Input<'a> {
             (&*shown, Role::Text, self.field.to_shown(self.field.caret()))
         };
         let (height, font) = match (self.variant, self.size) {
+            (Variant::Bordered, Size::Xs) => (7, 12),
             (Variant::Bordered, Size::Sm) => (8, 12),
             (Variant::Bordered, Size::Md) => (9, 12),
             (Variant::Bordered, Size::Lg) => (10, 12),
+            (_, Size::Xs) => (7, 12),
             (_, Size::Sm) => (8, 12),
             (_, Size::Md) => (10, 13),
             (_, Size::Lg) => (12, 14),

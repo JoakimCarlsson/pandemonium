@@ -880,6 +880,7 @@ pub(crate) fn file_list(state: &WorkspaceState, height: f32, size: Size) -> Node
 /// How tall a header over a file is at `size`, in logical pixels.
 pub(crate) const fn header_height(size: Size) -> f32 {
     match size {
+        Size::Xs => 24.0,
         Size::Sm => 28.0,
         Size::Md => 32.0,
         Size::Lg => 36.0,
@@ -888,7 +889,9 @@ pub(crate) const fn header_height(size: Size) -> f32 {
 
 /// The header size that is `height` logical pixels tall.
 fn size_of(height: f32) -> Size {
-    if height <= header_height(Size::Sm) {
+    if height <= header_height(Size::Xs) {
+        Size::Xs
+    } else if height <= header_height(Size::Sm) {
         Size::Sm
     } else if height <= header_height(Size::Md) {
         Size::Md

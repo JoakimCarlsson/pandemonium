@@ -21,7 +21,6 @@ pub mod change_list;
 pub mod changes;
 pub mod chat;
 pub mod checkbox;
-pub mod chip;
 pub mod choices;
 pub mod code_box;
 pub mod composer;
@@ -117,7 +116,6 @@ pub use button::Button;
 pub use card::Card;
 pub use changes::Changes;
 pub use checkbox::Checkbox;
-pub use chip::Chip;
 pub use code_box::CodeBox;
 pub use conflict::Conflict;
 pub use context_menu::{
