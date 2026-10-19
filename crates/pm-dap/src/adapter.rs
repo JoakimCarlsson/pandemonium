@@ -149,7 +149,7 @@ impl Adapter {
     pub fn program(&self) -> Option<PathBuf> {
         self.programs
             .iter()
-            .find_map(|program| crate::program::installed(program))
+            .find_map(|program| pm_tools::installed(program))
     }
 
     /// Whether this adapter is installed.

@@ -143,14 +143,16 @@ impl Core {
         }
         for info in &mut infos {
             info.owner = owners.get(&info.id).map(|package| package.id.clone());
+            let mut server_ready = false;
             if let Some(manifest) = installed.get(&info.id) {
                 info.installed = true;
                 info.server = manifest.server.as_ref().map(pm_lsp::server_state);
+                server_ready = manifest.server.as_ref().is_none_or(pm_lsp::server_ready);
                 info.icon = icon_of(&info.id, manifest);
                 info.color = manifest.color.clone();
             }
             info.busy = busy.get(&info.id).cloned();
-            info.problem = problems.get(&info.id).cloned();
+            info.problem = problems.get(&info.id).filter(|_| !server_ready).cloned();
         }
         infos.sort_by_key(|info| info.name.to_lowercase());
         infos

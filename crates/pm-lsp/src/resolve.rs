@@ -33,12 +33,6 @@ fn in_folder(folder: &Path, name: &str) -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
-/// The program called `name` on the machine's path.
-fn on_path(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path).find_map(|folder| in_folder(&folder, name))
-}
-
 /// Whether `program` run with `arguments` exits cleanly in time.
 fn works(program: &Path, arguments: &[String]) -> bool {
     let Ok(mut child) = Command::new(program)
@@ -73,10 +67,24 @@ fn installed_program(spec: &ServerSpec, install: &Install, folder: &Path) -> Opt
 }
 
 /// Runs `command`, saying what it needed, `needs`, when it cannot be started, and what it printed when it fails.
-fn run(mut command: Command, needs: &str) -> Result<(), String> {
-    let output = command.stdin(Stdio::null()).output().map_err(|_| {
-        format!("installing this language server needs {needs}, which is not on this machine")
-    })?;
+fn run(
+    tool: &str,
+    needs: &str,
+    arguments: &[&str],
+    prepare: impl FnOnce(&mut Command),
+) -> Result<(), String> {
+    let not_here =
+        || format!("installing this language server needs {needs}, which is not on this machine");
+    let program = pm_tools::installed(tool).ok_or_else(not_here)?;
+    let mut command = Command::new(&program);
+    command
+        .args(arguments)
+        .env("PATH", pm_tools::path_beside(&program));
+    prepare(&mut command);
+    let output = command
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|_| not_here())?;
     if output.status.success() {
         return Ok(());
     }
@@ -111,18 +119,17 @@ fn install_into(spec: &ServerSpec, install: &Install, folder: &Path) -> Result<(
                 .package
                 .as_deref()
                 .ok_or("the manifest names no package for go to install")?;
-            let mut command = Command::new("go");
-            command
-                .args(["install", package])
-                .env("GOBIN", folder)
-                .env("GOSUMDB", "sum.golang.org")
-                .env("GOFLAGS", "-mod=readonly")
-                .env_remove("GONOSUMDB")
-                .env_remove("GONOSUMCHECK")
-                .env_remove("GOPRIVATE")
-                .env_remove("GOINSECURE")
-                .current_dir(folder);
-            run(command, "Go")
+            run("go", "Go", &["install", package], |command| {
+                command
+                    .env("GOBIN", folder)
+                    .env("GOSUMDB", "sum.golang.org")
+                    .env("GOFLAGS", "-mod=readonly")
+                    .env_remove("GONOSUMDB")
+                    .env_remove("GONOSUMCHECK")
+                    .env_remove("GOPRIVATE")
+                    .env_remove("GOINSECURE")
+                    .current_dir(folder);
+            })
         }
         InstallKind::Npm => {
             let origin = spec
@@ -134,18 +141,16 @@ fn install_into(spec: &ServerSpec, install: &Install, folder: &Path) -> Result<(
                     format!("the language has no {pin} pinning its server: {error}")
                 })?;
             }
-            let npm = if cfg!(windows) { "npm.cmd" } else { "npm" };
-            let mut command = Command::new(npm);
-            command
-                .args([
-                    "ci",
-                    "--ignore-scripts",
-                    "--no-audit",
-                    "--no-fund",
-                    "--loglevel=error",
-                ])
-                .current_dir(folder);
-            run(command, "Node.js and npm")
+            let arguments = [
+                "ci",
+                "--ignore-scripts",
+                "--no-audit",
+                "--no-fund",
+                "--loglevel=error",
+            ];
+            run("npm", "Node.js and npm", &arguments, |command| {
+                command.current_dir(folder);
+            })
         }
     }
 }
@@ -179,7 +184,7 @@ pub(crate) fn found(spec: &ServerSpec, root: Option<&Path>) -> Option<PathBuf> {
             .find_map(|folder| in_folder(&root.join(folder), &spec.command))
     });
     in_project.or_else(|| {
-        on_path(&spec.command)
+        pm_tools::installed(&spec.command)
             .filter(|program| spec.check.is_empty() || works(program, &spec.check))
     })
 }
@@ -219,17 +224,23 @@ pub(crate) fn ensure_server(spec: &ServerSpec, root: Option<&Path>) -> Result<Pa
     }
 }
 
+/// What the machine has of the language server of `spec`, without installing anything: where it is or which version is installed, or nothing.
+fn server_found(spec: &ServerSpec) -> Option<String> {
+    if let Some(program) = pm_tools::installed(&spec.command) {
+        return Some(format!("Uses {}", program.display()));
+    }
+    let install = spec.install.as_ref()?;
+    let folder = server_root(&spec.id).ok()?.join(&install.version);
+    installed_program(spec, install, &folder)
+        .map(|_| format!("{} {}", spec.command, install.version))
+}
+
 /// What the machine has of the language server of `spec`, in words for the reader, without installing anything.
 pub fn server_state(spec: &ServerSpec) -> String {
-    if let Some(program) = on_path(&spec.command) {
-        return format!("Uses {}", program.display());
-    }
-    let installed = spec.install.as_ref().and_then(|install| {
-        let folder = server_root(&spec.id).ok()?.join(&install.version);
-        installed_program(spec, install, &folder).map(|_| install.version.clone())
-    });
-    match installed {
-        Some(version) => format!("{} {version}", spec.command),
-        None => format!("{} is not installed", spec.command),
-    }
+    server_found(spec).unwrap_or_else(|| format!("{} is not installed", spec.command))
+}
+
+/// Whether the machine has the language server of `spec`.
+pub fn server_ready(spec: &ServerSpec) -> bool {
+    server_found(spec).is_some()
 }

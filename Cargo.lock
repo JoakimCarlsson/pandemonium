@@ -2388,6 +2388,7 @@ name = "pm-acp"
 version = "0.13.0-rc.5"
 dependencies = [
  "base64",
+ "pm-tools",
  "serde",
  "serde_json",
  "ureq",
@@ -2462,6 +2463,7 @@ dependencies = [
 name = "pm-dap"
 version = "0.13.0-rc.5"
 dependencies = [
+ "pm-tools",
  "serde",
  "serde_json",
 ]
@@ -2524,6 +2526,7 @@ dependencies = [
  "flate2",
  "pm-buffer",
  "pm-store",
+ "pm-tools",
  "serde",
  "serde_json",
  "sha2 0.11.1",
@@ -2718,6 +2721,10 @@ version = "0.13.0-rc.5"
 dependencies = [
  "pm-color",
 ]
+
+[[package]]
+name = "pm-tools"
+version = "0.13.0-rc.5"
 
 [[package]]
 name = "pm-transport"
