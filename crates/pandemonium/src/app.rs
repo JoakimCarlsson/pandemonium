@@ -12,7 +12,10 @@ use pm_components::arrange::{is_project_menu_item, is_session_menu_item};
 use pm_components::assist::HOVER_SCROLL;
 use pm_components::debug::{DEBUG_CONSOLE_SCROLL, DEBUG_STACK_SCROLL, DEBUG_VARIABLES_SCROLL};
 use pm_components::diff::gutter_of;
-use pm_components::extensions::{EXTENSIONS_SCROLL, INSTALL_EXTENSION};
+use pm_components::extensions::EXTENSIONS_SCROLL;
+use pm_components::folder_picker::{
+    PICKER_BACK, PICKER_CLOSE, PICKER_DOWN, PICKER_FORWARD, PICKER_SCROLL, PICKER_UP,
+};
 use pm_components::git_controls::{GRAPH_SCROLL, Pick, REVIEW_DISMISS, VIEWER_SCROLL};
 use pm_components::git_menus::MenuKind;
 use pm_components::message_menu::is_message_menu_item;
@@ -21,7 +24,7 @@ use pm_components::open_files::{EDITOR_FIELD, STRIP};
 use pm_components::overview::OVERVIEW_SCROLL;
 use pm_components::panes::{PANE_MENU, split_row_of};
 use pm_components::sash::Grows;
-use pm_components::settings::{SETTINGS_CLOSE, SETTINGS_NAV_SCROLL, SETTINGS_SCROLL, is_settings};
+use pm_components::settings::{SETTINGS_CLOSE, SETTINGS_NAV_SCROLL, SETTINGS_SCROLL};
 use pm_components::state::PROBLEMS_SCROLL;
 use pm_components::state::{COMMENT_CANCEL, COMMENT_FIELD};
 use pm_components::terminal_menu::TerminalCommand;
@@ -34,8 +37,8 @@ use pm_components::{
 use pm_editor::Action;
 use pm_input::{Button, Focus, FocusId, Key, KeyEvent, Modifiers, PointerEvent, PointerState};
 use pm_pages::{
-    ATTACH, AgentStatus, BROWSE, DIFF_SCROLL, MENU_SCROLL, PLAN_SCROLL, PROMPT, Screen,
-    TERMINAL_BODY, TREE_SCROLL,
+    ATTACH, AgentStatus, DIFF_SCROLL, MENU_SCROLL, PLAN_SCROLL, PROMPT, Screen, TERMINAL_BODY,
+    TREE_SCROLL,
 };
 use pm_renderer::{DrawList, Renderer};
 use pm_state::State;
@@ -49,12 +52,12 @@ use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::{CursorIcon, Window, WindowId};
 
+mod asides;
 mod code;
 mod frame;
 mod panes;
 mod paste;
 mod select;
-mod settings_window;
 mod terminal;
 
 use crate::keys::Clip;
@@ -133,9 +136,13 @@ pub struct App {
     /// The handle on the edge of a panel being dragged, where the pointer went down on it, how big the panel was, and which way the handle grows it.
     sash_drag: Option<(FocusId, (f32, f32), f32, Grows)>,
     /// The settings window and what it keeps, while settings are open and it is not standing in for the main window.
-    settings_surface: Option<settings_window::Surface>,
-    /// Whether the settings window stands in for the main one, while one of its events is handled.
-    on_settings: bool,
+    settings_surface: Option<asides::Surface>,
+    /// The folder picker's window and what it keeps, while the picker is open and it is not standing in for the main window.
+    picker_surface: Option<asides::Surface>,
+    /// The opening of the folder picker its window was last brought forward for.
+    raised_picker: Option<u64>,
+    /// The window beside the main one that stands in for it, while one of its events is handled.
+    on_aside: Option<asides::Aside>,
     /// When the application started, which animations run on.
     started: Instant,
     /// Where the threads that start agents report what they found.
@@ -335,7 +342,9 @@ impl Default for App {
             minimap_drag: false,
             sash_drag: None,
             settings_surface: None,
-            on_settings: false,
+            picker_surface: None,
+            raised_picker: None,
+            on_aside: None,
             started: Instant::now(),
             standings,
             reporter,
@@ -443,8 +452,8 @@ impl App {
     /// Draws one frame and asks for the next one while anything is moving or
     /// the frame could not be presented.
     fn redraw(&mut self) {
-        if self.on_settings {
-            self.redraw_settings();
+        if let Some(aside) = self.on_aside {
+            self.redraw_aside(aside);
             return;
         }
         self.fit_terminal();
@@ -630,16 +639,8 @@ impl App {
             self.agent_action(index);
             return;
         }
-        if id == BROWSE {
-            self.browse();
-            return;
-        }
         if id == ATTACH {
             self.attach();
-            return;
-        }
-        if id == INSTALL_EXTENSION {
-            self.install_extension();
             return;
         }
         if let Some(index) = self.model.read(|screen| screen.settings_more_of(id)) {
@@ -749,7 +750,7 @@ impl App {
         if let Some(window) = self.window.as_ref() {
             window.request_redraw();
         }
-        self.redraw_settings_window();
+        self.redraw_asides();
     }
 
     /// Writes what the reader chose for the agents' settings to disk when it differs from what was last written.
@@ -885,36 +886,6 @@ impl App {
         }
     }
 
-    /// Asks the desktop for a folder and adds it as a project, unless the
-    /// dialog is dismissed.
-    fn browse(&mut self) {
-        let Some(folder) = rfd::FileDialog::new()
-            .set_title("Choose a project folder")
-            .pick_folder()
-        else {
-            return;
-        };
-        let path = folder.to_string_lossy().into_owned();
-        self.model
-            .update(|state| *state = std::mem::take(state).with_project_opened(&path));
-        self.persist();
-        self.work.relist();
-    }
-
-    /// Asks the desktop for a folder and installs the extension in it, unless the dialog is dismissed.
-    fn install_extension(&mut self) {
-        let Some(folder) = rfd::FileDialog::new()
-            .set_title("Choose an extension folder")
-            .pick_folder()
-        else {
-            return;
-        };
-        let path = folder.to_string_lossy().into_owned();
-        self.model
-            .update(|state| *state = std::mem::take(state).extension_picked(path));
-        self.deliver();
-    }
-
     /// Asks the desktop for files and mentions them in the prompt, unless the dialog is dismissed.
     fn attach(&mut self) {
         let Some(files) = rfd::FileDialog::new()
@@ -962,6 +933,7 @@ impl App {
                 PLAN_SCROLL => std::mem::take(state).scrolled_plan(pixels, room),
                 DIFF_SCROLL => std::mem::take(state).scrolled_diff(pixels, room),
                 TREE_SCROLL => std::mem::take(state).scrolled_tree(pixels, room),
+                PICKER_SCROLL => std::mem::take(state).scrolled_folder_picker(pixels, room),
                 SETTINGS_SCROLL => std::mem::take(state).scrolled_settings(pixels, room),
                 SETTINGS_NAV_SCROLL => std::mem::take(state).scrolled_settings_nav(pixels, room),
                 EXTENSIONS_SCROLL => std::mem::take(state).scrolled_extensions(pixels, room),
@@ -1687,6 +1659,16 @@ impl App {
         self.focus.current() == Some(PROMPT)
     }
 
+    /// Steps back or forward through what the window in front shows: the folders looked inside while the folder picker is in front, and the pages and views visited otherwise.
+    fn step_through_history(&mut self, back: bool) {
+        match self.on_aside {
+            Some(asides::Aside::Picker) => {
+                self.activate(if back { PICKER_BACK } else { PICKER_FORWARD })
+            }
+            _ => self.navigate(if back { -1 } else { 1 }),
+        }
+    }
+
     /// Moves `delta` pages or views along the ones visited, towards the past when negative.
     fn navigate(&mut self, delta: isize) {
         self.model
@@ -1712,6 +1694,20 @@ impl App {
             return;
         }
         match event.key {
+            Key::Escape if self.on_aside == Some(asides::Aside::Picker) => {
+                self.activate(PICKER_CLOSE)
+            }
+            Key::ArrowUp if self.on_aside == Some(asides::Aside::Picker) => {
+                self.activate(PICKER_UP)
+            }
+            Key::ArrowDown if self.on_aside == Some(asides::Aside::Picker) => {
+                self.activate(PICKER_DOWN)
+            }
+            Key::Enter if self.on_aside == Some(asides::Aside::Picker) => {
+                if let Some(id) = self.model.read(|screen| screen.folder_picker_enter()) {
+                    self.activate(id);
+                }
+            }
             Key::Escape if self.model.read(|screen| screen.settings_open()) => {
                 self.activate(SETTINGS_CLOSE)
             }
@@ -1951,26 +1947,26 @@ impl ApplicationHandler for App {
         if self.closing || self.model.read(Screen::quitting) {
             event_loop.exit();
         }
-        self.sync_settings_window(event_loop);
+        self.sync_asides(event_loop);
         if self.dirty.replace(false)
             && let Some(window) = self.window.as_ref()
         {
             window.request_redraw();
-            self.redraw_settings_window();
+            self.redraw_asides();
         }
     }
 
     /// Routes window events to the renderer, the pointer and the keyboard.
     fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
-        if self.is_settings_window(id) {
-            self.settings_window_event(event_loop, event);
+        if let Some(aside) = self.aside_of_window(id) {
+            self.aside_event(aside, event_loop, event);
             return;
         }
         if self.window.as_ref().is_none_or(|window| window.id() != id) {
             return;
         }
         if matches!(event, WindowEvent::Focused(true))
-            && self.focus.current().is_some_and(is_settings)
+            && self.focus.current().is_some_and(asides::is_aside)
         {
             self.focus.clear();
         }
@@ -1999,7 +1995,7 @@ impl App {
                 if let Some(renderer) = self.renderer.as_mut() {
                     renderer.resize(size.width, size.height, scale);
                 }
-                if !self.on_settings {
+                if self.on_aside.is_none() {
                     Self::remember_size(&window);
                 }
             }
@@ -2037,7 +2033,7 @@ impl App {
                     MouseButton::Right => Button::Right,
                     MouseButton::Back | MouseButton::Forward => {
                         if state == ElementState::Pressed {
-                            self.navigate(if button == MouseButton::Back { -1 } else { 1 });
+                            self.step_through_history(button == MouseButton::Back);
                         }
                         window.request_redraw();
                         return;

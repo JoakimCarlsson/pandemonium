@@ -163,6 +163,7 @@ fn main() {
             Some("owning") => Shot::Owning,
             Some("cloning") => Shot::Cloning,
             Some("folders") => Shot::Folders,
+            Some("folders-onboarding") => Shot::FoldersOnboarding,
             Some(name) if Shot::settings_named(name).is_some() => {
                 Shot::settings_named(name).unwrap_or(Shot::Onboarding(pm_pages::Step::Welcome))
             }

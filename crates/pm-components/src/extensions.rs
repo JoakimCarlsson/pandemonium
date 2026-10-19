@@ -356,6 +356,10 @@ impl WorkspaceState {
 
     /// The state after the button of the `place`-th row, as `action` names it, was pressed: it installs the extension, or uninstalls it when it is installed.
     pub(crate) fn extensions_pressed(mut self, action: FocusId) -> Self {
+        if action == INSTALL_EXTENSION {
+            self.open_folder_picker(crate::folder_picker::Purpose::Extension, None);
+            return self;
+        }
         if action.0 < ROW_BASE {
             self.extension_card_pressed(action);
             return self;

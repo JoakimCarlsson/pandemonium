@@ -1,11 +1,11 @@
 //! The screen the window shows, and how it is drawn.
 
 use pm_color::{Role, Roles, Srgba};
-use pm_pages::{Screen, screen, settings_screen};
+use pm_pages::{Screen, picker_screen, screen, settings_screen};
 use pm_renderer::DrawList;
 use pm_text::Shaper;
 use pm_theme::{Fonts, Theme};
-use pm_ui::{Input, Output};
+use pm_ui::{Input, Node, Output};
 
 /// A shaper set in the fonts the app ships.
 pub fn shaper() -> Shaper {
@@ -61,6 +61,22 @@ pub fn paint(
     pm_ui::draw(&root, width, height, input, theme, shaper, list)
 }
 
+/// Paints `root`, when there is one, into `list`, replacing what the list held, and reports what was drawn and where.
+fn paint_window(
+    root: Option<Node>,
+    width: f32,
+    height: f32,
+    input: &Input,
+    theme: &Theme,
+    shaper: &mut Shaper,
+    list: &mut DrawList,
+) -> Output {
+    match root {
+        Some(root) => pm_ui::draw(&root, width, height, input, theme, shaper, list),
+        None => Output::default(),
+    }
+}
+
 /// Builds what the settings window shows for `state` and `input` and paints
 /// it into `list`, replacing what the list held. Reports what was drawn and
 /// where; nothing is drawn while settings are closed.
@@ -75,8 +91,24 @@ pub fn paint_settings(
 ) -> Output {
     list.clear();
     scale_for(state);
-    match settings_screen(state, width) {
-        Some(root) => pm_ui::draw(&root, width, height, input, theme, shaper, list),
-        None => Output::default(),
-    }
+    let root = settings_screen(state, width);
+    paint_window(root, width, height, input, theme, shaper, list)
+}
+
+/// Builds what the folder picker's window shows for `state` and `input` and
+/// paints it into `list`, replacing what the list held. Reports what was
+/// drawn and where; nothing is drawn while the picker is closed.
+pub fn paint_picker(
+    width: f32,
+    height: f32,
+    state: &Screen,
+    input: &Input,
+    theme: &Theme,
+    shaper: &mut Shaper,
+    list: &mut DrawList,
+) -> Output {
+    list.clear();
+    scale_for(state);
+    let root = picker_screen(state);
+    paint_window(root, width, height, input, theme, shaper, list)
 }

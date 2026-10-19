@@ -16,6 +16,7 @@ use pm_components::Input;
 use pm_components::button::{Size, Variant};
 use pm_components::context_menu::{ContextMenu, field_menu};
 use pm_components::extensions::{endings, pickable, standing};
+use pm_components::folder_picker::{FolderPicker, Outcome, PICKER_FIELD, Purpose, is_picker};
 use pm_components::parts::{glyph, line};
 use pm_components::project::Project;
 use pm_components::state::Outgoing;
@@ -153,6 +154,8 @@ pub struct OnboardingState {
     pub chosen: Vec<String>,
     /// What the server has yet to be asked.
     pub outbox: Vec<Outgoing>,
+    /// The window for choosing a folder, if it is open.
+    pub folder_picker: Option<FolderPicker>,
 }
 
 impl Default for OnboardingState {
@@ -169,6 +172,7 @@ impl Default for OnboardingState {
             languages: Vec::new(),
             chosen: Vec::new(),
             outbox: Vec::new(),
+            folder_picker: None,
         }
         .listing(&pm_protocol::builtin_agents())
     }
@@ -225,6 +229,12 @@ impl OnboardingState {
                 }
             }
             FINISH if self.has_ready_agent() => self.finished = true,
+            BROWSE => {
+                let (picker, ask) = FolderPicker::opened(Purpose::Open, None);
+                self.folder_picker = Some(picker);
+                self.outbox.push(ask);
+            }
+            action if is_picker(action) => return self.folder_picker_pressed(action),
             ADD => {
                 let source = self.path.text().to_owned();
                 self.add(&source);
@@ -243,9 +253,53 @@ impl OnboardingState {
 
     /// The state after `edit` is made to the field named `id`.
     pub fn edited(mut self, id: FocusId, edit: Edit) -> Self {
-        if id == PATH {
-            self.path.apply(edit);
+        match (id, self.folder_picker.as_mut()) {
+            (PATH, _) => self.path.apply(edit),
+            (PICKER_FIELD, Some(open)) => open.edited(edit),
+            _ => {}
         }
+        self
+    }
+
+    /// The state after something of the folder picker was pressed: `action` is the name of what.
+    fn folder_picker_pressed(mut self, action: FocusId) -> Self {
+        let Some(mut open) = self.folder_picker.take() else {
+            return self;
+        };
+        match open.pressed(action) {
+            Outcome::Staying(ask) => {
+                self.outbox.extend(ask);
+                self.folder_picker = Some(open);
+            }
+            Outcome::Closed => {}
+            Outcome::Chosen(path) => self.add(&open.address(&path)),
+        }
+        self
+    }
+
+    /// The state with the folders the server listed for `requested`, or why it could not, when that is still the folder the picker wants.
+    pub fn with_folders(
+        mut self,
+        requested: &str,
+        listed: Result<(String, Vec<String>), String>,
+    ) -> Self {
+        if let Some(open) = self.folder_picker.as_mut() {
+            open.listed(requested, listed);
+        }
+        self
+    }
+
+    /// The state with the list of the folder picker scrolled by `delta` logical pixels, with `room` pixels to scroll.
+    pub fn scrolled_folder_picker(mut self, delta: f32, room: f32) -> Self {
+        if let Some(open) = self.folder_picker.as_mut() {
+            open.scrolled(delta, room);
+        }
+        self
+    }
+
+    /// The state with the folder picker put away.
+    pub fn without_folder_picker(mut self) -> Self {
+        self.folder_picker = None;
         self
     }
 
@@ -273,7 +327,11 @@ impl OnboardingState {
 
     /// The text field `id` names, if it names one.
     pub fn field(&self, id: FocusId) -> Option<&Field> {
-        (id == PATH).then_some(&self.path)
+        match id {
+            PATH => Some(&self.path),
+            PICKER_FIELD => self.folder_picker.as_ref().map(|open| &open.field),
+            _ => None,
+        }
     }
 
     /// The state with a menu open over the field `field` at `at`.
@@ -290,7 +348,7 @@ impl OnboardingState {
 
     /// Whether `id` names a text field.
     pub fn is_field(id: FocusId) -> bool {
-        id == PATH
+        id == PATH || id == PICKER_FIELD
     }
 
     /// The state after the server on this machine said which languages there are; the ones a project's files are written in start ticked the first time.
@@ -652,7 +710,10 @@ pub fn onboarding(state: &OnboardingState) -> Node {
         .children(state.menu.and_then(|open| menu_over(state, open)))
 }
 
-/// The menu for the field it was opened on, if that field still exists.
+/// The menu for the field it was opened on, if that field still exists and is not the folder picker's, which has a window of its own.
 fn menu_over(state: &OnboardingState, open: ContextMenu) -> Option<Node> {
-    state.field(open.field).map(|field| field_menu(field, open))
+    state
+        .field(open.field)
+        .filter(|_| !is_picker(open.field))
+        .map(|field| field_menu(field, open))
 }

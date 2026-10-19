@@ -12,7 +12,7 @@ use pm_ui::{Node, node};
 
 use crate::Input;
 use crate::Modal;
-use crate::folder_browser;
+use crate::folder_picker::Purpose;
 use crate::input;
 use crate::parts::{glyph, line};
 use crate::state::{MENU_SCROLL, Outgoing, WorkspaceState};
@@ -44,17 +44,11 @@ pub const ADDER_DOWN: FocusId = FocusId(6009);
 /// Goes back to the first choices, or closes the panel when they are showing.
 pub const ADDER_ESCAPE: FocusId = FocusId(6010);
 
-/// Takes the folder being looked inside: opens it as a project, or clones the repository picked into it.
-pub const ADDER_CONFIRM: FocusId = FocusId(6011);
-
-/// The first of the parts of the path shown above the folders; the rest follow it.
-pub const ADDER_CRUMB_BASE: u64 = 6020;
-
-/// The first of the places one press away; the rest follow it.
-pub const ADDER_PLACE_BASE: u64 = 6060;
-
 /// The first of the rows of a list; the rest follow it.
 pub const ADDER_ROW_BASE: u64 = 6100;
+
+/// How many rows of a list have names.
+const ADDER_ROWS: u64 = 500;
 
 /// How wide the panel is, in logical pixels.
 const WIDTH: f32 = 632.0;
@@ -71,8 +65,6 @@ pub enum Step {
     Owners,
     /// The repositories of the account or organization that was picked, or an address typed.
     Repositories,
-    /// The folders of the server's machine, to open one as a project or to clone a repository into.
-    Folders,
 }
 
 /// What a list of rows holds, or is waiting for.
@@ -123,16 +115,6 @@ pub struct Adder {
     pub repositories: Listing,
     /// The account picked: its login and whether it is an organization.
     pub owner: Option<(String, bool)>,
-    /// The repository picked, which is cloned into the folder the reader chooses; nothing while a folder is chosen to open.
-    pub clone_request: Option<Found>,
-    /// The folders the server listed for the folder being looked inside.
-    pub folders: Listing,
-    /// The folder being looked inside, as the server gave it.
-    pub directory: Option<String>,
-    /// The folder the server was last asked about, to tell whether an answer is the one wanted.
-    pub requested: String,
-    /// The step Escape goes back to from the folders.
-    pub back: Step,
     /// The row that is highlighted, by position.
     pub selected: usize,
     /// What the server is doing for the reader, while it is.
@@ -185,11 +167,6 @@ impl Adder {
             owners: Listing::Loading,
             repositories: Listing::Loading,
             owner: None,
-            clone_request: None,
-            folders: Listing::Loading,
-            directory: None,
-            requested: String::new(),
-            back: Step::Choices,
             selected: 0,
             working: None,
             trouble: None,
@@ -197,28 +174,11 @@ impl Adder {
         }
     }
 
-    /// The machine the project is added on, as a project's address names it, or nothing for this one.
-    fn host(&self) -> Option<String> {
-        self.machine.as_ref().map(pm_config::KnownServer::host)
-    }
-
     /// The address of the project in the folder `path` of the machine it is added on.
     fn address(&self, path: &str) -> String {
         match &self.machine {
             Some(machine) => machine.project(path),
             None => path.to_owned(),
-        }
-    }
-
-    /// The panel looking inside the folder `path`, with the server asked about it.
-    fn enter_folders(&mut self, path: &str) -> Outgoing {
-        self.moved_to(Step::Folders);
-        self.folders = Listing::Loading;
-        self.requested = path.to_owned();
-        self.selected = usize::MAX;
-        Outgoing::Folders {
-            path: path.to_owned(),
-            host: self.host(),
         }
     }
 
@@ -234,7 +194,6 @@ impl Adder {
     fn listing(&self) -> &Listing {
         match self.step {
             Step::Repositories => &self.repositories,
-            Step::Folders => &self.folders,
             _ => &self.owners,
         }
     }
@@ -245,9 +204,6 @@ impl Adder {
             return Vec::new();
         }
         let typed = self.field.text();
-        if self.step == Step::Folders {
-            return self.folder_entries(typed);
-        }
         let mut entries = Vec::new();
         if is_address(typed) {
             entries.push(Found {
@@ -261,18 +217,6 @@ impl Adder {
             entries.extend(found.iter().filter(|held| matches(held, typed)).cloned());
         }
         entries
-    }
-
-    /// The folders inside the one being looked into that match what was typed.
-    fn folder_entries(&self, typed: &str) -> Vec<Found> {
-        let Listing::Found(inside) = &self.folders else {
-            return Vec::new();
-        };
-        inside
-            .iter()
-            .filter(|held| matches(held, typed))
-            .cloned()
-            .collect()
     }
 
     /// How many rows the list has.
@@ -298,7 +242,6 @@ impl Adder {
             Listing::Loading => Status::Loading(
                 match self.step {
                     Step::Owners => "Loading accounts and organizations",
-                    Step::Folders => "Loading folders",
                     _ => "Loading repositories",
                 }
                 .to_owned(),
@@ -315,7 +258,6 @@ impl Adder {
         match self.step {
             Step::Owners => "Search accounts and organizations, or paste a Git URL",
             Step::Repositories => "Search repositories, or paste a Git URL",
-            Step::Folders => "Filter folders",
             Step::Choices => "",
         }
     }
@@ -323,8 +265,8 @@ impl Adder {
     /// The rows of the first choices, on the machine the project is added on.
     fn choices(&self) -> [(IconName, &'static str, String); 2] {
         let browse = match &self.machine {
-            Some(machine) => format!("Choose a directory on {}", machine.name),
-            None => "Choose a directory from your home folder".to_owned(),
+            Some(machine) => format!("Choose a folder on {}", machine.name),
+            None => "Choose a folder on this computer".to_owned(),
         };
         [
             (IconName::FolderOpen, "Browse", browse),
@@ -374,15 +316,10 @@ fn choice_id(index: usize) -> FocusId {
 pub fn adder(state: &WorkspaceState) -> Option<Node> {
     let open = state.adder.as_ref()?;
     Some(
-        match open.step {
-            Step::Folders => Modal::new(ADDER_SCRIM, ADDER_BODY)
-                .width(folder_browser::WIDTH)
-                .children(folder_browser::view(open, state.menu_scroll)),
-            _ => Modal::new(ADDER_SCRIM, ADDER_BODY)
-                .width(WIDTH)
-                .children(panel(open, state.menu_scroll)),
-        }
-        .build(),
+        Modal::new(ADDER_SCRIM, ADDER_BODY)
+            .width(WIDTH)
+            .children(panel(open, state.menu_scroll))
+            .build(),
     )
 }
 
@@ -501,7 +438,8 @@ fn entry(row: &Row, id: FocusId, selected: bool) -> Node {
 /// Whether `id` names something of the panel.
 pub fn is_adder(id: FocusId) -> bool {
     let FocusId(number) = id;
-    (ADDER_SCRIM.0..=ADDER_CONFIRM.0).contains(&number) || number >= ADDER_CRUMB_BASE
+    (ADDER_SCRIM.0..=ADDER_ESCAPE.0).contains(&number)
+        || (ADDER_ROW_BASE..ADDER_ROW_BASE + ADDER_ROWS).contains(&number)
 }
 
 impl WorkspaceState {
@@ -515,7 +453,6 @@ impl WorkspaceState {
         let open = self.adder.as_ref()?;
         Some(match open.step {
             Step::Choices => choice_id(open.selected),
-            Step::Folders if open.field.text().trim().is_empty() => ADDER_CONFIRM,
             _ => ADDER_SUBMIT,
         })
     }
@@ -538,7 +475,6 @@ impl WorkspaceState {
             ADDER_ESCAPE if open.step == Step::Choices => return self.without_adder(),
             ADDER_ESCAPE => {
                 open.moved_to(match open.step {
-                    Step::Folders => open.back,
                     Step::Repositories => Step::Owners,
                     _ => Step::Choices,
                 });
@@ -551,9 +487,7 @@ impl WorkspaceState {
                     (selected, ADDER_UP) => selected.saturating_sub(1),
                     (selected, _) => (selected + 1).min(last),
                 };
-                if open.step != Step::Folders {
-                    self.keep_selected_in_view(open.selected);
-                }
+                self.keep_selected_in_view(open.selected);
             }
             ADDER_SUBMIT if !working => {
                 let index = if open.selected == usize::MAX {
@@ -565,19 +499,10 @@ impl WorkspaceState {
                 self.adder_chosen(index);
                 return self;
             }
-            ADDER_CONFIRM if !working => {
-                let settled = open.directory.clone();
-                self.adder = Some(open);
-                if let Some(path) = settled {
-                    self.adder_settled(&path);
-                }
-                return self;
-            }
             ADDER_BROWSE if !working => {
-                open.back = Step::Choices;
-                open.clone_request = None;
                 self.menu_scroll = 0.0;
-                self.outbox.push(open.enter_folders("~"));
+                self.open_folder_picker(Purpose::Open, open.machine);
+                return self;
             }
             ADDER_CLONE if !working => {
                 open.moved_to(Step::Owners);
@@ -585,25 +510,7 @@ impl WorkspaceState {
                 self.menu_scroll = 0.0;
                 self.outbox.push(Outgoing::Owners);
             }
-            _ => {
-                let FocusId(number) = action;
-                let target = match number {
-                    n if (ADDER_CRUMB_BASE..ADDER_PLACE_BASE).contains(&n) => open
-                        .directory
-                        .as_deref()
-                        .map(folder_browser::trail)
-                        .and_then(|trail| trail.get((n - ADDER_CRUMB_BASE) as usize).cloned())
-                        .map(|(_, path)| path),
-                    n if (ADDER_PLACE_BASE..ADDER_ROW_BASE).contains(&n) => folder_browser::PLACES
-                        .get((n - ADDER_PLACE_BASE) as usize)
-                        .map(|(_, path, _)| (*path).to_owned()),
-                    _ => None,
-                };
-                if let Some(path) = target.filter(|_| !working) {
-                    self.menu_scroll = 0.0;
-                    self.outbox.push(open.enter_folders(&path));
-                }
-            }
+            _ => {}
         }
         self.adder = Some(open);
         self
@@ -631,77 +538,11 @@ impl WorkspaceState {
                 });
             }
             Kind::Repository => {
-                open.clone_request = Some(found.clone());
-                open.back = open.step;
-                self.menu_scroll = 0.0;
-                self.outbox.push(open.enter_folders("~"));
+                let (repository, machine) = (found.clone(), open.machine.clone());
+                self.open_folder_picker(Purpose::CloneInto(repository), machine);
             }
-            Kind::Folder => {
-                self.menu_scroll = 0.0;
-                self.outbox.push(open.enter_folders(&found.value));
-            }
+            Kind::Folder => {}
         }
-    }
-
-    /// Takes the folder `path`: clones the repository picked into it, or opens it as a project.
-    fn adder_settled(&mut self, path: &str) {
-        let Some(open) = self.adder.as_mut() else {
-            return;
-        };
-        match open.clone_request.clone() {
-            Some(repository) => {
-                open.working = Some(format!("Cloning {}", repository.name));
-                open.trouble = None;
-                self.outbox.push(Outgoing::Clone {
-                    url: repository.value,
-                    under: path.to_owned(),
-                    host: open.host(),
-                });
-            }
-            None => {
-                let address = open.address(path);
-                self.adder = None;
-                self.menu_scroll = 0.0;
-                *self = self.clone().with_project_opened(&address);
-                self.outbox.push(Outgoing::Relist);
-            }
-        }
-    }
-
-    /// The state with the folders the server listed for `requested`, or why it could not, when that is still the folder wanted.
-    pub fn with_folders(
-        mut self,
-        requested: &str,
-        listed: Result<(String, Vec<String>), String>,
-    ) -> Self {
-        let Some(open) = self
-            .adder
-            .as_mut()
-            .filter(|open| open.requested == requested)
-        else {
-            return self;
-        };
-        match listed {
-            Ok((path, names)) => {
-                open.folders = Listing::Found(
-                    names
-                        .into_iter()
-                        .map(|name| Found {
-                            value: match path.as_str() {
-                                "/" => format!("/{name}"),
-                                _ => format!("{path}/{name}"),
-                            },
-                            name,
-                            detail: String::new(),
-                            kind: Kind::Folder,
-                        })
-                        .collect(),
-                );
-                open.directory = Some(path);
-            }
-            Err(reason) => open.folders = Listing::Failed(reason),
-        }
-        self
     }
 
     /// The state with the panel open on its first choices.
