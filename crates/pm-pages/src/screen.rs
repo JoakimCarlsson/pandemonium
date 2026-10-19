@@ -186,6 +186,11 @@ impl Screen {
         }
     }
 
+    /// Which opening of the folder picker is showing, while it is open.
+    pub fn folder_picker_serial(&self) -> Option<u64> {
+        self.folder_picker().map(|open| open.serial)
+    }
+
     /// Whether the folder picker is open.
     pub fn folder_picker_open(&self) -> bool {
         self.folder_picker().is_some()

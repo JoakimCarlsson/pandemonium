@@ -16,7 +16,7 @@ use pm_ui::{Cursor, Input, Output};
 use winit::dpi::LogicalSize;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
-use winit::window::{Window, WindowId};
+use winit::window::{UserAttentionType, Window, WindowId, WindowLevel};
 
 use super::{App, cursor_icon, fail_to_start};
 use crate::scene;
@@ -82,6 +82,14 @@ impl Aside {
         match self {
             Self::Settings => is_settings(id),
             Self::Picker => is_picker(id),
+        }
+    }
+
+    /// Where the window sits among the others: the folder picker stays in front of the windows of the app.
+    fn level(self) -> WindowLevel {
+        match self {
+            Self::Settings => WindowLevel::Normal,
+            Self::Picker => WindowLevel::AlwaysOnTop,
         }
     }
 
@@ -151,12 +159,32 @@ impl App {
                 _ => {}
             }
         }
+        self.raise_picker();
+    }
+
+    /// Brings the folder picker's window to the front when the picker was opened again while it showed, or was just opened.
+    fn raise_picker(&mut self) {
+        let serial = self.model.read(Screen::folder_picker_serial);
+        if serial == self.raised_picker {
+            return;
+        }
+        self.raised_picker = serial;
+        if serial.is_none() {
+            return;
+        }
+        if let Some(window) = self.window_of(Aside::Picker) {
+            window.set_minimized(false);
+            window.focus_window();
+            window.request_user_attention(Some(UserAttentionType::Informational));
+        }
     }
 
     /// A new window for `aside`, drawn into with the device of the `main` window's renderer.
     fn open_aside_window(event_loop: &ActiveEventLoop, main: &Renderer, aside: Aside) -> Surface {
         let attributes = Self::attributes(aside.opening_size())
             .with_title(aside.title())
+            .with_resizable(true)
+            .with_window_level(aside.level())
             .with_min_inner_size(aside.least_size());
         let window = match event_loop.create_window(attributes) {
             Ok(window) => Arc::new(window),

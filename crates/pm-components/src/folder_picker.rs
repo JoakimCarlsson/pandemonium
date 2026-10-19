@@ -4,6 +4,8 @@
 //! inside. It is what every part of the app that needs a folder opens, for this machine and for a
 //! remote one alike.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use pm_config::KnownServer;
 use pm_icon::IconName;
 use pm_input::FocusId;
@@ -75,6 +77,9 @@ const FILTER_WIDTH: f32 = 220.0;
 /// How tall a folder of the list is, in logical pixels.
 const ROW_HEIGHT: f32 = 32.0;
 
+/// How many times a picker has been opened, which numbers the openings.
+static OPENINGS: AtomicU64 = AtomicU64::new(0);
+
 /// The places that are one press away: what they are called, where they are and their glyph.
 pub const PLACES: [(&str, &str, IconName); 5] = [
     ("Home", "~", IconName::Folder),
@@ -110,6 +115,8 @@ pub enum Outcome {
 /// The folder picker, with the folders the server listed and the folders looked inside before.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FolderPicker {
+    /// Which opening of the picker this is, so that a window already showing one can tell a picker opened again.
+    pub serial: u64,
     /// What the folder chosen is for.
     pub purpose: Purpose,
     /// The server on another machine whose folders are shown, or this machine's when nothing.
@@ -161,6 +168,7 @@ impl FolderPicker {
     /// The picker for `purpose` looking inside the home folder of `machine`, or of this machine when nothing, with the request that lists it.
     pub fn opened(purpose: Purpose, machine: Option<KnownServer>) -> (Self, Outgoing) {
         let mut picker = Self {
+            serial: OPENINGS.fetch_add(1, Ordering::Relaxed),
             purpose,
             machine,
             field: Field::default(),

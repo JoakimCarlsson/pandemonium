@@ -139,6 +139,8 @@ pub struct App {
     settings_surface: Option<asides::Surface>,
     /// The folder picker's window and what it keeps, while the picker is open and it is not standing in for the main window.
     picker_surface: Option<asides::Surface>,
+    /// The opening of the folder picker its window was last brought forward for.
+    raised_picker: Option<u64>,
     /// The window beside the main one that stands in for it, while one of its events is handled.
     on_aside: Option<asides::Aside>,
     /// When the application started, which animations run on.
@@ -341,6 +343,7 @@ impl Default for App {
             sash_drag: None,
             settings_surface: None,
             picker_surface: None,
+            raised_picker: None,
             on_aside: None,
             started: Instant::now(),
             standings,
