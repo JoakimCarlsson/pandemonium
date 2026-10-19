@@ -83,10 +83,10 @@ pub struct View {
     /// Whether the review panel listed every file of the project instead of the changes.
     #[serde(default)]
     files_tab: bool,
-    /// The folders of the project's files that were folded away.
+    /// The folders of the project's files that were unfolded.
     #[serde(default)]
-    closed_tree: Vec<String>,
-    /// The folders of the changed files that were folded away.
+    open_tree: Vec<String>,
+    /// The folders of the changed files that were unfolded.
     #[serde(default)]
     closed_folders: Vec<String>,
     /// How far down the review panel's list was scrolled, in logical pixels.
@@ -227,7 +227,7 @@ impl View {
             diff: state.tab == Tab::Diff,
             review: state.review,
             files_tab: state.review_tab == ReviewTab::Files,
-            closed_tree: sorted(&state.closed_tree),
+            open_tree: sorted(&state.open_tree),
             closed_folders: sorted(&state.closed_folders),
             tree_scroll: state.tree_scroll,
             diff_scroll: state.diff_scroll,
@@ -295,7 +295,7 @@ impl View {
         }
         state.review = self.review;
         state.review_tab = self.review_tab();
-        state.closed_tree = self.closed_tree.iter().cloned().collect();
+        state.open_tree = self.open_tree.iter().cloned().collect();
         state.closed_folders = self.closed_folders.iter().cloned().collect();
         state.terminal = self.terminal;
         state.terminal_maximized = self.terminal_maximized;

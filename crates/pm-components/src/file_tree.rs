@@ -245,7 +245,7 @@ fn rows_of(
                 ));
             }
             Entry::Folder(folder) => {
-                let open = !state.closed_tree.contains(&folder.path);
+                let open = state.open_tree.contains(&folder.path);
                 let changed = if folder.files.iter().any(|index| {
                     state
                         .files

@@ -256,7 +256,7 @@ impl WorkspaceState {
                 folder.push('/');
             }
             folder.push_str(part);
-            self.closed_tree.remove(&folder);
+            self.open_tree.insert(folder.clone());
         }
         self.git.tree_selected = Some(crate::tree_actions::TreeTarget {
             path: path.to_owned(),

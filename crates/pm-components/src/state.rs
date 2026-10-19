@@ -1369,8 +1369,8 @@ pub struct WorkspaceState {
     pub project_search: crate::project_search::ProjectSearch,
     /// The hits of a search shown as one document, while they are.
     pub excerpts: Option<crate::excerpts::Excerpts>,
-    /// The folders of the project's files that are folded away, by path.
-    pub closed_tree: std::collections::HashSet<String>,
+    /// The folders of the project's files that are unfolded, by path.
+    pub open_tree: std::collections::HashSet<String>,
     /// The folders of the changed files that are folded away, by group and path.
     pub closed_folders: std::collections::HashSet<String>,
     /// The changed files folded away in the diff, by path.
@@ -1619,7 +1619,7 @@ impl WorkspaceState {
             review_tab: ReviewTab::Changes,
             project_search: crate::project_search::ProjectSearch::default(),
             excerpts: None,
-            closed_tree: std::collections::HashSet::new(),
+            open_tree: std::collections::HashSet::new(),
             closed_folders: std::collections::HashSet::new(),
             closed_diffs: std::collections::HashSet::new(),
             comment_target: None,
@@ -2958,7 +2958,7 @@ impl WorkspaceState {
                 path: path.clone(),
                 folder: true,
             });
-            toggle(&mut self.closed_tree, path);
+            toggle(&mut self.open_tree, path);
         }
     }
 

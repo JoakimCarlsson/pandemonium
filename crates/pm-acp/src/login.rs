@@ -19,9 +19,11 @@ const FETCH: Duration = Duration::from_secs(180);
 const BROWSER: Duration = Duration::from_secs(300);
 
 /// How long a login in a terminal window has to finish.
+#[cfg(target_os = "macos")]
 const TERMINAL_LOGIN: Duration = Duration::from_secs(600);
 
 /// The terminals tried when `TERMINAL` names none, with what each takes before the command.
+#[cfg(not(target_os = "macos"))]
 const TERMINALS: [(&str, &[&str]); 8] = [
     ("x-terminal-emulator", &["-e"]),
     ("kitty", &[]),
@@ -91,9 +93,15 @@ impl Agent {
 
 /// Runs `command`, with its environment, in a terminal window, and waits for the window to close.
 pub(crate) fn run_in_terminal(program: Command) -> Result<(), String> {
-    if cfg!(target_os = "macos") {
-        return run_in_terminal_app(&program);
-    }
+    #[cfg(target_os = "macos")]
+    return run_in_terminal_app(&program);
+    #[cfg(not(target_os = "macos"))]
+    run_in_terminal_elsewhere(program)
+}
+
+/// Runs `program`, with its environment, in the first terminal emulator found, and waits for it to finish.
+#[cfg(not(target_os = "macos"))]
+fn run_in_terminal_elsewhere(program: Command) -> Result<(), String> {
     let wanted = std::env::var("TERMINAL").ok();
     let candidates = wanted
         .iter()
@@ -120,11 +128,13 @@ pub(crate) fn run_in_terminal(program: Command) -> Result<(), String> {
 }
 
 /// Quotes `text` as one word of a shell script.
+#[cfg(target_os = "macos")]
 fn shell_word(text: &std::ffi::OsStr) -> String {
     format!("'{}'", text.to_string_lossy().replace('\'', "'\\''"))
 }
 
 /// Runs `program`, with its environment, in a Terminal window, and waits for it to finish.
+#[cfg(target_os = "macos")]
 fn run_in_terminal_app(program: &Command) -> Result<(), String> {
     let folder = std::env::home_dir()
         .ok_or("no home folder to keep the login script in")?
