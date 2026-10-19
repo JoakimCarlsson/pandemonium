@@ -933,6 +933,11 @@ impl Screen {
         self.in_workspace(|state| state.scrolled_overview(delta, room))
     }
 
+    /// Scrolls the history list by `delta` logical pixels, kept within `room` pixels of overflow.
+    pub fn scrolled_history(self, delta: f32, room: f32) -> Self {
+        self.in_workspace(|state| state.scrolled_history(delta, room))
+    }
+
     /// The screen after the server of `host` said how its languages stand.
     pub fn with_host_extensions(self, host: &Option<String>, languages: &[ExtensionInfo]) -> Self {
         self.in_workspace(|state| state.with_host_extensions(host, languages))

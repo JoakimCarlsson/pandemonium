@@ -132,8 +132,10 @@ pub enum Shot {
     New,
     /// The workspace with no project at all.
     Empty,
-    /// The workspace on the history page.
+    /// The workspace on the history page with overflowing session groups.
     History,
+    /// The history page scrolled to its oldest session.
+    HistoryScrolled,
     /// The workspace with the menu of a project open.
     ProjectMenu,
     /// The workspace with a project dragged over another.
@@ -1902,7 +1904,22 @@ impl Shot {
             ),
             Self::New => Screen::Workspace(WorkspaceState::new(&projects())),
             Self::Empty => Screen::Workspace(WorkspaceState::new(&[])),
-            Self::History => Screen::Workspace(workspace().after(HISTORY)),
+            Self::History | Self::HistoryScrolled => {
+                let mut state = workspace().after(HISTORY);
+                let template = state.sessions[0].clone();
+                let now = pm_components::age::now();
+                for index in 0..36 {
+                    let mut session = template.clone();
+                    session.home = false;
+                    session.title = format!("History session {}", index + 1);
+                    session.updated_at = now.saturating_sub(index * 6 * 60 * 60 * 1000);
+                    state.sessions.push(session);
+                }
+                if self == Self::HistoryScrolled {
+                    state.history_scroll = f32::MAX;
+                }
+                Screen::Workspace(state)
+            }
             Self::ProjectMenu => {
                 Screen::Workspace(workspace().with_project_menu(1, (236.0, 250.0)))
             }

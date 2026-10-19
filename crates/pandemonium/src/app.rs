@@ -944,6 +944,9 @@ impl App {
                 SETTINGS_SCROLL => std::mem::take(state).scrolled_settings(pixels, room),
                 SETTINGS_NAV_SCROLL => std::mem::take(state).scrolled_settings_nav(pixels, room),
                 EXTENSIONS_SCROLL => std::mem::take(state).scrolled_extensions(pixels, room),
+                pm_components::history::HISTORY_SCROLL => {
+                    std::mem::take(state).scrolled_history(pixels, room)
+                }
                 OVERVIEW_SCROLL => std::mem::take(state).scrolled_overview(pixels, room),
                 HOVER_SCROLL => std::mem::take(state).scrolled_hover(pixels, room),
                 VIEWER_SCROLL => std::mem::take(state).scrolled_viewer(pixels, room),
