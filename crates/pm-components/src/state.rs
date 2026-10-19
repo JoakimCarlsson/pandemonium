@@ -11,6 +11,7 @@ use crate::arrange::{
 };
 use crate::context_menu::ContextMenu;
 use crate::draft::{NEXT, OTHER};
+use crate::folder_picker::{FolderPicker, PICKER_FIELD, PICKER_SUBMIT, is_picker};
 use crate::git_controls::{BRANCH_FILTER, BRANCH_SUBMIT, GitControls, OPEN_ARROW_BASE};
 use crate::git_prompts::{PROMPT_CONFIRM, RENAME_FIELD, STASH_FIELD};
 use crate::message_menu::{
@@ -1444,6 +1445,8 @@ pub struct WorkspaceState {
     pub plan_width: f32,
     /// The panel for adding a project, if it is open.
     pub adder: Option<Adder>,
+    /// The window for choosing a folder, if it is open.
+    pub folder_picker: Option<FolderPicker>,
     /// The section showing in the settings panel, if it is open.
     pub settings: Option<crate::settings::Section>,
     /// The lists and the form of the settings pages that list servers.
@@ -1646,6 +1649,7 @@ impl WorkspaceState {
             review_width: crate::review::WIDTH,
             plan_width: 0.0,
             adder: None,
+            folder_picker: None,
             settings: None,
             settings_servers: crate::settings_servers::ServerSettings {
                 agents: builtin.clone(),
@@ -1930,6 +1934,7 @@ impl WorkspaceState {
             action if is_adder(action) && action.0 < ADDER_ROW_BASE => {
                 return self.adder_pressed(action);
             }
+            action if is_picker(action) => return self.folder_picker_pressed(action),
             HISTORY => self.page = Page::History,
             crate::extensions::EXTENSIONS => return self.with_extensions_page(),
             action if crate::extensions::is_extensions(action) => {
@@ -2010,6 +2015,7 @@ impl WorkspaceState {
                 }
             }
             ADDER_FIELD => self.adder_edited(edit),
+            PICKER_FIELD => self.folder_picker_edited(edit),
             HISTORY_SEARCH => self.history_search.apply(edit),
             crate::extensions::EXTENSIONS_SEARCH => self.extensions_searched(edit),
             id if crate::settings_servers::is_form_field(id) => self.server_form_edited(id, edit),
@@ -2059,6 +2065,7 @@ impl WorkspaceState {
             HISTORY_SEARCH => Some(&self.history_search),
             crate::extensions::EXTENSIONS_SEARCH => Some(&self.extensions_page.search),
             ADDER_FIELD => self.adder.as_ref().map(|open| &open.field),
+            PICKER_FIELD => self.folder_picker.as_ref().map(|open| &open.field),
             id if crate::settings_servers::is_form_field(id) => self.server_form_field(id),
             id if crate::settings_pages::is_setting_field(id) => self.setting_field(id),
             id if crate::settings_machines::is_machine_field(id) => self.machine_field(id),
@@ -2091,6 +2098,7 @@ impl WorkspaceState {
             || id == crate::extensions::EXTENSIONS_SEARCH
             || id == OTHER
             || id == ADDER_FIELD
+            || id == PICKER_FIELD
             || crate::settings_servers::is_form_field(id)
             || crate::settings_pages::is_setting_field(id)
             || crate::settings_machines::is_machine_field(id)
@@ -2117,6 +2125,7 @@ impl WorkspaceState {
             crate::find::REPLACE_FIELD => crate::find::REPLACE_ONE,
             HISTORY_SEARCH => HISTORY,
             ADDER_FIELD => ADDER_SUBMIT,
+            PICKER_FIELD => PICKER_SUBMIT,
             crate::settings::SETTINGS_SEARCH => crate::settings::SETTINGS_SEARCH_GO,
             id if crate::settings_servers::is_form_field(id) => crate::settings::SETTINGS_SAVE,
             id if crate::settings_machines::is_machine_field(id) => {

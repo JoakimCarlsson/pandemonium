@@ -926,6 +926,9 @@ impl WorkspaceState {
         if crate::adder::is_adder(id) {
             return Some(crate::adder::ADDER_FIELD);
         }
+        if crate::folder_picker::is_picker(id) {
+            return Some(crate::folder_picker::PICKER_FIELD);
+        }
         if crate::project_search::is_search_part(id)
             && id != crate::project_search::PROJECT_SEARCH_FIELD
             && number < crate::project_search::SEARCH_GROUP_BASE

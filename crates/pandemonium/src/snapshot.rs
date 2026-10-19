@@ -25,7 +25,7 @@ use pm_components::state::{
 use pm_components::tree_actions::{TREE_NEW_FOLDER, TreeTarget};
 use pm_input::{FocusId, PointerState};
 use pm_pages::{
-    ADD_PROJECT, HISTORY, OnboardingState, PROMPT, SEND, Screen, Step, TAB_DIFF, TERMINAL,
+    ADD_PROJECT, BROWSE, HISTORY, OnboardingState, PROMPT, SEND, Screen, Step, TAB_DIFF, TERMINAL,
     WorkspaceState,
 };
 use pm_renderer::{DrawList, Renderer};
@@ -46,6 +46,12 @@ const SETTINGS_WIDTH: u32 = 960;
 
 /// Logical height of a snapshot of the settings window.
 const SETTINGS_HEIGHT: u32 = 720;
+
+/// Logical width of a snapshot of the folder picker's window.
+const PICKER_WIDTH: u32 = 880;
+
+/// Logical height of a snapshot of the folder picker's window.
+const PICKER_HEIGHT: u32 = 560;
 
 /// Logical width of a snapshot of the settings window at its narrowest.
 const NARROW_WIDTH: u32 = 640;
@@ -220,8 +226,10 @@ pub enum Shot {
     Owning,
     /// The same panel on the repositories of one of them.
     Cloning,
-    /// The same panel on the folders of the machine, to open one as a project.
+    /// The folder picker's window on the folders of the machine, to open one as a project.
     Folders,
+    /// The folder picker's window opened from the project step of onboarding.
+    FoldersOnboarding,
     /// A Rust file being written: highlighted, with what the language server finds wrong under it and the brackets at the caret paired.
     Code,
     /// A markdown file shown rendered as a page, with the switch to its source.
@@ -1574,6 +1582,11 @@ fn projects() -> Vec<Project> {
 }
 
 impl Shot {
+    /// Whether this snapshot shows the folder picker's window instead of the main one.
+    fn in_picker_window(self) -> bool {
+        matches!(self, Self::Folders | Self::FoldersOnboarding)
+    }
+
     /// Whether this snapshot shows the settings window instead of the main one.
     fn in_settings_window(self) -> bool {
         matches!(
@@ -2050,15 +2063,20 @@ impl Shot {
                     .after(ADDER_CLONE)
                     .with_owners(Ok(owners())),
             ),
-            Self::Folders => Screen::Workspace(welcome().after(ADD_PROJECT).after(ADDER_BROWSE).with_folders(
-                "~",
-                Ok((
-                    "/home/me/code".to_owned(),
-                    ["pandemonium", "voxel", "wasa-cli", "world"]
-                        .map(str::to_owned)
-                        .to_vec(),
-                )),
-            )),
+            Self::Folders => Screen::Workspace(
+                welcome()
+                    .after(ADD_PROJECT)
+                    .after(ADDER_BROWSE)
+                    .with_folders("~", sample_folders()),
+            ),
+            Self::FoldersOnboarding => Screen::Onboarding(
+                OnboardingState {
+                    step: Step::Project,
+                    ..OnboardingState::default()
+                }
+                .after(BROWSE)
+                .with_folders("~", sample_folders()),
+            ),
             Self::Cloning => Screen::Workspace(
                 welcome()
                     .after(ADD_PROJECT)
@@ -2072,6 +2090,16 @@ impl Shot {
             }
         }
     }
+}
+
+/// The folders the server would list for the home folder.
+fn sample_folders() -> Result<(String, Vec<String>), String> {
+    Ok((
+        "/home/me/code".to_owned(),
+        ["pandemonium", "voxel", "wasa-cli", "world"]
+            .map(str::to_owned)
+            .to_vec(),
+    ))
 }
 
 /// Accounts and organizations as the server would list them for the account.
@@ -2537,11 +2565,15 @@ pub fn write(
         (NARROW_WIDTH, NARROW_HEIGHT)
     } else if shot.in_settings_window() {
         (SETTINGS_WIDTH, SETTINGS_HEIGHT)
+    } else if shot.in_picker_window() {
+        (PICKER_WIDTH, PICKER_HEIGHT)
     } else {
         (WIDTH, HEIGHT)
     };
     let paint = if shot.in_settings_window() {
         scene::paint_settings
+    } else if shot.in_picker_window() {
+        scene::paint_picker
     } else {
         scene::paint
     };

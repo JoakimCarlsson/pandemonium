@@ -1631,7 +1631,9 @@ impl Work {
                     Response::Folders { path, names } => Ok((path, names)),
                     other => Err(Self::trouble_of(other)),
                 };
-                Self::in_workspace(model, |state| state.with_folders(&requested, listed));
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_folders(&requested, listed);
+                });
             }
             Pending::Added => match response {
                 Response::Directory { path } => {

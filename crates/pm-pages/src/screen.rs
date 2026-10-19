@@ -7,7 +7,8 @@ use pm_ui::Node;
 
 use crate::onboarding::{ADD, AgentStatus, OnboardingState, PATH, onboarding};
 use crate::workspace::{Outgoing, WorkspaceState, workspace};
-use pm_components::context_menu::ContextMenu;
+use pm_components::context_menu::{ContextMenu, field_menu};
+use pm_components::folder_picker::FolderPicker;
 use pm_components::git_controls::Pick;
 use pm_components::git_menus::MenuKind;
 use pm_components::project::Project;
@@ -174,6 +175,53 @@ impl Screen {
         match self {
             Self::Workspace(state) => state.adder_enter(),
             Self::Onboarding(_) => None,
+        }
+    }
+
+    /// The folder picker, while it is open.
+    pub fn folder_picker(&self) -> Option<&FolderPicker> {
+        match self {
+            Self::Onboarding(state) => state.folder_picker.as_ref(),
+            Self::Workspace(state) => state.folder_picker.as_ref(),
+        }
+    }
+
+    /// Whether the folder picker is open.
+    pub fn folder_picker_open(&self) -> bool {
+        self.folder_picker().is_some()
+    }
+
+    /// What pressing Enter presses while the folder picker is open.
+    pub fn folder_picker_enter(&self) -> Option<FocusId> {
+        self.folder_picker().map(FolderPicker::enter)
+    }
+
+    /// The screen with the folder picker put away, which is what closing its window does.
+    pub fn without_folder_picker(self) -> Self {
+        match self {
+            Self::Onboarding(state) => Self::Onboarding(state.without_folder_picker()),
+            Self::Workspace(state) => Self::Workspace(state.without_folder_picker()),
+        }
+    }
+
+    /// The screen with the folders the server listed for `requested`, or why it could not, when that is still the folder the picker wants.
+    pub fn with_folders(
+        self,
+        requested: &str,
+        listed: Result<(String, Vec<String>), String>,
+    ) -> Self {
+        match self {
+            Self::Onboarding(state) => Self::Onboarding(state.with_folders(requested, listed)),
+            Self::Workspace(state) => Self::Workspace(state.with_folders(requested, listed)),
+        }
+    }
+
+    /// The screen after the list of the folder picker is scrolled by `delta`
+    /// logical pixels, downwards when positive, with `room` pixels to scroll.
+    pub fn scrolled_folder_picker(self, delta: f32, room: f32) -> Self {
+        match self {
+            Self::Onboarding(state) => Self::Onboarding(state.scrolled_folder_picker(delta, room)),
+            Self::Workspace(state) => Self::Workspace(state.scrolled_folder_picker(delta, room)),
         }
     }
 
@@ -1267,6 +1315,18 @@ pub fn screen(state: &Screen, width: f32, height: f32, shaper: &mut Shaper) -> N
         Screen::Onboarding(state) => onboarding(state),
         Screen::Workspace(state) => workspace(state, width, height, shaper),
     }
+}
+
+/// What the folder picker's window shows for `state` while the picker is open.
+pub fn picker_screen(state: &Screen) -> Option<Node> {
+    let picker = state.folder_picker()?;
+    Some(crate::picking::picker_window(
+        picker,
+        state
+            .menu()
+            .filter(|menu| menu.field == pm_components::folder_picker::PICKER_FIELD)
+            .and_then(|menu| Some(field_menu(state.field(menu.field)?, menu))),
+    ))
 }
 
 /// What the settings window, `width` logical pixels across, shows for `state` while settings are open.

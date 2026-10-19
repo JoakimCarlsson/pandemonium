@@ -86,7 +86,7 @@ impl App {
         true
     }
 
-    /// Carries out the control of the window `id` names, and says whether it was one. Closing the settings window closes settings.
+    /// Carries out the control of the window `id` names, and says whether it was one. Closing a window beside the main one closes what it shows.
     pub(super) fn window_control(&mut self, id: FocusId) -> bool {
         if !is_window_control(id) {
             return false;
@@ -97,9 +97,9 @@ impl App {
         match id {
             WINDOW_MINIMIZE => window.set_minimized(true),
             WINDOW_MAXIMIZE => window.set_maximized(!window.is_maximized()),
-            WINDOW_CLOSE if self.on_settings => self
+            WINDOW_CLOSE if let Some(aside) = self.on_aside => self
                 .model
-                .update(|state| *state = std::mem::take(state).without_settings()),
+                .update(|state| *state = aside.closed(std::mem::take(state))),
             WINDOW_CLOSE => self.closing = self.close_window(),
             _ => {}
         }

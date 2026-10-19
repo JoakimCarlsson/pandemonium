@@ -40,7 +40,7 @@ pub mod file_actions;
 pub mod file_icon;
 pub mod file_tree;
 pub mod find;
-pub mod folder_browser;
+pub mod folder_picker;
 pub mod git_controls;
 pub mod git_menus;
 pub mod git_prompts;

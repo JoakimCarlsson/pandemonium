@@ -102,7 +102,9 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
     }
     root.children(over)
         .children(state.menu.and_then(|menu| {
-            if settings::is_settings(menu.field) {
+            if settings::is_settings(menu.field)
+                || pm_components::folder_picker::is_picker(menu.field)
+            {
                 return None;
             }
             let field = state.field(menu.field)?;
