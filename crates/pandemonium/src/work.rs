@@ -1649,9 +1649,14 @@ impl Work {
                 _ => {}
             },
             Pending::Files(key) => {
-                if let Response::Files { paths, folders } = response {
+                if let Response::Files {
+                    paths,
+                    folders,
+                    ignored,
+                } = response
+                {
                     model.update(|screen| {
-                        *screen = std::mem::take(screen).with_files(&key, paths, folders);
+                        *screen = std::mem::take(screen).with_files(&key, paths, folders, ignored);
                     });
                 }
             }

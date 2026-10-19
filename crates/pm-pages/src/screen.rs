@@ -1032,9 +1032,17 @@ impl Screen {
     }
 
     /// The screen holding `files` as those listed for `key`, while the workspace is showing.
-    pub fn with_files(self, key: &str, files: Vec<String>, folders: Vec<String>) -> Self {
+    pub fn with_files(
+        self,
+        key: &str,
+        files: Vec<String>,
+        folders: Vec<String>,
+        ignored: Vec<String>,
+    ) -> Self {
         match self {
-            Self::Workspace(state) => Self::Workspace(state.with_files(key, files, folders)),
+            Self::Workspace(state) => {
+                Self::Workspace(state.with_files(key, files, folders, ignored))
+            }
             onboarding => onboarding,
         }
     }

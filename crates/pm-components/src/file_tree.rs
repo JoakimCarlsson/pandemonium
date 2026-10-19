@@ -76,6 +76,14 @@ impl Changed {
         }
     }
 
+    /// A file or folder git ignores.
+    fn ignored() -> Self {
+        Self {
+            letter: None,
+            tone: Some(Color::from(Role::Muted)),
+        }
+    }
+
     /// A file marked `letter`.
     fn file(letter: &'static str) -> Self {
         Self {
@@ -221,9 +229,11 @@ fn rows_of(
                     rows.extend(name_lines(state, false, depth));
                     continue;
                 }
-                let changed = marks
-                    .get(path)
-                    .map_or_else(Changed::none, |letter| Changed::file(letter));
+                let changed = match marks.get(path) {
+                    Some(letter) => Changed::file(letter),
+                    None if state.tree_ignored.contains(path) => Changed::ignored(),
+                    None => Changed::none(),
+                };
                 rows.push(row(
                     file_icon(name, 4.0),
                     name,
@@ -243,6 +253,8 @@ fn rows_of(
                         .is_some_and(|path| marks.contains_key(path.as_str()))
                 }) {
                     Changed::folder()
+                } else if state.tree_ignored.contains(&folder.path) {
+                    Changed::ignored()
                 } else {
                     Changed::none()
                 };

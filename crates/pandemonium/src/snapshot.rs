@@ -1546,11 +1546,16 @@ fn files() -> WorkspaceState {
         "crates/pandemonium/Cargo.toml",
         "crates/pm-ui/src/lib.rs",
         "scripts/install.sh",
+        ".env",
     ];
     state.with_files(
         &key,
         paths.map(str::to_owned).to_vec(),
-        vec!["crates/pandemonium/src/empty".to_owned()],
+        vec![
+            "crates/pandemonium/src/empty".to_owned(),
+            "target".to_owned(),
+        ],
+        vec![".env".to_owned(), "target".to_owned()],
     )
 }
 

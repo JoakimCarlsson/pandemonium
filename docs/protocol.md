@@ -627,7 +627,7 @@ embedded context, and anything else as a link to the stored file.
 | `failed`     | `message`                                                 |
 | `discovery`  | `settings`, `commands`                                    |
 | `skills`     | `skills` (`[{name, description}]`), `names` (`[string]`)  |
-| `files`      | `paths`: repository-relative, tracked or not ignored, `folders` (optional): untracked folders, which may hold no file yet |
+| `files`      | `paths`: repository-relative, tracked or not ignored, `folders` (optional): untracked folders, which may hold no file yet, `ignored` (optional): which of `paths` and `folders` git ignores, listed so a tree can dim them |
 | `branches`   | `names`: local branches, the current one first, then remote ones such as `origin/main`; read from git at each request |
 | `stashes`    | `stashes`: `[{index, message, when}]`, newest first |
 | `log`        | `commits`: `[{id, refs, summary, lanes}]`, newest first |

@@ -75,6 +75,9 @@ pub enum Response {
         /// The folders that hold no tracked file, which have no file to be told of by.
         #[serde(default)]
         folders: Vec<String>,
+        /// Which of `paths` and `folders` git ignores, which are listed so the tree can show them dimmed.
+        #[serde(default)]
+        ignored: Vec<String>,
     },
     /// The branches of a repository.
     Branches {
