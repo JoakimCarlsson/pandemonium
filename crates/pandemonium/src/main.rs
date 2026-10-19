@@ -145,6 +145,8 @@ fn main() {
             Some("answered") => Shot::Answered,
             Some("background") => Shot::Background,
             Some("subagents") => Shot::Agents,
+            Some("subagents-expanded") => Shot::AgentsExpanded,
+            Some("subagents-scrolled") => Shot::AgentsScrolled,
             Some("queued") => Shot::Queued,
             Some("usage") => Shot::Usage,
             Some("kept") => Shot::Kept,

@@ -176,6 +176,10 @@ pub enum Shot {
     Background,
     /// The same conversation with the subagents above the prompt box open.
     Agents,
+    /// The open panel with dozens of expanded tool runs.
+    AgentsExpanded,
+    /// The expanded panel scrolled to its last rows.
+    AgentsScrolled,
     /// A conversation whose agent is on a turn with prompts queued behind it and another being written.
     Queued,
     /// A conversation with the context ring in the prompt box.
@@ -1992,6 +1996,30 @@ impl Shot {
             Self::Background => Screen::Workspace(live(Turn::Background)),
             Self::Agents => {
                 Screen::Workspace(live(Turn::Background).after(FocusId(SUBAGENTS_CHIP.0)))
+            }
+            Self::AgentsExpanded | Self::AgentsScrolled => {
+                let mut state = live(Turn::Background);
+                let session = state.open_index().unwrap();
+                for index in 0..40 {
+                    state = state.heard(session, Event::Tool(Tool {
+                        parent: Some("a1".to_owned()),
+                        id: format!("many-{index}"),
+                        title: Some("Grep".to_owned()),
+                        kind: Some(Kind::Search),
+                        state: Some(ToolState::Done),
+                        target: Some(format!("caller_{index}")),
+                        diff: None,
+                        output: None,
+                        agent: None,
+                    }));
+                }
+                let (reply, position, _) = state.sessions[session].subagents().into_iter()
+                    .find(|(_, _, tool)| tool.id == "a1").unwrap();
+                state = state.after(SUBAGENTS_CHIP).after(FocusId(pm_components::state::STEP_BASE + (reply * 1000 + position) as u64));
+                if matches!(self, Self::AgentsScrolled) {
+                    state.subagents_scroll = 10000.0;
+                }
+                Screen::Workspace(state)
             }
             Self::Usage => Screen::Workspace(
                 live(Turn::Finished)

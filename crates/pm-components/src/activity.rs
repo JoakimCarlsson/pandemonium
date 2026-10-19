@@ -18,7 +18,8 @@ use crate::parts::{clipped, glyph, line};
 use crate::sample::{Session, Step};
 use crate::size::Size;
 use crate::state::{
-    APPROVALS_CHIP, Activity, OPEN_DIFF, PLAN_CHIP, SHELLS_CHIP, SUBAGENTS_CHIP, WorkspaceState,
+    APPROVALS_CHIP, Activity, OPEN_DIFF, PLAN_CHIP, SHELLS_CHIP, SUBAGENTS_CHIP, SUBAGENTS_SCROLL,
+    WorkspaceState,
 };
 use crate::steps::{elapsed, plan, question, subagents};
 
@@ -102,6 +103,7 @@ fn subagent_panel(state: &WorkspaceState, session: &Session) -> Option<Node> {
         reply,
         &|position| page.is_some_and(|open| held.contains(&(open, reply, position))),
         &root.to_string_lossy(),
+        Some((SUBAGENTS_SCROLL, state.subagents_scroll)),
     ))
 }
 

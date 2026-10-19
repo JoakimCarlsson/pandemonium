@@ -25,7 +25,7 @@ use pm_components::overview::OVERVIEW_SCROLL;
 use pm_components::panes::{PANE_MENU, split_row_of};
 use pm_components::sash::Grows;
 use pm_components::settings::{SETTINGS_CLOSE, SETTINGS_NAV_SCROLL, SETTINGS_SCROLL};
-use pm_components::state::PROBLEMS_SCROLL;
+use pm_components::state::{CHAT_SCROLL, PROBLEMS_SCROLL, SUBAGENTS_SCROLL};
 use pm_components::state::{COMMENT_CANCEL, COMMENT_FIELD};
 use pm_components::terminal_menu::TerminalCommand;
 use pm_components::title_bar::{COMMAND_CENTER, GO_BACK, GO_FORWARD};
@@ -924,8 +924,28 @@ impl App {
             .find(|scroller| scroller.rect.contains(x, y))
         {
             let (id, room) = (scroller.id, scroller.room);
-            self.scroll_box(id, pixels, room);
-            return;
+            let at_end = id == SUBAGENTS_SCROLL
+                && self.model.read(|screen| match screen {
+                    Screen::Workspace(state) => {
+                        let offset = state.subagents_scroll.clamp(0.0, room);
+                        (pixels > 0.0 && offset >= room) || (pixels < 0.0 && offset <= 0.0)
+                    }
+                    _ => false,
+                });
+            if !at_end {
+                self.scroll_box(id, pixels, room);
+                return;
+            }
+            if let Some(chat) = self
+                .output
+                .scrollers
+                .iter()
+                .find(|held| held.id == CHAT_SCROLL)
+            {
+                let room = chat.room;
+                self.scroll_box(CHAT_SCROLL, pixels, room);
+                return;
+            }
         }
         let height = renderer.size().1;
         self.model
@@ -937,6 +957,7 @@ impl App {
         self.model.update(|state| {
             *state = match id {
                 MENU_SCROLL => std::mem::take(state).scrolled_menu(pixels, room),
+                SUBAGENTS_SCROLL => std::mem::take(state).scrolled_subagents(pixels, room),
                 PLAN_SCROLL => std::mem::take(state).scrolled_plan(pixels, room),
                 DIFF_SCROLL => std::mem::take(state).scrolled_diff(pixels, room),
                 TREE_SCROLL => std::mem::take(state).scrolled_tree(pixels, room),

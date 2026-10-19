@@ -6,8 +6,8 @@ use pm_input::FocusId;
 use pm_style::{
     Radius, Role, animate_spin, bg, border, border_b, border_color, border_l, cursor_pointer, flex,
     flex_1, flex_col, flex_none, flex_wrap, font_mono, gap, h, items_center, justify_center,
-    leading_ratio, line_through, min_h, min_w_px, my, overflow_hidden, pb, pl, pr, px, py, rounded,
-    rounded_full, size, text_color, text_px, truncate, w_full,
+    leading_ratio, line_through, max_h, min_h, min_w_px, my, overflow_hidden, pb, pl, pr, px, py,
+    rounded, rounded_full, size, text_color, text_px, truncate, w_full,
 };
 use pm_ui::{Node, node, text};
 
@@ -301,6 +301,7 @@ pub fn is_inside_card(all: &[Step], position: usize) -> bool {
 
 /// The card of subagents: how many there are and how many are at work, then a row for each that folds out the tools it used.
 ///
+/// `scroll` bounds the rows to 240 logical pixels and scrolls them independently.
 /// `at` are the positions in `all`, the steps of the reply at `message`, of the tools that start them.
 pub fn subagents(
     all: &[Step],
@@ -308,6 +309,7 @@ pub fn subagents(
     message: usize,
     opened: &dyn Fn(usize) -> bool,
     root: &str,
+    scroll: Option<(FocusId, f32)>,
 ) -> Node {
     let agents: Vec<(usize, &ToolUse)> = at
         .iter()
@@ -402,6 +404,12 @@ pub fn subagents(
         }
         row
     });
+    let mut body = node().styles([flex(), flex_col()]).children(rows);
+    if let Some((id, offset)) = scroll {
+        body = body
+            .styles([max_h(60), overflow_hidden()])
+            .scroll_from_start(id, offset);
+    }
     node()
         .styles([
             flex(),
@@ -412,8 +420,8 @@ pub fn subagents(
             bg(Role::Surface),
             overflow_hidden(),
         ])
-        .child(header)
-        .children(rows)
+        .child(header.styles([flex_none()]))
+        .child(body)
 }
 
 /// The mark in front of a plan step: a filled check when done, a spinner while under way, an empty ring when not begun.
@@ -520,7 +528,7 @@ pub fn steps(
     let mut agents: Vec<usize> = Vec::new();
     let flush = |shown: &mut Vec<Node>, agents: &mut Vec<usize>| {
         if !agents.is_empty() {
-            shown.push(subagents(all, agents, message, &opened, root));
+            shown.push(subagents(all, agents, message, &opened, root, None));
             agents.clear();
         }
     };
