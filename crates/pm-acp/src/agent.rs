@@ -91,6 +91,20 @@ const TOOL_DIRECTORIES: [&str; 8] = [
     ".cargo/bin",
 ];
 
+/// The `bin` folder of every node version nvm has installed, newest name last.
+fn nvm_directories(home: &std::path::Path) -> Vec<PathBuf> {
+    let versions = home.join(".nvm/versions/node");
+    let mut directories: Vec<PathBuf> = std::fs::read_dir(versions)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|version| version.path().join("bin"))
+        .collect();
+    directories.sort();
+    directories.reverse();
+    directories
+}
+
 /// Where `program` is installed, on the path or in the usual places beside it.
 pub(crate) fn installed(program: &str) -> Option<PathBuf> {
     let path = env::var_os("PATH").unwrap_or_default();
@@ -101,6 +115,7 @@ pub(crate) fn installed(program: &str) -> Option<PathBuf> {
                 .iter()
                 .filter_map(|directory| Some(home.as_ref()?.join(directory))),
         )
+        .chain(home.as_deref().map(nvm_directories).unwrap_or_default())
         .chain([
             PathBuf::from("/usr/local/bin"),
             PathBuf::from("/opt/homebrew/bin"),
@@ -127,7 +142,15 @@ impl Agent {
     pub(crate) fn command(self, extra: &[String]) -> Command {
         let mut command = match (installed(self.program), self.source) {
             (None, Source::Package(package)) => {
-                let mut command = Command::new(installed(RUNNER).unwrap_or_else(|| RUNNER.into()));
+                let runner = installed(RUNNER);
+                let mut command = Command::new(runner.clone().unwrap_or_else(|| RUNNER.into()));
+                if let Some(folder) = runner.as_deref().and_then(std::path::Path::parent) {
+                    let path = env::var_os("PATH").unwrap_or_default();
+                    let joined = env::join_paths(
+                        std::iter::once(folder.to_path_buf()).chain(env::split_paths(&path)),
+                    );
+                    command.env("PATH", joined.unwrap_or(path));
+                }
                 command.arg("--yes").arg(package);
                 command
             }
