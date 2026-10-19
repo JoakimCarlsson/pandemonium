@@ -90,6 +90,12 @@ pub const SETTINGS_SWITCH_BASE: u64 = 20_000_500;
 /// The first of the buttons opening the menu of a server; the rest follow it.
 pub const SETTINGS_MORE_BASE: u64 = 20_000_600;
 
+/// The first of the buttons removing an account of an agent; the rest follow it.
+pub const SETTINGS_ACCOUNT_REMOVE_BASE: u64 = 20_000_700;
+
+/// The first of the buttons adding an account to an agent; the rest follow it.
+pub const SETTINGS_ACCOUNT_ADD_BASE: u64 = 20_000_800;
+
 /// The first of the sections down the left side; the rest follow it.
 pub const SETTINGS_SECTION_BASE: u64 = 20_000_010;
 

@@ -172,8 +172,9 @@ pub fn load_accounts() -> (Vec<Account>, Vec<(String, String)>) {
     (accounts, selected)
 }
 
-/// Saves `accounts` and the `selected` one of each agent, and makes sure each account has a private folder.
+/// Saves `accounts` and the `selected` one of each agent, makes sure each account has a private folder, and deletes the folder of one that is no longer listed.
 pub fn save_accounts(accounts: &[Account], selected: &[(String, String)]) -> io::Result<()> {
+    forget_unlisted_accounts(accounts);
     let mut contents = String::new();
     for (agent, id, name) in accounts {
         account_directory(agent, id)?;
@@ -213,4 +214,27 @@ pub fn account_directory(agent: &str, id: &str) -> io::Result<PathBuf> {
         builder.create(&folder)?;
     }
     Ok(folder)
+}
+
+/// Deletes the login folders under the data directory of accounts that are not in `accounts`.
+fn forget_unlisted_accounts(accounts: &[Account]) {
+    let Some(root) = directory().map(|directory| directory.join("accounts")) else {
+        return;
+    };
+    let Ok(agents) = fs::read_dir(&root) else {
+        return;
+    };
+    for agent in agents.flatten() {
+        let Ok(held) = fs::read_dir(agent.path()) else {
+            continue;
+        };
+        for account in held.flatten() {
+            let listed = accounts.iter().any(|(owner, id, _)| {
+                agent.file_name() == owner.as_str() && account.file_name() == id.as_str()
+            });
+            if !listed {
+                let _ = fs::remove_dir_all(account.path());
+            }
+        }
+    }
 }
