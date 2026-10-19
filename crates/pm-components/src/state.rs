@@ -1518,6 +1518,8 @@ pub struct WorkspaceState {
     pub files: Vec<String>,
     /// The folders among `files` that hold no tracked file, by path.
     pub tree_folders: Vec<String>,
+    /// The files and folders of the tree that git ignores, by path.
+    pub tree_ignored: std::collections::HashSet<String>,
     /// The folder `files` was read for.
     pub files_of: Option<String>,
     /// Who each agent is signed in as, by the agent's position, once it has been looked up.
@@ -1694,6 +1696,7 @@ impl WorkspaceState {
             discovered_elsewhere: std::collections::HashMap::new(),
             files: Vec::new(),
             tree_folders: Vec::new(),
+            tree_ignored: std::collections::HashSet::new(),
             files_of: None,
             identities: vec![None; builtin.len()],
             defaults: vec![None; builtin.len()],

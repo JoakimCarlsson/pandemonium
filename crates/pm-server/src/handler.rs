@@ -413,10 +413,29 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             },
             None => failed(format!("no agent is called {agent}")),
         },
-        Request::Files { directory, limit } => Response::Files {
-            paths: pm_git::files(&place(&directory), limit),
-            folders: pm_git::untracked_folders(&place(&directory), limit),
-        },
+        Request::Files { directory, limit } => {
+            let place = place(&directory);
+            let mut paths = pm_git::files(&place, limit);
+            let mut folders = pm_git::untracked_folders(&place, limit);
+            let mut ignored = Vec::new();
+            for entry in pm_git::ignored(&place, limit) {
+                match entry.strip_suffix('/') {
+                    Some(folder) => {
+                        folders.push(folder.to_owned());
+                        ignored.push(folder.to_owned());
+                    }
+                    None => {
+                        paths.push(entry.clone());
+                        ignored.push(entry);
+                    }
+                }
+            }
+            Response::Files {
+                paths,
+                folders,
+                ignored,
+            }
+        }
         Request::Branches { directory } => Response::Branches {
             names: pm_git::branches(&place(&directory)),
         },
