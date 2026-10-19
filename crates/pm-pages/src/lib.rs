@@ -4,7 +4,6 @@ mod debugging;
 mod editing;
 mod onboarding;
 mod panes;
-mod picking;
 mod screen;
 mod tasking;
 mod workspace;

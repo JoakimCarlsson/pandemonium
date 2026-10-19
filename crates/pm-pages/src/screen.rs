@@ -7,6 +7,7 @@ use pm_ui::Node;
 
 use crate::onboarding::{ADD, AgentStatus, OnboardingState, PATH, onboarding};
 use crate::workspace::{Outgoing, WorkspaceState, workspace};
+use pm_components::Window;
 use pm_components::context_menu::{ContextMenu, field_menu};
 use pm_components::folder_picker::FolderPicker;
 use pm_components::git_controls::Pick;
@@ -1325,13 +1326,17 @@ pub fn screen(state: &Screen, width: f32, height: f32, shaper: &mut Shaper) -> N
 /// What the folder picker's window shows for `state` while the picker is open.
 pub fn picker_screen(state: &Screen) -> Option<Node> {
     let picker = state.folder_picker()?;
-    Some(crate::picking::picker_window(
-        picker,
-        state
-            .menu()
-            .filter(|menu| menu.field == pm_components::folder_picker::PICKER_FIELD)
-            .and_then(|menu| Some(field_menu(state.field(menu.field)?, menu))),
-    ))
+    Some(
+        Window::new()
+            .body(picker.view())
+            .over(
+                state
+                    .menu()
+                    .filter(|menu| menu.field == pm_components::folder_picker::PICKER_FIELD)
+                    .and_then(|menu| Some(field_menu(state.field(menu.field)?, menu))),
+            )
+            .build(),
+    )
 }
 
 /// What the settings window, `width` logical pixels across, shows for `state` while settings are open.

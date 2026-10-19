@@ -109,6 +109,7 @@ pub mod tree_actions;
 pub mod usage;
 pub mod viewer;
 pub mod welcome;
+pub mod window;
 
 pub use avatar::Avatar;
 pub use button::Button;
@@ -133,3 +134,4 @@ pub use stepper::Stepper;
 pub use tally::Tally;
 pub use tile::Tile;
 pub use title_bar::TitleBar;
+pub use window::Window;

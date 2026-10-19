@@ -1,6 +1,6 @@
 //! The workspace window: the sidebar of projects and sessions beside the page the reader is on.
 
-use pm_style::{Role, bg, border, border_color, flex, flex_1, flex_col, h_full, min_h, w_full};
+use pm_style::{Role, bg, flex, flex_1, flex_col, h_full, min_h, w_full};
 use pm_text::Shaper;
 use pm_ui::{Node, node};
 
@@ -13,8 +13,8 @@ use pm_components::context_menu::{editor_menu, field_menu};
 use pm_components::git_prompts;
 use pm_components::message_menu::message_menu;
 use pm_components::open_files::EDITOR_FIELD;
-use pm_components::title_bar::{FRAMELESS, TITLE_BAR_HEIGHT};
-use pm_components::{Menu, TitleBar};
+use pm_components::title_bar::TITLE_BAR_HEIGHT;
+use pm_components::{Menu, TitleBar, Window};
 use pm_components::{adder, history, plan, review, settings, sidebar, terminal, welcome};
 
 pub use pm_components::state::{
@@ -190,22 +190,15 @@ fn session_menu(state: &WorkspaceState, open: SessionMenu) -> Node {
 pub(crate) fn settings_window(state: &WorkspaceState, width: f32) -> Option<Node> {
     let page = settings::settings(state, width)?;
     Some(
-        node()
-            .styles([flex(), flex_col(), w_full(), h_full(), bg(Role::Surface)])
-            .styles(
-                FRAMELESS
-                    .then(|| [border(), border_color(Role::Border)])
-                    .into_iter()
-                    .flatten(),
-            )
-            .child(TitleBar::closing().build())
-            .child(node().styles([flex_1(), min_h(0), w_full()]).child(page))
-            .children(pm_components::settings_servers::server_menu(state))
-            .children(
+        Window::new()
+            .body(page)
+            .over(pm_components::settings_servers::server_menu(state))
+            .over(
                 state
                     .menu
                     .filter(|menu| settings::is_settings(menu.field))
                     .and_then(|menu| Some(field_menu(state.field(menu.field)?, menu))),
-            ),
+            )
+            .build(),
     )
 }
