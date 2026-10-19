@@ -10,6 +10,7 @@ use pm_style::{Color, ComputedStyle, Context, Cursor, Role, State, StateSet, Tra
 use pm_style::layout::{Placed, solve};
 use pm_text::{Run, Shaper};
 use pm_theme::Theme;
+use pm_typography::TextOverflow;
 
 use crate::node::{Anchor, CaretShape, Mark, Node, Paint};
 use crate::retain;
@@ -748,9 +749,12 @@ impl Frame<'_> {
         opacity: f32,
     ) {
         let (rect, seen) = boxes;
-        let run = self.shaper.shape(content, &computed.typography);
         let inset = computed.layout.spacing.padding;
         let border = computed.decoration.borders.width;
+        let room = rect.width - inset.left - inset.right - border.left - border.right;
+        let shortened = self.ellipsized(content, computed, room);
+        let content = shortened.as_ref().unwrap_or(content);
+        let run = self.shaper.shape(content, &computed.typography);
         let (x, y) = world.apply(
             rect.x + inset.left + border.left,
             rect.y + inset.top + border.top,
@@ -924,6 +928,39 @@ impl Frame<'_> {
                 color,
             });
         }
+    }
+
+    /// `content` cut short and ended with an ellipsis so that it fits in `room`
+    /// logical pixels, when its typography says overflowing text ends in one and
+    /// it does not fit; `None` when it is to be drawn as it is.
+    fn ellipsized(
+        &mut self,
+        content: &std::sync::Arc<str>,
+        computed: &ComputedStyle,
+        room: f32,
+    ) -> Option<std::sync::Arc<str>> {
+        if computed.typography.overflow != TextOverflow::Ellipsis || content.contains('\n') {
+            return None;
+        }
+        if self.shaper.measure(content, &computed.typography).width <= room + 1.0 {
+            return None;
+        }
+        let boundaries: Vec<usize> = content
+            .char_indices()
+            .map(|(at, _)| at)
+            .chain(std::iter::once(content.len()))
+            .collect();
+        let (mut low, mut high) = (0, boundaries.len() - 1);
+        while low < high {
+            let middle = (low + high).div_ceil(2);
+            let candidate = format!("{}…", content[..boundaries[middle]].trim_end());
+            if self.shaper.measure(&candidate, &computed.typography).width <= room {
+                low = middle;
+            } else {
+                high = middle - 1;
+            }
+        }
+        Some(format!("{}…", content[..boundaries[low]].trim_end()).into())
     }
 
     /// Paints the wavy line `mark` asks for under its stretch of `run`, the line drawn with its top-left corner at `at`.

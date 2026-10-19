@@ -11,3 +11,4 @@ pm-renderer.workspace = true
 pm-style.workspace = true
 pm-text.workspace = true
 pm-theme.workspace = true
+pm-typography.workspace = true

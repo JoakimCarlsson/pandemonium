@@ -7,11 +7,18 @@ use pm_style::{
 use pm_ui::{Node, node, text};
 
 /// How wide, as a share of its height, a character of body text is taken to be.
-const CHARACTER_WIDTH: f32 = 0.48;
+const CHARACTER_WIDTH: f32 = 0.53;
 
-/// A line of `content` at `pixels` tall type with a line height of `ratio` times that, in `tone`.
+/// A line of `content` at `pixels` tall type with a line height of `ratio` times that, in `tone`,
+/// ended with an ellipsis when the box it sits in is too narrow for it.
 pub fn line(content: impl Into<String>, pixels: u32, ratio: f32, tone: impl Into<Color>) -> Node {
-    text(content).styles([text_px(pixels), leading_ratio(ratio), text_color(tone)])
+    text(content).styles([
+        text_px(pixels),
+        leading_ratio(ratio),
+        text_color(tone),
+        truncate(),
+        min_w_px(0),
+    ])
 }
 
 /// `name` drawn in `tone` in a square `steps` on a side.

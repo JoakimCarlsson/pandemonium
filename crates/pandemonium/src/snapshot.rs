@@ -1441,6 +1441,7 @@ fn branching() -> WorkspaceState {
         "main",
         "feat/session-titles",
         "feat/worktree-cleanup",
+        "task/271-add-per-project-tasks-run-buttons-and-a-toolchain-selector",
         "origin/main",
         "origin/feat/editor",
     ];
@@ -1448,7 +1449,7 @@ fn branching() -> WorkspaceState {
         .after(TAB_DIFF)
         .after(BRANCH_BUTTON)
         .with_session_branches(0, names.map(str::to_owned).to_vec())
-        .edited(BRANCH_FILTER, Edit::Paste("feat".to_owned()))
+        .edited(BRANCH_FILTER, Edit::Paste("t".to_owned()))
 }
 
 /// The workspace reading a file of the first session as it is in the last commit.
