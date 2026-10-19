@@ -60,6 +60,19 @@ impl Session {
         }
     }
 
+    /// Removes the waiting prompt `id` and its uploads, or does nothing if it has already left the queue.
+    pub(crate) fn remove_queued(&mut self, number: u64, id: u64) -> Told {
+        let Some(position) = self.queue.iter().position(|waiting| waiting.id == id) else {
+            return Told::new();
+        };
+        let Some(waiting) = self.queue.remove(position) else {
+            return Told::new();
+        };
+        crate::uploads::discard(&waiting.prompt.paths);
+        let event = Event::Unqueued(id);
+        vec![(number, self.note(number, &event), event)]
+    }
+
     /// Hands the agent of this session, numbered `number`, the prompt that has waited longest, once its turn is over.
     pub(crate) fn advance(&mut self, number: u64) -> Told {
         if self.busy {
@@ -76,10 +89,12 @@ impl Session {
 
     /// Drops every prompt waiting in this session, numbered `number`.
     pub(crate) fn drop_queue(&mut self, number: u64) -> Told {
-        let ids: Vec<u64> = self.queue.drain(..).map(|waiting| waiting.id).collect();
-        ids.into_iter()
-            .map(|id| {
-                let event = Event::Unqueued(id);
+        let waiting: Vec<Waiting> = self.queue.drain(..).collect();
+        waiting
+            .into_iter()
+            .map(|waiting| {
+                crate::uploads::discard(&waiting.prompt.paths);
+                let event = Event::Unqueued(waiting.id);
                 (number, self.note(number, &event), event)
             })
             .collect()

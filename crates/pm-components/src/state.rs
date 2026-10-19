@@ -132,6 +132,9 @@ pub const SEND_NOW: FocusId = FocusId(327);
 /// The first of the buttons handing a queued prompt to the agent at once; the rest follow it.
 pub const HURRY_BASE: u64 = 4900;
 
+/// The first of the buttons removing a waiting prompt; the rest follow it.
+pub const REMOVE_QUEUED_BASE: u64 = 4_900_000_000_000;
+
 /// The conversation's scrolling area.
 pub const CHAT_SCROLL: FocusId = FocusId(350);
 
@@ -988,6 +991,13 @@ pub enum Outgoing {
         /// The session, by position.
         session: usize,
         /// The queued prompt, by the number the server gave it.
+        queued: u64,
+    },
+    /// Removes a waiting prompt and its attached files without sending it.
+    RemoveQueued {
+        /// The session.
+        session: usize,
+        /// The queued prompt, by the id its `Queued` event gave it.
         queued: u64,
     },
     /// Answers the question the agent of a session asked.
@@ -2342,7 +2352,9 @@ impl WorkspaceState {
         } else if let Some(index) = position(CHOICE_BASE, self.choices()) {
             self.choose(index);
         } else if let Some(index) = position(HURRY_BASE, self.queued_open()) {
-            self.hurry(index);
+            self.act_on_queued(index, false);
+        } else if let Some(index) = position(REMOVE_QUEUED_BASE, self.queued_open()) {
+            self.act_on_queued(index, true);
         } else if let Some(index) = id
             .checked_sub(COPY_BASE)
             .map(|offset| offset as usize)
@@ -2582,15 +2594,17 @@ impl WorkspaceState {
         self.open().map_or(0, |session| session.queued.len())
     }
 
-    /// Hands the open session's agent the queued prompt at `index` in place of the turn it is on.
-    fn hurry(&mut self, index: usize) {
+    /// Removes the queued prompt at `index` when `remove` is set, otherwise hands it to the agent next.
+    fn act_on_queued(&mut self, index: usize, remove: bool) {
         let Page::Session(session) = self.page else {
             return;
         };
         if let Some(queued) = self.sessions[session].queued.get(index) {
-            self.outbox.push(Outgoing::Hurry {
-                session,
-                queued: queued.id,
+            let queued = queued.id;
+            self.outbox.push(if remove {
+                Outgoing::RemoveQueued { session, queued }
+            } else {
+                Outgoing::Hurry { session, queued }
             });
         }
     }

@@ -642,6 +642,9 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                 Ok(held.submit(session, next, now))
             })
         }
+        Request::RemoveQueued { session, queued } => {
+            telling(core, session, |held| held.remove_queued(session, queued))
+        }
         Request::Hurry { session, queued } => {
             let mut found = true;
             let response = telling(core, session, |held| {

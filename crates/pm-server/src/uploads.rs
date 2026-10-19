@@ -38,3 +38,18 @@ pub(crate) fn store(session: u64, attachments: &[Attachment]) -> Vec<PathBuf> {
         })
         .collect()
 }
+
+/// Deletes uploads belonging to a discarded prompt and their individual folders.
+pub(crate) fn discard(paths: &[String]) {
+    for path in paths {
+        let path = std::path::Path::new(path);
+        if let Err(error) = std::fs::remove_file(path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            eprintln!("could not remove upload {}: {error}", path.display());
+        }
+        if let Some(folder) = path.parent() {
+            let _ = std::fs::remove_dir(folder);
+        }
+    }
+}
