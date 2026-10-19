@@ -4,17 +4,14 @@ use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::primitives::{Length, Sides};
 use pm_style::{
-    Radius, Role, ShadowLayer, absolute, bg, border, border_color, cursor_pointer, flex, flex_1,
-    flex_col, flex_none, font_mono, gap, h, inset_length, items_center, justify_between,
-    leading_ratio, left, max_w_px, mb, min_w_px, p, px, py, relative, right, rounded,
-    shadow_layers, text_color, text_px, truncate, w_full, w_px, z,
+    Radius, Role, absolute, bg, cursor_pointer, flex, flex_1, flex_col, flex_none, font_mono, gap,
+    h, inset_length, items_center, justify_between, leading_ratio, left, max_w_px, mb, min_w_px, p,
+    px, py, relative, right, rounded, text_color, text_px, truncate, w_full, w_px, z,
 };
 use pm_ui::{Node, node, text};
 
 use crate::parts::{glyph, line};
-
-/// The shadow under a popover: a tall, soft one that lifts it off what is behind.
-const SHADOW: [ShadowLayer; 1] = [ShadowLayer::new(0.0, 12.0, 40.0, 0.0, 0.35, false)];
+use crate::{Surface, surface};
 
 /// A popover being described: the rows and sections it holds.
 ///
@@ -39,16 +36,10 @@ impl Popover {
     /// An empty popover.
     pub fn new() -> Self {
         Self {
-            body: node().styles([
-                flex(),
-                flex_col(),
-                p(1.5),
-                rounded(Radius::Xl),
-                border(),
-                border_color(Role::Border),
-                bg(Role::Surface),
-                shadow_layers(&SHADOW),
-            ]),
+            body: Surface::new()
+                .variant(surface::Variant::Floating)
+                .build()
+                .styles([p(1.5)]),
         }
     }
 

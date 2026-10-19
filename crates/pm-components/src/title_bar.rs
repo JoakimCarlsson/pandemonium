@@ -3,15 +3,14 @@
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
-    Radius, Role, bg, border, border_b, border_color, cursor_pointer, flex, flex_1, flex_none, gap,
-    h_px, items_center, justify_center, justify_end, min_w_px, overflow_hidden, px, rounded,
-    w_full, w_px,
+    Role, bg, border_b, border_color, flex, flex_1, flex_none, gap, h_px, items_center,
+    justify_center, justify_end, min_w_px, px, w_full, w_px,
 };
 use pm_ui::{Node, node};
 
 use crate::Button;
+use crate::button::Variant;
 use crate::listing::{LISTING_WIDTH, QUICK_INSET};
-use crate::parts::{clipped, glyph};
 use crate::quick_input::FIELD_HEIGHT;
 use crate::state::{Page, REVIEW, SETTINGS, SIDEBAR_TOGGLE, TERMINAL, WorkspaceState};
 
@@ -169,42 +168,24 @@ impl TitleBar {
 
 /// The button of the title bar that shows or hides the part of the window `icon` pictures, filled while it shows.
 fn layout_toggle(icon: IconName, id: FocusId, words: &str, open: bool) -> Node {
-    let toggle = Button::icon(icon, id).build().tooltip(words);
-    if open {
-        toggle.styles([bg(Role::SurfaceSelected)])
-    } else {
-        toggle
-    }
+    Button::icon(icon, id).selected(open).build().tooltip(words)
 }
 
 /// The box in the middle of the bar that says where the window is pointed and lists every command when it is pressed.
 fn command_center(place: String) -> Node {
-    node()
+    Button::new(place, COMMAND_CENTER)
+        .variant(Variant::Field)
+        .with_icon(IconName::Search)
+        .tone(Role::Subtle)
+        .width(COMMAND_CENTER_WIDTH)
+        .build()
         .styles([
-            flex(),
-            items_center(),
             justify_center(),
-            gap(1.5),
-            px(2),
-            w_px(COMMAND_CENTER_WIDTH),
             min_w_px(COMMAND_CENTER_MIN_WIDTH),
             h_px(COMMAND_CENTER_HEIGHT),
-            overflow_hidden(),
-            rounded(Radius::Md),
-            border(),
-            border_color(Role::Border),
             bg(Role::Background),
-            bg(Role::SurfaceHover).hover(),
-            cursor_pointer(),
         ])
-        .focusable(COMMAND_CENTER)
         .tooltip("Show All Commands")
-        .child(glyph(IconName::Search, 3.5, Role::Subtle))
-        .child(
-            node()
-                .styles([flex_none(), overflow_hidden()])
-                .child(clipped(place, 12, Role::Subtle)),
-        )
 }
 
 /// The buttons that minimize, maximize and close a window the desktop draws no frame around, or only the one that closes it when `close_only` is set.

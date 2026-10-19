@@ -21,7 +21,7 @@ use pm_components::folder_picker::{FolderPicker, Outcome, PICKER_FIELD, Purpose,
 use pm_components::parts::{glyph, line};
 use pm_components::project::Project;
 use pm_components::state::Outgoing;
-use pm_components::{Avatar, Card, Checkbox, Progress, Tile, TitleBar};
+use pm_components::{Avatar, Card, Checkbox, Stepper, Tile, TitleBar, stepper};
 use pm_protocol::ExtensionInfo;
 
 /// Moves to the step after the current one.
@@ -415,7 +415,10 @@ fn heading(
 
 /// The bar showing how far through onboarding the reader is.
 fn progress(step: Step) -> Node {
-    Progress::new(Step::ALL.len(), step as usize).build()
+    Stepper::new(Step::ALL.len(), 0)
+        .variant(stepper::Variant::Bar)
+        .current(Some(step as usize))
+        .build()
 }
 
 /// The welcome step: what the app is for.

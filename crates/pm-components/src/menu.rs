@@ -2,11 +2,13 @@
 
 use pm_input::FocusId;
 use pm_style::{
-    Radius, Role, absolute, bg, border, border_color, cursor_not_allowed, cursor_pointer, flex,
-    flex_1, flex_col, gap, h, items_center, leading_ratio, left, min_w_px, opacity, p, px, rounded,
-    shadow_md, text_color, text_px, top, w, z,
+    Radius, Role, absolute, bg, cursor_not_allowed, cursor_pointer, flex, flex_1, gap, h,
+    items_center, leading_ratio, left, min_w_px, opacity, p, px, rounded, text_color, text_px, top,
+    w, z,
 };
 use pm_ui::{Node, node, text};
+
+use crate::Surface;
 
 /// One row of a menu, or the rule between groups of rows.
 #[derive(Clone, Debug)]
@@ -93,22 +95,16 @@ impl Menu {
 
     /// The node that draws the menu.
     pub fn build(self) -> Node {
-        node()
+        Surface::new()
+            .build()
             .styles([
                 absolute(),
                 left(self.at.0 / 4.0),
                 top(self.at.1 / 4.0),
                 z(50),
-                flex(),
-                flex_col(),
                 w(self.width),
                 min_w_px(0),
                 p(1),
-                rounded(Radius::Md),
-                bg(Role::Surface),
-                border(),
-                border_color(Role::Border),
-                shadow_md(),
             ])
             .children(self.entries.into_iter().map(|entry| row(entry, self.row)))
     }

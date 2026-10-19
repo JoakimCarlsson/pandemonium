@@ -11,7 +11,6 @@ use pm_style::{
 };
 use pm_ui::{Node, node, text};
 
-use crate::Button;
 use crate::Sash;
 use crate::git_controls::{
     CHANGES_REFRESH, GRAPH_FETCH, GRAPH_PULL, GRAPH_PUSH, GRAPH_REFS, GRAPH_SASH, GRAPH_SCROLL,
@@ -20,6 +19,7 @@ use crate::git_controls::{
 use crate::parts::{glyph, line, spacer};
 use crate::size::Size;
 use crate::state::WorkspaceState;
+use crate::{Badge, Button, badge};
 use pm_input::FocusId;
 
 /// How tall the graph is when it is open, in logical pixels.
@@ -143,30 +143,20 @@ fn cell(lanes: &Lanes, columns: usize) -> Node {
 /// The pill naming a branch or tag that points at a commit.
 ///
 /// Git decorates the checked out branch as `HEAD -> name` and a tag as `tag: name`; the pill says the name, and the branch HEAD is on is drawn solid.
-fn badge(decorated: &str, color: Color) -> Node {
+fn reference_badge(decorated: &str, color: Color) -> Node {
     let (name, current) = match decorated.strip_prefix("HEAD -> ") {
         Some(branch) => (branch, true),
         None => (decorated.strip_prefix("tag: ").unwrap_or(decorated), false),
     };
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            flex_none(),
-            h(4.5),
-            px(1.5),
-            rounded(pm_style::Radius::Sm),
-            bg(if current { color } else { color.alpha(0.18) }),
-        ])
-        .child(text(name.to_owned()).styles([
-            text_px(11),
-            leading_ratio(1.2),
-            text_color(if current {
-                Color::from(Role::Background)
-            } else {
-                color
-            }),
-        ]))
+    Badge::new(name)
+        .tone(color)
+        .variant(if current {
+            badge::Variant::Solid
+        } else {
+            badge::Variant::Soft
+        })
+        .square()
+        .build()
 }
 
 /// One commit of the graph: its lanes, its name, its references and its summary.
@@ -195,7 +185,7 @@ fn commit_row(commit: &Commit, columns: usize, position: usize) -> Node {
                 .refs
                 .iter()
                 .take(SHOWN_REFS)
-                .map(|name| badge(name, color)),
+                .map(|name| reference_badge(name, color)),
         );
     if commit.refs.len() > SHOWN_REFS {
         row = row.child(
