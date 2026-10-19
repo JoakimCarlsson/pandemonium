@@ -102,7 +102,7 @@ impl Session {
         };
 
         let mut process = Command::new(&program)
-            .env("PATH", program::path_beside(&program))
+            .env("PATH", pm_tools::path_beside(&program))
             .args(adapter.arguments_for(port))
             .current_dir(root)
             .stdin(Stdio::piped())

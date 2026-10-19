@@ -1,9 +1,9 @@
 //! The agents the app ships, and how each is started.
 
-use std::env;
-use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Mutex;
+
+use pm_tools::{installed, path_beside};
 
 /// The program that runs a published package without installing it first.
 const RUNNER: &str = "npx";
@@ -75,40 +75,6 @@ pub const AGENTS: [Agent; 3] = [
     },
 ];
 
-/// The directories a program is looked for in besides the path.
-///
-/// A window started from a desktop session inherits the path that session
-/// was given, which is not the one a shell has: npm, bun and cargo each put
-/// their programs somewhere only a shell profile hears about.
-const TOOL_DIRECTORIES: [&str; 8] = [
-    ".local/bin",
-    ".grok/bin",
-    ".bun/bin",
-    ".deno/bin",
-    ".npm-global/bin",
-    "AppData/Roaming/npm",
-    ".volta/bin",
-    ".cargo/bin",
-];
-
-/// Where `program` is installed, on the path or in the usual places beside it.
-pub(crate) fn installed(program: &str) -> Option<PathBuf> {
-    let path = env::var_os("PATH").unwrap_or_default();
-    let home = env::home_dir();
-    env::split_paths(&path)
-        .chain(
-            TOOL_DIRECTORIES
-                .iter()
-                .filter_map(|directory| Some(home.as_ref()?.join(directory))),
-        )
-        .chain([
-            PathBuf::from("/usr/local/bin"),
-            PathBuf::from("/opt/homebrew/bin"),
-        ])
-        .map(|directory| directory.join(program))
-        .find(|candidate| candidate.is_file())
-}
-
 impl Agent {
     /// Whether the agent can be started on this machine: its program is
     /// installed, or it is a package and the runner is.
@@ -127,7 +93,11 @@ impl Agent {
     pub(crate) fn command(self, extra: &[String]) -> Command {
         let mut command = match (installed(self.program), self.source) {
             (None, Source::Package(package)) => {
-                let mut command = Command::new(installed(RUNNER).unwrap_or_else(|| RUNNER.into()));
+                let runner = installed(RUNNER);
+                let mut command = Command::new(runner.clone().unwrap_or_else(|| RUNNER.into()));
+                if let Some(runner) = runner.as_deref() {
+                    command.env("PATH", path_beside(runner));
+                }
                 command.arg("--yes").arg(package);
                 command
             }

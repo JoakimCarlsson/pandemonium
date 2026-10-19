@@ -717,19 +717,7 @@ impl WorkspaceState {
         } else if let Some(id) = logins.get(index - 1) {
             self.in_use.push((agent.to_owned(), id.clone()));
         } else {
-            let stamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |since| since.as_millis());
-            let id = format!("{stamp:x}");
-            let name = format!("Account {}", logins.len() + 1);
-            self.logins.push((agent.to_owned(), id.clone(), name));
-            self.in_use.push((agent.to_owned(), id));
-            self.outbox.push(Outgoing::Accounts {
-                logins: self.logins.clone(),
-                in_use: self.in_use.clone(),
-            });
-            self.outbox.push(Outgoing::SignIn { agent: self.agent });
-            self.identities[self.agent] = None;
+            self.add_account(self.agent);
             self.picker = None;
             return;
         }
@@ -739,6 +727,49 @@ impl WorkspaceState {
             in_use: self.in_use.clone(),
         });
         self.picker = None;
+    }
+
+    /// Adds a login for the agent at `agent`, makes it the one in use, and has the server sign it in.
+    pub(crate) fn add_account(&mut self, agent: usize) {
+        let Some(owner) = self.agent_id_at(agent) else {
+            return;
+        };
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_millis());
+        let id = format!("{stamp:x}");
+        let held = self.logins.iter().filter(|(by, _, _)| *by == owner).count();
+        self.in_use.retain(|(by, _)| *by != owner);
+        self.logins
+            .push((owner.clone(), id.clone(), format!("Account {}", held + 1)));
+        self.in_use.push((owner, id));
+        self.outbox.push(Outgoing::Accounts {
+            logins: self.logins.clone(),
+            in_use: self.in_use.clone(),
+        });
+        self.outbox.push(Outgoing::SignIn { agent });
+        if let Some(identity) = self.identities.get_mut(agent) {
+            *identity = None;
+        }
+    }
+
+    /// Takes the `index`-th login of the list out, and has the server keep the list and delete its sign-in.
+    pub(crate) fn remove_account(&mut self, index: usize) {
+        if index >= self.logins.len() {
+            return;
+        }
+        let (owner, id, _) = self.logins.remove(index);
+        self.in_use
+            .retain(|(by, used)| !(*by == owner && *used == id));
+        if let Some(agent) = self.agent_position(&owner)
+            && let Some(identity) = self.identities.get_mut(agent)
+        {
+            *identity = None;
+        }
+        self.outbox.push(Outgoing::Accounts {
+            logins: self.logins.clone(),
+            in_use: self.in_use.clone(),
+        });
     }
 
     /// Adds the sessions the server of `host` holds that belong to the projects here, and returns each one's position and the server's number for it.

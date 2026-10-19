@@ -259,26 +259,9 @@ impl App {
                 }
             }
             event => {
-                if matches!(event, WindowEvent::KeyboardInput { .. }) {
-                    let order = self
-                        .aside_output(aside)
-                        .regions
-                        .iter()
-                        .map(|region| region.id)
-                        .collect();
-                    self.focus.set_order(order);
-                }
                 self.in_aside(aside, |app| app.handle_window_event(event_loop, event));
             }
         }
-    }
-
-    /// What the last frame of the window of `aside` found, or nothing when it is closed.
-    fn aside_output(&mut self, aside: Aside) -> Output {
-        self.surface_of(aside)
-            .as_ref()
-            .map(|surface| surface.output.clone())
-            .unwrap_or_default()
     }
 
     /// Runs `act` with the window of `aside` standing in for the main one: its
@@ -344,6 +327,15 @@ impl App {
             window
                 .set_cursor(edge.map_or_else(|| cursor_icon(self.cursor), super::frame::edge_icon));
         }
+        let held_elsewhere = self.focus.current().filter(|id| !aside.owns(*id));
+        self.focus.set_order(
+            self.output
+                .regions
+                .iter()
+                .map(|region| region.id)
+                .chain(held_elsewhere)
+                .collect(),
+        );
         let presented = renderer.render(&self.list, &mut self.shaper, scene::ground(theme), || {
             window.pre_present_notify()
         });

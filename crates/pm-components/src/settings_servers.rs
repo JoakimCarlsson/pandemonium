@@ -16,11 +16,12 @@ use crate::input::Input;
 use crate::menu::Menu;
 use crate::parts::{clipped, glyph, line, wrap};
 use crate::settings::{
-    SETTINGS_ADD, SETTINGS_CANCEL, SETTINGS_DOCS, SETTINGS_EDIT_BASE, SETTINGS_ENV, SETTINGS_HOME,
-    SETTINGS_INSTALL_BASE, SETTINGS_INSTALLER, SETTINGS_MENU_COPY, SETTINGS_MENU_EDIT,
-    SETTINGS_MENU_REMOVE, SETTINGS_MENU_TOGGLE, SETTINGS_MENU_WEBSITE, SETTINGS_MORE_BASE,
-    SETTINGS_NAME, SETTINGS_PACKAGE, SETTINGS_RELEASE, SETTINGS_REMOVE_BASE, SETTINGS_SAVE,
-    SETTINGS_SCROLL, SETTINGS_SEARCH, SETTINGS_SEARCH_GO, SETTINGS_SWITCH_BASE, SETTINGS_TARGET,
+    SETTINGS_ACCOUNT_ADD_BASE, SETTINGS_ACCOUNT_REMOVE_BASE, SETTINGS_ADD, SETTINGS_CANCEL,
+    SETTINGS_DOCS, SETTINGS_EDIT_BASE, SETTINGS_ENV, SETTINGS_HOME, SETTINGS_INSTALL_BASE,
+    SETTINGS_INSTALLER, SETTINGS_MENU_COPY, SETTINGS_MENU_EDIT, SETTINGS_MENU_REMOVE,
+    SETTINGS_MENU_TOGGLE, SETTINGS_MENU_WEBSITE, SETTINGS_MORE_BASE, SETTINGS_NAME,
+    SETTINGS_PACKAGE, SETTINGS_RELEASE, SETTINGS_REMOVE_BASE, SETTINGS_SAVE, SETTINGS_SCROLL,
+    SETTINGS_SEARCH, SETTINGS_SEARCH_GO, SETTINGS_SWITCH_BASE, SETTINGS_TARGET,
     SETTINGS_TOGGLE_AVAILABLE, SETTINGS_TOGGLE_INSTALLED, Section,
 };
 use crate::settings_row::switch;
@@ -291,6 +292,12 @@ impl WorkspaceState {
             SETTINGS_SEARCH_GO if self.settings == Some(Section::McpServers) => {
                 let query = self.settings_servers.search.text().trim().to_owned();
                 self.search_tools(query);
+            }
+            _ if (SETTINGS_ACCOUNT_REMOVE_BASE..SETTINGS_ACCOUNT_ADD_BASE).contains(&number) => {
+                self.remove_account((number - SETTINGS_ACCOUNT_REMOVE_BASE) as usize);
+            }
+            _ if (SETTINGS_ACCOUNT_ADD_BASE..SETTINGS_ACCOUNT_ADD_BASE + 100).contains(&number) => {
+                self.add_account((number - SETTINGS_ACCOUNT_ADD_BASE) as usize);
             }
             _ if (SETTINGS_EDIT_BASE..SETTINGS_REMOVE_BASE).contains(&number) => {
                 let index = (number - SETTINGS_EDIT_BASE) as usize;
@@ -1124,6 +1131,10 @@ struct InstalledRow {
     place: Option<usize>,
     /// Whether it is switched on, when it can be switched.
     enabled: Option<bool>,
+    /// For an account, its place in the list of accounts.
+    account: Option<usize>,
+    /// For an agent, its place in the list of agents, which it adds accounts to.
+    adds_account: Option<usize>,
 }
 
 /// The rows of the servers already there: for the agents the ones the app ships, which cannot be changed, then the ones added by hand.
@@ -1140,13 +1151,41 @@ fn installed_rows(state: &WorkspaceState, section: Section, needle: &str) -> Vec
             .agents
             .iter()
             .enumerate()
-            .map(|(index, agent)| InstalledRow {
-                title: agent.name.clone(),
-                badges: Vec::new(),
-                description: String::new(),
-                detail: agent.command.clone(),
-                place: Some(index),
-                enabled: None,
+            .flat_map(|(index, agent)| {
+                let accounts = state
+                    .logins
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, (owner, _, _))| *owner == agent.id)
+                    .map(|(position, (_, id, name))| InstalledRow {
+                        title: name.clone(),
+                        badges: if state
+                            .in_use
+                            .iter()
+                            .any(|(owner, used)| *owner == agent.id && used == id)
+                        {
+                            vec![("In use", Role::Subtle)]
+                        } else {
+                            Vec::new()
+                        },
+                        description: String::new(),
+                        detail: format!("account of {}", agent.name),
+                        place: None,
+                        enabled: None,
+                        account: Some(position),
+                        adds_account: None,
+                    });
+                std::iter::once(InstalledRow {
+                    title: agent.name.clone(),
+                    badges: Vec::new(),
+                    description: String::new(),
+                    detail: agent.command.clone(),
+                    place: Some(index),
+                    enabled: None,
+                    account: None,
+                    adds_account: Some(index),
+                })
+                .chain(accounts)
             })
             .filter(matching)
             .collect(),
@@ -1171,6 +1210,8 @@ fn installed_rows(state: &WorkspaceState, section: Section, needle: &str) -> Vec
                 detail: reach_of(&tool.target, tool.env.len()),
                 place: Some(index),
                 enabled: Some(tool.enabled),
+                account: None,
+                adds_account: None,
             })
             .filter(matching)
             .collect(),
@@ -1353,6 +1394,28 @@ fn row(shown: InstalledRow) -> Node {
     let mut actions = node().styles([flex(), items_center(), gap(2), flex_none()]);
     if let (Some(place), Some(on)) = (shown.place, shown.enabled) {
         actions = actions.child(switch(on, FocusId(SETTINGS_SWITCH_BASE + place as u64)));
+    }
+    if let Some(agent) = shown.adds_account {
+        actions = actions.child(
+            Button::new(
+                "Add account",
+                FocusId(SETTINGS_ACCOUNT_ADD_BASE + agent as u64),
+            )
+            .variant(Variant::Outline)
+            .size(Size::Sm)
+            .build(),
+        );
+    }
+    if let Some(account) = shown.account {
+        actions = actions.child(
+            Button::new(
+                "Remove",
+                FocusId(SETTINGS_ACCOUNT_REMOVE_BASE + account as u64),
+            )
+            .variant(Variant::Ghost)
+            .size(Size::Sm)
+            .build(),
+        );
     }
     if let Some(place) = shown.place {
         actions = actions.child(

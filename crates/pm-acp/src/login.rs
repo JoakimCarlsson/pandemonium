@@ -18,6 +18,9 @@ const FETCH: Duration = Duration::from_secs(180);
 /// How long a login in a browser has to finish.
 const BROWSER: Duration = Duration::from_secs(300);
 
+/// How long a login in a terminal window has to finish.
+const TERMINAL_LOGIN: Duration = Duration::from_secs(600);
+
 /// The terminals tried when `TERMINAL` names none, with what each takes before the command.
 const TERMINALS: [(&str, &[&str]); 8] = [
     ("x-terminal-emulator", &["-e"]),
@@ -88,6 +91,9 @@ impl Agent {
 
 /// Runs `command`, with its environment, in a terminal window, and waits for the window to close.
 pub(crate) fn run_in_terminal(program: Command) -> Result<(), String> {
+    if cfg!(target_os = "macos") {
+        return run_in_terminal_app(&program);
+    }
     let wanted = std::env::var("TERMINAL").ok();
     let candidates = wanted
         .iter()
@@ -111,4 +117,66 @@ pub(crate) fn run_in_terminal(program: Command) -> Result<(), String> {
         }
     }
     Err("no terminal to log in with".to_owned())
+}
+
+/// Quotes `text` as one word of a shell script.
+fn shell_word(text: &std::ffi::OsStr) -> String {
+    format!("'{}'", text.to_string_lossy().replace('\'', "'\\''"))
+}
+
+/// Runs `program`, with its environment, in a Terminal window, and waits for it to finish.
+fn run_in_terminal_app(program: &Command) -> Result<(), String> {
+    let folder = std::env::home_dir()
+        .ok_or("no home folder to keep the login script in")?
+        .join(".cache/pandemonium");
+    std::os::unix::fs::DirBuilderExt::mode(std::fs::DirBuilder::new().recursive(true), 0o700)
+        .create(&folder)
+        .map_err(|error| error.to_string())?;
+    let script = folder.join(format!("login-{}.command", std::process::id()));
+    let finished = script.with_extension("done");
+    let mut words = vec!["env".to_owned()];
+    for (name, value) in program.get_envs() {
+        if let Some(value) = value {
+            let mut pair = name.to_os_string();
+            pair.push("=");
+            pair.push(value);
+            words.push(shell_word(&pair));
+        }
+    }
+    words.push(shell_word(program.get_program()));
+    words.extend(program.get_args().map(shell_word));
+    let lines = [
+        "#!/bin/sh".to_owned(),
+        words.join(" "),
+        format!("touch {}", shell_word(finished.as_os_str())),
+        "exit".to_owned(),
+    ];
+    let _ = std::fs::remove_file(&script);
+    let mut file = std::os::unix::fs::OpenOptionsExt::mode(
+        std::fs::OpenOptions::new().write(true).create_new(true),
+        0o700,
+    )
+    .open(&script)
+    .map_err(|error| error.to_string())?;
+    std::io::Write::write_all(&mut file, (lines.join("\n") + "\n").as_bytes())
+        .map_err(|error| error.to_string())?;
+    drop(file);
+    let opened = Command::new("open")
+        .arg("-a")
+        .arg("Terminal")
+        .arg(&script)
+        .status();
+    let outcome = match opened {
+        Ok(status) if status.success() => {
+            let deadline = std::time::Instant::now() + TERMINAL_LOGIN;
+            while !finished.exists() && std::time::Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(500));
+            }
+            Ok(())
+        }
+        _ => Err("could not open Terminal to log in with".to_owned()),
+    };
+    let _ = std::fs::remove_file(&script);
+    let _ = std::fs::remove_file(&finished);
+    outcome
 }

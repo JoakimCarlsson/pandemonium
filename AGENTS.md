@@ -109,6 +109,8 @@ One crate per layer, each depending only on the layers below it.
   `pm-git`,
   `pm-store` (persistence under the data directory). The server uses them; the
   window does not.
+- **Tools:** `pm-tools`: finds a program on the path and in the places tools install
+  themselves (nvm, Homebrew, go, cargo), for a window that was not started from a shell.
 - **Settings:** `pm-config`: what the window keeps of its own (how it opens,
   looks and draws shells and git marks, what it does when an agent finishes and
   the servers it knows), read from and written to one file. What a server acts

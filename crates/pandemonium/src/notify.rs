@@ -51,9 +51,34 @@ fn quoted(text: &str) -> String {
     text.replace('\\', "\\\\").replace('"', "'")
 }
 
+/// The bundle identifier of the app this program runs inside, read from its `Info.plist`, or `None` when it runs outside a bundle.
+#[cfg(target_os = "macos")]
+fn bundle_identifier() -> Option<String> {
+    let executable = std::env::current_exe().ok()?;
+    let contents = executable.parent()?.parent()?;
+    let plist = std::fs::read_to_string(contents.join("Info.plist")).ok()?;
+    let after_key = plist.split("<key>CFBundleIdentifier</key>").nth(1)?;
+    let value = after_key.split("<string>").nth(1)?.split("</string>").next()?;
+    Some(value.trim().to_owned())
+}
+
+/// Shows a notification from this app's own bundle, and says whether macOS took it.
+#[cfg(target_os = "macos")]
+fn show_from_bundle(title: &str, body: &str) -> bool {
+    let Some(identifier) = bundle_identifier() else {
+        return false;
+    };
+    let _ = mac_notification_sys::set_application(&identifier);
+    mac_notification_sys::send_notification(title, None, body, None).is_ok()
+}
+
 /// Shows a notification of the desktop's own saying `title`, with `body` under it.
 fn show(title: &str, body: &str) {
     if cfg!(target_os = "macos") {
+        #[cfg(target_os = "macos")]
+        if show_from_bundle(title, body) {
+            return;
+        }
         let script = format!(
             "display notification \"{}\" with title \"{}\"",
             quoted(body),

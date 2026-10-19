@@ -482,8 +482,15 @@ impl App {
                 &mut self.shaper,
                 &mut self.list,
             );
-            self.focus
-                .set_order(self.output.regions.iter().map(|region| region.id).collect());
+            let held_by_aside = self.focus.current().filter(|id| asides::is_aside(*id));
+            self.focus.set_order(
+                self.output
+                    .regions
+                    .iter()
+                    .map(|region| region.id)
+                    .chain(held_by_aside)
+                    .collect(),
+            );
             if std::mem::take(&mut self.focus_terminal) {
                 self.focus.focus(TERMINAL_BODY);
             }

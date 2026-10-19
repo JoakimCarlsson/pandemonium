@@ -220,6 +220,8 @@ pub enum Shot {
     SettingsMcp,
     /// The settings panel on the Agent Servers inside Agents, with the form for adding one open.
     SettingsForm,
+    /// The settings panel on the Agent Servers inside Agents, with two accounts added to the first agent.
+    SettingsAccounts,
     /// The same panel waiting for the accounts and organizations to clone from.
     Loading,
     /// The same panel on the accounts and organizations to clone from.
@@ -1599,6 +1601,7 @@ impl Shot {
                 | Self::SettingsCompact(_)
                 | Self::SettingsMcp
                 | Self::SettingsForm
+                | Self::SettingsAccounts
         )
     }
 
@@ -1629,6 +1632,7 @@ impl Shot {
             "machine" => Some(Self::SettingsMachine(narrow)),
             "compact" => Some(Self::SettingsCompact(narrow)),
             "form" => Some(Self::SettingsForm),
+            "accounts" => Some(Self::SettingsAccounts),
             "mcp" => Some(Self::SettingsMcp),
             slug => SETTINGS_SHOTS
                 .iter()
@@ -2056,6 +2060,21 @@ impl Shot {
                     .after(Section::AgentServers.id())
                     .after(SETTINGS_ADD),
             ),
+            Self::SettingsAccounts => {
+                let agent = welcome().agent_id_at(0).unwrap_or_default();
+                Screen::Workspace(
+                    welcome()
+                        .after(SETTINGS)
+                        .after(Section::AgentServers.id())
+                        .with_accounts(
+                            vec![
+                                (agent.clone(), "a1".to_owned(), "work@example.com".to_owned()),
+                                (agent.clone(), "a2".to_owned(), "Account 2".to_owned()),
+                            ],
+                            vec![(agent, "a1".to_owned())],
+                        ),
+                )
+            }
             Self::Adding => Screen::Workspace(welcome().after(ADD_PROJECT)),
             Self::Loading => Screen::Workspace(welcome().after(ADD_PROJECT).after(ADDER_CLONE)),
             Self::Owning => Screen::Workspace(
