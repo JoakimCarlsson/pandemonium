@@ -23,7 +23,7 @@ impl Window {
     /// A frame with nothing in it.
     pub fn new() -> Self {
         Self {
-            body: node().styles([flex_1(), min_h(0), w_full()]),
+            body: node().styles([flex(), flex_col(), flex_1(), min_h(0), w_full()]),
             over: Vec::new(),
         }
     }
