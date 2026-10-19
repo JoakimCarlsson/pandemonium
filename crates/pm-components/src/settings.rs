@@ -8,6 +8,7 @@ use pm_style::{
 };
 use pm_ui::{Node, node};
 
+use crate::input::Input;
 use crate::parts::{clipped, glyph, line};
 use crate::settings_servers;
 use crate::size::Size;
@@ -410,7 +411,7 @@ fn navigation(state: &WorkspaceState, showing: Section, folded: bool, width: f32
         .styles([flex(), items_center(), gap(1), flex_none(), pb(2)])
         .child(
             node().styles([flex_1(), min_w_px(0)]).child(
-                crate::search_box::SearchBox::new(&state.settings_page.find, SETTINGS_FIND)
+                Input::search(&state.settings_page.find, SETTINGS_FIND)
                     .size(Size::Sm)
                     .placeholder("Search settings")
                     .build(),

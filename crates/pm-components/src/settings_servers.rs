@@ -1046,7 +1046,7 @@ fn search_box(state: &WorkspaceState, section: Section) -> Node {
         Section::AgentServers => "Search agents",
         _ => "Search MCP servers; Enter searches the registry",
     };
-    crate::search_box::SearchBox::new(&state.settings_servers.search, SETTINGS_SEARCH)
+    Input::search(&state.settings_servers.search, SETTINGS_SEARCH)
         .size(Size::Lg)
         .placeholder(placeholder)
         .build()

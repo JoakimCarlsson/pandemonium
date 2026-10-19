@@ -214,7 +214,7 @@ pub fn picker_list(
     if options.len() >= FILTERED_FROM {
         list = list.child(
             node().styles([flex_none(), p(1)]).child(
-                crate::search_box::SearchBox::new(filter.0, filter.1)
+                Input::search(filter.0, filter.1)
                     .size(Size::Sm)
                     .placeholder("Type to narrow the list")
                     .build(),
