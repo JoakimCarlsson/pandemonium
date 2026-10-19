@@ -2351,6 +2351,8 @@ fn queued() -> WorkspaceState {
         text: text.to_owned(),
         files: files.iter().map(|name| (*name).to_owned()).collect(),
     };
+    let state = live(Turn::Working);
+    let session = state.sessions.len() - 1;
     [
         waiting(1, "Then add a test for the clamp", &[]),
         waiting(
@@ -2360,7 +2362,7 @@ fn queued() -> WorkspaceState {
         ),
     ]
     .into_iter()
-    .fold(live(Turn::Working), |state, event| state.heard(0, event))
+    .fold(state, |state, event| state.heard(session, event))
     .edited(
         PROMPT,
         Edit::Paste("Stop, the clamp lives in pm-ui".to_owned()),

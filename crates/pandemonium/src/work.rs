@@ -743,6 +743,14 @@ impl Work {
                         Pending::Nothing,
                     );
                 }
+                Outgoing::RemoveQueued { session, queued } => self.ask_session(
+                    session,
+                    |number| Request::RemoveQueued {
+                        session: number,
+                        queued,
+                    },
+                    Pending::Nothing,
+                ),
                 Outgoing::Hurry { session, queued } => self.ask_session(
                     session,
                     |number| Request::Hurry {

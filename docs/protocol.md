@@ -109,6 +109,7 @@ request with exactly one `response` carrying the same `id`.
 | `sign_in`      | `agent`                                                                                          | `done`          |
 | `start_session`| `agent`, `repository`, `directory`, `title`, `base`, `settings`, `text`, `attachments`           | `started`       |
 | `prompt`       | `session`, `text`, `attachments`, `now` (optional, `false` by default)                           | `done`          |
+| `remove_queued` | `session`, `queued`                                                                            | `done`          |
 | `hurry`        | `session`, `queued`                                                                              | `done`          |
 | `rewind`       | `session`, `turn`                                                                                | `done`          |
 | `restore`      | `session`, `turn`                                                                                | `done`          |
@@ -260,6 +261,10 @@ request with exactly one `response` carrying the same `id`.
 - **`hurry`:** moves the queued prompt whose `Queued` event gave it the id
   `queued` to the front of the queue and stops the running turn, as `now`
   does for a new prompt. Fails when no prompt waits under that id.
+- **`remove_queued`:** discards the waiting prompt identified by `queued` and
+  deletes its uploaded files. Announces `Unqueued` so connected and reconnecting
+  clients remove the row. Other waiting prompts keep their order. If the prompt
+  has already left the queue, succeeds without doing anything.
 - **`rewind`:** takes the conversation back to before the reader's turn
   `turn`, counted from 0 among the `Prompted` events a rewind has not
   dropped. The turn and everything after it are dropped, announced with a
