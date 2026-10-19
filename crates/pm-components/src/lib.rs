@@ -16,6 +16,7 @@ pub mod assist;
 pub mod avatar;
 pub mod branch_menu;
 pub mod button;
+pub mod card;
 pub mod change_list;
 pub mod changes;
 pub mod chat;
@@ -113,6 +114,7 @@ pub mod window;
 
 pub use avatar::Avatar;
 pub use button::Button;
+pub use card::Card;
 pub use changes::Changes;
 pub use checkbox::Checkbox;
 pub use chip::Chip;

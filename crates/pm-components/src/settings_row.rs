@@ -13,6 +13,7 @@ use pm_ui::{Node, node};
 use crate::input::Input;
 use crate::parts::{clipped, glyph, line, wrap};
 use crate::size::Size;
+use crate::tile::Tile;
 
 /// The room between what a setting says and its control, in logical pixels.
 const ROW_GAP: f32 = 24.0;
@@ -88,22 +89,12 @@ pub fn choices(names: &[&str], picked: usize, id_of: impl Fn(usize) -> FocusId) 
         ])
         .children(names.iter().enumerate().map(|(option, name)| {
             let on = option == picked;
-            node()
-                .styles([
-                    flex(),
-                    items_center(),
-                    justify_center(),
-                    h(6.5),
-                    px(2.5),
-                    rounded(Radius::Sm),
-                    cursor_pointer(),
-                ])
-                .styles([if on {
-                    bg(Role::SurfaceSelected)
-                } else {
-                    bg(Role::SurfaceHover).hover()
-                }])
-                .focusable(id_of(option))
+            Tile::new(id_of(option))
+                .selected(on)
+                .height(6.5)
+                .radius(Radius::Sm)
+                .build()
+                .styles([justify_center(), px(2.5)])
                 .child(line(
                     *name,
                     12,
@@ -223,23 +214,13 @@ pub fn picker_list(
     }
     list = list.children(shown.into_iter().take(MOST_LISTED).map(|(place, name)| {
         let on = Some(place) == picked;
-        node()
-            .styles([
-                flex(),
-                items_center(),
-                justify_between(),
-                gap(2),
-                h(7),
-                px(2),
-                rounded(Radius::Sm),
-                cursor_pointer(),
-            ])
-            .styles([if on {
-                bg(Role::SurfaceSelected)
-            } else {
-                bg(Role::SurfaceHover).hover()
-            }])
-            .focusable(id_of(place))
+        Tile::new(id_of(place))
+            .selected(on)
+            .height(7.0)
+            .gap(2.0)
+            .radius(Radius::Sm)
+            .build()
+            .styles([justify_between(), px(2)])
             .child(clipped(
                 name.as_str(),
                 12,

@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
-    Color, Role, bg, cursor_pointer, flex, flex_1, flex_col, font_mono, gap, h, items_center,
-    min_w_px, overflow_hidden, pl, pr, truncate,
+    Color, Radius, Role, flex, flex_1, flex_col, font_mono, gap, h, items_center, min_w_px,
+    overflow_hidden, pl, pr, truncate,
 };
 use pm_ui::{Node, node};
 
@@ -16,6 +16,7 @@ use crate::file_icon::{file_icon, folder_icon};
 use crate::parts::{glyph, line};
 use crate::size::Size;
 use crate::state::{TREE_BASE, WorkspaceState};
+use crate::tile::Tile;
 use crate::tree::{Entry, Layout, build, folders};
 use crate::tree_actions::{ENTRY_FIELD, Naming, TREE_FILE_BASE};
 
@@ -108,29 +109,24 @@ fn row(
         None => node().styles([pm_style::size(3.5)]),
     };
     let tone = changed.tone.unwrap_or_else(|| Color::from(Role::Text));
-    let mut styles = vec![
-        flex(),
-        items_center(),
-        gap(1.5),
-        h(6),
-        pl(3.0 + depth as f32 * INDENT),
-        pr(3),
-        cursor_pointer(),
-    ];
-    styles.push(if selected {
-        bg(Role::SurfaceSelected)
-    } else {
-        bg(Role::SurfaceHover).hover()
-    });
-    let mut row = node().styles(styles).child(chevron).child(icon).child(
-        node()
-            .styles([flex_1(), min_w_px(0), overflow_hidden()])
-            .child(line(name, 13, 1.4, tone).styles([truncate()])),
-    );
+    let mut row = Tile::new(id)
+        .selected(selected)
+        .height(6.0)
+        .gap(1.5)
+        .radius(Radius::Sm)
+        .build()
+        .styles([pl(3.0 + depth as f32 * INDENT), pr(3)])
+        .child(chevron)
+        .child(icon)
+        .child(
+            node()
+                .styles([flex_1(), min_w_px(0), overflow_hidden()])
+                .child(line(name, 13, 1.4, tone).styles([truncate()])),
+        );
     if let Some(letter) = changed.letter {
         row = row.child(line(letter, 11, 1.4, tone).styles([font_mono()]));
     }
-    row.focusable(id)
+    row
 }
 
 /// The field a name is typed into where its row will be, `depth` levels down, with what is wrong with the name under it.

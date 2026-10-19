@@ -3,9 +3,8 @@
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
-    Color, Role, bg, cursor_pointer, flex, flex_1, flex_none, font_mono, gap, h, items_center,
-    justify_between, leading_ratio, min_w_px, overflow_hidden, pb, pl, pr, pt, text_color, text_px,
-    truncate,
+    Color, Radius, Role, flex, flex_1, flex_none, font_mono, items_center, justify_between,
+    leading_ratio, min_w_px, overflow_hidden, pb, pl, pr, pt, text_color, text_px, truncate,
 };
 use pm_ui::{Node, node, text};
 use std::collections::HashSet;
@@ -16,6 +15,7 @@ use crate::parts::{glyph, line};
 use crate::sample::{Change, Session};
 use crate::size::Size;
 use crate::state::{FILE_BASE, FOLDER_BASE, FOLDER_STAGE_BASE, STAGE_BASE, WorkspaceState};
+use crate::tile::Tile;
 use crate::tree::{Entry, Folder, Layout, build, folders};
 use crate::{Button, Checkbox, Tally};
 
@@ -214,23 +214,18 @@ fn file_row(
 ) -> Node {
     let letter = change.mark();
     let tone = mark_color(letter);
-    let mut styles = vec![
-        flex(),
-        items_center(),
-        gap(2),
-        h(6.5),
-        pl(3.0 + depth as f32 * INDENT + FILE_OFFSET),
-        pr(3),
-        flex_none(),
-        overflow_hidden(),
-        cursor_pointer(),
-        bg(Role::SurfaceHover).hover(),
-    ];
-    if state.git.marked.contains(&index) {
-        styles.push(bg(Role::SurfaceSelected));
-    }
-    node()
-        .styles(styles)
+    Tile::new(FocusId(FILE_BASE + index as u64))
+        .selected(state.git.marked.contains(&index))
+        .height(6.5)
+        .gap(2.0)
+        .radius(Radius::Sm)
+        .build()
+        .styles([
+            pl(3.0 + depth as f32 * INDENT + FILE_OFFSET),
+            pr(3),
+            flex_none(),
+            overflow_hidden(),
+        ])
         .child(file_icon(name, 3.5))
         .child(
             node()
@@ -255,7 +250,6 @@ fn file_row(
         .children(
             (!change.conflicted).then(|| staged_box(change, FocusId(STAGE_BASE + index as u64))),
         )
-        .focusable(FocusId(FILE_BASE + index as u64))
 }
 
 /// The row of a folder, `depth` levels down, open or folded: a chevron, the box that stages everything in it, its name and what it changed.
@@ -275,18 +269,12 @@ fn folder_row(
     let partly = inside.iter().any(|&index| changes[index].staged);
     let added = inside.iter().map(|&index| changes[index].added()).sum();
     let removed = inside.iter().map(|&index| changes[index].removed()).sum();
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            gap(2),
-            h(6.5),
-            pl(3.0 + depth as f32 * INDENT),
-            pr(3),
-            flex_none(),
-            cursor_pointer(),
-            bg(Role::SurfaceHover).hover(),
-        ])
+    Tile::new(FocusId(FOLDER_BASE + position as u64))
+        .height(6.5)
+        .gap(2.0)
+        .radius(Radius::Sm)
+        .build()
+        .styles([pl(3.0 + depth as f32 * INDENT), pr(3), flex_none()])
         .child(glyph(
             if open {
                 IconName::ChevronDown
@@ -310,7 +298,6 @@ fn folder_row(
                 .child(line(&folder.name, 13, 1.4, Role::Text).styles([truncate()])),
         )
         .child(Tally::new(added, removed).size(11).build())
-        .focusable(FocusId(FOLDER_BASE + position as u64))
 }
 
 /// The rows of `entries` and of everything in their open folders, `depth` levels down; `counter` numbers the folders across the groups as [`folder_table`] does.

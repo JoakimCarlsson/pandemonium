@@ -3,9 +3,9 @@
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
-    Radius, Role, bg, border, border_b, border_color, cursor_pointer, flex, flex_1, flex_col,
-    flex_none, font_medium, gap, h, items_center, min_h, min_w_px, overflow_hidden, pb, pt, px,
-    rounded, text_px, truncate, w_px,
+    Radius, Role, bg, border, border_b, border_color, flex, flex_1, flex_col, flex_none,
+    font_medium, gap, h, items_center, min_h, min_w_px, overflow_hidden, pb, pt, px, rounded,
+    text_px, truncate, w_px,
 };
 use pm_ui::{Node, node};
 
@@ -15,6 +15,7 @@ use crate::parts::{clipped, glyph, line};
 use crate::sample::Session;
 use crate::size::Size;
 use crate::state::{HISTORY_SEARCH, SESSION_BASE, WorkspaceState};
+use crate::tile::Tile;
 
 /// How wide the search box is.
 const SEARCH_WIDTH: f32 = 500.0;
@@ -155,17 +156,10 @@ fn row(state: &WorkspaceState, index: usize) -> Node {
     let session: &Session = &state.sessions[index];
     let project = &state.projects[session.project];
     let agent = state.agent_look(session.agent);
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            gap(3),
-            h(12),
-            px(3),
-            rounded(Radius::Md),
-            cursor_pointer(),
-            bg(Role::SurfaceHover).hover(),
-        ])
+    Tile::new(FocusId(SESSION_BASE + index as u64))
+        .height(12.0)
+        .build()
+        .styles([px(3)])
         .child(
             node()
                 .styles([flex(), items_center(), gap(2), flex_1(), min_w_px(0)])
@@ -185,7 +179,6 @@ fn row(state: &WorkspaceState, index: usize) -> Node {
         ))
         .child(column(&session.branch, BRANCH_WIDTH))
         .child(column(&session.age(), AGE_WIDTH).styles([pm_style::justify_end()]))
-        .focusable(FocusId(SESSION_BASE + index as u64))
 }
 
 /// A cell `width` pixels wide holding `content`, cut short at its edge.
