@@ -7,16 +7,7 @@ use pm_style::{
 use pm_ui::{Node, node, text};
 
 use crate::Project;
-
-/// How big an avatar is.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Size {
-    /// A 20px square with a 13px letter: sits in a row.
-    #[default]
-    Default,
-    /// A 32px square with an 18px letter: stands on its own.
-    Lg,
-}
+use crate::size::Size;
 
 /// An avatar being described: the letter it shows, its colour and its size.
 ///
@@ -42,7 +33,7 @@ impl Avatar {
                 .map(|initial| initial.to_uppercase().to_string())
                 .unwrap_or_default(),
             color,
-            size: Size::Default,
+            size: Size::Sm,
         }
     }
 
@@ -51,7 +42,7 @@ impl Avatar {
         Self::new(&project.name, project.color())
     }
 
-    /// The avatar at `size`.
+    /// The avatar at `size`: a square 20, 24 or 32px on a side.
     pub fn size(mut self, size: Size) -> Self {
         self.size = size;
         self
@@ -60,7 +51,8 @@ impl Avatar {
     /// The node that draws the avatar.
     pub fn build(self) -> Node {
         let (side, font) = match self.size {
-            Size::Default => (5.0, 13),
+            Size::Sm => (5.0, 13),
+            Size::Md => (6.0, 15),
             Size::Lg => (8.0, 18),
         };
         node()

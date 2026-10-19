@@ -12,15 +12,16 @@ use pm_ui::{Node, node, text};
 
 use crate::composer::composer;
 use crate::parts::line;
+use crate::size::Size;
 use crate::state::{ADD_PROJECT, AGENT_BASE, REVIEW, WorkspaceState};
-use crate::{Button, Chip, chip};
+use crate::{Button, Chip};
 
 /// A chip naming one agent, filled while it is the one chosen.
 fn chip(state: &WorkspaceState, index: usize) -> Node {
     let agent = state.agent_look(index);
     Chip::new(agent.name, FocusId(AGENT_BASE + index as u64))
         .icon(agent.icon)
-        .size(chip::Size::Md)
+        .size(Size::Md)
         .selected(index == state.agent)
         .build()
 }

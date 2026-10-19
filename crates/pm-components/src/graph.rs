@@ -13,12 +13,12 @@ use pm_ui::{Node, node, text};
 
 use crate::Button;
 use crate::Sash;
-use crate::button::Size;
 use crate::git_controls::{
     CHANGES_REFRESH, GRAPH_FETCH, GRAPH_PULL, GRAPH_PUSH, GRAPH_REFS, GRAPH_SASH, GRAPH_SCROLL,
     GRAPH_TARGET, GRAPH_TOGGLE,
 };
 use crate::parts::{glyph, line, spacer};
+use crate::size::Size;
 use crate::state::WorkspaceState;
 use pm_input::FocusId;
 
@@ -271,7 +271,7 @@ pub fn graph(state: &WorkspaceState) -> Node {
                 },
                 GRAPH_TOGGLE,
             )
-            .size(Size::Icon)
+            .size(Size::Sm)
             .build()
             .tooltip(if open {
                 "Collapse Graph"
@@ -284,31 +284,31 @@ pub fn graph(state: &WorkspaceState) -> Node {
         .child(refs_button(git.graph_all).tooltip("Choose history references"))
         .child(
             Button::icon(IconName::Target, GRAPH_TARGET)
-                .size(Size::Icon)
+                .size(Size::Sm)
                 .build()
                 .tooltip("Go to current history item"),
         )
         .child(
             Button::icon(IconName::GitFetch, GRAPH_FETCH)
-                .size(Size::Icon)
+                .size(Size::Sm)
                 .build()
                 .tooltip("Fetch from all remotes"),
         )
         .child(
             Button::icon(IconName::GitPull, GRAPH_PULL)
-                .size(Size::Icon)
+                .size(Size::Sm)
                 .build()
                 .tooltip("Pull"),
         )
         .child(
             Button::icon(IconName::GitPush, GRAPH_PUSH)
-                .size(Size::Icon)
+                .size(Size::Sm)
                 .build()
                 .tooltip("Push"),
         )
         .child(
             Button::icon(IconName::Refresh, CHANGES_REFRESH)
-                .size(Size::Icon)
+                .size(Size::Sm)
                 .spinning(git.working)
                 .build()
                 .tooltip("Refresh"),

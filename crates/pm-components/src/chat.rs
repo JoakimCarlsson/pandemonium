@@ -15,7 +15,7 @@ use crate::Button;
 use crate::Markdown;
 use crate::Tally;
 use crate::activity::activity;
-use crate::button::{Size, Variant};
+use crate::button::Variant;
 use crate::composer::composer;
 use crate::input;
 use crate::inquiry::{answered, inquiry};
@@ -23,6 +23,7 @@ use crate::parts::{clipped, glyph, line, spacer, wrap};
 use crate::queued::queued;
 use crate::sample::{Session, Status};
 use crate::sidebar::status_icon;
+use crate::size::Size;
 use crate::state::{
     CHAT_SCROLL, CHAT_TEXT, COPY_BASE, DETAILS_BASE, FORK_BASE, KEEP_FILES, LINK_BASE,
     LINKS_PER_PIECE, LINKS_PER_REPLY, OPEN_DIFF, RESTORE_BASE, RESTORE_FILES, REVIEW, REWIND_BASE,

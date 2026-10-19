@@ -13,9 +13,10 @@ use pm_style::{
 use pm_text::{Edit, Field};
 use pm_ui::{Node, node, text};
 
-use crate::button::{Button, Size, Variant};
-use crate::input::{Input, Size as InputSize};
+use crate::button::{Button, Variant};
+use crate::input::Input;
 use crate::parts::line;
+use crate::size::Size;
 use crate::state::WorkspaceState;
 
 /// The field the text looked for is typed in.
@@ -304,7 +305,7 @@ pub(crate) fn switch(label: &str, id: FocusId, on: bool) -> Node {
 fn icon_button(icon: IconName, id: FocusId) -> Node {
     Button::icon(icon, id)
         .variant(Variant::Ghost)
-        .size(Size::Icon)
+        .size(Size::Sm)
         .build()
 }
 
@@ -341,7 +342,7 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) -> Node
         .child(
             node().styles([w_px(220.0), flex_none()]).child(
                 Input::new(&finding.query, FIND_FIELD)
-                    .size(InputSize::Sm)
+                    .size(Size::Sm)
                     .placeholder("Find")
                     .invalid(found.is_err())
                     .build(),
@@ -384,7 +385,7 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) -> Node
                 .child(
                     node().styles([w_px(220.0), flex_none()]).child(
                         Input::new(&finding.replacement, REPLACE_FIELD)
-                            .size(InputSize::Sm)
+                            .size(Size::Sm)
                             .placeholder("Replace")
                             .build(),
                     ),

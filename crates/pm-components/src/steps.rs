@@ -12,12 +12,13 @@ use pm_style::{
 use pm_ui::{Node, node, text};
 
 use crate::Button;
-use crate::button::{Size, Variant};
+use crate::button::Variant;
 use crate::diff::diff_line;
 use crate::diff_syntax::DiffColours;
 use crate::file_icon::{file_icon, file_language};
 use crate::parts::{clipped, glyph, line, wrap};
 use crate::sample::{DiffLine, Kind, Step, ToolUse};
+use crate::size::Size;
 use crate::state::{CHOICE_BASE, STEP_BASE};
 use crate::{CodeBox, Tally};
 

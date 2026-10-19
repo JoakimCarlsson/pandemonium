@@ -4,9 +4,9 @@ use pm_input::FocusId;
 use pm_style::{Role, flex, flex_col, gap, items_center, p, pb, px};
 use pm_ui::{Node, node};
 
-use crate::button::{Size, Variant};
-use crate::input::Size as InputSize;
+use crate::button::Variant;
 use crate::parts::{line, spacer, wrap};
+use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
 use crate::tree_actions::{EntryChange, TreeTarget, name_of};
 use crate::{Button, Input, Modal};
@@ -294,7 +294,7 @@ fn naming_box(
                 .child(
                     Input::new(field, id)
                         .placeholder(placeholder)
-                        .size(InputSize::Default)
+                        .size(Size::Md)
                         .build(),
                 ),
         )

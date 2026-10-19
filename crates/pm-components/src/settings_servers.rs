@@ -12,8 +12,8 @@ use pm_text::{Edit, Field};
 use pm_ui::{Node, node};
 
 use crate::Button;
-use crate::button::{Size, Variant};
-use crate::input::{self, Input};
+use crate::button::Variant;
+use crate::input::Input;
 use crate::menu::Menu;
 use crate::parts::{clipped, glyph, line, wrap};
 use crate::settings::{
@@ -25,6 +25,7 @@ use crate::settings::{
     SETTINGS_TOGGLE_AVAILABLE, SETTINGS_TOGGLE_INSTALLED, Section,
 };
 use crate::settings_row::switch;
+use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
 use crate::tile::Tile;
 
@@ -1046,7 +1047,7 @@ fn search_box(state: &WorkspaceState, section: Section) -> Node {
         _ => "Search MCP servers; Enter searches the registry",
     };
     crate::search_box::SearchBox::new(&state.settings_servers.search, SETTINGS_SEARCH)
-        .size(crate::search_box::Size::Lg)
+        .size(Size::Lg)
         .placeholder(placeholder)
         .build()
 }
@@ -1377,7 +1378,7 @@ fn row(shown: InstalledRow) -> Node {
     if let Some(place) = shown.place {
         actions = actions.child(
             Button::icon(IconName::More, FocusId(SETTINGS_MORE_BASE + place as u64))
-                .size(Size::Icon)
+                .size(Size::Sm)
                 .build(),
         );
     }
@@ -1483,7 +1484,7 @@ fn labelled(label: &str, field: &Field, id: FocusId, placeholder: &str) -> Node 
         .child(line(label, 12, 1.4, Role::Muted))
         .child(
             Input::new(field, id)
-                .size(input::Size::Sm)
+                .size(Size::Sm)
                 .placeholder(placeholder)
                 .build(),
         )

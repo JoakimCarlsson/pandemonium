@@ -9,9 +9,9 @@ use pm_ui::{Node, node};
 
 use crate::Input;
 use crate::git_controls::{BRANCH_BODY, BRANCH_CREATE, BRANCH_FILTER, BRANCH_PICK_BASE};
-use crate::input::Size;
 use crate::parts::line;
 use crate::popover::{Popover, row};
+use crate::size::Size;
 use crate::state::WorkspaceState;
 
 /// How far down the panel the list starts, which is under the row of the branch, in logical pixels.

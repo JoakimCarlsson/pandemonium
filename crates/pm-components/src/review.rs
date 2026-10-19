@@ -12,7 +12,6 @@ use pm_text::Shaper;
 use pm_ui::{Node, node};
 
 use crate::branch_menu::branch_menu;
-use crate::button::Size;
 use crate::git_controls::{
     BRANCH_BUTTON, CHANGES_MORE, CHANGES_REFRESH, CHANGES_TOGGLE, COMMIT_CHEVRON, Primary,
     TROUBLE_DISMISS,
@@ -20,6 +19,7 @@ use crate::git_controls::{
 use crate::graph::graph;
 use crate::parts::{clipped, glyph, line, spacer, wrap};
 use crate::sample::Session;
+use crate::size::Size;
 use crate::state::{
     COMMIT, COMMIT_MESSAGE, OPEN_DIFF, REVIEW_CHANGES, REVIEW_FILES, ReviewTab, TREE_SCROLL,
     WorkspaceState,
@@ -103,26 +103,26 @@ fn files_header(state: &WorkspaceState) -> Node {
         .child(line("Files", 13, 1.4, Role::Subtle).styles([pm_style::flex_1()]))
         .child(
             Button::icon(IconName::FilePlus, TREE_NEW_FILE)
-                .size(Size::Icon)
+                .size(Size::Sm)
                 .build()
                 .tooltip("New File…"),
         )
         .child(
             Button::icon(IconName::FolderPlus, TREE_NEW_FOLDER)
-                .size(Size::Icon)
+                .size(Size::Sm)
                 .build()
                 .tooltip("New Folder…"),
         )
         .child(
             Button::icon(IconName::Refresh, TREE_REFRESH)
-                .size(Size::Icon)
+                .size(Size::Sm)
                 .spinning(state.git.working)
                 .build()
                 .tooltip("Refresh"),
         )
         .child(
             Button::icon(IconName::Collapse, TREE_COLLAPSE)
-                .size(Size::Icon)
+                .size(Size::Sm)
                 .build()
                 .tooltip("Collapse Folders"),
         )
@@ -282,21 +282,21 @@ fn section_heading(state: &WorkspaceState, primary: &Primary) -> Node {
         )
         .child(
             Button::icon(IconName::GitCommit, COMMIT)
-                .size(Size::Icon)
+                .size(Size::Sm)
                 .disabled(!committable)
                 .build()
                 .tooltip("Commit"),
         )
         .child(
             Button::icon(IconName::Refresh, CHANGES_REFRESH)
-                .size(Size::Icon)
+                .size(Size::Sm)
                 .spinning(state.git.working)
                 .build()
                 .tooltip("Refresh"),
         )
         .child(
             Button::icon(IconName::More, CHANGES_MORE)
-                .size(Size::Icon)
+                .size(Size::Sm)
                 .build()
                 .tooltip("More Actions…"),
         )
@@ -325,7 +325,7 @@ fn trouble(said: &str, width: f32) -> Node {
             )
             .child(
                 Button::icon(IconName::Close, TROUBLE_DISMISS)
-                    .size(Size::Icon)
+                    .size(Size::Sm)
                     .build(),
             ),
     )

@@ -11,18 +11,7 @@ use pm_ui::{Node, node};
 
 use crate::input::{self, Input};
 use crate::parts::glyph;
-
-/// How big a search box is.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Size {
-    /// 32px tall, for a narrow column.
-    Sm,
-    /// 36px tall.
-    #[default]
-    Default,
-    /// 40px tall, heading a page.
-    Lg,
-}
+use crate::size::Size;
 
 /// A search box being described: the line it edits, the name it answers to, what it says while empty and how big it is.
 ///
@@ -47,7 +36,7 @@ impl<'a> SearchBox<'a> {
             field,
             id,
             placeholder: "",
-            size: Size::Default,
+            size: Size::Md,
         }
     }
 
@@ -67,7 +56,7 @@ impl<'a> SearchBox<'a> {
     pub fn build(self) -> Node {
         let (height, inset) = match self.size {
             Size::Sm => (8, 2),
-            Size::Default => (9, 3),
+            Size::Md => (9, 3),
             Size::Lg => (10, 3),
         };
         node()
@@ -88,7 +77,7 @@ impl<'a> SearchBox<'a> {
             .child(
                 Input::new(self.field, self.id)
                     .variant(input::Variant::Ghost)
-                    .size(input::Size::Sm)
+                    .size(Size::Sm)
                     .placeholder(self.placeholder)
                     .build(),
             )

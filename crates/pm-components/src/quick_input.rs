@@ -10,12 +10,13 @@ use pm_style::{
 use pm_ui::{Node, node, text};
 
 use crate::assist::listing_cells;
-use crate::input::{Input, Size as InputSize};
+use crate::input::Input;
 use crate::listing::{
     Destination, Items, LISTING_BODY, LISTING_FILTER, LISTING_ROW_BASE, LISTING_WIDTH, Listing,
     Quick, line_named, matched_characters, task_title,
 };
 use crate::parts::{glyph, line};
+use crate::size::Size;
 use pm_icon::IconName;
 
 /// How many rows the quick input shows at once.
@@ -35,7 +36,7 @@ pub fn quick_input(listing: &Listing) -> Node {
     let field = listing.items.filter().map(|filter| {
         node().styles([px(1.5), pt(1.5), pb(1)]).child(
             Input::new(filter, LISTING_FILTER)
-                .size(InputSize::Sm)
+                .size(Size::Sm)
                 .placeholder(listing.items.placeholder())
                 .build()
                 .styles([h_px(FIELD_HEIGHT)]),

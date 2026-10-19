@@ -10,12 +10,13 @@ use pm_text::{Edit, Field};
 use pm_ui::{Node, node};
 
 use crate::Button;
-use crate::button::{Size, Variant};
-use crate::input::{self, Input};
+use crate::button::Variant;
+use crate::input::Input;
 use crate::parts::{clipped, line};
 use crate::settings::Section;
 use crate::settings_pages::page_rows;
 use crate::settings_row::choices;
+use crate::size::Size;
 use crate::state::WorkspaceState;
 
 /// Opens the form for adding a server.
@@ -206,7 +207,7 @@ fn labelled(label: &str, field: &Field, id: FocusId, placeholder: &str) -> Node 
         .child(line(label, 12, 1.4, Role::Muted))
         .child(
             Input::new(field, id)
-                .size(input::Size::Sm)
+                .size(Size::Sm)
                 .placeholder(placeholder)
                 .build(),
         )

@@ -10,6 +10,7 @@ use pm_ui::{Node, node};
 
 use crate::parts::{clipped, glyph, line};
 use crate::settings_servers;
+use crate::size::Size;
 use crate::state::WorkspaceState;
 use crate::tile::Tile;
 
@@ -410,7 +411,7 @@ fn navigation(state: &WorkspaceState, showing: Section, folded: bool, width: f32
         .child(
             node().styles([flex_1(), min_w_px(0)]).child(
                 crate::search_box::SearchBox::new(&state.settings_page.find, SETTINGS_FIND)
-                    .size(crate::search_box::Size::Sm)
+                    .size(Size::Sm)
                     .placeholder("Search settings")
                     .build(),
             ),

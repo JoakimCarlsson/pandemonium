@@ -10,6 +10,8 @@ use pm_style::{
 use pm_text::{Field, Shaper};
 use pm_ui::{Line, Node, node, text, wrap};
 
+use crate::size::Size;
+
 /// How tall a line of a multiline input is as a share of its type size.
 const LINE_RATIO: f32 = 1.57;
 
@@ -42,18 +44,6 @@ pub enum Variant {
     Ghost,
     /// Several wrapped lines with no fill and no outline, for a box that draws its own; give the lines with [`Input::wrap`].
     Multiline,
-}
-
-/// How big an input is.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Size {
-    /// 32px tall, 12px text.
-    Sm,
-    /// 40px tall, 13px text.
-    #[default]
-    Default,
-    /// 48px tall, 14px text.
-    Lg,
 }
 
 /// An input being described: the line it edits, what it says while empty,
@@ -91,7 +81,7 @@ impl<'a> Input<'a> {
             placeholder: "",
             id,
             variant: Variant::Default,
-            size: Size::Default,
+            size: Size::Md,
             disabled: false,
             invalid: false,
             rows: 1,
@@ -156,7 +146,7 @@ impl<'a> Input<'a> {
         };
         let (height, font) = match self.size {
             Size::Sm => (8, 12),
-            Size::Default => (10, 13),
+            Size::Md => (10, 13),
             Size::Lg => (12, 14),
         };
         let mut line = text(content)

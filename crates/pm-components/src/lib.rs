@@ -4,7 +4,7 @@
 //! it looks and a size for how big it is, and turned into a [`pm_ui::Node`]
 //! with `build`; the caller restyles the node with `.styles([...])` and never
 //! reaches into it. Each component lives in a module named for what it is,
-//! which holds its `Variant` and `Size`, and is re-exported here.
+//! which holds its `Variant` and is re-exported here; `Size` is shared.
 
 pub mod activity;
 pub mod adder;
@@ -91,6 +91,7 @@ pub mod settings_servers;
 pub mod settings_state;
 pub mod settings_values;
 pub mod sidebar;
+pub mod size;
 pub mod state;
 pub mod stepper;
 pub mod steps;
@@ -130,6 +131,7 @@ pub use popover::Popover;
 pub use progress::Progress;
 pub use project::Project;
 pub use sash::Sash;
+pub use size::Size;
 pub use stepper::Stepper;
 pub use tally::Tally;
 pub use tile::Tile;

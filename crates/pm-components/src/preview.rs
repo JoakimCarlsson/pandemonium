@@ -8,11 +8,12 @@ use pm_style::{
 use pm_text::Shaper;
 use pm_ui::{Node, Picture, node};
 
-use crate::chip::{Chip, Size, Variant};
+use crate::chip::{Chip, Variant};
 use crate::figures::Figures;
 use crate::markdown::Markdown;
 use crate::open_files::{Contents, STRIP, Viewer};
 use crate::parts::line;
+use crate::size::Size;
 
 /// Shows the file shown rendered.
 pub const PREVIEW_SHOW: FocusId = FocusId(7094);

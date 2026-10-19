@@ -12,10 +12,11 @@ use pm_text::Edit;
 use pm_ui::{Node, node, text};
 
 use crate::Button;
-use crate::button::{Size as ButtonSize, Variant as ButtonVariant};
+use crate::button::Variant;
 use crate::excerpts::{Block, EXCERPTS_SCROLL, ExcerptFile, Source, plain_block};
 use crate::open_files::Contents;
 use crate::parts::{line, spacer};
+use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
 
 /// Takes everything of the file from our side.
@@ -219,31 +220,11 @@ pub fn is_conflict_part(id: FocusId) -> bool {
 
 /// How the two sides of a conflict lie.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Variant {
+pub enum Layout {
     /// Ours and theirs side by side, for a pane with room.
     SideBySide,
     /// Ours above theirs, for a narrow pane.
     Stacked,
-}
-
-/// How big the resolver's strip and conflicts are set.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Size {
-    /// Buttons 32 logical pixels tall, in snug cards.
-    Sm,
-    /// Buttons 36 logical pixels tall.
-    #[default]
-    Md,
-}
-
-impl Size {
-    /// The size of the buttons.
-    const fn button(self) -> ButtonSize {
-        match self {
-            Self::Sm => ButtonSize::Sm,
-            Self::Md => ButtonSize::Default,
-        }
-    }
 }
 
 /// The resolver being described: the room it has, how the sides lie and how big it is.
@@ -257,7 +238,7 @@ pub struct Conflict<'a> {
     /// How tall the room for the resolver is, in logical pixels.
     height: f32,
     /// How the two sides of a conflict lie.
-    variant: Variant,
+    layout: Layout,
     /// How big it is.
     size: Size,
 }
@@ -278,18 +259,18 @@ impl<'a> Conflict<'a> {
         Self {
             state,
             height,
-            variant: if width >= BESIDE {
-                Variant::SideBySide
+            layout: if width >= BESIDE {
+                Layout::SideBySide
             } else {
-                Variant::Stacked
+                Layout::Stacked
             },
             size: Size::default(),
         }
     }
 
-    /// The resolver with the sides lying as `variant` says.
-    pub fn variant(mut self, variant: Variant) -> Self {
-        self.variant = variant;
+    /// The resolver with the sides lying as `layout` says.
+    pub fn layout(mut self, layout: Layout) -> Self {
+        self.layout = layout;
         self
     }
 
@@ -311,9 +292,9 @@ impl<'a> Conflict<'a> {
             Self::side_lines(&region.ours),
             Self::side_lines(&region.theirs),
         );
-        let sides = match self.variant {
-            Variant::SideBySide => LABEL + ours.max(theirs).max(1) as f32 * row,
-            Variant::Stacked => 2.0 * LABEL + (ours.max(1) + theirs.max(1)) as f32 * row,
+        let sides = match self.layout {
+            Layout::SideBySide => LABEL + ours.max(theirs).max(1) as f32 * row,
+            Layout::Stacked => 2.0 * LABEL + (ours.max(1) + theirs.max(1)) as f32 * row,
         };
         LABEL + sides + BUTTONS + SPACE
     }
@@ -364,12 +345,12 @@ impl<'a> Conflict<'a> {
         let region = card.region;
         let ours = format!("Ours · {}", name_or(&region.ours_name, "HEAD"));
         let theirs = format!("Theirs · {}", name_or(&region.theirs_name, "incoming"));
-        let sides = match self.variant {
-            Variant::SideBySide => node()
+        let sides = match self.layout {
+            Layout::SideBySide => node()
                 .styles([flex(), gap(2), px(3)])
                 .child(self.side(&ours, &region.ours, Role::Success, row))
                 .child(self.side(&theirs, &region.theirs, Role::Warning, row)),
-            Variant::Stacked => node()
+            Layout::Stacked => node()
                 .styles([flex(), flex_col(), px(3)])
                 .child(self.side(&ours, &region.ours, Role::Success, row))
                 .child(self.side(&theirs, &region.theirs, Role::Warning, row)),
@@ -380,11 +361,11 @@ impl<'a> Conflict<'a> {
                 FocusId(CONFLICT_CHOICE_BASE + card.place as u64 * 3 + step as u64),
             )
             .variant(if choice == Choice::Both {
-                ButtonVariant::Ghost
+                Variant::Ghost
             } else {
-                ButtonVariant::Outline
+                Variant::Outline
             })
-            .size(self.size.button())
+            .size(self.size)
             .build()
         });
         node()
@@ -474,21 +455,21 @@ impl<'a> Conflict<'a> {
             .child(spacer())
             .child(
                 Button::new("Take all ours", CONFLICT_OURS_ALL)
-                    .variant(ButtonVariant::Ghost)
-                    .size(self.size.button())
+                    .variant(Variant::Ghost)
+                    .size(self.size)
                     .disabled(resolver.ours.is_none())
                     .build(),
             )
             .child(
                 Button::new("Take all theirs", CONFLICT_THEIRS_ALL)
-                    .variant(ButtonVariant::Ghost)
-                    .size(self.size.button())
+                    .variant(Variant::Ghost)
+                    .size(self.size)
                     .disabled(resolver.theirs.is_none())
                     .build(),
             )
             .child(
                 Button::new("Mark as resolved", CONFLICT_CONCLUDE)
-                    .size(self.size.button())
+                    .size(self.size)
                     .disabled(!loaded || left > 0)
                     .build(),
             )

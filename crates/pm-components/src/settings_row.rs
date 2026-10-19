@@ -10,8 +10,9 @@ use pm_style::{
 use pm_text::Field;
 use pm_ui::{Node, node};
 
-use crate::input::{self, Input};
+use crate::input::Input;
 use crate::parts::{clipped, glyph, line, wrap};
+use crate::size::Size;
 
 /// The room between what a setting says and its control, in logical pixels.
 const ROW_GAP: f32 = 24.0;
@@ -214,7 +215,7 @@ pub fn picker_list(
         list = list.child(
             node().styles([flex_none(), p(1)]).child(
                 crate::search_box::SearchBox::new(filter.0, filter.1)
-                    .size(crate::search_box::Size::Sm)
+                    .size(Size::Sm)
                     .placeholder("Type to narrow the list")
                     .build(),
             ),
@@ -264,7 +265,7 @@ pub fn picker_list(
 /// The box `field` is written in, answering to `id`, saying `placeholder` while empty.
 pub fn text_box(field: &Field, id: FocusId, placeholder: &str) -> Node {
     Input::new(field, id)
-        .size(input::Size::Sm)
+        .size(Size::Sm)
         .placeholder(placeholder)
         .build()
 }

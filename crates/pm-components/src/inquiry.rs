@@ -11,10 +11,11 @@ use pm_style::{
 use pm_ui::{Node, node};
 
 use crate::Button;
-use crate::button::{Size, Variant};
+use crate::button::Variant;
 use crate::draft::{CLOSE, Draft, FOLD, NEXT, OTHER, PICK_BASE, SKIP};
 use crate::input::{self, Input};
 use crate::parts::line;
+use crate::size::Size;
 
 /// The small box holding the number of the key that picks a row.
 fn key(number: usize) -> Node {

@@ -10,11 +10,11 @@ use pm_style::{
 use pm_ui::{Node, node, text};
 use std::collections::HashSet;
 
-use crate::button::Size;
 use crate::file_icon::file_icon;
 use crate::git_controls::{GROUP_TRACKED, GROUP_UNTRACKED, OPEN_ARROW_BASE};
 use crate::parts::{glyph, line};
 use crate::sample::{Change, Session};
+use crate::size::Size;
 use crate::state::{FILE_BASE, FOLDER_BASE, FOLDER_STAGE_BASE, STAGE_BASE, WorkspaceState};
 use crate::tree::{Entry, Folder, Layout, build, folders};
 use crate::{Button, Checkbox, Tally};
@@ -249,7 +249,7 @@ fn file_row(
                 IconName::ArrowRight,
                 FocusId(OPEN_ARROW_BASE + index as u64),
             )
-            .size(Size::Icon)
+            .size(Size::Sm)
             .build(),
         )
         .children(

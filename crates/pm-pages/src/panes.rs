@@ -12,7 +12,8 @@ use pm_text::Shaper;
 use pm_ui::{Node, node};
 
 use pm_components::Menu;
-use pm_components::button::{Size, Variant};
+use pm_components::Size;
+use pm_components::button::Variant;
 use pm_components::excerpts::{self, EXCERPTS_CLOSE, Source, TAB_EXCERPTS};
 use pm_components::file_icon::file_icon;
 use pm_components::open_files::{FILE_CLOSE_BASE, FILE_TAB_BASE, Viewer};
@@ -101,7 +102,7 @@ fn viewer_tab(viewer: &Viewer, index: usize, shown: bool) -> Node {
             },
             FocusId(FILE_CLOSE_BASE + index as u64),
         )
-        .size(pm_components::button::Size::Icon)
+        .size(pm_components::Size::Sm)
         .build(),
     )
     .focusable(FocusId(FILE_TAB_BASE + index as u64))
@@ -118,7 +119,7 @@ fn excerpts_tab(state: &WorkspaceState, shown: bool) -> Option<Node> {
             .child(line(excerpts.title(), 13, 1.4, tone))
             .child(
                 Button::icon(IconName::Close, EXCERPTS_CLOSE)
-                    .size(pm_components::button::Size::Icon)
+                    .size(pm_components::Size::Sm)
                     .build(),
             )
             .focusable(TAB_EXCERPTS),

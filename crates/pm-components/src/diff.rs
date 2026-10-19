@@ -10,12 +10,13 @@ use pm_style::{
 };
 use pm_ui::{Mark, Node, node, text};
 
-use crate::button::{Size, Variant};
+use crate::button::Variant;
 use crate::diff_syntax::{DiffColours, shown};
 use crate::excerpts::EXCERPTS_OPEN_CHANGES;
 use crate::file_icon::{file_icon, file_language};
 use crate::parts::{glyph, line, spacer, wrap};
 use crate::sample::{Change, Comment, DiffLine, Kind, Range, Session};
+use crate::size::Size;
 use crate::state::{
     COMMENT_ADD, COMMENT_CANCEL, COMMENT_FIELD, COMMENT_FILE_BASE, COMMENT_REMOVE_BASE,
     CommentTarget, DIFF_FOLD_BASE, DIFF_SCROLL, SEND_COMMENTS, VIEWED_BASE, WorkspaceState,

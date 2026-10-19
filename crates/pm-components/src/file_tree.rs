@@ -13,8 +13,8 @@ use pm_ui::{Node, node};
 use crate::Input;
 use crate::change_list::mark_color;
 use crate::file_icon::{file_icon, folder_icon};
-use crate::input::Size as InputSize;
 use crate::parts::{glyph, line};
+use crate::size::Size;
 use crate::state::{TREE_BASE, WorkspaceState};
 use crate::tree::{Entry, Layout, build, folders};
 use crate::tree_actions::{ENTRY_FIELD, Naming, TREE_FILE_BASE};
@@ -159,7 +159,7 @@ fn name_lines(state: &WorkspaceState, folder: bool, depth: usize) -> Vec<Node> {
             .child(
                 node().styles([flex_1(), min_w_px(0)]).child(
                     Input::new(field, ENTRY_FIELD)
-                        .size(InputSize::Sm)
+                        .size(Size::Sm)
                         .invalid(problem.is_some())
                         .build(),
                 ),

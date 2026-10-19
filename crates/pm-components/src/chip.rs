@@ -9,6 +9,7 @@ use pm_style::{
 use pm_ui::{Node, node};
 
 use crate::parts::{glyph, line};
+use crate::size::Size;
 
 /// How a chip looks, which says what it is for.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -18,16 +19,6 @@ pub enum Variant {
     Outline,
     /// A borderless button in a strip of controls: it names a value and opens its menu.
     Ghost,
-}
-
-/// How big a chip is.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Size {
-    /// 28px tall, 12px text.
-    #[default]
-    Sm,
-    /// 36px tall, 13px text.
-    Md,
 }
 
 /// A chip being described: what it says, how it looks and what it does.
@@ -90,7 +81,7 @@ impl Chip {
         self
     }
 
-    /// The chip measuring `size`.
+    /// The chip measuring `size`: 28, 36 or 40px tall.
     pub fn size(mut self, size: Size) -> Self {
         self.size = size;
         self
@@ -99,7 +90,7 @@ impl Chip {
     /// The node that draws the chip.
     pub fn build(self) -> Node {
         let outlined = self.variant == Variant::Outline;
-        let large = self.size == Size::Md;
+        let large = self.size != Size::Sm;
         let tone = if outlined && self.selected {
             Role::Text
         } else {
@@ -114,6 +105,7 @@ impl Chip {
         match (self.variant, self.size) {
             (Variant::Outline, Size::Sm) => styles.extend([gap(1.5), h(7), px(3)]),
             (Variant::Outline, Size::Md) => styles.extend([gap(2), h(9), px(3.5)]),
+            (Variant::Outline, Size::Lg) => styles.extend([gap(2), h(10), px(4)]),
             (Variant::Ghost, _) => styles.extend([gap(1), h(7), px(2)]),
         }
         if outlined {

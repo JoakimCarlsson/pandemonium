@@ -13,6 +13,7 @@ use crate::age::{self, Span};
 use crate::input::{self, Input};
 use crate::parts::{clipped, glyph, line};
 use crate::sample::Session;
+use crate::size::Size;
 use crate::state::{HISTORY_SEARCH, SESSION_BASE, WorkspaceState};
 
 /// How wide the search box is.
@@ -94,7 +95,7 @@ fn search(state: &WorkspaceState) -> Node {
             .child(
                 Input::new(&state.history_search, HISTORY_SEARCH)
                     .variant(input::Variant::Ghost)
-                    .size(input::Size::Sm)
+                    .size(Size::Sm)
                     .placeholder("Search history")
                     .build(),
             ),

@@ -20,8 +20,9 @@ use pm_ui::{Node, node};
 use crate::adder::{Found, Kind, Listing, Status, status_line};
 use crate::button::Variant;
 use crate::parts::{glyph, line, spacer};
+use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
-use crate::{Button, Input, input, popover};
+use crate::{Button, Input, popover};
 
 /// The first name the folder picker answers to.
 const PICKER_START: u64 = 21_000_000;
@@ -523,7 +524,7 @@ impl FolderPicker {
             .child(
                 node().styles([w_px(FILTER_WIDTH), flex_none()]).child(
                     Input::new(&self.field, PICKER_FIELD)
-                        .size(input::Size::Sm)
+                        .size(Size::Sm)
                         .placeholder("Filter folders")
                         .build(),
                 ),

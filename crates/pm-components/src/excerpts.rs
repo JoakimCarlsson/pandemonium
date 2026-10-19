@@ -16,6 +16,7 @@ use crate::file_icon::file_icon;
 use crate::open_files::{Contents, EDITOR_FIELD, Viewer};
 use crate::parts::{glyph, line};
 use crate::sample::DiffLine;
+use crate::size::Size;
 use crate::state::{Tab, WorkspaceState};
 use crate::viewer::{
     BREAKPOINT_CELL, Beside, breakpoint_cell, document_row, file_line, line_marks,
@@ -57,26 +58,6 @@ const GAP: f32 = 12.0;
 
 /// How far beyond the view, above and below, excerpts are still built, in logical pixels.
 const OVERSCAN: f32 = 200.0;
-
-/// How big the headers over the files are.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum HeaderSize {
-    /// 28 logical pixels tall.
-    Sm,
-    /// 32 logical pixels tall.
-    #[default]
-    Md,
-}
-
-impl HeaderSize {
-    /// How tall a header is, in logical pixels.
-    pub const fn height(self) -> f32 {
-        match self {
-            Self::Sm => 28.0,
-            Self::Md => 32.0,
-        }
-    }
-}
 
 /// A run of lines of a file shown together, and the lines in it that are hits.
 #[derive(Clone, Debug, PartialEq)]
@@ -506,7 +487,7 @@ fn header(
     file: &ExcerptFile,
     viewer: Option<&Viewer>,
     excerpts: &Excerpts,
-    size: HeaderSize,
+    size: Size,
 ) -> Node {
     let name = name_of(&file.path);
     let folder = file.path.strip_suffix(name).unwrap_or_default();
@@ -514,7 +495,7 @@ fn header(
         flex(),
         items_center(),
         gap(2),
-        h_px(size.height()),
+        h_px(header_height(size)),
         flex_none(),
         px(3),
         bg(Role::Surface),
@@ -583,7 +564,7 @@ fn mark_tone(mark: &str) -> Role {
 pub(crate) fn restore_button() -> Node {
     Button::new("Restore this version", EXCERPTS_RESTORE)
         .with_icon(IconName::History)
-        .size(crate::button::Size::Sm)
+        .size(Size::Sm)
         .build()
 }
 
@@ -784,18 +765,18 @@ fn diff_rows(file: &ExcerptFile) -> Vec<Node> {
 const DIFF_ROW: f32 = 20.0;
 
 /// The excerpts in a view `height` logical pixels tall: a header over each file, and under it the runs of lines, only those near the view being built.
-pub(crate) fn file_list(state: &WorkspaceState, height: f32, size: HeaderSize) -> Node {
+pub(crate) fn file_list(state: &WorkspaceState, height: f32, size: Size) -> Node {
     let Some(excerpts) = state.excerpts.as_ref() else {
         return node();
     };
     let row = state.editor.row_height();
-    let header_height = size.height();
+    let header_pixels = header_height(size);
     let mut entries: Vec<(Entry, f32)> = Vec::new();
     for (place, file) in excerpts.files.iter().enumerate() {
         let viewer = state
             .viewer_at(&file.path)
             .and_then(|i| state.git.viewers.get(i));
-        entries.push((Entry::Header(place), header_height));
+        entries.push((Entry::Header(place), header_pixels));
         if file.closed {
             continue;
         }
@@ -857,7 +838,7 @@ pub(crate) fn file_list(state: &WorkspaceState, height: f32, size: HeaderSize) -
                 let viewer = state
                     .viewer_at(&file.path)
                     .and_then(|i| state.git.viewers.get(i));
-                header(*place, file, viewer, excerpts, size_of(header_height))
+                header(*place, file, viewer, excerpts, size_of(header_pixels))
             }
             Entry::Block(place, usize::MAX) => {
                 let file = &excerpts.files[*place];
@@ -896,12 +877,23 @@ pub(crate) fn file_list(state: &WorkspaceState, height: f32, size: HeaderSize) -
         )
 }
 
+/// How tall a header over a file is at `size`, in logical pixels.
+pub(crate) const fn header_height(size: Size) -> f32 {
+    match size {
+        Size::Sm => 28.0,
+        Size::Md => 32.0,
+        Size::Lg => 36.0,
+    }
+}
+
 /// The header size that is `height` logical pixels tall.
-fn size_of(height: f32) -> HeaderSize {
-    if height <= HeaderSize::Sm.height() {
-        HeaderSize::Sm
+fn size_of(height: f32) -> Size {
+    if height <= header_height(Size::Sm) {
+        Size::Sm
+    } else if height <= header_height(Size::Md) {
+        Size::Md
     } else {
-        HeaderSize::Md
+        Size::Lg
     }
 }
 
@@ -941,5 +933,5 @@ pub(crate) fn plain_block(
 
 /// The excerpts of a search in a view `height` logical pixels tall.
 pub fn excerpts_view(state: &WorkspaceState, height: f32) -> Node {
-    file_list(state, height, HeaderSize::default())
+    file_list(state, height, Size::default())
 }

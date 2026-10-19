@@ -16,6 +16,7 @@ use crate::parts::{line, spacer};
 use crate::plan::proposal;
 use crate::popover::{anchored, heading, row};
 use crate::sample::Session;
+use crate::size::Size;
 use crate::state::{
     ACCOUNT, ACCOUNT_BASE, AGENT_TOGGLE, ATTACH, ATTACHED_BASE, BRANCH_BASE, EFFORT_BASE, LOCATION,
     Location, MENTION, MENU_BODY, MENU_SCROLL, PICK_BASE, PLACE_BASE, PROMPT, Picker, SEND,
@@ -442,7 +443,7 @@ pub fn sent_files(state: &WorkspaceState, files: &[String]) -> Node {
 fn round_button(icon: IconName, id: FocusId, disabled: bool) -> Node {
     Button::icon(icon, id)
         .variant(button::Variant::Default)
-        .size(button::Size::IconLg)
+        .size(Size::Md)
         .round()
         .disabled(disabled)
         .build()
@@ -458,7 +459,7 @@ fn send_buttons(working: bool, empty: bool) -> Vec<Node> {
         (true, false) => vec![
             Button::new("Send now", SEND_NOW)
                 .variant(button::Variant::Ghost)
-                .size(button::Size::Sm)
+                .size(Size::Sm)
                 .with_icon(IconName::Zap)
                 .build(),
             round_button(IconName::ArrowUp, SEND, false),
@@ -512,7 +513,7 @@ pub fn composer(
         .child(Button::icon(IconName::At, MENTION).build())
         .child(
             Button::new("/", SLASH_BUTTON)
-                .size(button::Size::Icon)
+                .size(Size::Sm)
                 .variant(button::Variant::Ghost)
                 .monospace()
                 .build(),
@@ -520,7 +521,7 @@ pub fn composer(
     if skills {
         strip = strip.child(
             Button::new("$", SKILL_BUTTON)
-                .size(button::Size::Icon)
+                .size(Size::Sm)
                 .variant(button::Variant::Ghost)
                 .monospace()
                 .build(),

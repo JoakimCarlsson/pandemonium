@@ -13,7 +13,7 @@ use pm_text::Shaper;
 use pm_ui::{Mark, Node, Paint, node, text};
 
 use crate::editor::COMPLETIONS_SHOWN;
-use crate::input::{Input, Size as InputSize};
+use crate::input::Input;
 use crate::line_edits::{GO_TO_LINE, GO_TO_LINE_BOX, GoingTo};
 use crate::listing::{
     Items, LISTING_BODY, LISTING_FILTER, LISTING_ROW_BASE, LISTING_SHOWN, LISTING_WIDTH, Listing,
@@ -21,6 +21,7 @@ use crate::listing::{
 use crate::markdown::Markdown;
 use crate::navigate::{RENAME_BOX, RENAME_SYMBOL, Renaming};
 use crate::parts::{glyph, line};
+use crate::size::Size;
 use crate::state::WorkspaceState;
 use crate::viewer::severity_role;
 use pm_editor::{Completions, HoverCard};
@@ -565,7 +566,7 @@ fn go_to_line_box(going: &GoingTo, lines: usize) -> Node {
         .focusable(GO_TO_LINE_BOX)
         .child(
             Input::new(&going.field, GO_TO_LINE)
-                .size(InputSize::Sm)
+                .size(Size::Sm)
                 .placeholder("Line number")
                 .build(),
         )
@@ -805,7 +806,7 @@ fn listing_panel(listing: &Listing) -> Node {
     .map(|(filter, hint)| {
         node().styles([px(0.5), py(0.5)]).child(
             Input::new(filter, LISTING_FILTER)
-                .size(InputSize::Sm)
+                .size(Size::Sm)
                 .placeholder(hint)
                 .build(),
         )
@@ -863,7 +864,7 @@ fn rename_box(renaming: &Renaming) -> Node {
         .focusable(RENAME_BOX)
         .child(
             Input::new(&renaming.field, RENAME_SYMBOL)
-                .size(InputSize::Sm)
+                .size(Size::Sm)
                 .invalid(renaming.problem.is_some())
                 .build(),
         )

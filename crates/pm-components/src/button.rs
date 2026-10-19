@@ -10,6 +10,8 @@ use pm_style::{
 };
 use pm_ui::{Node, node, text};
 
+use crate::size::Size;
+
 /// How a button looks, which says what it is for.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Variant {
@@ -26,22 +28,6 @@ pub enum Variant {
     Ghost,
     /// An action that reads as a link: underlined text.
     Link,
-}
-
-/// How big a button is.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Size {
-    /// 36px tall, 13px text.
-    #[default]
-    Default,
-    /// 32px tall, 12px text: sits inside a row.
-    Sm,
-    /// 40px tall, 13px text: closes a step.
-    Lg,
-    /// A 28px square holding only an icon.
-    Icon,
-    /// A 32px square holding only an icon.
-    IconLg,
 }
 
 /// A button being described: what it says, how it looks, and what it does.
@@ -77,7 +63,7 @@ impl Button {
             label: Some(label.into()),
             icon: None,
             variant: Variant::Default,
-            size: Size::Default,
+            size: Size::Md,
             id,
             disabled: false,
             round: false,
@@ -92,7 +78,7 @@ impl Button {
             label: None,
             icon: Some(icon),
             variant: Variant::Ghost,
-            size: Size::Icon,
+            size: Size::Sm,
             id,
             disabled: false,
             round: false,
@@ -119,7 +105,7 @@ impl Button {
         self
     }
 
-    /// The button at `size`.
+    /// The button at `size`: 32, 36 or 40px tall, or a square 28, 32 or 36px on a side while it holds only an icon.
     pub fn size(mut self, size: Size) -> Self {
         self.size = size;
         self
@@ -148,11 +134,14 @@ impl Button {
     pub fn build(self) -> Node {
         let ink = self.ink();
         let (height, side, font) = match self.size {
-            Size::Default => (9.0, 4.0, 13),
             Size::Sm => (8.0, 3.0, 12),
+            Size::Md => (9.0, 4.0, 13),
             Size::Lg => (10.0, 5.0, 13),
-            Size::Icon => (7.0, 0.0, 13),
-            Size::IconLg => (8.0, 0.0, 13),
+        };
+        let square = match self.size {
+            Size::Sm => 7.0,
+            Size::Md => 8.0,
+            Size::Lg => 9.0,
         };
         let mut styles = vec![
             flex(),
@@ -167,8 +156,8 @@ impl Button {
             ring(2).focus(),
             ring_color(Role::Focused).focus(),
         ];
-        if matches!(self.size, Size::Icon | Size::IconLg) {
-            styles.push(size(height));
+        if self.label.is_none() {
+            styles.push(size(square));
         } else {
             styles.extend([h(height), px(side)]);
         }

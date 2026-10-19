@@ -17,13 +17,14 @@ use pm_ui::{Mark, Node, Paint, node, text};
 
 use crate::Button;
 use crate::annotations::lens_mark;
-use crate::button::{Size, Variant};
+use crate::button::Variant;
 use crate::debug::{Dot, Gutter, breakpoint_mark};
 use crate::file_icon::file_icon;
 use crate::git_controls::VIEWER_SCROLL;
 use crate::open_files::{Contents, EDITOR_FIELD, EDITOR_SAVE, FILE_TAB_BASE, STRIP, Viewer};
 use crate::panes::PEEK_SCROLL_BASE;
 use crate::parts::{glyph, line, spacer};
+use crate::size::Size;
 use crate::state::WorkspaceState;
 use crate::tasks::run_mark;
 use pm_editor::{Document, EditorSettings, Hint, Lens, LineChange};
