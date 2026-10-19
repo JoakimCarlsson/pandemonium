@@ -206,9 +206,7 @@ impl WorkspaceState {
                 }
             }
             TREE_COLLAPSE => {
-                self.closed_tree = crate::file_tree::folder_paths(&self.files, &self.tree_folders)
-                    .into_iter()
-                    .collect();
+                self.open_tree.clear();
             }
             TREE_SPACE => {}
             _ => {
@@ -229,7 +227,7 @@ impl WorkspaceState {
         let current = match &naming {
             Naming::Rename(target) => name_of(&target.path).to_owned(),
             Naming::New { directory, .. } => {
-                self.closed_tree.remove(directory);
+                self.open_tree.insert(directory.clone());
                 String::new()
             }
         };
