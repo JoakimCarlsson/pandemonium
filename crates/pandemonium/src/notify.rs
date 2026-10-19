@@ -58,7 +58,11 @@ fn bundle_identifier() -> Option<String> {
     let contents = executable.parent()?.parent()?;
     let plist = std::fs::read_to_string(contents.join("Info.plist")).ok()?;
     let after_key = plist.split("<key>CFBundleIdentifier</key>").nth(1)?;
-    let value = after_key.split("<string>").nth(1)?.split("</string>").next()?;
+    let value = after_key
+        .split("<string>")
+        .nth(1)?
+        .split("</string>")
+        .next()?;
     Some(value.trim().to_owned())
 }
 
