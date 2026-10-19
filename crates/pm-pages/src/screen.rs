@@ -499,6 +499,14 @@ impl Screen {
         }
     }
 
+    /// The screen after the subagent rows scroll by `delta` pixels within `room`.
+    pub fn scrolled_subagents(self, delta: f32, room: f32) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.scrolled_subagents(delta, room)),
+            other => other,
+        }
+    }
+
     /// The screen after the diff is scrolled by `delta` logical pixels,
     /// downwards when positive, with `room` pixels to scroll.
     pub fn scrolled_diff(self, delta: f32, room: f32) -> Self {

@@ -66,6 +66,9 @@ pub const REVISE: FocusId = FocusId(330);
 /// The scrolling body of the plan panel.
 pub const PLAN_SCROLL: FocusId = FocusId(352);
 
+/// The independently scrolling rows above the composer.
+pub const SUBAGENTS_SCROLL: FocusId = FocusId(353);
+
 /// Shows the changed files in the review panel.
 pub const REVIEW_CHANGES: FocusId = FocusId(7001);
 
@@ -1389,6 +1392,8 @@ pub struct WorkspaceState {
     pub plan_open: bool,
     /// How far down the plan panel is scrolled, in logical pixels.
     pub plan_scroll: f32,
+    /// How far down the subagent panel rows are scrolled, in logical pixels.
+    pub subagents_scroll: f32,
     /// How far down a project's overview is scrolled, in logical pixels.
     pub overview_scroll: f32,
     /// Whether the terminal is open.
@@ -1629,6 +1634,7 @@ impl WorkspaceState {
             homed: None,
             plan_open: false,
             plan_scroll: 0.0,
+            subagents_scroll: 0.0,
             overview_scroll: 0.0,
             terminal: false,
             terminal_maximized: false,
@@ -2248,6 +2254,12 @@ impl WorkspaceState {
     /// The state after the plan panel is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
     pub fn scrolled_plan(mut self, delta: f32, room: f32) -> Self {
         self.plan_scroll = (self.plan_scroll + delta).clamp(0.0, room);
+        self
+    }
+
+    /// Scrolls the subagent rows by `delta` logical pixels within `room`.
+    pub fn scrolled_subagents(mut self, delta: f32, room: f32) -> Self {
+        self.subagents_scroll = (self.subagents_scroll + delta).clamp(0.0, room);
         self
     }
 
