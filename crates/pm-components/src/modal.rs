@@ -2,10 +2,11 @@
 
 use pm_input::FocusId;
 use pm_style::{
-    Color, Radius, Role, absolute, bg, border, border_color, flex, flex_col, flex_none, inset,
-    items_center, justify_center, overflow_hidden, rounded, shadow_md, w_px, z,
+    Color, absolute, bg, flex, flex_none, inset, items_center, justify_center, w_px, z,
 };
 use pm_ui::{Node, node};
+
+use crate::{Surface, surface};
 
 /// How dark the window behind a modal is made, from 0.0 to 1.0.
 const DIM: f32 = 0.55;
@@ -28,18 +29,10 @@ impl Modal {
     pub fn new(outside: FocusId, inside: FocusId) -> Self {
         Self {
             outside,
-            panel: node()
-                .styles([
-                    flex(),
-                    flex_col(),
-                    flex_none(),
-                    rounded(Radius::Xl),
-                    bg(Role::Surface),
-                    border(),
-                    border_color(Role::Border),
-                    shadow_md(),
-                    overflow_hidden(),
-                ])
+            panel: Surface::new()
+                .variant(surface::Variant::Dialog)
+                .build()
+                .styles([flex_none()])
                 .focusable(inside),
         }
     }

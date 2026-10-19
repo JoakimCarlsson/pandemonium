@@ -8,6 +8,7 @@ use pm_style::{
 };
 use pm_ui::{Node, node};
 
+use crate::input::Input;
 use crate::parts::{clipped, line};
 use crate::settings::SETTINGS_KEYMAP_FIND;
 use crate::settings_catalog::Setting;
@@ -172,7 +173,7 @@ fn found(action: Action, keys: &[String], needle: &str) -> bool {
 
 /// The box the actions are searched with.
 fn search_box(state: &WorkspaceState) -> Node {
-    crate::search_box::SearchBox::new(&state.settings_page.keymap_find, SETTINGS_KEYMAP_FIND)
+    Input::search(&state.settings_page.keymap_find, SETTINGS_KEYMAP_FIND)
         .placeholder("Search actions by name or keys")
         .build()
 }

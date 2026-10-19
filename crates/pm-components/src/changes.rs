@@ -8,13 +8,12 @@ use pm_style::{
 use pm_text::Edit;
 use pm_ui::{Node, node};
 
-use crate::button::{Size as ButtonSize, Variant as ButtonVariant};
-use crate::excerpts::{
-    Block, EXCERPTS_FOLD_ALL, ExcerptFile, HeaderSize, Source, file_list, restore_button,
-};
+use crate::button::Variant;
+use crate::excerpts::{Block, EXCERPTS_FOLD_ALL, ExcerptFile, Source, file_list, restore_button};
 use crate::open_files::Contents;
 use crate::parts::{glyph, line, spacer};
 use crate::sample::{Change, DiffLine, Fate, Kind};
+use crate::size::Size;
 use crate::state::{Tab, WorkspaceState};
 use crate::{Button, Tally};
 
@@ -26,7 +25,7 @@ const CONTEXT: usize = 3;
 
 /// What the view is of, which says what the strip above the files offers.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Variant {
+pub enum Mode {
     /// The changes of a session's folder, edited in place.
     #[default]
     Session,
@@ -34,26 +33,6 @@ pub enum Variant {
     Timeline,
     /// The files a commit or a branch changed, as their diffs say.
     Revision,
-}
-
-/// How big the view's headers and strip are.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Size {
-    /// Headers 28 logical pixels tall.
-    Sm,
-    /// Headers 32 logical pixels tall.
-    #[default]
-    Md,
-}
-
-impl Size {
-    /// How tall the header over each file is.
-    const fn header(self) -> HeaderSize {
-        match self {
-            Self::Sm => HeaderSize::Sm,
-            Self::Md => HeaderSize::Md,
-        }
-    }
 }
 
 /// The view of the changes being shown, being described: what it is of, how big it is and how tall the room for it is.
@@ -67,7 +46,7 @@ pub struct Changes<'a> {
     /// How tall the room for the view is, in logical pixels.
     height: f32,
     /// What it is of.
-    variant: Variant,
+    mode: Mode,
     /// How big it is.
     size: Size,
 }
@@ -75,22 +54,22 @@ pub struct Changes<'a> {
 impl<'a> Changes<'a> {
     /// The view of the excerpts `state` holds, in `height` logical pixels of room, of what they are of.
     pub fn new(state: &'a WorkspaceState, height: f32) -> Self {
-        let variant = match state.excerpts.as_ref().map(|excerpts| &excerpts.source) {
-            Some(Source::Timeline { .. }) => Variant::Timeline,
-            Some(Source::Revision { .. }) => Variant::Revision,
-            _ => Variant::Session,
+        let mode = match state.excerpts.as_ref().map(|excerpts| &excerpts.source) {
+            Some(Source::Timeline { .. }) => Mode::Timeline,
+            Some(Source::Revision { .. }) => Mode::Revision,
+            _ => Mode::Session,
         };
         Self {
             state,
             height,
-            variant,
+            mode,
             size: Size::default(),
         }
     }
 
-    /// The view as `variant` says.
-    pub fn variant(mut self, variant: Variant) -> Self {
-        self.variant = variant;
+    /// The view as `mode` says.
+    pub fn mode(mut self, mode: Mode) -> Self {
+        self.mode = mode;
         self
     }
 
@@ -100,7 +79,7 @@ impl<'a> Changes<'a> {
         self
     }
 
-    /// The strip above the files: how many there are and how far the changes went, then what the variant offers.
+    /// The strip above the files: how many there are and how far the changes went, then what the mode offers.
     fn strip(&self) -> Node {
         let Some(excerpts) = self.state.excerpts.as_ref() else {
             return node();
@@ -130,8 +109,8 @@ impl<'a> Changes<'a> {
             Source::Revision { label } => label.clone(),
             _ => format!("{count} file{} changed", if count == 1 { "" } else { "s" }),
         };
-        strip = match self.variant {
-            Variant::Timeline => strip
+        strip = match self.mode {
+            Mode::Timeline => strip
                 .child(glyph(IconName::History, 3.5, Role::Muted))
                 .child(line(
                     format!("Saved {when}, against the file as it is now"),
@@ -142,14 +121,14 @@ impl<'a> Changes<'a> {
                 .child(Tally::new(added, removed).size(12).build())
                 .child(spacer())
                 .child(restore_button()),
-            Variant::Session | Variant::Revision => strip
+            Mode::Session | Mode::Revision => strip
                 .child(line(what, 12, 1.4, Role::Muted))
                 .child(Tally::new(added, removed).size(12).build())
                 .child(spacer())
                 .child(
                     Button::new("Fold all", EXCERPTS_FOLD_ALL)
-                        .variant(ButtonVariant::Ghost)
-                        .size(ButtonSize::Sm)
+                        .variant(Variant::Ghost)
+                        .size(Size::Sm)
                         .build(),
                 ),
         };
@@ -164,7 +143,7 @@ impl<'a> Changes<'a> {
             .child(file_list(
                 self.state,
                 (self.height - STRIP).max(0.0),
-                self.size.header(),
+                self.size,
             ))
     }
 }

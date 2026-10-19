@@ -13,14 +13,15 @@ use pm_ui::{Node, node, text};
 
 use pm_components::Button;
 use pm_components::Input;
-use pm_components::button::{Size, Variant};
+use pm_components::Size;
+use pm_components::button::Variant;
 use pm_components::context_menu::{ContextMenu, field_menu};
 use pm_components::extensions::{endings, pickable, standing};
 use pm_components::folder_picker::{FolderPicker, Outcome, PICKER_FIELD, Purpose, is_picker};
 use pm_components::parts::{glyph, line};
 use pm_components::project::Project;
 use pm_components::state::Outgoing;
-use pm_components::{Avatar, Checkbox, Progress, Tile, TitleBar};
+use pm_components::{Avatar, Card, Checkbox, Stepper, Tile, TitleBar, stepper};
 use pm_protocol::ExtensionInfo;
 
 /// Moves to the step after the current one.
@@ -414,7 +415,10 @@ fn heading(
 
 /// The bar showing how far through onboarding the reader is.
 fn progress(step: Step) -> Node {
-    Progress::new(Step::ALL.len(), step as usize).build()
+    Stepper::new(Step::ALL.len(), 0)
+        .variant(stepper::Variant::Bar)
+        .current(Some(step as usize))
+        .build()
 }
 
 /// The welcome step: what the app is for.
@@ -439,7 +443,7 @@ fn welcome() -> Node {
                     FLOW.iter()
                         .enumerate()
                         .map(|(index, (icon, title, detail))| {
-                            Tile::strip(18).build().children([
+                            Card::new(18).build().children([
                                 node()
                                     .styles([
                                         flex(),
@@ -469,7 +473,7 @@ fn welcome() -> Node {
 fn project(state: &OnboardingState) -> Node {
     let can_add = Project::from_source(state.path.text()).is_some();
     let added = state.projects.iter().enumerate().map(|(index, project)| {
-        Tile::strip(11).build().children([
+        Card::new(11).build().children([
             Avatar::of(project).build(),
             node()
                 .styles([flex_1()])
@@ -552,7 +556,7 @@ fn agents(state: &OnboardingState) -> Node {
                                 (reason.chars().take(REASON_WIDTH).collect(), Some("Retry"))
                             }
                         };
-                        Tile::strip(14).build().children([
+                        Card::new(14).build().children([
                             glyph(*icon, 5.0, Role::Muted),
                             node().styles([flex(), flex_col(), flex_1()]).children([
                                 line(name, 14, 1.4, Role::Text),

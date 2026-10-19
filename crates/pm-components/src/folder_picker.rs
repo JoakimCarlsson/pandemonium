@@ -10,9 +10,9 @@ use pm_config::KnownServer;
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
-    Radius, Role, bg, border_b, border_color, border_r, border_t, cursor_pointer, flex, flex_1,
-    flex_col, flex_none, font_medium, gap, h, items_center, min_h, min_w_px, overflow_hidden, p,
-    px, rounded, truncate, w_full, w_px,
+    Role, border_b, border_color, border_r, border_t, flex, flex_1, flex_col, flex_none,
+    font_medium, gap, h, items_center, min_h, min_w_px, overflow_hidden, p, px, truncate, w_full,
+    w_px,
 };
 use pm_text::{Edit, Field};
 use pm_ui::{Node, node};
@@ -20,8 +20,10 @@ use pm_ui::{Node, node};
 use crate::adder::{Found, Kind, Listing, Status, status_line};
 use crate::button::Variant;
 use crate::parts::{glyph, line, spacer};
+use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
-use crate::{Button, Input, input, popover};
+use crate::tile::Tile;
+use crate::{Button, Input, popover};
 
 /// The first name the folder picker answers to.
 const PICKER_START: u64 = 21_000_000;
@@ -476,18 +478,11 @@ impl FolderPicker {
                 label = label.styles([font_medium()]);
             }
             path = path.child(
-                node()
-                    .styles([
-                        flex(),
-                        items_center(),
-                        h(7),
-                        px(1.5),
-                        rounded(Radius::Md),
-                        cursor_pointer(),
-                        bg(Role::SurfaceHover).hover(),
-                    ])
-                    .child(label)
-                    .focusable(FocusId(CRUMB_BASE + index as u64)),
+                Tile::new(FocusId(CRUMB_BASE + index as u64))
+                    .height(7.0)
+                    .build()
+                    .styles([px(1.5)])
+                    .child(label),
             );
         }
         node()
@@ -523,7 +518,7 @@ impl FolderPicker {
             .child(
                 node().styles([w_px(FILTER_WIDTH), flex_none()]).child(
                     Input::new(&self.field, PICKER_FIELD)
-                        .size(input::Size::Sm)
+                        .size(Size::Sm)
                         .placeholder("Filter folders")
                         .build(),
                 ),
@@ -603,48 +598,29 @@ fn places() -> Node {
                 .child(line("Places", 12, 1.4, Role::Subtle)),
         )
         .children(PLACES.iter().enumerate().map(|(index, (name, _, icon))| {
-            node()
-                .styles([
-                    flex(),
-                    items_center(),
-                    gap(2.5),
-                    h(8),
-                    px(2),
-                    rounded(Radius::Md),
-                    cursor_pointer(),
-                    bg(Role::SurfaceHover).hover(),
-                ])
+            Tile::new(FocusId(PLACE_BASE + index as u64))
+                .height(8.0)
+                .gap(2.5)
+                .build()
+                .styles([px(2)])
                 .child(glyph(*icon, 4.0, Role::Muted))
                 .child(line(*name, 13, 1.4, Role::Text))
-                .focusable(FocusId(PLACE_BASE + index as u64))
         }))
 }
 
 /// One folder of the list: its glyph and its name on a line, highlighted while it is the one the keys act on.
 fn row(name: &str, selected: bool, index: usize) -> Node {
-    let mut styles = vec![
-        flex(),
-        items_center(),
-        gap(3),
-        h(8),
-        px(2.5),
-        flex_none(),
-        rounded(Radius::Md),
-        cursor_pointer(),
-        bg(Role::SurfaceHover).hover(),
-    ];
-    if selected {
-        styles.push(bg(Role::SurfaceSelected));
-    }
-    node()
-        .styles(styles)
+    Tile::new(FocusId(ROW_BASE + index as u64))
+        .selected(selected)
+        .height(8.0)
+        .build()
+        .styles([px(2.5), flex_none()])
         .child(glyph(IconName::Folder, 4.0, Role::Accent))
         .child(
             node()
                 .styles([flex_1(), min_w_px(0), overflow_hidden()])
                 .child(line(name, 13, 1.4, Role::Text).styles([truncate()])),
         )
-        .focusable(FocusId(ROW_BASE + index as u64))
 }
 
 impl WorkspaceState {

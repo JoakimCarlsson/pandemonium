@@ -12,10 +12,12 @@ use pm_style::{
 use pm_text::Shaper;
 use pm_ui::{Node, node, text};
 
+use crate::Popover;
 use crate::parts::{line, spacer};
 use crate::plan::proposal;
 use crate::popover::{anchored, heading, row};
 use crate::sample::Session;
+use crate::size::Size;
 use crate::state::{
     ACCOUNT, ACCOUNT_BASE, AGENT_TOGGLE, ATTACH, ATTACHED_BASE, BRANCH_BASE, EFFORT_BASE, LOCATION,
     Location, MENTION, MENU_BODY, MENU_SCROLL, PICK_BASE, PLACE_BASE, PROMPT, Picker, SEND,
@@ -23,7 +25,6 @@ use crate::state::{
 };
 use crate::usage;
 use crate::{Button, Checkbox, Input, Stepper, button, checkbox, input};
-use crate::{Chip, Popover, chip};
 
 /// The shadow under the prompt box: a soft, wide one that lifts it off the page.
 const COMPOSER_SHADOW: [ShadowLayer; 1] = [ShadowLayer::new(0.0, 8.0, 30.0, 0.0, 0.18, false)];
@@ -442,7 +443,7 @@ pub fn sent_files(state: &WorkspaceState, files: &[String]) -> Node {
 fn round_button(icon: IconName, id: FocusId, disabled: bool) -> Node {
     Button::icon(icon, id)
         .variant(button::Variant::Default)
-        .size(button::Size::IconLg)
+        .size(Size::Md)
         .round()
         .disabled(disabled)
         .build()
@@ -458,7 +459,7 @@ fn send_buttons(working: bool, empty: bool) -> Vec<Node> {
         (true, false) => vec![
             Button::new("Send now", SEND_NOW)
                 .variant(button::Variant::Ghost)
-                .size(button::Size::Sm)
+                .size(Size::Sm)
                 .with_icon(IconName::Zap)
                 .build(),
             round_button(IconName::ArrowUp, SEND, false),
@@ -469,11 +470,12 @@ fn send_buttons(working: bool, empty: bool) -> Vec<Node> {
 
 /// A button in the prompt box's strip that names a setting's current value and opens its menu.
 fn chip(label: &str, icon: Option<IconName>, id: FocusId, open: bool) -> Node {
-    let chip = Chip::new(label, id)
-        .variant(chip::Variant::Ghost)
+    let chip = Button::new(label, id)
+        .variant(button::Variant::Ghost)
+        .size(Size::Xs)
         .selected(open);
     match icon {
-        Some(icon) => chip.icon(icon),
+        Some(icon) => chip.with_icon(icon),
         None => chip,
     }
     .build()
@@ -512,7 +514,7 @@ pub fn composer(
         .child(Button::icon(IconName::At, MENTION).build())
         .child(
             Button::new("/", SLASH_BUTTON)
-                .size(button::Size::Icon)
+                .size(Size::Sm)
                 .variant(button::Variant::Ghost)
                 .monospace()
                 .build(),
@@ -520,7 +522,7 @@ pub fn composer(
     if skills {
         strip = strip.child(
             Button::new("$", SKILL_BUTTON)
-                .size(button::Size::Icon)
+                .size(Size::Sm)
                 .variant(button::Variant::Ghost)
                 .monospace()
                 .build(),

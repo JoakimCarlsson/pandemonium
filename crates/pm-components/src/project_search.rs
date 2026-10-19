@@ -16,8 +16,9 @@ use pm_ui::{Node, node};
 
 use crate::file_icon::file_icon;
 use crate::find::switch;
-use crate::input::{Input, Size as InputSize};
+use crate::input::Input;
 use crate::parts::{glyph, line};
+use crate::size::Size;
 use crate::state::{Outgoing, ReviewTab, TREE_SCROLL, WorkspaceState};
 
 /// The field the text looked for in the project is typed in.
@@ -449,7 +450,7 @@ pub fn panel(state: &WorkspaceState) -> Node {
     let clear = (!search.query.text().is_empty()).then(|| {
         crate::button::Button::icon(IconName::Close, PROJECT_SEARCH_CLEAR)
             .variant(crate::button::Variant::Ghost)
-            .size(crate::button::Size::Icon)
+            .size(Size::Sm)
             .build()
     });
     node()
@@ -463,7 +464,7 @@ pub fn panel(state: &WorkspaceState) -> Node {
                         .child(
                             node().styles([flex_1(), min_w_px(0)]).child(
                                 Input::new(&search.query, PROJECT_SEARCH_FIELD)
-                                    .size(InputSize::Sm)
+                                    .size(Size::Sm)
                                     .placeholder("Search")
                                     .invalid(search.problem.is_some())
                                     .build(),
@@ -484,7 +485,7 @@ pub fn panel(state: &WorkspaceState) -> Node {
                         .children((search.total() > 0).then(|| {
                             crate::button::Button::icon(IconName::FileCode, PROJECT_SEARCH_EXCERPTS)
                                 .variant(crate::button::Variant::Ghost)
-                                .size(crate::button::Size::Icon)
+                                .size(Size::Sm)
                                 .build()
                                 .tooltip("Open Results in Editor")
                         })),

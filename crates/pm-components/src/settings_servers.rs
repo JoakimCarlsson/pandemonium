@@ -6,14 +6,13 @@ use pm_protocol::{AgentServer, McpServer, RegistryAgent, ToolListing};
 use pm_style::{
     Radius, Role, bg, border, border_b, border_color, cursor_pointer, flex, flex_1, flex_col,
     flex_none, gap, h, items_center, items_start, justify_between, min_h, min_w_px,
-    overflow_hidden, p, px, rounded, rounded_full, self_start, w_full,
+    overflow_hidden, p, px, rounded, self_start, w_full,
 };
 use pm_text::{Edit, Field};
 use pm_ui::{Node, node};
 
-use crate::Button;
-use crate::button::{Size, Variant};
-use crate::input::{self, Input};
+use crate::button::Variant;
+use crate::input::Input;
 use crate::menu::Menu;
 use crate::parts::{clipped, glyph, line, wrap};
 use crate::settings::{
@@ -25,8 +24,10 @@ use crate::settings::{
     SETTINGS_TOGGLE_AVAILABLE, SETTINGS_TOGGLE_INSTALLED, Section,
 };
 use crate::settings_row::switch;
+use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
 use crate::tile::Tile;
+use crate::{Badge, Button};
 
 /// How wide a paragraph of the pages may be, in logical pixels, so that it breaks before it reaches the button beside it.
 const PARAGRAPH_WIDTH: f32 = 600.0;
@@ -1045,8 +1046,8 @@ fn search_box(state: &WorkspaceState, section: Section) -> Node {
         Section::AgentServers => "Search agents",
         _ => "Search MCP servers; Enter searches the registry",
     };
-    crate::search_box::SearchBox::new(&state.settings_servers.search, SETTINGS_SEARCH)
-        .size(crate::search_box::Size::Lg)
+    Input::search(&state.settings_servers.search, SETTINGS_SEARCH)
+        .size(Size::Lg)
         .placeholder(placeholder)
         .build()
 }
@@ -1070,11 +1071,7 @@ fn heading(title: &str, count: usize, open: bool, toggle: FocusId) -> Node {
         .focusable(toggle)
         .child(glyph(chevron, 4.0, Role::Muted))
         .child(line(title, 15, 1.4, Role::Text).styles([pm_style::font_medium()]))
-        .child(
-            node()
-                .styles([flex(), px(2), rounded_full(), bg(Role::SurfaceSelected)])
-                .child(line(count.to_string(), 12, 1.4, Role::Muted)),
-        )
+        .child(Badge::new(count.to_string()).build())
 }
 
 /// The name of a list that does not fold, with how many rows it holds.
@@ -1082,11 +1079,7 @@ pub(crate) fn heading_only(title: &str, count: usize) -> Node {
     node()
         .styles([flex(), items_center(), gap(2), flex_none(), h(9)])
         .child(line(title, 15, 1.4, Role::Text).styles([pm_style::font_medium()]))
-        .child(
-            node()
-                .styles([flex(), px(2), rounded_full(), bg(Role::SurfaceSelected)])
-                .child(line(count.to_string(), 12, 1.4, Role::Muted)),
-        )
+        .child(Badge::new(count.to_string()).build())
 }
 
 /// A line that only says something.
@@ -1323,19 +1316,6 @@ fn how_run(offered: &RegistryAgent) -> String {
     }
 }
 
-/// A small label in a rounded wash, in `tone`.
-fn badge(label: &str, tone: Role) -> Node {
-    node()
-        .styles([
-            flex(),
-            flex_none(),
-            px(2),
-            rounded_full(),
-            bg(Role::SurfaceSelected),
-        ])
-        .child(line(label, 11, 1.5, tone))
-}
-
 /// One row of a list: a name with its labels over what it is for and what runs it, and, for a server that can be changed, its switch and menu.
 fn row(shown: InstalledRow) -> Node {
     let dim = shown.enabled == Some(false);
@@ -1364,7 +1344,7 @@ fn row(shown: InstalledRow) -> Node {
                     shown
                         .badges
                         .into_iter()
-                        .map(|(label, tone)| badge(label, tone)),
+                        .map(|(label, tone)| Badge::new(label).tone(tone).build()),
                 ),
         );
     if !shown.description.is_empty() {
@@ -1377,7 +1357,7 @@ fn row(shown: InstalledRow) -> Node {
     if let Some(place) = shown.place {
         actions = actions.child(
             Button::icon(IconName::More, FocusId(SETTINGS_MORE_BASE + place as u64))
-                .size(Size::Icon)
+                .size(Size::Sm)
                 .build(),
         );
     }
@@ -1483,7 +1463,7 @@ fn labelled(label: &str, field: &Field, id: FocusId, placeholder: &str) -> Node 
         .child(line(label, 12, 1.4, Role::Muted))
         .child(
             Input::new(field, id)
-                .size(input::Size::Sm)
+                .size(Size::Sm)
                 .placeholder(placeholder)
                 .build(),
         )

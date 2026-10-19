@@ -10,8 +10,9 @@ use pm_style::{
 use pm_text::Shaper;
 use pm_ui::{Node, node};
 
-use crate::button::{Size, Variant};
+use crate::button::Variant;
 use crate::parts::{line, spacer};
+use crate::size::Size;
 use crate::state::{CHOICE_BASE, CLOSE_PLAN, OPEN_PLAN, PLAN_SCROLL, REVISE, WorkspaceState};
 use crate::{Button, Markdown};
 

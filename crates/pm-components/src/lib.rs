@@ -4,7 +4,7 @@
 //! it looks and a size for how big it is, and turned into a [`pm_ui::Node`]
 //! with `build`; the caller restyles the node with `.styles([...])` and never
 //! reaches into it. Each component lives in a module named for what it is,
-//! which holds its `Variant` and `Size`, and is re-exported here.
+//! which holds its `Variant` and is re-exported here; `Size` is shared.
 
 pub mod activity;
 pub mod adder;
@@ -14,13 +14,14 @@ pub mod annotations;
 pub mod arrange;
 pub mod assist;
 pub mod avatar;
+pub mod badge;
 pub mod branch_menu;
 pub mod button;
+pub mod card;
 pub mod change_list;
 pub mod changes;
 pub mod chat;
 pub mod checkbox;
-pub mod chip;
 pub mod choices;
 pub mod code_box;
 pub mod composer;
@@ -68,7 +69,6 @@ pub mod plan;
 pub mod popover;
 pub mod preview;
 pub mod problems_panel;
-pub mod progress;
 pub mod project;
 pub mod project_search;
 pub mod queued;
@@ -78,7 +78,6 @@ pub mod review;
 pub mod sample;
 pub mod sash;
 pub mod scroll_marks;
-pub mod search_box;
 pub mod settings;
 pub mod settings_catalog;
 pub mod settings_editor;
@@ -91,10 +90,12 @@ pub mod settings_servers;
 pub mod settings_state;
 pub mod settings_values;
 pub mod sidebar;
+pub mod size;
 pub mod state;
 pub mod stepper;
 pub mod steps;
 pub mod sticky;
+pub mod surface;
 pub mod tab_menu;
 pub mod tally;
 pub mod tasks;
@@ -112,10 +113,11 @@ pub mod welcome;
 pub mod window;
 
 pub use avatar::Avatar;
+pub use badge::Badge;
 pub use button::Button;
+pub use card::Card;
 pub use changes::Changes;
 pub use checkbox::Checkbox;
-pub use chip::Chip;
 pub use code_box::CodeBox;
 pub use conflict::Conflict;
 pub use context_menu::{
@@ -127,10 +129,11 @@ pub use markdown::Markdown;
 pub use menu::Menu;
 pub use modal::Modal;
 pub use popover::Popover;
-pub use progress::Progress;
 pub use project::Project;
 pub use sash::Sash;
+pub use size::Size;
 pub use stepper::Stepper;
+pub use surface::Surface;
 pub use tally::Tally;
 pub use tile::Tile;
 pub use title_bar::TitleBar;

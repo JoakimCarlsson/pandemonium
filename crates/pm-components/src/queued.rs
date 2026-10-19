@@ -9,9 +9,10 @@ use pm_style::{
 use pm_ui::{Node, node};
 
 use crate::Button;
-use crate::button::{Size, Variant};
+use crate::button::Variant;
 use crate::parts::{clipped, glyph, line};
 use crate::sample::{Queued, Session};
+use crate::size::Size;
 use crate::state::HURRY_BASE;
 
 /// One waiting prompt, at `index`: its first line, how many files go with it and a button that hands it over in place of the turn.

@@ -12,12 +12,14 @@ use pm_style::{
 use pm_ui::{Node, node, text};
 
 use crate::Button;
-use crate::button::{Size, Variant};
+use crate::Tile;
+use crate::button::Variant;
 use crate::diff::diff_line;
 use crate::diff_syntax::DiffColours;
 use crate::file_icon::{file_icon, file_language};
 use crate::parts::{clipped, glyph, line, wrap};
 use crate::sample::{DiffLine, Kind, Step, ToolUse};
+use crate::size::Size;
 use crate::state::{CHOICE_BASE, STEP_BASE};
 use crate::{CodeBox, Tally};
 
@@ -342,17 +344,12 @@ pub fn subagents(
         let id = FocusId(STEP_BASE + (message * 1000 + position) as u64);
         let described = tool.target.as_deref().unwrap_or(&tool.title);
         let mut row = node().styles([flex(), flex_col(), w_full()]).child(
-            node()
-                .styles([
-                    flex(),
-                    items_center(),
-                    gap(2.5),
-                    px(3.5),
-                    min_h(10),
-                    min_w_px(0),
-                    cursor_pointer(),
-                    bg(Role::SurfaceHover).hover(),
-                ])
+            Tile::new(id)
+                .height(10.0)
+                .gap(2.5)
+                .radius(Radius::Xs)
+                .build()
+                .styles([px(3.5), min_w_px(0)])
                 .child(agent_mark(tool.state))
                 .children((tool.agent.as_deref() != Some("agent")).then(|| {
                     node()
@@ -391,8 +388,7 @@ pub fn subagents(
                     },
                     3.5,
                     Role::Subtle,
-                ))
-                .focusable(id),
+                )),
         );
         if open && !used.is_empty() {
             row = row.child(

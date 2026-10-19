@@ -11,15 +11,15 @@ use pm_style::{
 use pm_ui::{Node, node, text};
 
 use crate::Button;
-use crate::button::Size;
 use crate::debug::{
     DEBUG_CONSOLE_FIELD, DEBUG_CONSOLE_SCROLL, DEBUG_CONTINUE, DEBUG_FRAME_BASE, DEBUG_PAUSE,
     DEBUG_ROWS, DEBUG_STACK_SCROLL, DEBUG_START, DEBUG_STEP_IN, DEBUG_STEP_OUT, DEBUG_STEP_OVER,
     DEBUG_STOP, DEBUG_VARIABLE_BASE, DEBUG_VARIABLES_SCROLL, DEBUG_WATCH_FIELD,
     DEBUG_WATCH_REMOVE_BASE, Run, variable_rows,
 };
-use crate::input::{Input, Size as InputSize};
+use crate::input::Input;
 use crate::parts::{glyph, line};
+use crate::size::Size;
 use crate::state::WorkspaceState;
 
 /// How wide the list of the stack is, in logical pixels.
@@ -43,7 +43,7 @@ fn controls(run: &Run) -> Node {
     let live = view.standing != Standing::Ended;
     let button = |icon: IconName, id: FocusId, tip: &'static str, enabled: bool| {
         Button::icon(icon, id)
-            .size(Size::Icon)
+            .size(Size::Sm)
             .disabled(!enabled)
             .build()
             .tooltip(tip)
@@ -272,7 +272,7 @@ fn variables(state: &WorkspaceState, run: &Run) -> Node {
                     IconName::Close,
                     FocusId(DEBUG_WATCH_REMOVE_BASE + index as u64),
                 )
-                .size(Size::Icon)
+                .size(Size::Sm)
                 .build(),
             ],
             None,
@@ -281,7 +281,7 @@ fn variables(state: &WorkspaceState, run: &Run) -> Node {
     }
     let add = node().styles([px(2), py(1), flex_none()]).child(
         Input::new(&state.debug.watch, DEBUG_WATCH_FIELD)
-            .size(InputSize::Sm)
+            .size(Size::Sm)
             .placeholder("Add an expression to watch")
             .build(),
     );
@@ -323,7 +323,7 @@ fn console(state: &WorkspaceState, run: &Run) -> Node {
     }
     let ask = node().styles([px(2), py(1), flex_none()]).child(
         Input::new(&state.debug.console, DEBUG_CONSOLE_FIELD)
-            .size(InputSize::Sm)
+            .size(Size::Sm)
             .placeholder("Evaluate an expression")
             .build(),
     );

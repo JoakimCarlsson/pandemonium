@@ -4,18 +4,19 @@ use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
     Color, Radius, Role, bg, border, border_b, border_color, border_l, cursor_pointer, flex,
-    flex_1, flex_col, flex_none, font_medium, font_mono, gap, h, items_center, justify_center,
-    justify_end, leading_ratio, min_h, min_w_px, mt, mx, overflow_hidden, p, pb, pr, px, py,
-    rounded, rounded_full, size, text_color, text_px, truncate, w, w_full,
+    flex_1, flex_col, flex_none, font_medium, font_mono, gap, h, items_center, justify_end,
+    leading_ratio, min_h, min_w_px, mt, mx, overflow_hidden, p, pb, pr, px, py, rounded,
+    rounded_full, text_color, text_px, truncate, w, w_full,
 };
 use pm_ui::{Mark, Node, node, text};
 
-use crate::button::{Size, Variant};
+use crate::button::Variant;
 use crate::diff_syntax::{DiffColours, shown};
 use crate::excerpts::EXCERPTS_OPEN_CHANGES;
 use crate::file_icon::{file_icon, file_language};
 use crate::parts::{glyph, line, spacer, wrap};
 use crate::sample::{Change, Comment, DiffLine, Kind, Range, Session};
+use crate::size::Size;
 use crate::state::{
     COMMENT_ADD, COMMENT_CANCEL, COMMENT_FIELD, COMMENT_FILE_BASE, COMMENT_REMOVE_BASE,
     CommentTarget, DIFF_FOLD_BASE, DIFF_SCROLL, SEND_COMMENTS, VIEWED_BASE, WorkspaceState,
@@ -518,27 +519,12 @@ fn comment_box(state: &WorkspaceState, target: CommentTarget) -> Node {
 
 /// The button that marks a file as read, or takes the mark off.
 fn viewed_button(viewed: bool, id: FocusId) -> Node {
-    let mut button = node()
-        .styles([
-            flex(),
-            items_center(),
-            justify_center(),
-            size(6),
-            flex_none(),
-            rounded_full(),
-            cursor_pointer(),
-            bg(Role::SurfaceHover).hover(),
-        ])
-        .child(glyph(
-            IconName::Check,
-            3.5,
-            if viewed { Role::Success } else { Role::Subtle },
-        ))
-        .focusable(id);
-    if viewed {
-        button = button.styles([bg(Color::from(Role::Success).alpha(0.15))]);
-    }
-    button
+    Button::icon(IconName::Check, id)
+        .size(Size::Xs)
+        .round()
+        .tone(if viewed { Role::Success } else { Role::Subtle })
+        .selected(viewed)
+        .build()
 }
 
 /// One changed file: its header, and, unless it is folded away, its lines with the notes on them.

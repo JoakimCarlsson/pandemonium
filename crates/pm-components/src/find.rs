@@ -13,9 +13,10 @@ use pm_style::{
 use pm_text::{Edit, Field};
 use pm_ui::{Node, node, text};
 
-use crate::button::{Button, Size, Variant};
-use crate::input::{Input, Size as InputSize};
+use crate::button::{Button, Variant};
+use crate::input::Input;
 use crate::parts::line;
+use crate::size::Size;
 use crate::state::WorkspaceState;
 
 /// The field the text looked for is typed in.
@@ -300,14 +301,6 @@ pub(crate) fn switch(label: &str, id: FocusId, on: bool) -> Node {
     held
 }
 
-/// A button of the bar holding only `icon`.
-fn icon_button(icon: IconName, id: FocusId) -> Node {
-    Button::icon(icon, id)
-        .variant(Variant::Ghost)
-        .size(Size::Icon)
-        .build()
-}
-
 /// What the bar says of the matches: which is selected of how many, that there are none, or why the query cannot be used.
 fn tally(found: &Matches, selected: Option<usize>, empty: bool) -> (String, Role) {
     match found {
@@ -337,11 +330,11 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) -> Node
     };
     let find_row = node()
         .styles([flex(), items_center(), gap(1)])
-        .child(icon_button(toggle, FIND_TOGGLE_REPLACE))
+        .child(Button::icon(toggle, FIND_TOGGLE_REPLACE).build())
         .child(
             node().styles([w_px(220.0), flex_none()]).child(
                 Input::new(&finding.query, FIND_FIELD)
-                    .size(InputSize::Sm)
+                    .size(Size::Sm)
                     .placeholder("Find")
                     .invalid(found.is_err())
                     .build(),
@@ -355,9 +348,9 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) -> Node
                 .styles([w_px(84.0), flex_none(), px(1)])
                 .child(line(said, 11, 1.4, tone)),
         )
-        .child(icon_button(IconName::ArrowUp, FIND_PREVIOUS))
-        .child(icon_button(IconName::ArrowDown, FIND_NEXT))
-        .child(icon_button(IconName::Close, FIND_CLOSE));
+        .child(Button::icon(IconName::ArrowUp, FIND_PREVIOUS).build())
+        .child(Button::icon(IconName::ArrowDown, FIND_NEXT).build())
+        .child(Button::icon(IconName::Close, FIND_CLOSE).build());
     let mut bar = node()
         .styles([
             absolute(),
@@ -384,7 +377,7 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) -> Node
                 .child(
                     node().styles([w_px(220.0), flex_none()]).child(
                         Input::new(&finding.replacement, REPLACE_FIELD)
-                            .size(InputSize::Sm)
+                            .size(Size::Sm)
                             .placeholder("Replace")
                             .build(),
                     ),

@@ -54,7 +54,7 @@ impl Grows {
 
 /// Which way a handle lies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Variant {
+pub enum Layout {
     /// Upright, between panels side by side; dragged left and right.
     Column,
     /// Flat, between panels one above the other; dragged up and down.
@@ -66,7 +66,7 @@ pub struct Sash {
     /// The element the handle is.
     id: FocusId,
     /// Which way it lies.
-    variant: Variant,
+    layout: Layout,
     /// Where its middle line starts in the window, and how long it is, when it floats over an edge.
     placed: Option<((f32, f32), f32)>,
 }
@@ -76,7 +76,7 @@ impl Sash {
     pub fn column(id: FocusId) -> Self {
         Self {
             id,
-            variant: Variant::Column,
+            layout: Layout::Column,
             placed: None,
         }
     }
@@ -85,7 +85,7 @@ impl Sash {
     pub fn row(id: FocusId) -> Self {
         Self {
             id,
-            variant: Variant::Row,
+            layout: Layout::Row,
             placed: None,
         }
     }
@@ -98,9 +98,9 @@ impl Sash {
 
     /// The handle: a strip the pointer takes hold of, clear until the pointer is on it, when a line as thin as a border lights up along the edge.
     pub fn build(self) -> Node {
-        let (cursor, line) = match self.variant {
-            Variant::Column => (cursor_col_resize(), [w_px(1.0), h_full()]),
-            Variant::Row => (cursor_row_resize(), [h_px(1.0), w_full()]),
+        let (cursor, line) = match self.layout {
+            Layout::Column => (cursor_col_resize(), [w_px(1.0), h_full()]),
+            Layout::Row => (cursor_row_resize(), [h_px(1.0), w_full()]),
         };
         let mut styles = vec![
             flex(),
@@ -111,26 +111,26 @@ impl Sash {
             z(10),
             cursor,
         ];
-        match (self.variant, self.placed) {
-            (Variant::Column, Some(((x, y), length))) => styles.extend([
+        match (self.layout, self.placed) {
+            (Layout::Column, Some(((x, y), length))) => styles.extend([
                 w_px(THICKNESS),
                 h_px(length),
                 inset_length(Sides::Left, Length::Px(x - THICKNESS / 2.0)),
                 inset_length(Sides::Top, Length::Px(y)),
             ]),
-            (Variant::Row, Some(((x, y), length))) => styles.extend([
+            (Layout::Row, Some(((x, y), length))) => styles.extend([
                 w_px(length),
                 h_px(THICKNESS),
                 inset_length(Sides::Left, Length::Px(x)),
                 inset_length(Sides::Top, Length::Px(y - THICKNESS / 2.0)),
             ]),
-            (Variant::Column, None) => styles.extend([
+            (Layout::Column, None) => styles.extend([
                 w_px(THICKNESS),
                 top(0),
                 bottom(0),
                 inset_length(Sides::Left, Length::Px(-THICKNESS / 2.0)),
             ]),
-            (Variant::Row, None) => styles.extend([
+            (Layout::Row, None) => styles.extend([
                 h_px(THICKNESS),
                 left(0),
                 right(0),

@@ -11,9 +11,11 @@ use pm_style::{
 use pm_text::{Edit, Field};
 use pm_ui::{Node, node};
 
-use crate::button::{Size, Variant};
+use crate::button::Variant;
 use crate::checkbox::Variant as CheckboxVariant;
+use crate::input::Input;
 use crate::parts::{glyph, line};
+use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
 use crate::{Button, Checkbox};
 
@@ -421,8 +423,8 @@ fn heading() -> Node {
 
 /// The box the reader types into to narrow the list.
 fn search(state: &WorkspaceState) -> Node {
-    crate::search_box::SearchBox::new(&state.extensions_page.search, EXTENSIONS_SEARCH)
-        .size(crate::search_box::Size::Lg)
+    Input::search(&state.extensions_page.search, EXTENSIONS_SEARCH)
+        .size(Size::Lg)
         .placeholder("Search extensions")
         .build()
 }

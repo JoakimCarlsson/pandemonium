@@ -1,14 +1,18 @@
 //! The input: a box holding editable text, one line or several, with a look per variant and a measure per size.
 
+use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
     Radius, Role, Utility, bg, border, border_color, cursor_not_allowed, cursor_text, flex, flex_1,
-    flex_col, flex_none, font_mono, h, h_full, items_center, leading_ratio, min_h, min_w_px,
+    flex_col, flex_none, font_mono, gap, h, h_full, items_center, leading_ratio, min_h, min_w_px,
     opacity, overflow_hidden, pb, pt, px, ring, ring_color, rounded, text_color, text_px, truncate,
     w_full,
 };
 use pm_text::{Field, Shaper};
 use pm_ui::{Line, Node, node, text, wrap};
+
+use crate::parts::glyph;
+use crate::size::Size;
 
 /// How tall a line of a multiline input is as a share of its type size.
 const LINE_RATIO: f32 = 1.57;
@@ -38,22 +42,12 @@ pub enum Variant {
     /// A filled box with an outline.
     #[default]
     Default,
+    /// A filled box with an outline for a line typed in ordinary text, which a [`Input::leading_icon`] stands before.
+    Bordered,
     /// No fill and no outline, for a line edited in place.
     Ghost,
     /// Several wrapped lines with no fill and no outline, for a box that draws its own; give the lines with [`Input::wrap`].
     Multiline,
-}
-
-/// How big an input is.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Size {
-    /// 32px tall, 12px text.
-    Sm,
-    /// 40px tall, 13px text.
-    #[default]
-    Default,
-    /// 48px tall, 14px text.
-    Lg,
 }
 
 /// An input being described: the line it edits, what it says while empty,
@@ -73,6 +67,8 @@ pub struct Input<'a> {
     variant: Variant,
     /// How big it is.
     size: Size,
+    /// The glyph before the line, if any.
+    leading: Option<IconName>,
     /// Whether it is switched off.
     disabled: bool,
     /// Whether what it holds is not acceptable.
@@ -91,12 +87,26 @@ impl<'a> Input<'a> {
             placeholder: "",
             id,
             variant: Variant::Default,
-            size: Size::Default,
+            size: Size::Md,
+            leading: None,
             disabled: false,
             invalid: false,
             rows: 1,
             lines: Vec::new(),
         }
+    }
+
+    /// A bordered input editing `field` with a magnifying glass before the line, for what is looked for.
+    pub fn search(field: &'a Field, id: FocusId) -> Self {
+        Self::new(field, id)
+            .variant(Variant::Bordered)
+            .leading_icon(IconName::Search)
+    }
+
+    /// The input with `icon` before its line.
+    pub fn leading_icon(mut self, icon: IconName) -> Self {
+        self.leading = Some(icon);
+        self
     }
 
     /// The multiline input at least `rows` lines tall.
@@ -154,10 +164,15 @@ impl<'a> Input<'a> {
         } else {
             (&*shown, Role::Text, self.field.to_shown(self.field.caret()))
         };
-        let (height, font) = match self.size {
-            Size::Sm => (8, 12),
-            Size::Default => (10, 13),
-            Size::Lg => (12, 14),
+        let (height, font) = match (self.variant, self.size) {
+            (Variant::Bordered, Size::Xs) => (7, 12),
+            (Variant::Bordered, Size::Sm) => (8, 12),
+            (Variant::Bordered, Size::Md) => (9, 12),
+            (Variant::Bordered, Size::Lg) => (10, 12),
+            (_, Size::Xs) => (7, 12),
+            (_, Size::Sm) => (8, 12),
+            (_, Size::Md) => (10, 13),
+            (_, Size::Lg) => (12, 14),
         };
         let mut line = text(content)
             .styles([text_px(font), leading_ratio(1.4), text_color(tone)])
@@ -185,12 +200,13 @@ impl<'a> Input<'a> {
             w_full(),
             min_w_px(0),
             h(height),
+            gap(2),
             px(3),
             rounded(Radius::Lg),
             ring(2).focus(),
             ring_color(Role::Focused).focus(),
         ];
-        if self.variant == Variant::Default {
+        if matches!(self.variant, Variant::Default | Variant::Bordered) {
             styles.extend([
                 bg(Role::Surface),
                 border(),
@@ -220,7 +236,11 @@ impl<'a> Input<'a> {
             ])
             .scroll_x(self.field.scroll())
             .child(line);
-        let input = node().styles(styles).child(view);
+        let mut input = node().styles(styles);
+        if let Some(icon) = self.leading {
+            input = input.child(glyph(icon, 4.0, Role::Muted));
+        }
+        let input = input.child(view);
         if self.disabled {
             input
         } else {

@@ -9,11 +9,11 @@ use pm_style::{
 };
 use pm_ui::{Node, node};
 
-use crate::button::Size;
 use crate::extensions::group;
 use crate::parts::{clipped, glyph, line, spacer};
 use crate::sample::{Session, Status};
 use crate::sidebar::status_icon;
+use crate::size::Size;
 use crate::state::{NEW_IN_BASE, SESSION_BASE, WorkspaceState};
 use crate::{Avatar, Button};
 
