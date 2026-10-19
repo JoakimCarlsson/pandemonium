@@ -124,6 +124,7 @@ fn main() {
             Some("new") => Shot::New,
             Some("empty") => Shot::Empty,
             Some("history") => Shot::History,
+            Some("history-scrolled") => Shot::HistoryScrolled,
             Some("projectmenu") => Shot::ProjectMenu,
             Some("dragging") => Shot::Dragging,
             Some("welcome") => Shot::Welcome,

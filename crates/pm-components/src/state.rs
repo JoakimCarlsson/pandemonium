@@ -1435,6 +1435,8 @@ pub struct WorkspaceState {
     pub message: Field,
     /// What the history page is narrowed to.
     pub history_search: Field,
+    /// How far the history session groups have scrolled, in logical pixels.
+    pub history_scroll: f32,
     /// How far the sidebar's list is scrolled, in logical pixels.
     pub sidebar_scroll: f32,
     /// How wide the sidebar is, in logical pixels.
@@ -1646,6 +1648,7 @@ impl WorkspaceState {
             prompt: prompt_field(""),
             message: commit_field(),
             history_search: Field::default(),
+            history_scroll: 0.0,
             sidebar_scroll: 0.0,
             sidebar_width: crate::sidebar::WIDTH,
             review_width: crate::review::WIDTH,
@@ -2019,7 +2022,13 @@ impl WorkspaceState {
             }
             ADDER_FIELD => self.adder_edited(edit),
             PICKER_FIELD => self.folder_picker_edited(edit),
-            HISTORY_SEARCH => self.history_search.apply(edit),
+            HISTORY_SEARCH => {
+                let before = self.history_search.text().to_owned();
+                self.history_search.apply(edit);
+                if self.history_search.text() != before {
+                    self.history_scroll = 0.0;
+                }
+            }
             crate::extensions::EXTENSIONS_SEARCH => self.extensions_searched(edit),
             id if crate::settings_servers::is_form_field(id) => self.server_form_edited(id, edit),
             id if crate::settings_pages::is_setting_field(id) => self.setting_edited(id, edit),

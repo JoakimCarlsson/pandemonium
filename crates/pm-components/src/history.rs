@@ -17,6 +17,17 @@ use crate::size::Size;
 use crate::state::{HISTORY_SEARCH, SESSION_BASE, WorkspaceState};
 use crate::tile::Tile;
 
+/// The scrolling list of session groups on the history page.
+pub const HISTORY_SCROLL: FocusId = FocusId(9_300_000);
+
+impl WorkspaceState {
+    /// The state after the history list is scrolled by `delta` logical pixels, kept within `room` pixels of overflow.
+    pub fn scrolled_history(mut self, delta: f32, room: f32) -> Self {
+        self.history_scroll = (self.history_scroll + delta).clamp(0.0, room);
+        self
+    }
+}
+
 /// How wide the search box is.
 const SEARCH_WIDTH: f32 = 500.0;
 
@@ -53,6 +64,7 @@ pub fn history(state: &WorkspaceState) -> Node {
                     overflow_hidden(),
                     px(5),
                 ])
+                .scroll_from_start(HISTORY_SCROLL, state.history_scroll)
                 .children(
                     Span::ALL
                         .into_iter()
