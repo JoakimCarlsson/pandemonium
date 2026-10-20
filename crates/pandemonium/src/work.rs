@@ -133,6 +133,8 @@ enum Pending {
     Identity(usize, bool),
     /// The session at this position was started.
     Start(usize),
+    /// The session with this number on the server answering was asked to close.
+    Close(u64),
     /// The folder of the session at this position was looked at.
     Inspect(usize),
     /// Files of the session at this position were staged or unstaged.
@@ -616,6 +618,17 @@ impl Work {
         self.agents.get(position).cloned()
     }
 
+    /// Whether the session at `session` waits on a server to start it.
+    fn starting(&self, session: usize) -> bool {
+        self.links.values().any(|link| {
+            link.backlog
+                .iter()
+                .map(|(_, pending)| pending)
+                .chain(link.waiting.values())
+                .any(|pending| matches!(pending, Pending::Start(started) if *started == session))
+        })
+    }
+
     /// Asks the server that runs the session at `session` to do `request`, when that session is running there.
     fn ask_session(
         &mut self,
@@ -689,14 +702,23 @@ impl Work {
                         show_in_file_manager(&placement.directory);
                     }
                 }
-                Outgoing::Close { session, discard } => self.ask_session(
-                    session,
-                    |number| Request::CloseSession {
-                        session: number,
-                        discard,
-                    },
-                    Pending::Nothing,
-                ),
+                Outgoing::Close { session, discard } => match self.numbers.get(&session).cloned() {
+                    Some((host, number)) => self.ask(
+                        &host,
+                        Request::CloseSession {
+                            session: number,
+                            discard,
+                        },
+                        Pending::Close(number),
+                    ),
+                    None if self.starting(session) => model.update(|screen| {
+                        *screen = std::mem::take(screen)
+                            .git_failed("Could not close the session: it is still starting");
+                    }),
+                    None => model.update(|screen| {
+                        *screen = std::mem::take(screen).closed_elsewhere(session);
+                    }),
+                },
                 Outgoing::Start {
                     session,
                     text,
@@ -1718,6 +1740,21 @@ impl Work {
                 }),
                 _ => {}
             },
+            Pending::Close(number) => {
+                if let Some(position) = self.positions.get(&(host.clone(), number)).copied() {
+                    model.update(|screen| {
+                        let taken = std::mem::take(screen);
+                        *screen = match response {
+                            Response::Done => taken.closed_elsewhere(position),
+                            Response::Uncommitted => taken.asking_to_close(position),
+                            Response::Failed { message } => {
+                                taken.git_failed(&format!("Could not close the session: {message}"))
+                            }
+                            _ => taken,
+                        };
+                    });
+                }
+            }
             Pending::Inspect(session) => {
                 if let Response::Inspected {
                     changes,

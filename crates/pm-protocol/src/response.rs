@@ -440,4 +440,6 @@ pub enum Response {
         /// Its path on the server's machine.
         path: String,
     },
+    /// A session was not closed because its worktree has changes that are not committed; closing it with `discard` removes them.
+    Uncommitted,
 }

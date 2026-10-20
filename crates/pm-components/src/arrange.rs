@@ -179,29 +179,38 @@ impl WorkspaceState {
         }
     }
 
-    /// The state with the session at `position` closed, and, when `ask` is set, the server told to close it, removing the worktree even with changes that are not committed when `discard` is set.
+    /// The state with the session at `position` closed, or, when `ask` is set, the server told to close it, removing the worktree even with changes that are not committed when `discard` is set, and the session left open until the server has.
     pub fn closed_session(mut self, position: usize, ask: bool, discard: bool) -> Self {
         self.close_session(position, ask, discard);
         self
     }
 
-    /// Closes the session at `position`, and, when `ask` is set, tells the server to close it, removing the worktree even with changes that are not committed when `discard` is set.
+    /// Closes the session at `position`, or, when `ask` is set, tells the server to close it, removing the worktree even with changes that are not committed when `discard` is set, and leaves it open until the server has.
     pub(crate) fn close_session(&mut self, position: usize, ask: bool, discard: bool) {
         let Some(held) = self.sessions.get_mut(position) else {
             return;
         };
+        if ask {
+            self.outbox.push(Outgoing::Close {
+                session: position,
+                discard,
+            });
+            return;
+        }
         held.closed = true;
         let project = held.project;
         if self.page == Page::Session(position) {
             self.page = Page::New(project);
             self.sync_context();
         }
-        if ask {
-            self.outbox.push(Outgoing::Close {
-                session: position,
-                discard,
-            });
+    }
+
+    /// The state with the reader asked whether to close the session at `position` though its worktree has changes that are not committed.
+    pub fn asking_to_close(mut self, position: usize) -> Self {
+        if position < self.sessions.len() {
+            self.ask(Prompt::Close(position));
         }
+        self
     }
 
     /// The state with the menu of the project at `project` open at `at`.

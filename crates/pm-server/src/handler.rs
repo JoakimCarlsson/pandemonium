@@ -258,11 +258,11 @@ fn start_session(
     }
 }
 
-/// Stops the agent of session `number`, removes the worktree it made when no other open session works in it, and marks it closed.
+/// Stops the agent of session `number` and waits for it to exit, removes the worktree it made when no other open session works in it, deletes the branch it made there when nothing would be lost, and marks it closed.
 ///
-/// A worktree with changes that are not committed is kept and the request fails, unless `discard` is set.
+/// A worktree with changes that are not committed is kept and the request answered with `Uncommitted`, unless `discard` is set.
 fn close_session(core: &Core, number: u64, discard: bool) -> Response {
-    let told = {
+    let (chat, removal) = {
         let Ok(mut sessions) = core.sessions.lock() else {
             return failed("the server is shutting down");
         };
@@ -277,23 +277,42 @@ fn close_session(core: &Core, number: u64, discard: bool) -> Response {
         });
         let worktree = held.meta.head.is_some() && !shared;
         if worktree && !discard && !pm_git::changes(&folder).is_empty() {
-            return failed(format!(
-                "{} has changes that are not committed",
-                held.meta.title
-            ));
+            return Response::Uncommitted;
         }
         let held = sessions
             .get_mut(&number)
             .expect("the session was just found");
-        if let Some(chat) = held.chat.take() {
-            chat.cancel();
-        }
         held.busy = false;
-        if worktree
-            && let Err(reason) = pm_git::remove_worktree(&place(&held.meta.repository), &folder)
+        let removal = worktree.then(|| {
+            (
+                place(&held.meta.repository),
+                folder,
+                held.meta.branch.clone(),
+                held.meta.base.clone(),
+            )
+        });
+        (held.chat.take(), removal)
+    };
+    if let Some(chat) = chat {
+        chat.stop();
+    }
+    if let Some((repository, folder, branch, base)) = removal {
+        if !discard && !pm_git::changes(&folder).is_empty() {
+            return Response::Uncommitted;
+        }
+        if let Err(reason) =
+            pm_git::remove_worktree(&repository, &folder, branch.as_deref(), base.as_deref())
         {
             return failed(format!("could not remove the worktree: {reason}"));
         }
+    }
+    let told = {
+        let Ok(mut sessions) = core.sessions.lock() else {
+            return failed("the server is shutting down");
+        };
+        let Some(held) = sessions.get_mut(&number) else {
+            return failed(format!("no session is numbered {number}"));
+        };
         held.meta.closed = true;
         sessions::save_meta(number, &held.meta);
         held.drop_queue(number)

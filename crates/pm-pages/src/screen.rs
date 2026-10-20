@@ -389,10 +389,18 @@ impl Screen {
         }
     }
 
-    /// The screen with the session at `position` closed by another client.
+    /// The screen with the session at `position` closed, by the server or because no server holds it.
     pub fn closed_elsewhere(self, position: usize) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.closed_session(position, false, false)),
+            onboarding => onboarding,
+        }
+    }
+
+    /// The screen with the reader asked whether to close the session at `position` though its worktree has changes that are not committed.
+    pub fn asking_to_close(self, position: usize) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.asking_to_close(position)),
             onboarding => onboarding,
         }
     }

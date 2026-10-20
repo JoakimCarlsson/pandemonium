@@ -4,6 +4,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -15,8 +16,8 @@ pub(crate) const LOGIN_REQUIRED: i64 = -32000;
 
 /// An agent's process, spoken to line by line.
 pub(crate) struct Client {
-    /// The process.
-    child: Child,
+    /// The process, shared with whoever may have to end it from another thread.
+    child: Arc<Mutex<Child>>,
     /// What the process is written to.
     stdin: ChildStdin,
     /// The messages the process wrote, one per line.
@@ -71,11 +72,16 @@ impl Client {
             }
         });
         Ok(Self {
-            child,
+            child: Arc::new(Mutex::new(child)),
             stdin,
             lines,
             next: 1,
         })
+    }
+
+    /// The process, for ending it from another thread.
+    pub(crate) fn process(&self) -> Arc<Mutex<Child>> {
+        Arc::clone(&self.child)
     }
 
     /// Writes `message` to the agent as one line.
@@ -161,8 +167,15 @@ impl Client {
 impl Drop for Client {
     /// Ends the process, and collects it off the caller's thread.
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        end(&self.child);
+    }
+}
+
+/// Ends the process `child` and collects it.
+pub(crate) fn end(child: &Mutex<Child>) {
+    if let Ok(mut child) = child.lock() {
+        let _ = child.kill();
+        let _ = child.wait();
     }
 }
 

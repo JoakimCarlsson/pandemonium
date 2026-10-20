@@ -392,15 +392,44 @@ pub fn add_worktree(
     Ok(Worktree { path, head, branch })
 }
 
-/// Removes the worktree at `path` of `repository` with every file in it, and forgets it.
+/// Removes the worktree at `path` of `repository` with every file in it, and forgets it, then deletes `branch`, the branch it was made on from `base`, when every commit on it is also on `base` or a remote.
 ///
-/// A folder that is already gone is only forgotten.
-pub fn remove_worktree(repository: &Path, path: &Path) -> Result<(), String> {
+/// A folder that is already gone is only forgotten, and a branch with commits of its own is kept.
+pub fn remove_worktree(
+    repository: &Path,
+    path: &Path,
+    branch: Option<&str>,
+    base: Option<&str>,
+) -> Result<(), String> {
     let place = path.to_string_lossy().into_owned();
     if path.exists() {
         run(repository, &["worktree", "remove", "--force", &place])?;
     }
-    run(repository, &["worktree", "prune"]).map(|_| ())
+    run(repository, &["worktree", "prune"])?;
+    if let (Some(branch), Some(base)) = (branch, base)
+        && has_branch(repository, branch)
+        && merged(repository, branch, base)
+    {
+        let _ = run(repository, &["branch", "-D", branch]);
+    }
+    Ok(())
+}
+
+/// Whether every commit on `branch` of `repository` is also on `base` or a remote.
+fn merged(repository: &Path, branch: &str, base: &str) -> bool {
+    run(
+        repository,
+        &[
+            "rev-list",
+            "--count",
+            branch,
+            "--not",
+            base,
+            "--remotes",
+            "--",
+        ],
+    )
+    .is_ok_and(|count| count.trim() == "0")
 }
 
 /// The lines of the diff `text` holds, from the first hunk on.
