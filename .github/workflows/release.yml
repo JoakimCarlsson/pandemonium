@@ -58,6 +58,7 @@ jobs:
           case "$TAG" in *-* | nightly) channel=nightly ;; esac
           echo "VERSION=$version" >> "$GITHUB_ENV"
           echo "PANDEMONIUM_CHANNEL=$channel" >> "$GITHUB_ENV"
+          echo "PANDEMONIUM_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
       - name: Install system libraries
         if: runner.os == 'Linux'

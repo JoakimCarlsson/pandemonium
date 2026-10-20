@@ -95,6 +95,9 @@ const EDITOR_SETTINGS: &str = "editor-settings.json";
 /// The file the window's own settings are kept in.
 const WINDOW_SETTINGS: &str = "window-settings.json";
 
+/// How long the window waits before looking for a newer release again while it stays open.
+const RELEASE_RECHECK: Duration = Duration::from_secs(6 * 60 * 60);
+
 /// The window and what draws into it; both exist once the platform is ready.
 pub struct App {
     /// The window, once it is open.
@@ -167,6 +170,8 @@ pub struct App {
     saved_editor: pm_editor::EditorSettings,
     /// The file shown and its version while it waits to be saved by itself, and since when.
     autosave_wait: Option<((String, i32), Instant)>,
+    /// When the window last looked for a newer release.
+    release_asked: Instant,
     /// The agents the server can start, which onboarding checks.
     agents: Vec<pm_protocol::AgentServer>,
     /// The logins each agent last offered, in the order of `agents`.
@@ -363,6 +368,7 @@ impl Default for App {
             saved_choices: choices,
             saved_editor: editor,
             autosave_wait: None,
+            release_asked: Instant::now(),
             logins: vec![Vec::new(); agents.len()],
             agents,
             work,
@@ -730,6 +736,19 @@ impl App {
         self.work.set_servers(&settings.servers);
         self.saved_window = settings;
         self.apply_appearance();
+    }
+
+    /// When the window looks for a newer release again while updates are looked for, asking now once that time has come.
+    fn release_due(&mut self) -> Option<Instant> {
+        let general = &self.saved_window.general;
+        if !general.check_updates {
+            return None;
+        }
+        if self.release_asked.elapsed() >= RELEASE_RECHECK {
+            self.work.ask_release(general.channel);
+            self.release_asked = Instant::now();
+        }
+        Some(self.release_asked + RELEASE_RECHECK)
     }
 
     /// Draws the window light or dark, in the themes and fonts, as its own settings and the desktop say.
@@ -1944,6 +1963,7 @@ impl ApplicationHandler for App {
                     .with_window_settings(settings)
                     .with_fonts(all, mono);
             });
+            self.work.show_release(&self.model);
         }
         if self.model.read(Screen::has_outbox) {
             self.deliver();
@@ -1954,6 +1974,7 @@ impl ApplicationHandler for App {
             self.editor_highlight_due(),
             self.editor_autosave_due(),
             self.recording_due(),
+            self.release_due(),
         ]
         .into_iter()
         .flatten()

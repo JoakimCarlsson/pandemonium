@@ -107,8 +107,8 @@ enum Pending {
     Nothing,
     /// What the server on this machine keeps for the work the servers do.
     MachineSettings,
-    /// The newest release on a channel.
-    LatestRelease,
+    /// The newest release on a channel, the nightly one when set.
+    LatestRelease(bool),
     /// The agents the reader added by hand.
     AgentServers,
     /// The tool servers every agent is started with.
@@ -362,6 +362,8 @@ pub struct Work {
     grammars: HashSet<(Host, String)>,
     /// The colours diagrams are drawn in.
     palette: picture::Palette,
+    /// What looking for a newer release last found, kept for a workspace that opens after it was answered.
+    release: Option<pm_components::update::Update>,
 }
 
 impl Work {
@@ -394,6 +396,7 @@ impl Work {
             pending: Cell::new(0),
             grammars: HashSet::new(),
             palette: picture::Palette::default(),
+            release: None,
         }
     }
 
@@ -1936,7 +1939,7 @@ impl Work {
             Pending::Tasks(_) | Pending::Toolchains(_) => {
                 self.answered_tasks(model, pending, response)
             }
-            Pending::MachineSettings | Pending::LatestRelease => {
+            Pending::MachineSettings | Pending::LatestRelease(_) => {
                 self.answered_machine(model, pending, response)
             }
             Pending::Back(session, failing) => {

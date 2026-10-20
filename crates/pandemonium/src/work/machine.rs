@@ -1,5 +1,6 @@
 //! What the reader set up for the work the servers do: read from the server on this machine, sent to every server the window reaches whenever it changes and to each server as it is reached, and the newest release looked up.
 
+use pm_components::update::Update;
 use pm_protocol::{MachineSettings, Request, Response};
 use pm_state::State;
 
@@ -37,17 +38,23 @@ impl Work {
 
     /// Asks the server on this machine for the newest release on `channel`.
     pub fn ask_release(&mut self, channel: pm_config::Channel) {
-        let channel = match channel {
-            pm_config::Channel::Stable => "stable",
-            pm_config::Channel::Nightly => "nightly",
-        };
+        let nightly = channel == pm_config::Channel::Nightly;
+        let channel = if nightly { "nightly" } else { "stable" };
         self.ask(
             &None,
             Request::LatestRelease {
                 channel: channel.to_owned(),
+                running: Some(pm_components::update::RUNNING.to_owned()),
             },
-            Pending::LatestRelease,
+            Pending::LatestRelease(nightly),
         );
+    }
+
+    /// Hands the workspace what looking for a newer release last found, when anything was.
+    pub fn show_release(&self, model: &State<Screen>) {
+        if let Some(update) = self.release.clone() {
+            Self::in_workspace(model, |state| state.with_release(update));
+        }
     }
 
     /// Learns the tokens of the servers reached straight at their address or through a tunnel, from the servers the window knows.
@@ -83,11 +90,20 @@ impl Work {
                 }
                 Self::in_workspace(model, |state| state.with_machine_settings(settings));
             }
-            (Pending::LatestRelease, Response::LatestRelease { version, url }) => {
-                Self::in_workspace(model, |state| state.with_release(version, url));
+            (
+                Pending::LatestRelease(nightly),
+                Response::LatestRelease {
+                    version,
+                    url,
+                    commit,
+                },
+            ) => {
+                self.release = Some(Update::judged(nightly, version, commit, url));
+                self.show_release(model);
             }
-            (Pending::LatestRelease, _) => {
-                Self::in_workspace(model, |state| state.with_release(None, String::new()));
+            (Pending::LatestRelease(_), _) => {
+                self.release = Some(Update::Unknown);
+                self.show_release(model);
             }
             _ => {}
         }

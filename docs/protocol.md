@@ -133,7 +133,7 @@ request with exactly one `response` carrying the same `id`.
 | `watch_folders`| `directories`: `[string]`                                                                       | `done`          |
 | `machine_settings`| none                                                                                          | `machine_settings` |
 | `save_machine_settings`| `settings`: `{git, history, agents, shell, languages, extensions}`                       | `done`          |
-| `latest_release`| `channel`: `stable` or `nightly`                                                                 | `latest_release` |
+| `latest_release`| `channel`: `stable` or `nightly`; `running`: the asker's version, optional                       | `latest_release` |
 | `registry_agents`| none                                                                                             | `registry_agents`|
 | `search_tools` | `query`                                                                                          | `tool_listings` |
 | `accounts`     | none                                                                                             | `accounts`      |
@@ -371,8 +371,10 @@ request with exactly one `response` carrying the same `id`.
   other server it reaches, as it reaches it and whenever they change, so a
   project on another machine works by the same settings.
 - **`latest_release`:** the newest release of the app on `channel`, looked up
-  on the project's releases: the latest made for everyone for `stable`, the
-  build made every night for `nightly`.
+  on the project's releases: for `stable`, the newest made for everyone, or a
+  newer pre-release of the same numbers when `running` (the server's own
+  version when left out) is itself a pre-release; for `nightly`, the build made
+  every night.
 - **`open_terminal`:** starts the user's shell (`$SHELL`, with `TERM=xterm-256color`)
   in a pseudo-terminal in `directory`, with a window of `columns` by `rows`. The
   connection is attached to the shell already. The shell keeps running when no
@@ -646,7 +648,7 @@ embedded context, and anything else as a link to the stored file.
 | `agent_servers` | `servers`: `[{id, name, command, env, package, installer, home}]`                |
 | `mcp_servers` | `servers`: `[{name, target, env, description, website, enabled, extension}]`          |
 | `machine_settings` | `settings`: `{git, history, agents, shell, languages, extensions}`, as `save_machine_settings` takes them |
-| `latest_release` | `version`: the version, or for `nightly` the day it was made, or null when none was found; `url`: its page |
+| `latest_release` | `version`: the version, or for `nightly` the day it was made, or null when none was found; `url`: its page; `commit`: for `nightly`, the commit it was built from, or null |
 | `registry_agents` | `agents`: `[{id, name, version, description, website, command, env}]` |
 | `tool_listings` | `listings`: `[{id, title, description, name, target, env, inputs, asks, website}]` |
 | `accounts`   | `logins`: `[{agent, id, name}]`, `in_use`: `[[agent, id]]` |

@@ -1950,6 +1950,8 @@ impl WorkspaceState {
             PROJECT_MENU_NEW | PROJECT_MENU_REMOVE => return self.project_menu_pressed(action),
             ADD_PROJECT => return self.with_adder(),
             SETTINGS => return self.with_settings(),
+            crate::title_bar::UPDATE_OPEN => self.open_release(),
+            crate::title_bar::UPDATE_DISMISS => self.dismiss_release(),
             action if crate::settings::is_settings(action) => {
                 return self.settings_pressed(action);
             }

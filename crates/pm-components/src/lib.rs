@@ -107,6 +107,7 @@ pub mod title_bar;
 pub mod trail;
 pub mod tree;
 pub mod tree_actions;
+pub mod update;
 pub mod usage;
 pub mod viewer;
 pub mod welcome;

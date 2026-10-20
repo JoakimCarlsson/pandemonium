@@ -1,4 +1,4 @@
-//! The bar across the top of the window: back and forward, the command center naming where the window is, the settings, and the controls of a window the desktop draws no frame around.
+//! The bar across the top of the window: back and forward, the command center naming where the window is, the notice of a newer release, the settings, and the controls of a window the desktop draws no frame around.
 
 use pm_icon::IconName;
 use pm_input::FocusId;
@@ -12,6 +12,7 @@ use crate::Button;
 use crate::button::Variant;
 use crate::listing::{LISTING_WIDTH, QUICK_INSET};
 use crate::quick_input::FIELD_HEIGHT;
+use crate::size::Size;
 use crate::state::{Page, REVIEW, SETTINGS, SIDEBAR_TOGGLE, TERMINAL, WorkspaceState};
 
 /// How tall the bar is, in logical pixels.
@@ -37,6 +38,12 @@ pub const WINDOW_MAXIMIZE: FocusId = FocusId(7_405_005);
 
 /// Closes the window.
 pub const WINDOW_CLOSE: FocusId = FocusId(7_405_006);
+
+/// Opens the page of the newer release the bar tells of.
+pub const UPDATE_OPEN: FocusId = FocusId(7_405_007);
+
+/// Hides the notice of the newer release until a later one is out.
+pub const UPDATE_DISMISS: FocusId = FocusId(7_405_008);
 
 /// How wide the command center is while the bar has room, in logical pixels: as wide as the field of the quick input that opens over it.
 const COMMAND_CENTER_WIDTH: f32 = LISTING_WIDTH - 2.0 * QUICK_INSET;
@@ -66,6 +73,8 @@ pub struct TitleBar {
     sidebar_open: bool,
     /// Whether the review panel is showing, which fills the button that shows and hides it.
     review_open: bool,
+    /// The name of the newer release the bar tells of, when one is out and its notice was not dismissed.
+    release: Option<String>,
 }
 
 impl TitleBar {
@@ -89,6 +98,7 @@ impl TitleBar {
             panel_open: state.terminal,
             sidebar_open: state.sidebar_open,
             review_open: state.review && state.review_session().is_some(),
+            release: state.release_notice().map(str::to_owned),
             ..Self::default()
         }
     }
@@ -118,6 +128,7 @@ impl TitleBar {
                 gap(0.5),
                 pm_style::h_full(),
             ])
+            .children(self.release.map(release_notice))
             .children(navigation.then(|| {
                 layout_toggle(
                     IconName::PanelLeft,
@@ -186,6 +197,25 @@ fn command_center(place: String) -> Node {
             bg(Role::Background),
         ])
         .tooltip("Show All Commands")
+}
+
+/// The notice that the release `name` is out: a button that opens its page and one that dismisses it.
+fn release_notice(name: String) -> Node {
+    node()
+        .styles([flex(), flex_none(), items_center(), gap(0.5), px(1)])
+        .child(
+            Button::new(format!("{name} available"), UPDATE_OPEN)
+                .with_icon(IconName::ArrowUp)
+                .size(Size::Sm)
+                .build()
+                .tooltip("Open Release Page"),
+        )
+        .child(
+            Button::icon(IconName::Close, UPDATE_DISMISS)
+                .size(Size::Sm)
+                .build()
+                .tooltip("Dismiss"),
+        )
 }
 
 /// The buttons that minimize, maximize and close a window the desktop draws no frame around, or only the one that closes it when `close_only` is set.

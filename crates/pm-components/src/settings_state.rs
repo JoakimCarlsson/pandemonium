@@ -31,8 +31,10 @@ pub struct SettingsPage {
     pub fonts: Vec<String>,
     /// The families among them whose letters are all as wide as each other.
     pub mono_fonts: Vec<String>,
-    /// The newest release on the channel followed, once asked: its version, when one was found, and its page.
-    pub release: Option<(Option<String>, String)>,
+    /// What looking for a newer release on the channel followed found, once it was looked for.
+    pub release: Option<crate::update::Update>,
+    /// The name of the newer release whose notice the reader dismissed.
+    pub release_dismissed: Option<String>,
     /// The form for adding or changing a server of the servers page, while it is open.
     pub server_form: Option<crate::settings_machines::MachineForm>,
 }
@@ -143,10 +145,38 @@ impl WorkspaceState {
         self
     }
 
-    /// The state knowing the newest release on the channel followed: its `version`, when one was found, and its page at `url`.
-    pub fn with_release(mut self, version: Option<String>, url: String) -> Self {
-        self.settings_page.release = Some((version, url));
+    /// The state knowing what looking for a newer release on the channel followed found, kept only while updates are looked for.
+    pub fn with_release(mut self, update: crate::update::Update) -> Self {
+        self.settings_page.release = self.window.general.check_updates.then_some(update);
         self
+    }
+
+    /// The name of the newer release the window tells the reader about, unless they dismissed it.
+    pub fn release_notice(&self) -> Option<&str> {
+        match &self.settings_page.release {
+            Some(crate::update::Update::Newer { name, .. })
+                if self.settings_page.release_dismissed.as_ref() != Some(name) =>
+            {
+                Some(name)
+            }
+            _ => None,
+        }
+    }
+
+    /// Opens the page of the newer release found, when one was.
+    pub(crate) fn open_release(&mut self) {
+        if let Some(crate::update::Update::Newer { url, .. }) = &self.settings_page.release {
+            self.outbox.push(Outgoing::Open {
+                address: url.clone(),
+            });
+        }
+    }
+
+    /// Hides the notice of the newer release found, until a later one is found.
+    pub(crate) fn dismiss_release(&mut self) {
+        if let Some(name) = self.release_notice() {
+            self.settings_page.release_dismissed = Some(name.to_owned());
+        }
     }
 
     /// The language whose settings the languages page shows, by id, when any is installed.

@@ -99,6 +99,7 @@ fn main() {
             Some("extension-install") => Shot::ExtensionInstall,
             Some("workspace") => Shot::Workspace,
             Some("quitting") => Shot::Quitting,
+            Some("update") => Shot::Update,
             Some("diff") => Shot::Diff,
             Some("worddiff") => Shot::WordDiff,
             Some("commenting") => Shot::Commenting,

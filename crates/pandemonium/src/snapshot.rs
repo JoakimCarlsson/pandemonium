@@ -88,6 +88,8 @@ pub enum Shot {
     Workspace,
     /// The workspace asking whether to close the window while agents are working.
     Quitting,
+    /// The workspace telling of a newer release in its title bar.
+    Update,
     /// The workspace on the diff of its first session.
     Diff,
     /// The workspace on the diff of its first session with the words that changed inside changed lines marked.
@@ -1832,6 +1834,12 @@ impl Shot {
             }),
             Self::Workspace | Self::Selecting => Screen::Workspace(workspace()),
             Self::Quitting => Screen::Workspace(workspace().close_asked()),
+            Self::Update => Screen::Workspace(workspace().with_release(
+                pm_components::update::Update::Newer {
+                name: "Pandemonium 0.14.0".to_owned(),
+                url: "https://github.com".to_owned(),
+            },
+            )),
             Self::MessageMenu => {
                 Screen::Workspace(workspace().with_message_menu(3, (520.0, 230.0), true))
             }
@@ -2291,7 +2299,10 @@ fn settings_sample() -> WorkspaceState {
         )
         .with_window_settings(window)
         .with_machine_settings(machine)
-        .with_release(Some("0.14.0".to_owned()), "https://github.com".to_owned())
+        .with_release(pm_components::update::Update::Newer {
+            name: "Pandemonium 0.14.0".to_owned(),
+            url: "https://github.com".to_owned(),
+        })
         .after(SETTINGS)
 }
 
