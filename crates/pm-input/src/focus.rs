@@ -47,6 +47,14 @@ impl Focus {
         }
     }
 
+    /// Gives focus to `id` whether or not it is in the order yet, so an element
+    /// that first appears on the next frame is drawn focused on it. The next
+    /// [`set_order`](Self::set_order) drops it again when that frame does not
+    /// draw it.
+    pub fn claim(&mut self, id: FocusId) {
+        self.current = Some(id);
+    }
+
     /// Takes focus away from whatever holds it.
     pub fn clear(&mut self) {
         self.current = None;

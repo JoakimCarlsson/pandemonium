@@ -656,7 +656,7 @@ impl App {
                 let replacing = action == Action::Replace;
                 self.model
                     .update(|screen| *screen = std::mem::take(screen).find_opened(replacing));
-                self.focus.focus(FIND_FIELD);
+                self.focus.claim(FIND_FIELD);
                 self.show_editor_caret();
             }
             Action::FindNext | Action::FindPrevious => {
@@ -695,7 +695,7 @@ impl App {
                 self.model
                     .update(|screen| *screen = std::mem::take(screen).project_search_opened());
                 self.focus
-                    .focus(pm_components::project_search::PROJECT_SEARCH_FIELD);
+                    .claim(pm_components::project_search::PROJECT_SEARCH_FIELD);
             }
             Action::Problems => {
                 self.model

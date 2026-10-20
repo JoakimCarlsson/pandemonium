@@ -81,6 +81,7 @@ fn main() {
             Some("project-search") => Shot::ProjectSearch,
             Some("excerpts") => Shot::Excerpts,
             Some("finding") => Shot::Finding,
+            Some("find-reopened") => Shot::FindReopened,
             Some("outline") => Shot::Outline,
             Some("cursors") => Shot::Cursors,
             Some("folded") => Shot::Folded,
