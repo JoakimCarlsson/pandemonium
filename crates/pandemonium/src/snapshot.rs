@@ -282,6 +282,8 @@ pub enum Shot {
     Excerpts,
     /// The same file with the bar for finding and replacing open on a word it holds several times.
     Finding,
+    /// The same file with the bar for finding opened again over a query typed before, the query selected whole.
+    FindReopened,
     /// The same file with its outline listed, narrowed by a letter typed.
     Outline,
     /// The same file with every use of a name selected, a caret at each.
@@ -1803,6 +1805,12 @@ impl Shot {
                     .find_opened(true)
                     .find_typed(Edit::Paste("names".to_owned()))
                     .find_stepped(false),
+            ),
+            Self::FindReopened => Screen::Workspace(
+                code()
+                    .find_opened(false)
+                    .find_typed(Edit::Paste("names".to_owned()))
+                    .find_opened(false),
             ),
             Self::Extensions => Screen::Workspace(
                 welcome()
