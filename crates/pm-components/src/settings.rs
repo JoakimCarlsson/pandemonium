@@ -330,13 +330,7 @@ impl WorkspaceState {
                 self.settings_page.server_form = None;
             }
             SETTINGS_CLOSE => return self.without_settings(),
-            SETTINGS_RELEASE => {
-                if let Some((_, url)) = &self.settings_page.release {
-                    self.outbox.push(crate::state::Outgoing::Open {
-                        address: url.clone(),
-                    });
-                }
-            }
+            SETTINGS_RELEASE => self.open_release(),
             SETTINGS_FIND_CLEAR => {
                 self.settings_page.find = pm_text::Field::default();
                 self.settings_servers.scroll = 0.0;

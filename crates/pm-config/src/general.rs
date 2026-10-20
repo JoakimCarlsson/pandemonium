@@ -20,7 +20,7 @@ pub enum Channel {
     /// The releases made for everyone.
     #[default]
     Stable,
-    /// The build made every night from the main branch.
+    /// The pre-releases.
     Nightly,
 }
 
@@ -32,7 +32,7 @@ pub struct GeneralSettings {
     pub launch: Launch,
     /// Whether closing the window while agents work asks first.
     pub confirm_close: bool,
-    /// Whether the window looks for a newer release when it opens.
+    /// Whether the window looks for a newer release while it is open.
     pub check_updates: bool,
     /// Which releases it looks for.
     pub channel: Channel,

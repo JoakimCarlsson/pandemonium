@@ -28,6 +28,7 @@ use crate::settings_row::switch;
 use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
 use crate::tile::Tile;
+use crate::update::Update;
 use crate::{Badge, Button};
 
 /// How wide a paragraph of the pages may be, in logical pixels, so that it breaks before it reaches the button beside it.
@@ -823,46 +824,14 @@ pub(crate) fn body(state: &WorkspaceState, section: Section, room: f32) -> Node 
         .scroll_from_start(SETTINGS_SCROLL, state.settings_servers.scroll)
 }
 
-/// The numbers of a version written `0.14.0` or `v0.14.0-rc.1`, and whether it is a release before the one those numbers name.
-fn version_numbers(version: &str) -> (Vec<u64>, bool) {
-    let version = version.trim().trim_start_matches('v');
-    let (numbers, before) = match version.split_once('-') {
-        Some((numbers, _)) => (numbers, true),
-        None => (version, false),
-    };
-    (
-        numbers
-            .split('.')
-            .map(|part| part.parse().unwrap_or(0))
-            .collect(),
-        before,
-    )
-}
-
-/// Whether the release `newest` comes after the version `running`.
-fn is_newer(newest: &str, running: &str) -> bool {
-    let (newest, newest_before) = version_numbers(newest);
-    let (running, running_before) = version_numbers(running);
-    newest > running || (newest == running && running_before && !newest_before)
-}
-
-/// What the newest release on the channel followed is, beside the version running, once it was asked; with the button that opens its page when it is newer.
+/// What looking for a newer release on the channel followed found, beside the version running, once it was looked for; with the button that opens its page when one is newer.
 fn release_note(state: &WorkspaceState, room: f32) -> Option<Node> {
-    let (version, url) = state.settings_page.release.as_ref()?;
-    let running = env!("CARGO_PKG_VERSION");
-    let nightly = state.window.general.channel == pm_config::Channel::Nightly;
-    let (said, newer) = match version {
-        Some(made) if nightly => (
-            format!("The newest nightly build was made on {made}; this is {running}."),
-            !url.is_empty(),
-        ),
-        Some(version) if is_newer(version, running) => (
-            format!("Pandemonium {version} is available; this is {running}."),
-            !url.is_empty(),
-        ),
-        Some(_) => (format!("Pandemonium {running} is up to date."), false),
-        None => (
-            "No release could be found on this channel.".to_owned(),
+    let running = crate::update::RUNNING;
+    let (said, newer) = match state.settings_page.release.as_ref()? {
+        Update::Newer { name, .. } => (format!("{name} is available; this is {running}."), true),
+        Update::Current => (format!("Pandemonium {running} is up to date."), false),
+        Update::Unknown => (
+            "Could not check for a newer release on this channel.".to_owned(),
             false,
         ),
     };

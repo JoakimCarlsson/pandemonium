@@ -364,6 +364,8 @@ pub struct Work {
     grammars: HashSet<(Host, String)>,
     /// The colours diagrams are drawn in.
     palette: picture::Palette,
+    /// What looking for a newer release last found, kept for a workspace that opens after it was answered.
+    release: Option<pm_components::update::Update>,
 }
 
 impl Work {
@@ -396,6 +398,7 @@ impl Work {
             pending: Cell::new(0),
             grammars: HashSet::new(),
             palette: picture::Palette::default(),
+            release: None,
         }
     }
 

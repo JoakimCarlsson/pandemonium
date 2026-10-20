@@ -1,4 +1,4 @@
-//! The bar across the top of the window: back and forward, the command center naming where the window is, the settings, and the controls of a window the desktop draws no frame around.
+//! The bar across the top of the window: back and forward, the command center naming where the window is, the button that opens a newer release while one is out, the settings, and the controls of a window the desktop draws no frame around.
 
 use pm_icon::IconName;
 use pm_input::FocusId;
@@ -12,6 +12,7 @@ use crate::Button;
 use crate::button::Variant;
 use crate::listing::{LISTING_WIDTH, QUICK_INSET};
 use crate::quick_input::FIELD_HEIGHT;
+use crate::size::Size;
 use crate::state::{Page, REVIEW, SETTINGS, SIDEBAR_TOGGLE, TERMINAL, WorkspaceState};
 
 /// How tall the bar is, in logical pixels.
@@ -37,6 +38,9 @@ pub const WINDOW_MAXIMIZE: FocusId = FocusId(7_405_005);
 
 /// Closes the window.
 pub const WINDOW_CLOSE: FocusId = FocusId(7_405_006);
+
+/// Opens the page of the newer release that is out.
+pub const UPDATE: FocusId = FocusId(7_405_007);
 
 /// How wide the command center is while the bar has room, in logical pixels: as wide as the field of the quick input that opens over it.
 const COMMAND_CENTER_WIDTH: f32 = LISTING_WIDTH - 2.0 * QUICK_INSET;
@@ -66,6 +70,8 @@ pub struct TitleBar {
     sidebar_open: bool,
     /// Whether the review panel is showing, which fills the button that shows and hides it.
     review_open: bool,
+    /// Whether a newer release is out, which the bar holds a button for.
+    update: bool,
 }
 
 impl TitleBar {
@@ -89,6 +95,7 @@ impl TitleBar {
             panel_open: state.terminal,
             sidebar_open: state.sidebar_open,
             review_open: state.review && state.review_session().is_some(),
+            update: state.update_available(),
             ..Self::default()
         }
     }
@@ -118,6 +125,15 @@ impl TitleBar {
                 gap(0.5),
                 pm_style::h_full(),
             ])
+            .children(self.update.then(|| {
+                Button::new("Update", UPDATE)
+                    .variant(Variant::Ghost)
+                    .tone(Role::Accent)
+                    .size(Size::Sm)
+                    .build()
+                    .tooltip("Update Available")
+                    .styles([pm_style::mr(1)])
+            }))
             .children(navigation.then(|| {
                 layout_toggle(
                     IconName::PanelLeft,

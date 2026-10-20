@@ -437,11 +437,11 @@ impl Setting {
             ),
             Self::CheckUpdates => (
                 "Check for updates",
-                "Look for a newer release each time the window opens.",
+                "Look for a newer release while the window is open.",
             ),
             Self::Channel => (
                 "Update channel",
-                "Follow the stable releases, or the build made every night.",
+                "Follow the stable releases, or the pre-releases.",
             ),
             Self::ThemeMode => (
                 "Theme mode",

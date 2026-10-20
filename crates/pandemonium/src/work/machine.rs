@@ -1,5 +1,6 @@
 //! What the reader set up for the work the servers do: read from the server on this machine, sent to every server the window reaches whenever it changes and to each server as it is reached, and the newest release looked up.
 
+use pm_components::update::Update;
 use pm_protocol::{MachineSettings, Request, Response};
 use pm_state::State;
 
@@ -50,6 +51,13 @@ impl Work {
         );
     }
 
+    /// Hands the workspace what looking for a newer release last found, when anything was.
+    pub fn show_release(&self, model: &State<Screen>) {
+        if let Some(update) = self.release.clone() {
+            Self::in_workspace(model, |state| state.with_release(update));
+        }
+    }
+
     /// Learns the tokens of the servers reached straight at their address or through a tunnel, from the servers the window knows.
     pub fn set_servers(&mut self, servers: &pm_config::ServerList) {
         self.tokens = servers
@@ -84,10 +92,12 @@ impl Work {
                 Self::in_workspace(model, |state| state.with_machine_settings(settings));
             }
             (Pending::LatestRelease, Response::LatestRelease { version, url }) => {
-                Self::in_workspace(model, |state| state.with_release(version, url));
+                self.release = Some(Update::judged(version, url));
+                self.show_release(model);
             }
             (Pending::LatestRelease, _) => {
-                Self::in_workspace(model, |state| state.with_release(None, String::new()));
+                self.release = Some(Update::Unknown);
+                self.show_release(model);
             }
             _ => {}
         }

@@ -374,7 +374,7 @@ request with exactly one `response` carrying the same `id`.
   project on another machine works by the same settings.
 - **`latest_release`:** the newest release of the app on `channel`, looked up
   on the project's releases: the latest made for everyone for `stable`, the
-  build made every night for `nightly`.
+  newest pre-release for `nightly`.
 - **`open_terminal`:** starts the user's shell (`$SHELL`, with `TERM=xterm-256color`)
   in a pseudo-terminal in `directory`, with a window of `columns` by `rows`. The
   connection is attached to the shell already. The shell keeps running when no
@@ -648,7 +648,7 @@ embedded context, and anything else as a link to the stored file.
 | `agent_servers` | `servers`: `[{id, name, command, env, package, installer, home}]`                |
 | `mcp_servers` | `servers`: `[{name, target, env, description, website, enabled, extension}]`          |
 | `machine_settings` | `settings`: `{git, history, agents, shell, languages, extensions}`, as `save_machine_settings` takes them |
-| `latest_release` | `version`: the version, or for `nightly` the day it was made, or null when none was found; `url`: its page |
+| `latest_release` | `version`: the version, or null when none was found; `url`: its page |
 | `registry_agents` | `agents`: `[{id, name, version, description, website, command, env}]` |
 | `tool_listings` | `listings`: `[{id, title, description, name, target, env, inputs, asks, website}]` |
 | `accounts`   | `logins`: `[{agent, id, name}]`, `in_use`: `[[agent, id]]` |
