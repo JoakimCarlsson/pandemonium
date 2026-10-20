@@ -1,7 +1,7 @@
 //! Keeping the logins of one agent apart, by giving each its own home folder.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use crate::agent::Agent;
@@ -102,45 +102,85 @@ fn shared(agent: Agent) -> &'static [&'static str] {
     }
 }
 
-/// Puts into an account folder what the agent needs to sign in on its own and keep its login there, unless the folder has it already.
-fn seed(agent: Agent, home: &std::path::Path) {
+/// Writes into an account folder the agent's settings file: the one the account has, with the reader's own from `source` laid over it and what the agent needs to sign in on its own and keep its login there over both.
+fn seed(agent: Agent, home: &Path, source: Option<&Path>) {
     let (file, contents) = match agent.product() {
         Some(Product::Claude) => ("settings.json", r#"{"forceLoginMethod":"claudeai"}"#),
         Some(Product::Codex) => ("config.toml", "cli_auth_credentials_store = \"file\"\n"),
         _ => return,
     };
     let path = home.join(file);
-    if !path.exists() {
-        let _ = std::fs::write(path, contents);
+    let account = std::fs::read_to_string(&path).ok();
+    let user = source.and_then(|source| std::fs::read_to_string(source.join(file)).ok());
+    let merged = if file.ends_with(".toml") {
+        layered(
+            account.as_deref(),
+            user.as_deref(),
+            contents,
+            |text| text.parse::<toml::Table>().ok(),
+            |table| toml::to_string(table).ok(),
+        )
+    } else {
+        layered(
+            account.as_deref(),
+            user.as_deref(),
+            contents,
+            |text| serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(text).ok(),
+            |map| serde_json::to_string_pretty(map).ok(),
+        )
+    };
+    let Some(merged) = merged else {
+        return;
+    };
+    if account.as_deref() != Some(merged.as_str()) {
+        let _ = std::fs::write(path, merged);
     }
 }
 
+/// The top-level keys of `account`, then `user` over them, then `seed` over both, written back out; `account` and `user` are each left out when they cannot be read.
+fn layered<M, V>(
+    account: Option<&str>,
+    user: Option<&str>,
+    seed: &str,
+    parse: impl Fn(&str) -> Option<M>,
+    write: impl Fn(&M) -> Option<String>,
+) -> Option<String>
+where
+    M: Default + Extend<(String, V)> + IntoIterator<Item = (String, V)>,
+{
+    let mut layers = account.and_then(&parse).unwrap_or_default();
+    layers.extend(user.and_then(&parse).unwrap_or_default());
+    layers.extend(parse(seed)?);
+    write(&layers)
+}
+
+/// The agent's own config folder, which an account folder shares its setup from; a home variable pointing at an account folder, as one inherited from an agent the app started, is passed over.
+fn own_folder(agent: Agent) -> Option<PathBuf> {
+    let product = agent.product()?;
+    std::env::var_os(product.home_variable())
+        .map(PathBuf::from)
+        .filter(|folder| !is_account_folder(folder))
+        .or_else(|| Some(std::env::home_dir()?.join(format!(".{}", product.slug()))))
+}
+
+/// Whether `folder` is an account folder, which the app keeps at `accounts/<agent>/<id>`.
+fn is_account_folder(folder: &Path) -> bool {
+    folder
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::file_name)
+        .is_some_and(|name| name == "accounts")
+}
+
 /// Links what an agent's own folder shares into the account folder `home`, leaving what is already there.
-fn share_setup(agent: Agent, home: &std::path::Path) {
-    seed(agent, home);
+fn share_setup(agent: Agent, home: &Path) {
+    let source = own_folder(agent);
+    seed(agent, home, source.as_deref());
     if agent.home.is_none() {
         crate::overlay::build(agent, home);
         return;
     }
-    let Some(source) = std::env::home_dir().and_then(|own| match agent.product() {
-        Some(Product::Codex) => Some(
-            std::env::var_os("CODEX_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| own.join(".codex")),
-        ),
-        Some(Product::Grok) => Some(
-            std::env::var_os("GROK_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| own.join(".grok")),
-        ),
-        Some(Product::Copilot) => Some(
-            std::env::var_os("COPILOT_HOME")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| own.join(".copilot")),
-        ),
-        Some(Product::Claude) => Some(own.join(".claude")),
-        None => None,
-    }) else {
+    let Some(source) = source else {
         return;
     };
     for entry in shared(agent) {
