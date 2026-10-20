@@ -130,6 +130,9 @@ request with exactly one `response` carrying the same `id`.
 | `save_agent_servers`| `servers`: `[{id, name, command, env, package, installer, home}]`, `env`: `[[name, value]]`                                | `done`          |
 | `mcp_servers`  | none                                                                                             | `mcp_servers`   |
 | `save_mcp_servers`| `servers`: `[{name, target, env, description, website, enabled, extension}]`, `env`: `[[name, value]]`                                     | `done`          |
+| `library`      | `agent`, `directory`                                                                             | `library`       |
+| `tool_sets`    | `agent`                                                                                          | `tool_sets`     |
+| `save_withheld`| `keys`: `[string]`                                                                               | `done`          |
 | `watch_folders`| `directories`: `[string]`                                                                       | `done`          |
 | `machine_settings`| none                                                                                          | `machine_settings` |
 | `save_machine_settings`| `settings`: `{git, history, agents, shell, languages, extensions}`                       | `done`          |
@@ -330,6 +333,25 @@ request with exactly one `response` carrying the same `id`.
   when it begins with `http://` or `https://`, and `env` is then the headers it
   is sent; otherwise it is the command that starts it, and `env` its environment.
   Every new session is started with the tool servers saved at that moment that are `enabled`; `description` and `website` are optional and `enabled` is true when missing.
+- **`library`, `tool_sets`, `save_withheld`:** what an agent is given in a
+  project, read on the server's machine from the folders the agent's product
+  keeps it in, so a remote project lists the remote machine's files. `library`
+  answers with `product` (`claude`, `codex`, `grok`, `copilot`, or null), the
+  `items` found (`[{kind, scope, name, description, path, applies, model, tools,
+  command}]`, `kind` one of `skill`, `instruction`, `agent`, `hook` and `scope`
+  one of `workspace`, `user`, `built_in`) and `withheld`. `tool_sets` answers
+  with `product`, `sets` (`[{id, name, source, plugin, tools: [{name,
+  description}], error}]`, `source` one of `built_in`, `server`, `plugin`): the
+  agent's own tools under the id `built-in`, then each tool server's, listed by
+  starting it, under the server's name. `withheld` is every key turned off: an
+  item's `<kind>/<scope>/<name>` (the scope written `built-in`), a whole set's
+  `tools/<id>` and one tool's `tool/<id>/<tool>`; `save_withheld` replaces it
+  whole and the server keeps it. A session started afterwards is not given what
+  is turned off where its product can leave it out: a tool server turned off
+  whole is left out of `mcpServers`, Claude Code is started without the skills,
+  agent definitions and tools turned off and without the instruction files, and
+  Codex without the skills; `skills` leaves out the skills turned off. The
+  files on disk are never changed.
 - **`registry_agents`, `search_tools`:** what the public registries of agents and
   of tool servers offer, read by the server so that a client needs no access to
   the internet. Only agents that are a package a runner fetches are listed.
@@ -647,6 +669,8 @@ embedded context, and anything else as a link to the stored file.
 | `choices`    | `choices`: `[[agent, setting, value]]`                    |
 | `agent_servers` | `servers`: `[{id, name, command, env, package, installer, home}]`                |
 | `mcp_servers` | `servers`: `[{name, target, env, description, website, enabled, extension}]`          |
+| `library`    | `product`, `items`, `withheld`, as described under `library` above |
+| `tool_sets`  | `product`, `sets`, `withheld`, as described under `library` above |
 | `machine_settings` | `settings`: `{git, history, agents, shell, languages, extensions}`, as `save_machine_settings` takes them |
 | `latest_release` | `version`: the version, or null when none was found; `url`: its page |
 | `registry_agents` | `agents`: `[{id, name, version, description, website, command, env}]` |

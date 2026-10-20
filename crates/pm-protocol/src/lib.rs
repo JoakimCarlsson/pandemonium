@@ -30,6 +30,7 @@ pub use machine::{
     HISTORY_MEGABYTES, HistoryPreferences, LanguagePreferences, MachineSettings, ShellPreferences,
 };
 pub use message::{ClientMessage, ServerMessage};
+pub use pm_agent_library as library;
 pub use pm_buffer::{Position, Span};
 pub use pm_dap::{
     Breakpoint, Category as DebugCategory, Event as DebugEvent, Frame as DebugFrame,

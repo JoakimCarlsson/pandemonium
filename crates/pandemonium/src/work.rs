@@ -123,6 +123,10 @@ enum Pending {
     SignIn(usize),
     /// The skills of an agent in a project.
     Skills(usize, usize),
+    /// What the agent at the second position is given in the project at the first.
+    Library(usize, usize),
+    /// The tools the agent at the second position is given on the machine of the project at the first.
+    ToolSets(usize, usize),
     /// The sessions the server of this machine holds.
     Sessions(Host),
     /// The files listed for this key.
@@ -1174,6 +1178,40 @@ impl Work {
                 Outgoing::SaveMcpServers(servers) => {
                     self.ask(&None, Request::SaveMcpServers { servers }, Pending::Nothing)
                 }
+                Outgoing::Library {
+                    agent,
+                    project,
+                    host,
+                    directory,
+                } => {
+                    if let Some(id) = self.agent_id(agent) {
+                        self.ask(
+                            &host,
+                            Request::Library {
+                                agent: id,
+                                directory,
+                            },
+                            Pending::Library(project, agent),
+                        );
+                    }
+                }
+                Outgoing::ToolSets {
+                    agent,
+                    project,
+                    host,
+                } => {
+                    if let Some(id) = self.agent_id(agent) {
+                        self.ask(
+                            &host,
+                            Request::ToolSets { agent: id },
+                            Pending::ToolSets(project, agent),
+                        );
+                    }
+                }
+                Outgoing::SaveWithheld { host, keys } => {
+                    self.ask(&host, Request::SaveWithheld { keys }, Pending::Nothing)
+                }
+                Outgoing::OpenPath { path } => show_in_file_manager(&path),
                 Outgoing::Owners => self.ask(&None, Request::Owners, Pending::Owners),
                 Outgoing::Repositories {
                     login,
@@ -1604,6 +1642,32 @@ impl Work {
                     Self::in_workspace(model, |state| state.with_agent_servers(servers));
                 }
             }
+            Pending::Library(project, agent) => match response {
+                Response::Library {
+                    product,
+                    items,
+                    withheld,
+                } => Self::in_workspace(model, |state| {
+                    state.with_library(project, agent, product, items, withheld)
+                }),
+                other => {
+                    let reason = Self::trouble_of(other);
+                    Self::in_workspace(model, |state| state.with_library_failed(reason));
+                }
+            },
+            Pending::ToolSets(project, agent) => match response {
+                Response::ToolSets {
+                    product,
+                    sets,
+                    withheld,
+                } => Self::in_workspace(model, |state| {
+                    state.with_tool_sets(project, agent, product, sets, withheld)
+                }),
+                other => {
+                    let reason = Self::trouble_of(other);
+                    Self::in_workspace(model, |state| state.with_library_failed(reason));
+                }
+            },
             Pending::McpServers => {
                 if let Response::McpServers { servers } = response {
                     Self::in_workspace(model, |state| state.with_mcp_servers(servers));

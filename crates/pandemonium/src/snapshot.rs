@@ -60,7 +60,7 @@ const NARROW_WIDTH: u32 = 640;
 const NARROW_HEIGHT: u32 = 420;
 
 /// The name of the shot of each section of the settings window, after `settings-`.
-pub const SETTINGS_SHOTS: [(&str, Section); 16] = [
+pub const SETTINGS_SHOTS: [(&str, Section); 22] = [
     ("general", Section::General),
     ("appearance", Section::Appearance),
     ("editor", Section::Editor),
@@ -76,6 +76,12 @@ pub const SETTINGS_SHOTS: [(&str, Section); 16] = [
     ("agents", Section::Agents),
     ("agent-servers", Section::AgentServers),
     ("mcp-servers", Section::McpServers),
+    ("customizations", Section::Customizations),
+    ("skills", Section::Skills),
+    ("instructions", Section::Instructions),
+    ("agent-definitions", Section::AgentDefinitions),
+    ("hooks", Section::Hooks),
+    ("tools", Section::Tools),
     ("servers", Section::Servers),
 ];
 
@@ -2278,7 +2284,7 @@ fn settings_sample() -> WorkspaceState {
         },
     ];
     let fonts = |names: &[&str]| names.iter().map(|name| (*name).to_owned()).collect();
-    welcome()
+    let state = welcome()
         .with_extensions(sample_languages())
         .with_fonts(
             fonts(&[
@@ -2316,7 +2322,103 @@ fn settings_sample() -> WorkspaceState {
             name: "Pandemonium 0.14.0".to_owned(),
             url: "https://github.com".to_owned(),
         })
-        .after(SETTINGS)
+        .after(SETTINGS);
+    with_library_sample(state)
+}
+
+/// `state` with what Claude Code is given in the project read, a skill and two tools of it turned off, and the GitHub tool server's set unfolded.
+fn with_library_sample(state: WorkspaceState) -> WorkspaceState {
+    use pm_protocol::library::{Item, Kind, Product, Scope, Source, ToolEntry, ToolSet};
+    let here = std::env::current_dir().unwrap_or_default();
+    let inside = |path: &str| here.join(path).to_string_lossy().into_owned();
+    let item = |kind, scope, name: &str, description: &str, path: String| Item {
+        kind,
+        scope,
+        name: name.to_owned(),
+        description: description.to_owned(),
+        path,
+        ..Item::default()
+    };
+    let items = vec![
+        item(Kind::Skill, Scope::Workspace, "release-notes", "Writes the notes of a release from the commits since the last tag", inside(".claude/skills/release-notes/SKILL.md")),
+        item(Kind::Skill, Scope::User, "commit", "Commit the changes made in this session on the current branch", "/home/me/.claude/skills/commit/SKILL.md".to_owned()),
+        item(Kind::Skill, Scope::BuiltIn, "frontend-design:frontend-design", "Guidance for distinctive, intentional visual design", "/home/me/.claude/plugins/cache/official/frontend-design/skills/frontend-design/SKILL.md".to_owned()),
+        Item {
+            applies: vec!["the whole project".to_owned()],
+            ..item(Kind::Instruction, Scope::Workspace, "CLAUDE.md", "", inside("CLAUDE.md"))
+        },
+        Item {
+            applies: vec!["crates/pm-ui/".to_owned()],
+            ..item(Kind::Instruction, Scope::Workspace, "crates/pm-ui/CLAUDE.md", "", inside("crates/pm-ui/CLAUDE.md"))
+        },
+        Item {
+            applies: vec!["every project".to_owned()],
+            ..item(Kind::Instruction, Scope::User, "~/.claude/CLAUDE.md", "", "/home/me/.claude/CLAUDE.md".to_owned())
+        },
+        Item {
+            model: "sonnet".to_owned(),
+            tools: vec!["Read".to_owned(), "Grep".to_owned(), "Glob".to_owned()],
+            ..item(Kind::Agent, Scope::Workspace, "reviewer", "Reviews a change for bugs before it is committed", inside(".claude/agents/reviewer.md"))
+        },
+        item(Kind::Agent, Scope::User, "researcher", "Finds out how a library is used across the code", "/home/me/.claude/agents/researcher.md".to_owned()),
+        Item {
+            command: "~/.claude/hooks/guard.sh".to_owned(),
+            ..item(Kind::Hook, Scope::User, "PreToolUse", "Bash", "/home/me/.claude/settings.json".to_owned())
+        },
+        Item {
+            command: "make fmt".to_owned(),
+            ..item(Kind::Hook, Scope::Workspace, "Stop", "", inside(".claude/settings.json"))
+        },
+    ];
+    let tool = |name: &str, description: &str| ToolEntry {
+        name: name.to_owned(),
+        description: description.to_owned(),
+    };
+    let sets = ToolSet::built_in(Some(Product::Claude))
+        .into_iter()
+        .chain([
+            ToolSet {
+                id: "github".to_owned(),
+                name: "github".to_owned(),
+                source: Source::Server,
+                plugin: None,
+                tools: vec![
+                    tool("create_issue", "Open a new issue in a repository"),
+                    tool("get_issue", "Read an issue and its comments"),
+                    tool(
+                        "list_pull_requests",
+                        "List the pull requests of a repository",
+                    ),
+                    tool("search_code", "Search code across repositories"),
+                    tool("add_issue_comment", "Comment on an issue"),
+                ],
+                error: None,
+            },
+            ToolSet {
+                id: "context7".to_owned(),
+                name: "context7".to_owned(),
+                source: Source::Plugin,
+                plugin: Some("docs".to_owned()),
+                tools: vec![
+                    tool("resolve-library-id", "Find the id of a library"),
+                    tool("get-library-docs", "Read the documentation of a library"),
+                ],
+                error: None,
+            },
+        ])
+        .collect();
+    let withheld = vec![
+        "skill/user/commit".to_owned(),
+        "tool/github/create_issue".to_owned(),
+        "tool/github/add_issue_comment".to_owned(),
+        "tool/built-in/WebSearch".to_owned(),
+    ];
+    let agent = state.agent;
+    let mut state = state
+        .with_library(0, agent, Some(Product::Claude), items, withheld.clone())
+        .with_tool_sets(0, agent, Some(Product::Claude), sets, withheld);
+    state.settings_page.library.open_sets = vec!["github".to_owned()];
+    state
 }
 
 fn welcome() -> WorkspaceState {

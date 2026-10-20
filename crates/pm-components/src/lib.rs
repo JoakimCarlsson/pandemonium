@@ -83,6 +83,7 @@ pub mod settings_catalog;
 pub mod settings_editor;
 pub mod settings_keymap;
 pub mod settings_languages;
+pub mod settings_library;
 pub mod settings_machines;
 pub mod settings_pages;
 pub mod settings_row;

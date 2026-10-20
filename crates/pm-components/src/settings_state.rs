@@ -35,6 +35,8 @@ pub struct SettingsPage {
     pub release: Option<crate::update::Update>,
     /// The form for adding or changing a server of the servers page, while it is open.
     pub server_form: Option<crate::settings_machines::MachineForm>,
+    /// What the pages of what agents are given hold.
+    pub library: crate::settings_library::Library,
 }
 
 /// The settings the window edits, held together so one setting can be copied from one set to another.

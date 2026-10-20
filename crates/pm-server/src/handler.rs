@@ -424,14 +424,34 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             None => failed(format!("no agent is called {agent}")),
         },
         Request::Skills { agent, directory } => match agent_named(&agent) {
-            Some(agent) => Response::Skills {
-                skills: pm_acp::skills(agent, &place(&directory)),
-                names: pm_acp::skill_names(agent, &place(&directory))
-                    .into_iter()
-                    .collect(),
+            Some(agent) => {
+                let withheld = crate::library::withheld();
+                Response::Skills {
+                    skills: pm_acp::skills(agent, &place(&directory), &withheld),
+                    names: pm_acp::skill_names(agent, &place(&directory), &withheld)
+                        .into_iter()
+                        .collect(),
+                }
+            }
+            None => failed(format!("no agent is called {agent}")),
+        },
+        Request::Library { agent, directory } => match agent_named(&agent) {
+            Some(agent) => Response::Library {
+                product: agent.product(),
+                items: crate::library::items(agent, &place(&directory)),
+                withheld: crate::library::withheld(),
             },
             None => failed(format!("no agent is called {agent}")),
         },
+        Request::ToolSets { agent } => match agent_named(&agent) {
+            Some(agent) => Response::ToolSets {
+                product: agent.product(),
+                sets: crate::library::tool_sets(agent),
+                withheld: crate::library::withheld(),
+            },
+            None => failed(format!("no agent is called {agent}")),
+        },
+        Request::SaveWithheld { keys } => saved_list(crate::library::WITHHELD, &keys),
         Request::Files { directory, limit } => {
             let place = place(&directory);
             let mut paths = pm_git::files(&place, limit);

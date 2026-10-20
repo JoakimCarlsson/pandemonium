@@ -9,9 +9,6 @@ use serde_json::Value;
 use crate::agent::Agent;
 use crate::product::Product;
 
-/// How deep under an agent's plugin folder skills are looked for.
-const PLUGIN_DEPTH: usize = 7;
-
 /// Who `agent` is signed in as, as its own files say: an organisation or an address.
 pub fn account(agent: Agent) -> Option<String> {
     account_in(agent, agent.home())
@@ -64,38 +61,27 @@ fn account_in(agent: Agent, own: Option<PathBuf>) -> Option<String> {
     }
 }
 
-/// The names of the skills installed for `agent`, for telling a skill from a command in what it offers behind a slash.
-pub fn skill_names(agent: Agent, directory: &Path) -> HashSet<String> {
-    let mut names = HashSet::new();
-    if agent.product() != Some(Product::Claude) {
-        return names;
-    }
-    if let Some(home) = std::env::home_dir() {
-        collect(&home.join(".claude/skills"), 1, &mut names);
-        collect(&home.join(".claude/plugins"), PLUGIN_DEPTH, &mut names);
-    }
-    collect(&directory.join(".claude/skills"), 1, &mut names);
-    names
+/// The skills `agent` is given in the project at `directory`: those found in the folders it keeps them in, less the ones `withheld` turns off.
+pub(crate) fn given_skills(
+    agent: Agent,
+    directory: &Path,
+    withheld: &[String],
+) -> Vec<pm_agent_library::Item> {
+    pm_agent_library::skills(agent.product(), directory, agent.config_folder().as_deref())
+        .into_iter()
+        .filter(|skill| skill.enabled(withheld))
+        .collect()
 }
 
-/// Adds the name of every folder under `folder`, at most `depth` levels down, that holds a skill.
-fn collect(folder: &Path, depth: usize, names: &mut HashSet<String>) {
-    let Ok(entries) = fs::read_dir(folder) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        if path.join("SKILL.md").is_file()
-            && let Some(name) = path.file_name().and_then(|name| name.to_str())
-        {
-            names.insert(name.to_owned());
-        } else if depth > 1 {
-            collect(&path, depth - 1, names);
-        }
+/// The names of the skills installed for `agent` and not turned off in `withheld`, for telling a skill from a command in what it offers behind a slash; a skill a plugin brings is named without its plugin.
+pub fn skill_names(agent: Agent, directory: &Path, withheld: &[String]) -> HashSet<String> {
+    if agent.product() != Some(Product::Claude) {
+        return HashSet::new();
     }
+    given_skills(agent, directory, withheld)
+        .into_iter()
+        .map(|skill| skill.name.rsplit(':').next().unwrap_or_default().to_owned())
+        .collect()
 }
 
 /// The bytes a base64 text in the URL-safe alphabet stands for.

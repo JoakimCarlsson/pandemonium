@@ -101,7 +101,11 @@ One crate per layer, each depending only on the layers below it.
   after a folder changes; a release build reads the folders from the repository
   at its own release tag, a debug build from its checkout, and either from
   `PANDEMONIUM_LANGUAGES` when it is set.
-- **Domain:** `pm-acp` (agents over the Agent Client Protocol), `pm-dap`
+- **Domain:** `pm-acp` (agents over the Agent Client Protocol),
+  `pm-agent-library` (the skills, instructions, agent definitions, hooks and
+  tools each agent product is given, read from the folders it keeps them in,
+  and how an agent is started without the ones turned off), `pm-mcp` (a client
+  of tool servers, which lists the tools they offer), `pm-dap`
   (programs debugged through debug adapters over the Debug Adapter Protocol:
   the adapters, what a folder can be debugged as, and a running session),
   `pm-task` (what a project can be built, tested and run with: tasks read from
@@ -126,8 +130,7 @@ One crate per layer, each depending only on the layers below it.
   describes the package.
 - **Binary:** `pandemonium`: the event loop, the window and the threads that
   talk to the servers. It wires the layers and implements none of them.
-- **Not built yet** (one doc comment each): `pm-session`, `pm-review`,
-  `pm-mcp`, `pm-agent-library`.
+- **Not built yet** (one doc comment each): `pm-session`, `pm-review`.
 
 ## Hard rules
 

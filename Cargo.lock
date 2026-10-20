@@ -2417,6 +2417,7 @@ name = "pm-acp"
 version = "0.13.0-rc.7"
 dependencies = [
  "base64",
+ "pm-agent-library",
  "pm-tools",
  "serde",
  "serde_json",
@@ -2427,6 +2428,11 @@ dependencies = [
 [[package]]
 name = "pm-agent-library"
 version = "0.13.0-rc.7"
+dependencies = [
+ "serde",
+ "serde_json",
+ "toml",
+]
 
 [[package]]
 name = "pm-animation"
@@ -2575,6 +2581,11 @@ dependencies = [
 [[package]]
 name = "pm-mcp"
 version = "0.13.0-rc.7"
+dependencies = [
+ "pm-tools",
+ "serde_json",
+ "ureq",
+]
 
 [[package]]
 name = "pm-pages"
@@ -2633,6 +2644,7 @@ version = "0.13.0-rc.7"
 dependencies = [
  "base64",
  "pm-acp",
+ "pm-agent-library",
  "pm-buffer",
  "pm-dap",
  "pm-git",
@@ -2666,9 +2678,11 @@ dependencies = [
  "getrandom 0.4.3",
  "notify",
  "pm-acp",
+ "pm-agent-library",
  "pm-dap",
  "pm-git",
  "pm-lsp",
+ "pm-mcp",
  "pm-plugin",
  "pm-policy",
  "pm-protocol",

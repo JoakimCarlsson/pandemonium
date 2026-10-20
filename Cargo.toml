@@ -47,6 +47,8 @@ pm-policy = { path = "crates/pm-policy" }
 pm-plugin-api = { path = "crates/pm-plugin-api" }
 pm-wasm = { path = "crates/pm-wasm" }
 pm-plugin = { path = "crates/pm-plugin" }
+pm-agent-library = { path = "crates/pm-agent-library" }
+pm-mcp = { path = "crates/pm-mcp" }
 
 [profile.dist]
 inherits = "release"
