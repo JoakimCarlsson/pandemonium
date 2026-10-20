@@ -351,7 +351,7 @@ pub fn prompt(state: &WorkspaceState, open: &Prompt) -> Node {
         Prompt::Discard(indices) => {
             let paths = state.paths_of(indices);
             let created = state
-                .open()
+                .review_session()
                 .map(|session| {
                     indices
                         .iter()

@@ -650,7 +650,7 @@ impl WorkspaceState {
     /// Opens the file at `index` of the changes as it is in the folder.
     pub(crate) fn open_changed_file(&mut self, index: usize) {
         if let Some(path) = self
-            .open()
+            .review_session()
             .and_then(|session| session.changes.get(index))
             .map(|change| change.path.clone())
         {
