@@ -2616,14 +2616,15 @@ impl WorkspaceState {
         }
     }
 
-    /// How many changes the open session has.
+    /// How many changes the session the review panel is about has.
     pub(crate) fn change_count(&self) -> usize {
-        self.open().map_or(0, |session| session.changes.len())
+        self.review_session()
+            .map_or(0, |session| session.changes.len())
     }
 
-    /// Applies `edit` to the change at `index` of the open session.
+    /// Applies `edit` to the change at `index` of the session the review panel is about.
     fn change_at(&mut self, index: usize, edit: impl FnOnce(&mut Change)) {
-        if let Page::Session(open) = self.page
+        if let Some(open) = self.review_index()
             && let Some(change) = self
                 .sessions
                 .get_mut(open)
@@ -2728,15 +2729,15 @@ impl WorkspaceState {
         std::mem::take(&mut self.attachments)
     }
 
-    /// Stages every change of the open session, or unstages them all when all are staged.
+    /// Stages every change of the session the review panel is about, or unstages them all when all are staged.
     fn stage_all(&mut self) {
         let all: Vec<usize> = (0..self.change_count()).collect();
         self.stage_changes(&all);
     }
 
-    /// Stages the changes at `indices` of the open session, or unstages them when all of them are staged already.
+    /// Stages the changes at `indices` of the session the review panel is about, or unstages them when all of them are staged already.
     pub(crate) fn stage_changes(&mut self, indices: &[usize]) {
-        let stage = !self.open().is_some_and(|session| {
+        let stage = !self.review_session().is_some_and(|session| {
             indices
                 .iter()
                 .filter_map(|&index| session.changes.get(index))
@@ -2745,10 +2746,10 @@ impl WorkspaceState {
         self.set_staged(indices, stage);
     }
 
-    /// Stages the changes at `indices` of the open session, or, when `stage` is not set, unstages them.
+    /// Stages the changes at `indices` of the session the review panel is about, or, when `stage` is not set, unstages them.
     pub(crate) fn set_staged(&mut self, indices: &[usize], stage: bool) {
         self.git.trouble = None;
-        let Page::Session(open) = self.page else {
+        let Some(open) = self.review_index() else {
             return;
         };
         let Some(session) = self.sessions.get_mut(open) else {

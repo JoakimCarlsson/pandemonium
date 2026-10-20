@@ -126,6 +126,8 @@ pub enum Shot {
     TerminalMenu,
     /// The overview of a project.
     Overview,
+    /// The overview of a project with the menu on a changed file of its folder open.
+    OverviewChangeMenu,
     /// The workspace with the terminal open and the sidebar, the review panel and the terminal dragged to other sizes.
     Resized,
     /// The workspace of the projects onboarding added, with no sessions.
@@ -1884,6 +1886,9 @@ impl Shot {
                 Screen::Workspace(state)
             }
             Self::Overview => Screen::Workspace(overview()),
+            Self::OverviewChangeMenu => {
+                Screen::Workspace(overview().with_change_menu(0, (1000.0, 250.0)))
+            }
             Self::Resized => {
                 let mut state = terminal();
                 state.sidebar_width = 360.0;
