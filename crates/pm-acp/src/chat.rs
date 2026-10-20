@@ -2,14 +2,17 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::process::Child;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
 use crate::agent::Agent;
 use crate::background::{self, Shells};
-use crate::client::{Answer, Client, Heard, LOGIN_REQUIRED, answer};
+use crate::client::{self, Answer, Client, Heard, LOGIN_REQUIRED, answer};
 use crate::inquiry::{self, Inquiry, Question, Reply};
 use crate::subagent::Subagents;
 
@@ -320,6 +323,15 @@ enum Command {
     },
 }
 
+/// The agent's process once it is started, and whether the chat was stopped, shared by a chat and its driver thread.
+#[derive(Default)]
+struct Ending {
+    /// The process, once it is started.
+    process: Option<Arc<Mutex<Child>>>,
+    /// Whether the chat was stopped, so a process started after that is ended at once.
+    stopped: bool,
+}
+
 /// A running agent and the conversation held with it.
 ///
 /// Everything the agent does happens on a thread of its own, so nothing it
@@ -330,6 +342,10 @@ pub struct Chat {
     commands: Sender<Command>,
     /// What the driver thread reports.
     events: Receiver<Event>,
+    /// The agent's process, for ending it.
+    ending: Arc<Mutex<Ending>>,
+    /// The driver thread.
+    driver: JoinHandle<()>,
 }
 
 impl Chat {
@@ -337,12 +353,31 @@ impl Chat {
     pub fn start(agent: Agent, directory: PathBuf, tools: Vec<serde_json::Value>) -> Self {
         let (commands, received) = mpsc::channel();
         let (sender, events) = mpsc::channel();
-        std::thread::spawn(move || {
-            if let Err(reason) = drive(agent, &directory, &tools, &received, &sender) {
+        let ending = Arc::new(Mutex::new(Ending::default()));
+        let shared = Arc::clone(&ending);
+        let driver = std::thread::spawn(move || {
+            if let Err(reason) = drive(agent, &directory, &tools, &shared, &received, &sender) {
                 let _ = sender.send(Event::Failed(reason));
             }
         });
-        Self { commands, events }
+        Self {
+            commands,
+            events,
+            ending,
+            driver,
+        }
+    }
+
+    /// Ends the agent's process and waits until it and the driver thread are gone, so nothing the agent runs is left writing into its folder.
+    pub fn stop(self) {
+        if let Ok(mut ending) = self.ending.lock() {
+            ending.stopped = true;
+            if let Some(process) = &ending.process {
+                client::end(process);
+            }
+        }
+        drop(self.commands);
+        let _ = self.driver.join();
     }
 
     /// Hands the agent `text` and the files at `files` as the next turn.
@@ -547,6 +582,7 @@ fn drive(
     agent: Agent,
     directory: &std::path::Path,
     tools: &[serde_json::Value],
+    ending: &Mutex<Ending>,
     commands: &Receiver<Command>,
     events: &Sender<Event>,
 ) -> Result<(), String> {
@@ -558,6 +594,13 @@ fn drive(
     }
     let patience = if agent.fetches() { FETCH } else { QUICK };
     let mut client = Client::start_in(agent.command(&[]), directory)?;
+    {
+        let mut ending = ending.lock().map_err(|_| "the chat was dropped")?;
+        if ending.stopped {
+            return Ok(());
+        }
+        ending.process = Some(client.process());
+    }
     let shaken = client.initialize(patience)?;
     let prompts = shaken["agentCapabilities"]["promptCapabilities"].clone();
     let opened = match client.ask(

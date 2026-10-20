@@ -117,7 +117,7 @@ request with exactly one `response` carrying the same `id`.
 | `choose`       | `session`, `ticket`, `option`                                                                    | `done`          |
 | `answer`       | `session`, `ticket`, `replies`                                                                   | `done`          |
 | `cancel`       | `session`                                                                                        | `done`          |
-| `close_session`| `session`, `discard`?                                                                           | `done`          |
+| `close_session`| `session`, `discard`?                                                                           | `done`, or `uncommitted` |
 | `rename_session`| `session`, `title`                                                                              | `done`          |
 | `set`          | `session`, `setting`, `value`                                                                    | `done`          |
 | `attach`       | `session`, `after`                                                                               | `done`          |
@@ -241,12 +241,14 @@ request with exactly one `response` carrying the same `id`.
   prompt; when it names no `mode` and `agents.permission_mode` is set, that mode
   is asked for too. The response gives the session number, the folder the agent works in
   and, for a worktree, the abbreviated commit it has checked out (`head`). The connection is attached to the session already.
-- **`close_session`:** stops the session's agent, drops its queued prompts and marks it `closed`. The
+- **`close_session`:** stops the session's agent and waits for its process to exit, drops its queued prompts and marks it `closed`. The
   log is kept, so the session still shows in `sessions` (with `closed: true`)
   and can be opened with `attach`. A session that has a worktree of its own
   has the worktree removed, unless another open session works in the same
   folder; while the worktree has changes that are not committed the request
-  fails, unless `discard` is `true`. A later `prompt` opens a closed session
+  is answered `uncommitted` and the session stays open, unless `discard` is `true`.
+  The branch the worktree was made on is deleted with it when every commit on
+  it is also on the session's base or a remote, and kept otherwise. A later `prompt` opens a closed session
   again, and fails when its folder was removed. Other clients are told with `session_closed`.
 - **`rename_session`:** keeps `title` as the session's title, trimmed, and fails when it is empty.
   Every client watching the session is told with a `Titled` event, the one that asked included. The
