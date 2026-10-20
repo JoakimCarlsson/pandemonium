@@ -33,8 +33,6 @@ pub struct SettingsPage {
     pub mono_fonts: Vec<String>,
     /// What looking for a newer release on the channel followed found, once it was looked for.
     pub release: Option<crate::update::Update>,
-    /// The name of the newer release whose notice the reader dismissed.
-    pub release_dismissed: Option<String>,
     /// The form for adding or changing a server of the servers page, while it is open.
     pub server_form: Option<crate::settings_machines::MachineForm>,
 }
@@ -151,16 +149,12 @@ impl WorkspaceState {
         self
     }
 
-    /// The name of the newer release the window tells the reader about, unless they dismissed it.
-    pub fn release_notice(&self) -> Option<&str> {
-        match &self.settings_page.release {
-            Some(crate::update::Update::Newer { name, .. })
-                if self.settings_page.release_dismissed.as_ref() != Some(name) =>
-            {
-                Some(name)
-            }
-            _ => None,
-        }
+    /// Whether a newer release than the running build is out.
+    pub fn update_available(&self) -> bool {
+        matches!(
+            self.settings_page.release,
+            Some(crate::update::Update::Newer { .. })
+        )
     }
 
     /// Opens the page of the newer release found, when one was.
@@ -169,13 +163,6 @@ impl WorkspaceState {
             self.outbox.push(Outgoing::Open {
                 address: url.clone(),
             });
-        }
-    }
-
-    /// Hides the notice of the newer release found, until a later one is found.
-    pub(crate) fn dismiss_release(&mut self) {
-        if let Some(name) = self.release_notice() {
-            self.settings_page.release_dismissed = Some(name.to_owned());
         }
     }
 

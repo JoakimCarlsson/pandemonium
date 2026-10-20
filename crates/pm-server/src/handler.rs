@@ -576,9 +576,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             core.documents.settings_changed(&settings);
             answer
         }
-        Request::LatestRelease { channel, running } => {
-            crate::releases::latest(&channel, running.as_deref())
-        }
+        Request::LatestRelease { channel } => crate::releases::latest(&channel),
         Request::Sessions => Response::Sessions {
             sessions: core.infos(),
         },

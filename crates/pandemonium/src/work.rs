@@ -107,8 +107,8 @@ enum Pending {
     Nothing,
     /// What the server on this machine keeps for the work the servers do.
     MachineSettings,
-    /// The newest release on a channel, the nightly one when set.
-    LatestRelease(bool),
+    /// The newest release on a channel.
+    LatestRelease,
     /// The agents the reader added by hand.
     AgentServers,
     /// The tool servers every agent is started with.
@@ -1939,7 +1939,7 @@ impl Work {
             Pending::Tasks(_) | Pending::Toolchains(_) => {
                 self.answered_tasks(model, pending, response)
             }
-            Pending::MachineSettings | Pending::LatestRelease(_) => {
+            Pending::MachineSettings | Pending::LatestRelease => {
                 self.answered_machine(model, pending, response)
             }
             Pending::Back(session, failing) => {

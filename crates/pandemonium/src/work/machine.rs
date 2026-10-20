@@ -38,15 +38,16 @@ impl Work {
 
     /// Asks the server on this machine for the newest release on `channel`.
     pub fn ask_release(&mut self, channel: pm_config::Channel) {
-        let nightly = channel == pm_config::Channel::Nightly;
-        let channel = if nightly { "nightly" } else { "stable" };
+        let channel = match channel {
+            pm_config::Channel::Stable => "stable",
+            pm_config::Channel::Nightly => "nightly",
+        };
         self.ask(
             &None,
             Request::LatestRelease {
                 channel: channel.to_owned(),
-                running: Some(pm_components::update::RUNNING.to_owned()),
             },
-            Pending::LatestRelease(nightly),
+            Pending::LatestRelease,
         );
     }
 
@@ -90,18 +91,11 @@ impl Work {
                 }
                 Self::in_workspace(model, |state| state.with_machine_settings(settings));
             }
-            (
-                Pending::LatestRelease(nightly),
-                Response::LatestRelease {
-                    version,
-                    url,
-                    commit,
-                },
-            ) => {
-                self.release = Some(Update::judged(nightly, version, commit, url));
+            (Pending::LatestRelease, Response::LatestRelease { version, url }) => {
+                self.release = Some(Update::judged(version, url));
                 self.show_release(model);
             }
-            (Pending::LatestRelease(_), _) => {
+            (Pending::LatestRelease, _) => {
                 self.release = Some(Update::Unknown);
                 self.show_release(model);
             }

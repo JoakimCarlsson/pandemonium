@@ -441,7 +441,7 @@ impl Setting {
             ),
             Self::Channel => (
                 "Update channel",
-                "Follow the stable releases, or the build made every night.",
+                "Follow the stable releases, or the pre-releases.",
             ),
             Self::ThemeMode => (
                 "Theme mode",

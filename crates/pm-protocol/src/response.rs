@@ -174,9 +174,6 @@ pub enum Response {
         version: Option<String>,
         /// The page it is published on.
         url: String,
-        /// The commit it was built from, for the nightly build.
-        #[serde(default)]
-        commit: Option<String>,
     },
     /// The named logins and the one in use for each agent.
     Accounts {

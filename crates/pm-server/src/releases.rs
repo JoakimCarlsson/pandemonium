@@ -6,53 +6,35 @@ use serde_json::Value;
 /// Where the project's releases are listed.
 const RELEASES: &str = "https://api.github.com/repos/JoakimCarlsson/pandemonium/releases";
 
-/// The tag the build made every night is published under.
+/// The tag the build made every night is published under, which names no version.
 const NIGHTLY: &str = "nightly";
 
-/// The newest release on `channel` for someone running `running`, the server's own version when nothing: the newest one they follow of those made for everyone and their own pre-releases, or the build made every night, by the date it was made and the commit it was built from.
-pub(crate) fn latest(channel: &str, running: Option<&str>) -> Response {
-    let running = running.unwrap_or(env!("CARGO_PKG_VERSION"));
+/// The newest release on `channel`: the latest one made for everyone for `stable`, the newest pre-release for `nightly`.
+pub(crate) fn latest(channel: &str) -> Response {
     let found = if channel == NIGHTLY {
-        fetch(&format!("{RELEASES}/tags/{NIGHTLY}")).map(|release| {
-            let text = |key: &str| text(&release, key).map(str::to_owned);
-            Response::LatestRelease {
-                version: text("published_at").map(|date| date.chars().take(10).collect()),
-                url: text("html_url").unwrap_or_default(),
-                commit: text("target_commitish"),
-            }
-        })
-    } else {
         fetch(&format!("{RELEASES}?per_page=100")).map(|listed| {
-            let newest = listed
+            listed
                 .as_array()
                 .into_iter()
                 .flatten()
-                .filter(|release| !flag(release, "draft"))
-                .filter_map(|release| Some((text(release, "tag_name")?, release)))
-                .filter(|(tag, release)| {
-                    *tag != NIGHTLY
-                        && pm_protocol::follows(tag, flag(release, "prerelease"), running)
+                .find(|release| {
+                    flag(release, "prerelease")
+                        && !flag(release, "draft")
+                        && text(release, "tag_name") != Some(NIGHTLY)
                 })
-                .fold(
-                    None,
-                    |newest: Option<(&str, &Value)>, (tag, release)| match newest {
-                        Some((held, _)) if !pm_protocol::is_newer(tag, held) => newest,
-                        _ => Some((tag, release)),
-                    },
-                );
-            Response::LatestRelease {
-                version: newest.map(|(tag, _)| tag.trim_start_matches('v').to_owned()),
-                url: newest
-                    .and_then(|(_, release)| text(release, "html_url"))
-                    .unwrap_or_default()
-                    .to_owned(),
-                commit: None,
-            }
+                .cloned()
+                .unwrap_or_default()
         })
+    } else {
+        fetch(&format!("{RELEASES}/latest"))
     };
-    found.unwrap_or_else(|reason| {
-        crate::handler::failed(format!("could not look for releases: {reason}"))
-    })
+    match found {
+        Ok(release) => Response::LatestRelease {
+            version: text(&release, "tag_name").map(|tag| tag.trim_start_matches('v').to_owned()),
+            url: text(&release, "html_url").unwrap_or_default().to_owned(),
+        },
+        Err(reason) => crate::handler::failed(format!("could not look for releases: {reason}")),
+    }
 }
 
 /// What the releases API answers at `source`, read as JSON, or why it could not be read.

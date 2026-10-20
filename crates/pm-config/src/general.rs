@@ -20,7 +20,7 @@ pub enum Channel {
     /// The releases made for everyone.
     #[default]
     Stable,
-    /// The build made every night from the main branch.
+    /// The pre-releases.
     Nightly,
 }
 
