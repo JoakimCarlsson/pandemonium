@@ -84,8 +84,8 @@ pub enum Prompt {
     StashMessage,
     /// Which stash to apply, pop or drop.
     Stashes(StashAction),
-    /// Whether to take a file or folder off the disk.
-    Remove(TreeTarget),
+    /// Whether to take files and folders off the disk.
+    Remove(Vec<TreeTarget>),
     /// Whether to close the tab at this position of the open files, which has changes that were not saved.
     Unsaved(usize),
     /// Whether to close the session at this position, which has changes that are not committed, and remove its worktree with them.
@@ -197,9 +197,11 @@ impl WorkspaceState {
             }
             Prompt::Stashes(_) | Prompt::Close(_) | Prompt::Rename(_) | Prompt::Quit => {}
             Prompt::Unsaved(index) => self.discard_file(index),
-            Prompt::Remove(target) => {
-                self.drop_viewer_of(&target.path);
-                self.send_entry(EntryChange::Remove { path: target.path });
+            Prompt::Remove(targets) => {
+                for target in targets {
+                    self.drop_viewer_of(&target.path);
+                    self.send_entry(EntryChange::Remove { path: target.path });
+                }
             }
         }
     }
@@ -436,18 +438,20 @@ pub fn prompt(state: &WorkspaceState, open: &Prompt) -> Node {
                 Variant::Destructive,
             )
         }
-        Prompt::Remove(target) => {
-            let name = name_of(&target.path);
-            let (title, words) = if target.folder {
-                (
-                    format!("Delete {name}?"),
+        Prompt::Remove(targets) => {
+            let (title, words) = match targets.as_slice() {
+                [target] if target.folder => (
+                    format!("Delete {}?", name_of(&target.path)),
                     "The folder and everything in it is taken off the disk. This cannot be undone.",
-                )
-            } else {
-                (
-                    format!("Delete {name}?"),
+                ),
+                [target] => (
+                    format!("Delete {}?", name_of(&target.path)),
                     "The file is taken off the disk. This cannot be undone.",
-                )
+                ),
+                _ => (
+                    format!("Delete {} items?", targets.len()),
+                    "They are taken off the disk, each folder with everything in it. This cannot be undone.",
+                ),
             };
             question(title, words, "Delete", Variant::Destructive)
         }

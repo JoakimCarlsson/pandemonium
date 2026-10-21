@@ -132,6 +132,8 @@ pub struct App {
     output: Output,
     /// The element the primary button went down on.
     pressed_on: Option<FocusId>,
+    /// The row of the project's files or of the changed files the primary button last went down on, while nothing else was pressed since, so Ctrl+A picks every row of its list.
+    list_pressed: Option<FocusId>,
     /// The scrolling box whose bar is held down, and where the pointer last was along it.
     bar_drag: Option<(FocusId, f32)>,
     /// Whether the pointer is down on the minimap, so that moving it scrolls the file.
@@ -343,6 +345,7 @@ impl Default for App {
             modifiers: Modifiers::default(),
             output: Output::default(),
             pressed_on: None,
+            list_pressed: None,
             bar_drag: None,
             minimap_drag: false,
             sash_drag: None,
@@ -673,14 +676,24 @@ impl App {
             return;
         }
         let picks = self.modifiers.shift || self.modifiers.control || self.modifiers.logo;
+        let how = if self.modifiers.shift {
+            Pick::Range
+        } else {
+            Pick::Toggle
+        };
         if picks && let Some(index) = self.model.read(|screen| screen.change_row_of(id)) {
-            let how = if self.modifiers.shift {
-                Pick::Range
-            } else {
-                Pick::Toggle
-            };
             self.model
                 .update(|state| *state = std::mem::take(state).change_picked(index, how));
+            return;
+        }
+        if picks
+            && let Some(target) = self
+                .model
+                .read(|screen| screen.tree_row_of(id))
+                .filter(|target| !target.is_root())
+        {
+            self.model
+                .update(|state| *state = std::mem::take(state).tree_row_picked(target, how));
             return;
         }
         self.model
@@ -1220,6 +1233,11 @@ impl App {
                         .update(|state| *state = std::mem::take(state).without_menu());
                 }
                 self.pressed_on = self.pointer.position.and_then(|at| self.output.hit(at));
+                self.list_pressed = self.pressed_on.filter(|id| {
+                    screen.tree_row_of(*id).is_some()
+                        || screen.change_row_of(*id).is_some()
+                        || screen.change_folder_row_of(*id).is_some()
+                });
                 self.press_excerpt();
                 self.text_press();
                 if self.pressed_on != Some(ENTRY_FIELD)
@@ -1730,6 +1748,28 @@ impl App {
             .update(|screen| *screen = std::mem::take(screen).navigated(delta));
     }
 
+    /// Picks every row of the list a row was last pressed in when the key asks to select everything, and says whether it did.
+    fn list_key(&mut self, event: KeyEvent) -> bool {
+        let Some(id) = self.list_pressed else {
+            return false;
+        };
+        if self.focus.current().is_some_and(Screen::is_field)
+            || !matches!(keys::edit(&event), Some(Edit::SelectAll))
+        {
+            return false;
+        }
+        self.model.update(|screen| {
+            let tree = screen.tree_row_of(id).is_some();
+            let taken = std::mem::take(screen);
+            *screen = if tree {
+                taken.tree_all_picked()
+            } else {
+                taken.changes_all_picked()
+            };
+        });
+        true
+    }
+
     /// Acts on a key: Tab walks the focus, Enter and Space press the focused
     /// element, Escape lets go of focus.
     fn key(&mut self, event: KeyEvent) {
@@ -1738,6 +1778,7 @@ impl App {
         }
         if self.recording_key(event)
             || self.terminal_key(event)
+            || self.list_key(event)
             || self.text_key(event)
             || self.card_key(event)
             || self.rename_key(event)

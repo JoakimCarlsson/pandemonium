@@ -143,6 +143,13 @@ pub struct GitControls {
     pub naming: Option<(crate::tree_actions::Naming, Field)>,
     /// The row of the tree last picked, where new files and folders go.
     pub tree_selected: Option<crate::tree_actions::TreeTarget>,
+    /// The rows of the tree picked together, in the order they were picked.
+    pub tree_marked: Vec<crate::tree_actions::TreeTarget>,
+    /// Where the range of tree rows being marked was anchored, and what was marked before it began.
+    pub tree_gesture: Option<(
+        crate::tree_actions::TreeTarget,
+        Vec<crate::tree_actions::TreeTarget>,
+    )>,
     /// The file or folder of the tree the open menu or question is about.
     pub tree_target: Option<crate::tree_actions::TreeTarget>,
     /// What was cut or copied out of the tree.
@@ -196,6 +203,8 @@ impl Default for GitControls {
             rename: Field::default(),
             naming: None,
             tree_selected: None,
+            tree_marked: Vec::new(),
+            tree_gesture: None,
             tree_target: None,
             tree_clipboard: None,
             stashes: Vec::new(),
@@ -423,6 +432,14 @@ impl WorkspaceState {
         marked.dedup();
         self.git.marked = marked;
         self.git.selected = Some(index);
+    }
+
+    /// The state with every file the list shows picked.
+    pub fn changes_all_picked(mut self) -> Self {
+        self.git.gesture = None;
+        self.git.marked = self.listed();
+        self.git.marked.sort_unstable();
+        self
     }
 
     /// The state with the menu on changed files open at `at` over the file at `index`: on the files marked when it is one of them, on it alone when it is not.

@@ -654,6 +654,30 @@ impl Screen {
         }
     }
 
+    /// The screen after the tree row `target` was pressed with the modifier that picks several.
+    pub fn tree_row_picked(self, target: TreeTarget, how: Pick) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.tree_row_picked(target, how)),
+            other => other,
+        }
+    }
+
+    /// The screen with every row of the project's files that is shown picked.
+    pub fn tree_all_picked(self) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.tree_all_picked()),
+            other => other,
+        }
+    }
+
+    /// The screen with every changed file the list shows picked.
+    pub fn changes_all_picked(self) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.changes_all_picked()),
+            other => other,
+        }
+    }
+
     /// The screen after the server listed the branches of the folder of the session at `session`.
     pub fn with_session_branches(self, session: usize, names: Vec<String>) -> Self {
         match self {

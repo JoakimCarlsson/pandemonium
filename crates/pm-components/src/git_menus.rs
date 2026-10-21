@@ -370,6 +370,8 @@ impl WorkspaceState {
             .unwrap_or_else(TreeTarget::root);
         let pasting = self.git.tree_clipboard.is_some();
         let local = self.review_is_local();
+        let targets = self.tree_targets();
+        let one = targets.len() == 1;
         if target.is_root() {
             return vec![
                 row("New File…", Command::TreeNewFile),
@@ -389,7 +391,11 @@ impl WorkspaceState {
             row("New File…", Command::TreeNewFile),
             row("New Folder…", Command::TreeNewFolder),
             Entry::Rule,
-            row_if("Open", Command::TreeOpen, !target.folder),
+            row_if(
+                "Open",
+                Command::TreeOpen,
+                targets.iter().any(|target| !target.folder),
+            ),
             Entry::Rule,
             row("Cut", Command::TreeCut),
             row("Copy", Command::TreeCopy),
@@ -398,9 +404,9 @@ impl WorkspaceState {
             Entry::Rule,
             row("Copy Path", Command::TreeCopyPath),
             row("Copy Relative Path", Command::TreeCopyRelativePath),
-            row_if("Reveal in File Manager", Command::TreeReveal, local),
+            row_if("Reveal in File Manager", Command::TreeReveal, local && one),
             Entry::Rule,
-            row("Rename…", Command::TreeRename),
+            row_if("Rename…", Command::TreeRename, one),
             row("Delete", Command::TreeDelete),
         ]
     }
