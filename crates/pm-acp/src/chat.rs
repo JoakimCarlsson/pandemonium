@@ -254,6 +254,8 @@ pub enum Event {
     Failed(String),
     /// The agent named the conversation, or named it again.
     Titled(String),
+    /// The hooks the agent's Codex holds back until the reader trusts them, all of them as they stand now; empty when none is held back.
+    Hooks(Vec<crate::hooks::Hook>),
     /// A reader handed the agent a turn: what they wrote and the names of the files they attached.
     Prompted {
         /// What the reader wrote.
@@ -346,6 +348,8 @@ pub struct Chat {
     ending: Arc<Mutex<Ending>>,
     /// The driver thread.
     driver: JoinHandle<()>,
+    /// Kept while the chat lives, so that the thread watching the agent's hooks ends with it.
+    _hooks: Sender<()>,
 }
 
 impl Chat {
@@ -361,6 +365,13 @@ impl Chat {
         let (sender, events) = mpsc::channel();
         let ending = Arc::new(Mutex::new(Ending::default()));
         let shared = Arc::clone(&ending);
+        let (hooks, unwatched) = mpsc::channel();
+        if agent.product() == Some(crate::product::Product::Codex) {
+            let (directory, home, sender) = (directory.clone(), home.clone(), sender.clone());
+            std::thread::spawn(move || {
+                crate::hooks::watch(agent, directory, home, sender, unwatched)
+            });
+        }
         let driver = std::thread::spawn(move || {
             if let Err(reason) = drive(
                 agent, &directory, home, &tools, &launch, &shared, &received, &sender,
@@ -373,6 +384,7 @@ impl Chat {
             events,
             ending,
             driver,
+            _hooks: hooks,
         }
     }
 

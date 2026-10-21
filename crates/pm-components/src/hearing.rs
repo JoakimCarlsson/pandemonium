@@ -34,6 +34,7 @@ impl Session {
             Event::Finished(error) => self.finish(error),
             Event::Failed(reason) => self.finish(Some(reason)),
             Event::Titled(title) => self.title = title,
+            Event::Hooks(hooks) => self.hooks_held(hooks),
             Event::Prompted {
                 text,
                 files,

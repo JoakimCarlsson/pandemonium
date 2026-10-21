@@ -814,6 +814,14 @@ impl Work {
                     },
                     Pending::Nothing,
                 ),
+                Outgoing::TrustHooks { session, hooks } => self.ask_session(
+                    session,
+                    |number| Request::TrustHooks {
+                        session: number,
+                        hooks,
+                    },
+                    Pending::Nothing,
+                ),
                 Outgoing::Rewind { session, turn } => self.ask_session(
                     session,
                     |number| Request::Rewind {

@@ -117,6 +117,7 @@ request with exactly one `response` carrying the same `id`.
 | `fork_session` | `session`, `turn`                                                                                | `sessions`      |
 | `choose`       | `session`, `ticket`, `option`                                                                    | `done`          |
 | `answer`       | `session`, `ticket`, `replies`                                                                   | `done`          |
+| `trust_hooks`  | `session`, `hooks`: `[Hook]`                                                                     | `done`          |
 | `cancel`       | `session`                                                                                        | `done`          |
 | `close_session`| `session`, `discard`?                                                                           | `done`, or `uncommitted` |
 | `rename_session`| `session`, `title`                                                                              | `done`          |
@@ -311,6 +312,13 @@ request with exactly one `response` carrying the same `id`.
   are the `label`s of the alternatives chosen and `other` is what the reader
   typed, both possibly empty to skip the question. A null `replies` abandons the
   form, which aborts the agent's use of the tool.
+- **`trust_hooks`:** trusts hooks a `Hooks` event of the session listed, on the
+  machine the session runs on, the way Codex records trust itself (asked of
+  `codex app-server`, so `codex` in a terminal sees the same state). A hook is
+  trusted only when its `key` and `hash` still match what Codex lists, so one
+  that changed since it was shown stays untrusted. A `Hooks` event follows with
+  what is still held back, and the session's next turn starts its agent again
+  so that it runs the hooks trusted. Nothing is trusted without this request.
 - **`attach`:** subscribes the connection to a session and replays the events
   numbered after `after`. See [Events](#events).
 - **`inspect`:** the files that differ from the last commit, with their diffs,
@@ -795,6 +803,7 @@ Events use serde's default form, one key naming the type.
 | `{"Finished": null}`          | The turn ended. A string instead of null means it failed with that reason.                                |
 | `{"Failed": "reason"}`        | The agent could not be started or stopped. The next `prompt` starts it again.                             |
 | `{"Titled": "text"}`          | The agent named the session, or named it again. The server keeps it as the session's `title`.            |
+| `{"Hooks": [Hook]}`           | The hooks the session's Codex holds back until the reader trusts them, all of them as they stand now. Replaces the earlier list; empty when none is held back. Told when a Codex session starts and again when a file the hooks are read from changes. Trust them with `trust_hooks`. |
 | `{"Prompted": {text, files, checkpoint}}` | A client handed the agent a turn. Sent to every client watching the session, the one that sent it included. `files` are names. `checkpoint` (absent means `false`) says the files were kept before the turn, so `restore` can put them back. |
 | `{"Queued": {id, text, files}}` | A client wrote while a turn was running, so the prompt waits under `id`, counted per session. `files` are names. |
 | `{"Unqueued": id}`            | The prompt queued under `id` stopped waiting: it is handed over (a `Prompted` event follows) or dropped.  |
@@ -817,6 +826,12 @@ Shapes used above:
 - **Permission:** `{ticket, title, command, plan?, choices: [{id, name, verdict}]}`
   with `verdict` one of `Allow`, `Always`, `Reject`.
 
+- **Hook:** `{key, event, matcher, command, source, hash, changed}`. `key` is
+  what Codex keeps the hook's trust under, `event` the event it runs on as Codex
+  names it (`preToolUse`), `matcher` what the event must match (possibly null),
+  `command` what it runs, `source` the file it is read from, `hash` what Codex
+  makes of it as it stands, and `changed` whether it was trusted before and has
+  changed since rather than new.
 - **Inquiry:** `{ticket, questions: [{header, text, multiple, alternatives: [{label, description}]}]}`.
   Send the answers to the questions with `answer`.
 

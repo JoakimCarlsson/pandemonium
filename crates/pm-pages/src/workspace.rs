@@ -7,7 +7,7 @@ use pm_ui::{Node, node};
 use pm_components::arrange::{
     PROJECT_MENU_NEW, PROJECT_MENU_REMOVE, ProjectMenu, SESSION_MENU_CLOSE,
     SESSION_MENU_COPY_BRANCH, SESSION_MENU_COPY_PATH, SESSION_MENU_OPEN_FOLDER,
-    SESSION_MENU_RENAME, SessionMenu,
+    SESSION_MENU_RENAME, SESSION_MENU_REVIEW_HOOKS, SessionMenu,
 };
 use pm_components::context_menu::{editor_menu, field_menu};
 use pm_components::git_prompts;
@@ -161,13 +161,12 @@ fn project_menu(open: ProjectMenu) -> Node {
         .build()
 }
 
-/// The menu of a session: copy where it works, rename it, show its folder, or archive it.
+/// The menu of a session: copy where it works, rename it, show its folder, review the hooks its Codex holds back when it holds some back, or archive it.
 fn session_menu(state: &WorkspaceState, open: SessionMenu) -> Node {
-    let on_branch = state
-        .sessions
-        .get(open.session)
-        .is_some_and(|held| held.on_branch);
-    Menu::new(open.at.0, open.at.1)
+    let held = state.sessions.get(open.session);
+    let on_branch = held.is_some_and(|held| held.on_branch);
+    let hooks_held = held.is_some_and(|held| !held.held_hooks.is_empty());
+    let menu = Menu::new(open.at.0, open.at.1)
         .item("Copy path", None, SESSION_MENU_COPY_PATH, false)
         .item(
             "Copy branch name",
@@ -181,8 +180,12 @@ fn session_menu(state: &WorkspaceState, open: SessionMenu) -> Node {
             None,
             SESSION_MENU_OPEN_FOLDER,
             state.is_remote_session(open.session),
-        )
-        .item("Archive", None, SESSION_MENU_CLOSE, false)
+        );
+    let menu = match hooks_held {
+        true => menu.item("Review hooks", None, SESSION_MENU_REVIEW_HOOKS, false),
+        false => menu,
+    };
+    menu.item("Archive", None, SESSION_MENU_CLOSE, false)
         .build()
 }
 

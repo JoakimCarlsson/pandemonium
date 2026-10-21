@@ -413,6 +413,33 @@ fn with_session(core: &Core, number: u64, action: impl FnOnce(&mut Session)) -> 
     }
 }
 
+/// Trusts those of `hooks` the Codex of session `number` still holds back as they were shown, tells the clients which it holds back after that, and has the session's next turn start its agent again so that it runs them.
+fn trust_hooks(core: &Core, number: u64, hooks: &[pm_acp::Hook]) -> Response {
+    let found = core.sessions.lock().ok().and_then(|sessions| {
+        sessions.get(&number).map(|held| {
+            (
+                held.agent,
+                held.directory.clone(),
+                login_folder(&held.meta.agent, held.meta.login.as_deref()),
+            )
+        })
+    });
+    let Some((agent, directory, home)) = found else {
+        return failed(format!("no session is numbered {number}"));
+    };
+    match pm_acp::trust_hooks(agent, &directory, home.as_deref(), hooks) {
+        Ok(held_back) => telling(core, number, |held| {
+            held.hooks_trusted = true;
+            let event = pm_acp::Event::Hooks(held_back);
+            if held.repeats(&event) {
+                return Told::new();
+            }
+            vec![(number, held.note(number, &event), event)]
+        }),
+        Err(reason) => failed(format!("could not trust the hooks: {reason}")),
+    }
+}
+
 /// Subscribes `connection` to a session and replays what it missed after `after`.
 fn attach(core: &Core, connection: &Arc<Connection>, number: u64, after: u64) -> Response {
     let Ok(sessions) = core.sessions.lock() else {
@@ -748,6 +775,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                 chat.answer(ticket, replies);
             }
         }),
+        Request::TrustHooks { session, hooks } => trust_hooks(core, session, &hooks),
         Request::Cancel { session } => telling(core, session, |held| {
             let mut told = match &held.chat {
                 Some(chat) => {

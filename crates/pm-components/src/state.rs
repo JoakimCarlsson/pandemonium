@@ -1057,6 +1057,13 @@ pub enum Outgoing {
         /// What was answered to each question, or nothing to abandon the form.
         replies: Option<Vec<pm_acp::Reply>>,
     },
+    /// Trusts hooks the Codex of a session holds back, as they were shown.
+    TrustHooks {
+        /// The session, by position.
+        session: usize,
+        /// The hooks to trust.
+        hooks: Vec<pm_acp::Hook>,
+    },
     /// Takes the conversation of a session back to before one of the reader's turns, dropping it and all after it.
     Rewind {
         /// The session, by position.
@@ -2350,6 +2357,9 @@ impl WorkspaceState {
             return;
         }
         if self.press_inquiry(FocusId(id)) {
+            return;
+        }
+        if self.press_hooks(FocusId(id)) {
             return;
         }
         if self.press_terminal(FocusId(id)) {
