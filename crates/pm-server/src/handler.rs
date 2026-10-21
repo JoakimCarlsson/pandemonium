@@ -155,6 +155,26 @@ fn apply_accounts(logins: &[pm_protocol::Login], in_use: &[(String, String)]) {
     }
 }
 
+/// The folder of the login `login` of `agent`, when the login is still kept; nothing for the agent's own folder.
+pub(crate) fn login_folder(agent: &str, login: Option<&str>) -> Option<PathBuf> {
+    let login = login?;
+    let (logins, _) = pm_store::load_accounts();
+    logins
+        .iter()
+        .any(|(owner, id, _)| owner == agent && id == login)
+        .then(|| pm_store::account_directory(agent, login).ok())
+        .flatten()
+}
+
+/// The id of the login new sessions of `agent` start as, or nothing for the agent's own.
+fn login_for_new_work(agent: &str) -> Option<String> {
+    let (_, in_use) = pm_store::load_accounts();
+    in_use
+        .into_iter()
+        .find(|(owner, _)| owner == agent)
+        .map(|(_, id)| id)
+}
+
 /// What the reader wrote for `session` and the files of `attachments`, stored where the agent can read them.
 fn prompt(session: u64, text: &str, attachments: &[Attachment]) -> Prompt {
     Prompt {
@@ -243,6 +263,7 @@ fn start_session(
         title: title.to_owned(),
         closed: false,
         updated: now(),
+        login: login_for_new_work(agent.id),
     };
     let mut session = Session::new(agent, folder.clone(), Vec::new(), meta);
     session.start_agent(&crate::machine::with_mode(settings));
@@ -619,6 +640,10 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
         Request::Sessions => Response::Sessions {
             sessions: core.infos(),
         },
+        Request::SetSessionAccount { session, login } => with_session(core, session, |held| {
+            held.meta.login = login;
+            sessions::save_meta(session, &held.meta);
+        }),
         Request::SignIn { agent } => match agent_named(&agent) {
             Some(agent) => match agent.sign_in() {
                 Ok(()) => Response::Done,

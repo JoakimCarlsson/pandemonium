@@ -959,6 +959,13 @@ pub enum Outgoing {
         /// The login in use for each agent.
         in_use: Vec<(String, String)>,
     },
+    /// Has a session run as a login, or as its agent's own when there is none.
+    SessionAccount {
+        /// The session, by position.
+        session: usize,
+        /// The login's id.
+        login: Option<String>,
+    },
     /// Lists the files of the folder `directory` on `host`, for the list behind an `@`.
     Files {
         /// What the answer is held under, to tell whether it is still the one wanted.
@@ -2698,6 +2705,7 @@ impl WorkspaceState {
                 let title: String = text.chars().take(40).collect();
                 let mut session = Session::started(&title, project, &text);
                 session.agent = self.agent;
+                session.login = self.login_for_new_work(self.agent).map(str::to_owned);
                 session.directory = self.projects[project]
                     .directory()
                     .to_string_lossy()

@@ -126,6 +126,9 @@ impl Session {
             self.meta.closed = false;
             sessions::save_meta(number, &self.meta);
         }
+        if self.running_as != self.meta.login {
+            self.chat = None;
+        }
         let afresh = self.chat.is_none();
         let preface = conversation::preface(&self.log, afresh);
         let event = Event::Prompted {

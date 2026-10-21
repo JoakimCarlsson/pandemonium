@@ -216,6 +216,8 @@ pub enum Shot {
     TerminalComposing,
     /// The workspace on its first session with a stretch of the conversation's text selected.
     Selecting,
+    /// The workspace on its first session, which runs as an account the reader added.
+    SessionAccount,
     /// The same selection with the menu over a reply open.
     MessageMenu,
     /// The page for starting work with the panel for adding a project open on its choices.
@@ -1849,6 +1851,15 @@ impl Shot {
                 ..OnboardingState::default()
             }),
             Self::Workspace | Self::Selecting => Screen::Workspace(workspace()),
+            Self::SessionAccount => {
+                let mut state = workspace();
+                let agent = state.agent_id_at(state.sessions[0].agent).unwrap_or_default();
+                state.sessions[0].login = Some("a1".to_owned());
+                Screen::Workspace(state.with_accounts(
+                    vec![(agent, "a1".to_owned(), "work@example.com".to_owned())],
+                    Vec::new(),
+                ))
+            }
             Self::Quitting => Screen::Workspace(workspace().close_asked()),
             Self::Update => Screen::Workspace(workspace().with_release(
                 pm_components::update::Update::Newer {

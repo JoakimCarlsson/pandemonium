@@ -77,21 +77,26 @@ impl WorkspaceState {
         self.agent_has_skills(self.agent_now())
     }
 
-    /// Who the chosen agent is signed in as: the name of the login in use, or the one in its own default folder.
+    /// Who the agent the prompt is for is signed in as: the name of the open session's login or the one new work starts with, or the one in its own default folder.
     pub fn account(&self) -> Option<&str> {
-        match self.login_in_use() {
-            Some(used) => self
-                .logins_here()
-                .into_iter()
-                .find(|(id, _)| *id == used)
-                .map(|(_, name)| name),
-            None => self.default_account(),
-        }
+        self.account_as(self.agent_now(), self.login_in_use())
     }
 
-    /// Who the chosen agent is signed in as in its own default folder, when its files say.
+    /// Who the agent at `agent` is signed in as under the login `login`: its name, or, for the agent's own, the one in its default folder.
+    pub fn account_as(&self, agent: usize, login: Option<&str>) -> Option<&str> {
+        let Some(login) = login else {
+            return self.defaults.get(agent)?.as_ref()?.as_deref();
+        };
+        let owner = self.agent_id_at(agent)?;
+        self.logins
+            .iter()
+            .find(|(by, id, _)| *by == owner && id == login)
+            .map(|(_, _, name)| name.as_str())
+    }
+
+    /// Who the agent the prompt is for is signed in as in its own default folder, when its files say.
     pub fn default_account(&self) -> Option<&str> {
-        self.defaults.get(self.agent)?.as_ref()?.as_deref()
+        self.account_as(self.agent_now(), None)
     }
 
     /// Whether the command named `name` is a skill the agent has installed.
@@ -683,12 +688,12 @@ impl WorkspaceState {
         true
     }
 
-    /// The agent's id the account menu is for.
+    /// The agent's id the account menu is for: the open session's, or the one chosen for new work.
     fn agent_id(&self) -> Option<String> {
-        self.agent_id_at(self.agent)
+        self.agent_id_at(self.agent_now())
     }
 
-    /// The named logins of the chosen agent: the folder name and what each is called.
+    /// The named logins of the agent the account menu is for: the folder name and what each is called.
     pub fn logins_here(&self) -> Vec<(&str, &str)> {
         let Some(agent) = self.agent_id() else {
             return Vec::new();
@@ -700,16 +705,24 @@ impl WorkspaceState {
             .collect()
     }
 
-    /// The folder name of the login in use for the chosen agent, if it is not the agent's own.
+    /// The folder name of the login the open session runs as, or, with none open, the one new work of the chosen agent starts with; nothing for the agent's own.
     pub fn login_in_use(&self) -> Option<&str> {
-        let agent = self.agent_id()?;
+        if let Some(session) = self.open() {
+            return session.login.as_deref();
+        }
+        self.login_for_new_work(self.agent)
+    }
+
+    /// The folder name of the login new sessions of the agent at `agent` start as, if it is not the agent's own.
+    pub(crate) fn login_for_new_work(&self, agent: usize) -> Option<&str> {
+        let agent = self.agent_id_at(agent)?;
         self.in_use
             .iter()
             .find(|(owner, _)| *owner == agent)
             .map(|(_, id)| id.as_str())
     }
 
-    /// Takes the row `index` of the account menu: the agent's own login, a named one, or adding one.
+    /// Takes the row `index` of the account menu: the agent's own login, a named one, or adding one; for the open session only, or with none open, for new work.
     fn pick_account(&mut self, index: usize) {
         let Some(agent) = self.agent_id() else {
             return;
@@ -719,21 +732,45 @@ impl WorkspaceState {
             .into_iter()
             .map(|(id, _)| id.to_owned())
             .collect();
-        self.in_use.retain(|(owner, _)| *owner != agent);
-        if index == 0 {
-        } else if let Some(id) = logins.get(index - 1) {
-            self.in_use.push((agent.to_owned(), id.clone()));
-        } else {
-            self.add_account(self.agent);
-            self.picker = None;
+        self.picker = None;
+        let login = match index {
+            0 => None,
+            _ => match logins.get(index - 1) {
+                Some(id) => Some(id.clone()),
+                None => {
+                    self.add_account(self.agent_now());
+                    let added = self.in_use.iter().find(|(owner, _)| *owner == agent);
+                    let added = added.map(|(_, id)| id.clone());
+                    self.set_session_login(added);
+                    return;
+                }
+            },
+        };
+        if self.open().is_some() {
+            self.set_session_login(login);
             return;
+        }
+        self.in_use.retain(|(owner, _)| *owner != agent);
+        if let Some(id) = login {
+            self.in_use.push((agent.to_owned(), id));
         }
         self.identities[self.agent] = None;
         self.outbox.push(Outgoing::Accounts {
             logins: self.logins.clone(),
             in_use: self.in_use.clone(),
         });
-        self.picker = None;
+    }
+
+    /// Has the open session run as the login `login`, or as the agent's own when there is none; nothing when no session is open.
+    fn set_session_login(&mut self, login: Option<String>) {
+        let Some(session) = self.open_index() else {
+            return;
+        };
+        if let Some(held) = self.sessions.get_mut(session) {
+            held.login = login.clone();
+            self.outbox
+                .push(Outgoing::SessionAccount { session, login });
+        }
     }
 
     /// Adds a login for the agent at `agent`, makes it the one in use, and has the server sign it in.
@@ -768,6 +805,11 @@ impl WorkspaceState {
         let (owner, id, _) = self.logins.remove(index);
         self.in_use
             .retain(|(by, used)| !(*by == owner && *used == id));
+        for session in &mut self.sessions {
+            if session.login.as_ref() == Some(&id) {
+                session.login = None;
+            }
+        }
         if let Some(agent) = self.agent_position(&owner)
             && let Some(identity) = self.identities.get_mut(agent)
         {
@@ -808,6 +850,7 @@ impl WorkspaceState {
             ));
             if let Some(session) = self.sessions.last_mut() {
                 session.updated_at = info.updated;
+                session.login = info.login.clone();
             }
             added.push((self.sessions.len() - 1, info.session));
         }

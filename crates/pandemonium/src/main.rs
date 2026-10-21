@@ -163,6 +163,7 @@ fn main() {
             Some("composing") => Shot::Composing,
             Some("terminalcomposing") => Shot::TerminalComposing,
             Some("selecting") => Shot::Selecting,
+            Some("sessionaccount") => Shot::SessionAccount,
             Some("messagemenu") => Shot::MessageMenu,
             Some("adding") => Shot::Adding,
             Some("loading") => Shot::Loading,

@@ -91,6 +91,12 @@ impl Agent {
     /// The command that starts the agent in protocol mode, with `extra`
     /// arguments after the ones that put it there.
     pub(crate) fn command(self, extra: &[String]) -> Command {
+        self.command_in(extra, self.home())
+    }
+
+    /// The command that starts the agent in protocol mode, with `extra`
+    /// arguments after the ones that put it there, keeping its config and login in the folder `home`, or in its default one when there is none.
+    pub(crate) fn command_in(self, extra: &[String], home: Option<std::path::PathBuf>) -> Command {
         let mut command = match (installed(self.program), self.source) {
             (None, Source::Package(package)) => {
                 let runner = installed(RUNNER);
@@ -107,8 +113,8 @@ impl Agent {
             .args(self.arguments)
             .args(extra)
             .envs(self.env.iter().copied());
-        if let Some((name, home)) = self.environment() {
-            command.env(name, home);
+        if let Some(home) = home {
+            command.env(self.home.unwrap_or("HOME"), home);
         }
         command
     }

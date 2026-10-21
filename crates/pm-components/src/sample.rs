@@ -469,6 +469,8 @@ pub struct Session {
     pub commands: Vec<Slash>,
     /// The skills the agent offers behind a dollar sign.
     pub skills: Vec<Slash>,
+    /// The id of the login its agent runs as, or nothing for the agent's own.
+    pub login: Option<String>,
     /// The question the agent waits on the reader to answer, if it waits on one.
     pub ask: Option<Permission>,
     /// The form of questions the agent waits on the reader to answer, if it waits on one.
@@ -522,6 +524,7 @@ impl Session {
             context: None,
             commands: Vec::new(),
             skills: Vec::new(),
+            login: None,
             ask: None,
             inquiry: None,
             turn_started: None,
