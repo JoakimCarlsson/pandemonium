@@ -17,7 +17,7 @@ use pm_components::folder_picker::{
     PICKER_BACK, PICKER_CLOSE, PICKER_DOWN, PICKER_FORWARD, PICKER_SCROLL, PICKER_UP,
 };
 use pm_components::git_controls::{GRAPH_SCROLL, Pick, REVIEW_DISMISS, VIEWER_SCROLL};
-use pm_components::git_menus::MenuKind;
+use pm_components::git_menus::{CHANGE_MENU_HEIGHT, MenuKind};
 use pm_components::message_menu::is_message_menu_item;
 use pm_components::minimap::MINIMAP;
 use pm_components::open_files::{EDITOR_FIELD, STRIP};
@@ -1369,36 +1369,41 @@ impl App {
         });
     }
 
-    /// Opens the menu on changed files, just under the pointer, over the file at `index`.
+    /// Where a menu `menu_height` tall opens: just under the pointer and inside the window.
+    fn menu_under_pointer(&self, menu_height: f32) -> Option<(f32, f32)> {
+        let (x, y) = self.pointer.position?;
+        let (width, height) = self.window_size();
+        Some((
+            (x - 8.0).min(width - 216.0).max(0.0),
+            (y + 12.0).min(height - menu_height - 8.0).max(0.0),
+        ))
+    }
+
+    /// Opens the menu on changed files, just under the pointer and inside the window, over the file at `index`.
     fn open_change_menu(&mut self, index: usize) {
-        let Some((x, y)) = self.pointer.position else {
+        let Some(at) = self.menu_under_pointer(CHANGE_MENU_HEIGHT) else {
             return;
         };
         self.model.update(|state| {
-            *state = std::mem::take(state).with_change_menu(index, (x - 8.0, y + 12.0));
+            *state = std::mem::take(state).with_change_menu(index, at);
         });
     }
 
-    /// Opens the menu on changed files, just under the pointer, over the folder at `position` of their tree.
+    /// Opens the menu on changed files, just under the pointer and inside the window, over the folder at `position` of their tree.
     fn open_folder_change_menu(&mut self, position: usize) {
-        let Some((x, y)) = self.pointer.position else {
+        let Some(at) = self.menu_under_pointer(CHANGE_MENU_HEIGHT) else {
             return;
         };
         self.model.update(|state| {
-            *state = std::mem::take(state).with_folder_change_menu(position, (x - 8.0, y + 12.0));
+            *state = std::mem::take(state).with_folder_change_menu(position, at);
         });
     }
 
     /// Opens the menu on the project's files, just under the pointer and inside the window, over `target`.
     fn open_tree_menu(&mut self, target: TreeTarget) {
-        let Some((x, y)) = self.pointer.position else {
+        let Some(at) = self.menu_under_pointer(TREE_MENU_HEIGHT) else {
             return;
         };
-        let (width, height) = self.window_size();
-        let at = (
-            (x - 8.0).min(width - 216.0).max(0.0),
-            (y + 12.0).min(height - TREE_MENU_HEIGHT - 8.0).max(0.0),
-        );
         self.model.update(|state| {
             *state = std::mem::take(state).with_tree_menu(target, at);
         });

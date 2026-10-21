@@ -12,6 +12,9 @@ use crate::tree_actions::TreeTarget;
 /// The first of the rows of the menu that is open; the rest follow it.
 pub const MENU_ROW_BASE: u64 = 9000;
 
+/// How tall the menu on changed files is, in logical pixels, to keep it inside the window.
+pub const CHANGE_MENU_HEIGHT: f32 = 11.0 * 32.0 + 4.0 * 9.0 + 10.0;
+
 /// Which menu is open.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MenuKind {
