@@ -97,7 +97,7 @@ fn shared(agent: Agent) -> &'static [&'static str] {
     }
 }
 
-/// Writes into an account folder the agent's settings file: the one the account has, with the reader's own from `source` laid over it and what the agent needs to sign in on its own and keep its login there over both.
+/// Writes into an account folder the agent's settings file: the one the account has, less the keys an earlier start took from the reader's own that it no longer has, with the reader's own from `source` laid over it and what the agent needs to sign in on its own and keep its login there over both.
 fn seed(agent: Agent, home: &Path, source: Option<&Path>) {
     let (file, contents) = match agent.product() {
         Some(Product::Claude) => ("settings.json", r#"{"forceLoginMethod":"claudeai"}"#),
@@ -105,13 +105,17 @@ fn seed(agent: Agent, home: &Path, source: Option<&Path>) {
         _ => return,
     };
     let path = home.join(file);
+    let record = home.join(format!("{file}.user-keys"));
     let account = std::fs::read_to_string(&path).ok();
     let user = source.and_then(|source| std::fs::read_to_string(source.join(file)).ok());
+    let recorded = std::fs::read_to_string(&record).unwrap_or_default();
+    let recorded: Vec<&str> = recorded.lines().collect();
     let merged = if file.ends_with(".toml") {
         layered(
             account.as_deref(),
             user.as_deref(),
             contents,
+            &recorded,
             |text| text.parse::<toml::Table>().ok(),
             |table| toml::to_string(table).ok(),
         )
@@ -120,33 +124,53 @@ fn seed(agent: Agent, home: &Path, source: Option<&Path>) {
             account.as_deref(),
             user.as_deref(),
             contents,
+            &recorded,
             |text| serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(text).ok(),
             |map| serde_json::to_string_pretty(map).ok(),
         )
     };
-    let Some(merged) = merged else {
+    let Some((merged, user_keys)) = merged else {
         return;
     };
-    if account.as_deref() != Some(merged.as_str()) {
-        let _ = std::fs::write(path, merged);
+    if account.as_deref() != Some(merged.as_str()) && std::fs::write(&path, merged).is_err() {
+        return;
+    }
+    if let Some(user_keys) = user_keys.filter(|keys| *keys != recorded) {
+        let _ = std::fs::write(record, user_keys.join("\n"));
     }
 }
 
-/// The top-level keys of `account`, then `user` over them, then `seed` over both, written back out; `account` and `user` are each left out when they cannot be read.
+/// The top-level keys of `account` less those in `recorded` that `user` no longer has, then `user` over them, then `seed` over both, written back out with the keys `user` has; `account` and `user` are each left out when they cannot be read, and nothing is dropped when `user` cannot be.
 fn layered<M, V>(
     account: Option<&str>,
     user: Option<&str>,
     seed: &str,
+    recorded: &[&str],
     parse: impl Fn(&str) -> Option<M>,
     write: impl Fn(&M) -> Option<String>,
-) -> Option<String>
+) -> Option<(String, Option<Vec<String>>)>
 where
-    M: Default + Extend<(String, V)> + IntoIterator<Item = (String, V)>,
+    M: Default + Extend<(String, V)> + IntoIterator<Item = (String, V)> + FromIterator<(String, V)>,
 {
-    let mut layers = account.and_then(&parse).unwrap_or_default();
-    layers.extend(user.and_then(&parse).unwrap_or_default());
+    let user: Option<Vec<(String, V)>> =
+        user.and_then(&parse).map(|user| user.into_iter().collect());
+    let user_keys: Option<Vec<String>> = user
+        .as_ref()
+        .map(|user| user.iter().map(|(key, _)| key.clone()).collect());
+    let removed = |key: &String| {
+        user_keys
+            .as_ref()
+            .is_some_and(|keys| recorded.contains(&key.as_str()) && !keys.contains(key))
+    };
+    let mut layers: M = account
+        .and_then(&parse)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(key, _)| !removed(key))
+        .collect();
+    layers.extend(user.unwrap_or_default());
     layers.extend(parse(seed)?);
-    write(&layers)
+    Some((write(&layers)?, user_keys))
 }
 
 /// The agent's own config folder, which an account folder shares its setup from; a home variable pointing at an account folder, as one inherited from an agent the app started, is passed over.
