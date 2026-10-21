@@ -843,6 +843,14 @@ impl Work {
                     |number| Request::Cancel { session: number },
                     Pending::Nothing,
                 ),
+                Outgoing::SessionAccount { session, login } => self.ask_session(
+                    session,
+                    |number| Request::SetSessionAccount {
+                        session: number,
+                        login,
+                    },
+                    Pending::Nothing,
+                ),
                 Outgoing::Set {
                     session,
                     setting,

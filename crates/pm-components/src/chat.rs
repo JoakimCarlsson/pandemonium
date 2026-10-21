@@ -19,7 +19,7 @@ use crate::button::Variant;
 use crate::composer::composer;
 use crate::input;
 use crate::inquiry::{answered, inquiry};
-use crate::parts::{clipped, glyph, line, spacer, wrap};
+use crate::parts::{clipped, glyph, line, wrap};
 use crate::queued::queued;
 use crate::sample::{Session, Status};
 use crate::sidebar::status_icon;
@@ -375,26 +375,23 @@ fn header(state: &WorkspaceState, session: &Session) -> Node {
                 ])),
         );
     }
-    let agent = state.agent_look(session.agent).name;
+    let mut agent = state.agent_look(session.agent).name;
+    if let Some(account) = state.account_as(session.agent, session.login.as_deref()) {
+        agent = format!("{agent} ({account})");
+    }
     let model = session
         .settings
         .iter()
         .find(|setting| setting.category == "model")
         .and_then(|setting| setting.current_name());
-    strip = strip
-        .child(
-            line(
-                match model {
-                    Some(model) => format!("{agent} · {model}"),
-                    None => agent.clone(),
-                },
-                12,
-                1.4,
-                Role::Subtle,
-            )
-            .styles([flex_none()]),
-        )
-        .child(spacer());
+    strip = strip.child(clipped(
+        match model {
+            Some(model) => format!("{agent} · {model}"),
+            None => agent.clone(),
+        },
+        12,
+        Role::Subtle,
+    ));
     if !session.changes.is_empty() {
         strip = strip.child(
             Button::new(

@@ -156,6 +156,13 @@ pub enum Request {
         /// The login in use for each agent, as agent and login id.
         in_use: Vec<(String, String)>,
     },
+    /// Has one session run as a login, leaving every other session and the login new sessions start with as they are.
+    SetSessionAccount {
+        /// The session's number.
+        session: u64,
+        /// The login's id, or nothing for the agent's own.
+        login: Option<String>,
+    },
     /// Signs the agent in under the login now in use.
     SignIn {
         /// The agent, by its id.

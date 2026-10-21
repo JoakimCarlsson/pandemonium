@@ -349,10 +349,11 @@ pub struct Chat {
 }
 
 impl Chat {
-    /// Starts `agent` in the folder `directory` and opens a conversation with it that has the tool servers `tools`, leaving out what `launch` says to.
+    /// Starts `agent` in the folder `directory`, keeping its config and login in the folder `home` or in its own when there is none, and opens a conversation with it that has the tool servers `tools`, leaving out what `launch` says to.
     pub fn start(
         agent: Agent,
         directory: PathBuf,
+        home: Option<PathBuf>,
         tools: Vec<serde_json::Value>,
         launch: pm_agent_library::Launch,
     ) -> Self {
@@ -362,7 +363,7 @@ impl Chat {
         let shared = Arc::clone(&ending);
         let driver = std::thread::spawn(move || {
             if let Err(reason) = drive(
-                agent, &directory, &tools, &launch, &shared, &received, &sender,
+                agent, &directory, home, &tools, &launch, &shared, &received, &sender,
             ) {
                 let _ = sender.send(Event::Failed(reason));
             }
@@ -566,11 +567,13 @@ pub fn skills(agent: Agent, directory: &Path, withheld: &[String]) -> Vec<Slash>
         .collect()
 }
 
-/// Starts the agent, opens a conversation and carries it until the chat is
+/// Starts the agent with its config and login in `home`, or in its own folder when there is none, opens a conversation and carries it until the chat is
 /// dropped or the agent stops; `launch` says what it is started without.
+#[allow(clippy::too_many_arguments)]
 fn drive(
     agent: Agent,
     directory: &std::path::Path,
+    home: Option<PathBuf>,
     tools: &[serde_json::Value],
     launch: &pm_agent_library::Launch,
     ending: &Mutex<Ending>,
@@ -584,7 +587,10 @@ fn drive(
         return Err(format!("{} is not a folder", directory.display()));
     }
     let patience = if agent.fetches() { FETCH } else { QUICK };
-    let mut command = agent.command(&[]);
+    if let Some(home) = &home {
+        crate::profile::share_setup(agent, home);
+    }
+    let mut command = agent.command_in(&[], home);
     command.envs(launch.env.iter().map(|(name, value)| (name, value)));
     let mut client = Client::start_in(command, directory)?;
     {

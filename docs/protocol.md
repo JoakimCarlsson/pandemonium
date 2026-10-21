@@ -106,6 +106,7 @@ request with exactly one `response` carrying the same `id`.
 | `branches`     | `directory`                                                                                      | `branches`      |
 | `identity`     | `agent`                                                                                          | `identity`      |
 | `set_accounts` | `logins`: `[{agent, id, name}]`, `in_use`: `[[agent, id]]`                                       | `done`          |
+| `set_session_account` | `session`, `login` (a login id, or `null` for the agent's own)                            | `done`          |
 | `sign_in`      | `agent`                                                                                          | `done`          |
 | `start_session`| `agent`, `repository`, `directory`, `title`, `base`, `settings`, `text`, `attachments`           | `started`       |
 | `prompt`       | `session`, `text`, `attachments`, `now` (optional, `false` by default)                           | `done`          |
@@ -321,7 +322,13 @@ request with exactly one `response` carrying the same `id`.
   run of changes.
 - **`set_accounts`:** keeps the logins and the login in use for each agent on
   the server's machine, and points the agents at them. `accounts` reads them
-  back.
+  back. The login in use for an agent is the one new sessions of it start
+  with; a session keeps its own login after that.
+- **`set_session_account`:** has the session run as `login`, or as the agent's
+  own login when it is `null`, without touching any other session or the login
+  new sessions start with. The server keeps it with the session; a running
+  agent is started again under the new login before the session's next turn,
+  and told the conversation so far.
 - **`projects`, `choices`:** what the reader set up, kept by the server so that
   every client sees the same. `projects` says `saved: false` when the list was
   never saved, which means the app has not been set up yet. A project is an
@@ -762,9 +769,10 @@ What an agent does arrives as an `event`, not as a response:
 - A client drops an event whose `seq` it already has, so replays are safe.
 
 A **SessionInfo** is `{session, agent, repository, directory, branch, head,
-base, title, closed, updated, last_seq, running}`. `updated` is milliseconds since the epoch,
-`last_seq` is the number of the session's latest event, and `running` says
-whether its agent is running now.
+base, title, closed, updated, last_seq, running, login}`. `updated` is milliseconds since the epoch,
+`last_seq` is the number of the session's latest event, `running` says
+whether its agent is running now, and `login` is the id of the login the
+session runs as, `null` for the agent's own.
 
 ### Event types
 

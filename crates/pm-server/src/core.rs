@@ -43,6 +43,8 @@ pub(crate) struct Session {
     pub(crate) queue: VecDeque<Waiting>,
     /// The id the next waiting prompt gets.
     pub(crate) next_queued: u64,
+    /// The id of the login the running agent was started as, or nothing for the agent's own.
+    pub(crate) running_as: Option<String>,
 }
 
 impl Session {
@@ -62,13 +64,16 @@ impl Session {
             busy: false,
             queue: VecDeque::new(),
             next_queued: 1,
+            running_as: None,
         }
     }
 
-    /// Starts the agent in the session's folder, without what the reader turned off, and gives it the settings the reader chose.
+    /// Starts the agent in the session's folder as the session's login, without what the reader turned off, and gives it the settings the reader chose.
     pub(crate) fn start_agent(&mut self, settings: &[(String, String)]) {
         let (tools, launch) = crate::library::given(self.agent, &self.directory);
-        let chat = Chat::start(self.agent, self.directory.clone(), tools, launch);
+        let home = crate::handler::login_folder(&self.meta.agent, self.meta.login.as_deref());
+        let chat = Chat::start(self.agent, self.directory.clone(), home, tools, launch);
+        self.running_as = self.meta.login.clone();
         for (setting, value) in settings {
             chat.set(setting, value);
         }
@@ -255,6 +260,7 @@ impl Core {
                 updated: session.meta.updated,
                 last_seq: session.log.last().map_or(0, |(seq, _)| *seq),
                 running: session.chat.is_some(),
+                login: session.meta.login.clone(),
             })
             .collect();
         infos.sort_by_key(|info| info.session);

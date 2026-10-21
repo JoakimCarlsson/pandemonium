@@ -32,6 +32,9 @@ pub(crate) struct Meta {
     pub(crate) closed: bool,
     /// When it last changed, in milliseconds since the epoch.
     pub(crate) updated: u64,
+    /// The id of the login its agent runs as, or nothing for the agent's own.
+    #[serde(default)]
+    pub(crate) login: Option<String>,
 }
 
 /// One line of a session's log: an event and its number.

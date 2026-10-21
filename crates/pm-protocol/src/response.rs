@@ -33,6 +33,9 @@ pub struct SessionInfo {
     pub closed: bool,
     /// Whether its agent is running now.
     pub running: bool,
+    /// The id of the login it runs as, or nothing for the agent's own.
+    #[serde(default)]
+    pub login: Option<String>,
 }
 
 /// What the server knows about one shell.

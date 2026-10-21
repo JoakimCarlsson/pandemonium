@@ -36,11 +36,6 @@ impl Agent {
         ACTIVE.lock().ok()?.as_ref()?.get(self.id).cloned()
     }
 
-    /// The environment to start the agent with: its home variable pointing at the folder in use, or, when it has none, the home folder itself.
-    pub(crate) fn environment(self) -> Option<(&'static str, PathBuf)> {
-        Some((self.home.unwrap_or("HOME"), self.home()?))
-    }
-
     /// Signs the agent in under the home folder in use, by the first way it offers, and returns once that is over.
     pub fn sign_in(self) -> Result<(), String> {
         if !self.startable() {
@@ -173,7 +168,7 @@ fn is_account_folder(folder: &Path) -> bool {
 }
 
 /// Links what an agent's own folder shares into the account folder `home`, leaving what is already there.
-fn share_setup(agent: Agent, home: &Path) {
+pub(crate) fn share_setup(agent: Agent, home: &Path) {
     let source = own_folder(agent);
     seed(agent, home, source.as_deref());
     if agent.home.is_none() {
