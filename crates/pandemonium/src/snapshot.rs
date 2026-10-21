@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use pm_acp::{
-    Alternative, Background, Choice, Diff, Discovery, Event, Inquiry, Kind, Permission, Pick,
+    Alternative, Background, Choice, Diff, Discovery, Event, Hook, Inquiry, Kind, Permission, Pick,
     PlanStep, Progress, Question, Setting, Slash, Tool, ToolState, Verdict,
 };
 use pm_components::Project;
@@ -12,6 +12,7 @@ use pm_components::diff::gutter_id;
 use pm_components::git_controls::{BRANCH_BUTTON, BRANCH_FILTER, Pick as Choosing};
 use pm_components::git_menus::MenuKind;
 use pm_components::git_prompts::Prompt;
+use pm_components::hooks_prompt::HOOKS_REVIEW;
 use pm_components::open_files::EDITOR_FIELD;
 use pm_components::panes::{Item, SPLIT_RIGHT, Side};
 use pm_components::settings::{SETTINGS_ADD, SETTINGS_FIND, Section};
@@ -184,6 +185,10 @@ pub enum Shot {
     Inquiring,
     /// A conversation whose reader answered a form of questions.
     Answered,
+    /// A conversation whose Codex holds back hooks until the reader trusts them, asking what to do.
+    Hooks,
+    /// The same conversation with the hooks held back listed for review.
+    HooksReview,
     /// A conversation whose turn ended while two subagents and a command were still running.
     Background,
     /// The same conversation with the subagents above the prompt box open.
@@ -2046,6 +2051,8 @@ impl Shot {
                 ]),
             )),
             Self::Inquiring => Screen::Workspace(live(Turn::Inquiring)),
+            Self::Hooks => Screen::Workspace(hooks_held()),
+            Self::HooksReview => Screen::Workspace(hooks_held().after(HOOKS_REVIEW)),
             Self::Background => Screen::Workspace(live(Turn::Background)),
             Self::Agents => {
                 Screen::Workspace(live(Turn::Background).after(FocusId(SUBAGENTS_CHIP.0)))
@@ -2563,6 +2570,40 @@ fn queued() -> WorkspaceState {
     .edited(
         PROMPT,
         Edit::Paste("Stop, the clamp lives in pm-ui".to_owned()),
+    )
+}
+
+/// A finished conversation whose Codex holds back a new hook and a changed one until the reader trusts them.
+fn hooks_held() -> WorkspaceState {
+    let hook = |key: &str, event: &str, matcher: Option<&str>, command: &str, changed| Hook {
+        key: format!("/home/reader/.codex/hooks.json:{key}"),
+        event: event.to_owned(),
+        matcher: matcher.map(str::to_owned),
+        command: command.to_owned(),
+        source: "/home/reader/.codex/hooks.json".to_owned(),
+        hash: format!("sha256:{key}"),
+        changed,
+    };
+    let state = live(Turn::Finished);
+    let session = state.sessions.len() - 1;
+    state.heard(
+        session,
+        Event::Hooks(vec![
+            hook(
+                "pre_tool_use:0:0",
+                "preToolUse",
+                Some("Bash"),
+                "sh -c 'cat >> ~/.cache/scratch/pandemonium/pretool.log'",
+                false,
+            ),
+            hook(
+                "session_start:0:0",
+                "sessionStart",
+                None,
+                "/home/reader/.local/bin/muffle hook codex --terse",
+                true,
+            ),
+        ]),
     )
 }
 

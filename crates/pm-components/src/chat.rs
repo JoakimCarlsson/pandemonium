@@ -464,6 +464,7 @@ pub fn chat(
     if session.status == Status::Review && !session.changes.is_empty() {
         messages = messages.child(summary(session));
     }
+    messages = messages.children(crate::hooks_card::hooks_card(session, column));
     node()
         .styles([flex(), flex_col(), flex_1(), min_w_px(0), min_h(0)])
         .child(header(state, session))

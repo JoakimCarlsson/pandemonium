@@ -12,6 +12,7 @@ mod attachment;
 mod background;
 mod chat;
 mod client;
+mod hooks;
 mod inquiry;
 mod install;
 mod login;
@@ -30,6 +31,7 @@ pub use chat::{
     Background, Chat, Choice, Diff, Discovery, Event, Kind, Permission, Pick, PlanStep, Progress,
     Setting, Slash, Tool, ToolState, Usage, Verdict, discover, skills,
 };
+pub use hooks::{Hook, trust_hooks};
 pub use inquiry::{Alternative, Inquiry, Question, Reply};
 pub use install::{is_web_address, open as open_address};
 pub use mcp::{command_line, command_words, mcp_servers};

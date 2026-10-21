@@ -29,6 +29,9 @@ pub const SESSION_MENU_RENAME: FocusId = FocusId(7088);
 /// The row of a session's menu that shows its folder in the file manager.
 pub const SESSION_MENU_OPEN_FOLDER: FocusId = FocusId(7089);
 
+/// The row of a session's menu that asks again about the hooks its Codex holds back.
+pub const SESSION_MENU_REVIEW_HOOKS: FocusId = FocusId(7090);
+
 /// The menu open over a session, and where.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SessionMenu {
@@ -66,6 +69,7 @@ pub fn is_session_menu_item(id: FocusId) -> bool {
         SESSION_MENU_COPY_BRANCH,
         SESSION_MENU_RENAME,
         SESSION_MENU_OPEN_FOLDER,
+        SESSION_MENU_REVIEW_HOOKS,
     ]
     .contains(&id)
 }
@@ -160,6 +164,12 @@ impl WorkspaceState {
                     session: open.session,
                 });
                 self
+            }
+            SESSION_MENU_REVIEW_HOOKS => {
+                if let Some(held) = self.sessions.get_mut(open.session) {
+                    held.hooks_prompt = crate::hooks_prompt::HooksPrompt::Asking;
+                }
+                self.after(FocusId(SESSION_BASE + open.session as u64))
             }
             _ => self.close_after_asking(open.session),
         }

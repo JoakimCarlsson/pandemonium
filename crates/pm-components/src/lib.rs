@@ -48,6 +48,8 @@ pub mod git_prompts;
 pub mod graph;
 pub mod hearing;
 pub mod history;
+pub mod hooks_card;
+pub mod hooks_prompt;
 pub mod inline_values;
 pub mod input;
 pub mod inquiry;

@@ -52,8 +52,8 @@ fn candidates(name: &str) -> Vec<String> {
     }
 }
 
-/// Where `program` is installed, on the path or in the usual places beside it.
-pub fn installed(program: &str) -> Option<PathBuf> {
+/// The machine's path followed by the usual places programs install themselves, in the order they are searched.
+fn search_directories() -> Vec<PathBuf> {
     let path = env::var_os("PATH").unwrap_or_default();
     let home = env::home_dir();
     env::split_paths(&path)
@@ -64,6 +64,13 @@ pub fn installed(program: &str) -> Option<PathBuf> {
         )
         .chain(home.as_deref().map(nvm_directories).unwrap_or_default())
         .chain(SYSTEM_DIRECTORIES.iter().map(PathBuf::from))
+        .collect()
+}
+
+/// Where `program` is installed, on the path or in the usual places beside it.
+pub fn installed(program: &str) -> Option<PathBuf> {
+    search_directories()
+        .into_iter()
         .flat_map(|directory| {
             candidates(program)
                 .into_iter()
@@ -72,11 +79,20 @@ pub fn installed(program: &str) -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
-/// The machine's path with the folder holding `program` put first, so that what it starts is found beside it.
+/// The machine's path with the folder holding `program` put first, so that what it starts is found beside it, and
+/// the usual places programs install themselves that exist added after it, so that a program started from a
+/// desktop session finds the tools a shell profile would have put on the path.
 pub fn path_beside(program: &Path) -> OsString {
-    let first = program.parent().map(Path::to_path_buf);
-    let machine = env::var_os("PATH")
-        .map(|path| env::split_paths(&path).collect::<Vec<_>>())
-        .unwrap_or_default();
-    env::join_paths(first.into_iter().chain(machine)).unwrap_or_default()
+    let mut directories: Vec<PathBuf> = Vec::new();
+    for directory in program
+        .parent()
+        .map(Path::to_path_buf)
+        .into_iter()
+        .chain(search_directories())
+    {
+        if directory.is_dir() && !directories.contains(&directory) {
+            directories.push(directory);
+        }
+    }
+    env::join_paths(directories).unwrap_or_default()
 }

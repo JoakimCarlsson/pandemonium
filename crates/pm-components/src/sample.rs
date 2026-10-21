@@ -475,6 +475,10 @@ pub struct Session {
     pub ask: Option<Permission>,
     /// The form of questions the agent waits on the reader to answer, if it waits on one.
     pub inquiry: Option<Draft>,
+    /// The hooks the agent's Codex holds back until the reader trusts them.
+    pub held_hooks: Vec<pm_acp::Hook>,
+    /// How the prompt about the held-back hooks shows.
+    pub hooks_prompt: crate::hooks_prompt::HooksPrompt,
     /// When the turn that is running began, if one is.
     pub turn_started: Option<Instant>,
     /// How many of the prompts this window sent the server has yet to repeat back, so that they are not added twice.
@@ -527,6 +531,8 @@ impl Session {
             login: None,
             ask: None,
             inquiry: None,
+            held_hooks: Vec::new(),
+            hooks_prompt: crate::hooks_prompt::HooksPrompt::Hidden,
             turn_started: None,
             echoes: 0,
             queued: Vec::new(),

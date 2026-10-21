@@ -147,6 +147,8 @@ fn main() {
             Some("asking") => Shot::Asking,
             Some("inquiring") => Shot::Inquiring,
             Some("answered") => Shot::Answered,
+            Some("hooks") => Shot::Hooks,
+            Some("hooks-review") => Shot::HooksReview,
             Some("background") => Shot::Background,
             Some("subagents") => Shot::Agents,
             Some("subagents-expanded") => Shot::AgentsExpanded,

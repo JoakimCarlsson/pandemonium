@@ -6,7 +6,7 @@ use std::sync::Mutex;
 use pm_tools::{installed, path_beside};
 
 /// The program that runs a published package without installing it first.
-const RUNNER: &str = "npx";
+pub(crate) const RUNNER: &str = "npx";
 
 /// Where an agent's program comes from when the reader does not have it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -96,6 +96,9 @@ impl Agent {
 
     /// The command that starts the agent in protocol mode, with `extra`
     /// arguments after the ones that put it there, keeping its config and login in the folder `home`, or in its default one when there is none.
+    ///
+    /// The agent's path holds the usual places tools install themselves, so the
+    /// hooks and commands it runs find them however the server was started.
     pub(crate) fn command_in(self, extra: &[String], home: Option<std::path::PathBuf>) -> Command {
         let mut command = match (installed(self.program), self.source) {
             (None, Source::Package(package)) => {
@@ -107,7 +110,12 @@ impl Agent {
                 command.arg("--yes").arg(package);
                 command
             }
-            (program, _) => Command::new(program.unwrap_or_else(|| self.program.into())),
+            (program, _) => {
+                let program = program.unwrap_or_else(|| self.program.into());
+                let mut command = Command::new(&program);
+                command.env("PATH", path_beside(&program));
+                command
+            }
         };
         command
             .args(self.arguments)
