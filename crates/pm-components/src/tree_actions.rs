@@ -30,7 +30,7 @@ pub const TREE_NAME_SUBMIT: FocusId = FocusId(7082);
 pub const TREE_FILE_BASE: u64 = 3_000_000;
 
 /// How tall the menu on an entry of the tree is, in logical pixels, to keep it inside the window.
-pub const TREE_MENU_HEIGHT: f32 = 11.0 * 32.0 + 5.0 * 9.0 + 10.0;
+pub const TREE_MENU_HEIGHT: f32 = 12.0 * 32.0 + 5.0 * 9.0 + 10.0;
 
 /// A file or folder of the tree, by its path from the root of the project; the root itself has an empty path.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -370,6 +370,16 @@ impl WorkspaceState {
             (false, false) => joined(session.directory.trim_end_matches('/'), &target.path),
         };
         self.outbox.push(Outgoing::Copy { text });
+    }
+
+    /// Shows the entry the menu was opened on in the file manager of this machine.
+    pub(crate) fn tree_reveal(&mut self) {
+        if let (Some(target), Some(session)) = (self.tree_target(), self.review_index()) {
+            self.outbox.push(Outgoing::RevealFile {
+                session,
+                path: target.path,
+            });
+        }
     }
 
     /// Sends `change` to the server for the open session's folder, and says it is working.

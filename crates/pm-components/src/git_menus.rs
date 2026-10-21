@@ -125,6 +125,8 @@ enum Command {
     TreeCopyPath,
     /// Copies the path of the entry from the root of the project.
     TreeCopyRelativePath,
+    /// Shows the entry in the file manager of this machine.
+    TreeReveal,
     /// Asks what to rename the entry to.
     TreeRename,
     /// Asks whether to delete the entry.
@@ -367,6 +369,7 @@ impl WorkspaceState {
             .clone()
             .unwrap_or_else(TreeTarget::root);
         let pasting = self.git.tree_clipboard.is_some();
+        let local = self.review_is_local();
         if target.is_root() {
             return vec![
                 row("New File…", Command::TreeNewFile),
@@ -376,6 +379,7 @@ impl WorkspaceState {
                 Entry::Rule,
                 row("Copy Path", Command::TreeCopyPath),
                 row("Copy Relative Path", Command::TreeCopyRelativePath),
+                row_if("Reveal in File Manager", Command::TreeReveal, local),
                 Entry::Rule,
                 row("Collapse All", Command::TreeCollapse),
                 row("Refresh", Command::TreeRefresh),
@@ -394,6 +398,7 @@ impl WorkspaceState {
             Entry::Rule,
             row("Copy Path", Command::TreeCopyPath),
             row("Copy Relative Path", Command::TreeCopyRelativePath),
+            row_if("Reveal in File Manager", Command::TreeReveal, local),
             Entry::Rule,
             row("Rename…", Command::TreeRename),
             row("Delete", Command::TreeDelete),
@@ -616,6 +621,7 @@ impl WorkspaceState {
             Command::TreeDuplicate => self.tree_duplicate(),
             Command::TreeCopyPath => self.tree_copy_path(false),
             Command::TreeCopyRelativePath => self.tree_copy_path(true),
+            Command::TreeReveal => self.tree_reveal(),
             Command::TreeRename => self.tree_rename(),
             Command::TreeDelete => self.tree_delete(),
             Command::TreeCollapse => {
