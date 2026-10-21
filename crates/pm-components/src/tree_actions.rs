@@ -29,6 +29,9 @@ pub const TREE_NAME_SUBMIT: FocusId = FocusId(7082);
 /// The first of the rows of the project's files; the rest follow it.
 pub const TREE_FILE_BASE: u64 = 3_000_000;
 
+/// How tall the menu on an entry of the tree is, in logical pixels, to keep it inside the window.
+pub const TREE_MENU_HEIGHT: f32 = 11.0 * 32.0 + 5.0 * 9.0 + 10.0;
+
 /// A file or folder of the tree, by its path from the root of the project; the root itself has an empty path.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TreeTarget {

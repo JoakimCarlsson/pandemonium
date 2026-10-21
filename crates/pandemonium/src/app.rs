@@ -29,7 +29,7 @@ use pm_components::state::{CHAT_SCROLL, PROBLEMS_SCROLL, SUBAGENTS_SCROLL};
 use pm_components::state::{COMMENT_CANCEL, COMMENT_FIELD};
 use pm_components::terminal_menu::TerminalCommand;
 use pm_components::title_bar::{COMMAND_CENTER, GO_BACK, GO_FORWARD};
-use pm_components::tree_actions::{ENTRY_FIELD, TreeTarget};
+use pm_components::tree_actions::{ENTRY_FIELD, TREE_MENU_HEIGHT, TreeTarget};
 use pm_components::{
     EDITOR_MENU_HEIGHT, EditorCommand, MENU_COPY, MENU_CUT, MENU_PASTE, MENU_REDO, MENU_SELECT_ALL,
     MENU_UNDO, is_menu_item,
@@ -1371,13 +1371,18 @@ impl App {
         });
     }
 
-    /// Opens the menu on the project's files, just under the pointer, over `target`.
+    /// Opens the menu on the project's files, just under the pointer and inside the window, over `target`.
     fn open_tree_menu(&mut self, target: TreeTarget) {
         let Some((x, y)) = self.pointer.position else {
             return;
         };
+        let (width, height) = self.window_size();
+        let at = (
+            (x - 8.0).min(width - 216.0).max(0.0),
+            (y + 12.0).min(height - TREE_MENU_HEIGHT - 8.0).max(0.0),
+        );
         self.model.update(|state| {
-            *state = std::mem::take(state).with_tree_menu(target, (x - 8.0, y + 12.0));
+            *state = std::mem::take(state).with_tree_menu(target, at);
         });
     }
 
