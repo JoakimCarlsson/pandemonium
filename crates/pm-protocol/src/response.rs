@@ -163,6 +163,24 @@ pub enum Response {
         /// Every server, in the order they are kept.
         servers: Vec<crate::McpServer>,
     },
+    /// The customizations an agent is given in a project.
+    Library {
+        /// The product the agent runs, when it is one the server knows the files of.
+        product: Option<crate::library::Product>,
+        /// What was found, kind by kind.
+        items: Vec<crate::library::Item>,
+        /// The keys of what is turned off.
+        withheld: Vec<String>,
+    },
+    /// The tools an agent is given.
+    ToolSets {
+        /// The product the agent runs, when it is one the server knows the files of.
+        product: Option<crate::library::Product>,
+        /// Its own tools first, then each tool server's.
+        sets: Vec<crate::library::ToolSet>,
+        /// The keys of what is turned off.
+        withheld: Vec<String>,
+    },
     /// What the reader set up for the work the server does on its machine.
     MachineSettings {
         /// The settings, whole.

@@ -736,12 +736,18 @@ fn summary(section: Section) -> &'static str {
         Section::Servers => {
             "The servers the window works with: the one on this machine, and ones reached at their address, over ssh, inside WSL or a dev container, or through a tunnel."
         }
+        Section::Customizations
+        | Section::Skills
+        | Section::Instructions
+        | Section::AgentDefinitions
+        | Section::Hooks
+        | Section::Tools => crate::settings_library::summary(section),
         Section::Results => "",
     }
 }
 
 /// The words `content` breaks into, one line under another, in no more than `room` logical pixels across.
-fn paragraph(content: &str, room: f32) -> Node {
+pub(crate) fn paragraph(content: &str, room: f32) -> Node {
     node().styles([flex(), flex_col(), min_w_px(0)]).children(
         wrap(content, 13, room.min(PARAGRAPH_WIDTH))
             .into_iter()
@@ -819,6 +825,12 @@ pub(crate) fn body(state: &WorkspaceState, section: Section, room: f32) -> Node 
             .child(about)
             .children(crate::settings_machines::body(state, room)),
         Section::AgentServers | Section::McpServers => list(state, section, inner, room),
+        Section::Customizations
+        | Section::Skills
+        | Section::Instructions
+        | Section::AgentDefinitions
+        | Section::Hooks
+        | Section::Tools => crate::settings_library::body(state, section, inner, room),
     };
     page.child(filled)
         .scroll_from_start(SETTINGS_SCROLL, state.settings_servers.scroll)
@@ -887,7 +899,7 @@ pub(crate) fn boxed(rows: Vec<Node>) -> Node {
 }
 
 /// A card of the overview: what `section` is called and for, and how much is set in it; pressing it opens it.
-fn card(section: Section, count: String) -> Node {
+pub(crate) fn card(section: Section, count: String) -> Node {
     Tile::new(section.id())
         .build()
         .styles([
@@ -912,6 +924,9 @@ fn card(section: Section, count: String) -> Node {
             match section {
                 Section::AgentServers => "The agents that can be started, and the ones you add.",
                 Section::McpServers => "Tool servers every agent is started with.",
+                other if crate::settings_library::lists(other) => {
+                    crate::settings_library::blurb(other)
+                }
                 other => crate::settings_editor::summary(other),
             },
             12,
@@ -921,7 +936,7 @@ fn card(section: Section, count: String) -> Node {
 }
 
 /// A row of a boxed list: its contents side by side, with room around them.
-fn flat_row() -> Node {
+pub(crate) fn flat_row() -> Node {
     node().styles([
         flex(),
         items_center(),
@@ -1017,9 +1032,14 @@ fn list(state: &WorkspaceState, section: Section, page: Node, room: f32) -> Node
 }
 
 /// The box the list is narrowed with, and, for tool servers, the registry searched with.
-fn search_box(state: &WorkspaceState, section: Section) -> Node {
+pub(crate) fn search_box(state: &WorkspaceState, section: Section) -> Node {
     let placeholder = match section {
         Section::AgentServers => "Search agents",
+        Section::Skills => "Search skills",
+        Section::Instructions => "Search instructions",
+        Section::AgentDefinitions => "Search agents",
+        Section::Hooks => "Search hooks",
+        Section::Tools => "Search tools",
         _ => "Search MCP servers; Enter searches the registry",
     };
     Input::search(&state.settings_servers.search, SETTINGS_SEARCH)
@@ -1059,12 +1079,12 @@ pub(crate) fn heading_only(title: &str, count: usize) -> Node {
 }
 
 /// A line that only says something.
-fn note(message: &str) -> Node {
+pub(crate) fn note(message: &str) -> Node {
     line(message, 12, 1.4, Role::Muted).styles([flex_none()])
 }
 
 /// A quiet note saying `message`, broken into lines no more than `room` logical pixels across.
-fn wrapped_note(message: &str, room: f32) -> Node {
+pub(crate) fn wrapped_note(message: &str, room: f32) -> Node {
     node().styles([flex(), flex_col(), flex_none()]).children(
         wrap(message, 12, room)
             .into_iter()

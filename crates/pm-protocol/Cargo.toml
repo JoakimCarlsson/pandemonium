@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 base64 = "0.23.1"
 pm-acp.workspace = true
+pm-agent-library.workspace = true
 pm-buffer.workspace = true
 pm-dap.workspace = true
 pm-git.workspace = true

@@ -349,14 +349,21 @@ pub struct Chat {
 }
 
 impl Chat {
-    /// Starts `agent` in the folder `directory` and opens a conversation with it that has the tool servers `tools`.
-    pub fn start(agent: Agent, directory: PathBuf, tools: Vec<serde_json::Value>) -> Self {
+    /// Starts `agent` in the folder `directory` and opens a conversation with it that has the tool servers `tools`, leaving out what `launch` says to.
+    pub fn start(
+        agent: Agent,
+        directory: PathBuf,
+        tools: Vec<serde_json::Value>,
+        launch: pm_agent_library::Launch,
+    ) -> Self {
         let (commands, received) = mpsc::channel();
         let (sender, events) = mpsc::channel();
         let ending = Arc::new(Mutex::new(Ending::default()));
         let shared = Arc::clone(&ending);
         let driver = std::thread::spawn(move || {
-            if let Err(reason) = drive(agent, &directory, &tools, &shared, &received, &sender) {
+            if let Err(reason) = drive(
+                agent, &directory, &tools, &launch, &shared, &received, &sender,
+            ) {
                 let _ = sender.send(Event::Failed(reason));
             }
         });
@@ -538,50 +545,34 @@ pub fn discover(agent: Agent) -> Result<Discovery, String> {
     Ok(found)
 }
 
-/// The skills `agent` can be asked for by name, found in the folders it keeps them in, when it has skills.
-pub fn skills(agent: Agent, directory: &Path) -> Vec<Slash> {
+/// The skills `agent` can be asked for by name, found in the folders it keeps them in, less the ones `withheld` turns off, when it has skills.
+pub fn skills(agent: Agent, directory: &Path, withheld: &[String]) -> Vec<Slash> {
     if agent.product() != Some(crate::product::Product::Codex) {
         return Vec::new();
     }
-    let home = std::env::home_dir();
-    let codex_home = std::env::var_os("CODEX_HOME")
-        .map(PathBuf::from)
-        .or_else(|| home.as_ref().map(|home| home.join(".codex")));
-    let folders = [
-        home.as_ref().map(|home| home.join(".agents/skills")),
-        codex_home.map(|home| home.join("skills")),
-        Some(directory.join(".codex/skills")),
-        Some(directory.join(".agents/skills")),
-    ];
-    let mut found = BTreeMap::new();
-    for folder in folders.into_iter().flatten() {
-        let Ok(entries) = std::fs::read_dir(folder) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let Ok(held) = std::fs::read_to_string(entry.path().join("SKILL.md")) else {
-                continue;
-            };
-            let field = |key: &str| {
-                held.lines()
-                    .find_map(|line| line.strip_prefix(key))
-                    .map(|value| value.trim().to_owned())
-            };
-            if let Some(name) = field("name: ").filter(|name| !name.is_empty()) {
-                let description = field("description: ").unwrap_or_default();
-                found.insert(name.clone(), Slash { name, description });
-            }
-        }
-    }
-    found.into_values().collect()
+    crate::account::given_skills(agent, directory, withheld)
+        .into_iter()
+        .map(|skill| {
+            (
+                skill.name.clone(),
+                Slash {
+                    name: skill.name,
+                    description: skill.description,
+                },
+            )
+        })
+        .collect::<BTreeMap<_, _>>()
+        .into_values()
+        .collect()
 }
 
 /// Starts the agent, opens a conversation and carries it until the chat is
-/// dropped or the agent stops.
+/// dropped or the agent stops; `launch` says what it is started without.
 fn drive(
     agent: Agent,
     directory: &std::path::Path,
     tools: &[serde_json::Value],
+    launch: &pm_agent_library::Launch,
     ending: &Mutex<Ending>,
     commands: &Receiver<Command>,
     events: &Sender<Event>,
@@ -593,7 +584,9 @@ fn drive(
         return Err(format!("{} is not a folder", directory.display()));
     }
     let patience = if agent.fetches() { FETCH } else { QUICK };
-    let mut client = Client::start_in(agent.command(&[]), directory)?;
+    let mut command = agent.command(&[]);
+    command.envs(launch.env.iter().map(|(name, value)| (name, value)));
+    let mut client = Client::start_in(command, directory)?;
     {
         let mut ending = ending.lock().map_err(|_| "the chat was dropped")?;
         if ending.stopped {
@@ -603,11 +596,11 @@ fn drive(
     }
     let shaken = client.initialize(patience)?;
     let prompts = shaken["agentCapabilities"]["promptCapabilities"].clone();
-    let opened = match client.ask(
-        "session/new",
-        &json!({ "cwd": directory, "mcpServers": tools }),
-        patience,
-    )? {
+    let mut opening = json!({ "cwd": directory, "mcpServers": tools });
+    if let Some(meta) = &launch.meta {
+        opening["_meta"] = meta.clone();
+    }
+    let opened = match client.ask("session/new", &opening, patience)? {
         Answer::Result(result) => result,
         Answer::Error(LOGIN_REQUIRED, _) => {
             return Err(format!("{} needs you to sign in first", agent.name));

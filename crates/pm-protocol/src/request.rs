@@ -491,6 +491,23 @@ pub enum Request {
         /// Every server, in the order they are kept.
         servers: Vec<McpServer>,
     },
+    /// The skills, instructions, agent definitions and hooks the agent is given in the project folder.
+    Library {
+        /// The agent, by its id.
+        agent: String,
+        /// The project's folder on the server's machine.
+        directory: String,
+    },
+    /// The tools the agent is given, in sets by where they come from: its own and each tool server's.
+    ToolSets {
+        /// The agent, by its id.
+        agent: String,
+    },
+    /// Replaces what the server leaves out of what agents are given, by the keys of the customizations, tool sets and tools turned off.
+    SaveWithheld {
+        /// Every key turned off.
+        keys: Vec<String>,
+    },
     /// Has the server tell this connection whenever the files of one of `directories`, or what git keeps about them, change, in place of the folders it watched before.
     WatchFolders {
         /// The folders, as their sessions name them; none to watch nothing.

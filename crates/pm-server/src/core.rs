@@ -65,10 +65,10 @@ impl Session {
         }
     }
 
-    /// Starts the agent in the session's folder and gives it the settings the reader chose.
+    /// Starts the agent in the session's folder, without what the reader turned off, and gives it the settings the reader chose.
     pub(crate) fn start_agent(&mut self, settings: &[(String, String)]) {
-        let tools = pm_acp::mcp_servers(&crate::extensions::mcp_text());
-        let chat = Chat::start(self.agent, self.directory.clone(), tools);
+        let (tools, launch) = crate::library::given(self.agent, &self.directory);
+        let chat = Chat::start(self.agent, self.directory.clone(), tools, launch);
         for (setting, value) in settings {
             chat.set(setting, value);
         }

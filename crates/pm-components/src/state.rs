@@ -744,6 +744,38 @@ pub enum Outgoing {
     SaveAgentServers(Vec<pm_protocol::AgentServer>),
     /// Has the server keep these as the tool servers every agent is started with.
     SaveMcpServers(Vec<pm_protocol::McpServer>),
+    /// Lists what the agent at `agent` is given in the project at `project`: its skills, instructions, agent definitions and hooks.
+    Library {
+        /// The agent, by position.
+        agent: usize,
+        /// The project, by position.
+        project: usize,
+        /// The machine, or nothing for this one.
+        host: Option<String>,
+        /// The project's folder.
+        directory: String,
+    },
+    /// Lists the tools the agent at `agent` is given, on the machine of the project at `project`.
+    ToolSets {
+        /// The agent, by position.
+        agent: usize,
+        /// The project, by position.
+        project: usize,
+        /// The machine, or nothing for this one.
+        host: Option<String>,
+    },
+    /// Has the server of a machine keep `keys` as what it leaves out of what agents are given.
+    SaveWithheld {
+        /// The machine, or nothing for this one.
+        host: Option<String>,
+        /// Every key turned off.
+        keys: Vec<String>,
+    },
+    /// Opens the file at `path` of this machine in the program the system opens it with.
+    OpenPath {
+        /// The file.
+        path: String,
+    },
     /// Has every server the window reaches keep these as what the reader set up for the work it does on its machine.
     SaveMachineSettings(pm_protocol::MachineSettings),
     /// Tells the reader something happened while they may be looking elsewhere, in the way they chose.

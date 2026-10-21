@@ -97,7 +97,7 @@ pub const SETTINGS_ACCOUNT_REMOVE_BASE: u64 = 20_000_700;
 pub const SETTINGS_ACCOUNT_ADD_BASE: u64 = 20_000_800;
 
 /// The first of the sections down the left side; the rest follow it.
-pub const SETTINGS_SECTION_BASE: u64 = 20_000_010;
+pub const SETTINGS_SECTION_BASE: u64 = 20_000_900;
 
 /// The first of the buttons editing a server of the list showing; the rest follow it.
 pub const SETTINGS_EDIT_BASE: u64 = 20_000_100;
@@ -172,6 +172,18 @@ pub enum Section {
     AgentServers,
     /// The tool servers every agent is started with.
     McpServers,
+    /// How many of each kind of customization agents are given in the project.
+    Customizations,
+    /// The skills agents are given.
+    Skills,
+    /// The instruction files agents read.
+    Instructions,
+    /// The agent definitions agents can hand work to.
+    AgentDefinitions,
+    /// The commands agents run when something happens.
+    Hooks,
+    /// The tools agents are given, in sets by where they come from.
+    Tools,
     /// The servers the window knows and where new projects go.
     Servers,
     /// The settings a search found, on whatever page they are.
@@ -180,7 +192,7 @@ pub enum Section {
 
 impl Section {
     /// Every section, in the order the list shows them, each followed by the ones inside it.
-    pub const ALL: [Section; 16] = [
+    pub const ALL: [Section; 22] = [
         Section::General,
         Section::Appearance,
         Section::Editor,
@@ -196,6 +208,12 @@ impl Section {
         Section::Agents,
         Section::AgentServers,
         Section::McpServers,
+        Section::Customizations,
+        Section::Skills,
+        Section::Instructions,
+        Section::AgentDefinitions,
+        Section::Hooks,
+        Section::Tools,
         Section::Servers,
     ];
 
@@ -219,6 +237,12 @@ impl Section {
             Self::Agents => "Agents",
             Self::AgentServers => "Agent Servers",
             Self::McpServers => "MCP Servers",
+            Self::Customizations => "Overview",
+            Self::Skills => "Skills",
+            Self::Instructions => "Instructions",
+            Self::AgentDefinitions => "Agents",
+            Self::Hooks => "Hooks",
+            Self::Tools => "Tools",
         }
     }
 
@@ -241,13 +265,26 @@ impl Section {
             Self::Agents => IconName::Sparkles,
             Self::AgentServers => IconName::Folder,
             Self::McpServers => IconName::Plug,
+            Self::Customizations
+            | Self::Skills
+            | Self::Instructions
+            | Self::AgentDefinitions
+            | Self::Hooks
+            | Self::Tools => IconName::Sparkles,
         }
     }
 
     /// The section it sits inside, if it sits inside one.
     pub(crate) fn parent(self) -> Option<Section> {
         match self {
-            Self::AgentServers | Self::McpServers => Some(Self::Agents),
+            Self::AgentServers
+            | Self::McpServers
+            | Self::Customizations
+            | Self::Skills
+            | Self::Instructions
+            | Self::AgentDefinitions
+            | Self::Hooks
+            | Self::Tools => Some(Self::Agents),
             Self::EditorAppearance
             | Self::EditorEditing
             | Self::EditorSaving
@@ -299,6 +336,7 @@ impl WorkspaceState {
         self.fill_fields();
         self.outbox.push(crate::state::Outgoing::LoadServers);
         self.outbox.push(crate::state::Outgoing::Extensions);
+        self.read_library();
         if self.window.general.check_updates && self.settings_page.release.is_none() {
             self.outbox.push(crate::state::Outgoing::LatestRelease {
                 channel: self.window.general.channel,
@@ -309,12 +347,17 @@ impl WorkspaceState {
 
     /// The state with settings closed, whatever form they had open.
     pub fn without_settings(mut self) -> Self {
+        self.close_settings();
+        self
+    }
+
+    /// Closes settings, whatever form they had open.
+    pub(crate) fn close_settings(&mut self) {
         self.settings = None;
         self.settings_servers.form = None;
         self.settings_page.server_form = None;
         self.settings_page.picker = None;
         self.recording = None;
-        self
     }
 
     /// The state after something of the settings window was pressed: `action` is the name of what.
@@ -339,6 +382,7 @@ impl WorkspaceState {
             action if self.keymap_pressed(action) => {}
             action if self.machines_pressed(action) => {}
             action if self.languages_pressed(action) => {}
+            action if self.library_pressed(action) => {}
             action => {
                 if let Some(section) = Section::ALL
                     .into_iter()
@@ -353,6 +397,9 @@ impl WorkspaceState {
                     self.settings_page.picker = None;
                     self.recording = None;
                     self.section_changed();
+                    if crate::settings_library::lists(section) {
+                        self.read_library();
+                    }
                 } else {
                     return self.servers_pressed(action);
                 }
@@ -468,15 +515,20 @@ fn navigation(state: &WorkspaceState, showing: Section, folded: bool, width: f32
                                     None => true,
                                 })
                                 .map(|section| {
-                                    entry(section, !searching && section == showing, folded)
+                                    entry(
+                                        section,
+                                        !searching && section == showing,
+                                        folded,
+                                        state.library_count(section),
+                                    )
                                 }),
                         ),
                 ),
         )
 }
 
-/// One row of the list of sections: a section of its own has its glyph, Agents the chevron that says whether the sections inside it are shown, and those inside another only their name, set in under it.
-fn entry(section: Section, showing: bool, folded: bool) -> Node {
+/// One row of the list of sections: a section of its own has its glyph, Agents the chevron that says whether the sections inside it are shown, and those inside another only their name, set in under it, with `count` after it when it has one.
+fn entry(section: Section, showing: bool, folded: bool, count: Option<usize>) -> Node {
     let tone = if showing { Role::Text } else { Role::Muted };
     let row = Tile::new(section.id())
         .selected(showing)
@@ -495,7 +547,8 @@ fn entry(section: Section, showing: bool, folded: bool) -> Node {
         _ if section.parent().is_some() => row.styles([pl(8)]),
         _ => row.child(glyph(section.icon(), 4.0, tone)),
     };
-    row.child(clipped(section.title(), 13, tone))
+    row.child(clipped(section.title(), 13, tone).styles([pm_style::flex_1()]))
+        .children(count.map(|count| crate::Badge::new(count.to_string()).build()))
 }
 
 /// The settings of `section` under its title, with `room` logical pixels across for them.

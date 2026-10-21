@@ -68,7 +68,7 @@ impl WorkspaceState {
     }
 
     /// The position of the agent the prompt is for: the open session's, or the one chosen for new work.
-    fn agent_now(&self) -> usize {
+    pub(crate) fn agent_now(&self) -> usize {
         self.open().map_or(self.agent, |session| session.agent)
     }
 
