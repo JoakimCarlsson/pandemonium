@@ -1,6 +1,6 @@
 //! Every file of the project as a tree of folders, folders first, with the files git sees changed marked.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use pm_icon::IconName;
 use pm_input::FocusId;
@@ -18,7 +18,7 @@ use crate::size::Size;
 use crate::state::{TREE_BASE, WorkspaceState};
 use crate::tile::Tile;
 use crate::tree::{Entry, Layout, build, folders};
-use crate::tree_actions::{ENTRY_FIELD, Naming, TREE_FILE_BASE};
+use crate::tree_actions::{ENTRY_FIELD, Naming, TREE_FILE_BASE, TreeTarget};
 
 /// How far, in steps, each level of the tree indents its rows.
 const INDENT: f32 = 4.0;
@@ -46,6 +46,40 @@ pub fn folder_paths(files: &[String], empty: &[String]) -> Vec<String> {
         .into_iter()
         .map(|folder| folder.path.clone())
         .collect()
+}
+
+/// Every row of the tree of `files` and the `empty` folders shown while the folders in `open` are unfolded, from the top down.
+pub fn shown_rows(files: &[String], empty: &[String], open: &HashSet<String>) -> Vec<TreeTarget> {
+    /// Adds the rows of `entries`, and of what is in those of their folders that are open, to `rows`.
+    fn collect(
+        files: &[String],
+        entries: &[Entry],
+        open: &HashSet<String>,
+        rows: &mut Vec<TreeTarget>,
+    ) {
+        for entry in entries {
+            match entry {
+                Entry::File { index, .. } => {
+                    rows.extend(files.get(*index).map(|path| TreeTarget {
+                        path: path.clone(),
+                        folder: false,
+                    }))
+                }
+                Entry::Folder(folder) => {
+                    rows.push(TreeTarget {
+                        path: folder.path.clone(),
+                        folder: true,
+                    });
+                    if open.contains(&folder.path) {
+                        collect(files, &folder.entries, open, rows);
+                    }
+                }
+            }
+        }
+    }
+    let mut rows = Vec::new();
+    collect(files, &tree(files, empty), open, &mut rows);
+    rows
 }
 
 /// The letter each changed file of the open session is marked with, by path.
@@ -204,19 +238,18 @@ fn renaming(state: &WorkspaceState, path: &str) -> bool {
     matches!(state.git.naming.as_ref(), Some((Naming::Rename(target), _)) if target.path == path)
 }
 
-/// Whether `path` is the row last picked.
-fn picked(state: &WorkspaceState, path: &str, folder: bool) -> bool {
-    state
-        .git
-        .tree_selected
-        .as_ref()
-        .is_some_and(|target| target.path == path && target.folder == folder)
+/// Whether `path` is among the rows `picked`.
+fn picked(picked: &[TreeTarget], path: &str, folder: bool) -> bool {
+    picked
+        .iter()
+        .any(|target| target.path == path && target.folder == folder)
 }
 
-/// The rows of `entries` and of everything in their open folders, `depth` levels down.
+/// The rows of `entries` and of everything in their open folders, `depth` levels down, those `chosen` drawn picked.
 fn rows_of(
     state: &WorkspaceState,
     marks: &HashMap<&str, &'static str>,
+    chosen: &[TreeTarget],
     entries: &[Entry],
     depth: usize,
 ) -> Vec<Node> {
@@ -241,7 +274,7 @@ fn rows_of(
                     None,
                     FocusId(TREE_FILE_BASE + *index as u64),
                     &changed,
-                    picked(state, path, false),
+                    picked(chosen, path, false),
                 ));
             }
             Entry::Folder(folder) => {
@@ -268,14 +301,14 @@ fn rows_of(
                         Some(open),
                         FocusId(TREE_BASE + folder.position as u64),
                         &changed,
-                        picked(state, &folder.path, true),
+                        picked(chosen, &folder.path, true),
                     ));
                 }
                 if open {
                     if let Some(is_folder) = new_in(state, &folder.path) {
                         rows.extend(name_lines(state, is_folder, depth + 1));
                     }
-                    rows.extend(rows_of(state, marks, &folder.entries, depth + 1));
+                    rows.extend(rows_of(state, marks, chosen, &folder.entries, depth + 1));
                 }
             }
         }
@@ -292,6 +325,7 @@ pub fn rows(state: &WorkspaceState) -> Vec<Node> {
     rows.extend(rows_of(
         state,
         &marks(state),
+        &state.tree_picked(),
         &tree(&state.files, &state.tree_folders),
         0,
     ));

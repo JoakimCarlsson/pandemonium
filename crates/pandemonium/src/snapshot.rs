@@ -117,6 +117,8 @@ pub enum Shot {
     /// The workspace on the diff with two changed files picked and the menu on them open.
     ChangeMenu,
     TreeMenu,
+    /// The project's files with three rows picked, two as a range, and the menu on them open.
+    TreePicked,
     Naming,
     /// The workspace on the diff with the question of whether to discard two changed files open.
     Discarding,
@@ -1902,6 +1904,19 @@ impl Shot {
                 },
                 (1000.0, 250.0),
             )),
+            Self::TreePicked => {
+                let file = |path: &str| TreeTarget {
+                    path: path.to_owned(),
+                    folder: false,
+                };
+                Screen::Workspace(
+                    files()
+                        .tree_row_picked(file(".env"), Choosing::Toggle)
+                        .tree_row_picked(file("Cargo.toml"), Choosing::Range)
+                        .tree_row_picked(file("README.md"), Choosing::Toggle)
+                        .with_tree_menu(file("README.md"), (1000.0, 250.0)),
+                )
+            }
             Self::Naming => Screen::Workspace(files().after(TREE_NEW_FOLDER)),
             Self::Discarding => Screen::Workspace(picked().asked(Prompt::Discard(vec![0, 2]))),
             Self::Branching => Screen::Workspace(branching()),

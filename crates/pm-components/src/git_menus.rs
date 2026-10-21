@@ -12,6 +12,9 @@ use crate::tree_actions::TreeTarget;
 /// The first of the rows of the menu that is open; the rest follow it.
 pub const MENU_ROW_BASE: u64 = 9000;
 
+/// How tall the menu on changed files is, in logical pixels, to keep it inside the window.
+pub const CHANGE_MENU_HEIGHT: f32 = 11.0 * 32.0 + 4.0 * 9.0 + 10.0;
+
 /// Which menu is open.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MenuKind {
@@ -125,6 +128,8 @@ enum Command {
     TreeCopyPath,
     /// Copies the path of the entry from the root of the project.
     TreeCopyRelativePath,
+    /// Shows the entry in the file manager of this machine.
+    TreeReveal,
     /// Asks what to rename the entry to.
     TreeRename,
     /// Asks whether to delete the entry.
@@ -367,6 +372,9 @@ impl WorkspaceState {
             .clone()
             .unwrap_or_else(TreeTarget::root);
         let pasting = self.git.tree_clipboard.is_some();
+        let local = self.review_is_local();
+        let targets = self.tree_targets();
+        let one = targets.len() == 1;
         if target.is_root() {
             return vec![
                 row("New File…", Command::TreeNewFile),
@@ -376,6 +384,7 @@ impl WorkspaceState {
                 Entry::Rule,
                 row("Copy Path", Command::TreeCopyPath),
                 row("Copy Relative Path", Command::TreeCopyRelativePath),
+                row_if("Reveal in File Manager", Command::TreeReveal, local),
                 Entry::Rule,
                 row("Collapse All", Command::TreeCollapse),
                 row("Refresh", Command::TreeRefresh),
@@ -385,7 +394,11 @@ impl WorkspaceState {
             row("New File…", Command::TreeNewFile),
             row("New Folder…", Command::TreeNewFolder),
             Entry::Rule,
-            row_if("Open", Command::TreeOpen, !target.folder),
+            row_if(
+                "Open",
+                Command::TreeOpen,
+                targets.iter().any(|target| !target.folder),
+            ),
             Entry::Rule,
             row("Cut", Command::TreeCut),
             row("Copy", Command::TreeCopy),
@@ -394,8 +407,9 @@ impl WorkspaceState {
             Entry::Rule,
             row("Copy Path", Command::TreeCopyPath),
             row("Copy Relative Path", Command::TreeCopyRelativePath),
+            row_if("Reveal in File Manager", Command::TreeReveal, local && one),
             Entry::Rule,
-            row("Rename…", Command::TreeRename),
+            row_if("Rename…", Command::TreeRename, one),
             row("Delete", Command::TreeDelete),
         ]
     }
@@ -616,6 +630,7 @@ impl WorkspaceState {
             Command::TreeDuplicate => self.tree_duplicate(),
             Command::TreeCopyPath => self.tree_copy_path(false),
             Command::TreeCopyRelativePath => self.tree_copy_path(true),
+            Command::TreeReveal => self.tree_reveal(),
             Command::TreeRename => self.tree_rename(),
             Command::TreeDelete => self.tree_delete(),
             Command::TreeCollapse => {

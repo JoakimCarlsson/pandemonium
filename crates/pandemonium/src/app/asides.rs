@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use pm_components::folder_picker::is_picker;
+use pm_components::folder_picker::{PICKER_FIELD, is_picker};
 use pm_components::settings::is_settings;
 use pm_components::state::SETTINGS;
 use pm_input::{FocusId, PointerState};
@@ -162,7 +162,7 @@ impl App {
         self.raise_picker();
     }
 
-    /// Brings the folder picker's window to the front when the picker was opened again while it showed, or was just opened.
+    /// Brings the folder picker's window to the front and focuses its filter when the picker was opened again while it showed, or was just opened.
     fn raise_picker(&mut self) {
         let serial = self.model.read(Screen::folder_picker_serial);
         if serial == self.raised_picker {
@@ -172,6 +172,7 @@ impl App {
         if serial.is_none() {
             return;
         }
+        self.focus.claim(PICKER_FIELD);
         if let Some(window) = self.window_of(Aside::Picker) {
             window.set_minimized(false);
             window.focus_window();

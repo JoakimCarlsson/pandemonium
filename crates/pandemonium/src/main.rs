@@ -112,6 +112,7 @@ fn main() {
             Some("stashing") => Shot::Stashing,
             Some("changemenu") => Shot::ChangeMenu,
             Some("treemenu") => Shot::TreeMenu,
+            Some("treepicked") => Shot::TreePicked,
             Some("naming") => Shot::Naming,
             Some("discarding") => Shot::Discarding,
             Some("branching") => Shot::Branching,

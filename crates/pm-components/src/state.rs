@@ -3031,7 +3031,7 @@ impl WorkspaceState {
     fn fold_tree_folder(&mut self, position: usize) {
         let paths = crate::file_tree::folder_paths(&self.files, &self.tree_folders);
         if let Some(path) = paths.into_iter().nth(position) {
-            self.git.tree_selected = Some(TreeTarget {
+            self.select_tree(TreeTarget {
                 path: path.clone(),
                 folder: true,
             });

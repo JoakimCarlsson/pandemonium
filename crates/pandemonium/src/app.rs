@@ -17,7 +17,7 @@ use pm_components::folder_picker::{
     PICKER_BACK, PICKER_CLOSE, PICKER_DOWN, PICKER_FORWARD, PICKER_SCROLL, PICKER_UP,
 };
 use pm_components::git_controls::{GRAPH_SCROLL, Pick, REVIEW_DISMISS, VIEWER_SCROLL};
-use pm_components::git_menus::MenuKind;
+use pm_components::git_menus::{CHANGE_MENU_HEIGHT, MenuKind};
 use pm_components::message_menu::is_message_menu_item;
 use pm_components::minimap::MINIMAP;
 use pm_components::open_files::{EDITOR_FIELD, STRIP};
@@ -29,7 +29,7 @@ use pm_components::state::{CHAT_SCROLL, PROBLEMS_SCROLL, SUBAGENTS_SCROLL};
 use pm_components::state::{COMMENT_CANCEL, COMMENT_FIELD};
 use pm_components::terminal_menu::TerminalCommand;
 use pm_components::title_bar::{COMMAND_CENTER, GO_BACK, GO_FORWARD};
-use pm_components::tree_actions::{ENTRY_FIELD, TreeTarget};
+use pm_components::tree_actions::{ENTRY_FIELD, TREE_MENU_HEIGHT, TreeTarget};
 use pm_components::{
     EDITOR_MENU_HEIGHT, EditorCommand, MENU_COPY, MENU_CUT, MENU_PASTE, MENU_REDO, MENU_SELECT_ALL,
     MENU_UNDO, is_menu_item,
@@ -132,6 +132,8 @@ pub struct App {
     output: Output,
     /// The element the primary button went down on.
     pressed_on: Option<FocusId>,
+    /// The row of the project's files or of the changed files the primary button last went down on, while nothing else was pressed since, so Ctrl+A picks every row of its list.
+    list_pressed: Option<FocusId>,
     /// The scrolling box whose bar is held down, and where the pointer last was along it.
     bar_drag: Option<(FocusId, f32)>,
     /// Whether the pointer is down on the minimap, so that moving it scrolls the file.
@@ -343,6 +345,7 @@ impl Default for App {
             modifiers: Modifiers::default(),
             output: Output::default(),
             pressed_on: None,
+            list_pressed: None,
             bar_drag: None,
             minimap_drag: false,
             sash_drag: None,
@@ -673,14 +676,24 @@ impl App {
             return;
         }
         let picks = self.modifiers.shift || self.modifiers.control || self.modifiers.logo;
+        let how = if self.modifiers.shift {
+            Pick::Range
+        } else {
+            Pick::Toggle
+        };
         if picks && let Some(index) = self.model.read(|screen| screen.change_row_of(id)) {
-            let how = if self.modifiers.shift {
-                Pick::Range
-            } else {
-                Pick::Toggle
-            };
             self.model
                 .update(|state| *state = std::mem::take(state).change_picked(index, how));
+            return;
+        }
+        if picks
+            && let Some(target) = self
+                .model
+                .read(|screen| screen.tree_row_of(id))
+                .filter(|target| !target.is_root())
+        {
+            self.model
+                .update(|state| *state = std::mem::take(state).tree_row_picked(target, how));
             return;
         }
         self.model
@@ -1220,6 +1233,11 @@ impl App {
                         .update(|state| *state = std::mem::take(state).without_menu());
                 }
                 self.pressed_on = self.pointer.position.and_then(|at| self.output.hit(at));
+                self.list_pressed = self.pressed_on.filter(|id| {
+                    screen.tree_row_of(*id).is_some()
+                        || screen.change_row_of(*id).is_some()
+                        || screen.change_folder_row_of(*id).is_some()
+                });
                 self.press_excerpt();
                 self.text_press();
                 if self.pressed_on != Some(ENTRY_FIELD)
@@ -1351,33 +1369,43 @@ impl App {
         });
     }
 
-    /// Opens the menu on changed files, just under the pointer, over the file at `index`.
+    /// Where a menu `menu_height` tall opens: just under the pointer and inside the window.
+    fn menu_under_pointer(&self, menu_height: f32) -> Option<(f32, f32)> {
+        let (x, y) = self.pointer.position?;
+        let (width, height) = self.window_size();
+        Some((
+            (x - 8.0).min(width - 216.0).max(0.0),
+            (y + 12.0).min(height - menu_height - 8.0).max(0.0),
+        ))
+    }
+
+    /// Opens the menu on changed files, just under the pointer and inside the window, over the file at `index`.
     fn open_change_menu(&mut self, index: usize) {
-        let Some((x, y)) = self.pointer.position else {
+        let Some(at) = self.menu_under_pointer(CHANGE_MENU_HEIGHT) else {
             return;
         };
         self.model.update(|state| {
-            *state = std::mem::take(state).with_change_menu(index, (x - 8.0, y + 12.0));
+            *state = std::mem::take(state).with_change_menu(index, at);
         });
     }
 
-    /// Opens the menu on changed files, just under the pointer, over the folder at `position` of their tree.
+    /// Opens the menu on changed files, just under the pointer and inside the window, over the folder at `position` of their tree.
     fn open_folder_change_menu(&mut self, position: usize) {
-        let Some((x, y)) = self.pointer.position else {
+        let Some(at) = self.menu_under_pointer(CHANGE_MENU_HEIGHT) else {
             return;
         };
         self.model.update(|state| {
-            *state = std::mem::take(state).with_folder_change_menu(position, (x - 8.0, y + 12.0));
+            *state = std::mem::take(state).with_folder_change_menu(position, at);
         });
     }
 
-    /// Opens the menu on the project's files, just under the pointer, over `target`.
+    /// Opens the menu on the project's files, just under the pointer and inside the window, over `target`.
     fn open_tree_menu(&mut self, target: TreeTarget) {
-        let Some((x, y)) = self.pointer.position else {
+        let Some(at) = self.menu_under_pointer(TREE_MENU_HEIGHT) else {
             return;
         };
         self.model.update(|state| {
-            *state = std::mem::take(state).with_tree_menu(target, (x - 8.0, y + 12.0));
+            *state = std::mem::take(state).with_tree_menu(target, at);
         });
     }
 
@@ -1725,6 +1753,28 @@ impl App {
             .update(|screen| *screen = std::mem::take(screen).navigated(delta));
     }
 
+    /// Picks every row of the list a row was last pressed in when the key asks to select everything, and says whether it did.
+    fn list_key(&mut self, event: KeyEvent) -> bool {
+        let Some(id) = self.list_pressed else {
+            return false;
+        };
+        if self.focus.current().is_some_and(Screen::is_field)
+            || !matches!(keys::edit(&event), Some(Edit::SelectAll))
+        {
+            return false;
+        }
+        self.model.update(|screen| {
+            let tree = screen.tree_row_of(id).is_some();
+            let taken = std::mem::take(screen);
+            *screen = if tree {
+                taken.tree_all_picked()
+            } else {
+                taken.changes_all_picked()
+            };
+        });
+        true
+    }
+
     /// Acts on a key: Tab walks the focus, Enter and Space press the focused
     /// element, Escape lets go of focus.
     fn key(&mut self, event: KeyEvent) {
@@ -1733,6 +1783,7 @@ impl App {
         }
         if self.recording_key(event)
             || self.terminal_key(event)
+            || self.list_key(event)
             || self.text_key(event)
             || self.card_key(event)
             || self.rename_key(event)

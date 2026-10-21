@@ -2,6 +2,7 @@
 
 use pm_input::FocusId;
 
+use crate::git_controls::Pick;
 use crate::git_prompts::Prompt;
 use crate::state::{Outgoing, WorkspaceState};
 
@@ -28,6 +29,9 @@ pub const TREE_NAME_SUBMIT: FocusId = FocusId(7082);
 
 /// The first of the rows of the project's files; the rest follow it.
 pub const TREE_FILE_BASE: u64 = 3_000_000;
+
+/// How tall the menu on an entry of the tree is, in logical pixels, to keep it inside the window.
+pub const TREE_MENU_HEIGHT: f32 = 12.0 * 32.0 + 5.0 * 9.0 + 10.0;
 
 /// A file or folder of the tree, by its path from the root of the project; the root itself has an empty path.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -79,8 +83,8 @@ pub enum Naming {
 /// What was cut or copied out of the tree, waiting to be pasted.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Clipboard {
-    /// What it is.
-    pub target: TreeTarget,
+    /// What it is: one entry or several.
+    pub targets: Vec<TreeTarget>,
     /// Whether pasting moves it rather than copies it.
     pub cut: bool,
 }
@@ -135,6 +139,24 @@ pub fn joined(directory: &str, name: &str) -> String {
     }
 }
 
+/// `targets` without those inside a folder among them, which go with that folder.
+fn outermost(targets: Vec<TreeTarget>) -> Vec<TreeTarget> {
+    targets
+        .iter()
+        .filter(|target| {
+            !target.is_root()
+                && !targets.iter().any(|folder| {
+                    folder.folder
+                        && target
+                            .path
+                            .strip_prefix(&folder.path)
+                            .is_some_and(|rest| rest.starts_with('/'))
+                })
+        })
+        .cloned()
+        .collect()
+}
+
 impl WorkspaceState {
     /// The file or folder of the tree row `id` is, if it is one, or the root when it is the space under the rows.
     pub fn tree_row_of(&self, id: FocusId) -> Option<TreeTarget> {
@@ -161,10 +183,96 @@ impl WorkspaceState {
             .map(|path| TreeTarget { path, folder: true })
     }
 
-    /// The state with the menu on the tree open at `at` over `target`.
+    /// The rows of the tree as they are shown, from the top down.
+    fn tree_shown(&self) -> Vec<TreeTarget> {
+        crate::file_tree::shown_rows(&self.files, &self.tree_folders, &self.open_tree)
+    }
+
+    /// The rows of the tree a command acts on, as they are shown: those marked, or the row last picked when none of them is shown.
+    pub fn tree_picked(&self) -> Vec<TreeTarget> {
+        let marked: Vec<TreeTarget> = self
+            .tree_shown()
+            .into_iter()
+            .filter(|row| self.git.tree_marked.contains(row))
+            .collect();
+        if marked.is_empty() {
+            self.git.tree_selected.clone().into_iter().collect()
+        } else {
+            marked
+        }
+    }
+
+    /// Puts the tree's pick on `target` alone, forgetting every mark.
+    pub(crate) fn select_tree(&mut self, target: TreeTarget) {
+        self.git.tree_marked.clear();
+        self.git.tree_gesture = None;
+        self.git.tree_selected = Some(target);
+    }
+
+    /// The state after the tree row `target` was pressed with the modifier that picks several.
+    ///
+    /// A range is drawn from where the gesture was anchored, as the list of changes draws one.
+    pub fn tree_row_picked(mut self, target: TreeTarget, how: Pick) -> Self {
+        match how {
+            Pick::Toggle => {
+                self.git.tree_gesture = None;
+                if self.git.tree_marked.is_empty()
+                    && let Some(selected) = self
+                        .git
+                        .tree_selected
+                        .clone()
+                        .filter(|selected| *selected != target)
+                {
+                    self.git.tree_marked.push(selected);
+                }
+                if let Some(at) = self.git.tree_marked.iter().position(|held| *held == target) {
+                    self.git.tree_marked.remove(at);
+                } else {
+                    self.git.tree_marked.push(target.clone());
+                }
+            }
+            Pick::Range => {
+                let (anchor, base) = self.git.tree_gesture.clone().unwrap_or_else(|| {
+                    (
+                        self.git
+                            .tree_selected
+                            .clone()
+                            .unwrap_or_else(|| target.clone()),
+                        self.git.tree_marked.clone(),
+                    )
+                });
+                self.git.tree_gesture = Some((anchor.clone(), base.clone()));
+                let shown = self.tree_shown();
+                let (Some(from), Some(to)) = (
+                    shown.iter().position(|row| *row == anchor),
+                    shown.iter().position(|row| *row == target),
+                ) else {
+                    return self;
+                };
+                let mut marked = base;
+                for row in &shown[from.min(to)..=from.max(to)] {
+                    if !marked.contains(row) {
+                        marked.push(row.clone());
+                    }
+                }
+                self.git.tree_marked = marked;
+            }
+        }
+        self.git.tree_selected = Some(target);
+        self
+    }
+
+    /// The state with every row of the tree that is shown picked.
+    pub fn tree_all_picked(mut self) -> Self {
+        self.git.tree_gesture = None;
+        self.git.tree_marked = self.tree_shown();
+        self
+    }
+
+    /// The state with the menu on the tree open at `at` over `target`: on the rows picked when it is one of them, on it alone when it is not.
     pub fn with_tree_menu(mut self, target: TreeTarget, at: (f32, f32)) -> Self {
-        if !target.is_root() {
-            self.git.tree_selected = Some(target.clone());
+        if !target.is_root() && !self.tree_picked().contains(&target) {
+            self.select_tree(target.clone());
         }
         self.git.tree_target = Some(target);
         self.with_git_menu(crate::git_menus::MenuKind::Tree, at)
@@ -213,7 +321,7 @@ impl WorkspaceState {
                 let Some(target) = self.tree_row_of(action).filter(|target| !target.folder) else {
                     return false;
                 };
-                self.git.tree_selected = Some(target.clone());
+                self.select_tree(target.clone());
                 self.open_viewer(target.path, false);
             }
         }
@@ -280,6 +388,19 @@ impl WorkspaceState {
         self.git.tree_target.clone()
     }
 
+    /// The entries the open menu acts on: the rows picked when it was opened on one of them, the one it was opened on when not.
+    pub(crate) fn tree_targets(&self) -> Vec<TreeTarget> {
+        let Some(target) = self.tree_target() else {
+            return Vec::new();
+        };
+        let picked = self.tree_picked();
+        if picked.contains(&target) {
+            picked
+        } else {
+            vec![target]
+        }
+    }
+
     /// Asks for the name of a new file, or folder, in the folder the menu was opened on.
     pub(crate) fn tree_new(&mut self, folder: bool) {
         let directory = self
@@ -296,24 +417,40 @@ impl WorkspaceState {
         }
     }
 
-    /// Asks whether to delete the entry the menu was opened on.
+    /// Asks whether to delete the entries the menu acts on.
     pub(crate) fn tree_delete(&mut self) {
-        if let Some(target) = self.tree_target().filter(|target| !target.is_root()) {
-            self.ask(Prompt::Remove(target));
+        let targets = outermost(self.tree_targets());
+        if !targets.is_empty() {
+            self.ask(Prompt::Remove(targets));
         }
     }
 
-    /// Opens the file the menu was opened on.
+    /// Opens the files the menu acts on, each kept in a tab of its own when there are several.
     pub(crate) fn tree_open(&mut self) {
-        if let Some(target) = self.tree_target().filter(|target| !target.folder) {
+        let files: Vec<TreeTarget> = self
+            .tree_targets()
+            .into_iter()
+            .filter(|target| !target.folder)
+            .collect();
+        let several = files.len() > 1;
+        for target in files {
             self.open_viewer(target.path, false);
+            if several
+                && let Some(viewer) = self
+                    .git
+                    .shown
+                    .and_then(|shown| self.git.viewers.get_mut(shown))
+            {
+                viewer.preview = false;
+            }
         }
     }
 
-    /// Holds the entry the menu was opened on, to be moved by a paste when `cut` and copied by it when not.
+    /// Holds the entries the menu acts on, to be moved by a paste when `cut` and copied by it when not.
     pub(crate) fn tree_hold(&mut self, cut: bool) {
-        if let Some(target) = self.tree_target().filter(|target| !target.is_root()) {
-            self.git.tree_clipboard = Some(Clipboard { target, cut });
+        let targets = outermost(self.tree_targets());
+        if !targets.is_empty() {
+            self.git.tree_clipboard = Some(Clipboard { targets, cut });
         }
     }
 
@@ -327,23 +464,27 @@ impl WorkspaceState {
             .map(|target| target.directory())
             .unwrap_or_default();
         if held.cut {
-            let to = joined(&into, name_of(&held.target.path));
             self.git.tree_clipboard = None;
-            self.send_entry(EntryChange::Rename {
-                from: held.target.path,
-                to,
-            });
-        } else {
-            self.send_entry(EntryChange::Copy {
-                from: held.target.path,
-                into,
-            });
+        }
+        for target in held.targets {
+            let change = if held.cut {
+                EntryChange::Rename {
+                    to: joined(&into, name_of(&target.path)),
+                    from: target.path,
+                }
+            } else {
+                EntryChange::Copy {
+                    from: target.path,
+                    into: into.clone(),
+                }
+            };
+            self.send_entry(change);
         }
     }
 
-    /// Copies the entry the menu was opened on into the folder it is in, beside itself.
+    /// Copies each entry the menu acts on into the folder it is in, beside itself.
     pub(crate) fn tree_duplicate(&mut self) {
-        if let Some(target) = self.tree_target().filter(|target| !target.is_root()) {
+        for target in outermost(self.tree_targets()) {
             let into = parent_of(&target.path).to_owned();
             self.send_entry(EntryChange::Copy {
                 from: target.path,
@@ -352,21 +493,36 @@ impl WorkspaceState {
         }
     }
 
-    /// Puts the path of the entry the menu was opened on on the clipboard, from the root of the project or in full.
+    /// Puts the paths of the entries the menu acts on on the clipboard, one a line, from the root of the project or in full.
     pub(crate) fn tree_copy_path(&mut self, relative: bool) {
-        let Some(target) = self.tree_target() else {
-            return;
-        };
         let Some(session) = self.review_session() else {
             return;
         };
-        let text = match (relative, target.is_root()) {
-            (true, true) => ".".to_owned(),
-            (true, false) => target.path,
-            (false, true) => session.directory.clone(),
-            (false, false) => joined(session.directory.trim_end_matches('/'), &target.path),
-        };
-        self.outbox.push(Outgoing::Copy { text });
+        let lines: Vec<String> = self
+            .tree_targets()
+            .into_iter()
+            .map(|target| match (relative, target.is_root()) {
+                (true, true) => ".".to_owned(),
+                (true, false) => target.path,
+                (false, true) => session.directory.clone(),
+                (false, false) => joined(session.directory.trim_end_matches('/'), &target.path),
+            })
+            .collect();
+        if !lines.is_empty() {
+            self.outbox.push(Outgoing::Copy {
+                text: lines.join("\n"),
+            });
+        }
+    }
+
+    /// Shows the entry the menu was opened on in the file manager of this machine.
+    pub(crate) fn tree_reveal(&mut self) {
+        if let (Some(target), Some(session)) = (self.tree_target(), self.review_index()) {
+            self.outbox.push(Outgoing::RevealFile {
+                session,
+                path: target.path,
+            });
+        }
     }
 
     /// Sends `change` to the server for the open session's folder, and says it is working.
