@@ -4,9 +4,9 @@ use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
     Radius, Role, Utility, bg, border, border_color, cursor_not_allowed, cursor_text, flex, flex_1,
-    flex_col, flex_none, font_mono, gap, h, h_full, items_center, leading_ratio, min_h, min_w_px,
-    opacity, overflow_hidden, pb, pt, px, ring, ring_color, rounded, text_color, text_px, truncate,
-    w_full,
+    flex_col, flex_none, font_mono, gap, h, h_full, items_center, leading_ratio, max_h, min_h,
+    min_w_px, opacity, overflow_hidden, pb, pt, px, ring, ring_color, rounded, text_color, text_px,
+    truncate, w_full,
 };
 use pm_text::{Field, Shaper};
 use pm_ui::{Line, Node, node, text, wrap};
@@ -257,7 +257,9 @@ impl<'a> Input<'a> {
             .iter()
             .position(|line| caret < line.next)
             .unwrap_or(self.lines.len().saturating_sub(1));
-        let first = (caret_line + 1).saturating_sub(MAX_LINES);
+        let offset =
+            self.field
+                .scroll_for_lines(caret_line, self.lines.len(), MAX_LINES, 14.0 * LINE_RATIO);
         let selection = self
             .field
             .selection()
@@ -285,29 +287,40 @@ impl<'a> Input<'a> {
                     .field_line(self.id, 0),
             );
         }
-        column.children(
-            self.lines
-                .iter()
-                .enumerate()
-                .skip(first)
-                .take(MAX_LINES)
-                .map(|(index, line)| {
-                    let mut row = text(&content[line.start..line.end])
-                        .styles(typography())
-                        .styles([text_color(Role::Text), flex_none()])
-                        .field_line(self.id, line.start);
-                    if index == caret_line {
-                        row = row.caret(caret - line.start, self.id);
-                    }
-                    if let Some(range) = clipped(&selection, line) {
-                        row = row.selection(range, self.id);
-                    }
-                    if let Some(range) = clipped(&marked, line) {
-                        row = row.marked(range, self.id);
-                    }
-                    row
-                }),
-        )
+        let rows = self.lines.iter().enumerate().map(|(index, line)| {
+            let mut row = text(&content[line.start..line.end])
+                .styles(typography())
+                .styles([text_color(Role::Text), flex_none()])
+                .field_line(self.id, line.start);
+            if index == caret_line {
+                row = row.caret(caret - line.start, self.id);
+            }
+            if let Some(range) = clipped(&selection, line) {
+                row = row.selection(range, self.id);
+            }
+            if let Some(range) = clipped(&marked, line) {
+                row = row.marked(range, self.id);
+            }
+            row
+        });
+        if self.lines.len() > MAX_LINES {
+            column.styles([px(0)]).child(
+                node()
+                    .styles([
+                        flex(),
+                        flex_col(),
+                        w_full(),
+                        min_w_px(0),
+                        px(4),
+                        max_h(MAX_LINES as f32 * LINE / 4.0),
+                        overflow_hidden(),
+                    ])
+                    .scroll_from_start(self.id, offset)
+                    .children(rows),
+            )
+        } else {
+            column.children(rows)
+        }
     }
 }
 

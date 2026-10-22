@@ -93,6 +93,8 @@ pub enum Shot {
     Onboarding(Step),
     /// The workspace on its first session.
     Workspace,
+    /// A forty-line prompt scrolled part way through its contents.
+    ComposerLong,
     /// A session whose account needs signing in again.
     SignedOut,
     /// The workspace asking whether to close the window while agents are working.
@@ -1882,6 +1884,14 @@ impl Shot {
                 },
                 ..OnboardingState::default()
             }),
+            Self::ComposerLong => {
+                let prompt = (1..=40).map(|line| format!("Prompt line {line}\n")).collect();
+                Screen::Workspace(
+                    workspace()
+                        .edited(PROMPT, Edit::Paste(prompt))
+                        .edited(PROMPT, Edit::ScrollTo(220.0)),
+                )
+            }
             Self::SignedOut => {
                 let mut state = workspace();
                 state.sessions[0].login = Some("a1".to_owned());

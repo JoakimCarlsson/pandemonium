@@ -528,6 +528,11 @@ impl App {
                 && let Some(field) = state.field(id)
                 && field.is_multiline()
             {
+                if let Some(scroller) = self.output.scrollers.iter().find(|held| held.id == id)
+                    && (field.follows_caret() || (scroller.offset - field.scroll()).abs() > 0.5)
+                {
+                    scroll_to = Some((id, scroller.offset));
+                }
                 let caret = field.to_shown(field.caret());
                 if let Some(held) = self
                     .output
@@ -986,7 +991,23 @@ impl App {
 
     /// Scrolls the box `id`, which has `room` pixels to scroll, by `pixels`, downwards when positive.
     fn scroll_box(&mut self, id: FocusId, pixels: f32, room: f32) {
+        let shown = self
+            .output
+            .scrollers
+            .iter()
+            .find(|held| held.id == id)
+            .map(|held| held.offset);
         self.model.update(|state| {
+            if let Some(field) = state.field(id).filter(|field| field.is_multiline()) {
+                let from = if field.follows_caret() {
+                    shown.unwrap_or(field.scroll())
+                } else {
+                    field.scroll()
+                };
+                let offset = (from + pixels).clamp(0.0, room);
+                *state = std::mem::take(state).edited(id, Edit::ScrollTo(offset));
+                return;
+            }
             *state = match id {
                 MENU_SCROLL => std::mem::take(state).scrolled_menu(pixels, room),
                 SUBAGENTS_SCROLL => std::mem::take(state).scrolled_subagents(pixels, room),

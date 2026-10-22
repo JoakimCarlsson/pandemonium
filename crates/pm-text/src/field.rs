@@ -58,8 +58,8 @@ pub enum Edit {
     Undo,
     /// Make again the change that was taken back.
     Redo,
-    /// Scroll the line so it starts this many logical pixels left of the
-    /// view; negative offsets are taken as none.
+    /// Scroll the field by this many logical pixels: vertically for multiline
+    /// inputs, horizontally otherwise; negative offsets are taken as none.
     ScrollTo(f32),
     /// Replace the bytes of the text in the range with the text, as one
     /// change, then select from the first offset of the new text to the
@@ -91,8 +91,10 @@ pub struct Field {
     /// The end of the selection that does not move, as a byte offset on a
     /// character boundary; equal to the caret when nothing is selected.
     anchor: usize,
-    /// How far the line is scrolled left, in logical pixels.
+    /// The scroll offset in logical pixels: vertical for multiline inputs, horizontal otherwise.
     scroll: f32,
+    /// Whether the next multiline layout should bring the caret into view.
+    follow_caret: bool,
     /// How many characters the line may hold, if it is limited.
     limit: Option<usize>,
     /// Whether the line is shown as dots and cannot be copied from.
@@ -139,6 +141,7 @@ impl Field {
     pub fn new(text: impl Into<String>) -> Self {
         let text = text.into();
         Self {
+            follow_caret: true,
             caret: text.len(),
             anchor: text.len(),
             text,
@@ -195,9 +198,28 @@ impl Field {
         !self.selected().is_empty()
     }
 
-    /// How far the line is scrolled left, in logical pixels.
+    /// The scroll offset in logical pixels: vertical for multiline inputs, horizontal otherwise.
     pub fn scroll(&self) -> f32 {
         self.scroll
+    }
+
+    /// Whether an edit still needs its multiline caret brought into view.
+    pub fn follows_caret(&self) -> bool {
+        self.follow_caret
+    }
+
+    /// The vertical offset for a multiline viewport, following the caret only after an edit.
+    pub fn scroll_for_lines(&self, caret: usize, lines: usize, visible: usize, height: f32) -> f32 {
+        let room = lines.saturating_sub(visible) as f32 * height;
+        let offset = self.scroll.clamp(0.0, room);
+        if !self.follow_caret {
+            return offset;
+        }
+        let top = caret as f32 * height;
+        offset
+            .min(top)
+            .max(top + height - visible as f32 * height)
+            .clamp(0.0, room)
     }
 
     /// What the line looks like: its text with what is being composed at the
@@ -342,6 +364,7 @@ impl Field {
 
     /// Makes `edit`.
     pub fn apply(&mut self, edit: Edit) {
+        self.follow_caret = !matches!(edit, Edit::ScrollTo(_));
         match &edit {
             Edit::Undo => return self.undo(),
             Edit::Redo => return self.redo(),
@@ -712,5 +735,29 @@ impl Field {
             at = from + start + character.len_utf8();
         }
         at
+    }
+}
+
+/// Tests for multiline viewport offsets.
+#[cfg(test)]
+mod tests {
+    use super::{Edit, Field, Motion};
+
+    /// Wheel offsets survive layout until an edit or caret motion requires following again.
+    #[test]
+    fn multiline_scroll_follows_edits_only() {
+        let mut field = Field::new("line\n".repeat(40)).multiline(true);
+        assert_eq!(field.scroll_for_lines(40, 41, 8, 22.0), 726.0);
+        field.apply(Edit::ScrollTo(220.0));
+        assert_eq!(field.scroll_for_lines(40, 41, 8, 22.0), 220.0);
+        field.apply(Edit::Insert('x'));
+        assert_eq!(field.scroll_for_lines(40, 41, 8, 22.0), 726.0);
+        field.apply(Edit::ScrollTo(726.0));
+        field.apply(Edit::Move(Motion::Home, false));
+        assert_eq!(field.scroll_for_lines(0, 41, 8, 22.0), 0.0);
+        field.apply(Edit::ScrollTo(220.0));
+        assert_eq!(field.scroll_for_lines(12, 41, 8, 22.0), 220.0);
+        assert_eq!(field.scroll_for_lines(0, 0, 8, 22.0), 0.0);
+        assert_eq!(field.scroll_for_lines(7, 8, 8, 22.0), 0.0);
     }
 }
