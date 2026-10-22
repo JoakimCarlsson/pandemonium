@@ -133,6 +133,8 @@ enum Pending {
     Files(String),
     /// The branches of the project at this position.
     Branches(usize),
+    /// The submodules of the project at this position.
+    Submodules(usize),
     /// Who an agent is signed in as, and whether that names the login in use.
     Identity(usize, bool),
     /// The session at this position was started.
@@ -1141,6 +1143,15 @@ impl Work {
                     Request::Branches { directory },
                     Pending::Branches(project),
                 ),
+                Outgoing::Submodules {
+                    project,
+                    host,
+                    directory,
+                } => self.ask(
+                    &host,
+                    Request::Submodules { directory },
+                    Pending::Submodules(project),
+                ),
                 Outgoing::Skills {
                     agent,
                     project,
@@ -1800,6 +1811,13 @@ impl Work {
                     });
                 }
             }
+            Pending::Submodules(project) => {
+                if let Response::Submodules { paths } = response {
+                    model.update(|screen| {
+                        *screen = std::mem::take(screen).with_submodules(project, paths)
+                    });
+                }
+            }
             Pending::Identity(agent, naming) => {
                 if let Response::Identity { default, selected } = response {
                     model.update(|screen| {
@@ -1873,13 +1891,11 @@ impl Work {
                     head,
                     tracking,
                     operation,
-                    submodules,
                 } = response
                 {
                     model.update(|screen| {
                         *screen = std::mem::take(screen)
                             .refreshed(session, &changes, commits)
-                            .with_submodules(session, submodules)
                             .checked_out(session, branch.as_deref(), head.as_deref())
                             .tracked(session, branch.as_deref(), tracking, operation);
                     });

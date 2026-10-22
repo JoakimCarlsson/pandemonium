@@ -822,13 +822,18 @@ impl WorkspaceState {
         });
     }
 
-    /// Adds the sessions the server of `host` holds that belong to the projects here, and returns each one's position and the server's number for it.
+    /// Adds the sessions the server of `host` holds that belong to the projects here, asks it for the submodules of those projects, and returns each one's position and the server's number for it.
     pub fn restore_sessions(
         &mut self,
         host: &Option<String>,
         infos: &[pm_protocol::SessionInfo],
     ) -> Vec<(usize, u64)> {
         let mut added = Vec::new();
+        for project in 0..self.projects.len() {
+            if self.projects[project].host() == *host {
+                self.ask_submodules(project);
+            }
+        }
         for info in infos {
             let Some(project) = self.projects.iter().position(|held| {
                 held.host() == *host && held.directory().to_string_lossy() == info.repository

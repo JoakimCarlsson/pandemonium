@@ -983,6 +983,15 @@ pub enum Outgoing {
         /// Ignored folders currently unfolded in the tree.
         expanded: Vec<String>,
     },
+    /// Lists the submodules of the repository `directory` on `host`, for the project at `project`.
+    Submodules {
+        /// The project, by position.
+        project: usize,
+        /// The machine, or nothing for this one.
+        host: Option<String>,
+        /// The folder.
+        directory: String,
+    },
     /// Lists the branches of the repository `directory` on `host`, for the project at `project`.
     Branches {
         /// The project, by position.
@@ -1831,6 +1840,7 @@ impl WorkspaceState {
             && !self.projects.iter().any(|held| held.path == project.path)
         {
             self.projects.push(project);
+            self.ask_submodules(self.projects.len() - 1);
         }
         self.sync_context();
         self
@@ -3191,14 +3201,23 @@ impl WorkspaceState {
         self
     }
 
-    /// The state after the folder of the session at `session` was seen to hold the submodules at `paths`; only the stand-in for a project's own folder says what its project's submodules are.
-    pub fn with_submodules(mut self, session: usize, paths: Vec<String>) -> Self {
-        if let Some(held) = self.sessions.get(session).filter(|held| held.home)
-            && let Some(project) = self.projects.get_mut(held.project)
-        {
-            project.submodules = paths;
+    /// The state after the project at `project` was seen to hold the submodules at `paths`.
+    pub fn with_submodules(mut self, project: usize, paths: Vec<String>) -> Self {
+        if let Some(held) = self.projects.get_mut(project) {
+            held.submodules = paths;
         }
         self
+    }
+
+    /// Asks the machine of the project at `project` for its submodules.
+    pub(crate) fn ask_submodules(&mut self, project: usize) {
+        if let Some(held) = self.projects.get(project) {
+            self.outbox.push(Outgoing::Submodules {
+                project,
+                host: held.host(),
+                directory: held.directory().to_string_lossy().into_owned(),
+            });
+        }
     }
 
     /// The state after the folder of the session at `session` was seen to have

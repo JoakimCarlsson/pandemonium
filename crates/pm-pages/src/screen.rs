@@ -1157,10 +1157,10 @@ impl Screen {
         }
     }
 
-    /// The screen after the folder of the session at `session` was seen to hold the submodules at `paths`.
-    pub fn with_submodules(self, session: usize, paths: Vec<String>) -> Self {
+    /// The screen after the project at `project` was seen to hold the submodules at `paths`.
+    pub fn with_submodules(self, project: usize, paths: Vec<String>) -> Self {
         match self {
-            Self::Workspace(state) => Self::Workspace(state.with_submodules(session, paths)),
+            Self::Workspace(state) => Self::Workspace(state.with_submodules(project, paths)),
             onboarding => onboarding,
         }
     }

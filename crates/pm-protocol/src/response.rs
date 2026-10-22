@@ -90,6 +90,11 @@ pub enum Response {
         /// Their names, the current one first.
         names: Vec<String>,
     },
+    /// The submodules of a repository.
+    Submodules {
+        /// Where each is, nested ones included, from the root of the repository.
+        paths: Vec<String>,
+    },
     /// The history of a repository.
     Log {
         /// The commits, newest first.
@@ -232,9 +237,6 @@ pub enum Response {
         /// The merge, rebase or cherry-pick the folder is stopped in, if it is in one.
         #[serde(default)]
         operation: Option<pm_git::Operation>,
-        /// Where each of its submodules is, nested ones included, from its root.
-        #[serde(default)]
-        submodules: Vec<String>,
     },
     /// A shell was started.
     Terminal {

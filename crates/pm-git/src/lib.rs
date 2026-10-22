@@ -212,19 +212,35 @@ fn walk(root: &Path, directory: &Path, limit: usize, found: &mut Vec<String>) {
     }
 }
 
-/// The files of the folder `directory`, as paths from it, at most `limit` of them: those a repository tracks or does not ignore, or, in a folder that is not a repository, every file but those in hidden and bulky folders.
+/// The files of the folder `directory`, as paths from it, at most `limit` of them: those a repository and its submodules track or do not ignore, or, in a folder that is not a repository, every file but those in hidden and bulky folders.
 pub fn files(directory: &Path, limit: usize) -> Vec<String> {
     if !is_repository(directory) {
         let mut found = Vec::new();
         walk(directory, directory, limit, &mut found);
         return found;
     }
-    run(
-        directory,
-        &["ls-files", "--cached", "--others", "--exclude-standard"],
-    )
-    .map(|listed| listed.lines().take(limit).map(str::to_owned).collect())
-    .unwrap_or_default()
+    let submodules = submodule::submodules(directory);
+    let listed = |folder: &Path, arguments: &[&str]| -> Vec<String> {
+        run(folder, arguments)
+            .map(|listed| listed.lines().map(str::to_owned).collect())
+            .unwrap_or_default()
+    };
+    let untracked = ["ls-files", "--others", "--exclude-standard"];
+    let mut found: Vec<String> =
+        listed(directory, &["ls-files", "--cached", "--recurse-submodules"])
+            .into_iter()
+            .filter(|path| !submodules.contains(path))
+            .chain(listed(directory, &untracked))
+            .collect();
+    for path in &submodules {
+        found.extend(
+            listed(&directory.join(path), &untracked)
+                .into_iter()
+                .map(|file| format!("{path}/{file}")),
+        );
+    }
+    found.truncate(limit);
+    found
 }
 
 /// The untracked folders of the repository `directory` is in, as paths from it, at most `limit` of them: those that hold no tracked file, which is how a folder with nothing in it yet is told of.

@@ -570,6 +570,9 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
         Request::Branches { directory } => Response::Branches {
             names: pm_git::branches(&place(&directory)),
         },
+        Request::Submodules { directory } => Response::Submodules {
+            paths: pm_git::submodules(&place(&directory)),
+        },
         Request::Identity { agent } => match agent_named(&agent) {
             Some(agent) => Response::Identity {
                 default: pm_acp::default_account(agent),
@@ -855,7 +858,6 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                     head: None,
                     tracking: pm_git::Tracking::default(),
                     operation: None,
-                    submodules: Vec::new(),
                 };
             }
             Response::Inspected {
@@ -865,7 +867,6 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                 head: pm_git::resolve(directory, "HEAD"),
                 tracking: pm_git::tracking(directory),
                 operation: pm_git::operation(directory),
-                submodules: pm_git::submodules(directory),
             }
         }
         Request::Stage {
