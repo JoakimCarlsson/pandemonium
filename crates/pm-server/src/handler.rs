@@ -500,20 +500,41 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             None => failed(format!("no agent is called {agent}")),
         },
         Request::SaveWithheld { keys } => saved_list(crate::library::WITHHELD, &keys),
-        Request::Files { directory, limit } => {
+        Request::Files {
+            directory,
+            limit,
+            expanded,
+        } => {
             let place = place(&directory);
             let mut paths = pm_git::files(&place, limit);
             let mut folders = pm_git::untracked_folders(&place, limit);
             let mut ignored = Vec::new();
+            let mut roots = Vec::new();
             for entry in pm_git::ignored(&place, limit) {
                 match entry.strip_suffix('/') {
                     Some(folder) => {
+                        roots.push(folder.to_owned());
                         folders.push(folder.to_owned());
                         ignored.push(folder.to_owned());
                     }
                     None => {
                         paths.push(entry.clone());
                         ignored.push(entry);
+                    }
+                }
+            }
+            for folder in expanded {
+                if roots
+                    .iter()
+                    .any(|root| folder == *root || folder.starts_with(&format!("{root}/")))
+                {
+                    for (path, is_folder) in crate::entries::children(&place, &folder) {
+                        ignored.push(path.clone());
+                        if is_folder {
+                            folders.push(path);
+                        } else {
+                            paths.push(path);
+                        }
                     }
                 }
             }

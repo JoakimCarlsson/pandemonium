@@ -102,7 +102,7 @@ request with exactly one `response` carrying the same `id`.
 | -------------- | ------------------------------------------------------------------------------------------------ | --------------- |
 | `discover`     | `agent`                                                                                          | `discovery`     |
 | `skills`       | `agent`, `directory`                                                                             | `skills`        |
-| `files`        | `directory`, `limit`                                                                             | `files`         |
+| `files`        | `directory`, `limit`, `expanded` (optional)                                                      | `files`         |
 | `branches`     | `directory`                                                                                      | `branches`      |
 | `identity`     | `agent`                                                                                          | `identity`      |
 | `set_accounts` | `logins`: `[{agent, id, name}]`, `in_use`: `[[agent, id]]`                                       | `done`          |
@@ -227,6 +227,13 @@ request with exactly one `response` carrying the same `id`.
 | `permalink`    | `directory`, `path`, `line` (optional), `end_line` (optional)                                    | `address`       |
 
 `agent` is an agent's id: `claude-code`, `codex` or `grok`.
+
+`files` lists ignored folders without walking them. Its optional `expanded`
+array names repository-relative ignored folders whose immediate files and
+subfolders are included, all marked ignored. It defaults to an empty array.
+These contents do not consume the base listing's `limit`. Clients list again
+on expansion, including reopening a folder, and when notified of changes;
+reopening also refreshes folders excluded by the file watcher.
 
 - **`discover`:** starts the agent briefly and returns what it lets the reader
   change (models, modes, effort) and the commands it offers behind a slash.
@@ -671,7 +678,7 @@ embedded context, and anything else as a link to the stored file.
 | `failed`     | `message`                                                 |
 | `discovery`  | `settings`, `commands`                                    |
 | `skills`     | `skills` (`[{name, description}]`), `names` (`[string]`)  |
-| `files`      | `paths`: repository-relative, tracked or not ignored, `folders` (optional): untracked folders, which may hold no file yet, `ignored` (optional): which of `paths` and `folders` git ignores, listed so a tree can dim them |
+| `files`      | `paths`: repository-relative, tracked or not ignored plus the immediate files in expanded ignored folders, `folders` (optional): untracked folders and immediate subfolders of expanded ignored folders, which may hold no file yet, `ignored` (optional): which of `paths` and `folders` git ignores, listed so a tree can dim them |
 | `branches`   | `names`: local branches, the current one first, then remote ones such as `origin/main`; read from git at each request |
 | `stashes`    | `stashes`: `[{index, message, when}]`, newest first |
 | `log`        | `commits`: `[{id, refs, summary, lanes}]`, newest first |

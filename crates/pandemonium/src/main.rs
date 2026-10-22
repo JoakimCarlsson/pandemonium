@@ -105,6 +105,7 @@ fn main() {
             Some("worddiff") => Shot::WordDiff,
             Some("commenting") => Shot::Commenting,
             Some("files") => Shot::Files,
+            Some("ignored-files") => Shot::IgnoredFiles,
             Some("source") => Shot::Source,
             Some("refused") => Shot::Refused,
             Some("sourcemenu") => Shot::SourceMenu,
