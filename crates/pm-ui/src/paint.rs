@@ -98,6 +98,8 @@ pub struct Scroller {
     pub rect: Rect,
     /// How far back from the end its contents can be scrolled, in logical pixels.
     pub room: f32,
+    /// The actual offset from the start, clamped to the available room.
+    pub offset: f32,
 }
 
 /// One line of editable text, where it was drawn.
@@ -621,16 +623,17 @@ impl Frame<'_> {
             .fold(rect.y, f32::max)
             + padding;
         let room = (end - (rect.y + rect.height)).max(0.0);
-        self.output.scrollers.push(Scroller {
-            id,
-            rect: seen,
-            room,
-        });
         let (anchor, position) = place;
         let offset = match anchor {
             Anchor::Start => position.clamp(0.0, room),
             Anchor::End => room - position.clamp(0.0, room),
         };
+        self.output.scrollers.push(Scroller {
+            id,
+            rect: seen,
+            room,
+            offset,
+        });
         (offset, room)
     }
 

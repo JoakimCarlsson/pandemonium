@@ -98,6 +98,7 @@ fn main() {
             Some("tabmenu") => Shot::TabMenu,
             Some("extensions") => Shot::Extensions,
             Some("extension-install") => Shot::ExtensionInstall,
+            Some("composer-long") => Shot::ComposerLong,
             Some("workspace") => Shot::Workspace,
             Some("quitting") => Shot::Quitting,
             Some("update") => Shot::Update,
