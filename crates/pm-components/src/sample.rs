@@ -471,6 +471,8 @@ pub struct Session {
     pub skills: Vec<Slash>,
     /// The id of the login its agent runs as, or nothing for the agent's own.
     pub login: Option<String>,
+    /// Why this session needs signing in again and its account's name on its server, when named.
+    pub signed_out: Option<(String, Option<String>)>,
     /// The question the agent waits on the reader to answer, if it waits on one.
     pub ask: Option<Permission>,
     /// The form of questions the agent waits on the reader to answer, if it waits on one.
@@ -529,6 +531,7 @@ impl Session {
             commands: Vec::new(),
             skills: Vec::new(),
             login: None,
+            signed_out: None,
             ask: None,
             inquiry: None,
             held_hooks: Vec::new(),

@@ -95,6 +95,8 @@ pub enum Shot {
     Workspace,
     /// A forty-line prompt scrolled part way through its contents.
     ComposerLong,
+    /// A session whose account needs signing in again.
+    SignedOut,
     /// The workspace asking whether to close the window while agents are working.
     Quitting,
     /// The workspace telling of a newer release in its title bar.
@@ -107,6 +109,8 @@ pub enum Shot {
     Commenting,
     /// The workspace on the diff of its first session with the project's files listed in the review panel.
     Files,
+    /// Expanded ignored folders with nested files dimmed.
+    IgnoredFiles,
     /// The workspace on the diff with the source control panel: staged and untracked files, a message, the graph.
     Source,
     /// The source control panel with git's refusal of a branch switch said in it.
@@ -139,6 +143,8 @@ pub enum Shot {
     TerminalMenu,
     /// The overview of a project.
     Overview,
+    /// A folded change opened from the project Changes list.
+    OverviewDiff,
     /// The overview of a project with the menu on a changed file of its folder open.
     OverviewChangeMenu,
     /// The workspace with the terminal open and the sidebar, the review panel and the terminal dragged to other sizes.
@@ -1588,6 +1594,25 @@ fn files() -> WorkspaceState {
     )
 }
 
+/// Expanded ignored folders with every nested file and folder dimmed.
+fn ignored_files() -> WorkspaceState {
+    let mut state = files();
+    let paths = [
+        "server/prod/connect.sh",
+        "server/prod/key.pem",
+        "server/stage/connect.sh",
+        "server/stage/clip.mp4",
+    ];
+    let folders = ["server", "server/prod", "server/stage"];
+    state.files.extend(paths.map(str::to_owned));
+    state.tree_folders.extend(folders.map(str::to_owned));
+    state
+        .tree_ignored
+        .extend(paths.into_iter().chain(folders).map(str::to_owned));
+    state.open_tree.extend(folders.map(str::to_owned));
+    state
+}
+
 /// The workspace with a shell open that has run a few commands, as the shell would have drawn them.
 fn terminal() -> WorkspaceState {
     with_shell(workspace_sample())
@@ -1867,6 +1892,14 @@ impl Shot {
                         .edited(PROMPT, Edit::ScrollTo(220.0)),
                 )
             }
+            Self::SignedOut => {
+                let mut state = workspace();
+                state.sessions[0].login = Some("a1".to_owned());
+                Screen::Workspace(state.heard(0, Event::SignedOut {
+                    reason: "Failed to authenticate: OAuth session expired and could not be refreshed".to_owned(),
+                    account: Some("work@example.com".to_owned()),
+                }))
+            }
             Self::Workspace | Self::Selecting => Screen::Workspace(workspace()),
             Self::SessionAccount => {
                 let mut state = workspace();
@@ -1898,6 +1931,7 @@ impl Shot {
             }
             Self::Commenting => Screen::Workspace(commenting()),
             Self::Files => Screen::Workspace(files()),
+            Self::IgnoredFiles => Screen::Workspace(ignored_files()),
             Self::Source => Screen::Workspace(source()),
             Self::SourceMenu => {
                 Screen::Workspace(source().with_git_menu(MenuKind::Source, (700.0, 110.0)))
@@ -1949,6 +1983,12 @@ impl Shot {
                 Screen::Workspace(state)
             }
             Self::Overview => Screen::Workspace(overview()),
+            Self::OverviewDiff => {
+                let mut state = overview();
+                let path = state.review_session().unwrap().changes[0].path.clone();
+                state.closed_diffs.insert(path);
+                Screen::Workspace(state.after(FocusId(pm_components::state::FILE_BASE)))
+            }
             Self::OverviewChangeMenu => {
                 Screen::Workspace(overview().with_change_menu(0, (1000.0, 250.0)))
             }

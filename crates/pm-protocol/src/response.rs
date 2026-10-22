@@ -75,7 +75,7 @@ pub enum Response {
     Files {
         /// Their paths, from the root of the repository.
         paths: Vec<String>,
-        /// The folders that hold no tracked file, which have no file to be told of by.
+        /// The folders that hold no tracked file, including immediate subfolders of expanded ignored folders.
         #[serde(default)]
         folders: Vec<String>,
         /// Which of `paths` and `folders` git ignores, which are listed so the tree can show them dimmed.

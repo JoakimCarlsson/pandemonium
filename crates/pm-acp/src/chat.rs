@@ -250,6 +250,15 @@ pub enum Event {
     Answered(Vec<(String, Option<String>)>),
     /// The turn ended, with the reason it failed where it did.
     Finished(Option<String>),
+    /// The turn ended because the account needs signing in again.
+    SignedOut {
+        /// Why authentication failed.
+        reason: String,
+        /// The name of the session account, supplied by its server when named.
+        account: Option<String>,
+    },
+    /// The session account was signed in again.
+    SignedIn,
     /// The agent could not be started or stopped, for this reason.
     Failed(String),
     /// The agent named the conversation, or named it again.
@@ -620,8 +629,12 @@ fn drive(
     }
     let opened = match client.ask("session/new", &opening, patience)? {
         Answer::Result(result) => result,
-        Answer::Error(LOGIN_REQUIRED, _) => {
-            return Err(format!("{} needs you to sign in first", agent.name));
+        Answer::Error(code, message) if signed_out(code, &message) => {
+            let _ = events.send(Event::SignedOut {
+                reason: message,
+                account: None,
+            });
+            return Ok(());
         }
         Answer::Error(_, message) => return Err(message),
     };
@@ -871,17 +884,25 @@ fn hear_agent(
             let id = id.as_u64();
             if id.is_some() && id == waiting.turn {
                 waiting.turn = None;
-                let (error, stopped) = match answer(message) {
-                    Answer::Result(result) => {
-                        (None, result["stopReason"].as_str() == Some("cancelled"))
-                    }
-                    Answer::Error(_, message) => (Some(message), true),
+                let (finished, stopped) = match answer(message) {
+                    Answer::Result(result) => (
+                        Event::Finished(None),
+                        result["stopReason"].as_str() == Some("cancelled"),
+                    ),
+                    Answer::Error(code, message) if signed_out(code, &message) => (
+                        Event::SignedOut {
+                            reason: message,
+                            account: None,
+                        },
+                        true,
+                    ),
+                    Answer::Error(_, message) => (Event::Finished(Some(message)), true),
                 };
                 for event in turn_ended(waiting, stopped || waiting.cancelled) {
                     let _ = events.send(event);
                 }
                 waiting.cancelled = false;
-                let _ = events.send(Event::Finished(error));
+                let _ = events.send(finished);
             } else if id.is_some_and(|id| waiting.sets.remove(&id))
                 && message["result"]["configOptions"].is_array()
             {
@@ -1106,4 +1127,34 @@ fn subagent_kind(update: &Value) -> Option<String> {
     let named = names.contains(&Some("Task")) || names.contains(&Some("Agent"));
     let typed = update["rawInput"]["subagent_type"].as_str();
     (named || typed.is_some()).then(|| typed.unwrap_or("agent").to_owned())
+}
+
+/// Whether a prompt failure means the account needs signing in again.
+fn signed_out(code: i64, message: &str) -> bool {
+    let message = message.to_ascii_lowercase();
+    code == LOGIN_REQUIRED
+        || message.contains("failed to authenticate")
+        || message.contains("authentication required")
+        || message.contains("not authenticated")
+        || message.contains("not logged in")
+        || message.contains("oauth session expired")
+}
+
+#[cfg(test)]
+/// Tests for authentication failures returned by prompts.
+mod tests {
+    use super::signed_out;
+
+    /// Auth failures are distinct from ordinary prompt failures.
+    #[test]
+    fn prompt_authentication_errors() {
+        assert!(signed_out(-32000, ""));
+        assert!(signed_out(
+            -32603,
+            "Failed to authenticate: OAuth session expired and could not be refreshed"
+        ));
+        assert!(signed_out(-32603, "Not logged in"));
+        assert!(!signed_out(-32603, ""));
+        assert!(!signed_out(-32603, "Request timed out"));
+    }
 }

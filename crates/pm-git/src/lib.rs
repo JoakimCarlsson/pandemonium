@@ -243,7 +243,7 @@ pub fn untracked_folders(directory: &Path, limit: usize) -> Vec<String> {
     .unwrap_or_default()
 }
 
-/// The ignored files and folders of the repository `directory` is in, as paths from it, at most `limit` of them; a folder is written with a `/` at its end and is not looked into.
+/// The ignored files and folders of the repository `directory` is in, as paths from it, at most `limit` of them; a folder is written with a `/` at its end, and its contents are listed separately when expanded.
 pub fn ignored(directory: &Path, limit: usize) -> Vec<String> {
     if !is_repository(directory) {
         return Vec::new();

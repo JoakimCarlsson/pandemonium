@@ -166,6 +166,16 @@ pub(crate) fn login_folder(agent: &str, login: Option<&str>) -> Option<PathBuf> 
         .flatten()
 }
 
+/// The display name of a named account on this server.
+pub(crate) fn login_name(agent: &str, login: Option<&str>) -> Option<String> {
+    let login = login?;
+    pm_store::load_accounts()
+        .0
+        .into_iter()
+        .find(|(owner, id, _)| owner == agent && id == login)
+        .map(|(_, _, name)| name)
+}
+
 /// The id of the login new sessions of `agent` start as, or nothing for the agent's own.
 fn login_for_new_work(agent: &str) -> Option<String> {
     let (_, in_use) = pm_store::load_accounts();
@@ -500,20 +510,41 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             None => failed(format!("no agent is called {agent}")),
         },
         Request::SaveWithheld { keys } => saved_list(crate::library::WITHHELD, &keys),
-        Request::Files { directory, limit } => {
+        Request::Files {
+            directory,
+            limit,
+            expanded,
+        } => {
             let place = place(&directory);
             let mut paths = pm_git::files(&place, limit);
             let mut folders = pm_git::untracked_folders(&place, limit);
             let mut ignored = Vec::new();
+            let mut roots = Vec::new();
             for entry in pm_git::ignored(&place, limit) {
                 match entry.strip_suffix('/') {
                     Some(folder) => {
+                        roots.push(folder.to_owned());
                         folders.push(folder.to_owned());
                         ignored.push(folder.to_owned());
                     }
                     None => {
                         paths.push(entry.clone());
                         ignored.push(entry);
+                    }
+                }
+            }
+            for folder in expanded {
+                if roots
+                    .iter()
+                    .any(|root| folder == *root || folder.starts_with(&format!("{root}/")))
+                {
+                    for (path, is_folder) in crate::entries::children(&place, &folder) {
+                        ignored.push(path.clone());
+                        if is_folder {
+                            folders.push(path);
+                        } else {
+                            paths.push(path);
+                        }
                     }
                 }
             }
@@ -671,6 +702,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             held.meta.login = login;
             sessions::save_meta(session, &held.meta);
         }),
+        Request::SignInSession { session } => sign_in_session(core, session),
         Request::SignIn { agent } => match agent_named(&agent) {
             Some(agent) => match agent.sign_in() {
                 Ok(()) => Response::Done,
@@ -1560,5 +1592,41 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             directory,
             operation,
         } => done(pm_git::remote(&place(&directory), &operation)),
+    }
+}
+
+/// Signs in on this server using the session's account, then tells every attached client.
+fn sign_in_session(core: &Core, number: u64) -> Response {
+    let found = core.sessions.lock().ok().and_then(|sessions| {
+        let held = sessions.get(&number)?;
+        Some((held.agent, held.meta.agent.clone(), held.meta.login.clone()))
+    });
+    let Some((agent, id, login)) = found else {
+        return failed(format!("no session is numbered {number}"));
+    };
+    let home = login_folder(&id, login.as_deref());
+    let result = if login.is_some() && home.is_none() {
+        Err("the session's account no longer exists".to_owned())
+    } else {
+        agent.sign_in_in(home)
+    };
+    let event = match &result {
+        Ok(()) => pm_acp::Event::SignedIn,
+        Err(reason) => pm_acp::Event::SignedOut {
+            reason: reason.clone(),
+            account: login_name(&id, login.as_deref()),
+        },
+    };
+    let mut told = Vec::new();
+    if let Ok(mut sessions) = core.sessions.lock()
+        && let Some(held) = sessions.get_mut(&number)
+        && held.meta.login == login
+    {
+        told.push((number, held.note(number, &event), event));
+    }
+    core.tell_all(told);
+    match result {
+        Ok(()) => Response::Done,
+        Err(reason) => failed(reason),
     }
 }

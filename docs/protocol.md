@@ -102,12 +102,13 @@ request with exactly one `response` carrying the same `id`.
 | -------------- | ------------------------------------------------------------------------------------------------ | --------------- |
 | `discover`     | `agent`                                                                                          | `discovery`     |
 | `skills`       | `agent`, `directory`                                                                             | `skills`        |
-| `files`        | `directory`, `limit`                                                                             | `files`         |
+| `files`        | `directory`, `limit`, `expanded` (optional)                                                      | `files`         |
 | `branches`     | `directory`                                                                                      | `branches`      |
 | `identity`     | `agent`                                                                                          | `identity`      |
 | `set_accounts` | `logins`: `[{agent, id, name}]`, `in_use`: `[[agent, id]]`                                       | `done`          |
 | `set_session_account` | `session`, `login` (a login id, or `null` for the agent's own)                            | `done`          |
 | `sign_in`      | `agent`                                                                                          | `done`          |
+| `sign_in_session` | `session` | `done` |
 | `start_session`| `agent`, `repository`, `directory`, `title`, `base`, `settings`, `text`, `attachments`           | `started`       |
 | `prompt`       | `session`, `text`, `attachments`, `now` (optional, `false` by default)                           | `done`          |
 | `remove_queued` | `session`, `queued`                                                                            | `done`          |
@@ -227,6 +228,13 @@ request with exactly one `response` carrying the same `id`.
 | `permalink`    | `directory`, `path`, `line` (optional), `end_line` (optional)                                    | `address`       |
 
 `agent` is an agent's id: `claude-code`, `codex` or `grok`.
+
+`files` lists ignored folders without walking them. Its optional `expanded`
+array names repository-relative ignored folders whose immediate files and
+subfolders are included, all marked ignored. It defaults to an empty array.
+These contents do not consume the base listing's `limit`. Clients list again
+on expansion, including reopening a folder, and when notified of changes;
+reopening also refreshes folders excluded by the file watcher.
 
 - **`discover`:** starts the agent briefly and returns what it lets the reader
   change (models, modes, effort) and the commands it offers behind a slash.
@@ -671,7 +679,7 @@ embedded context, and anything else as a link to the stored file.
 | `failed`     | `message`                                                 |
 | `discovery`  | `settings`, `commands`                                    |
 | `skills`     | `skills` (`[{name, description}]`), `names` (`[string]`)  |
-| `files`      | `paths`: repository-relative, tracked or not ignored, `folders` (optional): untracked folders, which may hold no file yet, `ignored` (optional): which of `paths` and `folders` git ignores, listed so a tree can dim them |
+| `files`      | `paths`: repository-relative, tracked or not ignored plus the immediate files in expanded ignored folders, `folders` (optional): untracked folders and immediate subfolders of expanded ignored folders, which may hold no file yet, `ignored` (optional): which of `paths` and `folders` git ignores, listed so a tree can dim them |
 | `branches`   | `names`: local branches, the current one first, then remote ones such as `origin/main`; read from git at each request |
 | `stashes`    | `stashes`: `[{index, message, when}]`, newest first |
 | `log`        | `commits`: `[{id, refs, summary, lanes}]`, newest first |
@@ -782,6 +790,22 @@ base, title, closed, updated, last_seq, running, login}`. `updated` is milliseco
 whether its agent is running now, and `login` is the id of the login the
 session runs as, `null` for the agent's own.
 
+### Signing in again during a session
+
+`sign_in_session { session }` runs the agent's existing login flow on the server
+that owns the session, using that session's account folder rather than the
+account selected for new work. It answers `done` or `failed`.
+
+`{"SignedOut": {"reason", "account"}}` ends a turn that failed with ACP `LOGIN_REQUIRED`
+(`-32000`) or an authentication failure. `account` names the session's account
+on its server, or is null for the default account. It replaces `Finished` for that turn;
+clients show a sign-in notice and action, not an assistant message. The server
+stops the expired agent and drops queued prompts without sending them.
+`"SignedIn"` clears the notice after a successful `sign_in_session`; login
+failure sends `SignedOut` with its reason instead. Both events are numbered,
+persisted, and replayed like other session events. The next prompt uses the
+same session and its conversation history with refreshed credentials.
+
 ### Event types
 
 Events use serde's default form, one key naming the type.
@@ -795,12 +819,14 @@ Events use serde's default form, one key naming the type.
 | `{"Thought": "text"}`         | More of the agent's reasoning. Append it.                                                                 |
 | `{"Tool": Tool}`              | A tool the agent is using. Later events with the same `id` update it.                                     |
 | `{"Background": {id, label, running}}` | A command or task went on running beyond its call (`running` true), or ended (false). `id` is the handle the agent knows it by; for a command left running by a turn it is the `id` of its `Tool`. The agent is still at work while any runs, though the turn is over. |
-| `{"Halted": null}`            | The turn was stopped or failed: nothing the agent had running goes on. A `Finished` follows.              |
+| `{"Halted": null}`            | The turn was stopped or failed: nothing the agent had running goes on. A `Finished` or `SignedOut` follows.              |
 | `{"Plan": [PlanStep]}`        | The agent's plan, whole. Replaces the earlier one.                                                        |
 | `{"Ask": Permission}`         | The agent waits for an answer: send `choose` with the `ticket` and the `id` of a choice.                  |
 | `{"Inquire": Inquiry}`      | The agent waits for answers to a form of questions: send `answer` with the `ticket` and a reply for each question. |
 | `{"Answered": [[question, answer]]}` | A client answered a form of questions. `answer` is null for a question that was skipped. |
 | `{"Finished": null}`          | The turn ended. A string instead of null means it failed with that reason.                                |
+| `{"SignedOut": {"reason", "account"}}` | The turn ended because the session account needs signing in again. Send `sign_in_session`; do not append the reason as an assistant reply. |
+| `"SignedIn"` | The session account was signed in again. Clear its sign-in notice. |
 | `{"Failed": "reason"}`        | The agent could not be started or stopped. The next `prompt` starts it again.                             |
 | `{"Titled": "text"}`          | The agent named the session, or named it again. The server keeps it as the session's `title`.            |
 | `{"Hooks": [Hook]}`           | The hooks the session's Codex holds back until the reader trusts them, all of them as they stand now. Replaces the earlier list; empty when none is held back. Told when a Codex session starts and again when a file the hooks are read from changes. Trust them with `trust_hooks`. |

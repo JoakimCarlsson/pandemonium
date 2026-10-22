@@ -132,12 +132,15 @@ pub enum Request {
         /// The project's folder on the server's machine.
         directory: String,
     },
-    /// The files of a folder that are tracked or not ignored.
+    /// The files of a folder, including ignored entries and the immediate contents of expanded ignored folders.
     Files {
         /// The folder.
         directory: String,
-        /// The most paths to return.
+        /// The most base paths; expanded ignored folders are listed separately.
         limit: usize,
+        /// Repository-relative ignored folders whose immediate entries should also be listed.
+        #[serde(default)]
+        expanded: Vec<String>,
     },
     /// The local branches of the repository a folder is in.
     Branches {
@@ -167,6 +170,11 @@ pub enum Request {
     SignIn {
         /// The agent, by its id.
         agent: String,
+    },
+    /// Signs in again as the account of an existing session, on its server.
+    SignInSession {
+        /// The session's number.
+        session: u64,
     },
     /// Starts a session: makes its worktree when asked, starts its agent and hands it the first prompt.
     StartSession {

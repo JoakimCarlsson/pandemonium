@@ -129,6 +129,9 @@ pub const STOP: FocusId = FocusId(322);
 /// Stops the turn the agent is on and hands it the prompt in its place.
 pub const SEND_NOW: FocusId = FocusId(327);
 
+/// Signs in again as the open session's account.
+pub const SESSION_SIGN_IN: FocusId = FocusId(331);
+
 /// The first of the buttons handing a queued prompt to the agent at once; the rest follow it.
 pub const HURRY_BASE: u64 = 4900;
 
@@ -974,6 +977,8 @@ pub enum Outgoing {
         host: Option<String>,
         /// The folder.
         directory: String,
+        /// Ignored folders currently unfolded in the tree.
+        expanded: Vec<String>,
     },
     /// Lists the branches of the repository `directory` on `host`, for the project at `project`.
     Branches {
@@ -1013,6 +1018,11 @@ pub enum Outgoing {
     SignIn {
         /// The agent, by position.
         agent: usize,
+    },
+    /// Signs in again as the account of the open session.
+    SignInSession {
+        /// The session, by position.
+        session: usize,
     },
     /// Hands the agent of a session the words as its next turn, or queues them while it is on one.
     Prompt {
@@ -2025,6 +2035,11 @@ impl WorkspaceState {
             CLOSE_PLAN => self.plan_open = false,
             REVISE => self.reject(),
             OPEN_DIFF => self.tab = Tab::Diff,
+            SESSION_SIGN_IN => {
+                if let Page::Session(session) = self.page {
+                    self.outbox.push(Outgoing::SignInSession { session });
+                }
+            }
             SEND => self.send(false),
             SEND_NOW => self.send(true),
             STOP => self.stop(),
@@ -2699,6 +2714,9 @@ impl WorkspaceState {
                 let Some(session) = self.sessions.get_mut(index) else {
                     return;
                 };
+                if session.signed_out.is_some() {
+                    return;
+                }
                 if session.status == Status::Working {
                     self.queue(index, text, now);
                     return;
@@ -2990,7 +3008,7 @@ impl WorkspaceState {
         self.request_resolver(index);
         self.tab = Tab::Diff;
         if let Some(path) = self
-            .open()
+            .review_session()
             .and_then(|session| session.changes.get(index))
             .map(|change| change.path.clone())
         {
@@ -3029,7 +3047,7 @@ impl WorkspaceState {
     /// Folds the file at `index` of the diff, or unfolds it.
     fn fold_diff(&mut self, index: usize) {
         if let Some(path) = self
-            .open()
+            .review_session()
             .and_then(|session| session.changes.get(index))
             .map(|change| change.path.clone())
         {
@@ -3045,7 +3063,11 @@ impl WorkspaceState {
                 path: path.clone(),
                 folder: true,
             });
+            let ignored = self.tree_ignored.contains(&path);
             toggle(&mut self.open_tree, path);
+            if ignored {
+                self.reread_files();
+            }
         }
     }
 
@@ -3061,10 +3083,10 @@ impl WorkspaceState {
         self
     }
 
-    /// Commits the staged changes of the open session under the message typed, or, with none staged, the changes of its tracked files, and pushes afterwards when `push` is set.
+    /// Commits the staged changes of the review folder under the message typed, or, with none staged, the changes of its tracked files, and pushes afterwards when `push` is set.
     pub(crate) fn commit_with(&mut self, push: bool, amend: bool) {
         let message = self.message.text().trim().to_owned();
-        let Page::Session(index) = self.page else {
+        let Some(index) = self.review_index() else {
             return;
         };
         let Some(session) = self.sessions.get_mut(index) else {
@@ -3223,5 +3245,59 @@ impl WorkspaceState {
 fn toggle(set: &mut std::collections::HashSet<String>, path: String) {
     if !set.remove(&path) {
         set.insert(path);
+    }
+}
+
+/// Regression coverage for source control in project folders and session worktrees.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::git_controls::Pick;
+    use crate::panes::{Item, Side};
+
+    /// Opening, folding, picking, staging and committing use the folder being reviewed on every page.
+    #[test]
+    fn review_actions_without_an_open_session() {
+        for page in [Page::Project(0), Page::New(0), Page::Session(0)] {
+            let mut state = WorkspaceState::sample();
+            let changes = state.sessions[0].changes.clone();
+            state.page = page;
+            state.sync_context();
+            let index = state.review_index().unwrap();
+            state.sessions[index].changes = changes;
+            state.sessions[index].changes[1].untracked = true;
+            state = state
+                .pane_dragged(Item::Diff, Some((0, Side::Right)), (0.0, 0.0))
+                .pane_dropped()
+                .after(TAB_CHAT);
+            for row in [0, 1] {
+                let path = state.sessions[index].changes[row].path.clone();
+                state.closed_diffs.insert(path.clone());
+                state = state.after(FocusId(FILE_BASE + row as u64));
+                assert_eq!(state.file, Some(row));
+                assert_eq!(state.current_item(), Item::Diff);
+                let panes = state.panes();
+                let group = panes.layout.groups()[panes.focused];
+                assert_eq!(group.items[group.active], Item::Diff);
+                assert!(!state.closed_diffs.contains(&path));
+                state = state.after(FocusId(DIFF_FOLD_BASE + row as u64));
+                assert!(state.closed_diffs.contains(&path));
+            }
+            state.tab = Tab::Chat;
+            state = state.change_picked(0, Pick::Toggle);
+            state = state.change_picked(1, Pick::Range);
+            assert_eq!(state.tab, Tab::Chat);
+            assert!(state.git.marked.contains(&0));
+            assert!(state.git.marked.contains(&1));
+            state.set_staged(&[0, 1], true);
+            state.take_outbox();
+            state.message = Field::new("Review folder changes");
+            state = state.after(COMMIT);
+            assert!(state.take_outbox().iter().any(|outgoing| matches!(
+                outgoing,
+                Outgoing::Commit { session, message, .. }
+                    if *session == index && message == "Review folder changes"
+            )));
+        }
     }
 }
