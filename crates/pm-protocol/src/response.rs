@@ -36,6 +36,9 @@ pub struct SessionInfo {
     /// The id of the login it runs as, or nothing for the agent's own.
     #[serde(default)]
     pub login: Option<String>,
+    /// The submodule its agent works in, from the root of the project, or nothing for the project itself.
+    #[serde(default)]
+    pub submodule: Option<String>,
 }
 
 /// What the server knows about one shell.
@@ -87,6 +90,16 @@ pub enum Response {
         /// Their names, the current one first.
         names: Vec<String>,
     },
+    /// The submodules of a repository.
+    Submodules {
+        /// Where each is, nested ones included, from the root of the repository.
+        paths: Vec<String>,
+    },
+    /// What the checked out submodules of a repository have checked out.
+    SubmoduleHeads {
+        /// Each submodule's path from the root and its branch, or `@` and the commit on a detached head.
+        heads: Vec<(String, String)>,
+    },
     /// The history of a repository.
     Log {
         /// The commits, newest first.
@@ -133,6 +146,9 @@ pub enum Response {
         /// The abbreviated commit its worktree has checked out on a detached head.
         #[serde(default)]
         head: Option<String>,
+        /// The submodules its worktree could not check out, each as its path and why; the session started without them.
+        #[serde(default)]
+        skipped: Vec<(String, String)>,
     },
     /// The projects the reader has added.
     Projects {

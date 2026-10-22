@@ -315,7 +315,10 @@ impl WorkspaceState {
         if choosing == Choosing::Branch
             && let Some(session) = self.review_index()
         {
-            self.outbox.push(Outgoing::SessionBranches { session });
+            self.outbox.push(Outgoing::SessionBranches {
+                session,
+                submodule: None,
+            });
         }
         let filter = Field::new(if choosing == Choosing::Help { "?" } else { "" });
         let choices = self.choices_of(choosing);
@@ -402,7 +405,11 @@ impl WorkspaceState {
                 if let Some(session) = self.review_index() {
                     self.git.trouble = None;
                     self.git.busy = Some("Switching branch…");
-                    self.outbox.push(Outgoing::Checkout { session, branch });
+                    self.outbox.push(Outgoing::Checkout {
+                        session,
+                        branch,
+                        submodule: None,
+                    });
                 }
                 self
             }
@@ -410,7 +417,11 @@ impl WorkspaceState {
                 if let Some(session) = self.review_index() {
                     self.git.trouble = None;
                     self.git.busy = Some("Making branch…");
-                    self.outbox.push(Outgoing::CreateBranch { session, name });
+                    self.outbox.push(Outgoing::CreateBranch {
+                        session,
+                        name,
+                        submodule: None,
+                    });
                 }
                 self
             }

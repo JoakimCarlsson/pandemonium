@@ -30,6 +30,15 @@ pub const BRANCH_PICK_BASE: u64 = 8300;
 /// How many branches the list shows at once.
 pub const BRANCH_ROWS: usize = 12;
 
+/// The first of the rows of the list of repositories that pick the one the panel works on, numbered as [`WorkspaceState::repositories`] lists them; the rest follow it.
+pub const REPOSITORY_BASE: u64 = 8320;
+
+/// The first of the buttons on the rows of the list of repositories that open each one's branches; the rest follow it.
+pub const REPOSITORY_BRANCH_BASE: u64 = 8400;
+
+/// How many repositories the list of repositories shows at most: the folder's own and its submodules.
+pub const REPOSITORY_ROWS: usize = 40;
+
 /// The scrolling body of the file being read.
 pub const VIEWER_SCROLL: FocusId = FocusId(7032);
 
@@ -162,8 +171,12 @@ pub struct GitControls {
     pub graph_height: f32,
     /// Whether the list of branches is open.
     pub branch_menu: bool,
-    /// The branches of the open session's repository, the one checked out first.
+    /// The branches of the repository the list shows, the one checked out first.
     pub branches: Vec<String>,
+    /// The submodule of the open session's folder the panel works on, from the folder: its changes, commits, branches and remote; nothing for the folder's own repository.
+    pub repository: Option<String>,
+    /// What each checked out submodule of the open session's folder has checked out: its path and its branch, or `@` and the commit.
+    pub submodule_heads: Vec<(String, String)>,
     /// What branches are searched for and a new one is named by.
     pub filter: Field,
     /// The files open in the window, one tab each, in the order the tabs are in.
@@ -212,6 +225,8 @@ impl Default for GitControls {
             graph_height: crate::graph::HEIGHT,
             branch_menu: false,
             branches: Vec::new(),
+            repository: None,
+            submodule_heads: Vec::new(),
             filter: Field::default(),
             viewers: Vec::new(),
             shown: None,
@@ -264,7 +279,7 @@ impl WorkspaceState {
     /// The state with the menu on changed files open at `at` over the folder at `position` of the tree, acting on every file in it.
     pub fn with_folder_change_menu(mut self, position: usize, at: (f32, f32)) -> Self {
         let files = self.review_session().and_then(|session| {
-            crate::change_list::folder_table(&session.changes)
+            crate::change_list::folder_table(&session.changes, self.git.repository.as_deref())
                 .into_iter()
                 .nth(position)
                 .map(|folder| folder.files)
@@ -285,6 +300,8 @@ impl WorkspaceState {
             || id == BRANCH_FILTER
             || id == BRANCH_CREATE
             || (BRANCH_PICK_BASE..BRANCH_PICK_BASE + BRANCH_ROWS as u64).contains(&id.0)
+            || (REPOSITORY_BRANCH_BASE..REPOSITORY_BRANCH_BASE + REPOSITORY_ROWS as u64)
+                .contains(&id.0)
     }
 
     /// Whether a menu of the panel, a question or the list of branches is open.
@@ -340,7 +357,11 @@ impl WorkspaceState {
     /// The files in the order the list shows them, group by group.
     fn listed(&self) -> Vec<usize> {
         self.review_session().map_or_else(Vec::new, |session| {
-            crate::change_list::order_shown(&session.changes, &self.closed_folders)
+            crate::change_list::order_shown(
+                &session.changes,
+                &self.closed_folders,
+                self.git.repository.as_deref(),
+            )
         })
     }
 
@@ -701,7 +722,11 @@ impl WorkspaceState {
                     _ => Group::Untracked,
                 };
                 let members = self.review_session().map_or_else(Vec::new, |session| {
-                    crate::change_list::members(&session.changes, group)
+                    crate::change_list::members(
+                        &session.changes,
+                        group,
+                        self.git.repository.as_deref(),
+                    )
                 });
                 self.stage_changes(&members);
             }
@@ -728,7 +753,7 @@ impl WorkspaceState {
         true
     }
 
-    /// Opens or closes the list of branches, asking the server for them when it opens.
+    /// Opens or closes the list of branches of the repository the panel works on, asking the server for them when it opens.
     fn toggle_branch_menu(&mut self) {
         if self.git.branch_menu {
             self.git.branch_menu = false;
@@ -740,8 +765,78 @@ impl WorkspaceState {
         self.close_other_menus();
         self.git.branch_menu = true;
         self.git.filter = Field::default();
-        self.outbox
-            .push(Outgoing::SessionBranches { session: open });
+        self.git.branches = Vec::new();
+        self.outbox.push(Outgoing::SessionBranches {
+            session: open,
+            submodule: self.git.repository.clone(),
+        });
+    }
+
+    /// The repositories of the open session's folder the panel can work on: its own, then each checked out submodule, nested ones included, as the server last said.
+    pub fn repositories(&self) -> Vec<Option<String>> {
+        std::iter::once(None)
+            .chain(
+                self.git
+                    .submodule_heads
+                    .iter()
+                    .map(|(path, _)| Some(path.clone())),
+            )
+            .take(REPOSITORY_ROWS)
+            .collect()
+    }
+
+    /// Makes the repository at `row` of [`Self::repositories`] the one the panel works on, reading its history again, and opens its branches when `branches` is set.
+    fn pick_repository(&mut self, row: usize, branches: bool) {
+        let Some(picked) = self.repositories().into_iter().nth(row) else {
+            return;
+        };
+        let Some(open) = self.review_index() else {
+            return;
+        };
+        if self.git.repository != picked {
+            self.git.repository = picked;
+            self.git.marked = Vec::new();
+            self.git.selected = None;
+            self.git.history = Vec::new();
+            self.outbox.push(Outgoing::Refresh { session: open });
+        }
+        self.git.branch_menu = false;
+        if branches {
+            self.toggle_branch_menu();
+        }
+    }
+
+    /// The submodule the panel works on in the folder of the session at `session`, or nothing for the folder's own repository or a session the panel does not show.
+    pub fn repository_of(&self, session: usize) -> Option<String> {
+        (self.review_index() == Some(session))
+            .then(|| self.git.repository.clone())
+            .flatten()
+    }
+
+    /// What the repository at `repository` of the open session's folder has checked out: the session's branch for its own, or the submodule's as the server last said.
+    pub fn head_of(&self, repository: Option<&str>) -> Option<String> {
+        match repository {
+            Some(path) => self
+                .git
+                .submodule_heads
+                .iter()
+                .find(|(held, _)| held == path)
+                .map(|(_, head)| head.clone()),
+            None => self.review_session().map(|session| session.branch.clone()),
+        }
+    }
+
+    /// The state after the server said what the submodules of the folder of the session at `session` have checked out; a submodule picked that is no longer there gives the panel back to the folder's own repository.
+    pub fn with_submodule_heads(mut self, session: usize, heads: Vec<(String, String)>) -> Self {
+        if self.review_index() == Some(session) {
+            if let Some(picked) = &self.git.repository
+                && !heads.iter().any(|(path, _)| path == picked)
+            {
+                self.git.repository = None;
+            }
+            self.git.submodule_heads = heads;
+        }
+        self
     }
 
     /// Checks out the branch typed, or makes it when `create` is set or none is called that.
@@ -764,6 +859,7 @@ impl WorkspaceState {
                 self.outbox.push(Outgoing::Checkout {
                     session: open,
                     branch,
+                    submodule: self.git.repository.clone(),
                 });
                 return;
             }
@@ -775,12 +871,24 @@ impl WorkspaceState {
             self.outbox.push(Outgoing::CreateBranch {
                 session: open,
                 name: typed,
+                submodule: self.git.repository.clone(),
             });
         }
     }
 
-    /// Checks out the branch of the row `action` if it is one, and says whether it was.
+    /// Checks out the branch of the row `action` if it is one, or picks the repository of a row of the list of repositories, opening its branches when `action` is the button on it, and says whether it was any.
     fn press_branch_row(&mut self, action: FocusId) -> bool {
+        for (base, branches) in [(REPOSITORY_BASE, false), (REPOSITORY_BRANCH_BASE, true)] {
+            if let Some(row) = action
+                .0
+                .checked_sub(base)
+                .map(|row| row as usize)
+                .filter(|row| *row < REPOSITORY_ROWS)
+            {
+                self.pick_repository(row, branches);
+                return true;
+            }
+        }
         let Some(row) = action
             .0
             .checked_sub(BRANCH_PICK_BASE)
@@ -800,6 +908,7 @@ impl WorkspaceState {
             self.outbox.push(Outgoing::Checkout {
                 session: open,
                 branch,
+                submodule: self.git.repository.clone(),
             });
         }
         true

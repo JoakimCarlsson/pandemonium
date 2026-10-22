@@ -16,7 +16,7 @@ use crate::sample::{Change, Session};
 use crate::size::Size;
 use crate::state::{FILE_BASE, FOLDER_BASE, FOLDER_STAGE_BASE, STAGE_BASE, WorkspaceState};
 use crate::tile::Tile;
-use crate::tree::{Entry, Folder, Layout, build, folders};
+use crate::tree::{Entry, Folder, Layout, build_stopping, folders};
 use crate::{Button, Checkbox, Tally};
 
 /// Where a changed file is listed.
@@ -64,12 +64,12 @@ impl Group {
     }
 }
 
-/// The positions in `changes` of the files of `group`, in the order they came in.
-pub fn members(changes: &[Change], group: Group) -> Vec<usize> {
+/// The positions in `changes` of the files of `group` that are in `repository`, a submodule or nothing for the folder's own repository, in the order they came in.
+pub fn members(changes: &[Change], group: Group, repository: Option<&str>) -> Vec<usize> {
     changes
         .iter()
         .enumerate()
-        .filter(|(_, change)| group.holds(change))
+        .filter(|(_, change)| group.holds(change) && change.submodule.as_deref() == repository)
         .map(|(index, _)| index)
         .collect()
 }
@@ -91,9 +91,9 @@ fn staged_box(change: &Change, id: FocusId) -> Node {
         .build()
 }
 
-/// The heading above the files of `group`, and the box that stages them all: none of them, all of them or some.
-fn heading(changes: &[Change], group: Group) -> Node {
-    let files = members(changes, group);
+/// The heading above the files of `group` in `repository`, and the box that stages them all: none of them, all of them or some.
+fn heading(changes: &[Change], group: Group, repository: Option<&str>) -> Node {
+    let files = members(changes, group, repository);
     let staged = files
         .iter()
         .filter(|&&index| changes[index].fully_staged())
@@ -141,27 +141,55 @@ pub struct GroupFolder {
     pub files: Vec<usize>,
 }
 
-/// The tree of the files of `group`: folders that hold only a folder are joined into one row.
-fn tree(changes: &[Change], members: &[usize]) -> Vec<Entry> {
-    let paths: Vec<&str> = members
+/// `path` as it is from `repository`, a submodule or nothing for the folder's own repository.
+fn relative<'a>(path: &'a str, repository: Option<&str>) -> &'a str {
+    repository
+        .and_then(|repository| path.strip_prefix(repository))
+        .and_then(|rest| rest.strip_prefix('/'))
+        .unwrap_or(path)
+}
+
+/// Where `change` is listed in the tree of `repository`: at its path from there, or, for a submodule moved to another commit, as a row inside the submodule's own folder.
+fn tree_path(change: &Change, repository: Option<&str>) -> String {
+    let path = relative(&change.path, repository);
+    match change.moved_label() {
+        Some(label) => format!("{path}/{label}"),
+        None => path.to_owned(),
+    }
+}
+
+/// The folders of `changes` that are submodules moved to another commit, from `repository`.
+fn submodule_folders<'a>(changes: &'a [Change], repository: Option<&str>) -> Vec<&'a str> {
+    changes
         .iter()
-        .map(|&index| changes[index].path.as_str())
+        .filter(|change| change.moved.is_some())
+        .map(|change| relative(&change.path, repository))
+        .collect()
+}
+
+/// The tree of the files of `group` in `repository`: folders that hold only a folder are joined into one row, except that a submodule's row always ends at it.
+fn tree(changes: &[Change], members: &[usize], repository: Option<&str>) -> Vec<Entry> {
+    let paths: Vec<String> = members
+        .iter()
+        .map(|&index| tree_path(&changes[index], repository))
         .collect();
-    build(
+    let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+    build_stopping(
         &paths,
         Layout {
             compact: true,
             sorted: false,
         },
+        &submodule_folders(changes, repository),
     )
 }
 
-/// Every folder of every group's tree, group by group and from the top down, folded or not: the place of a folder in this list is what its row answers to.
-pub fn folder_table(changes: &[Change]) -> Vec<GroupFolder> {
+/// Every folder of every group's tree of `repository`, group by group and from the top down, folded or not: the place of a folder in this list is what its row answers to.
+pub fn folder_table(changes: &[Change], repository: Option<&str>) -> Vec<GroupFolder> {
     let mut table = Vec::new();
     for group in Group::ALL {
-        let files = members(changes, group);
-        for folder in folders(&tree(changes, &files)) {
+        let files = members(changes, group, repository);
+        for folder in folders(&tree(changes, &files, repository)) {
             table.push(GroupFolder {
                 group,
                 path: folder.path.clone(),
@@ -177,8 +205,12 @@ pub fn fold_key(group: Group, path: &str) -> String {
     format!("{group:?}:{path}")
 }
 
-/// The positions in `changes` of the files the list shows, top to bottom, leaving out those in folders folded away in `closed`.
-pub fn order_shown(changes: &[Change], closed: &HashSet<String>) -> Vec<usize> {
+/// The positions in `changes` of the files of `repository` the list shows, top to bottom, leaving out those in folders folded away in `closed`.
+pub fn order_shown(
+    changes: &[Change],
+    closed: &HashSet<String>,
+    repository: Option<&str>,
+) -> Vec<usize> {
     fn collect(
         entries: &[Entry],
         group: Group,
@@ -198,10 +230,27 @@ pub fn order_shown(changes: &[Change], closed: &HashSet<String>) -> Vec<usize> {
     }
     let mut order = Vec::new();
     for group in Group::ALL {
-        let files = members(changes, group);
-        collect(&tree(changes, &files), group, &files, closed, &mut order);
+        let files = members(changes, group, repository);
+        collect(
+            &tree(changes, &files, repository),
+            group,
+            &files,
+            closed,
+            &mut order,
+        );
     }
     order
+}
+
+/// How many commits a submodule moved by, and which way.
+fn commit_count(moved: &pm_git::Moved) -> String {
+    let count = moved.commits.len();
+    let noun = if count == 1 { "commit" } else { "commits" };
+    if moved.back {
+        format!("{count} {noun} back")
+    } else {
+        format!("{count} {noun}")
+    }
 }
 
 /// The row of the file at `index`, `depth` levels down: how it changed, a button that opens it and the box that stages it.
@@ -214,6 +263,10 @@ fn file_row(
 ) -> Node {
     let letter = change.mark();
     let tone = mark_color(letter);
+    let icon = match &change.moved {
+        Some(_) => glyph(IconName::Git, 3.5, Role::Muted),
+        None => file_icon(name, 3.5),
+    };
     Tile::new(FocusId(FILE_BASE + index as u64))
         .selected(state.git.marked.contains(&index))
         .height(6.5)
@@ -226,11 +279,16 @@ fn file_row(
             flex_none(),
             overflow_hidden(),
         ])
-        .child(file_icon(name, 3.5))
+        .child(icon)
         .child(
             node()
                 .styles([flex_1(), min_w_px(0), overflow_hidden()])
                 .child(line(name, 13, 1.4, Role::Text).styles([truncate()])),
+        )
+        .children(
+            change.moved.as_ref().map(|moved| {
+                line(commit_count(moved), 11, 1.4, Role::Subtle).styles([flex_none()])
+            }),
         )
         .child(text(letter).styles([
             text_px(11),
@@ -239,14 +297,14 @@ fn file_row(
             text_color(tone),
             flex_none(),
         ]))
-        .child(
+        .children(change.moved.is_none().then(|| {
             Button::icon(
                 IconName::ArrowRight,
                 FocusId(OPEN_ARROW_BASE + index as u64),
             )
             .size(Size::Sm)
-            .build(),
-        )
+            .build()
+        }))
         .children(
             (!change.conflicted).then(|| staged_box(change, FocusId(STAGE_BASE + index as u64))),
         )
@@ -291,6 +349,11 @@ fn folder_row(
             )
             .mixed(partly && staged < inside.len())
             .build(),
+        )
+        .children(
+            submodule_folders(changes, None)
+                .contains(&folder.path.as_str())
+                .then(|| glyph(IconName::Git, 3.5, Role::Muted)),
         )
         .child(
             node()
@@ -342,20 +405,21 @@ fn rows_of(
     rows
 }
 
-/// The rows of the changes of `session`: each group that has files, under its heading, as a tree of folders.
+/// The rows of the changes of `session` in the repository the panel works on: each group that has files, under its heading, as a tree of folders.
 pub fn rows(state: &WorkspaceState, session: &Session) -> Vec<Node> {
+    let repository = state.git.repository.as_deref();
     let mut rows = Vec::new();
     let mut counter = 0;
     for group in Group::ALL {
-        let files = members(&session.changes, group);
+        let files = members(&session.changes, group, repository);
         if files.is_empty() {
             continue;
         }
-        rows.push(heading(&session.changes, group));
+        rows.push(heading(&session.changes, group, repository));
         rows.extend(rows_of(
             state,
             &session.changes,
-            &tree(&session.changes, &files),
+            &tree(&session.changes, &files, repository),
             group,
             &files,
             0,

@@ -210,7 +210,7 @@ impl WorkspaceState {
         held.closed = true;
         let project = held.project;
         if self.page == Page::Session(position) {
-            self.page = Page::New(project);
+            self.start_in(project, None);
             self.sync_context();
         }
     }
@@ -240,7 +240,7 @@ impl WorkspaceState {
             return self;
         };
         if row == PROJECT_MENU_NEW {
-            self.page = Page::New(open.project);
+            self.start_in(open.project, None);
             self.sync_context();
             self
         } else {

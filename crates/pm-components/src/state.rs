@@ -163,6 +163,9 @@ pub const PROJECT_BASE: u64 = 1000;
 /// The first of the rows starting work in a project; the rest follow it.
 pub const NEW_IN_BASE: u64 = 1100;
 
+/// The first of the rows starting work in a submodule of a project, numbered across the projects as [`crate::sidebar::submodule_rows`] lists them; the rest follow it.
+pub const NEW_IN_SUBMODULE_BASE: u64 = 1300;
+
 /// The first of the rows opening a session; the rest follow it.
 pub const SESSION_BASE: u64 = 2000;
 
@@ -980,6 +983,15 @@ pub enum Outgoing {
         /// Ignored folders currently unfolded in the tree.
         expanded: Vec<String>,
     },
+    /// Lists the submodules of the repository `directory` on `host`, for the project at `project`.
+    Submodules {
+        /// The project, by position.
+        project: usize,
+        /// The machine, or nothing for this one.
+        host: Option<String>,
+        /// The folder.
+        directory: String,
+    },
     /// Lists the branches of the repository `directory` on `host`, for the project at `project`.
     Branches {
         /// The project, by position.
@@ -1138,6 +1150,8 @@ pub enum Outgoing {
         session: usize,
         /// The branch.
         branch: String,
+        /// The submodule of the folder it is done in, from the folder, or nothing for the folder's own repository.
+        submodule: Option<String>,
     },
     /// Makes a branch in the folder of a session and checks it out.
     CreateBranch {
@@ -1145,9 +1159,18 @@ pub enum Outgoing {
         session: usize,
         /// What the branch is called.
         name: String,
+        /// The submodule of the folder it is done in, from the folder, or nothing for the folder's own repository.
+        submodule: Option<String>,
     },
     /// Lists the branches of the repository the folder of a session is in.
     SessionBranches {
+        /// The session, by position.
+        session: usize,
+        /// The submodule of the folder it is done in, from the folder, or nothing for the folder's own repository.
+        submodule: Option<String>,
+    },
+    /// Lists what each checked out submodule of the folder of a session has checked out.
+    SubmoduleHeads {
         /// The session, by position.
         session: usize,
     },
@@ -1510,6 +1533,8 @@ pub struct WorkspaceState {
     pub history_scroll: f32,
     /// How far the sidebar's list is scrolled, in logical pixels.
     pub sidebar_scroll: f32,
+    /// The submodule of the project the new session page starts work in, or nothing for the project itself.
+    pub new_in: Option<String>,
     /// How wide the sidebar is, in logical pixels.
     pub sidebar_width: f32,
     /// How wide the review panel is, in logical pixels.
@@ -1722,6 +1747,7 @@ impl WorkspaceState {
             history_search: Field::default(),
             history_scroll: 0.0,
             sidebar_scroll: 0.0,
+            new_in: None,
             sidebar_width: crate::sidebar::WIDTH,
             review_width: crate::review::WIDTH,
             plan_width: 0.0,
@@ -1825,6 +1851,7 @@ impl WorkspaceState {
             && !self.projects.iter().any(|held| held.path == project.path)
         {
             self.projects.push(project);
+            self.ask_submodules(self.projects.len() - 1);
         }
         self.sync_context();
         self
@@ -1839,7 +1866,7 @@ impl WorkspaceState {
             .iter()
             .position(|held| Some(&held.path) == path.as_ref())
         {
-            self.page = Page::New(index);
+            self.start_in(index, None);
             self.sync_context();
         }
         self
@@ -2366,6 +2393,12 @@ impl WorkspaceState {
             .any(|session| session.status == Status::Working || session.background_running())
     }
 
+    /// Shows the page that starts work in the project at `project`, in its `submodule` when one is given.
+    pub(crate) fn start_in(&mut self, project: usize, submodule: Option<String>) {
+        self.page = Page::New(project);
+        self.new_in = submodule;
+    }
+
     /// The state after one of the rows or chips numbered from a base was pressed.
     fn after_numbered(&mut self, id: u64) {
         if crate::diff::gutter_of(FocusId(id)).is_some() {
@@ -2398,7 +2431,13 @@ impl WorkspaceState {
             self.page = Page::Project(index);
             self.overview_scroll = 0.0;
         } else if let Some(index) = position(NEW_IN_BASE, self.projects.len()) {
-            self.page = Page::New(index);
+            self.start_in(index, None);
+        } else if let Some((project, submodule)) = (NEW_IN_SUBMODULE_BASE..SESSION_BASE)
+            .contains(&id)
+            .then(|| crate::sidebar::submodule_rows(self))
+            .and_then(|rows| rows.into_iter().nth((id - NEW_IN_SUBMODULE_BASE) as usize))
+        {
+            self.start_in(project, Some(submodule));
         } else if let Some(index) = position(SESSION_BASE, self.sessions.len()) {
             self.sessions[index].closed = false;
             if let Page::Session(before) = self.page
@@ -2739,6 +2778,8 @@ impl WorkspaceState {
                     .to_string_lossy()
                     .into_owned();
                 session.base = self.base_for_new_work();
+                session.submodule = self.new_in.take();
+                session.directory = session.folder_in(&session.directory);
                 session.branch = if session.base.is_some() {
                     String::new()
                 } else {
@@ -3022,7 +3063,7 @@ impl WorkspaceState {
     /// Folds the folder at `position` of the open session's changes, or unfolds it.
     fn fold_change_folder(&mut self, position: usize) {
         let key = self.review_session().and_then(|session| {
-            crate::change_list::folder_table(&session.changes)
+            crate::change_list::folder_table(&session.changes, self.git.repository.as_deref())
                 .get(position)
                 .map(|folder| crate::change_list::fold_key(folder.group, &folder.path))
         });
@@ -3034,7 +3075,7 @@ impl WorkspaceState {
     /// Stages everything under the folder at `position` of the open session's changes, or unstages it when all of it is staged.
     fn stage_change_folder(&mut self, position: usize) {
         let files = self.review_session().and_then(|session| {
-            crate::change_list::folder_table(&session.changes)
+            crate::change_list::folder_table(&session.changes, self.git.repository.as_deref())
                 .into_iter()
                 .nth(position)
                 .map(|folder| folder.files)
@@ -3146,7 +3187,7 @@ impl WorkspaceState {
         head: Option<&str>,
     ) -> Self {
         if let Some(held) = self.sessions.get_mut(session) {
-            held.directory = directory.to_owned();
+            held.directory = held.folder_in(directory);
             if branch.is_some() || head.is_some() {
                 held.branch = Session::checkout_label(branch, head, held.base.as_deref());
             }
@@ -3170,6 +3211,25 @@ impl WorkspaceState {
             self.git.operation = operation;
         }
         self
+    }
+
+    /// The state after the project at `project` was seen to hold the submodules at `paths`.
+    pub fn with_submodules(mut self, project: usize, paths: Vec<String>) -> Self {
+        if let Some(held) = self.projects.get_mut(project) {
+            held.submodules = paths;
+        }
+        self
+    }
+
+    /// Asks the machine of the project at `project` for its submodules.
+    pub(crate) fn ask_submodules(&mut self, project: usize) {
+        if let Some(held) = self.projects.get(project) {
+            self.outbox.push(Outgoing::Submodules {
+                project,
+                host: held.host(),
+                directory: held.directory().to_string_lossy().into_owned(),
+            });
+        }
     }
 
     /// The state after the folder of the session at `session` was seen to have
@@ -3205,6 +3265,8 @@ impl WorkspaceState {
                     change.index = found.index;
                     change.worktree = found.worktree;
                     change.from = found.from.clone();
+                    change.submodule = found.submodule.clone();
+                    change.moved = found.moved.clone();
                     change.viewed = held
                         .changes
                         .iter()

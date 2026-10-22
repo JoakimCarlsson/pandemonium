@@ -35,6 +35,20 @@ pub(crate) struct Meta {
     /// The id of the login its agent runs as, or nothing for the agent's own.
     #[serde(default)]
     pub(crate) login: Option<String>,
+    /// The submodule its agent works in, from the root of `directory`, or nothing for the project itself.
+    #[serde(default)]
+    pub(crate) submodule: Option<String>,
+}
+
+impl Meta {
+    /// The folder its agent works in: `directory`, or the submodule's folder inside it.
+    pub(crate) fn agent_folder(&self) -> PathBuf {
+        let root = PathBuf::from(&self.directory);
+        match &self.submodule {
+            Some(submodule) => root.join(submodule),
+            None => root,
+        }
+    }
 }
 
 /// One line of a session's log: an event and its number.

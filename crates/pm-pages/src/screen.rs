@@ -859,6 +859,14 @@ impl Screen {
         }
     }
 
+    /// The submodule the git panel works on in the folder of the session at `session`, or nothing for the folder's own repository or a session the panel does not show.
+    pub fn repository_of(&self, session: usize) -> Option<String> {
+        match self {
+            Self::Workspace(state) => state.repository_of(session),
+            Self::Onboarding(_) => None,
+        }
+    }
+
     /// Whether the graph is open, and whether it lists every reference.
     pub fn graph_wanted(&self) -> Option<bool> {
         match self {
@@ -1153,6 +1161,22 @@ impl Screen {
     ) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.refreshed(session, changes, commits)),
+            onboarding => onboarding,
+        }
+    }
+
+    /// The screen after the submodules of the folder of the session at `session` were seen to have `heads` checked out.
+    pub fn with_submodule_heads(self, session: usize, heads: Vec<(String, String)>) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_submodule_heads(session, heads)),
+            onboarding => onboarding,
+        }
+    }
+
+    /// The screen after the project at `project` was seen to hold the submodules at `paths`.
+    pub fn with_submodules(self, project: usize, paths: Vec<String>) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_submodules(project, paths)),
             onboarding => onboarding,
         }
     }

@@ -215,8 +215,34 @@ pub(crate) fn blocks_of_diff(diff: &[DiffLine]) -> Vec<Block> {
     blocks
 }
 
+/// The submodule `change` moved to another commit, listed among the excerpts as the commits it moved through: those it gained as added lines, those it went back past as removed ones.
+fn moved_file(change: &Change, moved: &pm_git::Moved) -> ExcerptFile {
+    let kind = if moved.back { Kind::Remove } else { Kind::Add };
+    let header = DiffLine {
+        kind: Kind::Hunk,
+        text: change.moved_label().unwrap_or_default(),
+    };
+    let commits = moved.commits.iter().map(|subject| DiffLine {
+        kind,
+        text: subject.clone(),
+    });
+    let count = moved.commits.len();
+    ExcerptFile {
+        path: change.path.clone(),
+        editable: false,
+        blocks: Vec::new(),
+        closed: false,
+        mark: Some(change.mark()),
+        tally: if moved.back { (0, count) } else { (count, 0) },
+        diff: std::iter::once(header).chain(commits).collect(),
+    }
+}
+
 /// The file the change `change` is of, as it is listed among the excerpts.
 fn changed_file(change: &Change) -> ExcerptFile {
+    if let Some(moved) = &change.moved {
+        return moved_file(change, moved);
+    }
     let blocks = blocks_of_diff(&change.diff);
     let gone = change.fate() == Fate::Deleted;
     ExcerptFile {

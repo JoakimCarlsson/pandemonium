@@ -1,4 +1,4 @@
-//! The list of branches under the branch of the open session: to check one out, or to make a new one.
+//! The list of branches under the branch of the repository the panel works on: to check one out, or to make a new one.
 
 use pm_input::FocusId;
 use pm_style::{
@@ -20,9 +20,11 @@ const TOP: f32 = 88.0;
 /// How wide the list is, in logical pixels.
 const WIDTH: f32 = 340.0;
 
-/// The list of branches of the open session's repository, hanging under the row it belongs to.
-pub fn branch_menu(state: &WorkspaceState, current: &str) -> Node {
+/// The list of branches of the repository the panel works on, hanging under the row it belongs to.
+pub fn branch_menu(state: &WorkspaceState) -> Node {
     let git = &state.git;
+    let current = state.head_of(git.repository.as_deref()).unwrap_or_default();
+    let current = current.as_str();
     let typed = git.filter.text().trim();
     let matching = git.matching();
     let mut menu = Popover::new().width(WIDTH).child(

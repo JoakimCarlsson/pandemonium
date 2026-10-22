@@ -125,6 +125,10 @@ pub struct Change {
     pub worktree: Option<char>,
     /// Where it was before it was renamed, when it was.
     pub from: Option<String>,
+    /// The submodule it is in, from the root of the project, or nothing when it is in the project itself.
+    pub submodule: Option<String>,
+    /// What a submodule checked out at another commit than the one recorded moved through, when the change is that.
+    pub moved: Option<pm_git::Moved>,
 }
 
 /// What a file's status comes to once its letter is read: how loudly it asks to be noticed, and the letter it is written with.
@@ -172,7 +176,19 @@ impl Change {
             index: None,
             worktree: Some('M'),
             from: None,
+            submodule: None,
+            moved: None,
         }
+    }
+
+    /// What a submodule moved to another commit is called in the lists: the commit recorded and the one checked out.
+    pub fn moved_label(&self) -> Option<String> {
+        let moved = self.moved.as_ref()?;
+        Some(format!(
+            "{} → {}",
+            moved.from.as_deref().unwrap_or("new"),
+            moved.to
+        ))
     }
 
     /// Whether all of it is in the index.
@@ -447,6 +463,8 @@ pub struct Session {
     pub tracking: pm_git::Tracking,
     /// The folder the agent works in.
     pub directory: String,
+    /// The submodule of `directory` the agent works in, from its root, or nothing for the project itself.
+    pub submodule: Option<String>,
     /// The branch its worktree was made from, when it has one of its own.
     pub base: Option<String>,
     /// Which agent, by position in the list of agents, runs it.
@@ -518,6 +536,7 @@ impl Session {
             on_branch: !branch.is_empty(),
             tracking: pm_git::Tracking::default(),
             directory: String::new(),
+            submodule: None,
             base: None,
             agent: 0,
             status,
@@ -582,6 +601,14 @@ impl Session {
         session.home = true;
         session.directory = directory.to_owned();
         session
+    }
+
+    /// The folder its agent works in when `root` is the folder of its worktree or project: `root`, or its submodule's folder inside it.
+    pub fn folder_in(&self, root: &str) -> String {
+        match &self.submodule {
+            Some(submodule) => format!("{}/{submodule}", root.trim_end_matches('/')),
+            None => root.to_owned(),
+        }
     }
 
     /// How long ago it last changed, in the short form the lists show.
@@ -674,6 +701,7 @@ pub fn projects() -> Vec<Project> {
         .map(|name| Project {
             name: name.to_owned(),
             path: format!("~/{name}"),
+            submodules: Vec::new(),
         })
         .collect()
 }

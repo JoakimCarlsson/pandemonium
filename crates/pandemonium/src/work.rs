@@ -133,6 +133,10 @@ enum Pending {
     Files(String),
     /// The branches of the project at this position.
     Branches(usize),
+    /// The submodules of the project at this position.
+    Submodules(usize),
+    /// What the submodules of the folder of the session at this position have checked out.
+    SubmoduleHeads(usize),
     /// Who an agent is signed in as, and whether that names the login in use.
     Identity(usize, bool),
     /// The session at this position was started.
@@ -309,6 +313,16 @@ struct Placement {
     repository: String,
     /// What it is called.
     title: String,
+    /// The submodule its agent works in, or nothing for the project itself.
+    submodule: Option<String>,
+}
+
+/// The folder `submodule` is in `directory`, or `directory` itself when there is none.
+fn inside(directory: String, submodule: Option<&str>) -> String {
+    match submodule {
+        Some(submodule) => format!("{}/{submodule}", directory.trim_end_matches('/')),
+        None => directory,
+    }
 }
 
 /// The connection to the server of one machine, and what is waiting for its answers.
@@ -743,13 +757,14 @@ impl Work {
                         &placement.host,
                         Request::StartSession {
                             agent,
+                            directory: placement.repository.clone(),
                             repository: placement.repository,
-                            directory: placement.directory,
                             title: placement.title,
                             base,
                             settings,
                             text,
                             attachments: Self::attachments(&files),
+                            submodule: placement.submodule,
                         },
                         Pending::Start(session),
                     );
@@ -895,7 +910,7 @@ impl Work {
                     tracked,
                     push,
                     amend,
-                } => self.ask_in_folder(
+                } => self.ask_in_repository(
                     model,
                     session,
                     |directory| Request::Commit {
@@ -910,7 +925,7 @@ impl Work {
                     session,
                     action,
                     message,
-                } => self.ask_in_folder(
+                } => self.ask_in_repository(
                     model,
                     session,
                     |directory| Request::Step {
@@ -925,7 +940,7 @@ impl Work {
                     action,
                     index,
                     message,
-                } => self.ask_in_folder(
+                } => self.ask_in_repository(
                     model,
                     session,
                     |directory| Request::Stash {
@@ -936,19 +951,19 @@ impl Work {
                     },
                     Pending::Git(session, "stash"),
                 ),
-                Outgoing::Stashes { session } => self.ask_in_folder(
+                Outgoing::Stashes { session } => self.ask_in_repository(
                     model,
                     session,
                     |directory| Request::Stashes { directory },
                     Pending::Stashes(session),
                 ),
-                Outgoing::CherryPick { session, commit } => self.ask_in_folder(
+                Outgoing::CherryPick { session, commit } => self.ask_in_repository(
                     model,
                     session,
                     |directory| Request::CherryPick { directory, commit },
                     Pending::Git(session, "cherry-pick"),
                 ),
-                Outgoing::Sync { session, operation } => self.ask_in_folder(
+                Outgoing::Sync { session, operation } => self.ask_in_repository(
                     model,
                     session,
                     |directory| Request::Sync {
@@ -957,7 +972,7 @@ impl Work {
                     },
                     Pending::Remote(session),
                 ),
-                Outgoing::Log { session, all } => self.ask_in_folder(
+                Outgoing::Log { session, all } => self.ask_in_repository(
                     model,
                     session,
                     |directory| Request::Log {
@@ -1006,23 +1021,45 @@ impl Work {
                     |directory| Request::Ignore { directory, paths },
                     Pending::Git(session, "add the files to .gitignore"),
                 ),
-                Outgoing::Checkout { session, branch } => self.ask_in_folder(
+                Outgoing::Checkout {
+                    session,
+                    branch,
+                    submodule,
+                } => self.ask_in_folder(
                     model,
                     session,
-                    |directory| Request::Checkout { directory, branch },
+                    |directory| Request::Checkout {
+                        directory: inside(directory, submodule.as_deref()),
+                        branch,
+                    },
                     Pending::Git(session, "switch branch"),
                 ),
-                Outgoing::CreateBranch { session, name } => self.ask_in_folder(
+                Outgoing::CreateBranch {
+                    session,
+                    name,
+                    submodule,
+                } => self.ask_in_folder(
                     model,
                     session,
-                    |directory| Request::CreateBranch { directory, name },
+                    |directory| Request::CreateBranch {
+                        directory: inside(directory, submodule.as_deref()),
+                        name,
+                    },
                     Pending::Git(session, "make the branch"),
                 ),
-                Outgoing::SessionBranches { session } => self.ask_in_folder(
+                Outgoing::SessionBranches { session, submodule } => self.ask_in_folder(
                     model,
                     session,
-                    |directory| Request::Branches { directory },
+                    |directory| Request::Branches {
+                        directory: inside(directory, submodule.as_deref()),
+                    },
                     Pending::SessionBranches(session),
+                ),
+                Outgoing::SubmoduleHeads { session } => self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::SubmoduleHeads { directory },
+                    Pending::SubmoduleHeads(session),
                 ),
                 Outgoing::ReadFile {
                     session,
@@ -1137,6 +1174,15 @@ impl Work {
                     &host,
                     Request::Branches { directory },
                     Pending::Branches(project),
+                ),
+                Outgoing::Submodules {
+                    project,
+                    host,
+                    directory,
+                } => self.ask(
+                    &host,
+                    Request::Submodules { directory },
+                    Pending::Submodules(project),
                 ),
                 Outgoing::Skills {
                     agent,
@@ -1797,6 +1843,13 @@ impl Work {
                     });
                 }
             }
+            Pending::Submodules(project) => {
+                if let Response::Submodules { paths } = response {
+                    model.update(|screen| {
+                        *screen = std::mem::take(screen).with_submodules(project, paths)
+                    });
+                }
+            }
             Pending::Identity(agent, naming) => {
                 if let Response::Identity { default, selected } = response {
                     model.update(|screen| {
@@ -1812,6 +1865,7 @@ impl Work {
                     directory,
                     branch,
                     head,
+                    skipped,
                 } => {
                     self.numbers.insert(session, (host.clone(), number));
                     self.positions.insert((host.clone(), number), session);
@@ -1826,6 +1880,12 @@ impl Work {
                             branch.as_deref(),
                             head.as_deref(),
                         );
+                        for (path, reason) in &skipped {
+                            *screen = std::mem::take(screen).noted(
+                                session,
+                                &format!("Could not check out the submodule {path}: {reason}"),
+                            );
+                        }
                     });
                     for (seq, event) in self
                         .early
@@ -1916,6 +1976,13 @@ impl Work {
                 model.update(|screen| *screen = std::mem::take(screen).with_tree_stale());
                 self.refresh(model, session);
             }
+            Pending::SubmoduleHeads(session) => {
+                if let Response::SubmoduleHeads { heads } = response {
+                    model.update(|screen| {
+                        *screen = std::mem::take(screen).with_submodule_heads(session, heads);
+                    });
+                }
+            }
             Pending::SessionBranches(session) => {
                 if let Response::Branches { names } = response {
                     model.update(|screen| {
@@ -1982,7 +2049,7 @@ impl Work {
                 }
                 self.refresh(model, session);
                 if push && !failed {
-                    self.ask_in_folder(
+                    self.ask_in_repository(
                         model,
                         session,
                         |directory| Request::Sync {
@@ -2257,7 +2324,25 @@ impl Work {
             base: held.base.clone(),
             repository: project.directory().to_string_lossy().into_owned(),
             title: held.title.clone(),
+            submodule: held.submodule.clone(),
         })
+    }
+
+    /// Asks the machine the session at `session` is on for what `make` builds from the folder of the repository the git panel works on: the session's folder, or the submodule picked in it.
+    fn ask_in_repository(
+        &mut self,
+        model: &State<Screen>,
+        session: usize,
+        make: impl FnOnce(String) -> Request,
+        pending: Pending,
+    ) {
+        let submodule = model.read(|screen| screen.repository_of(session));
+        self.ask_in_folder(
+            model,
+            session,
+            |directory| make(inside(directory, submodule.as_deref())),
+            pending,
+        );
     }
 
     /// Asks the machine the session at `session` is on for what `make` builds from its folder.
@@ -2297,11 +2382,19 @@ impl Work {
             },
             Pending::Inspect(session),
         );
+        self.ask(
+            &placement.host,
+            Request::SubmoduleHeads {
+                directory: placement.directory.clone(),
+            },
+            Pending::SubmoduleHeads(session),
+        );
         if let Some(all) = log {
+            let submodule = model.read(|screen| screen.repository_of(session));
             self.ask(
                 &placement.host,
                 Request::Log {
-                    directory: placement.directory,
+                    directory: inside(placement.directory, submodule.as_deref()),
                     limit: GRAPH_LIMIT,
                     all,
                 },
