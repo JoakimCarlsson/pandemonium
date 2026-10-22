@@ -852,6 +852,7 @@ impl WorkspaceState {
             if let Some(session) = self.sessions.last_mut() {
                 session.updated_at = info.updated;
                 session.login = info.login.clone();
+                session.submodule = info.submodule.clone();
             }
             added.push((self.sessions.len() - 1, info.session));
         }

@@ -13,6 +13,7 @@ mod graph;
 mod operation;
 mod places;
 mod revision;
+mod submodule;
 mod words;
 
 pub use checkpoint::{checkpoint, restore};
@@ -23,6 +24,7 @@ pub use graph::{Edge, Half, Lanes};
 pub use operation::{Operation, operation, step};
 pub use places::{clone, folders};
 pub use revision::revision_changes;
+pub use submodule::{branch_submodule, populate, submodules};
 pub use words::{Words, words};
 
 /// Where, under a repository, the worktrees made for tasks are kept.
@@ -72,6 +74,8 @@ pub struct Worktree {
     pub head: String,
     /// The branch it was given, when it was given one rather than a detached head.
     pub branch: Option<String>,
+    /// The submodules that could not be checked out in it, each as its path and why.
+    pub skipped: Vec<(String, String)>,
 }
 
 /// Where a new worktree is made and what branch it is on.
@@ -348,7 +352,7 @@ fn exclude_worktrees(repository: &Path) -> Result<(), String> {
     writeln!(file, "{separator}.pandemonium/").map_err(|error| error.to_string())
 }
 
-/// Makes a worktree of its own of `repository`, named from `title`, with `base` checked out, where `placement` says and on the branch it names or a detached head.
+/// Makes a worktree of its own of `repository`, named from `title`, with `base` checked out, where `placement` says and on the branch it names or a detached head, and checks out its submodules.
 ///
 /// `base` is looked up in the repository now, so a branch deleted a moment ago is refused rather than assumed.
 pub fn add_worktree(
@@ -389,7 +393,13 @@ pub fn add_worktree(
         )?,
         None => run(repository, &["worktree", "add", "--detach", &place, &head])?,
     };
-    Ok(Worktree { path, head, branch })
+    let skipped = submodule::populate(&path);
+    Ok(Worktree {
+        path,
+        head,
+        branch,
+        skipped,
+    })
 }
 
 /// Removes the worktree at `path` of `repository` with every file in it, and forgets it, then deletes `branch`, the branch it was made on from `base`, when every commit on it is also on `base` or a remote.

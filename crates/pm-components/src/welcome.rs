@@ -62,7 +62,15 @@ pub fn welcome(state: &WorkspaceState, above: f32, text_width: f32, shaper: &mut
                     max_w_px(680.0),
                 ])
                 .child(
-                    text(format!("What should we build in {}?", project.name)).styles([
+                    text(format!(
+                        "What should we build in {}?",
+                        state
+                            .new_in
+                            .as_deref()
+                            .and_then(|submodule| submodule.rsplit('/').next())
+                            .unwrap_or(&project.name)
+                    ))
+                    .styles([
                         text_px(28),
                         leading_ratio(1.25),
                         font_semibold(),

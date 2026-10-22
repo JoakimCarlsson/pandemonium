@@ -51,6 +51,8 @@ fn snapshot(top: &Path) -> Result<String, String> {
 /// Keeps the files of the worktree `directory` is in as they are now, tracked or not, under the reference `name`.
 ///
 /// Neither the branch, the head nor what is staged changes.
+///
+/// shortcut: the files inside submodules are not kept, only the commit each is at; keep them when a rewind has to undo edits made inside one.
 pub fn checkpoint(directory: &Path, name: &str) -> Result<(), String> {
     let top = toplevel(directory)?;
     let tree = snapshot(&top)?;

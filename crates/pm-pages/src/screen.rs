@@ -1157,6 +1157,14 @@ impl Screen {
         }
     }
 
+    /// The screen after the folder of the session at `session` was seen to hold the submodules at `paths`.
+    pub fn with_submodules(self, session: usize, paths: Vec<String>) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_submodules(session, paths)),
+            onboarding => onboarding,
+        }
+    }
+
     /// The screen after the folder of the session at `session` was seen to have `branch` checked out, or a detached `head`.
     pub fn checked_out(self, session: usize, branch: Option<&str>, head: Option<&str>) -> Self {
         match self {

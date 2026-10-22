@@ -163,6 +163,9 @@ pub const PROJECT_BASE: u64 = 1000;
 /// The first of the rows starting work in a project; the rest follow it.
 pub const NEW_IN_BASE: u64 = 1100;
 
+/// The first of the rows starting work in a submodule of a project, numbered across the projects as [`crate::sidebar::submodule_rows`] lists them; the rest follow it.
+pub const NEW_IN_SUBMODULE_BASE: u64 = 1300;
+
 /// The first of the rows opening a session; the rest follow it.
 pub const SESSION_BASE: u64 = 2000;
 
@@ -1510,6 +1513,8 @@ pub struct WorkspaceState {
     pub history_scroll: f32,
     /// How far the sidebar's list is scrolled, in logical pixels.
     pub sidebar_scroll: f32,
+    /// The submodule of the project the new session page starts work in, or nothing for the project itself.
+    pub new_in: Option<String>,
     /// How wide the sidebar is, in logical pixels.
     pub sidebar_width: f32,
     /// How wide the review panel is, in logical pixels.
@@ -1722,6 +1727,7 @@ impl WorkspaceState {
             history_search: Field::default(),
             history_scroll: 0.0,
             sidebar_scroll: 0.0,
+            new_in: None,
             sidebar_width: crate::sidebar::WIDTH,
             review_width: crate::review::WIDTH,
             plan_width: 0.0,
@@ -1839,7 +1845,7 @@ impl WorkspaceState {
             .iter()
             .position(|held| Some(&held.path) == path.as_ref())
         {
-            self.page = Page::New(index);
+            self.start_in(index, None);
             self.sync_context();
         }
         self
@@ -2366,6 +2372,12 @@ impl WorkspaceState {
             .any(|session| session.status == Status::Working || session.background_running())
     }
 
+    /// Shows the page that starts work in the project at `project`, in its `submodule` when one is given.
+    pub(crate) fn start_in(&mut self, project: usize, submodule: Option<String>) {
+        self.page = Page::New(project);
+        self.new_in = submodule;
+    }
+
     /// The state after one of the rows or chips numbered from a base was pressed.
     fn after_numbered(&mut self, id: u64) {
         if crate::diff::gutter_of(FocusId(id)).is_some() {
@@ -2398,7 +2410,13 @@ impl WorkspaceState {
             self.page = Page::Project(index);
             self.overview_scroll = 0.0;
         } else if let Some(index) = position(NEW_IN_BASE, self.projects.len()) {
-            self.page = Page::New(index);
+            self.start_in(index, None);
+        } else if let Some((project, submodule)) = (NEW_IN_SUBMODULE_BASE..SESSION_BASE)
+            .contains(&id)
+            .then(|| crate::sidebar::submodule_rows(self))
+            .and_then(|rows| rows.into_iter().nth((id - NEW_IN_SUBMODULE_BASE) as usize))
+        {
+            self.start_in(project, Some(submodule));
         } else if let Some(index) = position(SESSION_BASE, self.sessions.len()) {
             self.sessions[index].closed = false;
             if let Page::Session(before) = self.page
@@ -2739,6 +2757,7 @@ impl WorkspaceState {
                     .to_string_lossy()
                     .into_owned();
                 session.base = self.base_for_new_work();
+                session.submodule = self.new_in.take();
                 session.branch = if session.base.is_some() {
                     String::new()
                 } else {
@@ -3168,6 +3187,16 @@ impl WorkspaceState {
         }
         if self.review_index() == Some(session) {
             self.git.operation = operation;
+        }
+        self
+    }
+
+    /// The state after the folder of the session at `session` was seen to hold the submodules at `paths`; only the stand-in for a project's own folder says what its project's submodules are.
+    pub fn with_submodules(mut self, session: usize, paths: Vec<String>) -> Self {
+        if let Some(held) = self.sessions.get(session).filter(|held| held.home)
+            && let Some(project) = self.projects.get_mut(held.project)
+        {
+            project.submodules = paths;
         }
         self
     }

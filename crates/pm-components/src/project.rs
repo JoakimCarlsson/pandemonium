@@ -21,6 +21,8 @@ pub struct Project {
     pub name: String,
     /// The folder or repository address it was added from.
     pub path: String,
+    /// Where each of its submodules is, nested ones included, from its root, as its server last said.
+    pub submodules: Vec<String>,
 }
 
 impl Project {
@@ -32,6 +34,7 @@ impl Project {
         (!name.is_empty()).then(|| Self {
             name: name.to_owned(),
             path: path.to_owned(),
+            submodules: Vec::new(),
         })
     }
 

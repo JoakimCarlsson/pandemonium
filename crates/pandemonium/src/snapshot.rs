@@ -143,6 +143,8 @@ pub enum Shot {
     TerminalMenu,
     /// The overview of a project.
     Overview,
+    /// The sidebar with the submodules of a project under it, a session working in one, and work being started in another.
+    Submodules,
     /// A folded change opened from the project Changes list.
     OverviewDiff,
     /// The overview of a project with the menu on a changed file of its folder open.
@@ -1549,6 +1551,22 @@ fn overview() -> WorkspaceState {
     state.with_history(home, commits())
 }
 
+/// The first project with two submodules, one nested in the other, its second session working in the outer one, and new work being started in the nested one.
+fn submodules() -> WorkspaceState {
+    let mut state = workspace_sample();
+    state.projects[0].submodules =
+        vec!["vendor/inner".to_owned(), "vendor/inner/nested".to_owned()];
+    if let Some(session) = state
+        .sessions
+        .iter_mut()
+        .filter(|session| session.project == 0 && !session.home)
+        .nth(1)
+    {
+        session.submodule = Some("vendor/inner".to_owned());
+    }
+    state.after(FocusId(pm_components::state::NEW_IN_SUBMODULE_BASE + 1))
+}
+
 /// The page for starting work with a file of the project open beside it.
 fn new_file() -> WorkspaceState {
     let mut state = workspace_sample().after(FocusId(pm_components::state::NEW_IN_BASE));
@@ -1983,6 +2001,7 @@ impl Shot {
                 Screen::Workspace(state)
             }
             Self::Overview => Screen::Workspace(overview()),
+            Self::Submodules => Screen::Workspace(submodules()),
             Self::OverviewDiff => {
                 let mut state = overview();
                 let path = state.review_session().unwrap().changes[0].path.clone();

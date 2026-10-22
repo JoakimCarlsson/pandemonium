@@ -37,7 +37,7 @@ fn clone_folder() -> Result<PathBuf, String> {
         .unwrap_or_else(|| home.join("projects")))
 }
 
-/// Clones the repository at `url` into a folder of its own named after it, under `under` or the usual folder for clones, made when it is not there, and returns that folder.
+/// Clones the repository at `url` into a folder of its own named after it, under `under` or the usual folder for clones, made when it is not there, with its submodules, and returns that folder.
 ///
 /// A name that is already taken is refused rather than merged into, and an address that git would
 /// read as an option is not a repository at all.
@@ -56,7 +56,7 @@ pub fn clone(url: &str, under: Option<&Path>) -> Result<PathBuf, String> {
     if root.exists() {
         return Err(format!("{} is already there", root.display()));
     }
-    run(&under, &["clone", "--", url, &name])?;
+    run(&under, &["clone", "--recurse-submodules", "--", url, &name])?;
     Ok(root)
 }
 

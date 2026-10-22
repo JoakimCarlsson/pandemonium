@@ -194,6 +194,9 @@ pub enum Request {
         text: String,
         /// The files attached.
         attachments: Vec<Attachment>,
+        /// The submodule the agent works in, from the root of the project, or nothing for the project itself.
+        #[serde(default)]
+        submodule: Option<String>,
     },
     /// Closes a session: stops its agent and marks it finished. Its log is kept; a worktree it made is removed, and without `discard` that is refused while the worktree has changes that are not committed.
     CloseSession {

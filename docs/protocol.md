@@ -109,7 +109,7 @@ request with exactly one `response` carrying the same `id`.
 | `set_session_account` | `session`, `login` (a login id, or `null` for the agent's own)                            | `done`          |
 | `sign_in`      | `agent`                                                                                          | `done`          |
 | `sign_in_session` | `session` | `done` |
-| `start_session`| `agent`, `repository`, `directory`, `title`, `base`, `settings`, `text`, `attachments`           | `started`       |
+| `start_session`| `agent`, `repository`, `directory`, `title`, `base`, `settings`, `text`, `attachments`, `submodule` | `started`       |
 | `prompt`       | `session`, `text`, `attachments`, `now` (optional, `false` by default)                           | `done`          |
 | `remove_queued` | `session`, `queued`                                                                            | `done`          |
 | `hurry`        | `session`, `queued`                                                                              | `done`          |
@@ -254,6 +254,12 @@ reopening also refreshes folders excluded by the file watcher.
   prompt; when it names no `mode` and `agents.permission_mode` is set, that mode
   is asked for too. The response gives the session number, the folder the agent works in
   and, for a worktree, the abbreviated commit it has checked out (`head`). The connection is attached to the session already.
+  A worktree has every submodule checked out at the commit it records, nested
+  ones included; a submodule that cannot be fetched is left out and named in
+  `skipped` with why, and the session starts all the same. With `submodule`, a
+  path from the root of the project, the agent works in that submodule's folder
+  of the worktree (or of `directory`), and when the worktree has a branch the
+  submodule is put on a branch of the same name.
 - **`close_session`:** stops the session's agent and waits for its process to exit, drops its queued prompts and marks it `closed`. The
   log is kept, so the session still shows in `sessions` (with `closed: true`)
   and can be opened with `attach`. A session that has a worktree of its own
@@ -686,8 +692,8 @@ embedded context, and anything else as a link to the stored file.
 | `file`       | `text`: string or null for a file that is not text, `truncated`: whether it was cut short, `language` (optional): the installed language it is written in |
 | `bytes`      | `bytes` (base64): what a file holds, `truncated`: whether it was cut short |
 | `identity`   | `default`, `selected`: who the agent is signed in as, or null |
-| `started`    | `session`, `directory`, `branch` (always null for now), `head` (null without a worktree) |
-| `inspected`  | `changes`: `[{path, diff, words, staged, untracked, index, worktree, conflicted, from}]`, `commits`: `[string]` or null, `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind}`, `operation`: `Merge`, `Rebase` or `CherryPick` with what git prepared, or null |
+| `started`    | `session`, `directory`, `branch` (always null for now), `head` (null without a worktree), `skipped`: `[[path, reason]]` for submodules the worktree could not check out |
+| `inspected`  | `changes`: `[{path, diff, words, staged, untracked, index, worktree, conflicted, from}]`, `commits`: `[string]` or null, `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind}`, `operation`: `Merge`, `Rebase` or `CherryPick` with what git prepared, or null, `submodules`: `[string]`, every submodule's path from the root, nested ones included |
 | `projects`   | `paths`, `saved`                                          |
 | `choices`    | `choices`: `[[agent, setting, value]]`                    |
 | `agent_servers` | `servers`: `[{id, name, command, env, package, installer, home}]`                |
@@ -785,10 +791,12 @@ What an agent does arrives as an `event`, not as a response:
 - A client drops an event whose `seq` it already has, so replays are safe.
 
 A **SessionInfo** is `{session, agent, repository, directory, branch, head,
-base, title, closed, updated, last_seq, running, login}`. `updated` is milliseconds since the epoch,
+base, title, closed, updated, last_seq, running, login, submodule}`. `updated` is milliseconds since the epoch,
 `last_seq` is the number of the session's latest event, `running` says
 whether its agent is running now, and `login` is the id of the login the
-session runs as, `null` for the agent's own.
+session runs as, `null` for the agent's own. `submodule` is the path of the
+submodule its agent works in, `null` for the project itself; `directory` is
+still the folder of the whole worktree.
 
 ### Signing in again during a session
 

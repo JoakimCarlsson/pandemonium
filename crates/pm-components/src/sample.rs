@@ -447,6 +447,8 @@ pub struct Session {
     pub tracking: pm_git::Tracking,
     /// The folder the agent works in.
     pub directory: String,
+    /// The submodule of `directory` the agent works in, from its root, or nothing for the project itself.
+    pub submodule: Option<String>,
     /// The branch its worktree was made from, when it has one of its own.
     pub base: Option<String>,
     /// Which agent, by position in the list of agents, runs it.
@@ -518,6 +520,7 @@ impl Session {
             on_branch: !branch.is_empty(),
             tracking: pm_git::Tracking::default(),
             directory: String::new(),
+            submodule: None,
             base: None,
             agent: 0,
             status,
@@ -674,6 +677,7 @@ pub fn projects() -> Vec<Project> {
         .map(|name| Project {
             name: name.to_owned(),
             path: format!("~/{name}"),
+            submodules: Vec::new(),
         })
         .collect()
 }

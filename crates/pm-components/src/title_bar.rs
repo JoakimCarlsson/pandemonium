@@ -227,7 +227,7 @@ fn control(icon: IconName, id: FocusId, words: &str) -> Node {
         .tooltip(words)
 }
 
-/// What the command center says the window is pointed at: the project shown, and the session in it when one is.
+/// What the command center says the window is pointed at: the project shown, and the session in it or the submodule new work starts in when there is one.
 fn whereabouts(state: &WorkspaceState) -> String {
     let project = |index: usize| state.projects.get(index).map(|held| held.name.clone());
     let named = match state.page {
@@ -235,7 +235,11 @@ fn whereabouts(state: &WorkspaceState) -> String {
             let project = project(session.project)?;
             Some(format!("{project} · {}", session.title))
         }),
-        Page::New(index) | Page::Project(index) => project(index),
+        Page::New(index) => project(index).map(|name| match &state.new_in {
+            Some(submodule) => format!("{name} · {submodule}"),
+            None => name,
+        }),
+        Page::Project(index) => project(index),
         Page::History => Some("History".to_owned()),
         Page::Extensions => Some("Extensions".to_owned()),
     };

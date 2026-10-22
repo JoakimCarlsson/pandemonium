@@ -226,7 +226,7 @@ impl Core {
                     continue;
                 };
                 highest = highest.max(number);
-                let mut session = Session::new(agent, PathBuf::from(&meta.directory), log, meta);
+                let mut session = Session::new(agent, meta.agent_folder(), log, meta);
                 session.forget_queue(number);
                 session.end_open_turn(number, INTERRUPTED);
                 sessions.insert(number, session);
@@ -276,6 +276,7 @@ impl Core {
                 last_seq: session.log.last().map_or(0, |(seq, _)| *seq),
                 running: session.chat.is_some(),
                 login: session.meta.login.clone(),
+                submodule: session.meta.submodule.clone(),
             })
             .collect();
         infos.sort_by_key(|info| info.session);

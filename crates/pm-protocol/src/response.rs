@@ -36,6 +36,9 @@ pub struct SessionInfo {
     /// The id of the login it runs as, or nothing for the agent's own.
     #[serde(default)]
     pub login: Option<String>,
+    /// The submodule its agent works in, from the root of the project, or nothing for the project itself.
+    #[serde(default)]
+    pub submodule: Option<String>,
 }
 
 /// What the server knows about one shell.
@@ -133,6 +136,9 @@ pub enum Response {
         /// The abbreviated commit its worktree has checked out on a detached head.
         #[serde(default)]
         head: Option<String>,
+        /// The submodules its worktree could not check out, each as its path and why; the session started without them.
+        #[serde(default)]
+        skipped: Vec<(String, String)>,
     },
     /// The projects the reader has added.
     Projects {
@@ -226,6 +232,9 @@ pub enum Response {
         /// The merge, rebase or cherry-pick the folder is stopped in, if it is in one.
         #[serde(default)]
         operation: Option<pm_git::Operation>,
+        /// Where each of its submodules is, nested ones included, from its root.
+        #[serde(default)]
+        submodules: Vec<String>,
     },
     /// A shell was started.
     Terminal {

@@ -222,7 +222,7 @@ fn trying(
     }
 }
 
-/// Starts a session and hands its agent the first prompt.
+/// Starts a session, its agent in `submodule` of its folder when one is given, and hands the agent the first prompt.
 #[allow(clippy::too_many_arguments)]
 fn start_session(
     core: &Arc<Core>,
@@ -235,10 +235,12 @@ fn start_session(
     settings: &[(String, String)],
     text: &str,
     attachments: &[Attachment],
+    submodule: Option<&str>,
 ) -> Response {
     let Some(agent) = agent_named(agent) else {
         return failed(format!("no agent is called {agent}"));
     };
+    let mut skipped = Vec::new();
     let (folder, head) = match base {
         Some(_) if !pm_git::is_repository(&place(repository)) => {
             return failed(format!(
@@ -251,7 +253,16 @@ fn start_session(
             base,
             &crate::machine::placement(),
         ) {
-            Ok(made) => (made.path, Some((made.head, made.branch))),
+            Ok(made) => {
+                if let (Some(path), Some(branch)) = (submodule, &made.branch)
+                    && !made.skipped.iter().any(|(skipped, _)| skipped == path)
+                    && let Err(reason) = pm_git::branch_submodule(&made.path, path, branch)
+                {
+                    skipped.push((path.to_owned(), reason));
+                }
+                skipped.splice(0..0, made.skipped);
+                (made.path, Some((made.head, made.branch)))
+            }
             Err(reason) => return failed(format!("could not make a worktree: {reason}")),
         },
         None => {
@@ -274,8 +285,9 @@ fn start_session(
         closed: false,
         updated: now(),
         login: login_for_new_work(agent.id),
+        submodule: submodule.map(str::to_owned),
     };
-    let mut session = Session::new(agent, folder.clone(), Vec::new(), meta);
+    let mut session = Session::new(agent, meta.agent_folder(), Vec::new(), meta);
     session.start_agent(&crate::machine::with_mode(settings));
     let number = hold_session(core, connection, session);
     let first = prompt(number, text, attachments);
@@ -286,6 +298,7 @@ fn start_session(
         directory: folder.to_string_lossy().into_owned(),
         branch,
         head,
+        skipped,
     }
 }
 
@@ -719,6 +732,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             settings,
             text,
             attachments,
+            submodule,
         } => start_session(
             core,
             connection,
@@ -730,6 +744,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             &settings,
             &text,
             &attachments,
+            submodule.as_deref(),
         ),
         Request::CloseSession { session, discard } => {
             let closed = close_session(core, session, discard);
@@ -840,6 +855,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                     head: None,
                     tracking: pm_git::Tracking::default(),
                     operation: None,
+                    submodules: Vec::new(),
                 };
             }
             Response::Inspected {
@@ -849,6 +865,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                 head: pm_git::resolve(directory, "HEAD"),
                 tracking: pm_git::tracking(directory),
                 operation: pm_git::operation(directory),
+                submodules: pm_git::submodules(directory),
             }
         }
         Request::Stage {

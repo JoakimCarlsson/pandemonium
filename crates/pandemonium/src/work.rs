@@ -309,6 +309,8 @@ struct Placement {
     repository: String,
     /// What it is called.
     title: String,
+    /// The submodule its agent works in, or nothing for the project itself.
+    submodule: Option<String>,
 }
 
 /// The connection to the server of one machine, and what is waiting for its answers.
@@ -750,6 +752,7 @@ impl Work {
                             settings,
                             text,
                             attachments: Self::attachments(&files),
+                            submodule: placement.submodule,
                         },
                         Pending::Start(session),
                     );
@@ -1812,6 +1815,7 @@ impl Work {
                     directory,
                     branch,
                     head,
+                    skipped,
                 } => {
                     self.numbers.insert(session, (host.clone(), number));
                     self.positions.insert((host.clone(), number), session);
@@ -1826,6 +1830,12 @@ impl Work {
                             branch.as_deref(),
                             head.as_deref(),
                         );
+                        for (path, reason) in &skipped {
+                            *screen = std::mem::take(screen).noted(
+                                session,
+                                &format!("Could not check out the submodule {path}: {reason}"),
+                            );
+                        }
                     });
                     for (seq, event) in self
                         .early
@@ -1863,11 +1873,13 @@ impl Work {
                     head,
                     tracking,
                     operation,
+                    submodules,
                 } = response
                 {
                     model.update(|screen| {
                         *screen = std::mem::take(screen)
                             .refreshed(session, &changes, commits)
+                            .with_submodules(session, submodules)
                             .checked_out(session, branch.as_deref(), head.as_deref())
                             .tracked(session, branch.as_deref(), tracking, operation);
                     });
@@ -2257,6 +2269,7 @@ impl Work {
             base: held.base.clone(),
             repository: project.directory().to_string_lossy().into_owned(),
             title: held.title.clone(),
+            submodule: held.submodule.clone(),
         })
     }
 
