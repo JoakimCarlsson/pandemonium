@@ -105,6 +105,7 @@ request with exactly one `response` carrying the same `id`.
 | `files`        | `directory`, `limit`, `expanded` (optional)                                                      | `files`         |
 | `branches`     | `directory`                                                                                      | `branches`      |
 | `submodules`   | `directory`                                                                                      | `submodules`    |
+| `submodule_heads` | `directory`                                                                                   | `submodule_heads` |
 | `identity`     | `agent`                                                                                          | `identity`      |
 | `set_accounts` | `logins`: `[{agent, id, name}]`, `in_use`: `[[agent, id]]`                                       | `done`          |
 | `set_session_account` | `session`, `login` (a login id, or `null` for the agent's own)                            | `done`          |
@@ -259,8 +260,9 @@ reopening also refreshes folders excluded by the file watcher.
   ones included; a submodule that cannot be fetched is left out and named in
   `skipped` with why, and the session starts all the same. With `submodule`, a
   path from the root of the project, the agent works in that submodule's folder
-  of the worktree (or of `directory`), and when the worktree has a branch the
-  submodule is put on a branch of the same name.
+  of the worktree (or of `directory`). When the worktree has a branch, every
+  submodule it checked out is put on a branch of the same name; one that cannot
+  be is named in `skipped` too.
 - **`close_session`:** stops the session's agent and waits for its process to exit, drops its queued prompts and marks it `closed`. The
   log is kept, so the session still shows in `sessions` (with `closed: true`)
   and can be opened with `attach`. A session that has a worktree of its own
@@ -448,10 +450,13 @@ reopening also refreshes folders excluded by the file watcher.
   exists, or `~/projects`. The response names the folder. Fails when
   that folder is taken.
 - **`stage`:** stages the `paths` (from the repository root) or, when `stage`
-  is `false`, unstages them.
+  is `false`, unstages them. A path inside a submodule is staged in the
+  submodule; a submodule's own path stages the commit it is at in the
+  repository around it.
 - **`commit`:** commits what is staged under `message`. With nothing staged and
-  `tracked` set, it takes the changes of every tracked file instead. Fails on an
-  empty message.
+  `tracked` set, it takes the changes of every tracked file instead. It commits
+  in the repository `directory` is, so a submodule's folder commits in the
+  submodule. Fails on an empty message.
 - **`log`:** the most recent `limit` commits, newest first, as `{id, refs,
   summary, lanes}`. `refs` are the branches and tags pointing at the commit as
   git decorates them (`HEAD -> main`, `tag: v1`). `lanes` lays the commit out in
@@ -460,7 +465,8 @@ reopening also refreshes folders excluded by the file watcher.
   Without `all` it lists what the checked out branch reaches; with it, every
   reference.
 - **`sync`:** `operation` is `fetch` (all remotes, pruning), `pull`,
-  `pull_rebase`, `push` (publishing the branch when it follows nothing),
+  `pull_rebase`, `push` (publishing the branch when it follows nothing, after
+  pushing each submodule on a branch with commits no remote has),
   `force_push` (`--force-with-lease`) or `sync` (pull, then push).
 - **`cherry_pick`:** applies `commit` to the checked out branch.
 - **`stashes`:** the stashes, newest first, as `{index, message, when}`.
@@ -471,7 +477,9 @@ reopening also refreshes folders excluded by the file watcher.
   `message` when given), `skip` or `abort`. Fails when nothing is stopped.
 - **`commit` with `amend`:** rewrites the last commit in place of making another.
 - **`discard`:** puts the `paths` back as they are in the last commit, in the
-  index and in the files; a path that is not in the last commit is deleted.
+  index and in the files; a path that is not in the last commit is deleted. A
+  path inside a submodule is put back in the submodule; a submodule's own path
+  is checked out again at the commit recorded.
 - **`ignore`:** adds each of the `paths` to the `.gitignore` at the root of the
   repository, anchored with a leading slash, unless it is in it already.
 - **`checkout`:** checks out the local branch `branch`; a remote branch such as
@@ -689,13 +697,14 @@ embedded context, and anything else as a link to the stored file.
 | `files`      | `paths`: repository-relative, tracked or not ignored plus the immediate files in expanded ignored folders, `folders` (optional): untracked folders and immediate subfolders of expanded ignored folders, which may hold no file yet, `ignored` (optional): which of `paths` and `folders` git ignores, listed so a tree can dim them |
 | `branches`   | `names`: local branches, the current one first, then remote ones such as `origin/main`; read from git at each request |
 | `submodules` | `paths`: every submodule's path from the root of the repository, nested ones included, initialised or not |
+| `submodule_heads` | `heads`: `[[path, head]]` for each checked out submodule, nested ones included: its branch, or `@ <commit>` on a detached head. `branches`, `checkout` and `create_branch` on a submodule's folder act on the submodule |
 | `stashes`    | `stashes`: `[{index, message, when}]`, newest first |
 | `log`        | `commits`: `[{id, refs, summary, lanes}]`, newest first |
 | `file`       | `text`: string or null for a file that is not text, `truncated`: whether it was cut short, `language` (optional): the installed language it is written in |
 | `bytes`      | `bytes` (base64): what a file holds, `truncated`: whether it was cut short |
 | `identity`   | `default`, `selected`: who the agent is signed in as, or null |
 | `started`    | `session`, `directory`, `branch` (always null for now), `head` (null without a worktree), `skipped`: `[[path, reason]]` for submodules the worktree could not check out |
-| `inspected`  | `changes`: `[{path, diff, words, staged, untracked, index, worktree, conflicted, from}]`, `commits`: `[string]` or null, `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind}`, `operation`: `Merge`, `Rebase` or `CherryPick` with what git prepared, or null |
+| `inspected`  | `changes`: `[{path, diff, words, staged, untracked, index, worktree, conflicted, from, submodule, moved}]`, files inside submodules listed under their paths from the root with `submodule` the submodule's path, and a submodule checked out at another commit than the one recorded as its own path with `moved`: `{from, to, commits, back}` (abbreviated commits, the subjects between them oldest first, `back` when it went back past them) and an empty `diff`, `commits`: `[string]` or null, `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind}`, `operation`: `Merge`, `Rebase` or `CherryPick` with what git prepared, or null |
 | `projects`   | `paths`, `saved`                                          |
 | `choices`    | `choices`: `[[agent, setting, value]]`                    |
 | `agent_servers` | `servers`: `[{id, name, command, env, package, installer, home}]`                |

@@ -5,7 +5,8 @@ use pm_input::FocusId;
 use pm_style::{
     Color, Radius, Role, animate_spin, bg, border, border_b, border_color, border_l,
     cursor_pointer, flex, flex_1, flex_col, flex_none, font_medium, gap, h, h_full, items_center,
-    justify_center, min_h, min_w_px, overflow_hidden, pb, px, py, relative, rounded, w_full, w_px,
+    justify_center, min_h, min_w_px, overflow_hidden, pb, pl, pr, px, py, relative, rounded,
+    w_full, w_px,
 };
 use pm_text::Shaper;
 use pm_ui::{Node, node};
@@ -14,7 +15,7 @@ use crate::branch_menu::branch_menu;
 use crate::button::Variant;
 use crate::git_controls::{
     BRANCH_BUTTON, CHANGES_MORE, CHANGES_REFRESH, CHANGES_TOGGLE, COMMIT_CHEVRON, Primary,
-    TROUBLE_DISMISS,
+    REPOSITORY_BASE, REPOSITORY_BRANCH_BASE, TROUBLE_DISMISS,
 };
 use crate::graph::graph;
 use crate::parts::{clipped, glyph, line, spacer, wrap};
@@ -27,7 +28,7 @@ use crate::state::{
 use crate::tree_actions::{
     TREE_COLLAPSE, TREE_NEW_FILE, TREE_NEW_FOLDER, TREE_REFRESH, TREE_SPACE,
 };
-use crate::{Button, Input, input};
+use crate::{Button, Input, Tile, input};
 use crate::{change_list, file_tree};
 
 /// How wide the review panel is until it is dragged wider or narrower, in logical pixels.
@@ -228,7 +229,10 @@ fn message_box(state: &WorkspaceState, shaper: &mut Shaper) -> Node {
             .child(
                 Input::new(&state.message, COMMIT_MESSAGE)
                     .variant(input::Variant::Multiline)
-                    .placeholder("Message (Ctrl+Enter to commit)")
+                    .placeholder(&match &state.git.repository {
+                        Some(submodule) => format!("Message (Ctrl+Enter to commit in {submodule})"),
+                        None => "Message (Ctrl+Enter to commit)".to_owned(),
+                    })
                     .rows(4)
                     .wrap(input::inner_width(state.review_width - 24.0), shaper)
                     .build(),
@@ -353,12 +357,99 @@ fn changes(state: &WorkspaceState, session: &Session, shaper: &mut Shaper) -> No
         .child(graph(state))
 }
 
-/// The button that shows the branch `session` is on and opens the list of branches, or, outside a repository, only says so.
-fn branch_button(session: &Session, working: bool) -> Node {
+/// The rows of the list of repositories of `session`'s folder, when it has submodules: its own and each submodule, nested ones set in under the one they are in, each with what it has checked out on a button that opens its branches; the one the panel works on is picked.
+fn repositories(state: &WorkspaceState, session: &Session) -> Option<Node> {
+    let repositories = state.repositories();
+    if repositories.len() < 2 {
+        return None;
+    }
+    let name = |repository: &Option<String>| match repository {
+        Some(path) => path.clone(),
+        None => state
+            .projects
+            .get(session.project)
+            .map_or_else(String::new, |project| project.name.clone()),
+    };
+    let depth = |repository: &Option<String>| {
+        repository.as_deref().map_or(0, |path| {
+            1 + state
+                .git
+                .submodule_heads
+                .iter()
+                .filter(|(held, _)| {
+                    path.strip_prefix(held.as_str())
+                        .is_some_and(|rest| rest.starts_with('/'))
+                })
+                .count()
+        })
+    };
+    let rows =
+        repositories.iter().enumerate().map(|(row, repository)| {
+            let changed = session
+                .changes
+                .iter()
+                .filter(|change| change.submodule == *repository)
+                .count();
+            let head = state.head_of(repository.as_deref()).unwrap_or_default();
+            Tile::new(FocusId(REPOSITORY_BASE + row as u64))
+                .selected(state.git.repository == *repository)
+                .height(7.0)
+                .gap(2.0)
+                .radius(Radius::Sm)
+                .build()
+                .styles([pl(2.0 + depth(repository) as f32 * 3.5), pr(1), flex_none()])
+                .child(glyph(
+                    if repository.is_some() {
+                        IconName::GitFork
+                    } else {
+                        IconName::Git
+                    },
+                    3.5,
+                    Role::Muted,
+                ))
+                .child(clipped(name(repository), 13, Role::Text))
+                .children((changed > 0).then(|| {
+                    line(changed.to_string(), 11, 1.4, Role::Subtle).styles([flex_none()])
+                }))
+                .child(
+                    Button::new(&head, FocusId(REPOSITORY_BRANCH_BASE + row as u64))
+                        .variant(Variant::Ghost)
+                        .size(Size::Sm)
+                        .monospace()
+                        .build()
+                        .styles([flex_none()])
+                        .tooltip("Checkout Branch…"),
+                )
+        });
+    Some(
+        node()
+            .styles([
+                flex(),
+                flex_col(),
+                px(1),
+                pb(2),
+                flex_none(),
+                border_b(),
+                border_color(Role::Border),
+            ])
+            .child(
+                node()
+                    .styles([flex(), items_center(), h(7), px(2)])
+                    .child(line("Repositories", 12, 1.4, Role::Subtle)),
+            )
+            .children(rows),
+    )
+}
+
+/// The button that shows the branch the repository the panel works on is on and opens the list of branches, or, outside a repository, only says so.
+fn branch_button(state: &WorkspaceState, session: &Session, working: bool) -> Node {
     if session.branch.is_empty() {
         return clipped("Not a Git repository", 12, Role::Subtle);
     }
-    Button::new(&session.branch, BRANCH_BUTTON)
+    let head = state
+        .head_of(state.git.repository.as_deref())
+        .unwrap_or_else(|| session.branch.clone());
+    Button::new(&head, BRANCH_BUTTON)
         .variant(Variant::Ghost)
         .size(Size::Sm)
         .tone(Role::Text)
@@ -431,16 +522,16 @@ pub fn review(state: &WorkspaceState, session: &Session, shaper: &mut Shaper) ->
                     ),
                 ),
         )
-        .child(band(10).child(branch_button(session, state.git.working)))
+        .child(band(10).child(branch_button(state, session, state.git.working)))
+        .children(
+            (state.review_tab == ReviewTab::Changes)
+                .then(|| repositories(state, session))
+                .flatten(),
+        )
         .child(match state.review_tab {
             ReviewTab::Changes => changes(state, session, shaper),
             ReviewTab::Files => files(state),
             ReviewTab::Search => crate::project_search::panel(state),
         })
-        .children(
-            state
-                .git
-                .branch_menu
-                .then(|| branch_menu(state, &session.branch)),
-        )
+        .children(state.git.branch_menu.then(|| branch_menu(state)))
 }

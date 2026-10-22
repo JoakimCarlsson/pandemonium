@@ -95,6 +95,11 @@ pub enum Response {
         /// Where each is, nested ones included, from the root of the repository.
         paths: Vec<String>,
     },
+    /// What the checked out submodules of a repository have checked out.
+    SubmoduleHeads {
+        /// Each submodule's path from the root and its branch, or `@` and the commit on a detached head.
+        heads: Vec<(String, String)>,
+    },
     /// The history of a repository.
     Log {
         /// The commits, newest first.

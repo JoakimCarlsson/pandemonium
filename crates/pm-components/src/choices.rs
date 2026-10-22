@@ -858,6 +858,7 @@ impl WorkspaceState {
                 session.updated_at = info.updated;
                 session.login = info.login.clone();
                 session.submodule = info.submodule.clone();
+                session.directory = session.folder_in(&info.directory);
             }
             added.push((self.sessions.len() - 1, info.session));
         }

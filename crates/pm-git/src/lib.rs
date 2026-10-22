@@ -24,7 +24,7 @@ pub use graph::{Edge, Half, Lanes};
 pub use operation::{Operation, operation, step};
 pub use places::{clone, folders};
 pub use revision::revision_changes;
-pub use submodule::{branch_submodule, populate, submodules};
+pub use submodule::{populate, submodule_heads, submodules};
 pub use words::{Words, words};
 
 /// Where, under a repository, the worktrees made for tasks are kept.
@@ -63,6 +63,25 @@ pub struct Change {
     /// Where the file was before it was renamed, when it was.
     #[serde(default)]
     pub from: Option<String>,
+    /// The submodule the file is in, from the root of the repository, or nothing when it is in the repository itself.
+    #[serde(default)]
+    pub submodule: Option<String>,
+    /// What a submodule checked out at another commit than the one recorded moved through, when the change is that.
+    #[serde(default)]
+    pub moved: Option<Moved>,
+}
+
+/// A submodule checked out at another commit than the one its repository records.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Moved {
+    /// The commit recorded, abbreviated, or nothing when the submodule is new.
+    pub from: Option<String>,
+    /// The commit checked out, abbreviated.
+    pub to: String,
+    /// The subjects of the commits between them, oldest first.
+    pub commits: Vec<String>,
+    /// Whether it moved back: the commits are those the recorded one has that the checked out one has not.
+    pub back: bool,
 }
 
 /// A worktree made for one task, on a detached head so that no branch has to exist for it.
@@ -368,7 +387,7 @@ fn exclude_worktrees(repository: &Path) -> Result<(), String> {
     writeln!(file, "{separator}.pandemonium/").map_err(|error| error.to_string())
 }
 
-/// Makes a worktree of its own of `repository`, named from `title`, with `base` checked out, where `placement` says and on the branch it names or a detached head, and checks out its submodules.
+/// Makes a worktree of its own of `repository`, named from `title`, with `base` checked out, where `placement` says and on the branch it names or a detached head, and checks out its submodules, each on that branch too.
 ///
 /// `base` is looked up in the repository now, so a branch deleted a moment ago is refused rather than assumed.
 pub fn add_worktree(
@@ -409,7 +428,10 @@ pub fn add_worktree(
         )?,
         None => run(repository, &["worktree", "add", "--detach", &place, &head])?,
     };
-    let skipped = submodule::populate(&path);
+    let mut skipped = submodule::populate(&path);
+    if let Some(branch) = &branch {
+        skipped.extend(submodule::branch_all(&path, branch));
+    }
     Ok(Worktree {
         path,
         head,
@@ -486,8 +508,31 @@ fn unmerged(index: char, tree: char) -> bool {
     index == 'U' || tree == 'U' || matches!((index, tree), ('A', 'A') | ('D', 'D'))
 }
 
-/// Every file of the repository `directory` is in that differs from the last commit.
+/// Every file of the repository `directory` is in that differs from the last commit, those inside its submodules included under their paths from its root, and each submodule checked out at another commit than the one recorded.
 pub fn changes(directory: &Path) -> Vec<Change> {
+    let direct = submodule::direct(directory);
+    let mut found = Vec::new();
+    for change in own_changes(directory) {
+        if !direct.contains(&change.path) {
+            found.push(change);
+            continue;
+        }
+        let path = change.path.clone();
+        let inner = directory.join(&path);
+        found.extend(submodule::moved(directory, change));
+        if submodule::populated(&inner) {
+            found.extend(
+                changes(&inner)
+                    .into_iter()
+                    .map(|change| submodule::within(change, &path)),
+            );
+        }
+    }
+    found
+}
+
+/// The files of the repository `directory` is in itself that differ from its last commit, a submodule as one entry.
+fn own_changes(directory: &Path) -> Vec<Change> {
     let Ok(status) = run(directory, &["status", "--porcelain=v1", "-z", "-uall"]) else {
         return Vec::new();
     };
@@ -529,6 +574,8 @@ pub fn changes(directory: &Path) -> Vec<Change> {
             worktree: worktree_side,
             conflicted,
             from,
+            submodule: None,
+            moved: None,
         });
     }
     found
@@ -550,20 +597,24 @@ fn all_inside(paths: &[String]) -> Result<Vec<&str>, String> {
     paths.iter().map(|path| inside(path)).collect()
 }
 
-/// Stages `paths`.
-pub fn stage(directory: &Path, paths: &[String]) -> Result<(), String> {
-    let paths = all_inside(paths)?;
-    let mut arguments = vec!["add", "--"];
-    arguments.extend(paths);
-    run(directory, &arguments).map(|_| ())
+/// Runs `git` with `command` and then `paths` in each repository `paths` of `directory` are in, the repository itself or one of its submodules, each path as it is from there.
+fn run_by_owner(directory: &Path, command: &[&str], paths: &[String]) -> Result<(), String> {
+    for (folder, inner) in submodule::by_owner(directory, &all_inside(paths)?) {
+        let mut arguments = command.to_vec();
+        arguments.extend(inner.iter().map(String::as_str));
+        run(&folder, &arguments)?;
+    }
+    Ok(())
 }
 
-/// Takes `paths` out of the next commit, leaving their changes in the files.
+/// Stages `paths`, each in the repository it is in: a file inside a submodule in the submodule, a submodule itself at the commit it is at in the repository around it.
+pub fn stage(directory: &Path, paths: &[String]) -> Result<(), String> {
+    run_by_owner(directory, &["add", "--"], paths)
+}
+
+/// Takes `paths` out of the next commit of the repository each is in, leaving their changes in the files.
 pub fn unstage(directory: &Path, paths: &[String]) -> Result<(), String> {
-    let paths = all_inside(paths)?;
-    let mut arguments = vec!["reset", "--quiet", "--"];
-    arguments.extend(paths);
-    run(directory, &arguments).map(|_| ())
+    run_by_owner(directory, &["reset", "--quiet", "--"], paths)
 }
 
 /// Commits what is staged, under `message`; with nothing staged, `tracked` takes the changes of every tracked file instead, and `amend` rewrites the last commit in place of making another.
@@ -722,8 +773,9 @@ pub fn remote(directory: &Path, operation: &str) -> Result<(), String> {
     }
 }
 
-/// Pushes the checked out branch, and makes it follow what it was pushed to when it follows nothing.
+/// Pushes the checked out branch, after the submodules' own commits, and makes it follow what it was pushed to when it follows nothing.
 fn push(directory: &Path) -> Result<(), String> {
+    submodule::push_inside(directory)?;
     if tracking(directory).upstream.is_some() {
         return run(directory, &["push"]).map(|_| ());
     }
@@ -751,10 +803,29 @@ fn in_head(directory: &Path, path: &str) -> bool {
     run(directory, &["cat-file", "-e", &format!("HEAD:{path}")]).is_ok()
 }
 
-/// Puts `paths` back as they are in the last commit and takes them out of the next one: a file that is new is deleted.
+/// Puts `paths` back as they are in the last commit of the repository each is in and takes them out of the next one: a file that is new is deleted, and a submodule is checked out at the commit recorded.
 pub fn discard(directory: &Path, paths: &[String]) -> Result<(), String> {
-    for path in all_inside(paths)? {
-        if in_head(directory, path) {
+    for (folder, inner) in submodule::by_owner(directory, &all_inside(paths)?) {
+        discard_in(&folder, &inner)?;
+    }
+    Ok(())
+}
+
+/// Puts `paths` of the repository at `directory` back as they are in its last commit, and checks out each that is a submodule at the commit recorded.
+fn discard_in(directory: &Path, paths: &[String]) -> Result<(), String> {
+    let held = submodule::direct(directory);
+    for path in paths.iter().map(String::as_str) {
+        let recorded = || {
+            run(
+                directory,
+                &["rev-parse", "--verify", "--quiet", &format!("HEAD:{path}")],
+            )
+            .is_ok()
+        };
+        if held.iter().any(|submodule| submodule == path) && recorded() {
+            run(directory, &["reset", "--quiet", "--", path])?;
+            run(directory, &["submodule", "update", "--", path])?;
+        } else if in_head(directory, path) {
             run(
                 directory,
                 &[
@@ -875,7 +946,7 @@ pub fn read(directory: &Path, path: &str, head: bool) -> Result<Contents, String
     read_at(directory, path, head.then_some("HEAD"))
 }
 
-/// The bytes `path` holds in the working folder, or in the commit `revision` of the repository `directory` is in when one is named, no more than one past `most`.
+/// The bytes `path` holds in the working folder, or in the commit `revision` of the repository `directory` is in when one is named, no more than one past `most`; the last commit of a file inside a submodule is the submodule's.
 fn read_raw(
     directory: &Path,
     path: &str,
@@ -893,10 +964,15 @@ fn read_raw(
         {
             return Err(format!("{revision:?} does not name a commit"));
         }
+        let (folder, inner) = if revision == "HEAD" {
+            submodule::owner_of(directory, path)
+        } else {
+            (directory.to_path_buf(), path.to_owned())
+        };
         let mut child = Command::new("git")
-            .args(["show", &format!("{revision}:{path}")])
+            .args(["show", &format!("{revision}:{inner}")])
             .env("GIT_LITERAL_PATHSPECS", "1")
-            .current_dir(directory)
+            .current_dir(folder)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

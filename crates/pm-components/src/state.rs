@@ -1150,6 +1150,8 @@ pub enum Outgoing {
         session: usize,
         /// The branch.
         branch: String,
+        /// The submodule of the folder it is done in, from the folder, or nothing for the folder's own repository.
+        submodule: Option<String>,
     },
     /// Makes a branch in the folder of a session and checks it out.
     CreateBranch {
@@ -1157,9 +1159,18 @@ pub enum Outgoing {
         session: usize,
         /// What the branch is called.
         name: String,
+        /// The submodule of the folder it is done in, from the folder, or nothing for the folder's own repository.
+        submodule: Option<String>,
     },
     /// Lists the branches of the repository the folder of a session is in.
     SessionBranches {
+        /// The session, by position.
+        session: usize,
+        /// The submodule of the folder it is done in, from the folder, or nothing for the folder's own repository.
+        submodule: Option<String>,
+    },
+    /// Lists what each checked out submodule of the folder of a session has checked out.
+    SubmoduleHeads {
         /// The session, by position.
         session: usize,
     },
@@ -2768,6 +2779,7 @@ impl WorkspaceState {
                     .into_owned();
                 session.base = self.base_for_new_work();
                 session.submodule = self.new_in.take();
+                session.directory = session.folder_in(&session.directory);
                 session.branch = if session.base.is_some() {
                     String::new()
                 } else {
@@ -3051,7 +3063,7 @@ impl WorkspaceState {
     /// Folds the folder at `position` of the open session's changes, or unfolds it.
     fn fold_change_folder(&mut self, position: usize) {
         let key = self.review_session().and_then(|session| {
-            crate::change_list::folder_table(&session.changes)
+            crate::change_list::folder_table(&session.changes, self.git.repository.as_deref())
                 .get(position)
                 .map(|folder| crate::change_list::fold_key(folder.group, &folder.path))
         });
@@ -3063,7 +3075,7 @@ impl WorkspaceState {
     /// Stages everything under the folder at `position` of the open session's changes, or unstages it when all of it is staged.
     fn stage_change_folder(&mut self, position: usize) {
         let files = self.review_session().and_then(|session| {
-            crate::change_list::folder_table(&session.changes)
+            crate::change_list::folder_table(&session.changes, self.git.repository.as_deref())
                 .into_iter()
                 .nth(position)
                 .map(|folder| folder.files)
@@ -3175,7 +3187,7 @@ impl WorkspaceState {
         head: Option<&str>,
     ) -> Self {
         if let Some(held) = self.sessions.get_mut(session) {
-            held.directory = directory.to_owned();
+            held.directory = held.folder_in(directory);
             if branch.is_some() || head.is_some() {
                 held.branch = Session::checkout_label(branch, head, held.base.as_deref());
             }
@@ -3253,6 +3265,8 @@ impl WorkspaceState {
                     change.index = found.index;
                     change.worktree = found.worktree;
                     change.from = found.from.clone();
+                    change.submodule = found.submodule.clone();
+                    change.moved = found.moved.clone();
                     change.viewed = held
                         .changes
                         .iter()

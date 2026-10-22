@@ -87,6 +87,8 @@ pub fn revision_changes(
             worktree: None,
             conflicted: false,
             from: before,
+            submodule: None,
+            moved: None,
         });
     }
     Ok(found)

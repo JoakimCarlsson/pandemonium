@@ -301,6 +301,10 @@ pub enum Shot {
     Conflict,
     /// The files a session changed as one view, each folded away from its header and edited in place.
     Changes,
+    /// The changes of a session that edited files inside a submodule and moved it to another commit, grouped under the submodule.
+    ChangesSubmodule,
+    /// The source control panel of a folder with submodules: the list of repositories with the folder's own picked, or, `true`, a submodule picked with its branches open.
+    BranchesSubmodule(bool),
     /// The same file with the caret in a call, its signature over it and the uses of a name marked.
     Signing,
     /// The same file with brackets coloured by depth, names coloured by what the language server says they are, hints inside lines and lenses at the ends of lines.
@@ -1084,6 +1088,52 @@ fn new_side_text(change: &pm_components::sample::Change) -> String {
     lines.join("\n") + "\n"
 }
 
+/// The first session with a file edited inside the submodule `vendor/inner`, the submodule moved two commits on, and the changes opened as one view.
+fn changes_submodule() -> WorkspaceState {
+    let mut state = workspace_sample();
+    if let Some(session) = state.sessions.first_mut() {
+        let mut edited = pm_components::sample::Change::new(
+            "vendor/inner/src/parse.rs",
+            "@@ -3,3 +3,4 @@\n fn parse(text: &str) -> Tree {\n-    Tree::empty()\n+    let tokens = lex(text);\n+    Tree::from(tokens)\n }",
+        );
+        edited.submodule = Some("vendor/inner".to_owned());
+        let mut moved = pm_components::sample::Change::new("vendor/inner", "");
+        moved.moved = Some(pm_git::Moved {
+            from: Some("a1b2c3d".to_owned()),
+            to: "e4f5a6b".to_owned(),
+            commits: vec![
+                "Lex before parsing".to_owned(),
+                "Build trees from tokens".to_owned(),
+            ],
+            back: false,
+        });
+        session.changes.splice(0..0, [moved, edited]);
+    }
+    state.after(TAB_DIFF).changes_opened()
+}
+
+/// The session of [`changes_submodule`] with its submodules listed as repositories, the folder's own picked, or, when `inside`, the submodule `vendor/inner` picked with its branches open.
+fn branches_submodule(inside: bool) -> WorkspaceState {
+    let mut state = changes_submodule();
+    state.git.submodule_heads = vec![
+        ("vendor/inner".to_owned(), "main".to_owned()),
+        ("vendor/inner/nested".to_owned(), "@ 3f2a1c9".to_owned()),
+        ("deps/router".to_owned(), "feat/router".to_owned()),
+    ];
+    if inside {
+        state.git.branch_menu = true;
+        state.git.repository = Some("vendor/inner".to_owned());
+        state.git.branches = vec![
+            "main".to_owned(),
+            "fix/lexer".to_owned(),
+            "origin/main".to_owned(),
+        ];
+    } else {
+        state.git.branches = vec!["task/227-checkpoints".to_owned(), "main".to_owned()];
+    }
+    state
+}
+
 /// The session's changed files opened as one view, each file read from the folder and its changed lines edited in place.
 fn changes() -> WorkspaceState {
     for id in ["rust", "markdown", "markdown-inline"] {
@@ -1780,6 +1830,8 @@ impl Shot {
             Self::Timeline => Screen::Workspace(timeline()),
             Self::Conflict => Screen::Workspace(conflict()),
             Self::Changes => Screen::Workspace(changes()),
+            Self::ChangesSubmodule => Screen::Workspace(changes_submodule()),
+            Self::BranchesSubmodule(inside) => Screen::Workspace(branches_submodule(inside)),
             Self::Signing => Screen::Workspace(signing()),
             Self::Annotated => Screen::Workspace(annotated()),
             Self::ProjectSearch => Screen::Workspace(project_search()),

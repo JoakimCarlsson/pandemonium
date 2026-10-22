@@ -152,6 +152,11 @@ pub enum Request {
         /// The folder.
         directory: String,
     },
+    /// What each checked out submodule of the repository a folder is has checked out.
+    SubmoduleHeads {
+        /// The folder.
+        directory: String,
+    },
     /// Who the agent is signed in as, by default and under the login in use.
     Identity {
         /// The agent, by its id.

@@ -254,13 +254,7 @@ fn start_session(
             &crate::machine::placement(),
         ) {
             Ok(made) => {
-                if let (Some(path), Some(branch)) = (submodule, &made.branch)
-                    && !made.skipped.iter().any(|(skipped, _)| skipped == path)
-                    && let Err(reason) = pm_git::branch_submodule(&made.path, path, branch)
-                {
-                    skipped.push((path.to_owned(), reason));
-                }
-                skipped.splice(0..0, made.skipped);
+                skipped = made.skipped;
                 (made.path, Some((made.head, made.branch)))
             }
             Err(reason) => return failed(format!("could not make a worktree: {reason}")),
@@ -572,6 +566,9 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
         },
         Request::Submodules { directory } => Response::Submodules {
             paths: pm_git::submodules(&place(&directory)),
+        },
+        Request::SubmoduleHeads { directory } => Response::SubmoduleHeads {
+            heads: pm_git::submodule_heads(&place(&directory)),
         },
         Request::Identity { agent } => match agent_named(&agent) {
             Some(agent) => Response::Identity {

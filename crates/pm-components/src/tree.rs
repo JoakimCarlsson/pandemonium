@@ -69,10 +69,15 @@ impl Draft {
         }
     }
 
-    /// Joins every folder that holds only another folder with that folder.
-    fn compacted(mut self) -> Self {
-        self.children = self.children.into_iter().map(Draft::compacted).collect();
+    /// Joins every folder that holds only another folder with that folder, unless it is one of `stops`, whose row always ends at it.
+    fn compacted(mut self, stops: &[&str]) -> Self {
+        self.children = self
+            .children
+            .into_iter()
+            .map(|child| child.compacted(stops))
+            .collect();
         if self.file.is_none()
+            && !stops.contains(&self.path.as_str())
             && let [only] = self.children.as_slice()
             && only.file.is_none()
         {
@@ -123,6 +128,11 @@ impl Draft {
 
 /// The tree of `paths`, split at slashes, laid out as `layout` says; a path that ends in a slash is a folder with nothing in it.
 pub fn build(paths: &[&str], layout: Layout) -> Vec<Entry> {
+    build_stopping(paths, layout, &[])
+}
+
+/// The tree of `paths` laid out as `layout` says, no folder of `stops` joined with the one it holds.
+pub fn build_stopping(paths: &[&str], layout: Layout, stops: &[&str]) -> Vec<Entry> {
     let mut root = Draft::new("", String::new(), None);
     for (index, path) in paths.iter().enumerate() {
         let parts: Vec<&str> = path.split('/').filter(|part| !part.is_empty()).collect();
@@ -150,7 +160,7 @@ pub fn build(paths: &[&str], layout: Layout) -> Vec<Entry> {
         .into_iter()
         .map(|child| {
             if layout.compact {
-                child.compacted()
+                child.compacted(stops)
             } else {
                 child
             }
