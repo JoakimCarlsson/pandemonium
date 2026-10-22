@@ -93,6 +93,8 @@ pub enum Shot {
     Onboarding(Step),
     /// The workspace on its first session.
     Workspace,
+    /// A session whose account needs signing in again.
+    SignedOut,
     /// The workspace asking whether to close the window while agents are working.
     Quitting,
     /// The workspace telling of a newer release in its title bar.
@@ -1857,6 +1859,14 @@ impl Shot {
                 },
                 ..OnboardingState::default()
             }),
+            Self::SignedOut => {
+                let mut state = workspace();
+                state.sessions[0].login = Some("a1".to_owned());
+                Screen::Workspace(state.heard(0, Event::SignedOut {
+                    reason: "Failed to authenticate: OAuth session expired and could not be refreshed".to_owned(),
+                    account: Some("work@example.com".to_owned()),
+                }))
+            }
             Self::Workspace | Self::Selecting => Screen::Workspace(workspace()),
             Self::SessionAccount => {
                 let mut state = workspace();

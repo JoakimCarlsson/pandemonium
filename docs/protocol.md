@@ -108,6 +108,7 @@ request with exactly one `response` carrying the same `id`.
 | `set_accounts` | `logins`: `[{agent, id, name}]`, `in_use`: `[[agent, id]]`                                       | `done`          |
 | `set_session_account` | `session`, `login` (a login id, or `null` for the agent's own)                            | `done`          |
 | `sign_in`      | `agent`                                                                                          | `done`          |
+| `sign_in_session` | `session` | `done` |
 | `start_session`| `agent`, `repository`, `directory`, `title`, `base`, `settings`, `text`, `attachments`           | `started`       |
 | `prompt`       | `session`, `text`, `attachments`, `now` (optional, `false` by default)                           | `done`          |
 | `remove_queued` | `session`, `queued`                                                                            | `done`          |
@@ -782,6 +783,22 @@ base, title, closed, updated, last_seq, running, login}`. `updated` is milliseco
 whether its agent is running now, and `login` is the id of the login the
 session runs as, `null` for the agent's own.
 
+### Signing in again during a session
+
+`sign_in_session { session }` runs the agent's existing login flow on the server
+that owns the session, using that session's account folder rather than the
+account selected for new work. It answers `done` or `failed`.
+
+`{"SignedOut": {"reason", "account"}}` ends a turn that failed with ACP `LOGIN_REQUIRED`
+(`-32000`) or an authentication failure. `account` names the session's account
+on its server, or is null for the default account. It replaces `Finished` for that turn;
+clients show a sign-in notice and action, not an assistant message. The server
+stops the expired agent and drops queued prompts without sending them.
+`"SignedIn"` clears the notice after a successful `sign_in_session`; login
+failure sends `SignedOut` with its reason instead. Both events are numbered,
+persisted, and replayed like other session events. The next prompt uses the
+same session and its conversation history with refreshed credentials.
+
 ### Event types
 
 Events use serde's default form, one key naming the type.
@@ -795,12 +812,14 @@ Events use serde's default form, one key naming the type.
 | `{"Thought": "text"}`         | More of the agent's reasoning. Append it.                                                                 |
 | `{"Tool": Tool}`              | A tool the agent is using. Later events with the same `id` update it.                                     |
 | `{"Background": {id, label, running}}` | A command or task went on running beyond its call (`running` true), or ended (false). `id` is the handle the agent knows it by; for a command left running by a turn it is the `id` of its `Tool`. The agent is still at work while any runs, though the turn is over. |
-| `{"Halted": null}`            | The turn was stopped or failed: nothing the agent had running goes on. A `Finished` follows.              |
+| `{"Halted": null}`            | The turn was stopped or failed: nothing the agent had running goes on. A `Finished` or `SignedOut` follows.              |
 | `{"Plan": [PlanStep]}`        | The agent's plan, whole. Replaces the earlier one.                                                        |
 | `{"Ask": Permission}`         | The agent waits for an answer: send `choose` with the `ticket` and the `id` of a choice.                  |
 | `{"Inquire": Inquiry}`      | The agent waits for answers to a form of questions: send `answer` with the `ticket` and a reply for each question. |
 | `{"Answered": [[question, answer]]}` | A client answered a form of questions. `answer` is null for a question that was skipped. |
 | `{"Finished": null}`          | The turn ended. A string instead of null means it failed with that reason.                                |
+| `{"SignedOut": {"reason", "account"}}` | The turn ended because the session account needs signing in again. Send `sign_in_session`; do not append the reason as an assistant reply. |
+| `"SignedIn"` | The session account was signed in again. Clear its sign-in notice. |
 | `{"Failed": "reason"}`        | The agent could not be started or stopped. The next `prompt` starts it again.                             |
 | `{"Titled": "text"}`          | The agent named the session, or named it again. The server keeps it as the session's `title`.            |
 | `{"Hooks": [Hook]}`           | The hooks the session's Codex holds back until the reader trusts them, all of them as they stand now. Replaces the earlier list; empty when none is held back. Told when a Codex session starts and again when a file the hooks are read from changes. Trust them with `trust_hooks`. |

@@ -93,7 +93,7 @@ impl Session {
     pub(crate) fn turn_open(&self) -> bool {
         self.log.iter().fold(false, |open, (_, event)| match event {
             Event::Prompted { .. } => true,
-            Event::Finished(_) | Event::Failed(_) => false,
+            Event::Finished(_) | Event::SignedOut { .. } | Event::Failed(_) => false,
             _ => open,
         })
     }
@@ -140,7 +140,10 @@ impl Session {
         }
         if matches!(
             event,
-            Event::Prompted { .. } | Event::Finished(_) | Event::Failed(_)
+            Event::Prompted { .. }
+                | Event::Finished(_)
+                | Event::SignedOut { .. }
+                | Event::Failed(_)
         ) {
             self.meta.updated = now();
             sessions::save_meta(number, &self.meta);
@@ -316,13 +319,19 @@ impl Core {
                 let Some(chat) = &session.chat else {
                     continue;
                 };
-                for event in chat.events() {
+                for mut event in chat.events() {
+                    if let Event::SignedOut { account, .. } = &mut event {
+                        *account = crate::handler::login_name(
+                            &session.meta.agent,
+                            session.meta.login.as_deref(),
+                        );
+                    }
                     if session.repeats(&event) {
                         continue;
                     }
                     told.push((*number, session.note(*number, &event), event.clone()));
                     match event {
-                        Event::Failed(_) => {
+                        Event::Failed(_) | Event::SignedOut { .. } => {
                             session.chat = None;
                             session.busy = false;
                             told.extend(session.drop_queue(*number));

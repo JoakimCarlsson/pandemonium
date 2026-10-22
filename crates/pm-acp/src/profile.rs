@@ -38,15 +38,20 @@ impl Agent {
 
     /// Signs the agent in under the home folder in use, by the first way it offers, and returns once that is over.
     pub fn sign_in(self) -> Result<(), String> {
+        self.sign_in_in(self.home())
+    }
+
+    /// Signs in using the offered methods and the session's explicit account folder.
+    pub fn sign_in_in(self, home: Option<PathBuf>) -> Result<(), String> {
         if !self.startable() {
             return Err("the agent is not installed".to_owned());
         }
-        let mut client = crate::client::Client::start(self.command(&[]))?;
+        let mut client = crate::client::Client::start(self.command_in(&[], home.clone()))?;
         let shaken = client.initialize(std::time::Duration::from_secs(180))?;
         drop(client);
         let logins = crate::client::logins(&shaken["authMethods"]);
         let login = logins.first().ok_or("the agent offers no way to sign in")?;
-        self.log_in(login)
+        self.log_in_in(login, home)
     }
 }
 

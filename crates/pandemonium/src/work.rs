@@ -1098,6 +1098,11 @@ impl Work {
                     Pending::Figure(key),
                 ),
                 Outgoing::Accounts { logins, in_use } => self.set_accounts(&logins, &in_use),
+                Outgoing::SignInSession { session } => self.ask_session(
+                    session,
+                    |session| Request::SignInSession { session },
+                    Pending::Nothing,
+                ),
                 Outgoing::SignIn { agent } => {
                     if let Some(id) = self.agent_id(agent) {
                         self.ask(&None, Request::SignIn { agent: id }, Pending::SignIn(agent));
@@ -1551,7 +1556,10 @@ impl Work {
         };
         let files_moved = matches!(
             event,
-            Event::Finished(_) | Event::Failed(_) | Event::Restored { .. }
+            Event::Finished(_)
+                | Event::SignedOut { .. }
+                | Event::Failed(_)
+                | Event::Restored { .. }
         );
         let finished = live && matches!(event, Event::Finished(_));
         model.update(|screen| *screen = std::mem::take(screen).heard(session, event));

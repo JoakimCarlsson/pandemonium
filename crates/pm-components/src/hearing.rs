@@ -31,6 +31,12 @@ impl Session {
                 let at = reply.steps.len();
                 reply.answers.push((at, answers));
             }
+            Event::SignedOut { reason, account } => {
+                self.turn_started = None;
+                self.finish(None);
+                self.signed_out = Some((reason, account));
+            }
+            Event::SignedIn => self.signed_out = None,
             Event::Finished(error) => self.finish(error),
             Event::Failed(reason) => self.finish(Some(reason)),
             Event::Titled(title) => self.title = title,
@@ -380,5 +386,53 @@ fn worked(seconds: u64) -> String {
         format!("Worked for {}m {}s", seconds / 60, seconds % 60)
     } else {
         format!("Worked for {seconds}s")
+    }
+}
+
+#[cfg(test)]
+/// Tests for a session that needs its account signed in again.
+mod tests {
+    use super::*;
+
+    /// Authentication failures stay out of the transcript and clear after login.
+    #[test]
+    fn signed_out_session_can_resume() {
+        let mut session = Session::started("Test", 0, "Hello");
+        session.hear(Event::Prompted {
+            text: "Hello".to_owned(),
+            files: Vec::new(),
+            checkpoint: false,
+        });
+        let before = session.messages.len();
+        session.hear(Event::SignedOut {
+            reason: "OAuth session expired".to_owned(),
+            account: Some("work@example.com".to_owned()),
+        });
+        assert_eq!(session.messages.len(), before);
+        assert_eq!(
+            session.signed_out.as_ref().unwrap().1.as_deref(),
+            Some("work@example.com")
+        );
+        assert_ne!(session.status, Status::Working);
+        session.hear(Event::SignedIn);
+        assert!(session.signed_out.is_none());
+        session.hear(Event::Prompted {
+            text: "Hello again".to_owned(),
+            files: Vec::new(),
+            checkpoint: false,
+        });
+        assert_eq!(session.status, Status::Working);
+        session.hear(Event::Said("Reply".to_owned()));
+        session.hear(Event::Finished(None));
+        assert_eq!(session.messages.last().unwrap().text, "Reply");
+        session.hear(Event::Finished(Some("Other error".to_owned())));
+        assert!(
+            session
+                .messages
+                .last()
+                .unwrap()
+                .text
+                .contains("Something went wrong: Other error")
+        );
     }
 }
