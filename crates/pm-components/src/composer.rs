@@ -493,6 +493,35 @@ pub fn composer(
     text_width: f32,
     shaper: &mut Shaper,
 ) -> Node {
+    if let Some(session) = session
+        && let Some((reason, account)) = &session.signed_out
+    {
+        let agent = state.agent_look(session.agent).name;
+        let account = account.as_deref().or_else(|| {
+            session
+                .login
+                .as_deref()
+                .map(|id| state.account_as(session.agent, Some(id)).unwrap_or(id))
+        });
+        let label = match account {
+            Some(account) => format!("Sign in to {agent} again ({account})"),
+            None => format!("Sign in to {agent} again"),
+        };
+        return node()
+            .styles([
+                flex(),
+                flex_col(),
+                gap(3),
+                p(4),
+                rounded(Radius::Xl),
+                bg(Role::Surface),
+                border(),
+                border_color(Role::Border),
+            ])
+            .child(text(label).styles([text_color(Role::Text), text_px(14.0)]))
+            .child(text(reason).styles([text_color(Role::Muted), text_px(12.0)]))
+            .child(Button::new("Sign in", crate::state::SESSION_SIGN_IN).build());
+    }
     if let Some(proposed) = session
         .and_then(|session| session.ask.as_ref())
         .and_then(proposal)

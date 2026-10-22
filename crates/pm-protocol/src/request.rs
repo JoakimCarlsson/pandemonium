@@ -171,6 +171,11 @@ pub enum Request {
         /// The agent, by its id.
         agent: String,
     },
+    /// Signs in again as the account of an existing session, on its server.
+    SignInSession {
+        /// The session's number.
+        session: u64,
+    },
     /// Starts a session: makes its worktree when asked, starts its agent and hands it the first prompt.
     StartSession {
         /// The agent, by its id.

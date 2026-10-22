@@ -72,22 +72,26 @@ impl Agent {
     /// browser. One that needs a terminal runs the agent in the reader's
     /// terminal, and returns when that terminal is closed.
     pub fn log_in(self, login: &Login) -> Result<(), String> {
+        self.log_in_in(login, self.home())
+    }
+
+    /// Signs in through the existing login method using an explicit account folder.
+    pub(crate) fn log_in_in(
+        self,
+        login: &Login,
+        home: Option<std::path::PathBuf>,
+    ) -> Result<(), String> {
         match &login.way {
             Way::Asked => {
-                let mut client = Client::start(self.command(&[]))?;
+                let mut client = Client::start(self.command_in(&[], home))?;
                 client.initialize(QUICK.max(FETCH))?;
                 match client.ask("authenticate", &json!({ "methodId": login.id }), BROWSER)? {
                     Answer::Result(_) => Ok(()),
                     Answer::Error(_, message) => Err(message),
                 }
             }
-            Way::Terminal { args } => self.in_terminal(args),
+            Way::Terminal { args } => run_in_terminal(self.command_in(args, home)),
         }
-    }
-
-    /// Runs the agent with `args` in a terminal window, and waits for the window to close.
-    fn in_terminal(self, args: &[String]) -> Result<(), String> {
-        run_in_terminal(self.command(args))
     }
 }
 

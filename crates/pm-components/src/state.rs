@@ -129,6 +129,9 @@ pub const STOP: FocusId = FocusId(322);
 /// Stops the turn the agent is on and hands it the prompt in its place.
 pub const SEND_NOW: FocusId = FocusId(327);
 
+/// Signs in again as the open session's account.
+pub const SESSION_SIGN_IN: FocusId = FocusId(331);
+
 /// The first of the buttons handing a queued prompt to the agent at once; the rest follow it.
 pub const HURRY_BASE: u64 = 4900;
 
@@ -1015,6 +1018,11 @@ pub enum Outgoing {
     SignIn {
         /// The agent, by position.
         agent: usize,
+    },
+    /// Signs in again as the account of the open session.
+    SignInSession {
+        /// The session, by position.
+        session: usize,
     },
     /// Hands the agent of a session the words as its next turn, or queues them while it is on one.
     Prompt {
@@ -2027,6 +2035,11 @@ impl WorkspaceState {
             CLOSE_PLAN => self.plan_open = false,
             REVISE => self.reject(),
             OPEN_DIFF => self.tab = Tab::Diff,
+            SESSION_SIGN_IN => {
+                if let Page::Session(session) = self.page {
+                    self.outbox.push(Outgoing::SignInSession { session });
+                }
+            }
             SEND => self.send(false),
             SEND_NOW => self.send(true),
             STOP => self.stop(),
@@ -2701,6 +2714,9 @@ impl WorkspaceState {
                 let Some(session) = self.sessions.get_mut(index) else {
                     return;
                 };
+                if session.signed_out.is_some() {
+                    return;
+                }
                 if session.status == Status::Working {
                     self.queue(index, text, now);
                     return;
