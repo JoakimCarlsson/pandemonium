@@ -50,6 +50,7 @@ impl Work {
             && shown == directory
         {
             self.refresh(model, position);
+            model.update(|screen| *screen = std::mem::take(screen).with_tree_stale());
         }
     }
 }

@@ -974,6 +974,8 @@ pub enum Outgoing {
         host: Option<String>,
         /// The folder.
         directory: String,
+        /// Ignored folders currently unfolded in the tree.
+        expanded: Vec<String>,
     },
     /// Lists the branches of the repository `directory` on `host`, for the project at `project`.
     Branches {
@@ -3045,7 +3047,11 @@ impl WorkspaceState {
                 path: path.clone(),
                 folder: true,
             });
+            let ignored = self.tree_ignored.contains(&path);
             toggle(&mut self.open_tree, path);
+            if ignored {
+                self.reread_files();
+            }
         }
     }
 

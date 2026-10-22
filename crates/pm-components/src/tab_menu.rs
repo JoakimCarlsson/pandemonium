@@ -258,6 +258,7 @@ impl WorkspaceState {
             folder.push_str(part);
             self.open_tree.insert(folder.clone());
         }
+        self.reread_files();
         self.select_tree(crate::tree_actions::TreeTarget {
             path: path.to_owned(),
             folder: false,

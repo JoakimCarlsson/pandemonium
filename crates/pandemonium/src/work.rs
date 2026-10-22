@@ -1107,14 +1107,23 @@ impl Work {
                     key,
                     host,
                     directory,
-                } => self.ask(
-                    &host,
-                    Request::Files {
-                        directory,
-                        limit: FILE_LIMIT,
-                    },
-                    Pending::Files(key),
-                ),
+                    expanded,
+                } => {
+                    if let Some(link) = self.links.get_mut(&host) {
+                        link.waiting.retain(
+                            |_, pending| !matches!(pending, Pending::Files(held) if *held == key),
+                        );
+                    }
+                    self.ask(
+                        &host,
+                        Request::Files {
+                            directory,
+                            limit: FILE_LIMIT,
+                            expanded,
+                        },
+                        Pending::Files(key),
+                    );
+                }
                 Outgoing::Branches {
                     project,
                     host,

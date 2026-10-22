@@ -190,6 +190,7 @@ impl WorkspaceState {
                 key,
                 host,
                 directory,
+                expanded: self.open_tree.iter().cloned().collect(),
             });
         }
     }

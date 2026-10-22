@@ -105,6 +105,8 @@ pub enum Shot {
     Commenting,
     /// The workspace on the diff of its first session with the project's files listed in the review panel.
     Files,
+    /// Expanded ignored folders with nested files dimmed.
+    IgnoredFiles,
     /// The workspace on the diff with the source control panel: staged and untracked files, a message, the graph.
     Source,
     /// The source control panel with git's refusal of a branch switch said in it.
@@ -1586,6 +1588,25 @@ fn files() -> WorkspaceState {
     )
 }
 
+/// Expanded ignored folders with every nested file and folder dimmed.
+fn ignored_files() -> WorkspaceState {
+    let mut state = files();
+    let paths = [
+        "server/prod/connect.sh",
+        "server/prod/key.pem",
+        "server/stage/connect.sh",
+        "server/stage/clip.mp4",
+    ];
+    let folders = ["server", "server/prod", "server/stage"];
+    state.files.extend(paths.map(str::to_owned));
+    state.tree_folders.extend(folders.map(str::to_owned));
+    state
+        .tree_ignored
+        .extend(paths.into_iter().chain(folders).map(str::to_owned));
+    state.open_tree.extend(folders.map(str::to_owned));
+    state
+}
+
 /// The workspace with a shell open that has run a few commands, as the shell would have drawn them.
 fn terminal() -> WorkspaceState {
     with_shell(workspace_sample())
@@ -1888,6 +1909,7 @@ impl Shot {
             }
             Self::Commenting => Screen::Workspace(commenting()),
             Self::Files => Screen::Workspace(files()),
+            Self::IgnoredFiles => Screen::Workspace(ignored_files()),
             Self::Source => Screen::Workspace(source()),
             Self::SourceMenu => {
                 Screen::Workspace(source().with_git_menu(MenuKind::Source, (700.0, 110.0)))
