@@ -137,6 +137,8 @@ pub enum Shot {
     TerminalMenu,
     /// The overview of a project.
     Overview,
+    /// A folded change opened from the project Changes list.
+    OverviewDiff,
     /// The overview of a project with the menu on a changed file of its folder open.
     OverviewChangeMenu,
     /// The workspace with the terminal open and the sidebar, the review panel and the terminal dragged to other sizes.
@@ -1939,6 +1941,12 @@ impl Shot {
                 Screen::Workspace(state)
             }
             Self::Overview => Screen::Workspace(overview()),
+            Self::OverviewDiff => {
+                let mut state = overview();
+                let path = state.review_session().unwrap().changes[0].path.clone();
+                state.closed_diffs.insert(path);
+                Screen::Workspace(state.after(FocusId(pm_components::state::FILE_BASE)))
+            }
             Self::OverviewChangeMenu => {
                 Screen::Workspace(overview().with_change_menu(0, (1000.0, 250.0)))
             }

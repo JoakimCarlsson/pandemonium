@@ -123,6 +123,7 @@ fn main() {
             Some("terminallink") => Shot::TerminalLink,
             Some("terminalmenu") => Shot::TerminalMenu,
             Some("overview") => Shot::Overview,
+            Some("overviewdiff") => Shot::OverviewDiff,
             Some("overviewchangemenu") => Shot::OverviewChangeMenu,
             Some("resized") => Shot::Resized,
             Some("new") => Shot::New,

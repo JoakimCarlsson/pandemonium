@@ -2990,7 +2990,7 @@ impl WorkspaceState {
         self.request_resolver(index);
         self.tab = Tab::Diff;
         if let Some(path) = self
-            .open()
+            .review_session()
             .and_then(|session| session.changes.get(index))
             .map(|change| change.path.clone())
         {
@@ -3029,7 +3029,7 @@ impl WorkspaceState {
     /// Folds the file at `index` of the diff, or unfolds it.
     fn fold_diff(&mut self, index: usize) {
         if let Some(path) = self
-            .open()
+            .review_session()
             .and_then(|session| session.changes.get(index))
             .map(|change| change.path.clone())
         {
@@ -3061,10 +3061,10 @@ impl WorkspaceState {
         self
     }
 
-    /// Commits the staged changes of the open session under the message typed, or, with none staged, the changes of its tracked files, and pushes afterwards when `push` is set.
+    /// Commits the staged changes of the review folder under the message typed, or, with none staged, the changes of its tracked files, and pushes afterwards when `push` is set.
     pub(crate) fn commit_with(&mut self, push: bool, amend: bool) {
         let message = self.message.text().trim().to_owned();
-        let Page::Session(index) = self.page else {
+        let Some(index) = self.review_index() else {
             return;
         };
         let Some(session) = self.sessions.get_mut(index) else {
@@ -3223,5 +3223,59 @@ impl WorkspaceState {
 fn toggle(set: &mut std::collections::HashSet<String>, path: String) {
     if !set.remove(&path) {
         set.insert(path);
+    }
+}
+
+/// Regression coverage for source control in project folders and session worktrees.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::git_controls::Pick;
+    use crate::panes::{Item, Side};
+
+    /// Opening, folding, picking, staging and committing use the folder being reviewed on every page.
+    #[test]
+    fn review_actions_without_an_open_session() {
+        for page in [Page::Project(0), Page::New(0), Page::Session(0)] {
+            let mut state = WorkspaceState::sample();
+            let changes = state.sessions[0].changes.clone();
+            state.page = page;
+            state.sync_context();
+            let index = state.review_index().unwrap();
+            state.sessions[index].changes = changes;
+            state.sessions[index].changes[1].untracked = true;
+            state = state
+                .pane_dragged(Item::Diff, Some((0, Side::Right)), (0.0, 0.0))
+                .pane_dropped()
+                .after(TAB_CHAT);
+            for row in [0, 1] {
+                let path = state.sessions[index].changes[row].path.clone();
+                state.closed_diffs.insert(path.clone());
+                state = state.after(FocusId(FILE_BASE + row as u64));
+                assert_eq!(state.file, Some(row));
+                assert_eq!(state.current_item(), Item::Diff);
+                let panes = state.panes();
+                let group = panes.layout.groups()[panes.focused];
+                assert_eq!(group.items[group.active], Item::Diff);
+                assert!(!state.closed_diffs.contains(&path));
+                state = state.after(FocusId(DIFF_FOLD_BASE + row as u64));
+                assert!(state.closed_diffs.contains(&path));
+            }
+            state.tab = Tab::Chat;
+            state = state.change_picked(0, Pick::Toggle);
+            state = state.change_picked(1, Pick::Range);
+            assert_eq!(state.tab, Tab::Chat);
+            assert!(state.git.marked.contains(&0));
+            assert!(state.git.marked.contains(&1));
+            state.set_staged(&[0, 1], true);
+            state.take_outbox();
+            state.message = Field::new("Review folder changes");
+            state = state.after(COMMIT);
+            assert!(state.take_outbox().iter().any(|outgoing| matches!(
+                outgoing,
+                Outgoing::Commit { session, message, .. }
+                    if *session == index && message == "Review folder changes"
+            )));
+        }
     }
 }

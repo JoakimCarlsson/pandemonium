@@ -341,7 +341,7 @@ impl WorkspaceState {
             MenuKind::Refs => vec![row("Auto", Command::Auto), row("All", Command::All)],
             MenuKind::History(commit) => {
                 let branch = self
-                    .open()
+                    .review_session()
                     .map(|session| session.branch.clone())
                     .unwrap_or_default();
                 let known = self.git.history.get(commit).is_some();
