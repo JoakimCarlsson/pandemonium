@@ -284,10 +284,22 @@ impl WorkspaceState {
         self
     }
 
-    /// Asks for the files of the project again.
+    /// Asks for the files of the project again while keeping the current tree visible until the reply arrives.
     pub(crate) fn reread_files(&mut self) {
-        self.files_of = None;
-        self.refresh_files();
+        let wanted = self.prompt_place();
+        let key = wanted
+            .as_ref()
+            .map(|(host, directory)| format!("{host:?}:{directory}"));
+        if self.files_of != key {
+            self.refresh_files();
+        } else if let (Some((host, directory)), Some(key)) = (wanted, key) {
+            self.outbox.push(Outgoing::Files {
+                key,
+                host,
+                directory,
+                expanded: Vec::new(),
+            });
+        }
     }
 
     /// Carries out `action` if it is a button or row of the tree, and says whether it was.

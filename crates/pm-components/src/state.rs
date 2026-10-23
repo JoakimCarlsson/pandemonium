@@ -3106,11 +3106,7 @@ impl WorkspaceState {
                 path: path.clone(),
                 folder: true,
             });
-            let ignored = self.tree_ignored.contains(&path);
             toggle(&mut self.open_tree, path);
-            if ignored {
-                self.reread_files();
-            }
         }
     }
 

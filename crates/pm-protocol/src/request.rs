@@ -132,13 +132,13 @@ pub enum Request {
         /// The project's folder on the server's machine.
         directory: String,
     },
-    /// The files of a folder, including ignored entries and the immediate contents of expanded ignored folders.
+    /// The files of a folder, including ignored entries.
     Files {
         /// The folder.
         directory: String,
-        /// The most base paths; expanded ignored folders are listed separately.
+        /// The most paths in each listing.
         limit: usize,
-        /// Repository-relative ignored folders whose immediate entries should also be listed.
+        /// Previously expanded ignored folders; retained for older clients.
         #[serde(default)]
         expanded: Vec<String>,
     },

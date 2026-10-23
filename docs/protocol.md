@@ -231,12 +231,10 @@ request with exactly one `response` carrying the same `id`.
 
 `agent` is an agent's id: `claude-code`, `codex` or `grok`.
 
-`files` lists ignored folders without walking them. Its optional `expanded`
-array names repository-relative ignored folders whose immediate files and
-subfolders are included, all marked ignored. It defaults to an empty array.
-These contents do not consume the base listing's `limit`. Clients list again
-on expansion, including reopening a folder, and when notified of changes;
-reopening also refreshes folders excluded by the file watcher.
+`files` lists tracked, untracked and ignored files together, up to `limit` for
+each listing. Ignored paths are marked in the `ignored` response field so the
+tree can dim them. The optional `expanded` array is accepted for older clients
+and has no effect. Clients list again when notified of changes.
 
 - **`discover`:** starts the agent briefly and returns what it lets the reader
   change (models, modes, effort) and the commands it offers behind a slash.
@@ -700,7 +698,7 @@ embedded context, and anything else as a link to the stored file.
 | `failed`     | `message`                                                 |
 | `discovery`  | `settings`, `commands`                                    |
 | `skills`     | `skills` (`[{name, description}]`), `names` (`[string]`)  |
-| `files`      | `paths`: repository-relative, tracked or not ignored plus the immediate files in expanded ignored folders, `folders` (optional): untracked folders and immediate subfolders of expanded ignored folders, which may hold no file yet, `ignored` (optional): which of `paths` and `folders` git ignores, listed so a tree can dim them |
+| `files`      | `paths`: repository-relative tracked, untracked and ignored files, `folders` (optional): untracked and ignored folders that may hold no file yet, `ignored` (optional): which paths and folders git ignores, listed so a tree can dim them |
 | `branches`   | `names`: local branches, the current one first, then remote ones such as `origin/main`; read from git at each request |
 | `submodules` | `paths`: every submodule's path from the root of the repository, nested ones included, initialised or not |
 | `submodule_heads` | `heads`: `[[path, head]]` for each checked out submodule, nested ones included: its branch, or `@ <commit>` on a detached head. `branches`, `checkout` and `create_branch` on a submodule's folder act on the submodule |
