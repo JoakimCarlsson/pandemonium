@@ -50,8 +50,10 @@ struct Listed {
 
 /// Runs `gh` with `arguments`, never asking a question, and returns what it wrote, or what it complained of.
 fn gh(arguments: &[&str]) -> Result<String, String> {
-    let output = Command::new("gh")
+    let program = pm_tools::installed("gh").unwrap_or_else(|| "gh".into());
+    let output = Command::new(&program)
         .args(arguments)
+        .env("PATH", pm_tools::path_beside(&program))
         .env("GH_PROMPT_DISABLED", "1")
         .stdin(Stdio::null())
         .output()
@@ -129,4 +131,47 @@ pub fn repositories(owner: &Owner) -> Result<Vec<Repository>, String> {
         .collect();
     found.sort_by_key(|repository| repository.name.to_lowercase());
     Ok(found)
+}
+
+/// Isolated CLI discovery checks without a GitHub account or network access.
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::{fs, os::unix::fs::PermissionsExt, path::Path};
+
+    /// A desktop server finds a CLI outside PATH and preserves its output and authentication errors.
+    #[test]
+    fn cli_outside_inherited_path() {
+        if std::env::var_os("PM_GIT_GITHUB_TEST").is_some() {
+            assert_eq!(std::env::var_os("PATH").unwrap(), "");
+            assert_eq!(gh(&["success"]).unwrap(), "found\n");
+            assert_eq!(gh(&["failure"]).unwrap_err(), "not authenticated");
+            return;
+        }
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../build")
+            .join(format!("github-cli-{}", std::process::id()));
+        let bin = root.join(".local/bin");
+        fs::create_dir_all(&bin).unwrap();
+        fs::write(
+            bin.join("gh"),
+            "#!/bin/sh\n[ \"$GH_PROMPT_DISABLED\" = 1 ] || exit 2\nread -r input && exit 3\ncommand -v github-helper >/dev/null || exit 4\ncase \"$1\" in\nsuccess) printf 'found\\n';;\n*) printf 'not authenticated\\n' >&2; exit 1;;\nesac\n",
+        )
+        .unwrap();
+        fs::write(bin.join("github-helper"), "#!/bin/sh\nexit 0\n").unwrap();
+        for name in ["gh", "github-helper"] {
+            fs::set_permissions(bin.join(name), fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let output = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "github::tests::cli_outside_inherited_path"])
+            .env_clear()
+            .env("HOME", &root)
+            .env("PATH", "")
+            .env("SHELL", "/bin/false")
+            .env("PM_GIT_GITHUB_TEST", "1")
+            .output()
+            .unwrap();
+        fs::remove_dir_all(root).unwrap();
+        assert!(output.status.success(), "{output:?}");
+    }
 }

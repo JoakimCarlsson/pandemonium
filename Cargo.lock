@@ -2531,6 +2531,7 @@ dependencies = [
 name = "pm-git"
 version = "0.13.0-rc.11"
 dependencies = [
+ "pm-tools",
  "reflink-copy",
  "serde",
  "serde_json",
