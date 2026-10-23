@@ -78,6 +78,7 @@ impl WorkspaceState {
             self.page = page;
             self.tab = tab;
             self.sync_context();
+            self.fill_terminal_dock();
             self.refresh_files();
         }
         self

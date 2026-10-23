@@ -568,6 +568,19 @@ impl WorkspaceState {
         }
     }
 
+    /// Starts a shell in the session the dock is about when the dock is open on the shells and that session has none, as after moving to another session or project.
+    pub(crate) fn fill_terminal_dock(&mut self) {
+        if !self.terminal || self.bottom_tab() != BottomTab::Terminal || self.debug_docked() {
+            return;
+        }
+        if self
+            .docked()
+            .is_some_and(|session| session.terminals.is_empty())
+        {
+            self.open_terminal();
+        }
+    }
+
     /// Whether the dock shows a shell, and what its window holds: columns, lines and how far it is scrolled back.
     pub fn terminal_window(&self) -> Option<(usize, usize, usize)> {
         if self.bottom_tab() != BottomTab::Terminal {
