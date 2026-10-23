@@ -495,11 +495,11 @@ pub fn chat(
                     node()
                         .styles([w_full(), max_w_px(COLUMN), px(6)])
                         .children(queued(session))
-                        .children(
-                            session.inquiry.as_ref().map(|draft| {
-                                node().styles([w_full(), mb(2)]).child(inquiry(draft))
-                            }),
-                        )
+                        .children(session.inquiry.as_ref().map(|draft| {
+                            node()
+                                .styles([w_full(), mb(2)])
+                                .child(inquiry(draft, column, shaper))
+                        }))
                         .children(activity(state, session, column, shaper))
                         .child(composer(
                             state,

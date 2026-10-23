@@ -2885,18 +2885,20 @@ fn live(turn: Turn) -> WorkspaceState {
             ticket: 1,
             questions: vec![
                 Question {
-                    header: "Themes".to_owned(),
-                    text: "Which themes should the system setting apply to?".to_owned(),
+                    header: "Direction".to_owned(),
+                    text: "Imagine vault is three months from now and you open it every evening after a long day: the assistant can finally start jobs, the curating path is rewired, sources download straight into the library, and the whole thing feels like a private streaming service that knows your taste. When you picture the single most important thing that should have changed in how you interact with it compared to today, which of these is closest to the core of that change?".to_owned(),
                     multiple: false,
                     alternatives: vec![
                         alternative(
-                            "Light and dark only",
-                            "Follow the operating system between the two built-in themes.",
+                            "Assistant acts for me",
+                            "I ask in plain language to find new scenes like the last five I liked and download the best ones. The assistant queues a scan, identifies and downloads candidates, then generates jobs itself, with me only confirming the result.",
                         ),
                         alternative(
-                            "Every theme",
-                            "Let each custom theme declare a light and a dark variant.",
+                            "Library curates itself",
+                            "Rewire internal ingest and bring back a curate-style path so new material is discovered, fetched, identified and filed with minimal input, while still respecting library paths and avoiding time-triggered jobs.",
                         ),
+                        alternative("Browsing and taste first", "Focus on the grid, search, taste profile, recommendations and playback so finding something to watch is instant and personal. Automation can stay manual for now."),
+                        alternative("Metadata quality first", "Fix identify, populate visual descriptions, improve matching and scraper definitions so every scene has correct performers, studios and tags. Everything else builds on clean data."),
                     ],
                 },
                 Question {
@@ -2974,6 +2976,8 @@ pub fn write(
         (NARROW_WIDTH, NARROW_HEIGHT)
     } else if shot.in_settings_window() {
         (SETTINGS_WIDTH, SETTINGS_HEIGHT)
+    } else if matches!(shot, Shot::Inquiring) {
+        (WIDTH, 1000)
     } else if shot.in_picker_window() {
         (PICKER_WIDTH, PICKER_HEIGHT)
     } else {
