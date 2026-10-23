@@ -45,6 +45,15 @@ fn copy(from: &Path, to: &Path) -> Result<(), String> {
     }
 }
 
+/// Whether no part of `entry`, a path from the worktree's root, is a symbolic link there, so that writing it cannot land outside the worktree.
+fn free_of_links(worktree: &Path, entry: &str) -> bool {
+    let mut at = worktree.to_path_buf();
+    entry.split('/').all(|part| {
+        at.push(part);
+        !fs::symlink_metadata(&at).is_ok_and(|kind| kind.is_symlink())
+    })
+}
+
 /// Copies each ignored file or folder of `repository` that `patterns` name into the same place in `worktree`, and returns each that could not be copied, as its path and why.
 ///
 /// A pattern is a path from the repository's root, in which `*` stands for any run of characters in one name; only what git ignores is copied, never what is tracked, and never git's own folder or the folder worktrees are made in. A path that does not exist is left out without a word. A file inside a folder git ignores as a whole is named by naming the folder.
@@ -61,7 +70,8 @@ pub(crate) fn carry_ignored(
         .filter(|entry| named(patterns, entry))
         .map(|entry| entry.trim_end_matches('/').to_owned())
         .filter(|entry| entry != ".git" && !WORKTREES.starts_with(entry.as_str()))
-        .filter(|entry| !worktree.join(entry).exists())
+        .filter(|entry| fs::symlink_metadata(worktree.join(entry)).is_err())
+        .filter(|entry| free_of_links(worktree, entry))
         .filter_map(|entry| {
             copy(&repository.join(&entry), &worktree.join(&entry))
                 .err()
