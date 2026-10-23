@@ -54,6 +54,7 @@ pub mod inline_values;
 pub mod input;
 pub mod inquiry;
 pub mod jumps;
+pub mod language_offer;
 pub mod line_edits;
 pub mod listing;
 pub mod markdown;

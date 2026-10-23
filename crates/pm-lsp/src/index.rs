@@ -70,6 +70,9 @@ pub struct Listing {
     /// The endings of the file names written in it.
     #[serde(default)]
     pub suffixes: Vec<String>,
+    /// Whole file names that are written in it.
+    #[serde(default)]
+    pub names: Vec<String>,
     /// The program of its language server, when it has one.
     #[serde(default)]
     pub server: Option<String>,
@@ -201,6 +204,7 @@ fn listing_of(folder: &Path) -> Result<Listing, String> {
         hidden: manifest.hidden,
         requires: manifest.requires,
         suffixes: manifest.suffixes,
+        names: manifest.names,
         server: manifest.server.map(|server| server.command),
         files,
         local: false,

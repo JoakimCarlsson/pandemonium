@@ -272,6 +272,8 @@ pub enum Shot {
     FoldersOnboarding,
     /// A Rust file being written: highlighted, with what the language server finds wrong under it and the brackets at the caret paired.
     Code,
+    /// A file written in a language that is not installed, with the offer to install it above its lines.
+    LanguageOffer,
     /// A markdown file shown rendered as a page, with the switch to its source.
     MarkdownPreview,
     /// A vector picture shown drawn, with the switch to its source.
@@ -1160,6 +1162,24 @@ fn changes() -> WorkspaceState {
     })
 }
 
+/// A JavaScript file open while JavaScript is not installed, so the offer to install it is above its lines.
+fn language_offer() -> WorkspaceState {
+    let path = "scripts/build.js";
+    let mut state = workspace_sample().after(TAB_DIFF);
+    state.extensions = sample_languages();
+    state.open_viewer(path.to_owned(), false);
+    state.with_file(
+        0,
+        path,
+        false,
+        Ok((
+            Some("const fs = require(\"fs\");\n\nfunction build(files) {\n  return files.map((file) => fs.readFileSync(file, \"utf8\"));\n}\n\nmodule.exports = { build };\n".to_owned()),
+            false,
+            None,
+        )),
+    )
+}
+
 /// The Rust file set against a state it was saved in a while ago, its changed lines edited in place.
 fn timeline() -> WorkspaceState {
     let state = code();
@@ -1791,6 +1811,7 @@ impl Shot {
                 ..OnboardingState::default()
             }),
             Self::Code => Screen::Workspace(code()),
+            Self::LanguageOffer => Screen::Workspace(language_offer()),
             Self::MarkdownPreview => Screen::Workspace(previewed("README.md")),
             Self::VectorPreview => Screen::Workspace(previewed("assets/logo.svg")),
             Self::PicturePreview => Screen::Workspace(previewed("assets/screenshot.png")),
@@ -3137,5 +3158,50 @@ fn tool_listing(title: &str, name: &str, target: &str) -> pm_protocol::ToolListi
         inputs: Vec::new(),
         asks: false,
         website: String::new(),
+    }
+}
+
+#[cfg(test)]
+mod offer_tests {
+    use super::*;
+    use pm_components::language_offer::{OFFER_DECLINE, OFFER_INSTALL};
+    use pm_components::state::Outgoing;
+
+    /// Pressing Install asks for the language, and once the server lists it installed the open file takes it.
+    #[test]
+    fn install_asks_and_the_file_takes_the_language() {
+        let mut state = language_offer().after(OFFER_INSTALL);
+        let asked = state.take_outbox().into_iter().any(|outgoing| {
+            matches!(outgoing, Outgoing::InstallExtensions { ids } if ids == ["javascript"])
+        });
+        assert!(asked);
+        assert_eq!(state.shown_document().unwrap().language, None);
+        let installed = sample_languages()
+            .into_iter()
+            .map(|language| pm_protocol::ExtensionInfo {
+                installed: language.installed || language.id == "javascript",
+                ..language
+            })
+            .collect::<Vec<_>>();
+        let state = state.with_host_extensions(&None, &installed);
+        assert_eq!(
+            state.shown_document().unwrap().language.as_deref(),
+            Some("javascript")
+        );
+    }
+
+    /// Pressing Not now remembers the language, and it is not offered or installed from the bar after.
+    #[test]
+    fn declining_is_remembered() {
+        let mut state = language_offer().after(OFFER_DECLINE);
+        assert_eq!(state.window.general.declined_languages, ["javascript"]);
+        state.take_outbox();
+        let mut state = state.after(OFFER_INSTALL);
+        assert!(
+            !state
+                .take_outbox()
+                .iter()
+                .any(|outgoing| matches!(outgoing, Outgoing::InstallExtensions { .. }))
+        );
     }
 }

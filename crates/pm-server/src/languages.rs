@@ -114,6 +114,7 @@ impl Core {
                 color: None,
                 hidden: listing.hidden,
                 suffixes: listing.suffixes.clone(),
+                names: listing.names.clone(),
                 installed: false,
                 busy: None,
                 problem: None,
@@ -132,6 +133,7 @@ impl Core {
                     description: manifest.description.clone(),
                     hidden: manifest.hidden,
                     suffixes: manifest.suffixes.clone(),
+                    names: manifest.names.clone(),
                     ..ExtensionInfo::default()
                 });
             }

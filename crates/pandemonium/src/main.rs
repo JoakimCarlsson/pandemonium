@@ -59,6 +59,7 @@ fn main() {
             Some("agents") => Shot::Onboarding(pm_pages::Step::Agents),
             Some("languages") => Shot::Onboarding(pm_pages::Step::Languages),
             Some("code") => Shot::Code,
+            Some("languageoffer") => Shot::LanguageOffer,
             Some("markdownpreview") => Shot::MarkdownPreview,
             Some("vectorpreview") => Shot::VectorPreview,
             Some("picturepreview") => Shot::PicturePreview,

@@ -974,6 +974,7 @@ pub fn file_view(
             bg(Role::Background),
         ])
         .child(strip(viewer, live))
+        .children(crate::language_offer::offer(state, viewer))
         .child(
             node()
                 .styles([flex(), flex_1(), min_h(0), overflow_hidden()])

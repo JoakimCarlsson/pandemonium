@@ -36,6 +36,10 @@ pub struct GeneralSettings {
     pub check_updates: bool,
     /// Which releases it looks for.
     pub channel: Channel,
+    /// Whether opening a file written in a language that is not installed offers to install it.
+    pub offer_languages: bool,
+    /// The languages, by folder name, the reader turned the offer down for.
+    pub declined_languages: Vec<String>,
 }
 
 impl Default for GeneralSettings {
@@ -46,6 +50,8 @@ impl Default for GeneralSettings {
             confirm_close: true,
             check_updates: true,
             channel: Channel::Stable,
+            offer_languages: true,
+            declined_languages: Vec::new(),
         }
     }
 }

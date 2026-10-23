@@ -538,8 +538,8 @@ and has no effect. Clients list again when notified of changes.
   of files its manifest lists.
 - **`extensions`:** every extension the list offers, then those
   installed on the server's machine that it does not, each as `{id, name,
-  kind, version, description, icon, color, hidden, suffixes, installed, busy,
-  problem, server, local}`. `kind` is what the extension is; `language` is the
+  kind, version, description, icon, color, hidden, suffixes, names, installed,
+  busy, problem, server, local}`. `kind` is what the extension is; `language` is the
   only kind so far. `icon` is the SVG an installed language's files are shown
   with and `color` its tint as `#rrggbb`; a client shows a file of no installed
   language as a plain file. `hidden` languages are
@@ -733,7 +733,7 @@ embedded context, and anything else as a link to the stored file.
 | `repositories` | `repositories`: `[{name, description, private, url}]`   |
 | `folders`    | `path`: absolute, `names`: the folders inside it           |
 | `directory`  | `path`: a `clone` made   |
-| `extensions` | `extensions`: `[{id, name, kind, version, description, icon, color, hidden, suffixes, installed, busy, problem, server, local, owner, provides, requests, granted}]` |
+| `extensions` | `extensions`: `[{id, name, kind, version, description, icon, color, hidden, suffixes, names, installed, busy, problem, server, local, owner, provides, requests, granted}]` |
 | `extension_preview` | `extension`: one entry as `extensions` lists them, not installed, with what it `provides` and `requests` |
 | `extension_assets` | `themes`: `[{extension, name, dark, light}]`, `icon_themes`: `[{extension, name, icons: [{suffix, svg, color}]}]`, `commands`: `[{extension, id, title, description}]` |
 | `extension_command` | `prompt`: the text to put in the prompt box, `message`: a line to tell the reader; each is optional |

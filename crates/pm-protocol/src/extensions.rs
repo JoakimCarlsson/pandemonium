@@ -30,6 +30,9 @@ pub struct ExtensionInfo {
     /// The endings of the file names written in it.
     #[serde(default)]
     pub suffixes: Vec<String>,
+    /// Whole file names written in it, such as `Makefile`.
+    #[serde(default)]
+    pub names: Vec<String>,
     /// Whether it is installed.
     pub installed: bool,
     /// What installing it is doing now, while it is being installed.
