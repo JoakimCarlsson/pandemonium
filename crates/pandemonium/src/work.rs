@@ -346,8 +346,8 @@ pub struct Work {
     tokens: HashMap<String, String>,
     /// The number of the last event each session had when the window first listed it, by machine and number; the events up to it are history, not news.
     history: HashMap<(Host, u64), u64>,
-    /// The folder each server was last asked to watch, by machine.
-    watched: HashMap<Host, Option<String>>,
+    /// The folders each server was last asked to watch, by machine.
+    watched: HashMap<Host, Vec<String>>,
     /// The sessions, by position, whose folders were asked to be read while a read of them was on its way, so they are read once more when it lands.
     read_again: HashSet<usize>,
     /// The machine and the server's number of each session, by the session's position.
