@@ -1,4 +1,4 @@
-//! The changes of a session, of a commit or of a branch, and a file set against one of the states it was saved in, as one scrollable view of every file: each folded away from its header, and, in the folder, edited in place.
+//! The changes of a commit or of a branch, and a file set against one of the states it was saved in, as one scrollable view of every file: each folded away from its header, and, in the folder, edited in place.
 
 use pm_icon::IconName;
 use pm_style::{
@@ -12,7 +12,7 @@ use crate::button::Variant;
 use crate::excerpts::{Block, EXCERPTS_FOLD_ALL, ExcerptFile, Source, file_list, restore_button};
 use crate::open_files::Contents;
 use crate::parts::{glyph, line, spacer};
-use crate::sample::{Change, DiffLine, Fate, Kind};
+use crate::sample::{Change, DiffLine, Kind};
 use crate::size::Size;
 use crate::state::{Tab, WorkspaceState};
 use crate::{Button, Tally};
@@ -26,12 +26,10 @@ const CONTEXT: usize = 3;
 /// What the view is of, which says what the strip above the files offers.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Mode {
-    /// The changes of a session's folder, edited in place.
-    #[default]
-    Session,
     /// One file against a state it was saved in, with the button that restores that state.
     Timeline,
     /// The files a commit or a branch changed, as their diffs say.
+    #[default]
     Revision,
 }
 
@@ -56,8 +54,7 @@ impl<'a> Changes<'a> {
     pub fn new(state: &'a WorkspaceState, height: f32) -> Self {
         let mode = match state.excerpts.as_ref().map(|excerpts| &excerpts.source) {
             Some(Source::Timeline { .. }) => Mode::Timeline,
-            Some(Source::Revision { .. }) => Mode::Revision,
-            _ => Mode::Session,
+            _ => Mode::Revision,
         };
         Self {
             state,
@@ -121,7 +118,7 @@ impl<'a> Changes<'a> {
                 .child(Tally::new(added, removed).size(12).build())
                 .child(spacer())
                 .child(restore_button()),
-            Mode::Session | Mode::Revision => strip
+            Mode::Revision => strip
                 .child(line(what, 12, 1.4, Role::Muted))
                 .child(Tally::new(added, removed).size(12).build())
                 .child(spacer())
@@ -215,47 +212,6 @@ pub(crate) fn blocks_of_diff(diff: &[DiffLine]) -> Vec<Block> {
     blocks
 }
 
-/// The submodule `change` moved to another commit, listed among the excerpts as the commits it moved through: those it gained as added lines, those it went back past as removed ones.
-fn moved_file(change: &Change, moved: &pm_git::Moved) -> ExcerptFile {
-    let kind = if moved.back { Kind::Remove } else { Kind::Add };
-    let header = DiffLine {
-        kind: Kind::Hunk,
-        text: change.moved_label().unwrap_or_default(),
-    };
-    let commits = moved.commits.iter().map(|subject| DiffLine {
-        kind,
-        text: subject.clone(),
-    });
-    let count = moved.commits.len();
-    ExcerptFile {
-        path: change.path.clone(),
-        editable: false,
-        blocks: Vec::new(),
-        closed: false,
-        mark: Some(change.mark()),
-        tally: if moved.back { (0, count) } else { (count, 0) },
-        diff: std::iter::once(header).chain(commits).collect(),
-    }
-}
-
-/// The file the change `change` is of, as it is listed among the excerpts.
-fn changed_file(change: &Change) -> ExcerptFile {
-    if let Some(moved) = &change.moved {
-        return moved_file(change, moved);
-    }
-    let blocks = blocks_of_diff(&change.diff);
-    let gone = change.fate() == Fate::Deleted;
-    ExcerptFile {
-        path: change.path.clone(),
-        editable: !gone && !blocks.is_empty(),
-        blocks,
-        closed: false,
-        mark: Some(change.mark()),
-        tally: (change.added(), change.removed()),
-        diff: Vec::new(),
-    }
-}
-
 /// The file the change `change` is of, listed among the excerpts of a commit: shown from its diff alone and not to be edited.
 fn revision_file(change: &Change) -> ExcerptFile {
     ExcerptFile {
@@ -316,22 +272,6 @@ pub(crate) fn lines_between(old: &str, new: &str) -> Vec<DiffLine> {
 }
 
 impl WorkspaceState {
-    /// Opens every file the open session changed as one view, each file's changed lines edited in place, and shows it.
-    pub fn changes_opened(mut self) -> Self {
-        let Some(session) = self.review_index() else {
-            return self;
-        };
-        let files: Vec<ExcerptFile> = self
-            .review_session()
-            .map(|held| held.changes.iter().map(changed_file).collect())
-            .unwrap_or_default();
-        if files.is_empty() {
-            return self;
-        }
-        self.excerpts_shown(session, Source::Changes, files);
-        self
-    }
-
     /// Opens the files `changes`, which a commit or a branch changed, as one view named `label`, each shown from its diff and none of them edited.
     pub fn revision_opened(
         mut self,

@@ -523,7 +523,7 @@ pub fn review(state: &WorkspaceState, session: &Session, shaper: &mut Shaper) ->
                             Button::icon(IconName::GitCompare, OPEN_DIFF)
                                 .build()
                                 .styles([flex_none()])
-                                .tooltip("Open Changes")
+                                .tooltip("Open Diff")
                         },
                     ),
                 ),

@@ -304,10 +304,8 @@ pub enum Shot {
     Timeline,
     /// A file a merge stopped on, with both sides of each conflict and the result under them.
     Conflict,
-    /// The files a session changed as one view, each folded away from its header and edited in place.
-    Changes,
-    /// The changes of a session that edited files inside a submodule and moved it to another commit, grouped under the submodule.
-    ChangesSubmodule,
+    /// The diff of a session that edited files inside a submodule and moved it to another commit.
+    DiffSubmodule,
     /// The source control panel of a folder with submodules: the list of repositories with the folder's own picked, or, `true`, a submodule picked with its branches open.
     BranchesSubmodule(bool),
     /// The same file with the caret in a call, its signature over it and the uses of a name marked.
@@ -1069,32 +1067,8 @@ fn signing() -> WorkspaceState {
     )
 }
 
-/// The text of the new side of `change`: its lines as the hunks give them, with a placeholder line where the file goes unseen between them.
-fn new_side_text(change: &pm_components::sample::Change) -> String {
-    use pm_components::sample::Kind;
-    let mut lines: Vec<String> = Vec::new();
-    for entry in &change.diff {
-        match entry.kind {
-            Kind::Hunk => {
-                let start = entry
-                    .text
-                    .split_whitespace()
-                    .find(|part| part.starts_with('+'))
-                    .and_then(|part| part[1..].split(',').next()?.parse::<usize>().ok())
-                    .unwrap_or(1);
-                while lines.len() + 1 < start {
-                    lines.push("    // …".to_owned());
-                }
-            }
-            Kind::Context | Kind::Add => lines.push(entry.text.clone()),
-            Kind::Remove => {}
-        }
-    }
-    lines.join("\n") + "\n"
-}
-
-/// The first session with a file edited inside the submodule `vendor/inner`, the submodule moved two commits on, and the changes opened as one view.
-fn changes_submodule() -> WorkspaceState {
+/// The first session with a file edited inside the submodule `vendor/inner`, the submodule moved two commits on, and its diff open.
+fn diff_submodule() -> WorkspaceState {
     let mut state = workspace_sample();
     if let Some(session) = state.sessions.first_mut() {
         let mut edited = pm_components::sample::Change::new(
@@ -1114,12 +1088,12 @@ fn changes_submodule() -> WorkspaceState {
         });
         session.changes.splice(0..0, [moved, edited]);
     }
-    state.after(TAB_DIFF).changes_opened()
+    state.after(TAB_DIFF)
 }
 
-/// The session of [`changes_submodule`] with its submodules listed as repositories, the folder's own picked, or, when `inside`, the submodule `vendor/inner` picked with its branches open.
+/// The session of [`diff_submodule`] with its submodules listed as repositories, the folder's own picked, or, when `inside`, the submodule `vendor/inner` picked with its branches open.
 fn branches_submodule(inside: bool) -> WorkspaceState {
-    let mut state = changes_submodule();
+    let mut state = diff_submodule();
     state.git.submodule_heads = vec![
         ("vendor/inner".to_owned(), "main".to_owned()),
         ("vendor/inner/nested".to_owned(), "@ 3f2a1c9".to_owned()),
@@ -1137,29 +1111,6 @@ fn branches_submodule(inside: bool) -> WorkspaceState {
         state.git.branches = vec!["task/227-checkpoints".to_owned(), "main".to_owned()];
     }
     state
-}
-
-/// The session's changed files opened as one view, each file read from the folder and its changed lines edited in place.
-fn changes() -> WorkspaceState {
-    for id in ["rust", "markdown", "markdown-inline"] {
-        load_installed_grammar(id);
-    }
-    let state = workspace_sample().after(TAB_DIFF).changes_opened();
-    let session = state.review_index().unwrap_or_default();
-    let files: Vec<(String, String)> = state
-        .sessions
-        .get(session)
-        .map(|held| {
-            held.changes
-                .iter()
-                .map(|change| (change.path.clone(), new_side_text(change)))
-                .collect()
-        })
-        .unwrap_or_default();
-    files.into_iter().fold(state, |state, (path, text)| {
-        let language = pm_lsp::language_of(&path);
-        state.with_file(session, &path, false, Ok((Some(text), false, language)))
-    })
 }
 
 /// A JavaScript file open while JavaScript is not installed, so the offer to install it is above its lines.
@@ -1853,8 +1804,7 @@ impl Shot {
             Self::FileHistory => Screen::Workspace(file_history()),
             Self::Timeline => Screen::Workspace(timeline()),
             Self::Conflict => Screen::Workspace(conflict()),
-            Self::Changes => Screen::Workspace(changes()),
-            Self::ChangesSubmodule => Screen::Workspace(changes_submodule()),
+            Self::DiffSubmodule => Screen::Workspace(diff_submodule()),
             Self::BranchesSubmodule(inside) => Screen::Workspace(branches_submodule(inside)),
             Self::Signing => Screen::Workspace(signing()),
             Self::Annotated => Screen::Workspace(annotated()),

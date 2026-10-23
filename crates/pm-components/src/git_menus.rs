@@ -48,7 +48,7 @@ enum Command {
     OpenChanges,
     /// Opens the resolver on the file that is in conflict.
     Resolve,
-    /// Opens every changed file as one view, edited in place.
+    /// Shows the session diff.
     ReviewChanges,
     /// Opens every file the session's own commits changed as one view.
     ReviewBranch,
@@ -508,7 +508,7 @@ impl WorkspaceState {
                 }
             }
             Command::ReviewChanges => {
-                *self = std::mem::replace(self, WorkspaceState::new(&[])).changes_opened();
+                self.tab = crate::state::Tab::Diff;
             }
             Command::ReviewBranch => {
                 if let (Some(session), Some(base)) = (
