@@ -52,11 +52,40 @@ fn candidates(name: &str) -> Vec<String> {
     }
 }
 
+/// The path the reader's login shell builds, which a window started from the desktop never inherits.
+///
+/// Found once; empty on Windows, when the shell does not answer within three seconds or when it names no path.
+fn shell_path() -> &'static OsString {
+    static PATH: std::sync::OnceLock<OsString> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| {
+        if cfg!(windows) {
+            return OsString::new();
+        }
+        let shell = env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into());
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let output = std::process::Command::new(shell)
+                .args(["-ilc", "printf '%s' \"$PATH\""])
+                .stdin(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .output();
+            let _ = sender.send(output);
+        });
+        match receiver.recv_timeout(std::time::Duration::from_secs(3)) {
+            Ok(Ok(output)) if output.status.success() => {
+                String::from_utf8_lossy(&output.stdout).trim().into()
+            }
+            _ => OsString::new(),
+        }
+    })
+}
+
 /// The machine's path followed by the usual places programs install themselves, in the order they are searched.
 fn search_directories() -> Vec<PathBuf> {
     let path = env::var_os("PATH").unwrap_or_default();
     let home = env::home_dir();
     env::split_paths(&path)
+        .chain(env::split_paths(shell_path()))
         .chain(
             TOOL_DIRECTORIES
                 .iter()
