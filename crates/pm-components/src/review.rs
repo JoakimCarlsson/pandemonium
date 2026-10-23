@@ -74,10 +74,16 @@ fn nothing(message: &str) -> Node {
 
 /// One of the tabs at the top of the panel, a glyph that says its name when the pointer rests on it, filled while it is the one shown.
 fn panel_tab(label: &str, icon: IconName, id: FocusId, shown: bool) -> Node {
+    let mark = match (icon, shown) {
+        (IconName::Git, true) => IconName::GitFilled,
+        (IconName::Folder, true) => IconName::FolderFilled,
+        (IconName::Search, true) => IconName::SearchFilled,
+        _ => icon,
+    };
+    let tone = if shown { Role::Text } else { Role::Muted };
     Button::icon(icon, id)
         .size(Size::Md)
-        .tone(if shown { Role::Text } else { Role::Muted })
-        .selected(shown)
+        .mark(glyph(mark, 5.0, tone))
         .build()
         .tooltip(label)
 }
