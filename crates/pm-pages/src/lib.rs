@@ -9,7 +9,8 @@ mod tasking;
 mod workspace;
 
 pub use onboarding::{
-    ADD, AgentStatus, BACK, BROWSE, CONTINUE, FINISH, OnboardingState, PATH, SKIP, Step,
+    ADD, AgentStatus, BACK, BROWSE, CONTINUE, FINISH, LANGUAGES_SCROLL, OnboardingState, PATH,
+    SKIP, Step,
 };
 pub use screen::{Screen, picker_screen, screen, settings_screen};
 pub use workspace::{

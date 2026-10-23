@@ -231,6 +231,15 @@ impl Screen {
         }
     }
 
+    /// The screen after the onboarding language list is scrolled by `delta`
+    /// logical pixels, downwards when positive, with `room` pixels to scroll.
+    pub fn scrolled_languages(self, delta: f32, room: f32) -> Self {
+        match self {
+            Self::Onboarding(state) => Self::Onboarding(state.scrolled_languages(delta, room)),
+            workspace => workspace,
+        }
+    }
+
     /// The menu open over a field, and where, if one is.
     pub fn menu(&self) -> Option<ContextMenu> {
         match self {

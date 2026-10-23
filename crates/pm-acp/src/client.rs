@@ -24,7 +24,12 @@ pub(crate) struct Client {
     lines: Receiver<Value>,
     /// The id the next request is sent under.
     next: u64,
+    /// The last of what the process wrote to its error stream.
+    errors: Arc<Mutex<String>>,
 }
+
+/// How many characters of the error stream are kept to explain a stop.
+const ERROR_TAIL: usize = 400;
 
 /// What listening to an agent for a moment came to.
 pub(crate) enum Heard {
@@ -55,12 +60,27 @@ impl Client {
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .current_dir(directory)
             .spawn()
             .map_err(|error| format!("could not start: {error}"))?;
         let stdin = child.stdin.take().ok_or("no input pipe")?;
         let stdout = child.stdout.take().ok_or("no output pipe")?;
+        let errors = Arc::new(Mutex::new(String::new()));
+        if let Some(stderr) = child.stderr.take() {
+            let kept = Arc::clone(&errors);
+            std::thread::spawn(move || {
+                for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                    if let Ok(mut kept) = kept.lock() {
+                        kept.push_str(&line);
+                        kept.push('\n');
+                        let extra = kept.chars().count().saturating_sub(ERROR_TAIL);
+                        let cut = kept.char_indices().nth(extra).map_or(0, |(at, _)| at);
+                        kept.drain(..cut);
+                    }
+                }
+            });
+        }
         let (sender, lines) = mpsc::channel();
         std::thread::spawn(move || {
             for line in BufReader::new(stdout).lines().map_while(Result::ok) {
@@ -76,7 +96,18 @@ impl Client {
             stdin,
             lines,
             next: 1,
+            errors,
         })
+    }
+
+    /// Why the process stopped: its last words on the error stream, when it said any.
+    fn stopped(&self) -> String {
+        std::thread::sleep(Duration::from_millis(200));
+        let said = self.errors.lock().map(|kept| kept.trim().to_owned());
+        match said {
+            Ok(said) if !said.is_empty() => format!("stopped: {said}"),
+            _ => "stopped".to_owned(),
+        }
     }
 
     /// The process, for ending it from another thread.
@@ -142,7 +173,7 @@ impl Client {
             let message = match self.lines.recv_timeout(left) {
                 Ok(message) => message,
                 Err(RecvTimeoutError::Timeout) => return Err("did not answer in time".to_owned()),
-                Err(RecvTimeoutError::Disconnected) => return Err("stopped".to_owned()),
+                Err(RecvTimeoutError::Disconnected) => return Err(self.stopped()),
             };
             if message["id"] != json!(id) || message.get("method").is_some() {
                 continue;

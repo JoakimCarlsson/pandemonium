@@ -5,8 +5,8 @@ use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
     Radius, Role, bg, flex, flex_1, flex_col, font_medium, font_semibold, gap, items_center,
-    justify_center, leading_ratio, max_w, min_h, min_w_px, p, rounded, size, text_color, text_px,
-    tracking_tight, tracking_wide, w_full,
+    justify_center, leading_ratio, max_h, max_w, min_h, min_w_px, overflow_hidden, p, rounded,
+    size, text_color, text_px, tracking_tight, tracking_wide, w_full,
 };
 use pm_text::{Edit, Field};
 use pm_ui::{Node, node, text};
@@ -59,6 +59,12 @@ const LANGUAGE_PICK_END: u64 = 700;
 
 /// How many characters of a failure an agent row has room for.
 const REASON_WIDTH: usize = 72;
+
+/// The name under which the language list reports how far it can scroll.
+pub const LANGUAGES_SCROLL: FocusId = FocusId(21_000_020);
+
+/// The tallest the language list grows, in layout units, before it scrolls.
+const LANGUAGES_HEIGHT: f32 = 80.0;
 
 /// The three stages of working with an agent, in the order the app puts them.
 const FLOW: [(IconName, &str, &str); 3] = [
@@ -157,6 +163,8 @@ pub struct OnboardingState {
     pub outbox: Vec<Outgoing>,
     /// The window for choosing a folder, if it is open.
     pub folder_picker: Option<FolderPicker>,
+    /// How far the language list is scrolled, in logical pixels.
+    pub languages_scroll: f32,
 }
 
 impl Default for OnboardingState {
@@ -174,6 +182,7 @@ impl Default for OnboardingState {
             chosen: Vec::new(),
             outbox: Vec::new(),
             folder_picker: None,
+            languages_scroll: 0.0,
         }
         .listing(&pm_protocol::builtin_agents())
     }
@@ -287,6 +296,12 @@ impl OnboardingState {
         if let Some(open) = self.folder_picker.as_mut() {
             open.listed(requested, listed);
         }
+        self
+    }
+
+    /// The state with the language list scrolled by `delta` logical pixels, with `room` pixels to scroll.
+    pub fn scrolled_languages(mut self, delta: f32, room: f32) -> Self {
+        self.languages_scroll = (self.languages_scroll + delta).clamp(0.0, room);
         self
     }
 
@@ -552,9 +567,16 @@ fn agents(state: &OnboardingState) -> Node {
                                 ("Installed, signed out".to_owned(), Some("Sign in"))
                             }
                             AgentStatus::Missing => ("Not installed".to_owned(), Some("Install")),
-                            AgentStatus::Failed(reason) => {
-                                (reason.chars().take(REASON_WIDTH).collect(), Some("Retry"))
-                            }
+                            AgentStatus::Failed(reason) => (
+                                reason
+                                    .split_whitespace()
+                                    .collect::<Vec<_>>()
+                                    .join(" ")
+                                    .chars()
+                                    .take(REASON_WIDTH)
+                                    .collect(),
+                                Some("Retry"),
+                            ),
                         };
                         Card::new(14).build().children([
                             glyph(*icon, 5.0, Role::Muted),
@@ -608,8 +630,19 @@ fn languages(state: &OnboardingState) -> Node {
         line("Asking which languages there are…", 13, 1.4, Role::Subtle)
     } else {
         node()
-            .styles([pm_style::grid(), pm_style::grid_cols(2), gap(2), w_full()])
-            .children(rows)
+            .styles([
+                flex(),
+                flex_col(),
+                w_full(),
+                max_h(LANGUAGES_HEIGHT),
+                overflow_hidden(),
+            ])
+            .scroll_from_start(LANGUAGES_SCROLL, state.languages_scroll)
+            .child(
+                node()
+                    .styles([pm_style::grid(), pm_style::grid_cols(2), gap(2), w_full()])
+                    .children(rows),
+            )
     };
     node()
         .styles([flex(), flex_col(), gap(4), w_full()])

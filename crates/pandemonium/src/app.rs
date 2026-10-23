@@ -37,8 +37,8 @@ use pm_components::{
 use pm_editor::Action;
 use pm_input::{Button, Focus, FocusId, Key, KeyEvent, Modifiers, PointerEvent, PointerState};
 use pm_pages::{
-    ATTACH, AgentStatus, DIFF_SCROLL, MENU_SCROLL, PLAN_SCROLL, PROMPT, Screen, TERMINAL_BODY,
-    TREE_SCROLL,
+    ATTACH, AgentStatus, DIFF_SCROLL, LANGUAGES_SCROLL, MENU_SCROLL, PLAN_SCROLL, PROMPT, Screen,
+    TERMINAL_BODY, TREE_SCROLL,
 };
 use pm_renderer::{DrawList, Renderer};
 use pm_state::State;
@@ -1015,6 +1015,7 @@ impl App {
                 DIFF_SCROLL => std::mem::take(state).scrolled_diff(pixels, room),
                 TREE_SCROLL => std::mem::take(state).scrolled_tree(pixels, room),
                 PICKER_SCROLL => std::mem::take(state).scrolled_folder_picker(pixels, room),
+                LANGUAGES_SCROLL => std::mem::take(state).scrolled_languages(pixels, room),
                 SETTINGS_SCROLL => std::mem::take(state).scrolled_settings(pixels, room),
                 SETTINGS_NAV_SCROLL => std::mem::take(state).scrolled_settings_nav(pixels, room),
                 EXTENSIONS_SCROLL => std::mem::take(state).scrolled_extensions(pixels, room),
