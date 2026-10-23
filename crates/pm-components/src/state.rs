@@ -2079,6 +2079,7 @@ impl WorkspaceState {
             }
         }
         self.sync_context();
+        self.fill_terminal_dock();
         self.refresh_files();
         self.ask_log_once();
         self.debug_revealed().problem_revealed()
