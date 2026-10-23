@@ -581,6 +581,32 @@
       "local": false
     },
     {
+      "id": "powershell",
+      "name": "PowerShell",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "PowerShell scripts, modules and data files.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "ps1",
+        "psm1",
+        "psd1"
+      ],
+      "server": null,
+      "files": {
+        "brackets.scm": "efde855fb586cf429d62b5cf0e2bc23c52361a685a8c556535c08f6357aec8fb",
+        "config.toml": "b90edc3c25b22139fb4b10bfb6a97513cabd5ed5c797516ffcfd76f80514108c",
+        "grammar.wasm": "b3c8e9e9b9bd15383e9cc06883d460777ff02d17e1a4a3c61eb7a448ceb42c11",
+        "highlights.scm": "4034ead3c549deaa4e9667e72b9f56b1d633a229311b0d91494709fae82bc9d5",
+        "icon.svg": "8a0dde64ea454970cf35f63669fe6a762351f543099a91215c5614c371c4122f",
+        "indents.scm": "0851a2ba77d22d16d6261177b23a322c00a1c9381f73ee58aff811da8918d657",
+        "injections.scm": "8ac8d89baef7db2b73738e9ff0eff3090a914f6ec8e80b8e7771822536f0948f",
+        "outline.scm": "52ae27693bc65fccf2d1105669897c8effc608b910c95d5a94a0ef54cda8b166"
+      },
+      "local": false
+    },
+    {
       "id": "proto",
       "name": "Protocol Buffers",
       "kind": "language",
