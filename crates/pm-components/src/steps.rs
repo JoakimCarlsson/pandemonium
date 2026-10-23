@@ -9,6 +9,7 @@ use pm_style::{
     leading_ratio, line_through, max_h, min_h, min_w_px, my, overflow_hidden, pb, pl, pr, px, py,
     rounded, rounded_full, size, text_color, text_px, truncate, w_full,
 };
+use pm_text::Shaper;
 use pm_ui::{Node, node, text};
 
 use crate::Button;
@@ -590,8 +591,11 @@ pub fn steps(
         .children(shown)
 }
 
-/// The card that asks whether the agent may go ahead: what it wants to do and a button for each answer.
-pub fn question(ask: &Permission) -> Node {
+/// What the card around a command and the command's own padding take from the card's width, in logical pixels.
+const COMMAND_INSET: f32 = 64.0;
+
+/// The card that asks whether the agent may go ahead, `width` logical pixels wide: what it wants to do, its command broken to fit, and a button for each answer.
+pub fn question(ask: &Permission, width: f32, shaper: &mut Shaper) -> Node {
     let mut card = node()
         .styles([
             flex(),
@@ -607,21 +611,29 @@ pub fn question(ask: &Permission) -> Node {
         .child(line("Needs your approval", 12, 1.4, Role::Muted))
         .child(line(&ask.title, 13, 1.4, Role::Text));
     if let Some(command) = &ask.command {
+        let styles = [
+            text_px(12),
+            leading_ratio(1.6),
+            font_mono(),
+            text_color(Role::Text),
+        ];
+        let shown = format!("$ {command}").replace('\t', "    ");
+        let room = width - COMMAND_INSET;
         card = card.child(
             node()
                 .styles([
                     flex(),
+                    flex_col(),
                     px(3),
                     py(2),
                     rounded(Radius::Lg),
                     bg(Role::Background),
                 ])
-                .child(text(format!("$ {command}")).styles([
-                    text_px(12),
-                    leading_ratio(1.6),
-                    font_mono(),
-                    text_color(Role::Text),
-                ])),
+                .children(
+                    pm_ui::wrap(shaper, &shown, styles, room)
+                        .into_iter()
+                        .map(|piece| text(&shown[piece.start..piece.end]).styles(styles)),
+                ),
         );
     }
     card.child(answers(ask))

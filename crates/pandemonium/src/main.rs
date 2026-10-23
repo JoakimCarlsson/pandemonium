@@ -153,6 +153,7 @@ fn main() {
             Some("placing") => Shot::Placing,
             Some("live") => Shot::Live,
             Some("asking") => Shot::Asking,
+            Some("asking-command") => Shot::AskingCommand,
             Some("inquiring") => Shot::Inquiring,
             Some("answered") => Shot::Answered,
             Some("hooks") => Shot::Hooks,

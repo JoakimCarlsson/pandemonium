@@ -192,6 +192,8 @@ pub enum Shot {
     Live,
     /// A conversation whose agent waits for permission.
     Asking,
+    /// A conversation whose agent waits for permission to run a long command.
+    AskingCommand,
     /// A conversation whose agent waits for the answers to a form of three questions.
     Inquiring,
     /// A conversation whose reader answered a form of questions.
@@ -2162,6 +2164,7 @@ impl Shot {
             }
             Self::Live => Screen::Workspace(live(Turn::Finished)),
             Self::Asking => Screen::Workspace(live(Turn::Asking)),
+            Self::AskingCommand => Screen::Workspace(live(Turn::Command)),
             Self::Answered => Screen::Workspace(live(Turn::Working).heard(
                 0,
                 Event::Answered(vec![
@@ -2662,6 +2665,8 @@ enum Turn {
     Finished,
     /// The agent waits for permission.
     Asking,
+    /// The agent waits for permission to run a long command.
+    Command,
     /// The agent waits for the answers to a form of questions.
     Inquiring,
     /// The agent is still on it.
@@ -2852,6 +2857,23 @@ fn live(turn: Turn) -> WorkspaceState {
                     name: "Keep planning".to_owned(),
                     verdict: Verdict::Reject,
                 },
+            ],
+        }));
+    } else if turn == Turn::Command {
+        let choice = |id: &str, name: &str, verdict| Choice {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            verdict,
+        };
+        events.push(Event::Ask(Permission {
+            ticket: 1,
+            title: "Allow Claude to run Run a long read-only demo command?".to_owned(),
+            command: Some("printf '%s\\n' \"permission prompt demo\" \"line two of a deliberately long command\" && ls -la /home/jdaddy/Documents/repos/vault | head -n 5 && git -C /home/jdaddy/Documents/repos/vault log --oneline --decorate --max-count=3 && wc -l /home/jdaddy/Documents/repos/vault/AGENTS.md /home/jdaddy/Documents/repos/vault/Makefile 2>/dev/null && date --iso-8601=seconds".to_owned()),
+            plan: None,
+            choices: vec![
+                choice("a", "Allow once", Verdict::Allow),
+                choice("b", "Always allow", Verdict::Always),
+                choice("c", "Deny", Verdict::Reject),
             ],
         }));
     } else if turn == Turn::Inquiring {
