@@ -3,10 +3,10 @@
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
-    Color, Radius, Role, bg, border, border_b, border_color, cursor_pointer, flex, flex_1,
-    flex_col, flex_none, font_mono, gap, h, items_center, leading_ratio, max_w_px, mb, min_h,
-    min_w_px, mt, opacity, overflow_hidden, pb, px, py, rounded, rounded_full, self_end,
-    self_start, size, text_color, text_px, w_full,
+    Radius, Role, bg, border, border_b, border_color, cursor_pointer, flex, flex_1, flex_col,
+    flex_none, font_mono, gap, h, items_center, leading_ratio, max_w_px, mb, min_h, min_w_px, mt,
+    opacity, overflow_hidden, pb, px, py, rounded, rounded_full, self_end, self_start, size,
+    text_color, text_px, w_full,
 };
 use pm_text::Shaper;
 use pm_ui::{Node, node, text};
@@ -26,7 +26,7 @@ use crate::sidebar::status_icon;
 use crate::size::Size;
 use crate::state::{
     CHAT_SCROLL, CHAT_TEXT, COPY_BASE, DETAILS_BASE, FORK_BASE, KEEP_FILES, LINK_BASE,
-    LINKS_PER_PIECE, LINKS_PER_REPLY, OPEN_DIFF, RESTORE_BASE, RESTORE_FILES, REVIEW, REWIND_BASE,
+    LINKS_PER_PIECE, LINKS_PER_REPLY, OPEN_DIFF, RESTORE_BASE, RESTORE_FILES, REWIND_BASE,
     TURN_BASE, WorkspaceState,
 };
 use crate::steps::{question, steps};
@@ -339,7 +339,7 @@ fn summary(session: &Session) -> Node {
         .focusable(OPEN_DIFF)
 }
 
-/// The strip above the conversation: where the session stands, what it is and how to review it.
+/// The strip above the conversation: its status, title, branch and agent.
 fn header(state: &WorkspaceState, session: &Session) -> Node {
     let mut strip = node()
         .styles([
@@ -392,29 +392,7 @@ fn header(state: &WorkspaceState, session: &Session) -> Node {
         12,
         Role::Subtle,
     ));
-    if !session.changes.is_empty() {
-        strip = strip.child(
-            Button::new(
-                format!(
-                    "Review changes  +{} −{}",
-                    session.added(),
-                    session.removed()
-                ),
-                OPEN_DIFF,
-            )
-            .size(Size::Sm)
-            .build(),
-        );
-    }
-    strip.child(
-        Button::icon(IconName::PanelRight, REVIEW)
-            .build()
-            .styles([text_color(if state.review {
-                Color::from(Role::Text)
-            } else {
-                Color::from(Role::Muted)
-            })]),
-    )
+    strip
 }
 
 /// The conversation of `session` in a column `width` logical pixels wide, with the prompt box below.
