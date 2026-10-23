@@ -200,6 +200,8 @@ pub enum Setting {
     BranchTemplate,
     /// Where worktrees are made.
     WorktreeFolder,
+    /// The ignored files copied into every new worktree.
+    WorktreeInclude,
     /// Whether inline blame follows the editor or is off.
     GitBlame,
     /// Whether the change marks follow the editor or are off.
@@ -222,7 +224,7 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting, in the order the pages show them.
-    pub const ALL: [Self; 86] = [
+    pub const ALL: [Self; 87] = [
         Self::Launch,
         Self::ConfirmClose,
         Self::CheckUpdates,
@@ -300,6 +302,7 @@ impl Setting {
         Self::HistorySize,
         Self::BranchTemplate,
         Self::WorktreeFolder,
+        Self::WorktreeInclude,
         Self::GitBlame,
         Self::GitGutterMarks,
         Self::GitWordDiff,
@@ -389,6 +392,7 @@ impl Setting {
             | Self::HistorySize
             | Self::BranchTemplate
             | Self::WorktreeFolder
+            | Self::WorktreeInclude
             | Self::GitBlame
             | Self::GitGutterMarks
             | Self::GitWordDiff
@@ -417,6 +421,7 @@ impl Setting {
             | Self::HistorySize
             | Self::BranchTemplate
             | Self::WorktreeFolder
+            | Self::WorktreeInclude
             | Self::GitHosts
             | Self::DefaultAgent
             | Self::PermissionMode => Keeper::Machine,
@@ -707,6 +712,10 @@ impl Setting {
             Self::WorktreeFolder => (
                 "Worktree folder",
                 "Where session worktrees are made, a folder per project; empty keeps them inside each project.",
+            ),
+            Self::WorktreeInclude => (
+                "Files copied into new worktrees",
+                "Ignored files and folders of a project, as paths from its root separated by commas, copied into every new session worktree; * stands for part of one name, a folder ends in /. Empty copies nothing.",
             ),
             Self::GitBlame => (
                 "Inline blame",

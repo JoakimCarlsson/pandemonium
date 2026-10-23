@@ -267,6 +267,7 @@ impl Setting {
             Self::HistorySize => Control::Number(format!("{} MB", machine.history.megabytes)),
             Self::BranchTemplate => Control::Text("No branch, e.g. pm/{title}"),
             Self::WorktreeFolder => Control::Text("Inside each project"),
+            Self::WorktreeInclude => Control::Text("Nothing, e.g. .env, target/"),
             Self::GitBlame => Control::Choice(
                 FOLLOW,
                 place_of(&[GitMarks::FollowEditor, GitMarks::Off], &window.git.blame),
@@ -507,6 +508,7 @@ impl Setting {
             | Self::ShellArguments
             | Self::BranchTemplate
             | Self::WorktreeFolder
+            | Self::WorktreeInclude
             | Self::GitHosts
             | Self::DefaultAgent
             | Self::DefaultServer => {}
@@ -644,6 +646,7 @@ impl Setting {
                 | Self::ShellArguments
                 | Self::BranchTemplate
                 | Self::WorktreeFolder
+                | Self::WorktreeInclude
                 | Self::GitHosts
         )
     }
@@ -657,6 +660,7 @@ impl Setting {
             Self::ShellArguments => machine.shell.arguments.clone(),
             Self::BranchTemplate => machine.git.branch_template.clone(),
             Self::WorktreeFolder => machine.git.worktree_root.clone(),
+            Self::WorktreeInclude => machine.git.worktree_include.clone(),
             Self::GitHosts => machine.git.hosts_text(),
             _ => String::new(),
         }
@@ -678,6 +682,7 @@ impl Setting {
             Self::ShellArguments => machine.shell.arguments = text,
             Self::BranchTemplate => machine.git.branch_template = text,
             Self::WorktreeFolder => machine.git.worktree_root = text,
+            Self::WorktreeInclude => machine.git.worktree_include = text,
             Self::GitHosts => machine.git.set_hosts_text(&text),
             _ => {}
         }
@@ -814,6 +819,10 @@ impl Setting {
                 .git
                 .worktree_root
                 .clone_from(&kept.git.worktree_root),
+            Self::WorktreeInclude => machine
+                .git
+                .worktree_include
+                .clone_from(&kept.git.worktree_include),
             Self::GitBlame => window.git.blame = own.git.blame,
             Self::GitGutterMarks => window.git.gutter = own.git.gutter,
             Self::GitWordDiff => window.git.word_diff = own.git.word_diff,

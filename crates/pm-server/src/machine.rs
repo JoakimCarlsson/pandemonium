@@ -41,6 +41,13 @@ pub(crate) fn placement() -> pm_git::Placement {
     pm_git::Placement {
         root: (!root.is_empty()).then(|| crate::handler::place(root)),
         branch_template: Some(git.branch_template).filter(|template| !template.trim().is_empty()),
+        include: git
+            .worktree_include
+            .split([',', '\n'])
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+            .map(str::to_owned)
+            .collect(),
     }
 }
 
