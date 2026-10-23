@@ -24,16 +24,16 @@ use crate::state::{
 };
 
 /// How wide the sidebar is until it is dragged wider or narrower, in logical pixels.
-pub const WIDTH: f32 = 280.0;
+pub const WIDTH: f32 = 264.0;
 
 /// How narrow and how wide the sidebar can be dragged, in logical pixels.
 pub const WIDTHS: (f32, f32) = (200.0, 520.0);
 
 /// How tall a row of the sidebar is, in logical pixels.
-const ROW: f32 = 36.0;
+const ROW: f32 = 28.0;
 
 /// The room under a project's last row, in logical pixels.
-const SECTION_GAP: f32 = 12.0;
+const SECTION_GAP: f32 = 8.0;
 
 /// How tall everything in the sidebar but its list of projects is, in a
 /// window of any height: the three entries and the label above the list.
@@ -104,21 +104,25 @@ pub fn status_icon(status: Status) -> Node {
 fn entry(icon: IconName, label: &str, id: FocusId, selected: bool) -> Node {
     let tone = if selected { Role::Text } else { Role::Muted };
     Tile::new(id)
+        .height(7.0)
+        .gap(2.0)
         .selected(selected)
         .build()
         .styles([px(2)])
         .child(glyph(icon, 4.0, tone))
-        .child(line(label, 14, 1.4, tone))
+        .child(line(label, 13, 1.4, tone))
 }
 
 /// The row of one session under its project, set in `indent` steps.
 fn session_row(index: usize, session: &Session, selected: bool, indent: f32) -> Node {
     Tile::new(FocusId(SESSION_BASE + index as u64))
+        .height(7.0)
+        .gap(2.0)
         .selected(selected)
         .build()
         .styles([pl(indent), pr(2)])
         .child(status_icon(session.shown()))
-        .child(clipped(&session.title, 14, Role::Text))
+        .child(clipped(&session.title, 13, Role::Text))
         .child(line(session.age(), 12, 1.4, Role::Subtle))
 }
 
@@ -140,6 +144,8 @@ fn submodule_row(project: &Project, relative: &str, position: usize, starting: b
         .rsplit_once('/')
         .map_or(("", relative), |(folder, name)| (folder, name));
     Tile::new(FocusId(NEW_IN_SUBMODULE_BASE + position as u64))
+        .height(7.0)
+        .gap(2.0)
         .selected(starting)
         .build()
         .styles([pl(2), pr(2)])
@@ -232,14 +238,16 @@ fn project(state: &WorkspaceState, index: usize) -> Node {
         .unwrap_or(0);
     let dragged = state.project_drag.is_some_and(|drag| drag.from == index);
     let mut header = Tile::new(FocusId(PROJECT_BASE + index as u64))
+        .height(7.0)
+        .gap(2.0)
         .selected(state.page == Page::Project(index))
         .build()
         .styles([px(2)])
         .child(Avatar::of(project).build())
-        .child(clipped(&project.name, 14, Role::Text));
+        .child(clipped(&project.name, 13, Role::Text));
     header = header
         .child(Button::icon(IconName::More, FocusId(PROJECT_MORE_BASE + index as u64)).build());
-    let mut section = node().styles([flex(), flex_col(), mb(3)]).child(header);
+    let mut section = node().styles([flex(), flex_col(), mb(2)]).child(header);
     if dragged {
         section = section.styles([opacity(35)]);
     }
@@ -265,6 +273,8 @@ fn project(state: &WorkspaceState, index: usize) -> Node {
     let starting = state.page == Page::New(index) && state.new_in.is_none();
     section = section.child(
         Tile::new(FocusId(NEW_IN_BASE + index as u64))
+            .height(7.0)
+            .gap(2.0)
             .selected(starting)
             .build()
             .styles([pl(3)])
@@ -275,7 +285,7 @@ fn project(state: &WorkspaceState, index: usize) -> Node {
             ))
             .child(line(
                 "New session",
-                14,
+                13,
                 1.4,
                 if starting { Role::Text } else { Role::Muted },
             )),
@@ -317,7 +327,7 @@ pub fn sidebar(state: &WorkspaceState) -> Node {
         )
         .child(
             node()
-                .styles([flex(), items_center(), h(9), px(4)])
+                .styles([flex(), items_center(), h(7), px(4)])
                 .child(line("Workspaces", 12, 1.4, Role::Subtle)),
         )
         .child(
@@ -354,7 +364,7 @@ pub fn drag_ghost(state: &WorkspaceState) -> Option<Node> {
                 flex(),
                 items_center(),
                 gap(3),
-                h(9),
+                h(7),
                 w_px(state.sidebar_width - 16.0),
                 px(2),
                 rounded(Radius::Md),
