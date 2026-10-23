@@ -60,10 +60,16 @@ pub enum IconName {
     Copy,
     /// A window with a panel along its left side.
     PanelLeft,
+    /// A window with its left panel filled to show it is open.
+    PanelLeftFilled,
     /// A window with a panel along its right side.
     PanelRight,
+    /// A window with its right panel filled to show it is open.
+    PanelRightFilled,
     /// A window with a panel along its bottom.
     PanelBottom,
+    /// A window with its bottom panel filled to show it is open.
+    PanelBottomFilled,
     /// A square cut down the middle: panes.
     SquareSplit,
     /// A triangle pointing right: run.
@@ -168,8 +174,17 @@ impl IconName {
             Self::Sparkles => Svg::new("sparkles", include_icon!("sparkles")),
             Self::Copy => Svg::new("copy", include_icon!("copy")),
             Self::PanelLeft => Svg::new("panel_left", include_icon!("panel_left")),
+            Self::PanelLeftFilled => {
+                Svg::new("panel_left_filled", include_icon!("panel_left_filled"))
+            }
             Self::PanelRight => Svg::new("panel_right", include_icon!("panel_right")),
+            Self::PanelRightFilled => {
+                Svg::new("panel_right_filled", include_icon!("panel_right_filled"))
+            }
             Self::PanelBottom => Svg::new("panel_bottom", include_icon!("panel_bottom")),
+            Self::PanelBottomFilled => {
+                Svg::new("panel_bottom_filled", include_icon!("panel_bottom_filled"))
+            }
             Self::SquareSplit => Svg::new("square_split", include_icon!("square_split")),
             Self::Play => Svg::new("play", include_icon!("play")),
             Self::More => Svg::new("more", include_icon!("more")),
