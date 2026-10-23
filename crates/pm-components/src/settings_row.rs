@@ -242,11 +242,11 @@ pub fn list(
                 justify_between(),
                 gap(2),
                 px(2),
-                h(7),
+                h(6),
                 rounded(Radius::Sm),
-                bg(Role::Surface),
+                bg(Role::SurfaceHover).hover(),
             ])
-            .child(clipped(text.as_str(), 12, Role::Text).styles([font_mono()]))
+            .child(line(text.as_str(), 12, 1.4, Role::Text).styles([font_mono()]))
             .child(
                 Button::icon(IconName::Close, remove_of(place))
                     .size(Size::Xs)

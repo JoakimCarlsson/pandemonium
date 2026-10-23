@@ -735,7 +735,7 @@ impl Setting {
             ),
             Self::WorktreeInclude => (
                 "Files copied into new worktrees",
-                "Ignored files and folders of a project, as paths from its root separated by commas, copied into every new session worktree so it starts with its .env and build output; * stands for part of one name, a folder ends in /. Empty copies nothing.",
+                "Ignored files and folders copied from the project into every new session worktree, so it starts with its .env and build output. Paths are from the project root; * stands for part of one name and a folder ends in /.",
             ),
             Self::GitBlame => (
                 "Inline blame",
