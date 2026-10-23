@@ -25,6 +25,8 @@ pub struct GitPreferences {
     pub branch_template: String,
     /// The folder worktrees are made in, one folder per project inside it; empty for a folder inside each project.
     pub worktree_root: String,
+    /// The ignored files and folders of a project, as paths from its root separated by commas or lines, copied into every new session's worktree; the common ones (`.env` files, `target/`, `node_modules/`) by default, empty copies nothing.
+    pub worktree_include: String,
     /// The layout of a self-hosted server's web addresses, by the server's host name, for the servers whose name does not give it away: `github`, `gitlab`, `bitbucket`, `gitea`, `azure`, `sourcehut` or `gitee`.
     pub hosts: BTreeMap<String, String>,
 }
@@ -58,6 +60,8 @@ impl Default for GitPreferences {
             fetch_minutes: FETCH_MINUTES,
             branch_template: String::new(),
             worktree_root: String::new(),
+            worktree_include:
+                ".env, .env.*, target/, node_modules/, .build/, build/, dist/, .venv/".to_owned(),
             hosts: BTreeMap::new(),
         }
     }

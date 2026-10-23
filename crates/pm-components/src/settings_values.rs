@@ -22,6 +22,8 @@ pub(crate) enum Control {
     Text(&'static str),
     /// One of a list too long to show beside it, as the one picked is called.
     Picker(String),
+    /// A list of lines, each removed on its own, with a box to add one.
+    List(Vec<String>),
 }
 
 /// The modes an agent can be started in, as the choices name them.
@@ -267,6 +269,7 @@ impl Setting {
             Self::HistorySize => Control::Number(format!("{} MB", machine.history.megabytes)),
             Self::BranchTemplate => Control::Text("No branch, e.g. pm/{title}"),
             Self::WorktreeFolder => Control::Text("Inside each project"),
+            Self::WorktreeInclude => Control::List(self.lines(state)),
             Self::GitBlame => Control::Choice(
                 FOLLOW,
                 place_of(&[GitMarks::FollowEditor, GitMarks::Off], &window.git.blame),
@@ -507,6 +510,7 @@ impl Setting {
             | Self::ShellArguments
             | Self::BranchTemplate
             | Self::WorktreeFolder
+            | Self::WorktreeInclude
             | Self::GitHosts
             | Self::DefaultAgent
             | Self::DefaultServer => {}
@@ -646,6 +650,29 @@ impl Setting {
                 | Self::WorktreeFolder
                 | Self::GitHosts
         )
+    }
+
+    /// The lines of the list it holds, for a setting written as a list.
+    pub(crate) fn lines(self, state: &WorkspaceState) -> Vec<String> {
+        match self {
+            Self::WorktreeInclude => state
+                .machine
+                .git
+                .worktree_include
+                .split([',', '\n'])
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(str::to_owned)
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Has it hold `lines`, for a setting written as a list.
+    pub(crate) fn set_lines(self, state: &mut WorkspaceState, lines: &[String]) {
+        if self == Self::WorktreeInclude {
+            state.machine.git.worktree_include = lines.join(", ");
+        }
     }
 
     /// The text it holds, for a setting written as text.
@@ -814,6 +841,10 @@ impl Setting {
                 .git
                 .worktree_root
                 .clone_from(&kept.git.worktree_root),
+            Self::WorktreeInclude => machine
+                .git
+                .worktree_include
+                .clone_from(&kept.git.worktree_include),
             Self::GitBlame => window.git.blame = own.git.blame,
             Self::GitGutterMarks => window.git.gutter = own.git.gutter,
             Self::GitWordDiff => window.git.word_diff = own.git.word_diff,

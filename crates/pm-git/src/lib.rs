@@ -5,6 +5,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+mod carry;
 mod checkpoint;
 mod conflict;
 mod file_log;
@@ -93,7 +94,7 @@ pub struct Worktree {
     pub head: String,
     /// The branch it was given, when it was given one rather than a detached head.
     pub branch: Option<String>,
-    /// The submodules that could not be checked out in it, each as its path and why.
+    /// The submodules that could not be checked out in it and the ignored files that could not be copied into it, each as its path and why.
     pub skipped: Vec<(String, String)>,
 }
 
@@ -104,6 +105,8 @@ pub struct Placement {
     pub root: Option<PathBuf>,
     /// What the worktree's branch is called, with `{title}` standing for the title made into a name, or a detached head when nothing.
     pub branch_template: Option<String>,
+    /// The ignored files and folders of the repository, as paths from its root, that are copied into every new worktree.
+    pub include: Vec<String>,
 }
 
 impl Placement {
@@ -387,7 +390,7 @@ fn exclude_worktrees(repository: &Path) -> Result<(), String> {
     writeln!(file, "{separator}.pandemonium/").map_err(|error| error.to_string())
 }
 
-/// Makes a worktree of its own of `repository`, named from `title`, with `base` checked out, where `placement` says and on the branch it names or a detached head, and checks out its submodules, each on that branch too.
+/// Makes a worktree of its own of `repository`, named from `title`, with `base` checked out, where `placement` says and on the branch it names or a detached head, checks out its submodules, each on that branch too, and copies into it the ignored files `placement` lists.
 ///
 /// `base` is looked up in the repository now, so a branch deleted a moment ago is refused rather than assumed.
 pub fn add_worktree(
@@ -432,6 +435,7 @@ pub fn add_worktree(
     if let Some(branch) = &branch {
         skipped.extend(submodule::branch_all(&path, branch));
     }
+    skipped.extend(carry::carry_ignored(repository, &path, &placement.include));
     Ok(Worktree {
         path,
         head,

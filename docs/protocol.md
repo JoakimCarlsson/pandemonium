@@ -252,6 +252,12 @@ reopening also refreshes folders excluded by the file watcher.
   it is checked out on a new branch named by the template, `{title}` standing
   for the title made into a name (a template without it gets `/<title>` after
   it), numbered on when that branch is taken; `started` then gives the branch.
+  `git.worktree_include` lists ignored files and folders of the repository, as
+  paths from its root separated by commas or lines (`*` stands for part of one
+  name; `.env, .env.*, target/, node_modules/, .build/, build/, dist/, .venv/` by
+  default), that are copied into the new worktree, sharing blocks where the
+  filesystem allows; one that could not be copied is named in `skipped` with
+  why, and does not fail the request.
   `settings` is a list of `[setting, value]` pairs applied before the first
   prompt; when it names no `mode` and `agents.permission_mode` is set, that mode
   is asked for too. The response gives the session number, the folder the agent works in
@@ -403,7 +409,7 @@ reopening also refreshes folders excluded by the file watcher.
 - **`machine_settings`, `save_machine_settings`:** what the reader set up for
   the work the server does on its machine, kept by the server, replaced whole by
   the save and put to work at once. `git` is `{auto_fetch, fetch_minutes,
-  branch_template, worktree_root, hosts}`: `hosts` maps the host name of a
+  branch_template, worktree_root, worktree_include, hosts}`: `hosts` maps the host name of a
   self-hosted git server to the layout its web addresses use (`github`,
   `gitlab`, `bitbucket`, `gitea`, `azure`, `sourcehut` or `gitee`), which
   `permalink` follows for a host whose name does not give it away; while `auto_fetch` is set the server runs

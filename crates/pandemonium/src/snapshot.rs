@@ -61,7 +61,7 @@ const NARROW_WIDTH: u32 = 640;
 const NARROW_HEIGHT: u32 = 420;
 
 /// The name of the shot of each section of the settings window, after `settings-`.
-pub const SETTINGS_SHOTS: [(&str, Section); 22] = [
+pub const SETTINGS_SHOTS: [(&str, Section); 23] = [
     ("general", Section::General),
     ("appearance", Section::Appearance),
     ("editor", Section::Editor),
@@ -74,6 +74,7 @@ pub const SETTINGS_SHOTS: [(&str, Section); 22] = [
     ("keymap", Section::Keymap),
     ("terminal", Section::Terminal),
     ("git", Section::Git),
+    ("worktrees", Section::Worktrees),
     ("agents", Section::Agents),
     ("agent-servers", Section::AgentServers),
     ("mcp-servers", Section::McpServers),

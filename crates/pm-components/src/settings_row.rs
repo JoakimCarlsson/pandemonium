@@ -227,6 +227,47 @@ pub fn text_box(field: &Field, id: FocusId, placeholder: &str) -> Node {
         .build()
 }
 
+/// The `lines` one under another, each with a button that removes it answering to the name `remove_of` gives its place, then the box `field` answering to `field_id` with the button `add` that adds what is written in it.
+pub fn list(
+    lines: &[String],
+    remove_of: impl Fn(usize) -> FocusId,
+    field: (&Field, FocusId),
+    add: FocusId,
+) -> Node {
+    let rows = lines.iter().enumerate().map(|(place, text)| {
+        node()
+            .styles([
+                flex(),
+                items_center(),
+                justify_between(),
+                gap(2),
+                px(2),
+                h(6),
+                rounded(Radius::Sm),
+                bg(Role::SurfaceHover).hover(),
+            ])
+            .child(line(text.as_str(), 12, 1.4, Role::Text).styles([font_mono()]))
+            .child(
+                Button::icon(IconName::Close, remove_of(place))
+                    .size(Size::Xs)
+                    .build(),
+            )
+    });
+    node()
+        .styles([flex(), flex_col(), gap(1), flex_none()])
+        .children(rows)
+        .child(
+            node()
+                .styles([flex(), items_center(), gap(2), pm_style::pt(1)])
+                .child(
+                    node()
+                        .styles([w_px(TEXT_WIDTH), flex_none()])
+                        .child(text_box(field.0, field.1, "e.g. dist/ or .env.*")),
+                )
+                .child(Button::new("Add Pattern", add).size(Size::Sm).build()),
+        )
+}
+
 /// The button that puts a setting back as it comes, answering to `id`.
 fn reset_button(id: FocusId) -> Node {
     Button::icon(IconName::Undo, id).size(Size::Xs).build()

@@ -19,6 +19,8 @@ pub struct SettingsPage {
     pub nav_scroll: f32,
     /// The boxes of the settings written as text, as they are being written.
     pub fields: HashMap<Setting, Field>,
+    /// The pattern being written to be added to the list of a setting.
+    pub list_add: Field,
     /// The setting whose list of choices is open under it, when one is.
     pub picker: Option<Setting>,
     /// What the open list of choices is narrowed to.

@@ -34,6 +34,26 @@ pub(crate) fn pick_of(id: FocusId) -> Option<usize> {
         .then(|| (id.0 - PICK_BASE) as usize)
 }
 
+/// The box a pattern is written in before it is added to the list of a setting.
+pub(crate) const LIST_FIELD: FocusId = FocusId(20_000_065);
+
+/// The button that adds the pattern written in [`LIST_FIELD`] to the list.
+pub(crate) const LIST_ADD: FocusId = FocusId(20_000_066);
+
+/// The first of the buttons that remove a line of the list; the rest follow it.
+const LIST_REMOVE_BASE: u64 = 20_008_000;
+
+/// The button that removes the line at `index` of the list.
+pub(crate) fn list_remove_id(index: usize) -> FocusId {
+    FocusId(LIST_REMOVE_BASE + index as u64)
+}
+
+/// The line of the list the button `id` removes.
+pub(crate) fn list_remove_of(id: FocusId) -> Option<usize> {
+    id.0.checked_sub(LIST_REMOVE_BASE)
+        .map(|index| index as usize)
+}
+
 /// Who keeps a setting between runs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Keeper {
@@ -200,6 +220,8 @@ pub enum Setting {
     BranchTemplate,
     /// Where worktrees are made.
     WorktreeFolder,
+    /// The ignored files copied into every new worktree.
+    WorktreeInclude,
     /// Whether inline blame follows the editor or is off.
     GitBlame,
     /// Whether the change marks follow the editor or are off.
@@ -222,7 +244,7 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting, in the order the pages show them.
-    pub const ALL: [Self; 86] = [
+    pub const ALL: [Self; 87] = [
         Self::Launch,
         Self::ConfirmClose,
         Self::CheckUpdates,
@@ -300,6 +322,7 @@ impl Setting {
         Self::HistorySize,
         Self::BranchTemplate,
         Self::WorktreeFolder,
+        Self::WorktreeInclude,
         Self::GitBlame,
         Self::GitGutterMarks,
         Self::GitWordDiff,
@@ -387,12 +410,13 @@ impl Setting {
             | Self::LocalHistory
             | Self::HistoryDays
             | Self::HistorySize
-            | Self::BranchTemplate
-            | Self::WorktreeFolder
             | Self::GitBlame
             | Self::GitGutterMarks
             | Self::GitWordDiff
             | Self::GitHosts => Section::Git,
+            Self::BranchTemplate | Self::WorktreeFolder | Self::WorktreeInclude => {
+                Section::Worktrees
+            }
             Self::DefaultAgent | Self::PermissionMode | Self::OnFinish | Self::Notification => {
                 Section::Agents
             }
@@ -417,6 +441,7 @@ impl Setting {
             | Self::HistorySize
             | Self::BranchTemplate
             | Self::WorktreeFolder
+            | Self::WorktreeInclude
             | Self::GitHosts
             | Self::DefaultAgent
             | Self::PermissionMode => Keeper::Machine,
@@ -707,6 +732,10 @@ impl Setting {
             Self::WorktreeFolder => (
                 "Worktree folder",
                 "Where session worktrees are made, a folder per project; empty keeps them inside each project.",
+            ),
+            Self::WorktreeInclude => (
+                "Files copied into new worktrees",
+                "Ignored files and folders copied from the project into every new session worktree, so it starts with its .env and build output. Paths are from the project root; * stands for part of one name and a folder ends in /.",
             ),
             Self::GitBlame => (
                 "Inline blame",
