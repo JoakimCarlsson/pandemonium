@@ -166,6 +166,8 @@ pub enum Section {
     Terminal,
     /// How git is run and what it marks.
     Git,
+    /// How sessions get their branches and worktrees.
+    Worktrees,
     /// What agents are started with, with the groups below it.
     Agents,
     /// The agents that can be started, and the ones added by hand.
@@ -192,7 +194,7 @@ pub enum Section {
 
 impl Section {
     /// Every section, in the order the list shows them, each followed by the ones inside it.
-    pub const ALL: [Section; 22] = [
+    pub const ALL: [Section; 23] = [
         Section::General,
         Section::Appearance,
         Section::Editor,
@@ -205,6 +207,7 @@ impl Section {
         Section::Keymap,
         Section::Terminal,
         Section::Git,
+        Section::Worktrees,
         Section::Agents,
         Section::AgentServers,
         Section::McpServers,
@@ -225,6 +228,7 @@ impl Section {
             Self::Languages => "Languages",
             Self::Terminal => "Terminal",
             Self::Git => "Git",
+            Self::Worktrees => "Worktrees",
             Self::Servers => "Servers",
             Self::Results => "Search Results",
             Self::Editor => "Editor",
@@ -253,7 +257,7 @@ impl Section {
             Self::Appearance => IconName::Pencil,
             Self::Languages => IconName::File,
             Self::Terminal => IconName::Terminal,
-            Self::Git => IconName::Git,
+            Self::Git | Self::Worktrees => IconName::Git,
             Self::Servers => IconName::Plug,
             Self::Editor
             | Self::EditorAppearance
@@ -290,6 +294,7 @@ impl Section {
             | Self::EditorSaving
             | Self::EditorIntelligence
             | Self::EditorSearch => Some(Self::Editor),
+            Self::Worktrees => Some(Self::Git),
             Self::General
             | Self::Appearance
             | Self::Languages

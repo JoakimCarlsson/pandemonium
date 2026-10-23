@@ -9,10 +9,13 @@ use pm_ui::{Node, node};
 
 use crate::parts::line;
 use crate::settings::{SETTINGS_PICK_FILTER, Section};
-use crate::settings_catalog::{self, OPEN_LIST, RESET, Setting, pick_id, pick_of};
+use crate::settings_catalog::{
+    self, LIST_ADD, LIST_FIELD, OPEN_LIST, RESET, Setting, list_remove_id, list_remove_of, pick_id,
+    pick_of,
+};
 use crate::settings_row::{
     NUMBER_WIDTH, PICKER_WIDTH, RESET_WIDTH, SWITCH_WIDTH, SettingRow, choices, choices_width,
-    number, picker, picker_list, switch, text_box,
+    list, number, picker, picker_list, switch, text_box,
 };
 use crate::settings_values::Control;
 use crate::state::WorkspaceState;
@@ -20,6 +23,28 @@ use crate::state::WorkspaceState;
 impl WorkspaceState {
     /// Carries out pressing the control `id` of a setting, or a choice of the open list, and says whether it was one.
     pub(crate) fn setting_pressed(&mut self, id: FocusId) -> bool {
+        // shortcut: the one list setting is the worktree include list, give the lists a setting of their own when a second one comes
+        let listed = Setting::WorktreeInclude;
+        if id == LIST_ADD {
+            let pattern = self.settings_page.list_add.text().trim().to_owned();
+            let mut lines = listed.lines(self);
+            if !pattern.is_empty() && !lines.contains(&pattern) {
+                lines.push(pattern);
+                listed.set_lines(self, &lines);
+                self.setting_changed(listed);
+            }
+            self.settings_page.list_add = Field::default();
+            return true;
+        }
+        if let Some(place) = list_remove_of(id) {
+            let mut lines = listed.lines(self);
+            if place < lines.len() {
+                lines.remove(place);
+                listed.set_lines(self, &lines);
+                self.setting_changed(listed);
+            }
+            return true;
+        }
         if let Some(index) = pick_of(id) {
             if let Some(setting) = self.settings_page.picker.take() {
                 setting.pick(self, index);
@@ -60,6 +85,10 @@ impl WorkspaceState {
             self.settings_page.filter.apply(edit);
             return;
         }
+        if id == LIST_FIELD {
+            self.settings_page.list_add.apply(edit);
+            return;
+        }
         let Some(setting) = Setting::text_of(id) else {
             return;
         };
@@ -82,13 +111,16 @@ impl WorkspaceState {
         if id == SETTINGS_PICK_FILTER {
             return Some(&self.settings_page.filter);
         }
+        if id == LIST_FIELD {
+            return Some(&self.settings_page.list_add);
+        }
         self.settings_page.fields.get(&Setting::text_of(id)?)
     }
 }
 
 /// Whether `id` names a box of the settings written as text, or the one narrowing the open list.
 pub(crate) fn is_setting_field(id: FocusId) -> bool {
-    id == SETTINGS_PICK_FILTER || Setting::text_of(id).is_some()
+    id == SETTINGS_PICK_FILTER || id == LIST_FIELD || Setting::text_of(id).is_some()
 }
 
 /// Whether `setting` shows in `state`: the pickers of themes only once there is more than one theme, and a language's settings only once a language is installed.
@@ -157,6 +189,12 @@ pub(crate) fn setting_row(state: &WorkspaceState, setting: Setting, room: f32) -
                 }))
             }
         }
+        Control::List(lines) => row.below(Some(list(
+            &lines,
+            list_remove_id,
+            (&state.settings_page.list_add, LIST_FIELD),
+            LIST_ADD,
+        ))),
         Control::Picker(shown) => {
             let width = PICKER_WIDTH.min(room - reserved);
             row.control(

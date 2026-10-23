@@ -22,6 +22,8 @@ pub(crate) enum Control {
     Text(&'static str),
     /// One of a list too long to show beside it, as the one picked is called.
     Picker(String),
+    /// A list of lines, each removed on its own, with a box to add one.
+    List(Vec<String>),
 }
 
 /// The modes an agent can be started in, as the choices name them.
@@ -267,7 +269,7 @@ impl Setting {
             Self::HistorySize => Control::Number(format!("{} MB", machine.history.megabytes)),
             Self::BranchTemplate => Control::Text("No branch, e.g. pm/{title}"),
             Self::WorktreeFolder => Control::Text("Inside each project"),
-            Self::WorktreeInclude => Control::Text("Nothing, e.g. .env, target/"),
+            Self::WorktreeInclude => Control::List(self.lines(state)),
             Self::GitBlame => Control::Choice(
                 FOLLOW,
                 place_of(&[GitMarks::FollowEditor, GitMarks::Off], &window.git.blame),
@@ -646,9 +648,31 @@ impl Setting {
                 | Self::ShellArguments
                 | Self::BranchTemplate
                 | Self::WorktreeFolder
-                | Self::WorktreeInclude
                 | Self::GitHosts
         )
+    }
+
+    /// The lines of the list it holds, for a setting written as a list.
+    pub(crate) fn lines(self, state: &WorkspaceState) -> Vec<String> {
+        match self {
+            Self::WorktreeInclude => state
+                .machine
+                .git
+                .worktree_include
+                .split([',', '\n'])
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(str::to_owned)
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// Has it hold `lines`, for a setting written as a list.
+    pub(crate) fn set_lines(self, state: &mut WorkspaceState, lines: &[String]) {
+        if self == Self::WorktreeInclude {
+            state.machine.git.worktree_include = lines.join(", ");
+        }
     }
 
     /// The text it holds, for a setting written as text.
@@ -660,7 +684,6 @@ impl Setting {
             Self::ShellArguments => machine.shell.arguments.clone(),
             Self::BranchTemplate => machine.git.branch_template.clone(),
             Self::WorktreeFolder => machine.git.worktree_root.clone(),
-            Self::WorktreeInclude => machine.git.worktree_include.clone(),
             Self::GitHosts => machine.git.hosts_text(),
             _ => String::new(),
         }
@@ -682,7 +705,6 @@ impl Setting {
             Self::ShellArguments => machine.shell.arguments = text,
             Self::BranchTemplate => machine.git.branch_template = text,
             Self::WorktreeFolder => machine.git.worktree_root = text,
-            Self::WorktreeInclude => machine.git.worktree_include = text,
             Self::GitHosts => machine.git.set_hosts_text(&text),
             _ => {}
         }

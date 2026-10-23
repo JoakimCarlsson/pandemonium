@@ -716,7 +716,10 @@ fn summary(section: Section) -> &'static str {
             "The shell the terminal starts, and how its text and cursor are drawn."
         }
         Section::Git => {
-            "How the server fetches, names the branches of sessions and places their worktrees, and what git marks in files."
+            "How the server fetches and keeps the history of files, and what git marks in files."
+        }
+        Section::Worktrees => {
+            "How the server names the branches of sessions, where it makes their worktrees and what it copies into them."
         }
         Section::Editor
         | Section::EditorAppearance
@@ -787,7 +790,7 @@ pub(crate) fn body(state: &WorkspaceState, section: Section, room: f32) -> Node 
             .child(about)
             .child(crate::settings_pages::page_rows(state, section, room))
             .children(release_note(state, room)),
-        Section::Appearance | Section::Terminal | Section::Git => inner
+        Section::Appearance | Section::Terminal | Section::Git | Section::Worktrees => inner
             .child(about)
             .child(crate::settings_pages::page_rows(state, section, room)),
         Section::Editor => {

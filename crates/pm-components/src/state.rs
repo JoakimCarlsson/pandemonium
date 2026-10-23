@@ -2249,6 +2249,7 @@ impl WorkspaceState {
             id if crate::settings_machines::is_machine_field(id) => {
                 crate::settings_machines::MACHINE_SAVE
             }
+            crate::settings_catalog::LIST_FIELD => crate::settings_catalog::LIST_ADD,
             id if crate::settings_pages::is_setting_field(id)
                 || id == crate::settings::SETTINGS_FIND
                 || id == crate::settings::SETTINGS_KEYMAP_FIND =>

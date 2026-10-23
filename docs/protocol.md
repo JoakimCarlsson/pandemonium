@@ -254,7 +254,8 @@ reopening also refreshes folders excluded by the file watcher.
   it), numbered on when that branch is taken; `started` then gives the branch.
   `git.worktree_include` lists ignored files and folders of the repository, as
   paths from its root separated by commas or lines (`*` stands for part of one
-  name), that are copied into the new worktree, sharing blocks where the
+  name; `.env, .env.*, target/, node_modules/, .build/, build/, dist/, .venv/` by
+  default), that are copied into the new worktree, sharing blocks where the
   filesystem allows; one that could not be copied is named in `skipped` with
   why, and does not fail the request.
   `settings` is a list of `[setting, value]` pairs applied before the first

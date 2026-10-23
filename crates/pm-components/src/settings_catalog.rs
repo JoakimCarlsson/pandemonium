@@ -34,6 +34,26 @@ pub(crate) fn pick_of(id: FocusId) -> Option<usize> {
         .then(|| (id.0 - PICK_BASE) as usize)
 }
 
+/// The box a pattern is written in before it is added to the list of a setting.
+pub(crate) const LIST_FIELD: FocusId = FocusId(20_000_065);
+
+/// The button that adds the pattern written in [`LIST_FIELD`] to the list.
+pub(crate) const LIST_ADD: FocusId = FocusId(20_000_066);
+
+/// The first of the buttons that remove a line of the list; the rest follow it.
+const LIST_REMOVE_BASE: u64 = 20_008_000;
+
+/// The button that removes the line at `index` of the list.
+pub(crate) fn list_remove_id(index: usize) -> FocusId {
+    FocusId(LIST_REMOVE_BASE + index as u64)
+}
+
+/// The line of the list the button `id` removes.
+pub(crate) fn list_remove_of(id: FocusId) -> Option<usize> {
+    id.0.checked_sub(LIST_REMOVE_BASE)
+        .map(|index| index as usize)
+}
+
 /// Who keeps a setting between runs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Keeper {
@@ -390,13 +410,13 @@ impl Setting {
             | Self::LocalHistory
             | Self::HistoryDays
             | Self::HistorySize
-            | Self::BranchTemplate
-            | Self::WorktreeFolder
-            | Self::WorktreeInclude
             | Self::GitBlame
             | Self::GitGutterMarks
             | Self::GitWordDiff
             | Self::GitHosts => Section::Git,
+            Self::BranchTemplate | Self::WorktreeFolder | Self::WorktreeInclude => {
+                Section::Worktrees
+            }
             Self::DefaultAgent | Self::PermissionMode | Self::OnFinish | Self::Notification => {
                 Section::Agents
             }
@@ -715,7 +735,7 @@ impl Setting {
             ),
             Self::WorktreeInclude => (
                 "Files copied into new worktrees",
-                "Ignored files and folders of a project, as paths from its root separated by commas, copied into every new session worktree; * stands for part of one name, a folder ends in /. Empty copies nothing.",
+                "Ignored files and folders of a project, as paths from its root separated by commas, copied into every new session worktree so it starts with its .env and build output; * stands for part of one name, a folder ends in /. Empty copies nothing.",
             ),
             Self::GitBlame => (
                 "Inline blame",
