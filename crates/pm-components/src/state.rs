@@ -1620,6 +1620,9 @@ pub struct WorkspaceState {
     pub tree_ignored: std::collections::HashSet<String>,
     /// The folder `files` was read for.
     pub files_of: Option<String>,
+    /// Recent server listings shared across state copies, including replies received after navigation.
+    pub(crate) file_listings:
+        std::collections::VecDeque<std::sync::Arc<crate::choices::FileListing>>,
     /// Who each agent is signed in as, by the agent's position, once it has been looked up.
     pub identities: Vec<Option<Option<String>>>,
     /// Who each agent is signed in as in its own default folder, by the agent's position, once it has been looked up.
@@ -1799,6 +1802,7 @@ impl WorkspaceState {
             tree_folders: Vec::new(),
             tree_ignored: std::collections::HashSet::new(),
             files_of: None,
+            file_listings: Default::default(),
             identities: vec![None; builtin.len()],
             defaults: vec![None; builtin.len()],
             logins: Vec::new(),

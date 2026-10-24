@@ -125,8 +125,12 @@ fn files(state: &WorkspaceState, height: f32) -> Node {
         state,
         (height - 136.0 * pm_style::step_scale()).max(0.0),
     ));
-    if state.files.is_empty() {
-        list = list.child(nothing("No files yet."));
+    if state.files.is_empty() && state.tree_folders.is_empty() {
+        list = list.child(nothing(if state.files_loading() {
+            "Loading files…"
+        } else {
+            "No files yet."
+        }));
     }
     list = list.child(node().styles([flex_1(), min_h(32.0)]).focusable(TREE_SPACE));
     node()
