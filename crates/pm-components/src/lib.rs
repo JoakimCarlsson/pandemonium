@@ -81,6 +81,7 @@ pub mod review;
 pub mod sample;
 pub mod sash;
 pub mod scroll_marks;
+mod session_attention;
 pub mod settings;
 pub mod settings_catalog;
 pub mod settings_editor;

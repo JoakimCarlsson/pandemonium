@@ -8,15 +8,19 @@ use crate::dock::TerminalTab;
 use crate::draft::Draft;
 use crate::project::Project;
 
-/// Where a session stands in the agent, review, code flow.
+/// The activity or attention indicator shown beside a session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Status {
     /// The agent is still at it.
     Working,
-    /// The agent is done and its changes wait to be read.
-    Review,
-    /// Nothing is left to do.
-    Done,
+    /// A response has not been read.
+    Unread,
+    /// The agent is waiting for another prompt.
+    Idle,
+    /// The latest unread update is an error.
+    Error,
+    /// The agent needs an answer or permission.
+    NeedsInput,
 }
 
 /// What a line of a diff does to the file.
@@ -471,6 +475,18 @@ pub struct Session {
     pub agent: usize,
     /// Where it stands.
     pub status: Status,
+    /// How many response updates have arrived, including replayed history.
+    pub updates: u64,
+    /// The latest response update the reader has seen.
+    pub read_through: u64,
+    /// Whether the reader explicitly marked this session unread.
+    pub marked_unread: bool,
+    /// Whether automatic reading waits for the reader to leave this conversation.
+    pub hold_unread: bool,
+    /// Whether the latest completed turn failed.
+    pub latest_error: bool,
+    /// How far this conversation was scrolled back from its latest response.
+    pub chat_back: f32,
     /// When it last changed, in milliseconds since the epoch.
     pub updated_at: u64,
     /// The conversation so far.
@@ -539,7 +555,17 @@ impl Session {
             submodule: None,
             base: None,
             agent: 0,
-            status,
+            status: if status == Status::Unread {
+                Status::Idle
+            } else {
+                status
+            },
+            updates: u64::from(status == Status::Unread),
+            read_through: 0,
+            marked_unread: false,
+            hold_unread: false,
+            latest_error: false,
+            chat_back: 0.0,
             updated_at: crate::age::now().saturating_sub(minutes_ago * 60_000),
             messages,
             changes: Vec::new(),
@@ -586,7 +612,7 @@ impl Session {
         agent: usize,
         closed: bool,
     ) -> Self {
-        let mut session = Self::new(title, project, branch, Status::Done, 0, Vec::new());
+        let mut session = Self::new(title, project, branch, Status::Idle, 0, Vec::new());
         session.closed = closed;
         session.directory = directory.to_owned();
         session.base = base;
@@ -596,7 +622,7 @@ impl Session {
 
     /// The stand-in for the folder of the project at `project`, kept out of every list, that the git panel reads while no session is open.
     pub fn home(project: usize, directory: &str) -> Self {
-        let mut session = Self::new("", project, "", Status::Done, 0, Vec::new());
+        let mut session = Self::new("", project, "", Status::Idle, 0, Vec::new());
         session.closed = true;
         session.home = true;
         session.directory = directory.to_owned();
@@ -674,12 +700,32 @@ impl Session {
             })
     }
 
-    /// Where it stands as the reader should see it: at work while the agent has anything running.
+    /// Whether a response or an explicit reminder has yet to be read.
+    pub fn unread(&self) -> bool {
+        self.marked_unread || self.updates > self.read_through
+    }
+
+    /// Acknowledges the latest response without changing the agent's activity.
+    pub fn mark_read(&mut self) {
+        self.read_through = self.read_through.max(self.updates);
+        self.marked_unread = false;
+        self.hold_unread = false;
+    }
+
+    /// The activity or attention that matters most in the workspace list.
     pub fn shown(&self) -> Status {
-        if self.status != Status::Working && self.background_running() {
+        if self.ask.is_some() || self.inquiry.is_some() || self.signed_out.is_some() {
+            Status::NeedsInput
+        } else if self.status == Status::Working || self.background_running() {
             Status::Working
+        } else if self.unread() {
+            if self.latest_error {
+                Status::Error
+            } else {
+                Status::Unread
+            }
         } else {
-            self.status
+            Status::Idle
         }
     }
 
@@ -712,7 +758,7 @@ pub fn sessions() -> Vec<Session> {
         "Restore sessions from checkpoints",
         0,
         "task/227-checkpoints",
-        Status::Review,
+        Status::Unread,
         0,
         vec![
             Message::user(
@@ -763,7 +809,7 @@ pub fn sessions() -> Vec<Session> {
         "Add automatic session titles",
         0,
         "task/231-titles",
-        Status::Review,
+        Status::Unread,
         12,
         vec![
             Message::user(
@@ -820,7 +866,7 @@ pub fn sessions() -> Vec<Session> {
             "Release v0.7.0-beta.2",
             0,
             "main",
-            Status::Done,
+            Status::Idle,
             120,
             vec![
                 Message::user("Cut the beta release."),
@@ -835,7 +881,7 @@ pub fn sessions() -> Vec<Session> {
             "Greet user and await task",
             1,
             "main",
-            Status::Done,
+            Status::Idle,
             6,
             vec![
                 Message::user("Hi"),
@@ -850,7 +896,7 @@ pub fn sessions() -> Vec<Session> {
             "Add a --json output flag",
             1,
             "task/12-json-flag",
-            Status::Review,
+            Status::Unread,
             60,
             vec![
                 Message::user("Every command should be able to print machine-readable output."),

@@ -94,6 +94,8 @@ pub enum Shot {
     Onboarding(Step),
     /// The workspace on its first session.
     Workspace,
+    /// Every workspace attention state and the session menu, on an unread error when true.
+    SessionStates(bool),
     /// A forty-line prompt scrolled part way through its contents.
     ComposerLong,
     /// A session whose account needs signing in again.
@@ -2001,6 +2003,28 @@ impl Shot {
                     reason: "Failed to authenticate: OAuth session expired and could not be refreshed".to_owned(),
                     account: Some("work@example.com".to_owned()),
                 }))
+            }
+            Self::SessionStates(unread) => {
+                let mut state = workspace();
+                for session in &mut state.sessions {
+                    session.project = 0;
+                    session.status = pm_components::sample::Status::Idle;
+                    session.mark_read();
+                }
+                state.sessions[0].title = "Idle session".into();
+                state.sessions[1].title = "Agent working".into();
+                state.sessions[1].status = pm_components::sample::Status::Working;
+                state.sessions[2].title = "Unread response".into();
+                state.sessions[2].marked_unread = true;
+                state.sessions[3].title = "Unread error".into();
+                state = state.heard(3, Event::Failed("Connection lost".into()));
+                state.sessions[4].title = "Needs input".into();
+                state = state.heard(4, Event::Ask(Permission {
+                    ticket: 1, title: "Allow command?".into(), command: None, plan: None, choices: Vec::new(),
+                }));
+                let selected = if unread { 3 } else { 0 };
+                state = state.after(FocusId(pm_components::state::SESSION_BASE + selected as u64));
+                Screen::Workspace(state.with_session_menu(selected, (220.0, 160.0)))
             }
             Self::Workspace | Self::Selecting => Screen::Workspace(workspace()),
             Self::SessionAccount => {

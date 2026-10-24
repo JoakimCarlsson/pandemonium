@@ -439,7 +439,7 @@ pub fn chat(
                 .child(line(label, 13, 1.4, Role::Muted)),
         );
     }
-    if session.status == Status::Review && !session.changes.is_empty() {
+    if session.status != Status::Working && !session.changes.is_empty() {
         messages = messages.child(summary(session));
     }
     messages = messages.children(crate::hooks_card::hooks_card(session, column));

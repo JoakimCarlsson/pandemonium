@@ -585,7 +585,8 @@ impl App {
             self.model
                 .update(|state| *state = std::mem::take(state).edited(id, Edit::ScrollTo(want)));
         }
-        if pm_components::chat::history_pending() {
+        let history_pending = pm_components::chat::history_pending();
+        if history_pending {
             self.model.update(|_| {});
         }
         let cursor = match self.sash_drag {
@@ -610,6 +611,35 @@ impl App {
         self.place_completion();
         self.place_signature();
         self.note_code_view();
+        self.note_conversation(presented && !history_pending);
+    }
+
+    /// Marks updates read only after the end of the conversation has been presented in the focused window.
+    fn note_conversation(&mut self, presented: bool) {
+        let chat = self
+            .output
+            .scrollers
+            .iter()
+            .find(|scroller| scroller.id == CHAT_SCROLL);
+        let visible = chat.is_some();
+        let at_end = chat.is_some_and(|scroller| scroller.room - scroller.offset <= 1.0);
+        let focused = presented
+            && self
+                .window
+                .as_ref()
+                .is_some_and(|window| window.has_focus())
+            && !self.work.resuming();
+        let pending = self.model.read(|screen| {
+            matches!(screen, Screen::Workspace(state)
+            if state.conversation_observation_pending(visible, at_end, focused))
+        });
+        if pending {
+            self.model.update(|screen| {
+                if let Screen::Workspace(state) = screen {
+                    state.observe_conversation(visible, at_end, focused);
+                }
+            });
+        }
     }
 
     /// Tells the screen how wide the view of the file shown was drawn and how wide a character of code is, when that changed, so long lines wrap at its edge.
@@ -2199,6 +2229,7 @@ impl App {
                     event_loop.exit();
                 }
             }
+            WindowEvent::Focused(_) => window.request_redraw(),
             WindowEvent::ThemeChanged(theme) => {
                 self.system_appearance = appearance(Some(theme));
                 self.apply_appearance();

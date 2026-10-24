@@ -104,6 +104,8 @@ fn main() {
             Some("composer-long") => Shot::ComposerLong,
             Some("signed-out") => Shot::SignedOut,
             Some("workspace") => Shot::Workspace,
+            Some("session-states") => Shot::SessionStates(false),
+            Some("session-states-unread") => Shot::SessionStates(true),
             Some("quitting") => Shot::Quitting,
             Some("update") => Shot::Update,
             Some("diff") => Shot::Diff,

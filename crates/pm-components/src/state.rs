@@ -2305,6 +2305,9 @@ impl WorkspaceState {
     /// pixels, downwards when positive, with `room` pixels to scroll back.
     pub fn scrolled_chat(mut self, delta: f32, room: f32) -> Self {
         self.chat_back = (self.chat_back - delta).clamp(0.0, room);
+        if let Some(index) = self.open_index() {
+            self.sessions[index].chat_back = self.chat_back;
+        }
         self
     }
 
@@ -2456,7 +2459,7 @@ impl WorkspaceState {
             self.file = None;
             self.comment_target = None;
             self.fresh_git();
-            self.chat_back = 0.0;
+            self.chat_back = self.sessions[index].chat_back;
         } else if let Some(index) = position(AGENT_BASE, self.agent_slots()) {
             self.agent = index;
         } else if let Some(index) = position(CHOICE_BASE, self.choices()) {
@@ -2841,6 +2844,9 @@ impl WorkspaceState {
     fn take_prompt(&mut self) -> Vec<String> {
         self.prompt = prompt_field("");
         self.chat_back = 0.0;
+        if let Some(index) = self.open_index() {
+            self.sessions[index].chat_back = 0.0;
+        }
         self.slash = 0;
         std::mem::take(&mut self.attachments)
     }
@@ -3287,9 +3293,6 @@ impl WorkspaceState {
             if let Some(commits) = commits {
                 held.commits = commits;
             }
-            if held.status == Status::Done && !held.changes.is_empty() {
-                held.status = Status::Review;
-            }
         }
         if self.file.is_some_and(|file| file >= self.change_count()) {
             self.file = None;
@@ -3305,7 +3308,7 @@ impl WorkspaceState {
             message.duration = Some(String::new());
             held.messages.push(message);
             if held.status == Status::Working {
-                held.status = Status::Done;
+                held.status = Status::Idle;
                 held.turn_started = None;
             }
         }

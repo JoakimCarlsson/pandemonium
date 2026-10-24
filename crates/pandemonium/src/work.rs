@@ -376,6 +376,8 @@ pub struct Work {
     unclaimed: HashMap<(Host, u64), Vec<u8>>,
     /// Where the window was left, to be finished once the server that holds its session has listed its sessions.
     resume: Option<View>,
+    /// Saved read positions awaiting the sessions listed by each machine.
+    read_receipts: Vec<crate::view::ReadReceipt>,
     /// How many threads have yet to report.
     pending: Cell<usize>,
     /// The grammars asked for of each machine, by the name they were asked by, so each is asked for once.
@@ -413,6 +415,7 @@ impl Work {
                 .map(|agent| agent.id)
                 .collect(),
             resume: None,
+            read_receipts: Vec::new(),
             pending: Cell::new(0),
             grammars: HashSet::new(),
             palette: picture::Palette::default(),
@@ -489,6 +492,7 @@ impl Work {
 
     /// Has the window finish opening on `view` once the sessions it needs are listed.
     pub fn resume(&mut self, view: View) {
+        self.read_receipts = view.receipts().to_vec();
         self.resume = Some(view);
     }
 
@@ -2249,6 +2253,20 @@ impl Work {
             added = mapping;
         });
         for (position, number) in added {
+            if let Some(receipt) = self
+                .read_receipts
+                .iter()
+                .find(|receipt| receipt.host == *origin && receipt.number == number)
+            {
+                model.update(|screen| {
+                    if let Screen::Workspace(state) = screen {
+                        let session = &mut state.sessions[position];
+                        session.read_through = receipt.through;
+                        session.marked_unread = receipt.marked;
+                        session.hold_unread = receipt.marked;
+                    }
+                });
+            }
             self.forgotten.remove(&(origin.clone(), number));
             self.numbers.insert(position, (origin.clone(), number));
             self.positions.insert((origin.clone(), number), position);
