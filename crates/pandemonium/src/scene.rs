@@ -34,7 +34,6 @@ pub fn set_fonts(shaper: &mut Shaper, sans: &str, mono: &str) {
 fn scale_for(state: &Screen) {
     let appearance = match state {
         Screen::Workspace(held) => held.window.appearance.clone(),
-        Screen::Onboarding(_) => pm_config::AppearanceSettings::default(),
     };
     pm_style::set_scales(appearance.density.scale(), appearance.text_scale());
 }

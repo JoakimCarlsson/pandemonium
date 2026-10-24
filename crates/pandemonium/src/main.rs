@@ -55,9 +55,6 @@ fn main() {
             _ => pm_theme::Appearance::Dark,
         };
         let shot = match arguments.get(7).map(String::as_str) {
-            Some("project") => Shot::Onboarding(pm_pages::Step::Project),
-            Some("agents") => Shot::Onboarding(pm_pages::Step::Agents),
-            Some("languages") => Shot::Onboarding(pm_pages::Step::Languages),
             Some("code") => Shot::Code,
             Some("languageoffer") => Shot::LanguageOffer,
             Some("markdownpreview") => Shot::MarkdownPreview,
@@ -190,11 +187,10 @@ fn main() {
             Some("owning") => Shot::Owning,
             Some("cloning") => Shot::Cloning,
             Some("folders") => Shot::Folders,
-            Some("folders-onboarding") => Shot::FoldersOnboarding,
             Some(name) if Shot::settings_named(name).is_some() => {
-                Shot::settings_named(name).unwrap_or(Shot::Onboarding(pm_pages::Step::Welcome))
+                Shot::settings_named(name).unwrap_or(Shot::Empty)
             }
-            _ => Shot::Onboarding(pm_pages::Step::Welcome),
+            _ => Shot::Empty,
         };
         if let Err(error) = snapshot::write(
             Path::new(path),

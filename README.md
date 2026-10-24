@@ -202,7 +202,7 @@ implements none of them; it wires them together.
 | Drawing    | `pm-shaders`, `pm-renderer` (the only wgpu code), `pm-text`, `pm-icon`, `pm-theme`                      |
 | Interface  | `pm-input`, `pm-state`, `pm-ui`                                                                         |
 | Components | `pm-components`: reusable controls and the sections the workspace is drawn from                         |
-| Pages      | `pm-pages`: onboarding, the workspace and the screen that switches between them                         |
+| Pages      | `pm-pages`: the workspace, its panes and auxiliary windows                         |
 | Protocol   | `pm-protocol`: the messages between clients and a server                                                |
 | Server     | `pm-server`: the `pandemonium-server` program                                                           |
 | Client     | `pm-client` (one reconnecting connection, and starting the local server), `pm-ssh` (ssh transport)      |

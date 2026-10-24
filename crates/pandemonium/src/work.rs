@@ -581,9 +581,9 @@ impl Work {
         );
     }
 
-    /// Asks each agent on this machine what it lets the reader change, once the workspace is showing.
-    pub fn discover(&mut self, model: &State<Screen>) {
-        if self.discovered || !model.get().is_workspace() {
+    /// Asks each agent on this machine what it lets the reader change, once per launch.
+    pub fn discover(&mut self) {
+        if self.discovered {
             return;
         }
         self.discovered = true;
@@ -2259,12 +2259,11 @@ impl Work {
                 .find(|receipt| receipt.host == *origin && receipt.number == number)
             {
                 model.update(|screen| {
-                    if let Screen::Workspace(state) = screen {
-                        let session = &mut state.sessions[position];
-                        session.read_through = receipt.through;
-                        session.marked_unread = receipt.marked;
-                        session.hold_unread = receipt.marked;
-                    }
+                    let Screen::Workspace(state) = screen;
+                    let session = &mut state.sessions[position];
+                    session.read_through = receipt.through;
+                    session.marked_unread = receipt.marked;
+                    session.hold_unread = receipt.marked;
                 });
             }
             self.forgotten.remove(&(origin.clone(), number));
@@ -2293,9 +2292,8 @@ impl Work {
             .session()
             .and_then(|key| self.positions.get(&key).copied());
         model.update(|screen| {
-            if let Screen::Workspace(state) = screen {
-                *state = view.reopen(std::mem::replace(state, WorkspaceState::new(&[])), position);
-            }
+            let Screen::Workspace(state) = screen;
+            *state = view.reopen(std::mem::replace(state, WorkspaceState::new(&[])), position);
         });
     }
 
@@ -2310,9 +2308,8 @@ impl Work {
     /// Replaces the workspace with what `change` makes of it, while the workspace is showing.
     fn in_workspace(model: &State<Screen>, change: impl FnOnce(WorkspaceState) -> WorkspaceState) {
         model.update(|screen| {
-            if let Screen::Workspace(state) = screen {
-                *state = change(std::mem::replace(state, WorkspaceState::new(&[])));
-            }
+            let Screen::Workspace(state) = screen;
+            *state = change(std::mem::replace(state, WorkspaceState::new(&[])));
         });
     }
 
@@ -2330,9 +2327,7 @@ impl Work {
     /// Where the session at `session` works.
     fn session_of(model: &State<Screen>, session: usize) -> Option<Placement> {
         let screen = model.get();
-        let Screen::Workspace(state) = &screen else {
-            return None;
-        };
+        let Screen::Workspace(state) = &screen;
         let held = state.sessions.get(session)?;
         let project = state.projects.get(held.project)?;
         Some(Placement {

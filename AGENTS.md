@@ -62,8 +62,8 @@ One crate per layer, each depending only on the layers below it.
 - **Components:** `pm-components`: reusable controls (`Button`, `Chip`,
   `Popover`, `Checkbox`, `Tally` and so on), each a builder with a variant and a
   size, and the state and sections the workspace is drawn from.
-- **Pages:** `pm-pages`: onboarding, the workspace and the screen that switches
-  between them. A page is never a component and never lives in `pm-components`.
+- **Pages:** `pm-pages`: the workspace, its panes and auxiliary windows. A page
+  is never a component and never lives in `pm-components`.
 - **Protocol:** `pm-protocol`: the messages between clients and a server, as
   serde types over JSON. Append-only: add fields and variants, never remove or
   repurpose them.

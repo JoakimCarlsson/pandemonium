@@ -10,7 +10,6 @@ impl Screen {
     fn in_workspace(self, change: impl FnOnce(WorkspaceState) -> WorkspaceState) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(change(state)),
-            onboarding => onboarding,
         }
     }
 
@@ -212,7 +211,6 @@ impl Screen {
     pub fn answer_of(&self, verdict: pm_acp::Verdict) -> Option<pm_input::FocusId> {
         match self {
             Self::Workspace(state) => state.answer_of(verdict),
-            Self::Onboarding(_) => None,
         }
     }
 
@@ -265,7 +263,6 @@ impl Screen {
     pub fn command_taken(&self, row: Option<usize>) -> Option<pm_editor::Action> {
         match self {
             Self::Workspace(state) => state.command_taken(row),
-            Self::Onboarding(_) => None,
         }
     }
 
@@ -424,7 +421,6 @@ impl Screen {
     pub fn code_view(&self) -> Option<(f32, f32)> {
         match self {
             Self::Workspace(state) => state.code_view,
-            Self::Onboarding(_) => None,
         }
     }
 
@@ -477,7 +473,6 @@ impl Screen {
             Self::Workspace(state) => state
                 .shown_document()
                 .is_some_and(|document| document.is_dirty() && !document.field.is_read_only()),
-            Self::Onboarding(_) => false,
         }
     }
 
@@ -485,7 +480,6 @@ impl Screen {
     pub fn excerpt_owner_of(&self, id: pm_input::FocusId) -> Option<usize> {
         match self {
             Self::Workspace(state) => state.excerpt_owner_of(id),
-            Self::Onboarding(_) => None,
         }
     }
 
@@ -693,7 +687,6 @@ impl Screen {
                     .map(|index| index as usize)
                     .filter(|index| *index < state.git.viewers.len())
             }
-            Self::Onboarding(_) => None,
         }
     }
 
@@ -910,7 +903,6 @@ impl Screen {
     ) -> Option<(Option<String>, pm_protocol::ExtensionCommand)> {
         match self {
             Self::Workspace(state) => state.extension_command_taken(row),
-            Self::Onboarding(_) => None,
         }
     }
 
@@ -946,7 +938,6 @@ impl Screen {
     /// The screen after the server on this machine said which languages there are.
     pub fn with_extensions(self, languages: Vec<ExtensionInfo>) -> Self {
         match self {
-            Self::Onboarding(state) => Self::Onboarding(state.with_extensions(languages)),
             Self::Workspace(state) => Self::Workspace(state.with_extensions(languages)),
         }
     }

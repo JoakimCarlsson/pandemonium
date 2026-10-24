@@ -10,7 +10,6 @@ impl Screen {
     fn in_workspace_tasking(self, change: impl FnOnce(WorkspaceState) -> WorkspaceState) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(change(state)),
-            onboarding => onboarding,
         }
     }
 

@@ -25,10 +25,7 @@ use pm_components::state::{
 };
 use pm_components::tree_actions::{TREE_NEW_FOLDER, TreeTarget};
 use pm_input::{FocusId, PointerState};
-use pm_pages::{
-    ADD_PROJECT, BROWSE, HISTORY, OnboardingState, PROMPT, SEND, Screen, Step, TAB_DIFF, TERMINAL,
-    WorkspaceState,
-};
+use pm_pages::{ADD_PROJECT, HISTORY, PROMPT, SEND, Screen, TAB_DIFF, TERMINAL, WorkspaceState};
 use pm_renderer::{DrawList, Renderer};
 use pm_text::Edit;
 use pm_theme::{Appearance, default_family};
@@ -90,8 +87,6 @@ pub const SETTINGS_SHOTS: [(&str, Section); 23] = [
 /// Which screen a snapshot shows.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Shot {
-    /// A step of onboarding.
-    Onboarding(Step),
     /// The workspace on its first session.
     Workspace,
     /// Every workspace attention state and the session menu, on an unread error when true.
@@ -164,7 +159,7 @@ pub enum Shot {
     OverviewChangeMenu,
     /// The workspace with the terminal open and the sidebar, the review panel and the terminal dragged to other sizes.
     Resized,
-    /// The workspace of the projects onboarding added, with no sessions.
+    /// A workspace with projects and no sessions.
     New,
     /// The workspace with no project at all.
     Empty,
@@ -282,8 +277,6 @@ pub enum Shot {
     Cloning,
     /// The folder picker's window on the folders of the machine, to open one as a project.
     Folders,
-    /// The folder picker's window opened from the project step of onboarding.
-    FoldersOnboarding,
     /// A Rust file being written: highlighted, with what the language server finds wrong under it and the brackets at the caret paired.
     Code,
     /// A file written in a language that is not installed, with the offer to install it above its lines.
@@ -1739,7 +1732,7 @@ test result: \x1b[32mok\x1b[0m. 9 passed; 0 failed\r\n\
     state
 }
 
-/// The projects a first launch has after onboarding.
+/// The projects shown in the sample workspace.
 fn projects() -> Vec<Project> {
     ["~/code/pandemonium", "~/code/voxel"]
         .into_iter()
@@ -1750,7 +1743,7 @@ fn projects() -> Vec<Project> {
 impl Shot {
     /// Whether this snapshot shows the folder picker's window instead of the main one.
     fn in_picker_window(self) -> bool {
-        matches!(self, Self::Folders | Self::FoldersOnboarding)
+        matches!(self, Self::Folders)
     }
 
     /// Whether this snapshot shows the settings window instead of the main one.
@@ -1817,12 +1810,6 @@ impl Shot {
     fn screen(self) -> Screen {
         let workspace = workspace_sample;
         match self {
-            Self::Onboarding(Step::Languages) => Screen::Onboarding(OnboardingState {
-                step: Step::Languages,
-                languages: sample_languages(),
-                chosen: vec!["rust".to_owned(), "typescript".to_owned(), "toml".to_owned()],
-                ..OnboardingState::default()
-            }),
             Self::Code => Screen::Workspace(code()),
             Self::LanguageOffer => Screen::Workspace(language_offer()),
             Self::MarkdownPreview => Screen::Workspace(previewed("README.md")),
@@ -1978,18 +1965,6 @@ impl Shot {
                         sample_extension(false),
                     ),
             ),
-            Self::Onboarding(step) => Screen::Onboarding(OnboardingState {
-                step,
-                projects: if step == Step::Project {
-                    ["pandemonium", "voxel"]
-                        .into_iter()
-                        .filter_map(Project::from_source)
-                        .collect()
-                } else {
-                    Vec::new()
-                },
-                ..OnboardingState::default()
-            }),
             Self::ComposerLong => {
                 let prompt = (1..=40).map(|line| format!("Prompt line {line}\n")).collect();
                 Screen::Workspace(
@@ -2157,7 +2132,7 @@ impl Shot {
                     .edited(PROMPT, Edit::Compose("¨".to_owned())),
             ),
             Self::New => Screen::Workspace(WorkspaceState::new(&projects())),
-            Self::Empty => Screen::Workspace(WorkspaceState::new(&[])),
+            Self::Empty => Screen::default(),
             Self::History | Self::HistoryScrolled => {
                 let mut state = workspace().after(HISTORY);
                 let template = state.sessions[0].clone();
@@ -2401,14 +2376,6 @@ impl Shot {
                     .after(ADD_PROJECT)
                     .after(ADDER_BROWSE)
                     .with_folders("~", sample_folders()),
-            ),
-            Self::FoldersOnboarding => Screen::Onboarding(
-                OnboardingState {
-                    step: Step::Project,
-                    ..OnboardingState::default()
-                }
-                .after(BROWSE)
-                .with_folders("~", sample_folders()),
             ),
             Self::Cloning => Screen::Workspace(
                 welcome()

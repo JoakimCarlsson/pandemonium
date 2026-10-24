@@ -10,7 +10,6 @@ impl Screen {
     fn in_workspace_debugging(self, change: impl FnOnce(WorkspaceState) -> WorkspaceState) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(change(state)),
-            onboarding => onboarding,
         }
     }
 
@@ -79,7 +78,6 @@ impl Screen {
     pub fn debug_run(&self) -> Option<(u64, usize)> {
         match self {
             Self::Workspace(state) => state.debug.run.as_ref().map(|run| (run.debug, run.session)),
-            Self::Onboarding(_) => None,
         }
     }
 }

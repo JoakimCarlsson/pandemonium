@@ -52,7 +52,7 @@ impl Work {
         if host.is_none() {
             return;
         }
-        let ids = model.read(|screen| match screen {
+        let ids: Vec<String> = model.read(|screen| match screen {
             Screen::Workspace(state) => state
                 .extensions
                 .iter()
@@ -61,7 +61,6 @@ impl Work {
                 })
                 .map(|language| language.id.clone())
                 .collect(),
-            Screen::Onboarding(_) => Vec::new(),
         });
         if !ids.is_empty() {
             self.ask(host, Request::InstallExtensions { ids }, Pending::Nothing);

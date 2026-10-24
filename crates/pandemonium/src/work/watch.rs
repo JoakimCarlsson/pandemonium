@@ -10,9 +10,7 @@ impl Work {
     /// The machine and folder of the session the git panel is about, with its position, if one is shown.
     fn shown_folder(model: &State<Screen>) -> Option<(usize, Host, String)> {
         model.read(|screen| {
-            let Screen::Workspace(state) = screen else {
-                return None;
-            };
+            let Screen::Workspace(state) = screen;
             let position = state.review_index()?;
             let session = state.sessions.get(position)?;
             let project = state.projects.get(session.project)?;
@@ -23,9 +21,7 @@ impl Work {
     /// The projects on `host`, with their positions and folders as the server knows them.
     fn project_folders(model: &State<Screen>, host: &Host) -> Vec<(usize, String)> {
         model.read(|screen| {
-            let Screen::Workspace(state) = screen else {
-                return Vec::new();
-            };
+            let Screen::Workspace(state) = screen;
             state
                 .projects
                 .iter()

@@ -3,10 +3,8 @@
 use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
-use pm_acp::{Login, Standing};
 use pm_components::adder::{ADDER_DOWN, ADDER_ESCAPE, ADDER_UP};
 use pm_components::arrange::{is_project_menu_item, is_session_menu_item};
 use pm_components::assist::HOVER_SCROLL;
@@ -37,8 +35,7 @@ use pm_components::{
 use pm_editor::Action;
 use pm_input::{Button, Focus, FocusId, Key, KeyEvent, Modifiers, PointerEvent, PointerState};
 use pm_pages::{
-    ATTACH, AgentStatus, DIFF_SCROLL, LANGUAGES_SCROLL, MENU_SCROLL, PLAN_SCROLL, PROMPT, Screen,
-    TERMINAL_BODY, TREE_SCROLL,
+    ATTACH, DIFF_SCROLL, MENU_SCROLL, PLAN_SCROLL, PROMPT, Screen, TERMINAL_BODY, TREE_SCROLL,
 };
 use pm_renderer::{DrawList, Renderer};
 use pm_state::State;
@@ -155,10 +152,6 @@ pub struct App {
     on_aside: Option<asides::Aside>,
     /// When the application started, which animations run on.
     started: Instant,
-    /// Where the threads that start agents report what they found.
-    standings: Receiver<(usize, Standing)>,
-    /// Handed to each thread that starts an agent.
-    reporter: Sender<(usize, Standing)>,
     /// The shape the pointer was last set to.
     cursor: Cursor,
     /// The system clipboard, once something has needed it.
@@ -179,10 +172,6 @@ pub struct App {
     autosave_wait: Option<((String, i32), Instant)>,
     /// When the window last looked for a newer release.
     release_asked: Instant,
-    /// The agents the server can start, which onboarding checks.
-    agents: Vec<pm_protocol::AgentServer>,
-    /// The logins each agent last offered, in the order of `agents`.
-    logins: Vec<Vec<Login>>,
     /// The agents that run, and the work done for them.
     work: Work,
     /// What was last written as the view, which is what the window opened with until it changes.
@@ -335,7 +324,6 @@ impl Default for App {
         let dirty = Rc::new(Cell::new(false));
         let flag = Rc::clone(&dirty);
         model.subscribe(move |_| flag.set(true));
-        let (reporter, standings) = mpsc::channel();
         Self {
             window: None,
             renderer: None,
@@ -367,8 +355,6 @@ impl Default for App {
             raised_picker: None,
             on_aside: None,
             started: Instant::now(),
-            standings,
-            reporter,
             cursor: Cursor::Default,
             clipboard: None,
             dragging: None,
@@ -388,8 +374,6 @@ impl Default for App {
             saved_editor: editor,
             autosave_wait: None,
             release_asked: Instant::now(),
-            logins: vec![Vec::new(); agents.len()],
-            agents,
             work,
             autofocused: false,
             naming: false,
@@ -635,9 +619,8 @@ impl App {
         });
         if pending {
             self.model.update(|screen| {
-                if let Screen::Workspace(state) = screen {
-                    state.observe_conversation(visible, at_end, focused);
-                }
+                let Screen::Workspace(state) = screen;
+                state.observe_conversation(visible, at_end, focused);
             });
         }
     }
@@ -707,10 +690,6 @@ impl App {
             && self.model.read(|screen| screen.is_menu_row(id))
         {
             self.terminal_command(command);
-            return;
-        }
-        if let Some(index) = Screen::agent_of(id) {
-            self.agent_action(index);
             return;
         }
         if id == ATTACH {
@@ -895,7 +874,6 @@ impl App {
             Screen::Workspace(state) => Some(View::capture(state, focused, |position| {
                 work.server_number(position)
             })),
-            Screen::Onboarding(_) => None,
         }) else {
             return;
         };
@@ -937,71 +915,6 @@ impl App {
         self.saved = Some(paths);
     }
 
-    /// Finds out where every agent stands, each on a thread of its own, since
-    /// starting one can take a while.
-    fn check_agents(&self) {
-        for (index, agent) in self
-            .agents
-            .iter()
-            .enumerate()
-            .filter_map(|(index, record)| Some((index, record.agent()?)))
-        {
-            let reporter = self.reporter.clone();
-            std::thread::spawn(move || {
-                let _ = reporter.send((index, agent.probe()));
-            });
-        }
-    }
-
-    /// Does what the row of the agent at `index` offers: signs it in,
-    /// installs it or looks at it again, and reports where it ends up.
-    fn agent_action(&mut self, index: usize) {
-        let Some(agent) = self.agents.get(index).and_then(|record| record.agent()) else {
-            return;
-        };
-        let Some(status) = self.model.read(|screen| screen.agent(index).cloned()) else {
-            return;
-        };
-        let login = self.logins[index]
-            .iter()
-            .find(|login| !login.id.contains("cached"))
-            .or(self.logins[index].first())
-            .cloned();
-        self.model
-            .update(|state| *state = std::mem::take(state).with_agent(index, AgentStatus::Working));
-        let reporter = self.reporter.clone();
-        std::thread::spawn(move || {
-            let outcome = match (status, login) {
-                (AgentStatus::SignedOut, Some(login)) => agent.log_in(&login),
-                (AgentStatus::SignedOut, None) => Err("no way to sign in".to_owned()),
-                (AgentStatus::Missing, _) => agent.install(),
-                _ => Ok(()),
-            };
-            let standing = match outcome {
-                Ok(()) => agent.probe(),
-                Err(reason) => Standing::Failed(reason),
-            };
-            let _ = reporter.send((index, standing));
-        });
-    }
-
-    /// Takes in what the agent threads have found.
-    fn take_standings(&mut self) {
-        while let Ok((index, standing)) = self.standings.try_recv() {
-            let status = match standing {
-                Standing::Ready => AgentStatus::Ready,
-                Standing::SignedOut(logins) => {
-                    self.logins[index] = logins;
-                    AgentStatus::SignedOut
-                }
-                Standing::Missing => AgentStatus::Missing,
-                Standing::Failed(reason) => AgentStatus::Failed(reason),
-            };
-            self.model
-                .update(|state| *state = std::mem::take(state).with_agent(index, status));
-        }
-    }
-
     /// Asks the desktop for files and mentions them in the prompt, unless the dialog is dismissed.
     fn attach(&mut self) {
         let Some(files) = rfd::FileDialog::new()
@@ -1039,7 +952,6 @@ impl App {
                         let offset = state.subagents_scroll.clamp(0.0, room);
                         (pixels > 0.0 && offset >= room) || (pixels < 0.0 && offset <= 0.0)
                     }
-                    _ => false,
                 });
             if !at_end {
                 self.scroll_box(id, pixels, room);
@@ -1087,7 +999,6 @@ impl App {
                 DIFF_SCROLL => std::mem::take(state).scrolled_diff(pixels, room),
                 TREE_SCROLL => std::mem::take(state).scrolled_tree(pixels, room),
                 PICKER_SCROLL => std::mem::take(state).scrolled_folder_picker(pixels, room),
-                LANGUAGES_SCROLL => std::mem::take(state).scrolled_languages(pixels, room),
                 SETTINGS_SCROLL => std::mem::take(state).scrolled_settings(pixels, room),
                 SETTINGS_NAV_SCROLL => std::mem::take(state).scrolled_settings_nav(pixels, room),
                 EXTENSIONS_SCROLL => std::mem::take(state).scrolled_extensions(pixels, room),
@@ -1580,7 +1491,6 @@ impl App {
         let over = self.model.read(|held| {
             let current = match held {
                 Screen::Workspace(state) => state.project_drag.map_or(from, |drag| drag.over),
-                Screen::Onboarding(_) => from,
             };
             hit.and_then(|id| held.project_at(id))
                 .filter(|project| *project != from)
@@ -2122,12 +2032,6 @@ impl ApplicationHandler for App {
             Err(error) => fail_to_start(&error.to_string()),
         }
         self.system_appearance = appearance(window.theme());
-        if self
-            .model
-            .read(|screen| matches!(screen, Screen::Onboarding(_)))
-        {
-            self.check_agents();
-        }
         window.set_ime_allowed(true);
         self.window = Some(window);
         self.apply_appearance();
@@ -2135,8 +2039,7 @@ impl ApplicationHandler for App {
 
     /// Draws again when the model changed while no event asked for it.
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        self.take_standings();
-        self.work.discover(&self.model);
+        self.work.discover();
         self.work.poll(&self.model);
         self.settle_rename_focus();
         if self.model.read(Screen::editor_settings_wanted) {

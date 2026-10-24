@@ -42,7 +42,7 @@ pub struct Agent {
     pub home: Option<&'static str>,
 }
 
-/// Every agent the app ships, in the order onboarding lists them.
+/// Every agent the app ships, in the order the workspace lists them.
 pub const AGENTS: [Agent; 3] = [
     Agent {
         id: "claude-code",
