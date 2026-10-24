@@ -100,10 +100,10 @@ pub const DIFF_SCROLL: FocusId = FocusId(7004);
 pub const TREE_SCROLL: FocusId = FocusId(7005);
 
 /// The first of the rows folding a folder of the changed files; the rest follow it.
-pub const FOLDER_BASE: u64 = 7101;
+pub const FOLDER_BASE: u64 = 150_000;
 
 /// The first of the check boxes staging a folder of the changed files; the rest follow it.
-pub const FOLDER_STAGE_BASE: u64 = 7300;
+pub const FOLDER_STAGE_BASE: u64 = 170_000;
 
 /// The first of the headers folding a file of the diff; the rest follow it.
 pub const DIFF_FOLD_BASE: u64 = 7500;
@@ -3387,5 +3387,26 @@ mod tests {
                     if *session == index && message == "Review folder changes"
             )));
         }
+    }
+
+    /// Pressing a folder of the changed files folds it, and its menu acts on the files inside it, folded or not.
+    #[test]
+    fn changed_folders_fold_and_act_on_their_files() {
+        let mut state = WorkspaceState::sample();
+        state.page = Page::Session(0);
+        state.sync_context();
+        let index = state.review_index().unwrap();
+        state.sessions[index].changes = ["lib", "limb", "plugin", "two_bone"]
+            .iter()
+            .map(|name| Change::new(&format!("crates/pyre_ik/src/{name}.rs"), ""))
+            .collect();
+        let key =
+            crate::change_list::fold_key(crate::change_list::Group::Tracked, "crates/pyre_ik/src");
+        state = state.after(FocusId(FOLDER_BASE));
+        assert!(state.closed_folders.contains(&key));
+        state = state.with_folder_change_menu(0, (0.0, 0.0));
+        assert_eq!(state.marked_changes().len(), 4);
+        state = state.after(FocusId(FOLDER_BASE));
+        assert!(!state.closed_folders.contains(&key));
     }
 }

@@ -380,7 +380,14 @@ impl WorkspaceState {
         if !real {
             return self.git.selected.into_iter().collect();
         }
-        self.listed()
+        self.review_session()
+            .map_or_else(Vec::new, |session| {
+                crate::change_list::order_shown(
+                    &session.changes,
+                    &std::collections::HashSet::new(),
+                    self.git.repository.as_deref(),
+                )
+            })
             .into_iter()
             .filter(|row| self.git.marked.contains(row))
             .collect()
