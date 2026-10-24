@@ -31,6 +31,8 @@ use crate::state::{
 };
 use crate::steps::{question, steps};
 
+mod retained;
+
 /// How wide the column holding the conversation is at most, in logical pixels.
 const COLUMN: f32 = 760.0;
 
@@ -415,14 +417,10 @@ pub fn chat(
             px(6),
             py(8),
         ])
-        .children((0..session.messages.len()).map(|index| {
-            let message = &session.messages[index];
-            if message.from_user {
-                user_message(state, session, index, column)
-            } else {
-                agent_message(state, session, index, column, shaper)
-            }
-        }));
+        .children(
+            (0..session.messages.len())
+                .map(|index| retained::message(state, session, index, column, shaper)),
+        );
     let asking = session.ask.as_ref();
     if let Some(ask) = asking.filter(|ask| ask.plan.is_none()) {
         messages = messages.child(question(ask, column, shaper));

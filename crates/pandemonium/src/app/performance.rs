@@ -23,6 +23,10 @@ pub(super) struct Timings {
     render: Vec<f64>,
     /// Pointer event to successful render return, in milliseconds.
     response: Vec<f64>,
+    /// The oldest key or IME event awaiting a submitted frame.
+    keyboard: Option<Instant>,
+    /// Keyboard handling through successful submission, in milliseconds.
+    key_response: Vec<f64>,
 }
 
 impl Default for Timings {
@@ -34,6 +38,8 @@ impl Default for Timings {
             scene: Vec::new(),
             render: Vec::new(),
             response: Vec::new(),
+            keyboard: None,
+            key_response: Vec::new(),
         }
     }
 }
@@ -43,6 +49,13 @@ impl Timings {
     pub(super) fn pointer(&mut self, received: Option<Instant>) {
         if self.enabled && self.pointer.is_none() {
             self.pointer = received;
+        }
+    }
+
+    /// Starts measuring a key or composition event before its edit is applied.
+    pub(super) fn keyboard(&mut self) {
+        if self.enabled && self.keyboard.is_none() {
+            self.keyboard = Some(Instant::now());
         }
     }
 
@@ -72,17 +85,24 @@ impl Timings {
             self.response
                 .push(milliseconds(now.duration_since(pointer)));
         }
+        if let Some(keyboard) = self.keyboard.take() {
+            self.key_response
+                .push(milliseconds(now.duration_since(keyboard)));
+        }
         if self.scene.len() == SAMPLES {
             eprintln!(
-                "pandemonium frame timings ({SAMPLES} frames; milliseconds p50/p95/p99): scene={} acquire+submit={} pointer-to-submit={} ({} pointer frames; excludes display latency)",
+                "pandemonium frame timings ({SAMPLES} frames; milliseconds p50/p95/p99): scene={} acquire+submit={} pointer-to-submit={} ({} pointer frames) key-to-submit={} ({} key frames; excludes display latency)",
                 percentiles(&mut self.scene),
                 percentiles(&mut self.render),
                 percentiles(&mut self.response),
-                self.response.len()
+                self.response.len(),
+                percentiles(&mut self.key_response),
+                self.key_response.len()
             );
             self.scene.clear();
             self.render.clear();
             self.response.clear();
+            self.key_response.clear();
         }
     }
 }

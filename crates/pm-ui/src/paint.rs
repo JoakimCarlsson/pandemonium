@@ -80,6 +80,8 @@ pub struct Output {
     pub cursor: Cursor,
     /// The text boxes that hold a caret, in tree order.
     pub fields: Vec<FieldBox>,
+    /// Full line ranges for virtual inputs; offscreen runs are shaped only for navigation.
+    pub field_layouts: Vec<std::sync::Arc<crate::FieldLayout>>,
     /// The boxes that scroll from their end, in tree order.
     pub scrollers: Vec<Scroller>,
     /// The boxes made selectable, where they were seen, in tree order, those
@@ -146,7 +148,16 @@ impl Output {
     /// The byte offset in the field `id` on the line `by` lines from the one
     /// the caret at byte `caret` is on, at the same distance from the left,
     /// if there is such a line.
-    pub fn vertical(&self, id: FocusId, caret: usize, by: isize) -> Option<usize> {
+    pub fn vertical(
+        &self,
+        id: FocusId,
+        caret: usize,
+        by: isize,
+        shaper: &mut Shaper,
+    ) -> Option<usize> {
+        if let Some(layout) = self.field_layouts.iter().find(|layout| layout.id == id) {
+            return layout.vertical(caret, by, shaper);
+        }
         let lines = self.lines_of(id);
         let here = Self::line_at(&lines, caret)?;
         let target = lines.get(here.checked_add_signed(by)?)?;
@@ -157,6 +168,9 @@ impl Output {
     /// The byte offset at the start, or when `end` is set the end, of the
     /// line of the field `id` that the caret at byte `caret` is on.
     pub fn line_edge(&self, id: FocusId, caret: usize, end: bool) -> Option<usize> {
+        if let Some(layout) = self.field_layouts.iter().find(|layout| layout.id == id) {
+            return layout.edge(caret, end);
+        }
         let lines = self.lines_of(id);
         let line = lines[Self::line_at(&lines, caret)?];
         Some(if end {
@@ -314,6 +328,9 @@ impl Frame<'_> {
                 id: *id,
                 rect: Rect::new(rect.x, rect.y, 0.0, 0.0),
             }));
+        if let Some(layout) = &node.field_layout {
+            self.output.field_layouts.push(layout.clone());
+        }
         let outer_selectable = self.selectable;
         if let Some(id) = node.selectable {
             self.selectable = Some(id);
@@ -531,6 +548,9 @@ impl Frame<'_> {
                 id: *id,
                 rect: Rect::new(laid.x + self.origin.0, laid.y + self.origin.1, 0.0, 0.0),
             }));
+        if let Some(layout) = &node.field_layout {
+            self.output.field_layouts.push(layout.clone());
+        }
         let outer_selectable = self.selectable;
         if let Some(id) = node.selectable {
             self.selectable = Some(id);
@@ -551,6 +571,28 @@ impl Frame<'_> {
         }
         self.unseen_inside(node, laid, parent, opacity, inherited, scrolled);
         self.selectable = outer_selectable;
+    }
+
+    /// Replays only the metadata needed for selecting and copying an offscreen retained subtree.
+    fn hidden(&mut self, entries: &[retain::Hidden]) {
+        for entry in entries {
+            match entry {
+                retain::Hidden::Focus(id, rect) => self.output.regions.push(Region {
+                    id: *id,
+                    rect: rect.offset(self.origin.0, self.origin.1),
+                }),
+                retain::Hidden::Selectable(id, rect) => self.output.selectables.push(Region {
+                    id: *id,
+                    rect: rect.offset(self.origin.0, self.origin.1),
+                }),
+                retain::Hidden::Text(owner, text, rect) => {
+                    let outer = self.selectable;
+                    self.selectable = owner.or(outer);
+                    self.record_piece(text, rect.offset(self.origin.0, self.origin.1), None);
+                    self.selectable = outer;
+                }
+            }
+        }
     }
 
     /// Walks what `node`, which shows nothing, holds without painting it, as [`Frame::unseen`] does.
@@ -580,14 +622,18 @@ impl Frame<'_> {
         if let Some(retained) = &node.retained {
             let outer = self.origin;
             self.origin = (laid.x + outer.0, laid.y + outer.1);
-            self.unseen(
-                &retained.root,
-                &retained.placed,
-                parent,
-                opacity,
-                inherited,
-                scrolled,
-            );
+            if let Some(hidden) = &retained.hidden {
+                self.hidden(hidden);
+            } else {
+                self.unseen(
+                    &retained.root,
+                    &retained.placed,
+                    parent,
+                    opacity,
+                    inherited,
+                    scrolled,
+                );
+            }
             self.origin = outer;
         }
     }

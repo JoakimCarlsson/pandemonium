@@ -70,6 +70,8 @@ pub struct Node {
     /// text field at which the line starts, so presses and the caret can be
     /// placed in it.
     pub(crate) field_line: Option<(FocusId, usize)>,
+    /// Complete wrapped byte ranges for fields whose offscreen lines have no child nodes.
+    pub(crate) field_layout: Option<Arc<crate::FieldLayout>>,
     /// A box whose focus this one takes on: its focus styles apply while that box holds keyboard focus.
     pub(crate) focus_for: Option<FocusId>,
     /// Scrolls the contents from one end of them, and reports how far they
@@ -284,6 +286,12 @@ impl Node {
     /// that starts at byte `start` of the field's text.
     pub fn field_line(mut self, owner: FocusId, start: usize) -> Self {
         self.field_line = Some((owner, start));
+        self
+    }
+
+    /// Gives a virtual input complete line metadata for lazy keyboard navigation.
+    pub fn field_layout(mut self, layout: crate::FieldLayout) -> Self {
+        self.field_layout = Some(Arc::new(layout));
         self
     }
 

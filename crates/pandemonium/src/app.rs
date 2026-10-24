@@ -187,6 +187,12 @@ pub struct App {
     work: Work,
     /// What was last written as the view, which is what the window opened with until it changes.
     saved_view: Option<View>,
+    /// Serializes and writes the latest window state outside the event loop.
+    view_writer: crate::view::Writer,
+    /// The next debounced capture of the window state.
+    view_save_due: Option<Instant>,
+    /// The start of the current burst, limiting how long continuous typing delays saving.
+    view_save_started: Option<Instant>,
     /// The field the reader was typing in when the window last closed, which takes the keyboard once it is drawn.
     refocus: Option<FocusId>,
     /// The project header a press began on, by position, and where the pointer was.
@@ -371,6 +377,9 @@ impl Default for App {
             saved,
             refocus: saved_view.as_ref().and_then(View::typing),
             saved_view,
+            view_writer: crate::view::Writer::default(),
+            view_save_due: None,
+            view_save_started: None,
             project_press: None,
             project_dragging: false,
             pane_press: None,
@@ -824,6 +833,24 @@ impl App {
         self.saved_choices = choices;
     }
 
+    /// Defers view capture until typing pauses, while saving at least every two seconds.
+    fn defer_view_save(&mut self) {
+        let now = Instant::now();
+        let started = *self.view_save_started.get_or_insert(now);
+        self.view_save_due =
+            Some((now + Duration::from_millis(300)).min(started + Duration::from_secs(2)));
+    }
+
+    /// Captures an expired pending save and returns the next deadline for the event loop.
+    fn view_save_deadline(&mut self) -> Option<Instant> {
+        if self.view_save_due.is_some_and(|due| due <= Instant::now()) {
+            self.view_save_due = None;
+            self.view_save_started = None;
+            self.persist_view();
+        }
+        self.view_save_due
+    }
+
     /// Writes where the window is to disk when it differs from what was last written, once the window has finished opening where it was left.
     fn persist_view(&mut self) {
         if self.work.resuming() {
@@ -842,7 +869,7 @@ impl App {
         if self.saved_view.as_ref() == Some(&view) {
             return;
         }
-        view.save();
+        self.view_writer.queue(view.clone());
         self.saved_view = Some(view);
     }
 
@@ -1191,32 +1218,70 @@ impl App {
         match event {
             PointerEvent::Pressed(Button::Right) => {
                 let on = self.pointer.position.and_then(|at| self.output.hit(at));
-                let screen = self.model.get();
                 match on {
                     Some(id) if Screen::is_field(id) => self.open_menu(id),
-                    Some(id) if screen.session_row_of(id).is_some() => {
-                        self.open_session_menu(screen.session_row_of(id).unwrap_or_default());
+                    Some(id)
+                        if self
+                            .model
+                            .read(|screen| screen.session_row_of(id))
+                            .is_some() =>
+                    {
+                        self.open_session_menu(
+                            self.model
+                                .read(|screen| screen.session_row_of(id))
+                                .unwrap_or_default(),
+                        );
                     }
-                    Some(id) if screen.header_of(id).is_some() => {
-                        self.open_project_menu(screen.header_of(id).unwrap_or_default());
+                    Some(id) if self.model.read(|screen| screen.header_of(id)).is_some() => {
+                        self.open_project_menu(
+                            self.model
+                                .read(|screen| screen.header_of(id))
+                                .unwrap_or_default(),
+                        );
                     }
-                    Some(id) if screen.change_row_of(id).is_some() => {
-                        self.open_change_menu(screen.change_row_of(id).unwrap_or_default());
+                    Some(id) if self.model.read(|screen| screen.change_row_of(id)).is_some() => {
+                        self.open_change_menu(
+                            self.model
+                                .read(|screen| screen.change_row_of(id))
+                                .unwrap_or_default(),
+                        );
                     }
-                    Some(id) if screen.change_folder_row_of(id).is_some() => {
-                        let position = screen.change_folder_row_of(id).unwrap_or_default();
+                    Some(id)
+                        if self
+                            .model
+                            .read(|screen| screen.change_folder_row_of(id))
+                            .is_some() =>
+                    {
+                        let position = self
+                            .model
+                            .read(|screen| screen.change_folder_row_of(id))
+                            .unwrap_or_default();
                         self.open_folder_change_menu(position);
                     }
-                    Some(id) if screen.file_tab_of(id).is_some() => {
-                        let index = screen.file_tab_of(id).unwrap_or_default();
+                    Some(id) if self.model.read(|screen| screen.file_tab_of(id)).is_some() => {
+                        let index = self
+                            .model
+                            .read(|screen| screen.file_tab_of(id))
+                            .unwrap_or_default();
                         self.open_tab_menu(index);
                     }
-                    Some(id) if screen.tree_row_of(id).is_some() => {
-                        let target = screen.tree_row_of(id).unwrap_or_else(TreeTarget::root);
+                    Some(id) if self.model.read(|screen| screen.tree_row_of(id)).is_some() => {
+                        let target = self
+                            .model
+                            .read(|screen| screen.tree_row_of(id))
+                            .unwrap_or_else(TreeTarget::root);
                         self.open_tree_menu(target);
                     }
-                    Some(id) if screen.history_row_of(id).is_some() => {
-                        let row = screen.history_row_of(id).unwrap_or_default();
+                    Some(id)
+                        if self
+                            .model
+                            .read(|screen| screen.history_row_of(id))
+                            .is_some() =>
+                    {
+                        let row = self
+                            .model
+                            .read(|screen| screen.history_row_of(id))
+                            .unwrap_or_default();
                         self.open_git_menu(MenuKind::History(row));
                     }
                     Some(TERMINAL_BODY) => self.open_terminal_menu(),
@@ -1242,19 +1307,18 @@ impl App {
                         .update(|state| *state = std::mem::take(state).comment_drag_begun(id));
                 }
                 self.press_beside_code(on);
-                let screen = self.model.get();
                 self.project_press = on
-                    .and_then(|id| screen.header_of(id))
+                    .and_then(|id| self.model.read(|screen| screen.header_of(id)))
                     .zip(self.pointer.position);
                 self.project_dragging = false;
                 self.pane_press(on);
-                if screen.list_menu_open()
+                if self.model.read(|screen| screen.list_menu_open())
                     && !on.is_some_and(|id| {
                         is_project_menu_item(id)
                             || is_session_menu_item(id)
                             || is_message_menu_item(id)
                             || split_row_of(id).is_some()
-                            || screen.is_menu_row(id)
+                            || self.model.read(|screen| screen.is_menu_row(id))
                     })
                 {
                     self.model
@@ -1268,9 +1332,11 @@ impl App {
                 }
                 self.pressed_on = self.pointer.position.and_then(|at| self.output.hit(at));
                 self.list_pressed = self.pressed_on.filter(|id| {
-                    screen.tree_row_of(*id).is_some()
-                        || screen.change_row_of(*id).is_some()
-                        || screen.change_folder_row_of(*id).is_some()
+                    self.model.read(|screen| {
+                        screen.tree_row_of(*id).is_some()
+                            || screen.change_row_of(*id).is_some()
+                            || screen.change_folder_row_of(*id).is_some()
+                    })
                 });
                 self.press_excerpt();
                 self.text_press();
@@ -1609,12 +1675,15 @@ impl App {
     /// Moves the caret of the multiline field `id` by `by` lines as they are
     /// drawn, to the start or the end of the text when there is no line there.
     fn move_vertically(&mut self, id: FocusId, by: isize, extend: bool) {
-        let Some((caret, length, several)) = self
-            .model
-            .get()
-            .field(id)
-            .map(|field| (field.caret(), field.text().len(), field.has_others()))
-        else {
+        let Some((caret, length, several)) = self.model.read(|screen| {
+            screen.field(id).map(|field| {
+                (
+                    field.to_shown(field.caret()),
+                    field.shown().len(),
+                    field.has_others(),
+                )
+            })
+        }) else {
             return;
         };
         if several {
@@ -1628,7 +1697,7 @@ impl App {
         }
         let target = self
             .output
-            .vertical(id, caret, by)
+            .vertical(id, caret, by, &mut self.shaper)
             .unwrap_or(if by < 0 { 0 } else { length });
         self.edit_field(id, Edit::Place(target, extend));
     }
@@ -1639,7 +1708,7 @@ impl App {
         let Some((caret, several)) = self.model.read(|screen| {
             screen
                 .field(id)
-                .map(|field| (field.caret(), field.has_others()))
+                .map(|field| (field.to_shown(field.caret()), field.has_others()))
         }) else {
             return;
         };
@@ -1730,18 +1799,18 @@ impl App {
     fn clip(&mut self, id: FocusId, action: Clip) {
         match action {
             Clip::Copy | Clip::Cut => {
-                let selected = self
-                    .model
-                    .get()
-                    .field(id)
-                    .map(|field| {
-                        if field.has_others() {
-                            field.selected_all()
-                        } else {
-                            field.selected().to_owned()
-                        }
-                    })
-                    .unwrap_or_default();
+                let selected = self.model.read(|screen| {
+                    screen
+                        .field(id)
+                        .map(|field| {
+                            if field.has_others() {
+                                field.selected_all()
+                            } else {
+                                field.selected().to_owned()
+                            }
+                        })
+                        .unwrap_or_default()
+                });
                 if selected.is_empty() {
                     return;
                 }
@@ -1863,10 +1932,9 @@ impl App {
             Key::Character(digit)
                 if digit.is_ascii_digit()
                     && !self.focus.current().is_some_and(Screen::is_field)
-                    && let Some(id) = self
-                        .model
-                        .get()
-                        .inquiry_hotkey(digit.to_digit(10).unwrap_or_default() as usize) =>
+                    && let Some(id) = self.model.read(|screen| {
+                        screen.inquiry_hotkey(digit.to_digit(10).unwrap_or_default() as usize)
+                    }) =>
             {
                 self.activate(id);
             }
@@ -1970,10 +2038,7 @@ fn cursor_icon(cursor: Cursor) -> CursorIcon {
 
 /// The byte offset in the text of `field` that the offset `shown` of what is shown stands for.
 fn field_text_offset(field: &pm_text::Field, shown: usize) -> usize {
-    (0..=field.text().len())
-        .filter(|byte| field.text().is_char_boundary(*byte))
-        .find(|byte| field.to_shown(*byte) >= shown)
-        .unwrap_or(field.text().len())
+    field.to_text(shown)
 }
 
 /// The themes `settings` pick: the light one for the window drawn light, the dark one for it drawn dark.
@@ -2001,6 +2066,12 @@ fn fail_to_start(reason: &str) -> ! {
 }
 
 impl ApplicationHandler for App {
+    /// Captures the final draft and waits for its ordered background write before exit.
+    fn exiting(&mut self, _: &ActiveEventLoop) {
+        self.persist_view();
+        self.view_writer.flush();
+    }
+
     /// Opens the window and builds its renderer once the platform is ready.
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
@@ -2053,6 +2124,11 @@ impl ApplicationHandler for App {
         if self.model.read(Screen::has_outbox) {
             self.deliver();
         }
+        if self.dirty.get() {
+            self.defer_view_save();
+            self.persist_window();
+            self.persist_editor();
+        }
         let waiting = self.model.read(|screen| screen.waiting()) || self.work.busy();
         let hover = [
             self.editor_hover_due(),
@@ -2060,6 +2136,7 @@ impl ApplicationHandler for App {
             self.editor_autosave_due(),
             self.recording_due(),
             self.release_due(),
+            self.view_save_deadline(),
         ]
         .into_iter()
         .flatten()
@@ -2075,11 +2152,6 @@ impl ApplicationHandler for App {
         if self.model.read(Screen::place_unrecorded) {
             self.model
                 .update(|screen| *screen = std::mem::take(screen).with_place_recorded());
-        }
-        if self.dirty.get() {
-            self.persist_view();
-            self.persist_window();
-            self.persist_editor();
         }
         if self.closing || self.model.read(Screen::quitting) {
             event_loop.exit();
@@ -2160,7 +2232,9 @@ impl App {
                 {
                     return;
                 }
-                self.timings.pointer(received);
+                if self.on_aside.is_none() {
+                    self.timings.pointer(received);
+                }
             }
             WindowEvent::CursorLeft { .. } => self.pointer(PointerEvent::Left),
             WindowEvent::MouseWheel { delta, .. } => {
@@ -2196,9 +2270,17 @@ impl App {
                     ElementState::Released => PointerEvent::Released(button),
                 });
             }
-            WindowEvent::Ime(Ime::Preedit(composing, _)) => self.compose(composing),
+            WindowEvent::Ime(Ime::Preedit(composing, _)) => {
+                if self.on_aside.is_none() {
+                    self.timings.keyboard();
+                }
+                self.compose(composing);
+            }
             WindowEvent::Ime(Ime::Disabled) => self.compose(String::new()),
             WindowEvent::Ime(Ime::Commit(committed)) => {
+                if self.on_aside.is_none() {
+                    self.timings.keyboard();
+                }
                 if self.commit_to_terminal(&committed) {
                 } else if let Some(id) = self.focus.current()
                     && Screen::is_field(id)
@@ -2214,6 +2296,9 @@ impl App {
             WindowEvent::KeyboardInput { event, .. } => {
                 self.refocus = None;
                 if let Some(event) = keys::key_event(&event, self.modifiers) {
+                    if event.pressed && self.on_aside.is_none() {
+                        self.timings.keyboard();
+                    }
                     self.key(event);
                 }
             }

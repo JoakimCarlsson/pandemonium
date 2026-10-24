@@ -12,6 +12,7 @@
 //! selected with the pointer: [`Input::selection`] says what is selected,
 //! and [`Output`] finds places in the text and copies what a selection covers.
 
+mod field_layout;
 mod node;
 mod paint;
 mod retain;
@@ -20,6 +21,7 @@ mod select;
 mod tooltip;
 mod wrap;
 
+pub use field_layout::FieldLayout;
 pub use node::{CaretLook, CaretShape, Mark, Node, Paint, node, text};
 pub use paint::{FieldBox, Input, Output, Region, SCROLLBAR_GRIP, Scroller, draw};
 pub use pm_renderer::Picture;

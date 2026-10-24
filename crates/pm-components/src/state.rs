@@ -2089,9 +2089,9 @@ impl WorkspaceState {
     pub fn edited(mut self, id: FocusId, edit: Edit) -> Self {
         match id {
             PROMPT => {
-                let before = self.prompt.text().to_owned();
+                let before = self.prompt.revision();
                 self.prompt.apply(edit);
-                if self.prompt.text() != before {
+                if self.prompt.revision() != before {
                     self.menu_scroll = 0.0;
                 }
             }
