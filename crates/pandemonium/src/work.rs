@@ -272,19 +272,39 @@ enum Pending {
 }
 
 impl Pending {
-    /// Whether this is waiting on the server for something about a session's folder that the source control panel shows as under way.
+    /// Whether a git operation should animate the source control controls; routine reads refresh their data quietly.
     fn is_git(&self) -> bool {
         matches!(
             self,
-            Self::Inspect(_)
-                | Self::Log(_)
-                | Self::Stashes(_)
-                | Self::Stage(_)
-                | Self::Commit(..)
-                | Self::Git(..)
-                | Self::Remote(_)
-                | Self::SessionBranches(_)
+            Self::Stage(_) | Self::Commit(..) | Self::Git(..) | Self::Remote(_)
         )
+    }
+}
+
+#[cfg(test)]
+/// Regression checks for visible request progress.
+mod tests {
+    use super::Pending;
+
+    /// Background reads leave icons steady while operations still advertise their progress.
+    #[test]
+    fn git_progress_ignores_background_reads() {
+        for pending in [
+            Pending::Inspect(0),
+            Pending::Log(0),
+            Pending::Stashes(0),
+            Pending::SessionBranches(0),
+        ] {
+            assert!(!pending.is_git());
+        }
+        for pending in [
+            Pending::Stage(0),
+            Pending::Commit(0, false),
+            Pending::Git(0, "Switching branch…"),
+            Pending::Remote(0),
+        ] {
+            assert!(pending.is_git());
+        }
     }
 }
 

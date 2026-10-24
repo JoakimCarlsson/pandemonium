@@ -1119,6 +1119,46 @@ impl WorkspaceState {
 mod file_listing_tests {
     use super::*;
 
+    /// An existing conversation requests its skills and retains the server's reply.
+    #[test]
+    fn existing_session_loads_skills() {
+        let mut state = WorkspaceState::sample();
+        state.page = Page::Session(0);
+        state.skills_of = None;
+        state.sessions[0].skills.clear();
+        state.outbox.clear();
+        let agent = state.sessions[0].agent;
+        let project = state.sessions[0].project;
+        let directory = state.projects[project]
+            .directory()
+            .to_string_lossy()
+            .into_owned();
+        state.sync_context();
+        assert!(state.outbox.iter().any(|request| matches!(
+            request,
+            Outgoing::Skills { agent: asked_agent, project: asked_project, directory: asked_directory, .. }
+                if *asked_agent == agent && *asked_project == project && *asked_directory == directory
+        )));
+        state = state.with_skills(
+            agent,
+            project,
+            vec![Slash {
+                name: "review".into(),
+                description: "Review changes".into(),
+            }],
+            Default::default(),
+        );
+        assert_eq!(state.sessions[0].skills[0].name, "review");
+        state.outbox.clear();
+        state.sync_context();
+        assert!(
+            !state
+                .outbox
+                .iter()
+                .any(|request| matches!(request, Outgoing::Skills { .. }))
+        );
+    }
+
     /// Returning to a directory restores its files while requesting fresh server data.
     #[test]
     fn restores_listing_and_keeps_late_replies_separate() {
