@@ -4,7 +4,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
 
 use pm_acp::{Agent, Chat, Event};
 use pm_protocol::{ServerMessage, SessionInfo};
@@ -16,6 +17,46 @@ use crate::languages::Installs;
 use crate::queue::Waiting;
 use crate::sessions::{self, Meta};
 use crate::terminals::Terminal;
+
+/// Rung by the threads of the agents when they have something to tell, so the pump runs at once instead of on a timer.
+pub(crate) struct Bell {
+    /// Whether it was rung since the pump last waited.
+    rung: Mutex<bool>,
+    /// Wakes the pump.
+    sounded: Condvar,
+}
+
+impl Bell {
+    /// A bell that has not been rung.
+    const fn new() -> Self {
+        Self {
+            rung: Mutex::new(false),
+            sounded: Condvar::new(),
+        }
+    }
+
+    /// Rings the bell; a ring while the pump is busy is kept for its next wait.
+    pub(crate) fn ring(&self) {
+        if let Ok(mut rung) = self.rung.lock() {
+            *rung = true;
+            self.sounded.notify_one();
+        }
+    }
+
+    /// Waits until the bell is rung or `patience` has passed, and silences it.
+    pub(crate) fn wait(&self, patience: Duration) {
+        if let Ok(rung) = self.rung.lock()
+            && let Ok((mut rung, _)) = self
+                .sounded
+                .wait_timeout_while(rung, patience, |rung| !*rung)
+        {
+            *rung = false;
+        }
+    }
+}
+
+/// The bell the agents ring for the pump of the server.
+pub(crate) static BELL: Bell = Bell::new();
 
 /// One client connected to the server.
 pub(crate) struct Connection {
@@ -75,7 +116,14 @@ impl Session {
     pub(crate) fn start_agent(&mut self, settings: &[(String, String)]) {
         let (tools, launch) = crate::library::given(self.agent, &self.directory);
         let home = crate::handler::login_folder(&self.meta.agent, self.meta.login.as_deref());
-        let chat = Chat::start(self.agent, self.directory.clone(), home, tools, launch);
+        let chat = Chat::start(
+            self.agent,
+            self.directory.clone(),
+            home,
+            tools,
+            launch,
+            Arc::new(|| BELL.ring()),
+        );
         self.running_as = self.meta.login.clone();
         self.hooks_trusted = false;
         for (setting, value) in settings {

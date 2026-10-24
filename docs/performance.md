@@ -48,6 +48,22 @@ scrolling, and receiving agent output. A smaller queue can reduce latency but
 can also reduce throughput, so choose it from measurements on the target GPU
 and compositor. Headless snapshots cannot establish this tradeoff.
 
+## Streaming latency
+
+Agent output reaches the window without timers. The agent's threads ring the
+server's bell as soon as they queue an event, and the pump runs on the ring; its
+500 ms wait is only a backstop. A connection that has sent something in the
+last second waits 1 ms instead of 25 ms for the client before sending the next
+message. The client's connection thread calls a wake function after each
+report, which the window turns into an event loop user event, so incoming
+events are applied at once instead of at the next 50 ms tick while an agent
+works.
+
+Measured over a loopback WebSocket with an agent streaming one chunk every
+10 ms, the delay from the agent's write to the client's read fell from p50 13 ms,
+p95 24 ms and stalls of up to 276 ms to p50 1.4 ms, p95 2.8 ms and a maximum of
+7 ms, with chunks arriving evenly spaced instead of in bursts.
+
 ## Reproducible CPU comparisons
 
 ```sh

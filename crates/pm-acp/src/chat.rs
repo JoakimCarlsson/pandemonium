@@ -343,6 +343,27 @@ struct Ending {
     stopped: bool,
 }
 
+/// What a [`Chat`] calls each time its agent has something for [`Chat::events`], so the owner looks at once instead of on a timer.
+pub type Notify = Arc<dyn Fn() + Send + Sync>;
+
+/// Where the threads of a chat report what the agent did: the queue [`Chat::events`] reads, and the [`Notify`] that says it has grown.
+#[derive(Clone)]
+pub(crate) struct Events {
+    /// The queue [`Chat::events`] reads.
+    sender: Sender<Event>,
+    /// Called after each event is queued.
+    notify: Notify,
+}
+
+impl Events {
+    /// Queues `event` for the owner of the chat and notifies it, and says whether the owner still listens.
+    pub(crate) fn send(&self, event: Event) -> bool {
+        let sent = self.sender.send(event).is_ok();
+        (self.notify)();
+        sent
+    }
+}
+
 /// A running agent and the conversation held with it.
 ///
 /// Everything the agent does happens on a thread of its own, so nothing it
@@ -362,16 +383,21 @@ pub struct Chat {
 }
 
 impl Chat {
-    /// Starts `agent` in the folder `directory`, keeping its config and login in the folder `home` or in its own when there is none, and opens a conversation with it that has the tool servers `tools`, leaving out what `launch` says to.
+    /// Starts `agent` in the folder `directory`, keeping its config and login in the folder `home` or in its own when there is none, and opens a conversation with it that has the tool servers `tools`, leaving out what `launch` says to; `notify` is called whenever the agent has something for [`Chat::events`].
     pub fn start(
         agent: Agent,
         directory: PathBuf,
         home: Option<PathBuf>,
         tools: Vec<serde_json::Value>,
         launch: pm_agent_library::Launch,
+        notify: Notify,
     ) -> Self {
         let (commands, received) = mpsc::channel();
-        let (sender, events) = mpsc::channel();
+        let (queue, events) = mpsc::channel();
+        let sender = Events {
+            sender: queue,
+            notify,
+        };
         let ending = Arc::new(Mutex::new(Ending::default()));
         let shared = Arc::clone(&ending);
         let (hooks, unwatched) = mpsc::channel();
@@ -599,7 +625,7 @@ fn drive(
     launch: &pm_agent_library::Launch,
     ending: &Mutex<Ending>,
     commands: &Receiver<Command>,
-    events: &Sender<Event>,
+    events: &Events,
 ) -> Result<(), String> {
     if !agent.startable() {
         return Err(format!("{} is not installed", agent.name));
@@ -745,7 +771,7 @@ fn converse(
     configurable: bool,
     prompts: &Value,
     commands: &Receiver<Command>,
-    events: &Sender<Event>,
+    events: &Events,
 ) -> Result<(), String> {
     let mut waiting = Waiting {
         images: prompts["image"] == json!(true),
@@ -786,7 +812,7 @@ fn command_agent(
     configurable: bool,
     waiting: &mut Waiting,
     command: Command,
-    events: &Sender<Event>,
+    events: &Events,
 ) -> Result<(), String> {
     match command {
         Command::Prompt { text, files } if waiting.turn.is_none() => {
@@ -853,7 +879,7 @@ fn hear_agent(
     session: &str,
     waiting: &mut Waiting,
     message: &Value,
-    events: &Sender<Event>,
+    events: &Events,
 ) -> Result<(), String> {
     match (message["method"].as_str(), message.get("id")) {
         (Some("session/request_permission"), Some(id)) => {

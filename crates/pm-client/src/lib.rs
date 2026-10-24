@@ -8,4 +8,4 @@ mod local;
 mod session;
 
 pub use local::local;
-pub use session::{Client, Incoming};
+pub use session::{Client, Incoming, Wake};
