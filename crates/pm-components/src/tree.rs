@@ -1,5 +1,7 @@
 //! Paths arranged as a tree of folders and files.
 
+use std::collections::HashMap;
+
 /// A folder of the tree: the folders and files in it, and which of the paths it was built from lie beneath it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Folder {
@@ -48,6 +50,8 @@ struct Draft {
     file: Option<usize>,
     /// What is in it.
     children: Vec<Draft>,
+    /// Child positions by name and kind, avoiding a sibling scan for every path.
+    positions: HashMap<(String, bool), usize>,
 }
 
 impl Draft {
@@ -58,6 +62,7 @@ impl Draft {
             path,
             file,
             children: Vec::new(),
+            positions: HashMap::new(),
         }
     }
 
@@ -91,12 +96,8 @@ impl Draft {
     /// Puts folders before files, each in alphabetical order, all the way down.
     fn sorted(mut self) -> Self {
         self.children = self.children.into_iter().map(Draft::sorted).collect();
-        self.children.sort_by(|a, b| {
-            a.file
-                .is_some()
-                .cmp(&b.file.is_some())
-                .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-        });
+        self.children
+            .sort_by_cached_key(|child| (child.file.is_some(), child.name.to_lowercase()));
         self
     }
 
@@ -140,14 +141,12 @@ pub fn build_stopping(paths: &[&str], layout: Layout, stops: &[&str]) -> Vec<Ent
         for (depth, part) in parts.iter().enumerate() {
             let here = parts[..=depth].join("/");
             let file = depth + 1 == parts.len() && !path.ends_with('/');
-            let found = at
-                .children
-                .iter()
-                .position(|child| child.path == here && child.file.is_some() == file);
-            let found = found.unwrap_or_else(|| {
+            let key = ((*part).to_owned(), file);
+            let found = *at.positions.entry(key).or_insert_with(|| {
+                let position = at.children.len();
                 at.children
                     .push(Draft::new(part, here, file.then_some(index)));
-                at.children.len() - 1
+                position
             });
             at = &mut at.children[found];
         }

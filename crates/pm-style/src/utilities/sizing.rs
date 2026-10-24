@@ -55,6 +55,11 @@ pub fn max_w_px(pixels: impl Number) -> Utility {
     SizingRule::MaxWidth(Length::Px(pixels.value())).into()
 }
 
+/// Upper bound on height, in raw logical pixels.
+pub fn max_h_px(pixels: impl Number) -> Utility {
+    SizingRule::MaxHeight(Length::Px(pixels.value())).into()
+}
+
 /// Lower bound on width, in steps.
 pub fn min_w(steps: impl Number) -> Utility {
     SizingRule::MinWidth(Length::steps(steps)).into()

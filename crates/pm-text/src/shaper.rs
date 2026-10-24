@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use cosmic_text::fontdb::Weight;
 use cosmic_text::{
@@ -11,8 +12,14 @@ use pm_typography::{FontFamily, FontSlant, TypographyStyle};
 
 use crate::run::{Bitmap, GlyphKey, Run};
 
-/// How many shaped runs are kept before the cache of them is emptied.
+/// How many shaped runs each cache generation holds.
 const SHAPED_LIMIT: usize = 32_768;
+
+/// The estimated bytes of text and glyphs kept in each generation.
+const SHAPED_BYTES: usize = 16 * 1024 * 1024;
+
+/// Supplies unique font identities to dependent layout caches.
+static NEXT_FONT_KEY: AtomicU64 = AtomicU64::new(1);
 
 /// What a shaped run depends on besides the text: the family, the size
 /// and line height as bits, the weight and the slant.
@@ -41,6 +48,12 @@ pub struct Shaper {
     shaped: HashMap<Setting, HashMap<String, Run>>,
     /// How many runs `shaped` holds across all settings.
     shaped_count: usize,
+    /// The previous generation, promoted on use instead of flushing all hot runs at once.
+    older: HashMap<Setting, HashMap<String, Run>>,
+    /// Estimated retained bytes in the newer generation.
+    shaped_bytes: usize,
+    /// Identifies this shaper and its current font stacks across layout caches.
+    font_key: u64,
 }
 
 impl Shaper {
@@ -53,6 +66,9 @@ impl Shaper {
             mono: None,
             shaped: HashMap::new(),
             shaped_count: 0,
+            older: HashMap::new(),
+            shaped_bytes: 0,
+            font_key: NEXT_FONT_KEY.fetch_add(1, Ordering::Relaxed),
         }
     }
 
@@ -63,6 +79,14 @@ impl Shaper {
         self.mono = self.installed(mono);
         self.shaped.clear();
         self.shaped_count = 0;
+        self.older.clear();
+        self.shaped_bytes = 0;
+        self.font_key = NEXT_FONT_KEY.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Identifies the fonts used by this shaper; changes whenever its font stacks are reset.
+    pub fn font_key(&self) -> u64 {
+        self.font_key
     }
 
     /// The families of the fonts installed on the system, each once and in the order of their names, and those among them whose letters are all as wide as each other.
@@ -105,16 +129,25 @@ impl Shaper {
         if let Some(run) = self.shaped.get(&setting).and_then(|runs| runs.get(text)) {
             return run.clone();
         }
-        let run = self.shape_uncached(text, style);
-        if self.shaped_count >= SHAPED_LIMIT {
-            self.shaped.clear();
-            self.shaped_count = 0;
+        let run = self
+            .older
+            .get_mut(&setting)
+            .and_then(|runs| runs.remove(text))
+            .unwrap_or_else(|| self.shape_uncached(text, style));
+        let bytes = text.len() + run.glyphs.len() * std::mem::size_of::<cosmic_text::LayoutGlyph>();
+        if bytes <= SHAPED_BYTES {
+            if self.shaped_count >= SHAPED_LIMIT || self.shaped_bytes + bytes > SHAPED_BYTES {
+                self.older = std::mem::take(&mut self.shaped);
+                self.shaped_count = 0;
+                self.shaped_bytes = 0;
+            }
+            self.shaped
+                .entry(setting)
+                .or_default()
+                .insert(text.to_owned(), run.clone());
+            self.shaped_count += 1;
+            self.shaped_bytes += bytes;
         }
-        self.shaped
-            .entry(setting)
-            .or_default()
-            .insert(text.to_owned(), run.clone());
-        self.shaped_count += 1;
         run
     }
 

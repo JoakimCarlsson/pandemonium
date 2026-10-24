@@ -14,7 +14,7 @@ use pm_typography::TextOverflow;
 
 use crate::node::{Anchor, CaretShape, Mark, Node, Paint};
 use crate::retain;
-use crate::select::{DrawnPiece, TextPiece, TextSelection};
+use crate::select::{DrawnPiece, Pieces, TextPiece, TextSelection};
 use crate::tooltip::{self, Showing};
 
 /// How long the caret stays on, and then off, in milliseconds.
@@ -80,13 +80,15 @@ pub struct Output {
     pub cursor: Cursor,
     /// The text boxes that hold a caret, in tree order.
     pub fields: Vec<FieldBox>,
+    /// Full line ranges for virtual inputs; offscreen runs are shaped only for navigation.
+    pub field_layouts: Vec<std::sync::Arc<crate::FieldLayout>>,
     /// The boxes that scroll from their end, in tree order.
     pub scrollers: Vec<Scroller>,
     /// The boxes made selectable, where they were seen, in tree order, those
     /// off screen included with no size.
     pub selectables: Vec<Region>,
-    /// The lines of selectable text, in tree order, those off screen included.
-    pub pieces: Vec<TextPiece>,
+    /// The lines of selectable text, in tree order, those off screen included, kept as the subtrees they came from until [`Output::pieces`] is asked for.
+    pub pieces: Pieces,
 }
 
 /// One box whose contents scroll from their end, where it ended up.
@@ -146,7 +148,16 @@ impl Output {
     /// The byte offset in the field `id` on the line `by` lines from the one
     /// the caret at byte `caret` is on, at the same distance from the left,
     /// if there is such a line.
-    pub fn vertical(&self, id: FocusId, caret: usize, by: isize) -> Option<usize> {
+    pub fn vertical(
+        &self,
+        id: FocusId,
+        caret: usize,
+        by: isize,
+        shaper: &mut Shaper,
+    ) -> Option<usize> {
+        if let Some(layout) = self.field_layouts.iter().find(|layout| layout.id == id) {
+            return layout.vertical(caret, by, shaper);
+        }
         let lines = self.lines_of(id);
         let here = Self::line_at(&lines, caret)?;
         let target = lines.get(here.checked_add_signed(by)?)?;
@@ -157,6 +168,9 @@ impl Output {
     /// The byte offset at the start, or when `end` is set the end, of the
     /// line of the field `id` that the caret at byte `caret` is on.
     pub fn line_edge(&self, id: FocusId, caret: usize, end: bool) -> Option<usize> {
+        if let Some(layout) = self.field_layouts.iter().find(|layout| layout.id == id) {
+            return layout.edge(caret, end);
+        }
         let lines = self.lines_of(id);
         let line = lines[Self::line_at(&lines, caret)?];
         Some(if end {
@@ -194,6 +208,21 @@ pub fn draw(
     list: &mut DrawList,
 ) -> Output {
     let laid = solve(&root.item(shaper), width, height);
+    paint(root, &laid, width, height, input, theme, shaper, list)
+}
+
+/// Paints an already laid-out tree, resolving interaction styles afresh.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn paint(
+    root: &Node,
+    laid: &Placed,
+    width: f32,
+    height: f32,
+    input: &Input,
+    theme: &Theme,
+    shaper: &mut Shaper,
+    list: &mut DrawList,
+) -> Output {
     let mut frame = Frame {
         input,
         width,
@@ -212,7 +241,7 @@ pub fn draw(
     };
     frame.node(
         root,
-        &laid,
+        laid,
         Affine::IDENTITY,
         1.0,
         Cursor::Default,
@@ -293,6 +322,15 @@ impl Frame<'_> {
             return;
         }
 
+        self.output
+            .regions
+            .extend(node.virtual_focus.iter().map(|id| Region {
+                id: *id,
+                rect: Rect::new(rect.x, rect.y, 0.0, 0.0),
+            }));
+        if let Some(layout) = &node.field_layout {
+            self.output.field_layouts.push(layout.clone());
+        }
         let outer_selectable = self.selectable;
         if let Some(id) = node.selectable {
             self.selectable = Some(id);
@@ -413,6 +451,20 @@ impl Frame<'_> {
         }
     }
 
+    /// Counts `count` pieces of the selectable text `id` that are not recorded one by one, and gives back the number of the first.
+    fn skip_pieces(&mut self, id: FocusId, count: usize) -> usize {
+        match self.counts.iter_mut().find(|(owner, _)| *owner == id) {
+            Some((_, held)) => {
+                *held += count;
+                *held - count
+            }
+            None => {
+                self.counts.push((id, count));
+                0
+            }
+        }
+    }
+
     /// Records `content`, laid out at `laid`, as the next piece of the
     /// selectable text the box is in, if it is in one, with where it was
     /// `drawn`, and gives back that text and the piece's number.
@@ -504,6 +556,15 @@ impl Frame<'_> {
         if node.style.base().layout.display.display == Display::None {
             return;
         }
+        self.output
+            .regions
+            .extend(node.virtual_focus.iter().map(|id| Region {
+                id: *id,
+                rect: Rect::new(laid.x + self.origin.0, laid.y + self.origin.1, 0.0, 0.0),
+            }));
+        if let Some(layout) = &node.field_layout {
+            self.output.field_layouts.push(layout.clone());
+        }
         let outer_selectable = self.selectable;
         if let Some(id) = node.selectable {
             self.selectable = Some(id);
@@ -524,6 +585,43 @@ impl Frame<'_> {
         }
         self.unseen_inside(node, laid, parent, opacity, inherited, scrolled);
         self.selectable = outer_selectable;
+    }
+
+    /// Replays the metadata needed for focusing, selecting and copying an offscreen retained subtree; its text stays in the subtree until a selection asks for it.
+    fn hidden(&mut self, retained: &std::sync::Arc<retain::Retained>) {
+        let Some(hidden) = &retained.hidden else {
+            return;
+        };
+        for mark in &hidden.marks {
+            match mark {
+                retain::HiddenMark::Focus(id, rect) => self.output.regions.push(Region {
+                    id: *id,
+                    rect: rect.offset(self.origin.0, self.origin.1),
+                }),
+                retain::HiddenMark::Selectable(id, rect) => self.output.selectables.push(Region {
+                    id: *id,
+                    rect: rect.offset(self.origin.0, self.origin.1),
+                }),
+            }
+        }
+        let outer = self.selectable;
+        let mut starts: Vec<(FocusId, usize)> = Vec::new();
+        for (owner, count) in &hidden.counts {
+            let Some(id) = owner.or(outer) else {
+                continue;
+            };
+            match starts.iter().find(|(held, _)| *held == id) {
+                Some(_) => {
+                    self.skip_pieces(id, *count);
+                }
+                None => starts.push((id, self.skip_pieces(id, *count))),
+            }
+        }
+        if !starts.is_empty() {
+            self.output
+                .pieces
+                .push_hidden(retained.clone(), self.origin, outer, starts);
+        }
     }
 
     /// Walks what `node`, which shows nothing, holds without painting it, as [`Frame::unseen`] does.
@@ -553,14 +651,18 @@ impl Frame<'_> {
         if let Some(retained) = &node.retained {
             let outer = self.origin;
             self.origin = (laid.x + outer.0, laid.y + outer.1);
-            self.unseen(
-                &retained.root,
-                &retained.placed,
-                parent,
-                opacity,
-                inherited,
-                scrolled,
-            );
+            if retained.hidden.is_some() {
+                self.hidden(retained);
+            } else {
+                self.unseen(
+                    &retained.root,
+                    &retained.placed,
+                    parent,
+                    opacity,
+                    inherited,
+                    scrolled,
+                );
+            }
             self.origin = outer;
         }
     }

@@ -264,7 +264,11 @@ impl Renderer {
                     alpha_mode: capabilities.alpha_modes[0],
                     color_space: wgpu::SurfaceColorSpace::Srgb,
                     view_formats: vec![],
-                    desired_maximum_frame_latency: 2,
+                    desired_maximum_frame_latency: std::env::var("PANDEMONIUM_FRAME_LATENCY")
+                        .ok()
+                        .and_then(|value| value.parse::<u32>().ok())
+                        .filter(|value| matches!(value, 1 | 2))
+                        .unwrap_or(2),
                 };
                 surface.configure(&device, &config);
                 let target = Target::Surface {

@@ -42,6 +42,8 @@ pub struct Node {
     pub(crate) text: Option<Arc<str>>,
     /// What names the box to the user: it can be pressed and takes focus.
     pub(crate) focus: Option<FocusId>,
+    /// Offscreen list entries kept in keyboard traversal order without child nodes.
+    pub(crate) virtual_focus: Vec<FocusId>,
     /// An icon the box draws, tinted with the text colour, in the largest
     /// square that fits its content area.
     pub(crate) icon: Option<pm_icon::Svg>,
@@ -68,6 +70,8 @@ pub struct Node {
     /// text field at which the line starts, so presses and the caret can be
     /// placed in it.
     pub(crate) field_line: Option<(FocusId, usize)>,
+    /// Complete wrapped byte ranges for fields whose offscreen lines have no child nodes.
+    pub(crate) field_layout: Option<Arc<crate::FieldLayout>>,
     /// A box whose focus this one takes on: its focus styles apply while that box holds keyboard focus.
     pub(crate) focus_for: Option<FocusId>,
     /// Scrolls the contents from one end of them, and reports how far they
@@ -140,6 +144,12 @@ pub fn text(content: impl Into<String>) -> Node {
 }
 
 impl Node {
+    /// Preserves offscreen entries in keyboard traversal order without laying out their contents.
+    pub fn virtual_focus(mut self, ids: Vec<FocusId>) -> Self {
+        self.virtual_focus = ids;
+        self
+    }
+
     /// Makes the box draw `name` in the text colour; size the box to size the icon.
     pub fn icon(mut self, name: IconName) -> Self {
         self.icon = Some(name.svg());
@@ -279,6 +289,12 @@ impl Node {
         self
     }
 
+    /// Gives a virtual input complete line metadata for lazy keyboard navigation.
+    pub fn field_layout(mut self, layout: crate::FieldLayout) -> Self {
+        self.field_layout = Some(Arc::new(layout));
+        self
+    }
+
     /// Makes the box take the focus styles of the box named `id` as well as
     /// its own: it looks focused while `id` holds keyboard focus.
     pub fn focused_with(mut self, id: FocusId) -> Self {
@@ -317,6 +333,13 @@ impl Node {
     pub fn scroll_from_start(mut self, id: FocusId, offset: f32) -> Self {
         self.scroll_anchor = Some((id, Anchor::Start, offset));
         self
+    }
+
+    /// How tall the subtree kept by [`crate::retained`] was laid out, when this node holds one.
+    pub fn laid_height(&self) -> Option<f32> {
+        self.retained
+            .as_ref()
+            .map(|retained| retained.placed.height)
     }
 
     /// The box this node and its children ask the layout for.

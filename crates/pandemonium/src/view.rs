@@ -7,6 +7,10 @@ use pm_components::state::{
 use pm_input::FocusId;
 use serde::{Deserialize, Serialize};
 
+mod writer;
+
+pub use writer::Writer;
+
 /// The name the view is kept under in the data folder.
 const FILE: &str = "view";
 

@@ -56,7 +56,7 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
         body = body.child(plan::panel(state, source, plan_width, shaper));
     }
     if let Some(session) = state.review_session().filter(|_| reviewing) {
-        body = body.child(review::review(state, session, shaper));
+        body = body.child(review::review(state, session, page, shaper));
     }
     let mut root = node()
         .styles([

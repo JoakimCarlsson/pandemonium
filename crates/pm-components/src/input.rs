@@ -1,15 +1,17 @@
 //! The input: a box holding editable text, one line or several, with a look per variant and a measure per size.
 
+use std::sync::Arc;
+
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
     Radius, Role, Utility, bg, border, border_color, cursor_not_allowed, cursor_text, flex, flex_1,
-    flex_col, flex_none, font_mono, gap, h, h_full, items_center, leading_ratio, max_h, min_h,
-    min_w_px, opacity, overflow_hidden, pb, pt, px, ring, ring_color, rounded, text_color, text_px,
-    truncate, w_full,
+    flex_col, flex_none, font_mono, gap, h, h_full, items_center, leading_ratio, min_h, min_w_px,
+    opacity, overflow_hidden, pb, pt, px, ring, ring_color, rounded, text_color, text_px, truncate,
+    w_full,
 };
 use pm_text::{Field, Shaper};
-use pm_ui::{Line, Node, node, text, wrap};
+use pm_ui::{FieldLayout, Line, Node, node, text, wrap};
 
 use crate::parts::glyph;
 use crate::size::Size;
@@ -76,7 +78,7 @@ pub struct Input<'a> {
     /// How many lines tall a multiline box is at least.
     rows: u32,
     /// The text cut into the lines a multiline box shows.
-    lines: Vec<Line>,
+    lines: Arc<[Line]>,
 }
 
 impl<'a> Input<'a> {
@@ -92,7 +94,7 @@ impl<'a> Input<'a> {
             disabled: false,
             invalid: false,
             rows: 1,
-            lines: Vec::new(),
+            lines: Arc::from([]),
         }
     }
 
@@ -117,7 +119,7 @@ impl<'a> Input<'a> {
 
     /// The multiline input with its text wrapped to `width` logical pixels.
     pub fn wrap(mut self, width: f32, shaper: &mut Shaper) -> Self {
-        self.lines = wrap(shaper, &self.field.shown(), typography(), width);
+        self.lines = wrap(shaper, &self.field.shown(), typography(), width).into();
         self
     }
 
@@ -257,9 +259,11 @@ impl<'a> Input<'a> {
             .iter()
             .position(|line| caret < line.next)
             .unwrap_or(self.lines.len().saturating_sub(1));
-        let offset =
-            self.field
-                .scroll_for_lines(caret_line, self.lines.len(), MAX_LINES, 14.0 * LINE_RATIO);
+        let measured = pm_style::Style::new(typography()).base().typography;
+        let height = measured.line_height_px();
+        let offset = self
+            .field
+            .scroll_for_lines(caret_line, self.lines.len(), MAX_LINES, height);
         let selection = self
             .field
             .selection()
@@ -277,7 +281,13 @@ impl<'a> Input<'a> {
                 min_h((self.rows as f32 * LINE + PADDING) / 4.0),
                 cursor_text(),
             ])
-            .focusable(self.id);
+            .focusable(self.id)
+            .field_layout(FieldLayout {
+                id: self.id,
+                content: Arc::from(content.as_ref()),
+                lines: self.lines.clone(),
+                typography: measured,
+            });
         if content.is_empty() {
             return column.child(
                 text(self.placeholder)
@@ -287,22 +297,37 @@ impl<'a> Input<'a> {
                     .field_line(self.id, 0),
             );
         }
-        let rows = self.lines.iter().enumerate().map(|(index, line)| {
-            let mut row = text(&content[line.start..line.end])
-                .styles(typography())
-                .styles([text_color(Role::Text), flex_none()])
-                .field_line(self.id, line.start);
-            if index == caret_line {
-                row = row.caret(caret - line.start, self.id);
-            }
-            if let Some(range) = clipped(&selection, line) {
-                row = row.selection(range, self.id);
-            }
-            if let Some(range) = clipped(&marked, line) {
-                row = row.marked(range, self.id);
-            }
-            row
-        });
+        let first = if self.lines.len() > MAX_LINES {
+            (offset / height).floor() as usize
+        } else {
+            0
+        }
+        .saturating_sub(1);
+        let last = if self.lines.len() > MAX_LINES {
+            (first + MAX_LINES + 3).min(self.lines.len())
+        } else {
+            self.lines.len()
+        };
+        let rows = self.lines[first..last]
+            .iter()
+            .enumerate()
+            .map(|(index, line)| {
+                let index = first + index;
+                let mut row = text(&content[line.start..line.end])
+                    .styles(typography())
+                    .styles([text_color(Role::Text), flex_none(), pm_style::h_px(height)])
+                    .field_line(self.id, line.start);
+                if index == caret_line {
+                    row = row.caret(caret - line.start, self.id);
+                }
+                if let Some(range) = clipped(&selection, line) {
+                    row = row.selection(range, self.id);
+                }
+                if let Some(range) = clipped(&marked, line) {
+                    row = row.marked(range, self.id);
+                }
+                row
+            });
         if self.lines.len() > MAX_LINES {
             column.styles([px(0)]).child(
                 node()
@@ -312,11 +337,16 @@ impl<'a> Input<'a> {
                         w_full(),
                         min_w_px(0),
                         px(4),
-                        max_h(MAX_LINES as f32 * LINE / 4.0),
+                        pm_style::max_h_px(MAX_LINES as f32 * height),
                         overflow_hidden(),
                     ])
                     .scroll_from_start(self.id, offset)
-                    .children(rows),
+                    .child(node().styles([pm_style::h_px(first as f32 * height), flex_none()]))
+                    .children(rows)
+                    .child(node().styles([
+                        pm_style::h_px((self.lines.len() - last) as f32 * height),
+                        flex_none(),
+                    ])),
             )
         } else {
             column.children(rows)
@@ -338,3 +368,6 @@ impl From<Input<'_>> for Node {
         input.build()
     }
 }
+
+#[cfg(test)]
+mod tests;

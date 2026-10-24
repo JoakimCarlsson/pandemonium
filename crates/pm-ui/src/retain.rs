@@ -10,12 +10,16 @@ use pm_text::Shaper;
 
 use crate::node::Node;
 
+mod hidden;
+
+pub(crate) use hidden::{Hidden, HiddenMark};
+
 /// How many subtrees the newer generation of the cache holds at the end of a
 /// frame before it becomes the older one and the oldest are let go.
 const GENERATION: usize = 256;
 
 /// What a kept subtree is found by: the caller's key and the width as bits.
-type Key = (u64, u32);
+type Key = (u64, u32, u64, u32, u32);
 
 /// A subtree laid out at a fixed width, and where each of its boxes ended up.
 #[derive(Debug)]
@@ -24,6 +28,8 @@ pub(crate) struct Retained {
     pub(crate) root: Node,
     /// Its boxes, the root's top-left corner at the origin.
     pub(crate) placed: Placed,
+    /// Offscreen metadata avoids traversing every node of old conversation replies.
+    pub(crate) hidden: Option<Hidden>,
 }
 
 /// The subtrees drawn lately, in two generations: one found in the older is
@@ -80,12 +86,23 @@ pub fn retained(
     shaper: &mut Shaper,
     build: impl FnOnce(&mut Shaper) -> Node,
 ) -> Node {
-    let key = (key, width.to_bits());
+    let key = (
+        key,
+        width.to_bits(),
+        shaper.font_key(),
+        pm_style::step_scale().to_bits(),
+        pm_style::text_scale().to_bits(),
+    );
     let found = CACHE.with_borrow_mut(|cache| cache.find(key));
     let retained = found.unwrap_or_else(|| {
         let root = build(shaper);
         let placed = fit(&root.item(shaper), width);
-        let made = Arc::new(Retained { root, placed });
+        let hidden = hidden::collect(&root, &placed);
+        let made = Arc::new(Retained {
+            root,
+            placed,
+            hidden,
+        });
         CACHE.with_borrow_mut(|cache| cache.keep(key, made.clone()));
         made
     });

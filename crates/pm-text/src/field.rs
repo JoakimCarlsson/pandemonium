@@ -86,6 +86,8 @@ pub enum Edit {
 pub struct Field {
     /// The text being edited, which holds no control characters but line breaks and tabs, and those only in a multiline field.
     text: String,
+    /// Counts changes to text without scanning or copying it to detect edits.
+    revision: u64,
     /// The caret, as a byte offset on a character boundary.
     caret: usize,
     /// The end of the selection that does not move, as a byte offset on a
@@ -279,7 +281,7 @@ impl Field {
 
     /// The byte offset of the text that matches the offset `shown` in what is
     /// shown; an offset inside what is being composed is the caret's.
-    fn to_text(&self, shown: usize) -> usize {
+    pub fn to_text(&self, shown: usize) -> usize {
         let start = self.to_shown_uncomposed(self.caret);
         let width = self.composing_width();
         let shown = if shown >= start + width {
@@ -314,6 +316,11 @@ impl Field {
     /// The line as typed so far, without the caret.
     pub fn text(&self) -> &str {
         &self.text
+    }
+
+    /// How many times the text has changed; caret moves and composition do not change it.
+    pub fn revision(&self) -> u64 {
+        self.revision
     }
 
     /// The caret, as a byte offset into [`Field::text`].
@@ -395,8 +402,9 @@ impl Field {
         if changes && self.read_only {
             return;
         }
-        let before = changes.then(|| self.snapshot());
         let typed = matches!(&edit, Edit::Insert(c) if !c.is_whitespace());
+        let before = (changes && !(typed && self.typing)).then(|| self.snapshot());
+        let previous = (self.revision, self.caret, self.anchor, self.others.clone());
         let everywhere = matches!(
             edit,
             Edit::Insert(_)
@@ -415,10 +423,8 @@ impl Field {
             }
             self.perform(edit);
         }
-        if let Some(before) = before
-            && before != self.snapshot()
-        {
-            if !(typed && self.typing) {
+        if changes && previous != (self.revision, self.caret, self.anchor, self.others.clone()) {
+            if let Some(before) = before {
                 self.past.push(before);
                 if self.past.len() > HISTORY {
                     self.past.remove(0);
@@ -499,7 +505,7 @@ impl Field {
                 let clean = self.cleaned(&text);
                 let start = self.boundary(range.start);
                 let end = self.boundary(range.end.max(range.start));
-                self.text.replace_range(start..end, &clean);
+                self.replace_text(start..end, &clean);
                 self.anchor = self.boundary(anchor);
                 self.caret = self.boundary(caret);
             }
@@ -568,6 +574,9 @@ impl Field {
 
     /// Takes in a state the line is put back to.
     fn restore(&mut self, snapshot: Snapshot) {
+        if self.text != snapshot.text {
+            self.revision = self.revision.wrapping_add(1);
+        }
         self.text = snapshot.text;
         self.caret = snapshot.caret;
         self.anchor = snapshot.anchor;
@@ -594,14 +603,24 @@ impl Field {
     /// Replaces what is selected, or else nothing at the caret, with `text`.
     fn replace_selection(&mut self, text: &str) {
         let range = self.selection().unwrap_or(self.caret..self.caret);
-        let kept = self.text.chars().count() - self.text[range.clone()].chars().count();
-        let room = self
-            .limit
-            .map_or(usize::MAX, |limit| limit.saturating_sub(kept));
-        let text: String = text.chars().take(room).collect();
+        let limited = self.limit.map(|limit| {
+            let kept = self.text.chars().count() - self.text[range.clone()].chars().count();
+            text.chars()
+                .take(limit.saturating_sub(kept))
+                .collect::<String>()
+        });
+        let text = limited.as_deref().unwrap_or(text);
         self.caret = range.start + text.len();
-        self.text.replace_range(range, &text);
+        self.replace_text(range, text);
         self.anchor = self.caret;
+    }
+
+    /// Replaces bytes only when their contents differ, updating the cheap text revision.
+    fn replace_text(&mut self, range: Range<usize>, text: &str) {
+        if &self.text[range.clone()] != text {
+            self.text.replace_range(range, text);
+            self.revision = self.revision.wrapping_add(1);
+        }
     }
 
     /// Deletes what is selected, or else what lies between the caret and the
@@ -613,7 +632,7 @@ impl Field {
         });
         if let Some(range) = range {
             self.caret = range.start;
-            self.text.replace_range(range, "");
+            self.replace_text(range, "");
             self.anchor = self.caret;
         }
     }
@@ -759,5 +778,47 @@ mod tests {
         assert_eq!(field.scroll_for_lines(12, 41, 8, 22.0), 220.0);
         assert_eq!(field.scroll_for_lines(0, 0, 8, 22.0), 0.0);
         assert_eq!(field.scroll_for_lines(7, 8, 8, 22.0), 0.0);
+    }
+
+    /// Grouped Unicode typing remains one undo step, and revisions ignore caret moves and no-op deletes.
+    #[test]
+    fn revisions_preserve_undo_and_no_op_edits() {
+        let mut field = Field::new("seed");
+        for character in "café🦀".chars() {
+            field.apply(Edit::Insert(character));
+        }
+        let revision = field.revision();
+        assert_eq!(field.text(), "seedcafé🦀");
+        assert_eq!(field.past.len(), 1);
+        field.apply(Edit::Delete);
+        assert_eq!(field.revision(), revision);
+        field.apply(Edit::Undo);
+        assert_eq!(field.text(), "seed");
+        field.apply(Edit::Redo);
+        assert_eq!(field.text(), "seedcafé🦀");
+        let revision = field.revision();
+        field.apply(Edit::Move(Motion::Home, false));
+        assert_eq!(field.revision(), revision);
+        field.apply(Edit::SelectAll);
+        field.apply(Edit::Paste("replaced".to_owned()));
+        field.apply(Edit::Undo);
+        assert_eq!(field.text(), "seedcafé🦀");
+    }
+
+    /// Character limits still count Unicode characters, and composed and masked offsets round-trip.
+    #[test]
+    fn limits_and_display_offsets() {
+        let mut field = Field::new("é").limited(3).masked(true);
+        field.apply(Edit::Paste("🦀abc".to_owned()));
+        assert_eq!(field.text(), "é🦀a");
+        for byte in [0, 2, 6, 7] {
+            assert_eq!(field.to_text(field.to_shown(byte)), byte);
+        }
+        field.apply(Edit::Compose("字".to_owned()));
+        assert_eq!(field.to_text(field.to_shown(7)), 7);
+        field.apply(Edit::Compose(String::new()));
+        field.apply(Edit::SelectAll);
+        field.apply(Edit::Paste("🙂🙂🙂🙂".to_owned()));
+        assert_eq!(field.text(), "🙂🙂🙂");
     }
 }

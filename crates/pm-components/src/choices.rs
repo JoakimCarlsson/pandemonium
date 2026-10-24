@@ -20,6 +20,19 @@ const MENTION_ROW_HEIGHT: f32 = 34.0;
 /// The categories of settings shown as buttons in the prompt box, in the order they are shown.
 const SHOWN: [&str; 2] = ["model", "mode"];
 
+/// A server listing retained by machine and directory while another page is open.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct FileListing {
+    /// The request key, including the remote machine identity.
+    key: String,
+    /// Files in server order, which tree action indices refer to.
+    files: Vec<String>,
+    /// Explicit folders, including empty ones.
+    folders: Vec<String>,
+    /// Paths styled as ignored.
+    ignored: std::collections::HashSet<String>,
+}
+
 impl WorkspaceState {
     /// Whether pressing `action` leaves the open menu open or works it.
     pub fn keeps_picker(action: FocusId) -> bool {
@@ -183,7 +196,13 @@ impl WorkspaceState {
         if self.files_of == key {
             return;
         }
-        self.files = Vec::new();
+        let cached = self
+            .file_listings
+            .iter()
+            .find(|listing| Some(&listing.key) == key.as_ref());
+        self.files = cached.map_or_else(Vec::new, |listing| listing.files.clone());
+        self.tree_folders = cached.map_or_else(Vec::new, |listing| listing.folders.clone());
+        self.tree_ignored = cached.map_or_else(Default::default, |listing| listing.ignored.clone());
         self.files_of = key.clone();
         if let (Some((host, directory)), Some(key)) = (wanted, key) {
             self.outbox.push(Outgoing::Files {
@@ -195,7 +214,14 @@ impl WorkspaceState {
         }
     }
 
-    /// The state holding `files` as those listed for `key`, unless the prompt has moved on.
+    /// Whether the active directory is awaiting its first server listing.
+    pub fn files_loading(&self) -> bool {
+        self.files_of
+            .as_ref()
+            .is_some_and(|key| !self.file_listings.iter().any(|listing| &listing.key == key))
+    }
+
+    /// Retains a server listing for later navigation and displays it when its directory is active.
     pub fn with_files(
         mut self,
         key: &str,
@@ -203,10 +229,19 @@ impl WorkspaceState {
         folders: Vec<String>,
         ignored: Vec<String>,
     ) -> Self {
+        let listing = std::sync::Arc::new(FileListing {
+            key: key.to_owned(),
+            files,
+            folders,
+            ignored: ignored.into_iter().collect(),
+        });
+        self.file_listings.retain(|held| held.key != key);
+        self.file_listings.push_front(listing.clone());
+        self.file_listings.truncate(16);
         if self.files_of.as_deref() == Some(key) {
-            self.files = files;
-            self.tree_folders = folders;
-            self.tree_ignored = ignored.into_iter().collect();
+            self.files = listing.files.clone();
+            self.tree_folders = listing.folders.clone();
+            self.tree_ignored = listing.ignored.clone();
         }
         self
     }
@@ -1051,5 +1086,55 @@ impl WorkspaceState {
             let (id, value) = (setting.id.clone(), pick.value.clone());
             self.change(&id, &value);
         }
+    }
+}
+
+/// Navigation regressions for server-backed file listings.
+#[cfg(test)]
+mod file_listing_tests {
+    use super::*;
+
+    /// Returning to a directory restores its files while requesting fresh server data.
+    #[test]
+    fn restores_listing_and_keeps_late_replies_separate() {
+        let mut state = WorkspaceState::sample();
+        state.refresh_files();
+        let first = state.files_of.clone().unwrap();
+        state = state.with_files(
+            &first,
+            vec!["a.rs".into()],
+            vec!["empty".into()],
+            vec!["a.rs".into()],
+        );
+        let directory = state.sessions[0].directory.clone();
+        state.sessions[0].directory = "/different-checkout".into();
+        state.refresh_files();
+        let second = state.files_of.clone().unwrap();
+        assert!(state.files.is_empty());
+        assert!(state.tree_folders.is_empty());
+        assert!(state.tree_ignored.is_empty());
+        assert!(state.files_loading());
+        state = state.with_files(
+            &first,
+            vec!["updated.rs".into()],
+            vec!["empty".into()],
+            vec!["updated.rs".into()],
+        );
+        assert!(state.files.is_empty());
+        state = state.with_files(&second, Vec::new(), Vec::new(), Vec::new());
+        assert!(!state.files_loading());
+        state.sessions[0].directory = directory;
+        state.outbox.clear();
+        state.refresh_files();
+        assert_eq!(state.files, ["updated.rs"]);
+        assert_eq!(state.tree_folders, ["empty"]);
+        assert!(state.tree_ignored.contains("updated.rs"));
+        assert!(!state.files_loading());
+        assert!(
+            state
+                .outbox
+                .iter()
+                .any(|request| matches!(request, Outgoing::Files { key, .. } if key == &first))
+        );
     }
 }

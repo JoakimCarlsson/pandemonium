@@ -1,5 +1,6 @@
 //! The pictures a markdown source shows: diagrams written as fenced mermaid code, formulas written in TeX and images it names, each drawn or fetched into pixels and kept under a key.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
@@ -85,11 +86,67 @@ fn wanted_image(place: Option<&str>, source: &str) -> Option<Wanted> {
     linked_path(place?, source).map(Wanted::File)
 }
 
+/// A parsed figure index, with its source retained to reject hash collisions.
+struct FigureIndex {
+    /// The exact markdown source.
+    source: String,
+    /// The base path used to resolve images.
+    place: Option<String>,
+    /// The figures discovered in that source.
+    found: Vec<(u64, Wanted)>,
+}
+
+/// Two bounded generations of parsed figure indices.
+#[derive(Default)]
+struct FigureCache {
+    /// Recently used indices.
+    newer: HashMap<u64, FigureIndex>,
+    /// Indices from the previous generation.
+    older: HashMap<u64, FigureIndex>,
+    /// Source bytes retained in the newer generation.
+    bytes: usize,
+}
+
+thread_local! {
+    /// Figure discovery survives prompt edits instead of reparsing every conversation reply.
+    static FIGURE_CACHE: RefCell<FigureCache> = RefCell::default();
+}
+
 /// Every figure of the markdown `source`, named by a file at `place` or by text in no file, nested ones included, each with its key and what showing it takes, in the order they are written.
 pub fn figures_of(source: &str, place: Option<&str>) -> Vec<(u64, Wanted)> {
-    let mut found = Vec::new();
-    collect(&pm_markdown::parse(source), place, &mut found);
-    found
+    let key = key_of((source, place));
+    FIGURE_CACHE.with_borrow_mut(|cache| {
+        if let Some(index) = cache
+            .newer
+            .get(&key)
+            .filter(|index| index.source == source && index.place.as_deref() == place)
+        {
+            return index.found.clone();
+        }
+        let previous = cache
+            .older
+            .remove(&key)
+            .filter(|index| index.source == source && index.place.as_deref() == place);
+        let index = previous.unwrap_or_else(|| {
+            let mut found = Vec::new();
+            collect(&pm_markdown::parse(source), place, &mut found);
+            FigureIndex {
+                source: source.to_owned(),
+                place: place.map(str::to_owned),
+                found,
+            }
+        });
+        let found = index.found.clone();
+        if source.len() <= 4 * 1024 * 1024 {
+            if cache.bytes + source.len() > 4 * 1024 * 1024 || cache.newer.len() >= 256 {
+                cache.older = std::mem::take(&mut cache.newer);
+                cache.bytes = 0;
+            }
+            cache.bytes += source.len();
+            cache.newer.insert(key, index);
+        }
+        found
+    })
 }
 
 /// Adds the figures among `blocks` and the blocks inside them, named by a file at `place`, to `found`.

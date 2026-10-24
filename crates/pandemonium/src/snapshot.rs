@@ -110,6 +110,16 @@ pub enum Shot {
     Commenting,
     /// The workspace on the diff of its first session with the project's files listed in the review panel.
     Files,
+    /// Ten thousand files in expanded folders, for tree rendering and latency checks.
+    FilesLarge,
+    /// The large file tree scrolled into the middle of an expanded folder.
+    FilesScrolled,
+    /// A long Unicode prompt below a large conversation, at the caret.
+    InputStress,
+    /// The same long prompt manually scrolled away from its caret.
+    InputStressScrolled,
+    /// A long prompt with an IME composition at its caret.
+    InputStressComposing,
     /// Expanded ignored folders with nested files dimmed.
     IgnoredFiles,
     /// The workspace on the diff with the source control panel: staged and untracked files, a message, the graph.
@@ -1636,6 +1646,54 @@ fn files() -> WorkspaceState {
     )
 }
 
+/// The independent prompt and conversation sizes used by typing benchmarks and render fixtures.
+fn input_stress(long_prompt: bool, long_chat: bool) -> WorkspaceState {
+    let mut state = workspace_sample();
+    state.review = false;
+    let prompt = if long_prompt {
+        "A paragraph with Unicode café 🦀 and ordinary text to wrap. ".repeat(12) + "\n"
+    } else {
+        "hello".to_owned()
+    };
+    state.prompt = pm_components::state::prompt_field(&if long_prompt {
+        prompt.repeat(120)
+    } else {
+        prompt
+    });
+    if long_chat {
+        let mut message = state.sessions[0]
+            .messages
+            .iter()
+            .find(|message| !message.from_user)
+            .unwrap()
+            .clone();
+        message.text =
+            "A paragraph of agent output with **formatting** and `code`.\n\n".repeat(100);
+        message.said.clear();
+        message.steps.clear();
+        message.answers.clear();
+        state.sessions[0].messages = vec![message; 40];
+    }
+    state
+}
+
+/// A large expanded tree with stable names, optionally scrolled halfway down.
+fn large_files(scrolled: bool) -> WorkspaceState {
+    let mut state = files();
+    state.files = (0..10_000)
+        .map(|index| format!("src/module-{:03}/file-{:05}.rs", index / 100, index))
+        .collect();
+    state.tree_folders.clear();
+    state.tree_ignored.clear();
+    state.open_tree = std::iter::once("src".to_owned())
+        .chain((0..100).map(|index| format!("src/module-{index:03}")))
+        .collect();
+    if scrolled {
+        state.tree_scroll = 120_000.0;
+    }
+    state
+}
+
 /// Expanded ignored folders with every nested file and folder dimmed.
 fn ignored_files() -> WorkspaceState {
     let mut state = files();
@@ -1975,6 +2033,19 @@ impl Shot {
             }
             Self::Commenting => Screen::Workspace(commenting()),
             Self::Files => Screen::Workspace(files()),
+            Self::FilesLarge => Screen::Workspace(large_files(false)),
+            Self::FilesScrolled => Screen::Workspace(large_files(true)),
+            Self::InputStress => Screen::Workspace(input_stress(true, true)),
+            Self::InputStressScrolled => {
+                let mut state = input_stress(true, true);
+                state.prompt.apply(pm_text::Edit::ScrollTo(700.0));
+                Screen::Workspace(state)
+            }
+            Self::InputStressComposing => {
+                let mut state = input_stress(true, true);
+                state.prompt.apply(pm_text::Edit::Compose("字".to_owned()));
+                Screen::Workspace(state)
+            }
             Self::IgnoredFiles => Screen::Workspace(ignored_files()),
             Self::Source => Screen::Workspace(source()),
             Self::SourceMenu => {
@@ -3153,5 +3224,165 @@ mod offer_tests {
                 .iter()
                 .any(|outgoing| matches!(outgoing, Outgoing::InstallExtensions { .. }))
         );
+    }
+}
+
+#[cfg(test)]
+mod performance_tests {
+    use super::*;
+
+    /// Measures rebuilding the same screen against repainting retained geometry, without GPU submission.
+    #[test]
+    #[ignore = "manual CPU benchmark: cargo test -p pandemonium benchmark_retained_screen -- --ignored --nocapture"]
+    fn benchmark_retained_screen() {
+        let screen = Shot::FilesScrolled.screen();
+        let mut shaper = scene::shaper();
+        let mut list = DrawList::new();
+        let theme = default_family().dark;
+        let mut cached = scene::Cached::default();
+        for retained in [false, true] {
+            let mut samples = Vec::new();
+            for frame in 0..61 {
+                let input = Input {
+                    pointer: PointerState {
+                        position: Some((1200.0, 220.0 + (frame % 20) as f32 * 24.0)),
+                        ..PointerState::default()
+                    },
+                    elapsed_ms: frame as f32 * 16.67,
+                    ..Input::default()
+                };
+                let started = std::time::Instant::now();
+                let output = if retained {
+                    cached.paint(
+                        0,
+                        WIDTH as f32,
+                        HEIGHT as f32,
+                        &screen,
+                        &input,
+                        &theme,
+                        &mut shaper,
+                        &mut list,
+                    )
+                } else {
+                    scene::paint(
+                        WIDTH as f32,
+                        HEIGHT as f32,
+                        &screen,
+                        &input,
+                        &theme,
+                        &mut shaper,
+                        &mut list,
+                    )
+                };
+                std::hint::black_box(output);
+                if frame > 0 {
+                    samples.push(started.elapsed().as_secs_f64() * 1000.0);
+                }
+            }
+            samples.sort_by(f64::total_cmp);
+            eprintln!(
+                "screen build+layout+paint retained={retained}: p50={:.2} p95={:.2} p99={:.2} ms",
+                samples[29], samples[56], samples[59]
+            );
+        }
+    }
+
+    /// Model updates and viewport changes rebuild retained geometry and font changes can clear it.
+    #[test]
+    fn retained_screen_invalidates_for_content_and_viewport() {
+        let mut cached = scene::Cached::default();
+        let mut shaper = scene::shaper();
+        let mut list = DrawList::new();
+        let mut state = files();
+        let theme = default_family().dark;
+        let input = Input::default();
+        let first = cached.paint(
+            0,
+            WIDTH as f32,
+            HEIGHT as f32,
+            &Screen::Workspace(state.clone()),
+            &input,
+            &theme,
+            &mut shaper,
+            &mut list,
+        );
+        state.open_tree.insert("crates".to_owned());
+        let screen = Screen::Workspace(state);
+        let changed = cached.paint(
+            1,
+            WIDTH as f32,
+            HEIGHT as f32,
+            &screen,
+            &input,
+            &theme,
+            &mut shaper,
+            &mut list,
+        );
+        assert!(changed.regions.len() > first.regions.len());
+        let resized = cached.paint(
+            1,
+            1000.0,
+            HEIGHT as f32,
+            &screen,
+            &input,
+            &theme,
+            &mut shaper,
+            &mut list,
+        );
+        assert_ne!(changed.regions, resized.regions);
+        cached.clear();
+        let rebuilt = cached.paint(
+            1,
+            1000.0,
+            HEIGHT as f32,
+            &screen,
+            &input,
+            &theme,
+            &mut shaper,
+            &mut list,
+        );
+        assert_eq!(resized.regions, rebuilt.regions);
+    }
+
+    /// Measures editing and drawing independently for prompt size and conversation size.
+    #[test]
+    #[ignore = "manual CPU benchmark: cargo test -p pandemonium benchmark_typing -- --ignored --nocapture"]
+    fn benchmark_typing() {
+        for (long_prompt, long_chat) in [(false, false), (true, false), (false, true), (true, true)]
+        {
+            let state = input_stress(long_prompt, long_chat);
+            let mut screen = Screen::Workspace(state);
+            let mut shaper = scene::shaper();
+            let mut cached = scene::Cached::default();
+            let theme = default_family().dark;
+            let mut list = DrawList::new();
+            let mut samples = Vec::new();
+            for version in 0..21 {
+                let started = std::time::Instant::now();
+                screen = screen.edited(PROMPT, pm_text::Edit::Insert('x'));
+                let input = Input {
+                    focused: Some(PROMPT),
+                    ..Input::default()
+                };
+                std::hint::black_box(cached.paint(
+                    version,
+                    WIDTH as f32,
+                    HEIGHT as f32,
+                    &screen,
+                    &input,
+                    &theme,
+                    &mut shaper,
+                    &mut list,
+                ));
+                if version > 0 {
+                    samples.push(started.elapsed().as_secs_f64() * 1000.0);
+                }
+            }
+            samples.sort_by(f64::total_cmp);
+            eprintln!(
+                "typing CPU long_prompt={long_prompt} long_chat={long_chat}: p50={:.2} p95={:.2} ms",
+                samples[9], samples[18]
+            );
+        }
     }
 }
