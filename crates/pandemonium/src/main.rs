@@ -156,6 +156,7 @@ fn main() {
             Some("wrapped") => Shot::Wrapped,
             Some("slashed") => Shot::Slashed,
             Some("dollar") => Shot::Dollar,
+            Some("dollar-session") => Shot::DollarSession,
             Some("scrolling") => Shot::Scrolling,
             Some("placing") => Shot::Placing,
             Some("live") => Shot::Live,

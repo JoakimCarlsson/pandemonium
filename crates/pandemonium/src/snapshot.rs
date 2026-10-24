@@ -196,6 +196,8 @@ pub enum Shot {
     Slashed,
     /// The page for starting work with Codex and a dollar sign being typed.
     Dollar,
+    /// A Codex conversation with messages and its skills menu open.
+    DollarSession,
     /// The page for starting work with the list of models scrolled to its end.
     Scrolling,
     /// The page for starting work with the menu of where it is done open.
@@ -2209,11 +2211,21 @@ impl Shot {
                     .edited(PROMPT, Edit::Paste("/c".to_owned()))
                     .after(FocusId(4401)),
             ),
-            Self::Dollar => Screen::Workspace(
-                welcome()
-                    .after(FocusId(AGENT_BASE + 1))
-                    .edited(PROMPT, Edit::Paste("$r".to_owned())),
-            ),
+            Self::Dollar | Self::DollarSession => {
+                let mut state = if matches!(self, Self::DollarSession) {
+                    let mut state = WorkspaceState::sample();
+                    state.sessions[0].agent = 1;
+                    state
+                } else {
+                    welcome().after(FocusId(AGENT_BASE + 1))
+                };
+                state.sync_context();
+                state = state.with_skills(1, 0, vec![
+                    Slash { name: "review".to_owned(), description: "Review the changes in this project".to_owned() },
+                    Slash { name: "release-notes".to_owned(), description: "Write release notes from recent commits".to_owned() },
+                ], Default::default());
+                Screen::Workspace(state.after(pm_components::state::SKILL_BUTTON))
+            }
             Self::Scrolling => {
                 Screen::Workspace(welcome().after(FocusId(4200)).scrolled_menu(1000.0, 1000.0))
             }

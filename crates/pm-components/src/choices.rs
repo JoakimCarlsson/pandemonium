@@ -264,7 +264,7 @@ impl WorkspaceState {
         self
     }
 
-    /// The state holding the skills found for `agent` in the project at `project`, unless the page has moved on.
+    /// Stores discovered skills in matching conversations, including those opened before discovery finished.
     pub fn with_skills(
         mut self,
         agent: usize,
@@ -272,6 +272,11 @@ impl WorkspaceState {
         skills: Vec<pm_acp::Slash>,
         names: std::collections::HashSet<String>,
     ) -> Self {
+        for session in &mut self.sessions {
+            if session.agent == agent && session.project == project {
+                session.skills = skills.clone();
+            }
+        }
         if self.skills_of == Some((agent, project)) {
             self.skills = skills;
             self.skill_names = names;
@@ -562,8 +567,41 @@ impl WorkspaceState {
         self
     }
 
+    /// Reads skills for the prompt's agent and project, also hydrating restored conversations from the cache.
+    fn sync_skills(&mut self) {
+        let (agent, project) = match self.page {
+            Page::New(project) => (self.agent, project),
+            Page::Session(index) => {
+                let Some(session) = self.sessions.get(index) else {
+                    return;
+                };
+                (session.agent, session.project)
+            }
+            _ => return,
+        };
+        if self.skills_of == Some((agent, project)) {
+            if let Page::Session(index) = self.page {
+                self.sessions[index].skills = self.skills.clone();
+            }
+            return;
+        }
+        let Some(held) = self.projects.get(project) else {
+            return;
+        };
+        self.skills_of = Some((agent, project));
+        self.skills.clear();
+        self.skill_names.clear();
+        self.outbox.push(Outgoing::Skills {
+            agent,
+            project,
+            host: held.host(),
+            directory: held.directory().to_string_lossy().into_owned(),
+        });
+    }
+
     /// Reads what the page shown needs of its project: on a project's overview its own folder, and on the page for starting work also its branches, when they are not the ones read already.
     pub fn sync_context(&mut self) {
+        self.sync_skills();
         if let Page::Project(project) = self.page {
             self.read_home(project);
             self.sync_files_owner();
@@ -578,19 +616,6 @@ impl WorkspaceState {
         self.sync_files_owner();
         if let Some(held) = self.projects.get(project) {
             self.sync_discovery(held.host());
-        }
-        if self.skills_of != Some((self.agent, project))
-            && let Some(held) = self.projects.get(project)
-        {
-            self.skills_of = Some((self.agent, project));
-            self.skills = Vec::new();
-            self.skill_names = Default::default();
-            self.outbox.push(Outgoing::Skills {
-                agent: self.agent,
-                project,
-                host: held.host(),
-                directory: held.directory().to_string_lossy().into_owned(),
-            });
         }
         let asked = self.defaults.get(self.agent).is_some_and(Option::is_some)
             && self.identities.get(self.agent).is_some_and(Option::is_some);
@@ -1136,5 +1161,82 @@ mod file_listing_tests {
                 .iter()
                 .any(|request| matches!(request, Outgoing::Files { key, .. } if key == &first))
         );
+    }
+}
+
+/// Regression coverage for discovery arriving after a conversation has opened.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sample::Session;
+    use crate::state::{SEND, SKILL_BUTTON};
+
+    /// A restored Codex conversation whose skills have not been discovered yet.
+    fn conversation() -> WorkspaceState {
+        let mut state = WorkspaceState::sample();
+        let agent = state
+            .offered_agents()
+            .into_iter()
+            .find(|agent| state.agent_has_skills(*agent))
+            .unwrap();
+        state.sessions[0] = Session::restored("Task", 0, "task", "/project", None, agent, false);
+        state.skills_of = None;
+        state.skills.clear();
+        state.outbox.clear();
+        state
+    }
+
+    /// The skill offered by the server in these conversations.
+    fn skills() -> Vec<Slash> {
+        vec![Slash {
+            name: "review".into(),
+            description: "Review changes".into(),
+        }]
+    }
+
+    /// Restoring a conversation requests skills and makes the dollar button show them.
+    #[test]
+    fn restored_conversation_discovers_skills() {
+        let mut state = conversation();
+        let agent = state.sessions[0].agent;
+        state.sync_context();
+        assert!(state.outbox.iter().any(|request| matches!(request, Outgoing::Skills { agent: found, project: 0, .. } if *found == agent)));
+        state = state.with_skills(agent, 0, skills(), Default::default());
+        state.press_choice(SKILL_BUTTON.0);
+        assert_eq!(state.slash_matches(), vec![('$', skills().remove(0))]);
+    }
+
+    /// Discovery that finishes after the first message still reaches the conversation.
+    #[test]
+    fn late_discovery_populates_existing_conversation() {
+        let mut state = conversation();
+        let agent = state.sessions[0].agent;
+        state.skills_of = Some((agent, 0));
+        state.page = Page::New(0);
+        state.agent = agent;
+        state.prompt = prompt_field("Review these changes");
+        state = state.after(SEND);
+        assert!(state.open().unwrap().skills.is_empty());
+        state = state.with_skills(agent, 0, skills(), Default::default());
+        assert!(!state.open().unwrap().messages.is_empty());
+        state.press_choice(SKILL_BUTTON.0);
+        assert_eq!(state.slash_matches().len(), 1);
+    }
+
+    /// A conversation restored after discovery reuses the matching cache without another request.
+    #[test]
+    fn restored_conversation_reuses_cached_skills() {
+        let mut state = conversation();
+        state.skills_of = Some((state.sessions[0].agent, 0));
+        state.skills = skills();
+        state.sync_context();
+        assert!(
+            !state
+                .outbox
+                .iter()
+                .any(|request| matches!(request, Outgoing::Skills { .. }))
+        );
+        state.press_choice(SKILL_BUTTON.0);
+        assert_eq!(state.slash_matches().len(), 1);
     }
 }
