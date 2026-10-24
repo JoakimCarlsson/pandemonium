@@ -285,8 +285,21 @@ pub fn untracked_folders(directory: &Path, limit: usize) -> Vec<String> {
     .unwrap_or_default()
 }
 
-/// The ignored files and folders of the repository `directory` is in, as paths from it, at most `limit` of them; a folder is written with a `/` at its end, and its contents are listed separately when expanded.
+/// The ignored files of the repository `directory` is in, as paths from it, at most `limit` of them.
 pub fn ignored(directory: &Path, limit: usize) -> Vec<String> {
+    if !is_repository(directory) {
+        return Vec::new();
+    }
+    run(
+        directory,
+        &["ls-files", "--others", "--ignored", "--exclude-standard"],
+    )
+    .map(|listed| listed.lines().take(limit).map(str::to_owned).collect())
+    .unwrap_or_default()
+}
+
+/// The top-level ignored folders of the repository `directory` is in, including empty ones.
+pub fn ignored_folders(directory: &Path, limit: usize) -> Vec<String> {
     if !is_repository(directory) {
         return Vec::new();
     }
@@ -300,7 +313,14 @@ pub fn ignored(directory: &Path, limit: usize) -> Vec<String> {
             "--exclude-standard",
         ],
     )
-    .map(|listed| listed.lines().take(limit).map(str::to_owned).collect())
+    .map(|listed| {
+        listed
+            .lines()
+            .filter_map(|line| line.strip_suffix('/'))
+            .take(limit)
+            .map(str::to_owned)
+            .collect()
+    })
     .unwrap_or_default()
 }
 

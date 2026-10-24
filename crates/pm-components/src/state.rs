@@ -3106,11 +3106,7 @@ impl WorkspaceState {
                 path: path.clone(),
                 folder: true,
             });
-            let ignored = self.tree_ignored.contains(&path);
             toggle(&mut self.open_tree, path);
-            if ignored {
-                self.reread_files();
-            }
         }
     }
 
@@ -3219,6 +3215,14 @@ impl WorkspaceState {
     pub fn with_submodules(mut self, project: usize, paths: Vec<String>) -> Self {
         if let Some(held) = self.projects.get_mut(project) {
             held.submodules = paths;
+            if self.page == Page::New(project)
+                && self
+                    .new_in
+                    .as_ref()
+                    .is_some_and(|path| !held.submodules.contains(path))
+            {
+                self.new_in = None;
+            }
         }
         self
     }
@@ -3318,6 +3322,22 @@ mod tests {
     use super::*;
     use crate::git_controls::Pick;
     use crate::panes::{Item, Side};
+
+    /// Removing a selected submodule returns new work to the project root without changing existing sessions.
+    #[test]
+    fn removed_submodule_resets_new_work() {
+        let mut state = WorkspaceState::sample();
+        state.start_in(0, Some("vendor/inner".into()));
+        let sessions = state.sessions.len();
+        state = state.with_submodules(0, vec!["vendor/inner".into()]);
+        assert_eq!(state.new_in.as_deref(), Some("vendor/inner"));
+        state = state.with_submodules(1, Vec::new());
+        assert_eq!(state.new_in.as_deref(), Some("vendor/inner"));
+        state = state.with_submodules(0, vec!["vendor/other".into()]);
+        assert_eq!(state.new_in, None);
+        assert_eq!(state.sessions.len(), sessions);
+        assert_eq!(state.projects[0].submodules, ["vendor/other"]);
+    }
 
     /// Opening, folding, picking, staging and committing use the folder being reviewed on every page.
     #[test]

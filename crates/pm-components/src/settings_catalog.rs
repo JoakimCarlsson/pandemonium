@@ -74,6 +74,8 @@ pub enum Setting {
     CheckUpdates,
     /// Which releases it looks for.
     Channel,
+    /// Whether a file in a language that is not installed offers to install it.
+    OfferLanguages,
     /// Whether the window is light, dark or as the desktop says.
     ThemeMode,
     /// The theme drawn while it is light.
@@ -244,11 +246,12 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting, in the order the pages show them.
-    pub const ALL: [Self; 87] = [
+    pub const ALL: [Self; 88] = [
         Self::Launch,
         Self::ConfirmClose,
         Self::CheckUpdates,
         Self::Channel,
+        Self::OfferLanguages,
         Self::ThemeMode,
         Self::LightTheme,
         Self::DarkTheme,
@@ -337,9 +340,11 @@ impl Setting {
     /// The page it is on.
     pub fn page(self) -> Section {
         match self {
-            Self::Launch | Self::ConfirmClose | Self::CheckUpdates | Self::Channel => {
-                Section::General
-            }
+            Self::Launch
+            | Self::ConfirmClose
+            | Self::CheckUpdates
+            | Self::Channel
+            | Self::OfferLanguages => Section::General,
             Self::ThemeMode
             | Self::LightTheme
             | Self::DarkTheme
@@ -467,6 +472,10 @@ impl Setting {
             Self::Channel => (
                 "Update channel",
                 "Follow the stable releases, or the pre-releases.",
+            ),
+            Self::OfferLanguages => (
+                "Offer to install languages",
+                "Offer to install a language when a file is opened that is written in one that is not installed.",
             ),
             Self::ThemeMode => (
                 "Theme mode",

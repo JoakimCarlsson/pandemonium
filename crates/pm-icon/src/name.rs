@@ -22,6 +22,8 @@ macro_rules! include_icon {
 pub enum IconName {
     /// A branching line: version control.
     Git,
+    /// A branching line with filled endpoints: selected version control.
+    GitFilled,
     /// An arrow pointing left: back.
     ArrowLeft,
     /// An arrow pointing right: forward.
@@ -36,6 +38,8 @@ pub enum IconName {
     ChevronRight,
     /// A magnifying glass: search.
     Search,
+    /// A filled magnifying glass: selected search.
+    SearchFilled,
     /// A gear: settings.
     Settings,
     /// Horizontal sliders: view options.
@@ -60,10 +64,16 @@ pub enum IconName {
     Copy,
     /// A window with a panel along its left side.
     PanelLeft,
+    /// A window with its left panel filled to show it is open.
+    PanelLeftFilled,
     /// A window with a panel along its right side.
     PanelRight,
+    /// A window with its right panel filled to show it is open.
+    PanelRightFilled,
     /// A window with a panel along its bottom.
     PanelBottom,
+    /// A window with its bottom panel filled to show it is open.
+    PanelBottomFilled,
     /// A square cut down the middle: panes.
     SquareSplit,
     /// A triangle pointing right: run.
@@ -78,6 +88,8 @@ pub enum IconName {
     FileCode,
     /// A closed folder.
     Folder,
+    /// A filled folder: selected files.
+    FolderFilled,
     /// An open folder.
     FolderOpen,
     /// Two branches with a change between them: a diff to review.
@@ -149,6 +161,7 @@ impl IconName {
     pub fn svg(self) -> Svg {
         match self {
             Self::Git => Svg::new("git", include_icon!("git")),
+            Self::GitFilled => Svg::new("git_filled", include_icon!("git_filled")),
             Self::ArrowLeft => Svg::new("arrow_left", include_icon!("arrow_left")),
             Self::ArrowRight => Svg::new("arrow_right", include_icon!("arrow_right")),
             Self::ArrowUp => Svg::new("arrow_up", include_icon!("arrow_up")),
@@ -156,6 +169,7 @@ impl IconName {
             Self::ChevronDown => Svg::new("chevron_down", include_icon!("chevron_down")),
             Self::ChevronRight => Svg::new("chevron_right", include_icon!("chevron_right")),
             Self::Search => Svg::new("search", include_icon!("search")),
+            Self::SearchFilled => Svg::new("search_filled", include_icon!("search_filled")),
             Self::Settings => Svg::new("settings", include_icon!("settings")),
             Self::Split => Svg::new("split", include_icon!("split")),
             Self::Close => Svg::new("close", include_icon!("close")),
@@ -168,8 +182,17 @@ impl IconName {
             Self::Sparkles => Svg::new("sparkles", include_icon!("sparkles")),
             Self::Copy => Svg::new("copy", include_icon!("copy")),
             Self::PanelLeft => Svg::new("panel_left", include_icon!("panel_left")),
+            Self::PanelLeftFilled => {
+                Svg::new("panel_left_filled", include_icon!("panel_left_filled"))
+            }
             Self::PanelRight => Svg::new("panel_right", include_icon!("panel_right")),
+            Self::PanelRightFilled => {
+                Svg::new("panel_right_filled", include_icon!("panel_right_filled"))
+            }
             Self::PanelBottom => Svg::new("panel_bottom", include_icon!("panel_bottom")),
+            Self::PanelBottomFilled => {
+                Svg::new("panel_bottom_filled", include_icon!("panel_bottom_filled"))
+            }
             Self::SquareSplit => Svg::new("square_split", include_icon!("square_split")),
             Self::Play => Svg::new("play", include_icon!("play")),
             Self::More => Svg::new("more", include_icon!("more")),
@@ -177,6 +200,7 @@ impl IconName {
             Self::File => Svg::new("file", include_icon!("file")),
             Self::FileCode => Svg::new("file_code", include_icon!("file_code")),
             Self::Folder => Svg::new("folder", include_icon!("folder")),
+            Self::FolderFilled => Svg::new("folder_filled", include_icon!("folder_filled")),
             Self::FolderOpen => Svg::new("folder_open", include_icon!("folder_open")),
             Self::GitCompare => Svg::new("git_compare", include_icon!("git_compare")),
             Self::GitFork => Svg::new("git_fork", include_icon!("git_fork")),

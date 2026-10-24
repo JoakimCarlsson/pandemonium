@@ -38,9 +38,6 @@ pub const EXCERPTS_RESTORE: FocusId = FocusId(7_410_003);
 /// Folds every file of the excerpts away, or opens them all when they are all folded.
 pub const EXCERPTS_FOLD_ALL: FocusId = FocusId(7_410_004);
 
-/// Opens every file the session changed as one view, edited in place.
-pub const EXCERPTS_OPEN_CHANGES: FocusId = FocusId(7_410_005);
-
 /// The first of the headers that open a file, each following it by the position of the file in the excerpts.
 pub const EXCERPTS_FILE_BASE: u64 = 7_411_000;
 
@@ -138,8 +135,6 @@ pub enum Source {
         /// Whether the text was a regular expression.
         regex: bool,
     },
-    /// The lines the changes of the files of the session touched, with the lines they took out.
-    Changes,
     /// A file set against one of the states it was saved in.
     Timeline {
         /// How long ago the state was saved, as it is said.
@@ -172,7 +167,6 @@ impl Excerpts {
     pub fn title(&self) -> String {
         match &self.source {
             Source::Search { text, .. } => format!("Search: {text}"),
-            Source::Changes => "Changes".to_owned(),
             Source::Timeline { .. } => {
                 let name = self.files.first().map_or("", |file| name_of(&file.path));
                 format!("Timeline: {name}")
@@ -186,7 +180,7 @@ impl Excerpts {
     pub fn icon(&self) -> IconName {
         match &self.source {
             Source::Search { .. } => IconName::Search,
-            Source::Changes | Source::Revision { .. } => IconName::GitCompare,
+            Source::Revision { .. } => IconName::GitCompare,
             Source::Timeline { .. } => IconName::History,
             Source::Conflict(_) => IconName::GitFork,
         }
@@ -236,7 +230,6 @@ pub fn is_excerpt_part(id: FocusId) -> bool {
         || id == EXCERPTS_CLOSE
         || id == EXCERPTS_RESTORE
         || id == EXCERPTS_FOLD_ALL
-        || id == EXCERPTS_OPEN_CHANGES
         || (EXCERPTS_FILE_BASE..EXCERPT_OWNER_END).contains(&id.0)
         || crate::conflict::is_conflict_part(id)
 }
@@ -382,9 +375,6 @@ impl WorkspaceState {
         }
         if id == EXCERPTS_RESTORE {
             return self.timeline_restored();
-        }
-        if id == EXCERPTS_OPEN_CHANGES {
-            return self.changes_opened();
         }
         if id == EXCERPTS_FOLD_ALL {
             self.excerpts_folded();

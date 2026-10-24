@@ -89,6 +89,7 @@ impl Setting {
             ),
             Self::ConfirmClose => Control::Switch(window.general.confirm_close),
             Self::CheckUpdates => Control::Switch(window.general.check_updates),
+            Self::OfferLanguages => Control::Switch(window.general.offer_languages),
             Self::Channel => Control::Choice(
                 &["Stable", "Nightly"],
                 place_of(
@@ -334,6 +335,7 @@ impl Setting {
             Self::Launch => window.general.launch = [Launch::Restore, Launch::Fresh][option.min(1)],
             Self::ConfirmClose => window.general.confirm_close ^= true,
             Self::CheckUpdates => window.general.check_updates ^= true,
+            Self::OfferLanguages => window.general.offer_languages ^= true,
             Self::Channel => {
                 window.general.channel = [Channel::Stable, Channel::Nightly][option.min(1)];
             }
@@ -719,6 +721,9 @@ impl Setting {
             Self::Launch => window.general.launch = own.general.launch,
             Self::ConfirmClose => window.general.confirm_close = own.general.confirm_close,
             Self::CheckUpdates => window.general.check_updates = own.general.check_updates,
+            Self::OfferLanguages => {
+                window.general.offer_languages = own.general.offer_languages;
+            }
             Self::Channel => window.general.channel = own.general.channel,
             Self::ThemeMode => window.appearance.theme_mode = own.appearance.theme_mode,
             Self::LightTheme => window

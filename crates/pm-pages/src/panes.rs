@@ -285,7 +285,7 @@ fn item_view(
 fn excerpts_item(state: &WorkspaceState, width: f32, height: f32) -> Node {
     match state.excerpts.as_ref().map(|excerpts| &excerpts.source) {
         Some(Source::Conflict(_)) => Conflict::new(state, width, height).build(),
-        Some(Source::Changes | Source::Timeline { .. } | Source::Revision { .. }) => {
+        Some(Source::Timeline { .. } | Source::Revision { .. }) => {
             Changes::new(state, height).build()
         }
         _ => excerpts::excerpts_view(state, height),

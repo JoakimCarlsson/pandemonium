@@ -182,9 +182,18 @@ impl TitleBar {
     }
 }
 
-/// The button of the title bar that shows or hides the part of the window `icon` pictures, filled while it shows.
+/// The button that shows or hides a panel, filling its part of the icon while open.
 fn layout_toggle(icon: IconName, id: FocusId, words: &str, open: bool) -> Node {
-    Button::icon(icon, id).selected(open).build().tooltip(words)
+    let mark = match (icon, open) {
+        (IconName::PanelLeft, true) => IconName::PanelLeftFilled,
+        (IconName::PanelRight, true) => IconName::PanelRightFilled,
+        (IconName::PanelBottom, true) => IconName::PanelBottomFilled,
+        _ => icon,
+    };
+    Button::icon(icon, id)
+        .mark(crate::parts::glyph(mark, 5.0, Role::Muted))
+        .build()
+        .tooltip(words)
 }
 
 /// The box in the middle of the bar that says where the window is pointed and lists every command when it is pressed.

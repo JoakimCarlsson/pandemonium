@@ -693,6 +693,7 @@ impl WorkspaceState {
             SOURCE_SHOW => self.show_source(true),
             EDITOR_SAVE => self.format_then_save(true, None),
             EDITOR_FIELD => {}
+            _ if self.offer_pressed(action) => {}
             _ => return false,
         }
         true

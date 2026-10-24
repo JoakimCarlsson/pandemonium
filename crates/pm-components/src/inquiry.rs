@@ -5,10 +5,11 @@ use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
     Radius, Role, bg, border, border_color, cursor_pointer, flex, flex_1, flex_col, flex_none,
-    flex_wrap, gap, items_center, justify_center, justify_end, min_w_px, px, py, rounded,
-    rounded_full, self_start, size, w_full,
+    flex_wrap, gap, items_center, items_start, justify_center, justify_end, leading_ratio,
+    min_w_px, px, py, rounded, rounded_full, self_start, size, text_color, text_px, w_full,
 };
-use pm_ui::{Node, node};
+use pm_text::Shaper;
+use pm_ui::{Node, node, text};
 
 use crate::Button;
 use crate::button::Variant;
@@ -16,6 +17,23 @@ use crate::draft::{CLOSE, Draft, FOLD, NEXT, OTHER, PICK_BASE, SKIP};
 use crate::input::{self, Input};
 use crate::parts::line;
 use crate::size::Size;
+
+/// Draws every measured line of agent text within the available width.
+fn wrapped(content: &str, pixels: u32, tone: Role, width: f32, shaper: &mut Shaper) -> Node {
+    let styles = [pm_style::text_px(pixels), pm_style::leading_ratio(1.4)];
+    node().styles([flex(), flex_col(), min_w_px(0)]).children(
+        pm_ui::wrap(shaper, content, styles, width.max(32.0))
+            .into_iter()
+            .map(|part| {
+                text(&content[part.start..part.end]).styles([
+                    text_px(pixels),
+                    leading_ratio(1.4),
+                    text_color(tone),
+                    min_w_px(0),
+                ])
+            }),
+    )
+}
 
 /// The small box holding the number of the key that picks a row.
 fn key(number: usize) -> Node {
@@ -35,20 +53,33 @@ fn key(number: usize) -> Node {
 }
 
 /// The row offering `alternative`, which the key `number` picks, drawn as taken when `picked`, answering to `id`.
-fn row(alternative: &Alternative, number: usize, picked: bool, id: FocusId) -> Node {
+fn row(
+    alternative: &Alternative,
+    number: usize,
+    picked: bool,
+    id: FocusId,
+    width: f32,
+    shaper: &mut Shaper,
+) -> Node {
     let mut words = node()
         .styles([flex(), flex_col(), flex_1(), min_w_px(0)])
-        .child(line(&alternative.label, 15, 1.4, Role::Text));
+        .child(wrapped(&alternative.label, 14, Role::Text, width, shaper));
     if !alternative.description.is_empty() {
-        words = words.child(line(&alternative.description, 14, 1.4, Role::Muted));
+        words = words.child(wrapped(
+            &alternative.description,
+            13,
+            Role::Muted,
+            width,
+            shaper,
+        ));
     }
     node()
         .styles([
             flex(),
             items_center(),
-            gap(3),
-            px(4),
-            py(3),
+            gap(2),
+            px(3),
+            py(2),
             rounded(Radius::Lg),
             border(),
             border_color(if picked { Role::Accent } else { Role::Surface }),
@@ -71,9 +102,9 @@ fn other(draft: &Draft, number: usize) -> Node {
         .styles([
             flex(),
             flex_col(),
-            gap(2.5),
-            px(4),
-            py(3),
+            gap(2),
+            px(3),
+            py(2),
             rounded(Radius::Lg),
             border(),
             border_color(if field.text().trim().is_empty() {
@@ -101,10 +132,10 @@ fn other(draft: &Draft, number: usize) -> Node {
 }
 
 /// The card for `draft`: the question, the answers to pick from, and the buttons that skip it or move on, or only its title when folded.
-pub fn inquiry(draft: &Draft) -> Node {
+pub fn inquiry(draft: &Draft, width: f32, shaper: &mut Shaper) -> Node {
     let question = draft.question();
     let count = draft.inquiry.questions.len();
-    let mut title = node().styles([flex(), items_center(), gap(3)]);
+    let mut title = node().styles([flex(), items_start(), gap(2)]);
     if count > 1 {
         title = title.child(
             node()
@@ -126,11 +157,12 @@ pub fn inquiry(draft: &Draft) -> Node {
         );
     }
     let title = title
-        .child(node().styles([flex_1(), min_w_px(0)]).child(line(
+        .child(node().styles([flex_1(), min_w_px(0)]).child(wrapped(
             &question.text,
-            16,
-            1.4,
+            14,
             Role::Text,
+            width - if count > 1 { 145.0 } else { 105.0 },
+            shaper,
         )))
         .child(
             Button::icon(
@@ -148,9 +180,9 @@ pub fn inquiry(draft: &Draft) -> Node {
         .styles([
             flex(),
             flex_col(),
-            gap(3),
-            px(4),
-            py(3.5),
+            gap(2),
+            px(3),
+            py(2.5),
             rounded(Radius::Xl),
             border(),
             border_color(Role::Border),
@@ -162,7 +194,7 @@ pub fn inquiry(draft: &Draft) -> Node {
     }
     let picked = &draft.picks[draft.step];
     let rows = node()
-        .styles([flex(), flex_col(), gap(2)])
+        .styles([flex(), flex_col(), gap(1)])
         .children(
             question
                 .alternatives
@@ -174,6 +206,8 @@ pub fn inquiry(draft: &Draft) -> Node {
                         index + 1,
                         picked.contains(&index),
                         FocusId(PICK_BASE + index as u64),
+                        width - 92.0,
+                        shaper,
                     )
                 }),
         )

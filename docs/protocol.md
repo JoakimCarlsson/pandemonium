@@ -231,12 +231,10 @@ request with exactly one `response` carrying the same `id`.
 
 `agent` is an agent's id: `claude-code`, `codex` or `grok`.
 
-`files` lists ignored folders without walking them. Its optional `expanded`
-array names repository-relative ignored folders whose immediate files and
-subfolders are included, all marked ignored. It defaults to an empty array.
-These contents do not consume the base listing's `limit`. Clients list again
-on expansion, including reopening a folder, and when notified of changes;
-reopening also refreshes folders excluded by the file watcher.
+`files` lists tracked, untracked and ignored files together, up to `limit` for
+each listing. Ignored paths are marked in the `ignored` response field so the
+tree can dim them. The optional `expanded` array is accepted for older clients
+and has no effect. Clients list again when notified of changes.
 
 - **`discover`:** starts the agent briefly and returns what it lets the reader
   change (models, modes, effort) and the commands it offers behind a slash.
@@ -540,8 +538,8 @@ reopening also refreshes folders excluded by the file watcher.
   of files its manifest lists.
 - **`extensions`:** every extension the list offers, then those
   installed on the server's machine that it does not, each as `{id, name,
-  kind, version, description, icon, color, hidden, suffixes, installed, busy,
-  problem, server, local}`. `kind` is what the extension is; `language` is the
+  kind, version, description, icon, color, hidden, suffixes, names, installed,
+  busy, problem, server, local}`. `kind` is what the extension is; `language` is the
   only kind so far. `icon` is the SVG an installed language's files are shown
   with and `color` its tint as `#rrggbb`; a client shows a file of no installed
   language as a plain file. `hidden` languages are
@@ -700,7 +698,7 @@ embedded context, and anything else as a link to the stored file.
 | `failed`     | `message`                                                 |
 | `discovery`  | `settings`, `commands`                                    |
 | `skills`     | `skills` (`[{name, description}]`), `names` (`[string]`)  |
-| `files`      | `paths`: repository-relative, tracked or not ignored plus the immediate files in expanded ignored folders, `folders` (optional): untracked folders and immediate subfolders of expanded ignored folders, which may hold no file yet, `ignored` (optional): which of `paths` and `folders` git ignores, listed so a tree can dim them |
+| `files`      | `paths`: repository-relative tracked, untracked and ignored files, `folders` (optional): untracked and ignored folders that may hold no file yet, `ignored` (optional): which paths and folders git ignores, listed so a tree can dim them |
 | `branches`   | `names`: local branches, the current one first, then remote ones such as `origin/main`; read from git at each request |
 | `submodules` | `paths`: every submodule's path from the root of the repository, nested ones included, initialised or not |
 | `submodule_heads` | `heads`: `[[path, head]]` for each checked out submodule, nested ones included: its branch, or `@ <commit>` on a detached head. `branches`, `checkout` and `create_branch` on a submodule's folder act on the submodule |
@@ -735,7 +733,7 @@ embedded context, and anything else as a link to the stored file.
 | `repositories` | `repositories`: `[{name, description, private, url}]`   |
 | `folders`    | `path`: absolute, `names`: the folders inside it           |
 | `directory`  | `path`: a `clone` made   |
-| `extensions` | `extensions`: `[{id, name, kind, version, description, icon, color, hidden, suffixes, installed, busy, problem, server, local, owner, provides, requests, granted}]` |
+| `extensions` | `extensions`: `[{id, name, kind, version, description, icon, color, hidden, suffixes, names, installed, busy, problem, server, local, owner, provides, requests, granted}]` |
 | `extension_preview` | `extension`: one entry as `extensions` lists them, not installed, with what it `provides` and `requests` |
 | `extension_assets` | `themes`: `[{extension, name, dark, light}]`, `icon_themes`: `[{extension, name, icons: [{suffix, svg, color}]}]`, `commands`: `[{extension, id, title, description}]` |
 | `extension_command` | `prompt`: the text to put in the prompt box, `message`: a line to tell the reader; each is optional |

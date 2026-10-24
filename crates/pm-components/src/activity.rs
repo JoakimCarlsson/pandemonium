@@ -9,6 +9,7 @@ use pm_style::{
     flex_none, flex_wrap, gap, h, inset_length, items_center, left, mb, p, px, py, relative,
     rounded, rounded_full, shadow_md, size, w_full, z,
 };
+use pm_text::Shaper;
 use pm_ui::{Node, node};
 
 use crate::Button;
@@ -107,8 +108,13 @@ fn subagent_panel(state: &WorkspaceState, session: &Session) -> Option<Node> {
     ))
 }
 
-/// The chips for `session`, or nothing when there is nothing to sum up.
-pub fn activity(state: &WorkspaceState, session: &Session) -> Option<Node> {
+/// The chips for `session`, whose panels are `width` logical pixels wide, or nothing when there is nothing to sum up.
+pub fn activity(
+    state: &WorkspaceState,
+    session: &Session,
+    width: f32,
+    shaper: &mut Shaper,
+) -> Option<Node> {
     let plan_items = latest_plan(session);
     let awaiting = usize::from(session.ask.as_ref().is_some_and(|ask| ask.plan.is_none()));
     let working_agents = session
@@ -135,7 +141,7 @@ pub fn activity(state: &WorkspaceState, session: &Session) -> Option<Node> {
     if let Some(open) = state.activity {
         let panel = match open {
             Activity::Plan => plan_items.map(plan),
-            Activity::Approvals => session.ask.as_ref().map(question),
+            Activity::Approvals => session.ask.as_ref().map(|ask| question(ask, width, shaper)),
             Activity::Subagents => subagent_panel(state, session),
             Activity::Shells => (!session.shells.is_empty()).then(|| shells(session)),
         };

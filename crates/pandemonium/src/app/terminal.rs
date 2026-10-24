@@ -159,6 +159,8 @@ impl App {
             .update(|screen| *screen = std::mem::take(screen).terminal_command(command));
         if command == TerminalCommand::AddToChat {
             self.focus.focus(PROMPT);
+        } else {
+            self.focus.focus(TERMINAL_BODY);
         }
         self.deliver();
     }

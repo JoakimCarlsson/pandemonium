@@ -192,6 +192,8 @@ pub enum Shot {
     Live,
     /// A conversation whose agent waits for permission.
     Asking,
+    /// A conversation whose agent waits for permission to run a long command.
+    AskingCommand,
     /// A conversation whose agent waits for the answers to a form of three questions.
     Inquiring,
     /// A conversation whose reader answered a form of questions.
@@ -270,6 +272,8 @@ pub enum Shot {
     FoldersOnboarding,
     /// A Rust file being written: highlighted, with what the language server finds wrong under it and the brackets at the caret paired.
     Code,
+    /// A file written in a language that is not installed, with the offer to install it above its lines.
+    LanguageOffer,
     /// A markdown file shown rendered as a page, with the switch to its source.
     MarkdownPreview,
     /// A vector picture shown drawn, with the switch to its source.
@@ -300,10 +304,8 @@ pub enum Shot {
     Timeline,
     /// A file a merge stopped on, with both sides of each conflict and the result under them.
     Conflict,
-    /// The files a session changed as one view, each folded away from its header and edited in place.
-    Changes,
-    /// The changes of a session that edited files inside a submodule and moved it to another commit, grouped under the submodule.
-    ChangesSubmodule,
+    /// The diff of a session that edited files inside a submodule and moved it to another commit.
+    DiffSubmodule,
     /// The source control panel of a folder with submodules: the list of repositories with the folder's own picked, or, `true`, a submodule picked with its branches open.
     BranchesSubmodule(bool),
     /// The same file with the caret in a call, its signature over it and the uses of a name marked.
@@ -1065,32 +1067,8 @@ fn signing() -> WorkspaceState {
     )
 }
 
-/// The text of the new side of `change`: its lines as the hunks give them, with a placeholder line where the file goes unseen between them.
-fn new_side_text(change: &pm_components::sample::Change) -> String {
-    use pm_components::sample::Kind;
-    let mut lines: Vec<String> = Vec::new();
-    for entry in &change.diff {
-        match entry.kind {
-            Kind::Hunk => {
-                let start = entry
-                    .text
-                    .split_whitespace()
-                    .find(|part| part.starts_with('+'))
-                    .and_then(|part| part[1..].split(',').next()?.parse::<usize>().ok())
-                    .unwrap_or(1);
-                while lines.len() + 1 < start {
-                    lines.push("    // …".to_owned());
-                }
-            }
-            Kind::Context | Kind::Add => lines.push(entry.text.clone()),
-            Kind::Remove => {}
-        }
-    }
-    lines.join("\n") + "\n"
-}
-
-/// The first session with a file edited inside the submodule `vendor/inner`, the submodule moved two commits on, and the changes opened as one view.
-fn changes_submodule() -> WorkspaceState {
+/// The first session with a file edited inside the submodule `vendor/inner`, the submodule moved two commits on, and its diff open.
+fn diff_submodule() -> WorkspaceState {
     let mut state = workspace_sample();
     if let Some(session) = state.sessions.first_mut() {
         let mut edited = pm_components::sample::Change::new(
@@ -1110,12 +1088,12 @@ fn changes_submodule() -> WorkspaceState {
         });
         session.changes.splice(0..0, [moved, edited]);
     }
-    state.after(TAB_DIFF).changes_opened()
+    state.after(TAB_DIFF)
 }
 
-/// The session of [`changes_submodule`] with its submodules listed as repositories, the folder's own picked, or, when `inside`, the submodule `vendor/inner` picked with its branches open.
+/// The session of [`diff_submodule`] with its submodules listed as repositories, the folder's own picked, or, when `inside`, the submodule `vendor/inner` picked with its branches open.
 fn branches_submodule(inside: bool) -> WorkspaceState {
-    let mut state = changes_submodule();
+    let mut state = diff_submodule();
     state.git.submodule_heads = vec![
         ("vendor/inner".to_owned(), "main".to_owned()),
         ("vendor/inner/nested".to_owned(), "@ 3f2a1c9".to_owned()),
@@ -1135,27 +1113,22 @@ fn branches_submodule(inside: bool) -> WorkspaceState {
     state
 }
 
-/// The session's changed files opened as one view, each file read from the folder and its changed lines edited in place.
-fn changes() -> WorkspaceState {
-    for id in ["rust", "markdown", "markdown-inline"] {
-        load_installed_grammar(id);
-    }
-    let state = workspace_sample().after(TAB_DIFF).changes_opened();
-    let session = state.review_index().unwrap_or_default();
-    let files: Vec<(String, String)> = state
-        .sessions
-        .get(session)
-        .map(|held| {
-            held.changes
-                .iter()
-                .map(|change| (change.path.clone(), new_side_text(change)))
-                .collect()
-        })
-        .unwrap_or_default();
-    files.into_iter().fold(state, |state, (path, text)| {
-        let language = pm_lsp::language_of(&path);
-        state.with_file(session, &path, false, Ok((Some(text), false, language)))
-    })
+/// A JavaScript file open while JavaScript is not installed, so the offer to install it is above its lines.
+fn language_offer() -> WorkspaceState {
+    let path = "scripts/build.js";
+    let mut state = workspace_sample().after(TAB_DIFF);
+    state.extensions = sample_languages();
+    state.open_viewer(path.to_owned(), false);
+    state.with_file(
+        0,
+        path,
+        false,
+        Ok((
+            Some("const fs = require(\"fs\");\n\nfunction build(files) {\n  return files.map((file) => fs.readFileSync(file, \"utf8\"));\n}\n\nmodule.exports = { build };\n".to_owned()),
+            false,
+            None,
+        )),
+    )
 }
 
 /// The Rust file set against a state it was saved in a while ago, its changed lines edited in place.
@@ -1789,6 +1762,7 @@ impl Shot {
                 ..OnboardingState::default()
             }),
             Self::Code => Screen::Workspace(code()),
+            Self::LanguageOffer => Screen::Workspace(language_offer()),
             Self::MarkdownPreview => Screen::Workspace(previewed("README.md")),
             Self::VectorPreview => Screen::Workspace(previewed("assets/logo.svg")),
             Self::PicturePreview => Screen::Workspace(previewed("assets/screenshot.png")),
@@ -1830,8 +1804,7 @@ impl Shot {
             Self::FileHistory => Screen::Workspace(file_history()),
             Self::Timeline => Screen::Workspace(timeline()),
             Self::Conflict => Screen::Workspace(conflict()),
-            Self::Changes => Screen::Workspace(changes()),
-            Self::ChangesSubmodule => Screen::Workspace(changes_submodule()),
+            Self::DiffSubmodule => Screen::Workspace(diff_submodule()),
             Self::BranchesSubmodule(inside) => Screen::Workspace(branches_submodule(inside)),
             Self::Signing => Screen::Workspace(signing()),
             Self::Annotated => Screen::Workspace(annotated()),
@@ -2162,6 +2135,7 @@ impl Shot {
             }
             Self::Live => Screen::Workspace(live(Turn::Finished)),
             Self::Asking => Screen::Workspace(live(Turn::Asking)),
+            Self::AskingCommand => Screen::Workspace(live(Turn::Command)),
             Self::Answered => Screen::Workspace(live(Turn::Working).heard(
                 0,
                 Event::Answered(vec![
@@ -2662,6 +2636,8 @@ enum Turn {
     Finished,
     /// The agent waits for permission.
     Asking,
+    /// The agent waits for permission to run a long command.
+    Command,
     /// The agent waits for the answers to a form of questions.
     Inquiring,
     /// The agent is still on it.
@@ -2854,6 +2830,23 @@ fn live(turn: Turn) -> WorkspaceState {
                 },
             ],
         }));
+    } else if turn == Turn::Command {
+        let choice = |id: &str, name: &str, verdict| Choice {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            verdict,
+        };
+        events.push(Event::Ask(Permission {
+            ticket: 1,
+            title: "Allow Claude to run Run a long read-only demo command?".to_owned(),
+            command: Some("printf '%s\\n' \"permission prompt demo\" \"line two of a deliberately long command\" && ls -la /home/jdaddy/Documents/repos/vault | head -n 5 && git -C /home/jdaddy/Documents/repos/vault log --oneline --decorate --max-count=3 && wc -l /home/jdaddy/Documents/repos/vault/AGENTS.md /home/jdaddy/Documents/repos/vault/Makefile 2>/dev/null && date --iso-8601=seconds".to_owned()),
+            plan: None,
+            choices: vec![
+                choice("a", "Allow once", Verdict::Allow),
+                choice("b", "Always allow", Verdict::Always),
+                choice("c", "Deny", Verdict::Reject),
+            ],
+        }));
     } else if turn == Turn::Inquiring {
         let alternative = |label: &str, description: &str| Alternative {
             label: label.to_owned(),
@@ -2863,18 +2856,20 @@ fn live(turn: Turn) -> WorkspaceState {
             ticket: 1,
             questions: vec![
                 Question {
-                    header: "Themes".to_owned(),
-                    text: "Which themes should the system setting apply to?".to_owned(),
+                    header: "Direction".to_owned(),
+                    text: "Imagine vault is three months from now and you open it every evening after a long day: the assistant can finally start jobs, the curating path is rewired, sources download straight into the library, and the whole thing feels like a private streaming service that knows your taste. When you picture the single most important thing that should have changed in how you interact with it compared to today, which of these is closest to the core of that change?".to_owned(),
                     multiple: false,
                     alternatives: vec![
                         alternative(
-                            "Light and dark only",
-                            "Follow the operating system between the two built-in themes.",
+                            "Assistant acts for me",
+                            "I ask in plain language to find new scenes like the last five I liked and download the best ones. The assistant queues a scan, identifies and downloads candidates, then generates jobs itself, with me only confirming the result.",
                         ),
                         alternative(
-                            "Every theme",
-                            "Let each custom theme declare a light and a dark variant.",
+                            "Library curates itself",
+                            "Rewire internal ingest and bring back a curate-style path so new material is discovered, fetched, identified and filed with minimal input, while still respecting library paths and avoiding time-triggered jobs.",
                         ),
+                        alternative("Browsing and taste first", "Focus on the grid, search, taste profile, recommendations and playback so finding something to watch is instant and personal. Automation can stay manual for now."),
+                        alternative("Metadata quality first", "Fix identify, populate visual descriptions, improve matching and scraper definitions so every scene has correct performers, studios and tags. Everything else builds on clean data."),
                     ],
                 },
                 Question {
@@ -2952,6 +2947,8 @@ pub fn write(
         (NARROW_WIDTH, NARROW_HEIGHT)
     } else if shot.in_settings_window() {
         (SETTINGS_WIDTH, SETTINGS_HEIGHT)
+    } else if matches!(shot, Shot::Inquiring) {
+        (WIDTH, 1000)
     } else if shot.in_picker_window() {
         (PICKER_WIDTH, PICKER_HEIGHT)
     } else {
@@ -3111,5 +3108,50 @@ fn tool_listing(title: &str, name: &str, target: &str) -> pm_protocol::ToolListi
         inputs: Vec::new(),
         asks: false,
         website: String::new(),
+    }
+}
+
+#[cfg(test)]
+mod offer_tests {
+    use super::*;
+    use pm_components::language_offer::{OFFER_DECLINE, OFFER_INSTALL};
+    use pm_components::state::Outgoing;
+
+    /// Pressing Install asks for the language, and once the server lists it installed the open file takes it.
+    #[test]
+    fn install_asks_and_the_file_takes_the_language() {
+        let mut state = language_offer().after(OFFER_INSTALL);
+        let asked = state.take_outbox().into_iter().any(|outgoing| {
+            matches!(outgoing, Outgoing::InstallExtensions { ids } if ids == ["javascript"])
+        });
+        assert!(asked);
+        assert_eq!(state.shown_document().unwrap().language, None);
+        let installed = sample_languages()
+            .into_iter()
+            .map(|language| pm_protocol::ExtensionInfo {
+                installed: language.installed || language.id == "javascript",
+                ..language
+            })
+            .collect::<Vec<_>>();
+        let state = state.with_host_extensions(&None, &installed);
+        assert_eq!(
+            state.shown_document().unwrap().language.as_deref(),
+            Some("javascript")
+        );
+    }
+
+    /// Pressing Not now remembers the language, and it is not offered or installed from the bar after.
+    #[test]
+    fn declining_is_remembered() {
+        let mut state = language_offer().after(OFFER_DECLINE);
+        assert_eq!(state.window.general.declined_languages, ["javascript"]);
+        state.take_outbox();
+        let mut state = state.after(OFFER_INSTALL);
+        assert!(
+            !state
+                .take_outbox()
+                .iter()
+                .any(|outgoing| matches!(outgoing, Outgoing::InstallExtensions { .. }))
+        );
     }
 }
