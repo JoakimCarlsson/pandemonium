@@ -1,0 +1,32 @@
+# JavaScript: how files are told to be JavaScript, how they are edited and the language
+# server that reads them. A project's own TypeScript is used before the one
+# installed with the server.
+
+name = "JavaScript"
+version = "0.1.0"
+description = "JavaScript and JSX with typescript-language-server."
+icon = "icon.svg"
+color = "#e6c84f"
+grammar = "javascript"
+suffixes = ["js", "mjs", "cjs", "jsx"]
+aliases = ["js", "jsx"]
+line_comment = "//"
+indent = 2
+pairs = ["()", "[]", "{}", "\"\"", "''", "``"]
+
+
+[grammar_file]
+url = "https://github.com/tree-sitter/tree-sitter-javascript/releases/download/v0.25.0/tree-sitter-javascript.wasm"
+sha256 = "5fb488d0cabb4775a594bab85682de5ad6ce83c0d6ac997a9f82dd084d571240"
+
+[server]
+id = "typescript-language-server"
+language_id = "javascript"
+command = "typescript-language-server"
+args = ["--stdio"]
+project = ["node_modules/.bin"]
+
+[server.install]
+kind = "npm"
+version = "6.0.2"
+packages = ["typescript-language-server@6.0.2", "typescript@6.0.3"]

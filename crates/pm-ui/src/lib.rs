@@ -1,64 +1,32 @@
-//! The element tree, the layout pass, hit testing, focus and input routing.
+//! The element tree: nodes styled with utilities, laid out with flex and grid,
+//! and painted as quads.
 //!
-//! `pm-ui` is ours: there is no UI framework under it, only [`pm_gfx`]'s draw
-//! list. A screen is a function that builds an element tree from the caller's
-//! own state; [`Ui::draw`] measures it, paints it and remembers where its
-//! interactive regions ended up, so the next click or keypress comes back as
-//! one of the caller's messages.
-//!
-//! Styling follows Tailwind: a fixed spacing scale, one utility setter per
-//! step, and design tokens on a [`Theme`] instead of colours written at the
-//! call site.
+//! A screen is a function that builds a [`Node`] tree from the caller's own
+//! state. [`draw`] lays it out against the viewport, resolves each node's
+//! style for the pointer and the clock, and paints the result into a
+//! [`pm_renderer::DrawList`]. A [`Scene`] keeps the complete tree and layout
+//! across interaction frames; [`retained`] keeps individual subtrees built
+//! and laid out for as long as their content stays the same. A box given a
+//! [`Node::tooltip`] shows it over everything once the pointer has rested on
+//! it for a moment. Text inside a box made [`Node::selectable`] can be
+//! selected with the pointer: [`Input::selection`] says what is selected,
+//! and [`Output`] finds places in the text and copies what a selection covers.
 
-mod div;
-mod element;
-mod glyphs;
-mod icons;
-mod measured;
-mod overlay;
-mod paragraph;
-mod picture;
-mod placed;
-mod resize;
-mod scroll;
-mod selection;
-mod split;
-mod style;
-mod text;
-mod theme;
-mod ui;
-mod widgets;
-mod zoom;
+mod field_layout;
+mod node;
+mod paint;
+mod retain;
+mod scene;
+mod select;
+mod tooltip;
+mod wrap;
 
-pub use div::{Div, div, h_flex, v_flex};
-pub use element::{
-    Element, Input, Interaction, IntoElement, LayoutContext, PaintContext, Region, RegionAction,
-};
-pub use glyphs::Glyphs;
-pub use icons::{Icon, IconName, IconSize, LayoutIcon, LayoutIconButton, icon, layout_icon_button};
-pub use measured::{Bounds, Measured, measured};
-pub use overlay::{Above, Beside, Overlay, above, beside, overlay, overlay_above};
-pub use paragraph::{Paragraph, paragraph};
-pub use picture::{Picture, picture};
-pub use placed::{Placed, Placements, nearest};
-pub use resize::{ResizeEdge, ResizeEvent, ResizePhase, ResizeState, Sash, sash};
-pub use scroll::{Scroll, ScrollArea, Scrolled, scroll_area};
-pub use selection::{
-    Grain, Selection, SelectionContent, SelectionDrag, SelectionRow, Spot, spot_at,
-};
-pub use split::{Split, split};
-pub use style::{Align, Axis, Edges, Justify, Length, STEP, Side, Style, Styled, space};
-pub use text::{Text, text};
-pub use theme::{
-    Appearance, Colors, Emphasis, Font, Radii, Sizes, Syntax, Terminal, TextScale, TextSize, Theme,
-    ThemeFamily,
-};
-pub use ui::{PointerCursor, Ui};
-pub use widgets::{
-    Button, ButtonVariant, MenuItem, NotificationControl, SCROLLBAR_GUTTER, Scrollbar, Switch, Tab,
-    ThemePreview, ToggleState, button, checkbox, icon_badge, icon_button, kbd, menu, menu_entry,
-    menu_separator, menu_submenu, notification_control, rule, scrollbar, section, switch,
-    switch_field, tab, tab_bar, theme_gallery, theme_preview, tinted_icon_button, toggle_grid,
-    toggle_row, turning_icon_button, view_tab,
-};
-pub use zoom::{MAX_ZOOM, Zoom, ZoomArea, Zoomed, zoom_area};
+pub use field_layout::FieldLayout;
+pub use node::{CaretLook, CaretShape, Mark, Node, Paint, node, text};
+pub use paint::{FieldBox, Input, Output, Region, SCROLLBAR_GRIP, Scroller, draw};
+pub use pm_renderer::Picture;
+pub use pm_style::Cursor;
+pub use retain::retained;
+pub use scene::Scene;
+pub use select::{DrawnPiece, TextPiece, TextPoint, TextSelection, Unit};
+pub use wrap::{Line, wrap};

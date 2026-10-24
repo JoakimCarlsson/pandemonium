@@ -1,0 +1,8 @@
+[package]
+name = "pm-theme"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pm-color.workspace = true

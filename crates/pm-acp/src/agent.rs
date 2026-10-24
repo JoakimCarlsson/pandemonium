@@ -1,312 +1,214 @@
-//! The agents the editor can conduct, and how each of them is started.
-//!
-//! An agent is a program that speaks the protocol on its standard input and
-//! output. Some speak it themselves and some are spoken for by an adapter,
-//! but that difference stops here: above this module an agent is a name, a
-//! command and nothing else.
+//! The agents the app ships, and how each is started.
 
-use pm_host::Command;
-use std::env;
-use std::path::PathBuf;
-use std::sync::RwLock;
+use std::process::Command;
+use std::sync::Mutex;
+
+use pm_tools::{installed, path_beside};
 
 /// The program that runs a published package without installing it first.
-const RUNNER: &str = "npx";
+pub(crate) const RUNNER: &str = "npx";
 
-/// One agent the editor knows how to run.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+/// Where an agent's program comes from when the reader does not have it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Source {
+    /// A published package that the runner fetches the first time the agent
+    /// starts, so the agent is startable wherever the runner is.
+    Package(&'static str),
+    /// A program that an installer script puts on the machine.
+    Installer {
+        /// The script, as a shell pipeline that installs the program.
+        script: &'static str,
+    },
+    /// A program the reader named, which the app neither fetches nor installs.
+    Manual,
+}
+
+/// One agent the app knows how to run.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Agent {
-    /// What the editor calls this agent where a name has to be written down.
+    /// The name the app keeps the agent under.
     pub id: &'static str,
-    /// What a tab, a menu and a session list call it.
+    /// The name a row calls it.
     pub name: &'static str,
     /// The program to run when it is installed.
     pub program: &'static str,
     /// The arguments that put the program into protocol mode.
     pub arguments: &'static [&'static str],
-    /// The environment the program is started with, over the one it inherits.
-    pub env: &'static [(&'static str, &'static str)],
     /// Where the program comes from when it is not installed.
     pub source: Source,
+    /// The environment it is started with, over the one it inherits.
+    pub env: &'static [(&'static str, &'static str)],
+    /// The variable that moves its config and login to another folder, when it has one.
+    pub home: Option<&'static str>,
 }
 
-impl Agent {
-    /// An agent the reader runs from `program` with `arguments`, in the
-    /// environment `env` adds to, called `name` and known as `id`.
-    ///
-    /// Nothing is fetched for it and nowhere is named to install it from.
-    /// What is given is kept for as long as the editor runs, which is how
-    /// the shipped agents are held too, so a session that still has one is
-    /// never left without it.
-    #[must_use]
-    pub fn custom(
-        id: String,
-        name: String,
-        program: String,
-        arguments: Vec<String>,
-        env: Vec<(String, String)>,
-    ) -> Self {
-        let keep = |value: String| -> &'static str { value.leak() };
-        Self {
-            id: keep(id),
-            name: keep(name),
-            program: keep(program),
-            arguments: arguments.into_iter().map(keep).collect::<Vec<_>>().leak(),
-            env: env
-                .into_iter()
-                .map(|(name, value)| (keep(name), keep(value)))
-                .collect::<Vec<_>>()
-                .leak(),
-            source: Source::Command,
-        }
-    }
-}
-
-/// Where an agent's program comes from when the reader does not have it.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum Source {
-    /// A published package, which [`RUNNER`] fetches the first time the
-    /// agent is started.
-    Package(&'static str),
-    /// A program the reader installs themselves, named by where it is had
-    /// from. An agent that comes this way is only started once it is there.
-    Installer(&'static str),
-    /// A program named by its command. Nothing is fetched, and nowhere is
-    /// named to install it from.
-    Command,
-}
-
-impl Source {
-    /// What the picker writes beside an agent that is not installed yet.
-    #[must_use]
-    pub fn hint(self) -> String {
-        match self {
-            Self::Package(package) => format!("{package} (fetched on first run)"),
-            Self::Installer(origin) => format!("install from {origin}"),
-            Self::Command => "not installed".to_owned(),
-        }
-    }
-}
-
-/// No environment of an agent's own.
-const NO_ENVIRONMENT: &[(&str, &str)] = &[];
-
-/// Every agent the editor ships knowing about.
-///
-/// What a launch offers is [`agents`]: these, with the reader's own laid
-/// over them. A reader who has none of them installed still sees all of
-/// them: an agent that is missing is fetched by [`RUNNER`] the first time it
-/// is started, which is how most of these are meant to be run. The few that
-/// ship with an application of their own are named by where they are had
-/// from instead.
-pub const AGENTS: [Agent; 6] = [
+/// Every agent the app ships, in the order the workspace lists them.
+pub const AGENTS: [Agent; 3] = [
     Agent {
         id: "claude-code",
         name: "Claude Code",
         program: "claude-agent-acp",
         arguments: &[],
-        env: NO_ENVIRONMENT,
         source: Source::Package("@agentclientprotocol/claude-agent-acp"),
+        env: &[],
+        home: Some("CLAUDE_CONFIG_DIR"),
     },
     Agent {
         id: "codex",
         name: "Codex",
         program: "codex-acp",
         arguments: &[],
-        env: NO_ENVIRONMENT,
         source: Source::Package("@agentclientprotocol/codex-acp"),
-    },
-    Agent {
-        id: "gemini",
-        name: "Gemini",
-        program: "gemini",
-        arguments: &["--experimental-acp"],
-        env: NO_ENVIRONMENT,
-        source: Source::Package("@google/gemini-cli"),
-    },
-    Agent {
-        id: "copilot",
-        name: "GitHub Copilot",
-        program: "copilot",
-        arguments: &["--acp"],
-        env: NO_ENVIRONMENT,
-        source: Source::Package("@github/copilot"),
-    },
-    Agent {
-        id: "cursor",
-        name: "Cursor",
-        program: "agent",
-        arguments: &["acp"],
-        env: NO_ENVIRONMENT,
-        source: Source::Installer("cursor.com"),
+        env: &[],
+        home: Some("CODEX_HOME"),
     },
     Agent {
         id: "grok",
         name: "Grok Build",
         program: "grok",
         arguments: &["agent", "stdio"],
-        env: NO_ENVIRONMENT,
-        source: Source::Installer("x.ai"),
+        source: Source::Installer {
+            script: "curl -fsSL https://x.ai/cli/install.sh | bash",
+        },
+        env: &[],
+        home: Some("GROK_HOME"),
     },
 ];
 
-/// The agents a launch offers, once [`install`] has laid the reader's over
-/// the ones shipped.
-static OFFERED: RwLock<&'static [Agent]> = RwLock::new(&[]);
-
-/// Offers the shipped agents with `custom` laid over them.
-///
-/// A custom agent whose id matches a shipped one takes its place. One whose
-/// id is new is offered after the shipped ones. The list lives as long as
-/// the process does, so a session still holding an agent from the last list
-/// never sees it go.
-pub fn install(custom: Vec<Agent>) {
-    let mut offered = AGENTS.to_vec();
-    for agent in custom {
-        match offered.iter().position(|shipped| shipped.id == agent.id) {
-            Some(place) => offered[place] = agent,
-            None => offered.push(agent),
-        }
-    }
-    let offered = offered.leak();
-    if let Ok(mut agents) = OFFERED.write() {
-        *agents = offered;
-    }
-}
-
-/// The agents a launch offers: the shipped ones, then the reader's own.
-#[must_use]
-pub fn agents() -> &'static [Agent] {
-    OFFERED
-        .read()
-        .ok()
-        .map(|agents| *agents)
-        .filter(|agents| !agents.is_empty())
-        .unwrap_or(&AGENTS)
-}
-
 impl Agent {
-    /// The agent `id` names, if the editor knows one by that name.
-    #[must_use]
-    pub fn named(id: &str) -> Option<Self> {
-        agents().iter().copied().find(|agent| agent.id == id)
-    }
-
-    /// Whether the agent's own program is installed.
-    #[must_use]
-    pub fn installed(self) -> bool {
-        installed(self.program).is_some()
-    }
-
-    /// Whether the agent can be started on this machine.
-    ///
-    /// An agent [`RUNNER`] can fetch is always startable; one that comes
-    /// from an installer is startable once the reader has installed it.
-    #[must_use]
+    /// Whether the agent can be started on this machine: its program is
+    /// installed, or it is a package and the runner is.
     pub fn startable(self) -> bool {
-        matches!(self.source, Source::Package(_)) || self.installed()
+        installed(self.program).is_some()
+            || (matches!(self.source, Source::Package(_)) && installed(RUNNER).is_some())
     }
 
-    /// The command that starts this agent, installed or not.
+    /// Whether starting the agent has to fetch it first, which takes a while.
+    pub(crate) fn fetches(self) -> bool {
+        installed(self.program).is_none() && matches!(self.source, Source::Package(_))
+    }
+
+    /// The command that starts the agent in protocol mode, with `extra`
+    /// arguments after the ones that put it there.
+    pub(crate) fn command(self, extra: &[String]) -> Command {
+        self.command_in(extra, self.home())
+    }
+
+    /// The command that starts the agent in protocol mode, with `extra`
+    /// arguments after the ones that put it there, keeping its config and login in the folder `home`, or in its default one when there is none.
     ///
-    /// Neither the pipes nor the working directory are set here: what the
-    /// agent is run in is the session's business, and this says only what is
-    /// run.
-    #[must_use]
-    pub fn command(self) -> Command {
-        self.command_on(&pm_host::Host::local())
-    }
-
-    /// Whether this agent can start on the owning machine.
-    pub fn startable_on(self, host: &pm_host::Host) -> bool {
-        if host.is_local() {
-            self.startable()
-        } else {
-            host.which(self.program).is_some()
-                || (matches!(self.source, Source::Package(_)) && host.which(RUNNER).is_some())
-        }
-    }
-
-    /// Builds the agent command on the owning machine, preserving its environment.
-    pub fn command_on(self, host: &pm_host::Host) -> Command {
-        let find = |program| {
-            if host.is_local() {
-                installed(program)
-            } else {
-                host.which(program)
-            }
-        };
-        let mut command = match (find(self.program), self.source) {
+    /// The agent's path holds the usual places tools install themselves, so the
+    /// hooks and commands it runs find them however the server was started.
+    pub(crate) fn command_in(self, extra: &[String], home: Option<std::path::PathBuf>) -> Command {
+        let mut command = match (installed(self.program), self.source) {
             (None, Source::Package(package)) => {
-                let mut command =
-                    host.command(find(RUNNER).unwrap_or_else(|| PathBuf::from(RUNNER)));
+                let runner = installed(RUNNER);
+                let mut command = Command::new(runner.clone().unwrap_or_else(|| RUNNER.into()));
+                if let Some(runner) = runner.as_deref() {
+                    command.env("PATH", path_beside(runner));
+                }
                 command.arg("--yes").arg(package);
                 command
             }
-            (program, _) => host.command(program.unwrap_or_else(|| PathBuf::from(self.program))),
+            (program, _) => {
+                let program = program.unwrap_or_else(|| self.program.into());
+                let mut command = Command::new(&program);
+                command.env("PATH", path_beside(&program));
+                command
+            }
         };
-        command.args(self.arguments);
-        command.envs(self.env.iter().copied());
+        command
+            .args(self.arguments)
+            .args(extra)
+            .envs(self.env.iter().copied());
+        if let Some(home) = home {
+            command.env(self.home.unwrap_or("HOME"), home);
+        }
         command
     }
 }
 
-/// The directories a program is looked for in besides the path.
-///
-/// A window started from a desktop session inherits the path that session
-/// was given, which is not the one a shell has: npm, bun and cargo each put
-/// their programs somewhere that only a shell profile ever hears about, and
-/// an agent with an installer of its own may keep a directory of its own. An
-/// agent the reader has installed is the one the editor runs, whether or not
-/// the session was told where it lives.
-const TOOL_DIRECTORIES: [&str; 8] = [
-    ".local/bin",
-    ".grok/bin",
-    ".bun/bin",
-    ".deno/bin",
-    ".npm-global/bin",
-    "AppData/Roaming/npm",
-    ".volta/bin",
-    ".cargo/bin",
-];
+/// The agents made from records so far, by what defines each, so that asking again for one does not hold more memory.
+static DEFINED: Mutex<Vec<(String, Agent)>> = Mutex::new(Vec::new());
 
-/// Where `program` is installed, on the path or in the usual places beside it.
-pub(crate) fn installed(program: &str) -> Option<PathBuf> {
-    let path = env::var_os("PATH").unwrap_or_default();
-    let home = env::home_dir();
-    let names = file_names(program);
-
-    env::split_paths(&path)
-        .chain(
-            TOOL_DIRECTORIES
-                .iter()
-                .filter_map(|directory| Some(home.as_ref()?.join(directory))),
-        )
-        .chain([
-            PathBuf::from("/usr/local/bin"),
-            PathBuf::from("/opt/homebrew/bin"),
-        ])
-        .flat_map(|directory| names.iter().map(move |name| directory.join(name)))
-        .find(|candidate| candidate.is_file())
+/// Leaks `text` into a string that lives as long as the program.
+fn kept(text: &str) -> &'static str {
+    Box::leak(text.to_owned().into_boxed_str())
 }
 
-/// The file names `program` is installed under on this platform.
-#[cfg(not(windows))]
-fn file_names(program: &str) -> Vec<String> {
-    vec![program.to_owned()]
+/// What an agent is defined by, as the record the servers keep it in.
+#[derive(Clone, Copy, Debug)]
+pub struct Definition<'a> {
+    /// The name the app keeps the agent under.
+    pub id: &'a str,
+    /// The name a row calls it.
+    pub name: &'a str,
+    /// The command that starts it in protocol mode, program and arguments.
+    pub command: &'a str,
+    /// The environment it is started with, over the one it inherits.
+    pub env: &'a [(String, String)],
+    /// The package the runner fetches when the program is not installed.
+    pub package: Option<&'a str>,
+    /// The shell pipeline that installs the program.
+    pub installer: Option<&'a str>,
+    /// The variable that moves its config and login to another folder.
+    pub home: Option<&'a str>,
 }
 
-/// The file names `program` is installed under on this platform.
-///
-/// Windows runs a program by its extension, and `PATHEXT` lists the ones it
-/// runs. The bare name is left out: npm installs a shell script beside each
-/// `.cmd`, which Windows cannot start.
-#[cfg(windows)]
-fn file_names(program: &str) -> Vec<String> {
-    env::var("PATHEXT")
-        .unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_owned())
-        .split(';')
-        .filter(|extension| !extension.is_empty())
-        .map(|extension| format!("{program}{extension}"))
-        .collect()
+impl Agent {
+    /// The agent `definition` describes, or nothing when its command is empty.
+    pub fn define(definition: Definition) -> Option<Agent> {
+        let mut words = crate::mcp::command_words(definition.command).into_iter();
+        let program = words.next()?;
+        let arguments: Vec<String> = words.collect();
+        let key = format!(
+            "{}\0{}\0{}\0{:?}\0{:?}\0{:?}\0{:?}",
+            definition.id,
+            definition.name,
+            definition.command,
+            definition.env,
+            definition.package,
+            definition.installer,
+            definition.home
+        );
+        let mut held = DEFINED.lock().unwrap_or_else(|held| held.into_inner());
+        if let Some((_, agent)) = held.iter().find(|(held, _)| *held == key) {
+            return Some(*agent);
+        }
+        let source = match (definition.package, definition.installer) {
+            (Some(package), _) => Source::Package(kept(package)),
+            (None, Some(script)) => Source::Installer {
+                script: kept(script),
+            },
+            (None, None) => Source::Manual,
+        };
+        let arguments: Vec<&'static str> = arguments.iter().map(|word| kept(word)).collect();
+        let env: Vec<(&'static str, &'static str)> = definition
+            .env
+            .iter()
+            .map(|(name, value)| (kept(name), kept(value)))
+            .collect();
+        let agent = Agent {
+            id: kept(definition.id),
+            name: kept(definition.name),
+            program: kept(&program),
+            arguments: Vec::leak(arguments),
+            source,
+            env: Vec::leak(env),
+            home: definition
+                .home
+                .or_else(|| {
+                    crate::product::Product::of(&format!(
+                        "{} {}",
+                        definition.command,
+                        definition.package.unwrap_or_default()
+                    ))
+                    .map(|product| product.home_variable())
+                })
+                .map(kept),
+        };
+        held.retain(|(_, older)| older.id != definition.id);
+        held.push((key, agent));
+        Some(agent)
+    }
 }

@@ -7,12 +7,11 @@
 //! the numbers they carry never repeat. What is sent before the adapter has
 //! been reached waits in the queue until it is.
 
-use std::io::{BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 
-use pm_text::frame;
 use serde_json::{Value, json};
 
 /// The way messages go to one adapter.
@@ -70,7 +69,7 @@ impl Wire {
 /// pipe has gone.
 pub(crate) fn write_all(outbox: Receiver<Value>, mut sink: impl Write) {
     while let Ok(message) = outbox.recv() {
-        if frame::write(&mut sink, &message).is_err() {
+        if frame(&mut sink, &message).is_err() {
             return;
         }
     }
@@ -80,7 +79,37 @@ pub(crate) fn write_all(outbox: Receiver<Value>, mut sink: impl Write) {
 /// closes.
 pub(crate) fn read_all(source: impl Read, mut dispatch: impl FnMut(&Value)) {
     let mut source = BufReader::new(source);
-    while let Ok(Some(message)) = frame::read(&mut source) {
+    while let Some(message) = receive(&mut source) {
         dispatch(&message);
     }
+}
+
+/// Writes `message` to `sink`, framed with its length.
+fn frame(sink: &mut impl Write, message: &Value) -> std::io::Result<()> {
+    let body = serde_json::to_string(message)?;
+    write!(sink, "Content-Length: {}\r\n\r\n{body}", body.len())?;
+    sink.flush()
+}
+
+/// Reads one framed message from `source`, or nothing once it has closed or says something that is not a message.
+fn receive(source: &mut impl BufRead) -> Option<Value> {
+    let mut length = None;
+    loop {
+        let mut line = String::new();
+        if source.read_line(&mut line).ok()? == 0 {
+            return None;
+        }
+        let line = line.trim_end();
+        if line.is_empty() {
+            break;
+        }
+        if let Some((name, value)) = line.split_once(':')
+            && name.eq_ignore_ascii_case("content-length")
+        {
+            length = value.trim().parse::<usize>().ok();
+        }
+    }
+    let mut body = vec![0; length?];
+    source.read_exact(&mut body).ok()?;
+    serde_json::from_slice(&body).ok()
 }

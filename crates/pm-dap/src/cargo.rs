@@ -5,7 +5,8 @@
 //! executable in its output. `lldb-dap` knows only `program`, so the build is
 //! run here and the executable it made is put where `program` goes.
 
-use pm_host::Location;
+use std::path::Path;
+use std::process::Command;
 
 use serde_json::{Map, Value};
 
@@ -17,7 +18,7 @@ const COMPLAINT_LINES: usize = 12;
 /// A configuration that names a `program` of its own, or has no `cargo` key,
 /// is left as it is. The build runs in the configuration's `cwd`, or in `root`
 /// where it names none.
-pub(crate) fn resolve(config: &mut Map<String, Value>, root: &Location) -> Result<(), String> {
+pub(crate) fn resolve(config: &mut Map<String, Value>, root: &Path) -> Result<(), String> {
     let Some(Value::Object(cargo)) = config.get("cargo").cloned() else {
         return Ok(());
     };
@@ -29,7 +30,7 @@ pub(crate) fn resolve(config: &mut Map<String, Value>, root: &Location) -> Resul
         .get("cwd")
         .and_then(Value::as_str)
         .map_or_else(|| root.to_path_buf(), |own| root.join(own));
-    let program = build(&cargo, &root.at(directory))?;
+    let program = build(&cargo, &directory)?;
     config.remove("cargo");
     config.insert("program".into(), program.into());
     Ok(())
@@ -37,14 +38,14 @@ pub(crate) fn resolve(config: &mut Map<String, Value>, root: &Location) -> Resul
 
 /// Runs the cargo command `cargo` describes in `directory`, answering the
 /// executable it built that the `filter` picks out.
-fn build(cargo: &Map<String, Value>, directory: &Location) -> Result<String, String> {
+fn build(cargo: &Map<String, Value>, directory: &Path) -> Result<String, String> {
     let arguments = cargo
         .get("args")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
         .filter_map(Value::as_str);
-    let mut command = directory.host.command("cargo");
+    let mut command = Command::new("cargo");
     command
         .args(arguments)
         .arg("--message-format=json-render-diagnostics")

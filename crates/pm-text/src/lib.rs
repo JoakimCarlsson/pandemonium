@@ -1,44 +1,17 @@
-//! Text buffers: rope storage, syntax trees and the language-server client.
+//! Text: shaping runs of text in a typography style, measuring them and
+//! rasterizing their glyphs.
 //!
-//! This layer is text as data. A [`Buffer`] holds one file — the rope it is
-//! stored in, the syntax tree that follows the rope, where it is being
-//! edited and what a server has said about it — and answers questions in
-//! lines and columns. It neither lays out nor draws: how wide a character
-//! comes out and which colour a [`Highlight`] is drawn in are decided a
-//! layer up, against a font and a theme this crate never sees.
+//! The styling of text is `pm-typography`'s; this crate turns a string and a
+//! [`pm_typography::TypographyStyle`] into a [`Run`] of positioned glyphs,
+//! and a glyph into a coverage bitmap a renderer can draw. [`word_at`] finds
+//! the word around a place in a text.
 
-mod buffer;
-mod cursor;
-mod diagnostic;
-mod find;
-mod format;
-pub mod frame;
-mod grammar;
-mod hint;
-mod history;
-mod indent;
-pub mod install;
-mod language;
-mod lsp;
-mod predict;
-pub mod program;
-pub mod snippet;
-mod syntax;
+mod field;
+mod run;
+mod shaper;
+mod word;
 
-pub use buffer::Buffer;
-pub use cursor::{Motion, Position, Selection};
-pub use diagnostic::{Diagnostic, Severity};
-pub use find::{Finder, Query};
-pub use format::{reflow_markdown, rewrap};
-pub use hint::Hint;
-pub use indent::Indent;
-pub use language::{
-    ExtensionLanguage, Language, NO_OPTIONS, Server, install_languages, load_grammar,
-};
-pub use lsp::{
-    Answer, Asked, Calls, Client, CodeAction, Completion, CompletionKind, FileEdit, Handle, Lens,
-    Location, NamedLocation, Progress, Request, Semantic, ServerState, ServerStatus, Servers,
-    Signature, Symbol, Trigger, Watched, WorkspaceChange, is_tracing, set_trace,
-};
-pub use predict::{Prediction, Predictor, ServerPredictor, Ticket, server_predictor};
-pub use syntax::{Highlight, Highlights, SyntaxNode, highlight, is_declaration};
+pub use field::{Edit, Field, Motion};
+pub use run::{Bitmap, GlyphKey, PlacedGlyph, Run};
+pub use shaper::{Extent, Shaper};
+pub use word::word_at;

@@ -1,5 +1,7 @@
 //! Processes available for attaching and adapter scenarios for them.
 
+use std::process::Command;
+
 use serde_json::{Map, json};
 
 use crate::{Adapter, Request, Scenario};
@@ -15,16 +17,10 @@ pub struct Process {
     pub command: String,
 }
 
-/// Lists visible processes on the local machine.
+/// Lists the processes visible on this machine, the newest first.
 pub fn processes() -> Vec<Process> {
-    processes_on(&pm_host::Host::local())
-}
-
-/// Lists visible processes on the machine owning the project.
-pub fn processes_on(host: &pm_host::Host) -> Vec<Process> {
     let mut found = Vec::new();
-    if let Ok(output) = host
-        .command("ps")
+    if let Ok(output) = Command::new("ps")
         .args(["-axo", "pid=,comm=,args="])
         .output()
     {
@@ -36,7 +32,7 @@ pub fn processes_on(host: &pm_host::Host) -> Vec<Process> {
             ) else {
                 continue;
             };
-            if !host.is_local() || pid != std::process::id() {
+            if pid != std::process::id() {
                 found.push(Process {
                     pid,
                     name: std::path::Path::new(name)
@@ -57,7 +53,7 @@ impl Adapter {
     /// Builds an attach scenario using this adapter's process-id convention.
     pub fn attach(self, pid: u32) -> Scenario {
         let mut config = Map::new();
-        match self.id {
+        match self.id.as_str() {
             "gdb" | "lldb-dap" => {
                 config.insert("pid".into(), json!(pid));
             }
@@ -72,7 +68,7 @@ impl Adapter {
         }
         Scenario {
             label: format!("Attach to {pid}"),
-            kind: self.id.to_owned(),
+            kind: self.id.clone(),
             adapter: Some(self),
             request: Request::Attach,
             before: None,

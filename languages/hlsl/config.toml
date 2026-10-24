@@ -1,0 +1,23 @@
+# HLSL: how files are told to be HLSL, how they are edited and the language
+# server that reads them. grammar.wasm is built from
+# tree-sitter-grammars/tree-sitter-hlsl v0.2.0. The server needs the DirectX
+# shader compiler's library beside it, so it is not installed here and is used
+# when it is on the path.
+
+name = "HLSL"
+version = "0.1.0"
+description = "DirectX shaders with shader-language-server."
+icon = "icon.svg"
+color = "#7cc79a"
+grammar = "hlsl"
+suffixes = ["hlsl", "hlsli", "fx", "fxh", "vsh", "psh"]
+line_comment = "//"
+indent = 4
+pairs = ["()", "[]", "{}", "\"\""]
+
+[server]
+id = "shader-language-server"
+language_id = "hlsl"
+command = "shader-language-server"
+args = ["--stdio", "--hlsl"]
+check = ["--version"]

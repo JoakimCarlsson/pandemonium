@@ -15,6 +15,9 @@ use crate::adapter::Adapter;
 /// Where VS Code writes a worktree's debug configurations.
 const VS_CODE: &str = ".vscode/launch.json";
 
+/// Where a worktree writes its own, in the same form as VS Code's.
+const OWN: &str = ".pandemonium.launch.json";
+
 /// Where Zed writes them.
 const ZED: &str = ".zed/debug.json";
 
@@ -77,7 +80,7 @@ impl Scenario {
     /// What the adapter is told to launch or attach with.
     pub(crate) fn arguments(&self) -> Value {
         let mut config = self.config.clone();
-        if let Some(adapter) = self.adapter {
+        if let Some(adapter) = &self.adapter {
             adapter.prepare(&mut config);
         }
         Value::Object(config)
@@ -88,11 +91,16 @@ impl Scenario {
 ///
 /// The files are read every time they are asked about, because they are
 /// short and are edited by hand between one debugging run and the next.
-pub fn scenarios(root: &pm_host::Location, file: Option<&Path>) -> Vec<Scenario> {
+pub fn scenarios(root: &Path, file: Option<&Path>) -> Vec<Scenario> {
     let words = Words::new(root, file);
-    let mut found = read(root, VS_CODE)
-        .map(|file| vs_code(&file, &words))
+    let mut found = read(root, OWN)
+        .map(|file| vs_code(&file, OWN, &words))
         .unwrap_or_default();
+    found.extend(
+        read(root, VS_CODE)
+            .map(|file| vs_code(&file, VS_CODE, &words))
+            .unwrap_or_default(),
+    );
     found.extend(
         read(root, ZED)
             .map(|file| zed(&file, &words))
@@ -103,14 +111,14 @@ pub fn scenarios(root: &pm_host::Location, file: Option<&Path>) -> Vec<Scenario>
 }
 
 /// The file at `relative` under `root`, read as JSON with comments.
-fn read(root: &pm_host::Location, relative: &str) -> Option<Value> {
-    let written = root.host.fs().read_to_string(root.join(relative)).ok()?;
+fn read(root: &Path, relative: &str) -> Option<Value> {
+    let written = std::fs::read_to_string(root.join(relative)).ok()?;
     serde_json::from_str(&plain_json(&written)).ok()
 }
 
-/// The scenarios a VS Code `launch.json` holds.
-fn vs_code(file: &Value, words: &Words) -> Vec<Scenario> {
-    let source = PathBuf::from(VS_CODE);
+/// The scenarios a `launch.json` written in VS Code's form holds, read from the file at `path`.
+fn vs_code(file: &Value, path: &str, words: &Words) -> Vec<Scenario> {
+    let source = PathBuf::from(path);
     file.get("configurations")
         .and_then(Value::as_array)
         .into_iter()
@@ -209,8 +217,6 @@ fn without(object: &Map<String, Value>, own: &[&str]) -> Map<String, Value> {
 /// The words a scenario may write in place of a path, and what each stands
 /// for here.
 struct Words {
-    /// The machine supplying environment substitutions.
-    host: pm_host::Host,
     /// Each word, with the value it is replaced by.
     known: Vec<(String, String)>,
 }
@@ -220,7 +226,7 @@ impl Words {
     ///
     /// VS Code's `${...}` and Zed's `$ZED_...` say the same few things, and
     /// both are understood whichever file they were written in.
-    fn new(root: &pm_host::Location, file: Option<&Path>) -> Self {
+    fn new(root: &Path, file: Option<&Path>) -> Self {
         let shown = |path: &Path| path.to_string_lossy().into_owned();
         let root_text = shown(root);
         let file_text = file.map(shown).unwrap_or_default();
@@ -241,9 +247,7 @@ impl Words {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let home = root
-            .host
-            .home()
+        let home = std::env::home_dir()
             .map(|path| path.to_string_lossy().into_owned())
             .unwrap_or_default();
         let pairs = [
@@ -256,15 +260,7 @@ impl Words {
             ("${fileBasename}", base.clone()),
             ("${fileBasenameNoExtension}", stem.clone()),
             ("${userHome}", home),
-            (
-                "${pathSeparator}",
-                if root.host.os() == "windows" {
-                    "\\"
-                } else {
-                    "/"
-                }
-                .to_owned(),
-            ),
+            ("${pathSeparator}", std::path::MAIN_SEPARATOR.to_string()),
             ("$ZED_WORKTREE_ROOT", root_text),
             ("$ZED_RELATIVE_FILE", relative),
             ("$ZED_FILENAME", base),
@@ -273,7 +269,6 @@ impl Words {
             ("$ZED_FILE", file_text),
         ];
         Self {
-            host: root.host.clone(),
             known: pairs
                 .into_iter()
                 .map(|(word, value)| (word.to_owned(), value))
@@ -290,7 +285,7 @@ impl Words {
             .fold(written.to_owned(), |text, (word, value)| {
                 text.replace(word, value)
             });
-        environment(&self.host, &filled)
+        environment(&filled)
     }
 
     /// Every string in `value`, however deep, with its words filled in.
@@ -314,7 +309,7 @@ impl Words {
 }
 
 /// `text` with every `${env:NAME}` replaced by what the environment holds.
-fn environment(host: &pm_host::Host, text: &str) -> String {
+fn environment(text: &str) -> String {
     const OPEN: &str = "${env:";
     let mut filled = String::new();
     let mut rest = text;
@@ -324,7 +319,7 @@ fn environment(host: &pm_host::Host, text: &str) -> String {
         };
         let name = &rest[start + OPEN.len()..start + length];
         filled.push_str(&rest[..start]);
-        filled.push_str(&host.environment(name).unwrap_or_default());
+        filled.push_str(&std::env::var(name).unwrap_or_default());
         rest = &rest[start + length + 1..];
     }
     filled.push_str(rest);

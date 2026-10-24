@@ -1,0 +1,28 @@
+# Dockerfile: how files are told to be Dockerfiles, how they are edited and the
+# language server that reads them. No grammar is published for it, so the
+# folder holds its own, built with tree-sitter CLI 0.27.1 from
+# camdencheek/tree-sitter-dockerfile v0.2.0.
+
+name = "Dockerfile"
+version = "0.1.0"
+description = "Dockerfiles and Containerfiles with the Docker language server."
+icon = "icon.svg"
+color = "#4fa3e0"
+grammar = "dockerfile"
+suffixes = ["dockerfile", "containerfile"]
+names = ["Dockerfile", "Containerfile"]
+aliases = ["docker", "containerfile"]
+line_comment = "#"
+indent = 4
+pairs = ["[]", "{}", "\"\"", "''"]
+
+[server]
+id = "docker-langserver"
+language_id = "dockerfile"
+command = "docker-langserver"
+args = ["--stdio"]
+
+[server.install]
+kind = "npm"
+version = "0.15.0"
+packages = ["dockerfile-language-server-nodejs@0.15.0"]

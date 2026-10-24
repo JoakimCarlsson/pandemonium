@@ -1,0 +1,18 @@
+[package]
+name = "pm-pages"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pm-acp.workspace = true
+pm-components.workspace = true
+pm-config.workspace = true
+pm-editor.workspace = true
+pm-git.workspace = true
+pm-icon.workspace = true
+pm-input.workspace = true
+pm-protocol.workspace = true
+pm-style.workspace = true
+pm-text.workspace = true
+pm-ui.workspace = true

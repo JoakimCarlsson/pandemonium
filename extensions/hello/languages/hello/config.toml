@@ -1,0 +1,26 @@
+# Hello Config: files ending in .hello are read as JSON, with the JSON language
+# server when the machine has it.
+
+name = "Hello Config"
+version = "0.1.0"
+description = "Hello files, read as JSON."
+icon = "icon.svg"
+color = "#7fc9be"
+grammar = "json"
+suffixes = ["hello"]
+line_comment = "//"
+indent = 2
+pairs = ["[]", "{}", "\"\""]
+
+[grammar_file]
+url = "https://github.com/tree-sitter/tree-sitter-json/releases/download/v0.24.8/tree-sitter-json.wasm"
+sha256 = "d2119fb98d5912719b13f9458574f8608d2d29dfbe45f6be1f860ea1fe2a2405"
+
+[server]
+id = "vscode-json-language-server"
+language_id = "json"
+command = "vscode-json-language-server"
+args = ["--stdio"]
+
+[server.init]
+provideFormatter = true

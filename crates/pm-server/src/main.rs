@@ -1,18 +1,9 @@
-//! The headless machine endpoint, serving only operating system access.
+//! The `pandemonium-server` program.
 
-/// Runs the endpoint on its standard pipes or prints its version.
+/// Runs the server with the options on the command line.
 fn main() {
-    match std::env::args().nth(1).as_deref() {
-        Some("--version") => println!("pandemonium-server {}", env!("CARGO_PKG_VERSION")),
-        Some("--stdio") => {
-            if let Err(error) = pm_host::serve(std::io::stdin(), std::io::stdout()) {
-                eprintln!("{error}");
-                std::process::exit(1);
-            }
-        }
-        _ => {
-            eprintln!("usage: pandemonium-server --stdio | --version");
-            std::process::exit(2);
-        }
-    }
+    std::process::exit(pm_server::run_with_arguments(
+        "pandemonium-server",
+        std::env::args().skip(1),
+    ));
 }

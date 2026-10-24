@@ -1,0 +1,16 @@
+# PowerShell: how files are told to be PowerShell scripts and how they are
+# edited. It has no language server: PowerShell Editor Services is started by a
+# script run through pwsh, which a server entry cannot describe. grammar.wasm
+# is built from airbus-cert/tree-sitter-powershell at commit c96b28e.
+
+name = "PowerShell"
+version = "0.1.0"
+description = "PowerShell scripts, modules and data files."
+icon = "icon.svg"
+color = "#5391fe"
+grammar = "powershell"
+suffixes = ["ps1", "psm1", "psd1"]
+aliases = ["pwsh", "posh"]
+line_comment = "#"
+indent = 4
+pairs = ["()", "[]", "{}", "\"\"", "''"]

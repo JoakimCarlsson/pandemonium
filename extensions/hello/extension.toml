@@ -1,0 +1,44 @@
+# Hello: a sample extension. It adds a language, a theme, an icon theme, a debug
+# adapter, a tool server and two commands; one command is a fixed prompt, the
+# other is run by extension.wasm, which `make extension-sample` builds from
+# extensions/hello-guest and puts beside this file in build/extensions/hello.
+
+name = "Hello"
+version = "0.1.0"
+description = "A sample extension: a language, a theme, a debug adapter, a tool server and commands."
+api = 1
+wasm = "extension.wasm"
+capabilities = ["process", "read-project", "download"]
+
+[[languages]]
+folder = "languages/hello"
+
+[[themes]]
+file = "themes/hello-dusk.toml"
+
+[[icon_themes]]
+file = "icons/hello.toml"
+
+[[debug_adapters]]
+id = "hello-dap"
+name = "Hello"
+programs = ["python3"]
+arguments = ["-m", "debugpy.adapter"]
+connect = "stdio"
+types = ["hello"]
+
+[[mcp_servers]]
+name = "hello-tools"
+target = "npx -y @modelcontextprotocol/server-everything"
+description = "A tool server that is given to every agent."
+
+[[commands]]
+id = "hello"
+title = "Say hello"
+description = "Starts a prompt with a greeting"
+prompt = "Say hello to the project and tell me what it is for."
+
+[[commands]]
+id = "branch"
+title = "Review this branch"
+description = "Asks the agent to review the branch checked out in the project"

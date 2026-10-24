@@ -9,13 +9,14 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Most lines the console keeps before it forgets the oldest.
 const KEPT_LINES: usize = 10_000;
 
 /// Where a debugging session has got to.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Standing {
     /// The adapter is starting, or the program is being set up.
     Starting,
@@ -28,7 +29,7 @@ pub enum Standing {
 }
 
 /// Something the window acts on rather than only draws.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Event {
     /// The program paused here, which the window brings into view.
     Paused(Frame),
@@ -39,7 +40,7 @@ pub enum Event {
 }
 
 /// One thread of the program.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Thread {
     /// What the adapter calls it.
     pub id: i64,
@@ -48,7 +49,7 @@ pub struct Thread {
 }
 
 /// One frame of a paused thread's stack.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Frame {
     /// What the adapter calls it.
     pub id: i64,
@@ -63,7 +64,7 @@ pub struct Frame {
 }
 
 /// One scope of a frame: its locals, its arguments, its registers.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Scope {
     /// What the scope is called.
     pub name: String,
@@ -74,7 +75,7 @@ pub struct Scope {
 }
 
 /// One variable, or one member of one.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Variable {
     /// What it is called.
     pub name: String,
@@ -87,7 +88,7 @@ pub struct Variable {
 }
 
 /// A source breakpoint, with optional adapter-specific behavior.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Breakpoint {
     /// The source line, counted from zero.
     pub line: usize,
@@ -100,7 +101,7 @@ pub struct Breakpoint {
 }
 
 /// The latest result of evaluating a watch expression.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Watched {
     /// The expression being watched.
     pub expression: String,
@@ -109,7 +110,7 @@ pub struct Watched {
 }
 
 /// Where a breakpoint came to rest, as the adapter placed it.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Placed {
     /// The line it stops on, counted from zero.
     pub line: usize,
@@ -120,7 +121,7 @@ pub struct Placed {
 }
 
 /// Who a line of the console is from.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Category {
     /// The adapter, about itself or the session.
     Console,
@@ -137,7 +138,7 @@ pub enum Category {
 }
 
 /// One line of the console.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Line {
     /// Who it is from.
     pub category: Category,
@@ -179,7 +180,7 @@ pub(crate) enum Sent {
 /// What the adapter has said, and what it has not been told yet.
 pub(crate) struct State {
     /// The adapter's name in unsupported-feature messages.
-    pub adapter_name: &'static str,
+    pub adapter_name: String,
     /// What the adapter said it can do, once the handshake has said it.
     pub capabilities: Value,
     /// Where the session has got to.
@@ -227,7 +228,7 @@ impl State {
     /// The state of a session about to start, with `breakpoints` to set.
     pub(crate) fn new(
         breakpoints: BTreeMap<PathBuf, Vec<Breakpoint>>,
-        adapter_name: &'static str,
+        adapter_name: String,
     ) -> Self {
         Self {
             adapter_name,

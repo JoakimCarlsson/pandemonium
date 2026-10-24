@@ -1,0 +1,193 @@
+//! The tasks of a project run on the server's machine: found from its manifests, run in a shell the client watches, or run to their end before a program is debugged, each with the toolchains the reader chose.
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use pm_protocol::{Response, Task, ToolchainInfo};
+use pm_task::Toolchain;
+
+use crate::core::Core;
+
+/// The file the choices of toolchains are kept in.
+const FILE: &str = "toolchains";
+
+/// The toolchain chosen for each language of each project, by project and language.
+type Choices = BTreeMap<String, BTreeMap<String, String>>;
+
+/// The choices as they were last saved, or none when none were.
+fn choices() -> Choices {
+    pm_store::load_text(FILE)
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+/// What a project is kept under in the choices: its folder, taken to be the one `project` names when it names one, and otherwise the repository the folder `directory` is a worktree of, or the folder itself when it is not in one.
+pub(crate) fn project_key(directory: &Path, project: Option<&str>) -> String {
+    let root = project
+        .filter(|project| !project.is_empty())
+        .map(crate::handler::place)
+        .or_else(|| {
+            pm_git::git_folders(directory)
+                .and_then(|(_, common)| common.parent().map(Path::to_path_buf))
+        })
+        .unwrap_or_else(|| directory.to_path_buf());
+    root.canonicalize()
+        .unwrap_or(root)
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// The toolchain of `language`, by family, chosen for the project `project` whose root is `root`, when it is installed and not the machine's own.
+fn toolchain_of(root: &Path, project: &str, language: &str) -> Option<Toolchain> {
+    let id = choices().get(project)?.get(language)?.clone();
+    pm_task::toolchains(root)
+        .into_iter()
+        .find(|toolchain| toolchain.language == language && toolchain.id == id)
+        .filter(|toolchain| !toolchain.path.is_empty() || !toolchain.env.is_empty())
+}
+
+/// What a language server of `spec` is started with for the project at `root`: the environment of the toolchain chosen for its language.
+pub(crate) fn server_environment(
+    root: &Path,
+    spec: &pm_lsp::ServerSpec,
+) -> BTreeMap<String, String> {
+    let family = pm_task::family(&spec.language_id);
+    toolchain_of(root, &project_key(root, None), family)
+        .map(|toolchain| toolchain.environment(std::env::var_os("PATH")))
+        .unwrap_or_default()
+}
+
+/// The answer to asking what the folder `root` can be built, tested and run with.
+pub(crate) fn listed(root: &Path) -> Response {
+    let found = pm_task::tasks(root);
+    Response::Tasks {
+        tasks: found.tasks,
+        problem: found.problem,
+    }
+}
+
+/// The answer to asking which toolchains the project `project`, whose root is `root`, can use, and which it is set to.
+pub(crate) fn toolchains(root: &Path, project: Option<&str>) -> Response {
+    let chosen = choices()
+        .remove(&project_key(root, project))
+        .unwrap_or_default();
+    let toolchains = pm_task::toolchains(root)
+        .into_iter()
+        .map(|toolchain| {
+            let selected = match chosen.get(&toolchain.language) {
+                Some(id) => *id == toolchain.id,
+                None => toolchain.id == "system",
+            };
+            ToolchainInfo {
+                language: toolchain.language,
+                id: toolchain.id,
+                name: toolchain.name,
+                detail: toolchain.detail,
+                selected,
+            }
+        })
+        .collect();
+    Response::Toolchains { toolchains }
+}
+
+/// Sets the toolchain of `language` for `project` to `toolchain`, or back to the machine's own path when there is none.
+pub(crate) fn select(project: &str, language: &str, toolchain: Option<&str>) -> Result<(), String> {
+    let key = project_key(&crate::handler::place(project), Some(project));
+    let mut held = choices();
+    let entry = held.entry(key.clone()).or_default();
+    match toolchain {
+        Some(id) => entry.insert(language.to_owned(), id.to_owned()),
+        None => entry.remove(language),
+    };
+    if entry.is_empty() {
+        held.remove(&key);
+    }
+    let text = serde_json::to_string(&held).map_err(|error| error.to_string())?;
+    pm_store::save_text(FILE, &text).map_err(|error| error.to_string())
+}
+
+/// Runs the task of the project at `root` that is called `name` to its end, with the toolchains chosen for `project`, and says why it did not succeed when it did not.
+pub(crate) fn finish_named(root: &Path, project: Option<&str>, name: &str) -> Result<(), String> {
+    let task = pm_task::tasks(root)
+        .tasks
+        .into_iter()
+        .find(|task| task.is_named(name))
+        .ok_or_else(|| {
+            format!("the scenario needs the task {name}, which this project does not have")
+        })?;
+    let toolchain = toolchain_of(root, &project_key(root, project), &task.language);
+    let launch = pm_task::Launch::new(root, &task, toolchain.as_ref())?;
+    launch
+        .finish()
+        .map_err(|reason| format!("the task {name} failed: {reason}"))
+}
+
+/// The folder, from `root`, a runnable place in the file `path` runs in: the nearest one above the file that holds `marker`, or the root when nothing is marked or no folder holds it.
+fn folder_of(root: &Path, path: &str, marker: Option<&str>) -> String {
+    let Some(marker) = marker else {
+        return String::new();
+    };
+    let mut folder = PathBuf::from(path);
+    while folder.pop() {
+        if root.join(&folder).join(marker).is_file() {
+            return folder.to_string_lossy().replace('\\', "/");
+        }
+    }
+    String::new()
+}
+
+/// Whether `name` is made of the characters a function or a module is named with, so that it is safe to put in a command.
+fn is_plain(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|character| character.is_alphanumeric() || character == '_')
+}
+
+/// The task that runs the place called `name` of kind `kind` in the file `path` of the project at `root`, as the language of the file says.
+pub(crate) fn runnable(root: &Path, path: &str, kind: &str, name: &str) -> Result<Task, String> {
+    if !is_plain(name) {
+        return Err(format!("{name} is not a name that can be run"));
+    }
+    let (language, manifest) = pm_lsp::language_of(path)
+        .and_then(|id| crate::languages::installed_named(&id))
+        .ok_or_else(|| format!("no installed language runs {path}"))?;
+    let spec = manifest
+        .runnables
+        .iter()
+        .find(|spec| spec.kind == kind)
+        .ok_or_else(|| format!("{} has no way to run a {kind}", manifest.name))?;
+    Ok(Task {
+        name: spec.label.replace("{name}", name),
+        command: spec.command.replace("{name}", name),
+        folder: folder_of(root, path, spec.marker.as_deref()),
+        env: BTreeMap::new(),
+        group: if kind == "main" { "run" } else { "test" }.to_owned(),
+        language: pm_task::family(&language).to_owned(),
+        source: path.to_owned(),
+    })
+}
+
+impl Core {
+    /// Runs `task` of the project at `root`, which clients know by `directory`, in a shell started for `connection`, and returns the shell's number.
+    pub(crate) fn run_task(
+        self: &Arc<Self>,
+        root: &Path,
+        directory: &str,
+        project: Option<&str>,
+        task: &Task,
+        size: (u16, u16),
+    ) -> Result<u64, String> {
+        let toolchain = toolchain_of(root, &project_key(root, project), &task.language);
+        let launch = pm_task::Launch::new(root, task, toolchain.as_ref())?;
+        self.open_shell(
+            &launch.directory,
+            directory,
+            size.0,
+            size.1,
+            &launch.env,
+            Some(&launch.command),
+        )
+    }
+}

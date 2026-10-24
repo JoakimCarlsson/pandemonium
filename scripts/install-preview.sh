@@ -1,5 +1,9 @@
 #!/bin/sh
-# Installs this checkout as pandemonium-preview.
+#
+# Installs this checkout as pandemonium-preview, or, given `server`, installs
+# only the headless pandemonium-server.
+#
+#   scripts/install-preview.sh [server]
 
 set -eu
 
@@ -48,18 +52,13 @@ install_app_bundle() {
     echo "installed $MAC_APPS_DIR/Pandemonium Preview.app"
 }
 
-# Builds and installs the preview.
-main() {
-    command -v cargo >/dev/null 2>&1 || fail "'cargo' is required but was not found"
-
+# Builds and installs the window, which carries the local server in its `--server` mode.
+install_editor() {
     revision="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
     echo "building pandemonium preview at $revision"
-    PANDEMONIUM_VERSION=preview cargo build --release --locked -p pandemonium
-    sh scripts/build-server.sh release
-
+    cargo build --release --locked -p pandemonium
     mkdir -p "$BIN_DIR"
     install -m 0755 target/release/pandemonium "$BIN_DIR/$NAME"
-    install -m 0755 target/release/pandemonium-server "$BIN_DIR/pandemonium-server"
     case "$(uname -s)" in
         Linux)
             install_icons assets/brand/png assets/brand/pandemonium.svg
@@ -67,12 +66,30 @@ main() {
             ;;
         Darwin) install_app_bundle ;;
     esac
+    echo "installed $("$BIN_DIR/$NAME" --server --version) ($revision) to $BIN_DIR/$NAME"
+}
 
-    echo "installed $("$BIN_DIR/$NAME" --version) ($revision) to $BIN_DIR/$NAME"
+# Builds and installs the headless server alone.
+install_server() {
+    echo "building pandemonium-server"
+    cargo build --release --locked -p pm-server
+    mkdir -p "$BIN_DIR"
+    install -m 0755 target/release/pandemonium-server "$BIN_DIR/pandemonium-server"
+    echo "installed $("$BIN_DIR/pandemonium-server" --version) to $BIN_DIR/pandemonium-server"
+}
+
+# Installs what was asked for and warns when it is not on the PATH.
+main() {
+    command -v cargo >/dev/null 2>&1 || fail "'cargo' is required but was not found"
+    case "${1:-editor}" in
+        editor) install_editor ;;
+        server) install_server ;;
+        *) fail "usage: $0 [server]" ;;
+    esac
     case ":$PATH:" in
         *":$BIN_DIR:"*) ;;
-        *) echo "note: $BIN_DIR is not on your PATH; add it to run '$NAME' from a shell" ;;
+        *) echo "note: $BIN_DIR is not on your PATH" ;;
     esac
 }
 
-main
+main "$@"

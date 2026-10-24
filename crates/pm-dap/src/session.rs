@@ -12,10 +12,11 @@
 //! once the adapter says it is ready for them — the breakpoints and the word
 //! that setting up is done. Everything after that is the window asking.
 
-use pm_host::{Child, Stdio};
 use std::collections::BTreeMap;
 use std::io::{self, BufRead, BufReader, Read};
+use std::net::TcpStream;
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
@@ -25,11 +26,13 @@ use serde_json::{Value, json};
 
 use crate::adapter::Connect;
 use crate::cargo;
+use crate::program;
 use crate::scenario::{Request, Scenario};
 use crate::state::{
     Breakpoint, Category, Event, Frame, Line, Placed, Scope, Sent, Standing, State, Thread,
     Variable, Watched,
 };
+use crate::view::{SHOWN_LINES, View};
 use crate::wire::{self, Wire};
 
 /// How long an adapter that listens on a socket is given to open it.
@@ -53,7 +56,7 @@ pub struct Session {
     /// What the program is being debugged as.
     scenario: Scenario,
     /// The worktree it is being debugged in.
-    root: pm_host::Location,
+    root: PathBuf,
     /// The adapter's process, kept so that it can be ended.
     process: Arc<Mutex<Option<Child>>>,
     /// The way messages go to the adapter.
@@ -71,32 +74,35 @@ impl Session {
     /// nothing of it is waited for.
     pub fn start(
         scenario: Scenario,
-        root: &pm_host::Location,
+        root: &Path,
         breakpoints: BTreeMap<PathBuf, Vec<Breakpoint>>,
         notify: Notify,
     ) -> io::Result<Self> {
-        let adapter = scenario.adapter.ok_or_else(|| {
+        let adapter = scenario.adapter.clone().ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::Unsupported,
                 format!("no debug adapter for `{}`", scenario.kind),
             )
         })?;
-        let program = adapter.program_on(&root.host).ok_or_else(|| {
+        if let Some(reason) = &adapter.denied {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                reason.clone(),
+            ));
+        }
+        let program = adapter.program().ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::NotFound,
                 format!("{} is not installed", adapter.name),
             )
         })?;
         let port = match adapter.connect {
-            Connect::Tcp => root.host.free_port()?,
+            Connect::Tcp => program::free_port()?,
             Connect::Stdio => 0,
         };
 
-        let mut command = root.host.command(&program);
-        if root.host.is_local() {
-            command.env("PATH", pm_text::program::path_beside(&program));
-        }
-        let mut process = command
+        let mut process = Command::new(&program)
+            .env("PATH", pm_tools::path_beside(&program))
             .args(adapter.arguments_for(port))
             .current_dir(root)
             .stdin(Stdio::piped())
@@ -110,7 +116,7 @@ impl Session {
         let process = Arc::new(Mutex::new(Some(process)));
         let (outbox, queued) = mpsc::channel();
         let wire = Wire::new(outbox);
-        let state = Arc::new(Mutex::new(State::new(breakpoints, adapter.name)));
+        let state = Arc::new(Mutex::new(State::new(breakpoints, adapter.name.clone())));
         let reader = Reader {
             process: process.clone(),
             state: state.clone(),
@@ -118,7 +124,7 @@ impl Session {
             notify: notify.clone(),
             request: scenario.request,
             arguments: scenario.arguments(),
-            root: root.clone(),
+            root: root.to_path_buf(),
         };
 
         if let Some(stderr) = stderr {
@@ -139,7 +145,7 @@ impl Session {
 
         let session = Self {
             scenario,
-            root: root.clone(),
+            root: root.to_path_buf(),
             process,
             wire,
             state,
@@ -168,7 +174,7 @@ impl Session {
     }
 
     /// The worktree it is being debugged in.
-    pub fn root(&self) -> &pm_host::Location {
+    pub fn root(&self) -> &Path {
         &self.root
     }
 
@@ -252,6 +258,34 @@ impl Session {
         if let Some(frame) = frame {
             evaluate_watches(&self.wire, &self.state, frame);
         }
+    }
+
+    /// What the session looks like now.
+    pub fn view(&self) -> View {
+        self.read(|state| View {
+            label: self.scenario.label.clone(),
+            standing: state.standing,
+            reason: state.reason.clone(),
+            threads: state.threads.clone(),
+            thread: state.thread,
+            frames: state.frames.clone(),
+            frame: state.frame,
+            scopes: state.scopes.clone(),
+            variables: state
+                .variables
+                .iter()
+                .map(|(reference, variables)| (*reference, variables.clone()))
+                .collect(),
+            watches: state.watches.clone(),
+            watched: state.watched.clone(),
+            lines: state.lines[state.lines.len().saturating_sub(SHOWN_LINES)..].to_vec(),
+            line_count: state.lines.len(),
+            placed: state
+                .placed
+                .iter()
+                .map(|(path, placed)| (path.clone(), placed.clone()))
+                .collect(),
+        })
     }
 
     /// What the window has to act on, oldest first.
@@ -436,7 +470,7 @@ struct Reader {
     /// What it is launched or attached with.
     arguments: Value,
     /// The worktree it is being debugged in.
-    root: pm_host::Location,
+    root: PathBuf,
 }
 
 impl Reader {
@@ -647,11 +681,7 @@ impl Reader {
                 let reason = said.to_owned();
                 #[cfg(target_os = "linux")]
                 let reason = if self.request == Request::Attach
-                    && self
-                        .root
-                        .host
-                        .fs()
-                        .read_to_string("/proc/sys/kernel/yama/ptrace_scope")
+                    && std::fs::read_to_string("/proc/sys/kernel/yama/ptrace_scope")
                         .ok()
                         .and_then(|value| value.trim().parse::<u32>().ok())
                         .is_some_and(|scope| scope >= 1)
@@ -915,7 +945,7 @@ fn send_breakpoints(wire: &Wire, state: &Mutex<State>, path: &Path, lines: &[Bre
         .unwrap_or_default();
     let (capabilities, adapter_name) = {
         let state = lock(state);
-        (state.capabilities.clone(), state.adapter_name)
+        (state.capabilities.clone(), state.adapter_name.clone())
     };
     let mut unsupported = Vec::new();
     let breakpoints = lines
@@ -1008,7 +1038,7 @@ fn send_breakpoints(wire: &Wire, state: &Mutex<State>, path: &Path, lines: &[Bre
 fn reach(port: u16, queued: Receiver<Value>, reader: Reader) {
     let started = Instant::now();
     let stream = loop {
-        match reader.root.host.tcp(port) {
+        match TcpStream::connect(("127.0.0.1", port)) {
             Ok(stream) => break stream,
             Err(_) if started.elapsed() < CONNECT_WITHIN => thread::sleep(CONNECT_RETRY),
             Err(error) => {
@@ -1023,7 +1053,10 @@ fn reach(port: u16, queued: Receiver<Value>, reader: Reader) {
             }
         }
     };
-    let (sink, source) = stream;
+    let Ok(sink) = stream.try_clone() else {
+        return;
+    };
+    let source = stream;
     thread::spawn(move || wire::write_all(queued, sink));
     reader.run(source);
 }

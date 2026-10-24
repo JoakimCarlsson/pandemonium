@@ -1,0 +1,12 @@
+[package]
+name = "pm-git"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pm-tools = { version = "0.13.0-rc.11", path = "../pm-tools" }
+reflink-copy = "0.1.30"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+similar = "3.2.0"

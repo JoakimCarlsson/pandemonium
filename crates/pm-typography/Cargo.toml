@@ -1,0 +1,9 @@
+[package]
+name = "pm-typography"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pm-primitives.workspace = true
+pm-color.workspace = true

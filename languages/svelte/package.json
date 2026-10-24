@@ -1,0 +1,7 @@
+{
+  "name": "pandemonium-svelte-server",
+  "private": true,
+  "dependencies": {
+    "svelte-language-server": "0.18.5"
+  }
+}

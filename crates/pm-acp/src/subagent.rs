@@ -1,107 +1,87 @@
-//! Subagent session lifetimes and their projection into nested tool cards.
+//! Subagents an agent starts, and the tools each of them uses, folded into cards of their own.
 
 use std::collections::BTreeMap;
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
-use crate::update::{self, Event, Output, Status, Tools, Voice};
+use crate::chat::{Event, Kind, Tool, ToolState, tool};
 
-/// Announced child sessions, mapped to the cards containing their work.
+/// The child sessions an agent announced, each against the card that stands for it.
 #[derive(Default)]
 pub(crate) struct Subagents {
-    /// The card identity belonging to each announced child session.
+    /// The card of each announced child session.
     cards: BTreeMap<String, String>,
 }
 
 impl Subagents {
-    /// Converts lifecycle and child updates without mixing child prose into the parent reply.
-    pub(crate) fn events(&mut self, params: &Value, tools: &mut Tools) -> Vec<Event> {
-        let Some(session) = params["sessionId"].as_str() else {
-            return Vec::new();
-        };
-        let update = &params["update"];
-        match update["sessionUpdate"].as_str() {
-            Some("subagent_state_update") => self.state(update, tools),
-            Some(_) => self.event(session, update, tools).into_iter().collect(),
-            None => Vec::new(),
-        }
-    }
-
-    /// Settles an announced child's card at the state its lifetime ended in.
+    /// What an update said, as the events it comes to, with a child's work set under its card.
     ///
-    /// A child that was cancelled or cut off takes the calls still running
-    /// inside it along, since none of them can go on; one that failed leaves
-    /// them as they were last reported.
-    fn state(&self, update: &Value, tools: &mut Tools) -> Vec<Event> {
-        let Some(id) = update["subagentSessionId"]
-            .as_str()
-            .and_then(|child| self.cards.get(child))
-        else {
-            return Vec::new();
-        };
-        let status = match update["state"].as_str() {
-            Some("completed") => "completed",
-            Some("failed") => "failed",
-            Some("running") => "in_progress",
-            Some("cancelled") => return update::halt(tools, Some(id), Status::Cancelled),
-            Some("disconnected") => return update::halt(tools, Some(id), Status::Disconnected),
-            _ => return Vec::new(),
-        };
-        update::event(
-            &json!({
-                "sessionUpdate": "tool_call_update",
-                "toolCallId": id,
-                "status": status,
-            }),
-            tools,
-        )
-        .into_iter()
-        .collect()
-    }
-
-    /// Converts one update other than a child's change of state.
-    fn event(&mut self, session: &str, update: &Value, tools: &mut Tools) -> Option<Event> {
-        match update["sessionUpdate"].as_str()? {
-            "subagent_spawned" => {
-                let child = update["subagentSessionId"].as_str()?;
-                let id = format!("subagent:{child}");
-                let mut card = json!({
-                    "sessionUpdate": "tool_call",
-                    "toolCallId": id,
-                    "name": "Task",
-                    "title": update["name"].as_str().unwrap_or("Subagent"),
-                    "kind": "other",
-                    "status": "in_progress",
-                    "rawInput": { "description": update["name"] },
-                });
-                self.parent(session, &mut card);
-                self.cards.insert(child.to_owned(), id);
-                update::event(&card, tools)
-            }
-            "tool_call" | "tool_call_update" => {
-                let mut update = update.clone();
-                self.parent(session, &mut update);
-                update::event(&update, tools)
-            }
-            _ if self.cards.contains_key(session) => {
-                let Event::Said(Voice::Agent, text, _) = update::event(update, tools)? else {
-                    return None;
-                };
-                let call = tools.get_mut(self.cards.get(session)?)?;
-                match call.output.last_mut() {
-                    Some(Output::Said(passage)) => passage.push_str(&text),
-                    _ => call.output.push(Output::Said(text)),
+    /// `session` is the conversation the reader holds and `update` is read
+    /// from a notification for `from`: the child's own prose never joins the
+    /// parent's reply.
+    pub(crate) fn events(&mut self, session: &str, from: &str, update: &Value) -> Vec<Event> {
+        match update["sessionUpdate"].as_str() {
+            Some("subagent_spawned") => self.spawned(update).into_iter().collect(),
+            Some("subagent_state_update") => self.state(update).into_iter().collect(),
+            Some("tool_call" | "tool_call_update") if from != session => {
+                let mut event = tool(update);
+                if let (Some(held), Some(card)) = (event.as_mut(), self.cards.get(from)) {
+                    held.parent = Some(card.clone());
                 }
-                Some(Event::Ran(call.clone()))
+                event.map(Event::Tool).into_iter().collect()
             }
-            _ => update::event(update, tools),
+            _ => Vec::new(),
         }
     }
 
-    /// Attaches child tools and permission previews to their announced session card.
-    pub(crate) fn parent(&self, session: &str, update: &mut Value) {
-        if let Some(id) = self.cards.get(session) {
-            update["_meta"]["claudeCode"]["parentToolUseId"] = json!(id);
-        }
+    /// Whether `from` is a child session, whose words are not the reply's.
+    pub(crate) fn is_child(&self, from: &str) -> bool {
+        self.cards.contains_key(from)
+    }
+
+    /// The card a newly announced child gets.
+    fn spawned(&mut self, update: &Value) -> Option<Event> {
+        let child = update["subagentSessionId"].as_str()?;
+        let id = format!("subagent:{child}");
+        self.cards.insert(child.to_owned(), id.clone());
+        let name = update["name"].as_str().unwrap_or("Subagent").to_owned();
+        Some(Event::Tool(Tool {
+            id,
+            title: Some(name.clone()),
+            kind: Some(Kind::Other),
+            state: Some(ToolState::Running),
+            target: Some(name),
+            diff: None,
+            output: None,
+            parent: None,
+            agent: Some(
+                update["subagentType"]
+                    .as_str()
+                    .unwrap_or("agent")
+                    .to_owned(),
+            ),
+        }))
+    }
+
+    /// The state a child's card moves to when its lifetime changes.
+    fn state(&self, update: &Value) -> Option<Event> {
+        let id = self.cards.get(update["subagentSessionId"].as_str()?)?;
+        let state = match update["state"].as_str()? {
+            "completed" => ToolState::Done,
+            "failed" | "cancelled" | "disconnected" => ToolState::Failed,
+            "running" => ToolState::Running,
+            _ => return None,
+        };
+        Some(Event::Tool(Tool {
+            id: id.clone(),
+            title: None,
+            kind: None,
+            state: Some(state),
+            target: None,
+            diff: None,
+            output: None,
+            parent: None,
+            agent: None,
+        }))
     }
 }

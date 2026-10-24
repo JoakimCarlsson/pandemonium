@@ -1,43 +1,40 @@
-//! The agents the window conducts, over the Agent Client Protocol.
+//! The agent protocol client and the events an agent produces.
 //!
-//! An agent is another program: it is started in a worktree, told what the
-//! reader wants and left to work, and it reads files, writes them and asks
-//! permission through the editor that started it. This crate is that seam —
-//! the process, the protocol on its pipes, and what it says turned into
-//! [`Event`]s a window can draw. It knows nothing of panes, projects or
-//! sessions in the editor's sense; it speaks to one agent at a time.
-//!
-//! [`Agent`] is which agents there are and how each is run; [`Session`] is
-//! one of them running; a [`Request`] is what it asks the editor to do for
-//! it, and everything else here is what a session says.
+//! An agent is a program that speaks the Agent Client Protocol on its
+//! standard input and output. This crate knows the agents the app ships,
+//! finds out where each one stands on this machine, signs one in and
+//! installs one that is missing.
 
+mod account;
 mod agent;
 mod agent_registry;
 mod attachment;
-mod elicitation;
-mod launch;
-mod limits;
+mod background;
+mod chat;
+mod client;
+mod hooks;
+mod inquiry;
+mod install;
+mod login;
 mod mcp;
-mod process;
-mod registry;
-mod request;
-mod session;
+mod overlay;
+mod product;
+mod profile;
+mod standing;
 mod subagent;
-mod transport;
-mod update;
+mod tool_registry;
 
-pub use agent::{AGENTS, Agent, Source, agents, install};
-pub use agent_registry::{
-    Available, Download, Install, download as download_agent, fetch as fetch_agents,
+pub use account::{account, default_account, skill_names};
+pub use agent::{AGENTS, Agent, Definition, Source};
+pub use agent_registry::{Available, fetch as registry_agents};
+pub use chat::{
+    Background, Chat, Choice, Diff, Discovery, Event, Kind, Permission, Pick, PlanStep, Progress,
+    Setting, Slash, Tool, ToolState, Usage, Verdict, discover, skills,
 };
-pub use attachment::Attachment;
-pub use elicitation::{Alternative, Elicitation, Field, Given, Input, Inquiry, Link, Reply};
-pub use limits::{Limits, Window};
-pub use mcp::{McpServer, Offered, Reach, command_line, command_words, install_mcp};
-pub use registry::{Listing, search as search_registry};
-pub use request::{Answer, Exit, Request, Run};
-pub use session::{Conversation, Notify, Session};
-pub use update::{
-    About, Ask, Background, Choice, Command, Cost, Event, History, Kind, Knob, Location, Method,
-    Mode, Output, Pick, Setting, Status, Step, Stop, ToolCall, Usage, Voice, Way, Weight,
-};
+pub use hooks::{Hook, trust_hooks};
+pub use inquiry::{Alternative, Inquiry, Question, Reply};
+pub use install::{is_web_address, open as open_address};
+pub use mcp::{command_line, command_words, mcp_servers};
+pub use product::Product;
+pub use standing::{Login, Standing, Way};
+pub use tool_registry::{Listing, search as search_tools};

@@ -1,0 +1,30 @@
+# Bash: how files are told to be shell scripts, how they are edited and the
+# language server that reads them.
+
+name = "Bash"
+version = "0.1.0"
+description = "Bash and other shell scripts with the Bash language server."
+icon = "icon.svg"
+color = "#8fd17a"
+grammar = "bash"
+suffixes = ["sh", "bash", "zsh", "ksh", "bats", "ebuild", "eclass"]
+names = [".bashrc", ".bash_profile", ".bash_login", ".bash_logout", ".bash_aliases", ".profile", ".zshrc", ".zshenv", ".zprofile", ".zlogin", ".zlogout", ".kshrc", ".envrc", ".xinitrc", ".xprofile", "PKGBUILD", "APKBUILD"]
+aliases = ["sh", "shell", "shellscript", "zsh", "ksh", "console"]
+line_comment = "#"
+indent = 2
+pairs = ["()", "[]", "{}", "\"\"", "''", "``"]
+
+[grammar_file]
+url = "https://github.com/tree-sitter/tree-sitter-bash/releases/download/v0.25.1/tree-sitter-bash.wasm"
+sha256 = "8292919c88a0f7d3fb31d0cd0253ca5a9531bc1ede82b0537f2c63dd8abe6a7a"
+
+[server]
+id = "bash-language-server"
+language_id = "shellscript"
+command = "bash-language-server"
+args = ["start"]
+
+[server.install]
+kind = "npm"
+version = "5.8.1"
+packages = ["bash-language-server@5.8.1"]

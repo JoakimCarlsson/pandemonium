@@ -5,35 +5,37 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-pm-host.workspace = true
-arboard = { version = "3.6.1", features = ["wayland-data-control"] }
-base64 = "0.23.1"
-getrandom = "0.3"
-image = { version = "0.25.10", default-features = false, features = ["png"] }
-mermaid-svg = "0.7.0"
+arboard = { version = "3.6.1", default-features = false, features = ["image-data", "wayland-data-control"] }
+image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "ico", "jpeg", "png", "webp"] }
 pm-acp.workspace = true
-pm-core.workspace = true
-pm-dap.workspace = true
-pm-devcontainer.workspace = true
-pm-gfx.workspace = true
+pm-color.workspace = true
+pm-components.workspace = true
+pm-pages.workspace = true
+pm-git.workspace = true
+pm-input.workspace = true
+pm-renderer.workspace = true
+pm-state.workspace = true
+pm-store.workspace = true
 pm-text.workspace = true
+pm-theme.workspace = true
 pm-ui.workspace = true
-pm-vim.workspace = true
-pm-vt.workspace = true
-pollster = "1.0.1"
-pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
-rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
-semver = "1.0.28"
-serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.151"
-serde_norway = "0.9.42"
-similar = "3.2.0"
-toml = "1.1.6"
+rfd = "0.17.2"
 winit = "0.30.13"
+pm-protocol.workspace = true
+pm-client.workspace = true
+pm-ssh.workspace = true
+pm-server.workspace = true
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+pm-treesitter.workspace = true
+pm-lsp.workspace = true
+pm-editor.workspace = true
+pm-config.workspace = true
+pm-style.workspace = true
+resvg = "0.48.1"
+mermaid-svg = "0.7.0"
+latex-rust = "2.1.1"
+pm-transport.workspace = true
 
-[build-dependencies]
-winresource = "0.1.31"
-
-[target.'cfg(target_os = "linux")'.dependencies]
-wayland-backend = { version = "0.3", features = ["client_system"] }
-wayland-client = "0.31"
+[target.'cfg(target_os = "macos")'.dependencies]
+mac-notification-sys = "0.6.15"

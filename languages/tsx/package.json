@@ -1,0 +1,8 @@
+{
+  "name": "pandemonium-typescript-server",
+  "private": true,
+  "dependencies": {
+    "typescript": "6.0.3",
+    "typescript-language-server": "6.0.2"
+  }
+}
