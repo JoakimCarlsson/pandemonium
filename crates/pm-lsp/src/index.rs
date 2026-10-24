@@ -92,13 +92,9 @@ pub struct Index {
     pub languages: Vec<Listing>,
 }
 
-/// The tag of the repository this build reads the languages from: `nightly` for the nightly channel, and this build's own release otherwise.
+/// The tag of the repository this build reads the languages from: this build's own release.
 fn tag() -> String {
-    if pm_store::app_name().ends_with("nightly") {
-        "nightly".to_owned()
-    } else {
-        format!("v{}", env!("CARGO_PKG_VERSION"))
-    }
+    format!("v{}", env!("CARGO_PKG_VERSION"))
 }
 
 /// The `languages` folder of the checkout a debug build was built from, which it reads the languages from so that changes to them are seen before they are tagged.

@@ -6,22 +6,15 @@ use serde_json::Value;
 /// Where the project's releases are listed.
 const RELEASES: &str = "https://api.github.com/repos/JoakimCarlsson/pandemonium/releases";
 
-/// The tag the build made every night is published under, which names no version.
-const NIGHTLY: &str = "nightly";
-
-/// The newest release on `channel`: the latest one made for everyone for `stable`, the newest pre-release for `nightly`.
+/// The newest release on `channel`: the latest one made for everyone for `stable`, the newest pre-release for `preview`, which a client from before the channel was renamed asks for as `nightly`.
 pub(crate) fn latest(channel: &str) -> Response {
-    let found = if channel == NIGHTLY {
+    let found = if matches!(channel, "preview" | "nightly") {
         fetch(&format!("{RELEASES}?per_page=100")).map(|listed| {
             listed
                 .as_array()
                 .into_iter()
                 .flatten()
-                .find(|release| {
-                    flag(release, "prerelease")
-                        && !flag(release, "draft")
-                        && text(release, "tag_name") != Some(NIGHTLY)
-                })
+                .find(|release| flag(release, "prerelease") && !flag(release, "draft"))
                 .cloned()
                 .unwrap_or_default()
         })

@@ -20,8 +20,9 @@ pub enum Channel {
     /// The releases made for everyone.
     #[default]
     Stable,
-    /// The pre-releases.
-    Nightly,
+    /// The pre-releases; a setting written as `nightly` before the channel was renamed reads as this.
+    #[serde(alias = "nightly")]
+    Preview,
 }
 
 /// How the window opens, closes and keeps itself up to date.

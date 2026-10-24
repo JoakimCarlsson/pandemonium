@@ -91,9 +91,9 @@ impl Setting {
             Self::CheckUpdates => Control::Switch(window.general.check_updates),
             Self::OfferLanguages => Control::Switch(window.general.offer_languages),
             Self::Channel => Control::Choice(
-                &["Stable", "Nightly"],
+                &["Stable", "Preview"],
                 place_of(
-                    &[Channel::Stable, Channel::Nightly],
+                    &[Channel::Stable, Channel::Preview],
                     &window.general.channel,
                 ),
             ),
@@ -337,7 +337,7 @@ impl Setting {
             Self::CheckUpdates => window.general.check_updates ^= true,
             Self::OfferLanguages => window.general.offer_languages ^= true,
             Self::Channel => {
-                window.general.channel = [Channel::Stable, Channel::Nightly][option.min(1)];
+                window.general.channel = [Channel::Stable, Channel::Preview][option.min(1)];
             }
             Self::ThemeMode => {
                 let modes = [ThemeMode::System, ThemeMode::Light, ThemeMode::Dark];

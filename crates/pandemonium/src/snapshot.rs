@@ -1256,7 +1256,7 @@ fn file_history() -> WorkspaceState {
                 "Joakim Carlsson",
                 "2 weeks ago",
                 1_209_600,
-                "Add the nightly channel for pre-releases",
+                "Add the preview channel for pre-releases",
             ),
         ],
     )

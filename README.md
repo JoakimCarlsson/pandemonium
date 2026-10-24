@@ -152,20 +152,19 @@ against the release's `SHA256SUMS` and put the binary in `~/.local/bin`. The
 window also adds a launcher entry on Linux or `Pandemonium.app` in
 `~/Applications` on macOS.
 
-### Nightly
+### Preview
 
-Pre-releases and the nightly build are a separate channel, Pandemonium
-Nightly. It installs beside the stable app as `pandemonium-nightly`, with its
-own launcher entry, window class, server and data folder, so it never replaces
-or reads from the stable one. Without `PANDEMONIUM_VERSION` it installs the
-latest nightly build.
+Pre-releases are a separate channel, Pandemonium Preview. It installs beside
+the stable app as `pandemonium-preview`, with its own launcher entry, window
+class, server and data folder, so it never replaces or reads from the stable
+one. Without `PANDEMONIUM_VERSION` it installs the newest pre-release.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/JoakimCarlsson/pandemonium/main/install.sh | PANDEMONIUM_CHANNEL=nightly sh
+curl -fsSL https://raw.githubusercontent.com/JoakimCarlsson/pandemonium/main/install.sh | PANDEMONIUM_CHANNEL=preview sh
 ```
 
 ```powershell
-$env:PANDEMONIUM_CHANNEL = "nightly"; irm https://raw.githubusercontent.com/JoakimCarlsson/pandemonium/main/install.ps1 | iex
+$env:PANDEMONIUM_CHANNEL = "preview"; irm https://raw.githubusercontent.com/JoakimCarlsson/pandemonium/main/install.ps1 | iex
 ```
 
 ## Building

@@ -141,7 +141,7 @@ request with exactly one `response` carrying the same `id`.
 | `watch_folders`| `directories`: `[string]`                                                                       | `done`          |
 | `machine_settings`| none                                                                                          | `machine_settings` |
 | `save_machine_settings`| `settings`: `{git, history, agents, shell, languages, extensions}`                       | `done`          |
-| `latest_release`| `channel`: `stable` or `nightly`                                                                 | `latest_release` |
+| `latest_release`| `channel`: `stable` or `preview`                                                                 | `latest_release` |
 | `registry_agents`| none                                                                                             | `registry_agents`|
 | `search_tools` | `query`                                                                                          | `tool_listings` |
 | `accounts`     | none                                                                                             | `accounts`      |
@@ -432,7 +432,7 @@ and has no effect. Clients list again when notified of changes.
   project on another machine works by the same settings.
 - **`latest_release`:** the newest release of the app on `channel`, looked up
   on the project's releases: the latest made for everyone for `stable`, the
-  newest pre-release for `nightly`.
+  newest pre-release for `preview` (`nightly`, from a client older than the rename, is read as `preview`).
 - **`open_terminal`:** starts the user's shell (`$SHELL`, with `TERM=xterm-256color`)
   in a pseudo-terminal in `directory`, with a window of `columns` by `rows`. The
   connection is attached to the shell already. The shell keeps running when no
@@ -548,7 +548,7 @@ and has no effect. Clients list again when notified of changes.
   its language server last failed, and `server` what the machine has of its
   language server, in words. The list is `languages.json` read from
   `https://raw.githubusercontent.com/JoakimCarlsson/pandemonium/<tag>/languages`,
-  where the tag is the server's own release (`v<version>`) or `nightly`; a debug
+  where the tag is the server's own release (`v<version>`); a debug
   build reads the `languages` folder of its checkout instead, and
   `PANDEMONIUM_LANGUAGES` names another folder or address for either. It is fetched again only
   when it changed, and the copy kept is used when it cannot be fetched. The

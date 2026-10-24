@@ -40,7 +40,7 @@ impl Work {
     pub fn ask_release(&mut self, channel: pm_config::Channel) {
         let channel = match channel {
             pm_config::Channel::Stable => "stable",
-            pm_config::Channel::Nightly => "nightly",
+            pm_config::Channel::Preview => "preview",
         };
         self.ask(
             &None,

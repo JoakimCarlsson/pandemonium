@@ -557,7 +557,7 @@ pub enum Request {
     },
     /// The newest release of the app on `channel`, as its project publishes them.
     LatestRelease {
-        /// `stable` for the releases made for everyone, `nightly` for the pre-releases.
+        /// `stable` for the releases made for everyone, `preview` for the pre-releases; `nightly`, which a client from before the rename sends, means `preview`.
         channel: String,
     },
     /// The named logins and the one in use for each agent.

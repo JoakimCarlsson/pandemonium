@@ -5,10 +5,10 @@
 # and publishes the GitHub release once all of them have succeeded.
 #
 #   scripts/release.sh 0.2.0
-#   scripts/release.sh 0.3.0-rc.1     (a hyphen publishes a pre-release)
+#   scripts/release.sh 0.3.0-rc.1     (a hyphen publishes a preview release)
 #
 # Stable versions are cut from main, or from a release/X.Y branch for a patch.
-# Pre-releases are cut from main or from next.
+# Preview releases are cut from main or from next.
 
 set -eu
 
@@ -25,7 +25,7 @@ check_branch() {
     case "$version" in
         *-*)
             case "$branch" in main | next) return ;; esac
-            fail "pre-releases are cut from main or next, not $branch"
+            fail "preview releases are cut from main or next, not $branch"
             ;;
         *)
             case "$branch" in main | release/*) return ;; esac
