@@ -5,7 +5,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/JoakimCarlsson/pandemonium/main/install.sh | sh
 #
 # Environment:
-#   PANDEMONIUM_CHANNEL   stable or preview                  (default: stable)
+#   PANDEMONIUM_CHANNEL   stable or preview                  (default: stable; nightly is the old name of preview)
 #   PANDEMONIUM_VERSION   release to install, e.g. 0.2.0     (default: the latest release of the channel)
 #   PANDEMONIUM_COMPONENT editor or server                    (default: editor)
 #   PANDEMONIUM_BIN_DIR   where the binary goes              (default: ~/.local/bin)
@@ -15,6 +15,7 @@ set -eu
 
 REPO="JoakimCarlsson/pandemonium"
 CHANNEL="${PANDEMONIUM_CHANNEL:-stable}"
+[ "$CHANNEL" = "nightly" ] && CHANNEL="preview"
 VERSION="${PANDEMONIUM_VERSION:-}"
 COMPONENT="${PANDEMONIUM_COMPONENT:-editor}"
 BIN_DIR="${PANDEMONIUM_BIN_DIR:-$HOME/.local/bin}"
@@ -83,6 +84,67 @@ latest_preview_version() {
     tag="$(echo "$listing" | grep -o '"tag_name": *"[^"]*-[^"]*"' | head -n 1 | sed 's/.*: *"\(.*\)"/\1/')"
     [ -n "$tag" ] || fail "$REPO has no preview release yet"
     echo "${tag#v}"
+}
+
+# Prints the folder the desktop keeps an app's data folders in.
+data_root() {
+    case "$(uname -s)" in
+        Darwin) echo "$HOME/Library/Application Support" ;;
+        *) echo "${XDG_DATA_HOME:-$HOME/.local/share}" ;;
+    esac
+}
+
+# Stops the server that the nightly install left running, so that its data folder can be moved.
+stop_nightly_server() {
+    credential="$1/server.json"
+    [ -f "$credential" ] || return 0
+    pid="$(sed -n 's/.*"pid" *: *\([0-9][0-9]*\).*/\1/p' "$credential" | head -n 1)"
+    [ -n "$pid" ] || return 0
+    kill -TERM "$pid" 2>/dev/null || return 0
+    waited=0
+    while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 40 ]; do
+        sleep 0.1
+        waited=$((waited + 1))
+    done
+}
+
+# Moves what nightly kept in the data folder `$1` into the one preview already has, `$2`: the projects, sessions and the rest replace preview's, and the settings preview has already are left as they are.
+merge_nightly_data() {
+    for entry in "$1"/* "$1"/.[!.]*; do
+        [ -e "$entry" ] || continue
+        name="$(basename "$entry")"
+        case "$name" in
+            server.json) continue ;;
+            window-settings.json | editor-settings.json | machine-settings)
+                [ -e "$2/$name" ] && continue
+                ;;
+        esac
+        rm -rf "${2:?}/$name"
+        mv "$entry" "$2/$name"
+    done
+    rm -rf "$1"
+}
+
+# Moves a nightly install over to preview: its server is stopped, its data folder and so its settings, projects and sessions are carried across, and the files it installed are removed.
+migrate_nightly() {
+    [ "$CHANNEL" = "preview" ] || return 0
+    old="pandemonium-nightly"
+    root="$(data_root)"
+    [ -e "$BIN_DIR/$old" ] || [ -e "$BIN_DIR/$old-server" ] || [ -d "$root/$old" ] || [ -d "$MAC_APPS_DIR/Pandemonium Nightly.app" ] || return 0
+    echo "moving your nightly install over to preview"
+    stop_nightly_server "$root/$old"
+    if [ -d "$root/$old" ]; then
+        if [ -e "$root/$slug" ]; then
+            merge_nightly_data "$root/$old" "$root/$slug" && echo "moved your projects and sessions from $root/$old to $root/$slug"
+        else
+            mv "$root/$old" "$root/$slug" && echo "moved $root/$old to $root/$slug"
+        fi
+    fi
+    rm -f "$BIN_DIR/$old" "$BIN_DIR/$old-server" "$APPS_DIR/$old.desktop"
+    for icon in "$ICONS_DIR"/*/apps/"$old".png "$ICONS_DIR"/scalable/apps/"$old".svg; do
+        [ -e "$icon" ] && rm -f "$icon"
+    done
+    rm -rf "$MAC_APPS_DIR/Pandemonium Nightly.app"
 }
 
 # Checks the downloaded archive against the release's SHA256SUMS.
@@ -175,6 +237,7 @@ main() {
     curl --connect-timeout 10 --max-time 120 -fsSL "$base/SHA256SUMS" -o "$tmp/SHA256SUMS" \
         || fail "could not download SHA256SUMS for $VERSION"
     verify "$tmp" "$name.tar.gz"
+    migrate_nightly
 
     tar -xzf "$tmp/$name.tar.gz" -C "$tmp"
     mkdir -p "$BIN_DIR"
