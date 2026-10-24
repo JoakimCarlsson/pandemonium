@@ -5,8 +5,8 @@
 #   curl -fsSL https://raw.githubusercontent.com/JoakimCarlsson/pandemonium/main/install.sh | sh
 #
 # Environment:
-#   PANDEMONIUM_CHANNEL   stable or nightly                  (default: stable)
-#   PANDEMONIUM_VERSION   release to install, e.g. 0.2.0     (default: latest, or the nightly build for nightly)
+#   PANDEMONIUM_CHANNEL   stable or preview                  (default: stable)
+#   PANDEMONIUM_VERSION   release to install, e.g. 0.2.0     (default: the latest release of the channel)
 #   PANDEMONIUM_COMPONENT editor or server                    (default: editor)
 #   PANDEMONIUM_BIN_DIR   where the binary goes              (default: ~/.local/bin)
 #   PANDEMONIUM_APP_DIR   where the macOS app goes           (default: ~/Applications)
@@ -22,7 +22,7 @@ APPS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 ICONS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor"
 MAC_APPS_DIR="${PANDEMONIUM_APP_DIR:-$HOME/Applications}"
 
-# Sets the names the chosen channel installs under, so that nightly sits beside the stable app.
+# Sets the names the chosen channel installs under, so that preview sits beside the stable app.
 choose_channel() {
     case "$CHANNEL" in
         stable)
@@ -30,12 +30,12 @@ choose_channel() {
             label="Pandemonium"
             VERSION="${VERSION:-latest}"
             ;;
-        nightly)
-            slug="pandemonium-nightly"
-            label="Pandemonium Nightly"
-            VERSION="${VERSION:-nightly}"
+        preview)
+            slug="pandemonium-preview"
+            label="Pandemonium Preview"
+            VERSION="${VERSION:-latest}"
             ;;
-        *) fail "PANDEMONIUM_CHANNEL must be stable or nightly" ;;
+        *) fail "PANDEMONIUM_CHANNEL must be stable or preview" ;;
     esac
 }
 
@@ -73,6 +73,15 @@ latest_version() {
         || fail "could not reach the latest release of $REPO"
     tag="${url##*/tag/}"
     [ "$tag" != "$url" ] || fail "$REPO has no published release yet"
+    echo "${tag#v}"
+}
+
+# Prints the version the newest preview release is tagged with, without the leading v.
+latest_preview_version() {
+    listing="$(curl --connect-timeout 10 --max-time 120 -fsSL "https://api.github.com/repos/$REPO/releases?per_page=100")" \
+        || fail "could not reach the releases of $REPO"
+    tag="$(echo "$listing" | grep -o '"tag_name": *"[^"]*-[^"]*"' | head -n 1 | sed 's/.*: *"\(.*\)"/\1/')"
+    [ -n "$tag" ] || fail "$REPO has no preview release yet"
     echo "${tag#v}"
 }
 
@@ -143,16 +152,17 @@ main() {
     esac
 
     target="$(detect_target)"
-    [ "$VERSION" = "latest" ] && VERSION="$(latest_version)"
+    if [ "$VERSION" = "latest" ]; then
+        if [ "$CHANNEL" = "preview" ]; then
+            VERSION="$(latest_preview_version)"
+        else
+            VERSION="$(latest_version)"
+        fi
+    fi
     VERSION="${VERSION#v}"
 
-    if [ "$CHANNEL" = "nightly" ]; then
-        name="$binary-$target"
-    else
-        name="$binary-$VERSION-$target"
-    fi
+    name="$binary-$VERSION-$target"
     tag="v$VERSION"
-    [ "$VERSION" = "nightly" ] && tag="nightly"
     base="https://github.com/$REPO/releases/download/$tag"
     scratch="${XDG_CACHE_HOME:-$HOME/.cache}/scratch/pandemonium"
     mkdir -p "$scratch"

@@ -207,7 +207,7 @@ pub enum Response {
     },
     /// The newest release on a channel.
     LatestRelease {
-        /// Its version, as `0.14.0` or, for the nightly build, the date it was made; nothing when none could be found.
+        /// Its version, as `0.14.0` or `0.15.0-rc.1`; nothing when none could be found.
         version: Option<String>,
         /// The page it is published on.
         url: String,

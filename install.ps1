@@ -3,8 +3,8 @@
 #   irm https://raw.githubusercontent.com/JoakimCarlsson/pandemonium/main/install.ps1 | iex
 #
 # Environment:
-#   PANDEMONIUM_CHANNEL       stable or nightly               (default: stable)
-#   PANDEMONIUM_VERSION       release to install, e.g. 0.2.0   (default: latest, or the nightly build for nightly)
+#   PANDEMONIUM_CHANNEL       stable or preview               (default: stable)
+#   PANDEMONIUM_VERSION       release to install, e.g. 0.2.0   (default: the latest release of the channel)
 #   PANDEMONIUM_COMPONENT     editor or server                 (default: editor)
 #   PANDEMONIUM_INSTALL_DIR   where the binary goes            (default: %LOCALAPPDATA%\Programs\pandemonium)
 
@@ -16,12 +16,11 @@ $Target = 'x86_64-pc-windows-msvc'
 $Channel = if ($env:PANDEMONIUM_CHANNEL) { $env:PANDEMONIUM_CHANNEL } else { 'stable' }
 $Slug = switch ($Channel) {
     'stable' { 'pandemonium' }
-    'nightly' { 'pandemonium-nightly' }
-    default { throw 'PANDEMONIUM_CHANNEL must be stable or nightly' }
+    'preview' { 'pandemonium-preview' }
+    default { throw 'PANDEMONIUM_CHANNEL must be stable or preview' }
 }
-$Label = if ($Channel -eq 'nightly') { 'Pandemonium Nightly' } else { 'Pandemonium' }
-$DefaultVersion = if ($Channel -eq 'nightly') { 'nightly' } else { 'latest' }
-$Version = if ($env:PANDEMONIUM_VERSION) { $env:PANDEMONIUM_VERSION } else { $DefaultVersion }
+$Label = if ($Channel -eq 'preview') { 'Pandemonium Preview' } else { 'Pandemonium' }
+$Version = if ($env:PANDEMONIUM_VERSION) { $env:PANDEMONIUM_VERSION } else { 'latest' }
 $Component = if ($env:PANDEMONIUM_COMPONENT) { $env:PANDEMONIUM_COMPONENT } else { 'editor' }
 $InstallDir = if ($env:PANDEMONIUM_INSTALL_DIR) { $env:PANDEMONIUM_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA "Programs\$Slug" }
 $Binary = switch ($Component) {
@@ -41,6 +40,17 @@ function Get-LatestVersion {
     $path = $url.AbsolutePath
     if ($path -notmatch '/tag/v?([^/]+)$') { throw "$Repo has no published release yet" }
     $Matches[1]
+}
+
+<#
+.SYNOPSIS
+Returns the version the newest preview release is tagged with, without the leading v.
+#>
+function Get-LatestPreviewVersion {
+    $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases?per_page=100" -UseBasicParsing
+    $preview = $releases | Where-Object { $_.prerelease -and -not $_.draft } | Select-Object -First 1
+    if (-not $preview) { throw "$Repo has no preview release yet" }
+    $preview.tag_name
 }
 
 <#
@@ -79,11 +89,11 @@ function Add-StartMenuShortcut([string]$Exe) {
 }
 
 if (-not [Environment]::Is64BitOperatingSystem) { throw 'pandemonium needs 64-bit Windows' }
-if ($Version -eq 'latest') { $Version = Get-LatestVersion }
+if ($Version -eq 'latest') { $Version = if ($Channel -eq 'preview') { Get-LatestPreviewVersion } else { Get-LatestVersion } }
 $Version = $Version.TrimStart('v')
 
-$name = if ($Channel -eq 'nightly') { "$Binary-$Target" } else { "$Binary-$Version-$Target" }
-$tag = if ($Version -eq 'nightly') { 'nightly' } else { "v$Version" }
+$name = "$Binary-$Version-$Target"
+$tag = "v$Version"
 $base = "https://github.com/$Repo/releases/download/$tag"
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid())
 New-Item -ItemType Directory -Path $tmp | Out-Null
