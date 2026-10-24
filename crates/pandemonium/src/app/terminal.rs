@@ -19,7 +19,6 @@ impl App {
                 pm_pages::Screen::Workspace(state) => {
                     Some(pm_components::terminal::Look::of(state).font)
                 }
-                pm_pages::Screen::Onboarding(_) => None,
             })
             .unwrap_or(13.0)
     }

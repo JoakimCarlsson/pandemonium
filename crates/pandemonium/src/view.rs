@@ -66,11 +66,27 @@ enum Typing {
     Editor,
 }
 
+/// A session's read position, keyed by its machine and server identity.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct ReadReceipt {
+    /// The machine hosting the conversation.
+    pub host: Option<String>,
+    /// The server's session number.
+    pub number: u64,
+    /// The latest response update that was read.
+    pub through: u64,
+    /// Whether the reader left an explicit unread reminder.
+    pub marked: bool,
+}
+
 /// What the reader had on screen: the page, the panels and the prompt being written.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct View {
     /// The page the main area showed.
     page: Saved,
+    /// Read positions for conversations on all machines.
+    #[serde(default)]
+    receipts: Vec<ReadReceipt>,
     /// Whether the files the agent changed showed instead of the conversation.
     diff: bool,
     /// The files open in the session's tabs, in order.
@@ -148,6 +164,11 @@ fn open() -> bool {
 }
 
 impl View {
+    /// The saved acknowledgements for conversations, including remote ones.
+    pub(crate) fn receipts(&self) -> &[ReadReceipt] {
+        &self.receipts
+    }
+
     /// The view saved by the last run, if there is one.
     pub fn load() -> Option<Self> {
         serde_json::from_str(&pm_store::load_text(FILE)?).ok()
@@ -224,6 +245,20 @@ impl View {
             _ => None,
         };
         Self {
+            receipts: state
+                .sessions
+                .iter()
+                .enumerate()
+                .filter_map(|(index, session)| {
+                    let (host, number) = server_number(index)?;
+                    Some(ReadReceipt {
+                        host,
+                        number,
+                        through: session.read_through,
+                        marked: session.marked_unread,
+                    })
+                })
+                .collect(),
             page,
             files,
             shown: state.git.shown.filter(|_| with_files),
@@ -394,4 +429,35 @@ fn sorted(set: &std::collections::HashSet<String>) -> Vec<String> {
     let mut members: Vec<String> = set.iter().cloned().collect();
     members.sort();
     members
+}
+
+/// Coverage for persistent read acknowledgements and compatibility with older saved views.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Equal session numbers on different machines retain independent read positions and reminders.
+    #[test]
+    fn read_receipts_round_trip_by_machine_and_session() {
+        let mut state = WorkspaceState::sample();
+        state.sessions[0].updates = 12;
+        state.sessions[0].mark_read();
+        state.sessions[1].marked_unread = true;
+        let view = View::capture(&state, None, |index| match index {
+            0 => Some((None, 7)),
+            1 => Some((Some("ssh://build".into()), 7)),
+            _ => None,
+        });
+        let text = serde_json::to_string(&view).unwrap();
+        let restored: View = serde_json::from_str(&text).unwrap();
+        assert_eq!(restored.receipts(), view.receipts());
+        assert_eq!(restored.receipts()[0].through, 12);
+        assert_eq!(restored.receipts()[0].host, None);
+        assert!(restored.receipts()[1].marked);
+        assert_eq!(restored.receipts()[1].host.as_deref(), Some("ssh://build"));
+        let mut legacy = serde_json::to_value(&view).unwrap();
+        legacy.as_object_mut().unwrap().remove("receipts");
+        let restored: View = serde_json::from_value(legacy).unwrap();
+        assert!(restored.receipts().is_empty());
+    }
 }

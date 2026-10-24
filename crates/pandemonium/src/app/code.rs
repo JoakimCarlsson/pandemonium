@@ -101,7 +101,6 @@ impl App {
                 .and_then(|document| document.completion.as_ref())
                 .filter(|completion| !completion.loading)
                 .map(|completion| (completion.start, list_height(completion))),
-            Screen::Onboarding(_) => None,
         }) else {
             return;
         };
@@ -121,7 +120,6 @@ impl App {
                 .is_some_and(|completion| {
                     (completion.at.0 - at.0).abs() < 0.5 && (completion.at.1 - at.1).abs() < 0.5
                 }),
-            Screen::Onboarding(_) => true,
         });
         if !placed {
             self.model
@@ -138,7 +136,6 @@ impl App {
                     .as_ref()
                     .map(|signature| (document.field.caret(), signature_height(signature)))
             }),
-            Screen::Onboarding(_) => None,
         }) else {
             return;
         };
@@ -155,7 +152,6 @@ impl App {
                 (state.signature_at.0 - at.0).abs() < 0.5
                     && (state.signature_at.1 - at.1).abs() < 0.5
             }
-            Screen::Onboarding(_) => true,
         });
         if !placed {
             self.model
@@ -166,9 +162,7 @@ impl App {
     /// Saves the file shown once it has gone unchanged long enough with changes to save, when the editor saves by itself, and says when to look again while it has yet to.
     pub(super) fn editor_autosave_due(&mut self) -> Option<Instant> {
         let waiting = self.model.read(|screen| {
-            let Screen::Workspace(state) = screen else {
-                return None;
-            };
+            let Screen::Workspace(state) = screen;
             let document = state.shown_document()?;
             let dirty = state.editor.autosave && screen.shown_dirty();
             dirty.then(|| {
@@ -214,7 +208,6 @@ impl App {
                 let document = state.shown_document()?;
                 Some((path, document.version, document.field.caret()))
             }
-            Screen::Onboarding(_) => None,
         })?;
         if self.highlighted.as_ref() == Some(&here) {
             self.highlight_wait = None;
@@ -1164,7 +1157,6 @@ impl App {
                 .shown_document()
                 .and_then(|document| document.hover.as_ref())
                 .map(|card| card.offset),
-            Screen::Onboarding(_) => None,
         });
         let left = shown.is_some_and(|offset| word != Some(offset));
         if left && std::mem::take(&mut self.hover_entered) {
@@ -1212,7 +1204,6 @@ impl App {
             Screen::Workspace(state) => state
                 .shown_document()
                 .and_then(|document| document.reach.clone()),
-            Screen::Onboarding(_) => None,
         });
         if held != stretch {
             self.model
@@ -1226,7 +1217,6 @@ impl App {
             Screen::Workspace(state) => state
                 .shown_document()
                 .is_some_and(|document| document.reach.is_some()),
-            Screen::Onboarding(_) => false,
         })
     }
 

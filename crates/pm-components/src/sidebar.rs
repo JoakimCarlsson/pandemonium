@@ -84,7 +84,7 @@ fn listed_under<'a>(state: &'a WorkspaceState, session: &Session) -> Option<&'a 
         .map(String::as_str)
 }
 
-/// The mark of where a session stands: a turning ring, a tick or a dot.
+/// The session activity or attention indicator, with its meaning on hover.
 pub fn status_icon(status: Status) -> Node {
     let slot = node().styles([
         flex(),
@@ -93,10 +93,24 @@ pub fn status_icon(status: Status) -> Node {
         size(4),
         flex_none(),
     ]);
-    slot.child(match status {
+    slot.tooltip(match status {
+        Status::Working => "Working",
+        Status::Unread => "Unread",
+        Status::Error => "Unread error",
+        Status::NeedsInput => "Needs input",
+        Status::Idle => "Idle",
+    })
+    .child(match status {
         Status::Working => glyph(IconName::Loading, 3.5, Role::Muted).styles([animate_spin()]),
-        Status::Review => glyph(IconName::CheckCircle, 4.0, Role::Success),
-        Status::Done => node().styles([size(1.5), rounded_full(), bg(Role::Subtle)]),
+        Status::Unread => node().styles([size(2), rounded_full(), bg(Role::Accent)]),
+        Status::Error => glyph(IconName::Close, 3.5, Role::Danger),
+        Status::NeedsInput => glyph(IconName::Message, 3.5, Role::Warning),
+        Status::Idle => node().styles([
+            size(2),
+            rounded_full(),
+            border(),
+            border_color(Role::Subtle),
+        ]),
     })
 }
 

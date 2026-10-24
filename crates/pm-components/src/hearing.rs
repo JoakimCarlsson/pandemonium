@@ -13,6 +13,16 @@ impl Session {
         if !matches!(event, Event::Thought(_)) {
             self.stop_thinking();
         }
+        if matches!(
+            &event,
+            Event::Said(_)
+                | Event::Finished(_)
+                | Event::Failed(_)
+                | Event::SignedOut { .. }
+                | Event::Restored { .. }
+        ) {
+            self.updates += 1;
+        }
         match event {
             Event::Settings(settings) => self.settings = settings,
             Event::Commands(commands) => self.commands = commands,
@@ -127,7 +137,7 @@ impl Session {
         self.inquiry = None;
         self.echoes = 0;
         self.turn_started = None;
-        self.status = Status::Done;
+        self.status = Status::Idle;
     }
 
     /// Says that `count` files were put back as they were before the reader's turn `turn`, counted from nought.
@@ -341,13 +351,12 @@ impl Session {
             .take()
             .map(|started| worked(started.elapsed().as_secs()));
         if let Some(reason) = &error {
-            let reply = self.reply();
-            if !reply.text.is_empty() {
-                reply.text.push_str("\n\n");
-            }
-            reply
-                .text
-                .push_str(&format!("Something went wrong: {reason}"));
+            let separator = if self.reply().text.is_empty() {
+                ""
+            } else {
+                "\n\n"
+            };
+            self.say(&format!("{separator}Something went wrong: {reason}"));
         }
         let carried = if error.is_some() {
             Vec::new()
@@ -372,11 +381,8 @@ impl Session {
         }
         self.ask = None;
         self.inquiry = None;
-        self.status = if self.changes.is_empty() {
-            Status::Done
-        } else {
-            Status::Review
-        };
+        self.latest_error = error.is_some();
+        self.status = Status::Idle;
     }
 }
 

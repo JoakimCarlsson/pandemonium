@@ -1,17 +1,12 @@
-//! The pages of the window: what the reader sees on first launch, and the workspace they work in.
+//! The workspace page and its panes, screens and auxiliary windows.
 
 mod debugging;
 mod editing;
-mod onboarding;
 mod panes;
 mod screen;
 mod tasking;
 mod workspace;
 
-pub use onboarding::{
-    ADD, AgentStatus, BACK, BROWSE, CONTINUE, FINISH, LANGUAGES_SCROLL, OnboardingState, PATH,
-    SKIP, Step,
-};
 pub use screen::{Screen, picker_screen, screen, settings_screen};
 pub use workspace::{
     ADD_PROJECT, ATTACH, CHAT_SCROLL, DIFF_SCROLL, HISTORY, MENU_SCROLL, Outgoing, PLAN_SCROLL,

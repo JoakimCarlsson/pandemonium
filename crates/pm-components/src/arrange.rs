@@ -32,6 +32,9 @@ pub const SESSION_MENU_OPEN_FOLDER: FocusId = FocusId(7089);
 /// The row of a session's menu that asks again about the hooks its Codex holds back.
 pub const SESSION_MENU_REVIEW_HOOKS: FocusId = FocusId(7090);
 
+/// The row that toggles whether the session has been read.
+pub const SESSION_MENU_READ: FocusId = FocusId(7103);
+
 /// The menu open over a session, and where.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SessionMenu {
@@ -64,6 +67,7 @@ pub struct ProjectDrag {
 /// Whether `id` names the row of a session's menu.
 pub fn is_session_menu_item(id: FocusId) -> bool {
     [
+        SESSION_MENU_READ,
         SESSION_MENU_CLOSE,
         SESSION_MENU_COPY_PATH,
         SESSION_MENU_COPY_BRANCH,
@@ -144,6 +148,16 @@ impl WorkspaceState {
             return self;
         };
         match row {
+            SESSION_MENU_READ => {
+                let held = &mut self.sessions[open.session];
+                if held.unread() {
+                    held.mark_read();
+                } else {
+                    held.marked_unread = true;
+                    held.hold_unread = self.page == Page::Session(open.session);
+                }
+                self
+            }
             SESSION_MENU_COPY_PATH => {
                 let text = held.directory.clone();
                 self.outbox.push(Outgoing::Copy { text });

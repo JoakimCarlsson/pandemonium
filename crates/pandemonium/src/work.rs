@@ -376,6 +376,8 @@ pub struct Work {
     unclaimed: HashMap<(Host, u64), Vec<u8>>,
     /// Where the window was left, to be finished once the server that holds its session has listed its sessions.
     resume: Option<View>,
+    /// Saved read positions awaiting the sessions listed by each machine.
+    read_receipts: Vec<crate::view::ReadReceipt>,
     /// How many threads have yet to report.
     pending: Cell<usize>,
     /// The grammars asked for of each machine, by the name they were asked by, so each is asked for once.
@@ -413,6 +415,7 @@ impl Work {
                 .map(|agent| agent.id)
                 .collect(),
             resume: None,
+            read_receipts: Vec::new(),
             pending: Cell::new(0),
             grammars: HashSet::new(),
             palette: picture::Palette::default(),
@@ -489,6 +492,7 @@ impl Work {
 
     /// Has the window finish opening on `view` once the sessions it needs are listed.
     pub fn resume(&mut self, view: View) {
+        self.read_receipts = view.receipts().to_vec();
         self.resume = Some(view);
     }
 
@@ -577,9 +581,9 @@ impl Work {
         );
     }
 
-    /// Asks each agent on this machine what it lets the reader change, once the workspace is showing.
-    pub fn discover(&mut self, model: &State<Screen>) {
-        if self.discovered || !model.get().is_workspace() {
+    /// Asks each agent on this machine what it lets the reader change, once per launch.
+    pub fn discover(&mut self) {
+        if self.discovered {
             return;
         }
         self.discovered = true;
@@ -2249,6 +2253,19 @@ impl Work {
             added = mapping;
         });
         for (position, number) in added {
+            if let Some(receipt) = self
+                .read_receipts
+                .iter()
+                .find(|receipt| receipt.host == *origin && receipt.number == number)
+            {
+                model.update(|screen| {
+                    let Screen::Workspace(state) = screen;
+                    let session = &mut state.sessions[position];
+                    session.read_through = receipt.through;
+                    session.marked_unread = receipt.marked;
+                    session.hold_unread = receipt.marked;
+                });
+            }
             self.forgotten.remove(&(origin.clone(), number));
             self.numbers.insert(position, (origin.clone(), number));
             self.positions.insert((origin.clone(), number), position);
@@ -2275,9 +2292,8 @@ impl Work {
             .session()
             .and_then(|key| self.positions.get(&key).copied());
         model.update(|screen| {
-            if let Screen::Workspace(state) = screen {
-                *state = view.reopen(std::mem::replace(state, WorkspaceState::new(&[])), position);
-            }
+            let Screen::Workspace(state) = screen;
+            *state = view.reopen(std::mem::replace(state, WorkspaceState::new(&[])), position);
         });
     }
 
@@ -2292,9 +2308,8 @@ impl Work {
     /// Replaces the workspace with what `change` makes of it, while the workspace is showing.
     fn in_workspace(model: &State<Screen>, change: impl FnOnce(WorkspaceState) -> WorkspaceState) {
         model.update(|screen| {
-            if let Screen::Workspace(state) = screen {
-                *state = change(std::mem::replace(state, WorkspaceState::new(&[])));
-            }
+            let Screen::Workspace(state) = screen;
+            *state = change(std::mem::replace(state, WorkspaceState::new(&[])));
         });
     }
 
@@ -2312,9 +2327,7 @@ impl Work {
     /// Where the session at `session` works.
     fn session_of(model: &State<Screen>, session: usize) -> Option<Placement> {
         let screen = model.get();
-        let Screen::Workspace(state) = &screen else {
-            return None;
-        };
+        let Screen::Workspace(state) = &screen;
         let held = state.sessions.get(session)?;
         let project = state.projects.get(held.project)?;
         Some(Placement {

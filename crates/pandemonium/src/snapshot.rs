@@ -25,10 +25,7 @@ use pm_components::state::{
 };
 use pm_components::tree_actions::{TREE_NEW_FOLDER, TreeTarget};
 use pm_input::{FocusId, PointerState};
-use pm_pages::{
-    ADD_PROJECT, BROWSE, HISTORY, OnboardingState, PROMPT, SEND, Screen, Step, TAB_DIFF, TERMINAL,
-    WorkspaceState,
-};
+use pm_pages::{ADD_PROJECT, HISTORY, PROMPT, SEND, Screen, TAB_DIFF, TERMINAL, WorkspaceState};
 use pm_renderer::{DrawList, Renderer};
 use pm_text::Edit;
 use pm_theme::{Appearance, default_family};
@@ -90,10 +87,10 @@ pub const SETTINGS_SHOTS: [(&str, Section); 23] = [
 /// Which screen a snapshot shows.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Shot {
-    /// A step of onboarding.
-    Onboarding(Step),
     /// The workspace on its first session.
     Workspace,
+    /// Every workspace attention state and the session menu, on an unread error when true.
+    SessionStates(bool),
     /// A forty-line prompt scrolled part way through its contents.
     ComposerLong,
     /// A session whose account needs signing in again.
@@ -162,7 +159,7 @@ pub enum Shot {
     OverviewChangeMenu,
     /// The workspace with the terminal open and the sidebar, the review panel and the terminal dragged to other sizes.
     Resized,
-    /// The workspace of the projects onboarding added, with no sessions.
+    /// A workspace with projects and no sessions.
     New,
     /// The workspace with no project at all.
     Empty,
@@ -194,6 +191,8 @@ pub enum Shot {
     Slashed,
     /// The page for starting work with Codex and a dollar sign being typed.
     Dollar,
+    /// A Codex conversation with messages and its skills menu open.
+    DollarSession,
     /// The page for starting work with the list of models scrolled to its end.
     Scrolling,
     /// The page for starting work with the menu of where it is done open.
@@ -278,8 +277,6 @@ pub enum Shot {
     Cloning,
     /// The folder picker's window on the folders of the machine, to open one as a project.
     Folders,
-    /// The folder picker's window opened from the project step of onboarding.
-    FoldersOnboarding,
     /// A Rust file being written: highlighted, with what the language server finds wrong under it and the brackets at the caret paired.
     Code,
     /// A file written in a language that is not installed, with the offer to install it above its lines.
@@ -1735,7 +1732,7 @@ test result: \x1b[32mok\x1b[0m. 9 passed; 0 failed\r\n\
     state
 }
 
-/// The projects a first launch has after onboarding.
+/// The projects shown in the sample workspace.
 fn projects() -> Vec<Project> {
     ["~/code/pandemonium", "~/code/voxel"]
         .into_iter()
@@ -1746,7 +1743,7 @@ fn projects() -> Vec<Project> {
 impl Shot {
     /// Whether this snapshot shows the folder picker's window instead of the main one.
     fn in_picker_window(self) -> bool {
-        matches!(self, Self::Folders | Self::FoldersOnboarding)
+        matches!(self, Self::Folders)
     }
 
     /// Whether this snapshot shows the settings window instead of the main one.
@@ -1813,12 +1810,6 @@ impl Shot {
     fn screen(self) -> Screen {
         let workspace = workspace_sample;
         match self {
-            Self::Onboarding(Step::Languages) => Screen::Onboarding(OnboardingState {
-                step: Step::Languages,
-                languages: sample_languages(),
-                chosen: vec!["rust".to_owned(), "typescript".to_owned(), "toml".to_owned()],
-                ..OnboardingState::default()
-            }),
             Self::Code => Screen::Workspace(code()),
             Self::LanguageOffer => Screen::Workspace(language_offer()),
             Self::MarkdownPreview => Screen::Workspace(previewed("README.md")),
@@ -1974,18 +1965,6 @@ impl Shot {
                         sample_extension(false),
                     ),
             ),
-            Self::Onboarding(step) => Screen::Onboarding(OnboardingState {
-                step,
-                projects: if step == Step::Project {
-                    ["pandemonium", "voxel"]
-                        .into_iter()
-                        .filter_map(Project::from_source)
-                        .collect()
-                } else {
-                    Vec::new()
-                },
-                ..OnboardingState::default()
-            }),
             Self::ComposerLong => {
                 let prompt = (1..=40).map(|line| format!("Prompt line {line}\n")).collect();
                 Screen::Workspace(
@@ -2001,6 +1980,28 @@ impl Shot {
                     reason: "Failed to authenticate: OAuth session expired and could not be refreshed".to_owned(),
                     account: Some("work@example.com".to_owned()),
                 }))
+            }
+            Self::SessionStates(unread) => {
+                let mut state = workspace();
+                for session in &mut state.sessions {
+                    session.project = 0;
+                    session.status = pm_components::sample::Status::Idle;
+                    session.mark_read();
+                }
+                state.sessions[0].title = "Idle session".into();
+                state.sessions[1].title = "Agent working".into();
+                state.sessions[1].status = pm_components::sample::Status::Working;
+                state.sessions[2].title = "Unread response".into();
+                state.sessions[2].marked_unread = true;
+                state.sessions[3].title = "Unread error".into();
+                state = state.heard(3, Event::Failed("Connection lost".into()));
+                state.sessions[4].title = "Needs input".into();
+                state = state.heard(4, Event::Ask(Permission {
+                    ticket: 1, title: "Allow command?".into(), command: None, plan: None, choices: Vec::new(),
+                }));
+                let selected = if unread { 3 } else { 0 };
+                state = state.after(FocusId(pm_components::state::SESSION_BASE + selected as u64));
+                Screen::Workspace(state.with_session_menu(selected, (220.0, 160.0)))
             }
             Self::Workspace | Self::Selecting => Screen::Workspace(workspace()),
             Self::SessionAccount => {
@@ -2131,7 +2132,7 @@ impl Shot {
                     .edited(PROMPT, Edit::Compose("¨".to_owned())),
             ),
             Self::New => Screen::Workspace(WorkspaceState::new(&projects())),
-            Self::Empty => Screen::Workspace(WorkspaceState::new(&[])),
+            Self::Empty => Screen::default(),
             Self::History | Self::HistoryScrolled => {
                 let mut state = workspace().after(HISTORY);
                 let template = state.sessions[0].clone();
@@ -2185,11 +2186,21 @@ impl Shot {
                     .edited(PROMPT, Edit::Paste("/c".to_owned()))
                     .after(FocusId(4401)),
             ),
-            Self::Dollar => Screen::Workspace(
-                welcome()
-                    .after(FocusId(AGENT_BASE + 1))
-                    .edited(PROMPT, Edit::Paste("$r".to_owned())),
-            ),
+            Self::Dollar | Self::DollarSession => {
+                let mut state = if matches!(self, Self::DollarSession) {
+                    let mut state = WorkspaceState::sample();
+                    state.sessions[0].agent = 1;
+                    state
+                } else {
+                    welcome().after(FocusId(AGENT_BASE + 1))
+                };
+                state.sync_context();
+                state = state.with_skills(1, 0, vec![
+                    Slash { name: "review".to_owned(), description: "Review the changes in this project".to_owned() },
+                    Slash { name: "release-notes".to_owned(), description: "Write release notes from recent commits".to_owned() },
+                ], Default::default());
+                Screen::Workspace(state.after(pm_components::state::SKILL_BUTTON))
+            }
             Self::Scrolling => {
                 Screen::Workspace(welcome().after(FocusId(4200)).scrolled_menu(1000.0, 1000.0))
             }
@@ -2365,14 +2376,6 @@ impl Shot {
                     .after(ADD_PROJECT)
                     .after(ADDER_BROWSE)
                     .with_folders("~", sample_folders()),
-            ),
-            Self::FoldersOnboarding => Screen::Onboarding(
-                OnboardingState {
-                    step: Step::Project,
-                    ..OnboardingState::default()
-                }
-                .after(BROWSE)
-                .with_folders("~", sample_folders()),
             ),
             Self::Cloning => Screen::Workspace(
                 welcome()

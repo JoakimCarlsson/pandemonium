@@ -6,7 +6,7 @@ use pm_ui::{Node, node};
 
 use pm_components::arrange::{
     PROJECT_MENU_NEW, PROJECT_MENU_REMOVE, ProjectMenu, SESSION_MENU_CLOSE,
-    SESSION_MENU_COPY_BRANCH, SESSION_MENU_COPY_PATH, SESSION_MENU_OPEN_FOLDER,
+    SESSION_MENU_COPY_BRANCH, SESSION_MENU_COPY_PATH, SESSION_MENU_OPEN_FOLDER, SESSION_MENU_READ,
     SESSION_MENU_RENAME, SESSION_MENU_REVIEW_HOOKS, SessionMenu,
 };
 use pm_components::context_menu::{editor_menu, field_menu};
@@ -161,7 +161,7 @@ fn project_menu(open: ProjectMenu) -> Node {
         .build()
 }
 
-/// The menu of a session: copy where it works, rename it, show its folder, review the hooks its Codex holds back when it holds some back, or archive it.
+/// The session menu: its checkout, title, hooks, read status and archive action.
 fn session_menu(state: &WorkspaceState, open: SessionMenu) -> Node {
     let held = state.sessions.get(open.session);
     let on_branch = held.is_some_and(|held| held.on_branch);
@@ -185,8 +185,19 @@ fn session_menu(state: &WorkspaceState, open: SessionMenu) -> Node {
         true => menu.item("Review hooks", None, SESSION_MENU_REVIEW_HOOKS, false),
         false => menu,
     };
-    menu.item("Archive", None, SESSION_MENU_CLOSE, false)
-        .build()
+    menu.item(
+        if held.is_some_and(|held| held.unread()) {
+            "Mark as read"
+        } else {
+            "Mark as unread"
+        },
+        None,
+        SESSION_MENU_READ,
+        false,
+    )
+    .separator()
+    .item("Archive", None, SESSION_MENU_CLOSE, false)
+    .build()
 }
 
 /// What the settings window, `width` logical pixels across, shows while settings are open: the title bar that closes it, the sections and the one chosen, the menu of a server and the menu of a field of the window.

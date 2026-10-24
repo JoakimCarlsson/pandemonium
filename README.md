@@ -73,11 +73,11 @@ Limits:
 
 ## Extensions and languages
 
-Nothing language-specific ships in the binary. Languages are extensions: you
-pick them on first launch, or later on the Extensions page in the sidebar,
-and the server installs each one
-on the machine that holds the project: its tree-sitter grammar, its queries
-and its language server. A file of an installed language gets syntax
+Nothing language-specific ships in the binary. Languages are extensions: install
+them when opening a file that needs one, or from Settings or the Extensions
+page in the sidebar. The server installs each one on the machine that holds
+the project: its tree-sitter grammar, its queries and its language server.
+A file of an installed language gets syntax
 highlighting, indentation, bracket pairs and an outline in the window, and
 completion, diagnostics and hover from its language server.
 
@@ -175,6 +175,7 @@ happy with. Agents are fetched with `npx` on first run, so Node helps too.
 ```sh
 git clone https://github.com/JoakimCarlsson/pandemonium.git
 cd pandemonium
+export CARGO_TARGET_DIR=build
 make run
 ```
 
@@ -186,33 +187,34 @@ make lint                    # cargo clippy --workspace --all-targets -- -D warn
 make install                 # build this checkout and install it as pandemonium-preview
 make install-server          # build and install only pandemonium-server
 make release VERSION=0.2.0   # bump, tag and push; CI builds and publishes
+make languages              # regenerate the language index after changing a language folder
+make extension-sample       # build the sample extension into build/extensions/hello
 ```
 
-`pandemonium --snapshot <path>` draws one frame to a PNG without opening a
-window; see `crates/pandemonium/src/snapshot.rs`.
+Build output and snapshots go in the git-ignored `build/` directory. For direct
+Cargo commands and make targets, set `CARGO_TARGET_DIR=build`.
 
-## Layout
+The binary draws one frame to a PNG without opening a window:
 
-One crate per layer, each depending only on the layers below it. The window
-implements none of them; it wires them together.
+```text
+pandemonium --snapshot <path> [elapsed_ms [x y [focus [light|dark [screen]]]]]
+```
 
-| Layer      | Crates                                                                                                  |
-| ---------- | ------------------------------------------------------------------------------------------------------- |
-| Styling    | `pm-primitives`, `pm-color`, `pm-layout`, `pm-typography`, `pm-decoration`, `pm-animation`, `pm-style`  |
-| Drawing    | `pm-shaders`, `pm-renderer` (the only wgpu code), `pm-text`, `pm-icon`, `pm-theme`                      |
-| Interface  | `pm-input`, `pm-state`, `pm-ui`                                                                         |
-| Components | `pm-components`: reusable controls and the sections the workspace is drawn from                         |
-| Pages      | `pm-pages`: onboarding, the workspace and the screen that switches between them                         |
-| Protocol   | `pm-protocol`: the messages between clients and a server                                                |
-| Server     | `pm-server`: the `pandemonium-server` program                                                           |
-| Client     | `pm-client` (one reconnecting connection, and starting the local server), `pm-ssh` (ssh transport)      |
-| Code       | `pm-buffer` (text and places), `pm-treesitter` (grammars, highlighting), `pm-lsp` (languages, language servers), `pm-editor` (editing a file) |
-| Domain     | `pm-acp` (agents over ACP), `pm-git`, `pm-store` (persistence)                                          |
-| Binary     | `pandemonium`: the event loop, the window and the threads that talk to the servers                      |
+For example, after `CARGO_TARGET_DIR=build cargo build -p pandemonium`:
 
-Crates for later work, each holding only a doc comment so far: `pm-session`,
-`pm-review`, `pm-terminal`, `pm-config`, `pm-markdown`, `pm-mcp`, `pm-policy`,
-`pm-plugin`, `pm-plugin-api`, `pm-wasm` and `pm-agent-library`.
+```sh
+build/debug/pandemonium --snapshot build/workspace.png 0 0 0 0 dark workspace
+```
+
+Screen names are selected in `crates/pandemonium/src/main.rs`; their states are
+built in `crates/pandemonium/src/snapshot.rs`. Settings sections have
+`settings-<section>` shots and `settings-<section>-narrow` shots at 640 by 420.
+
+## Architecture
+
+See [docs/architecture.md](docs/architecture.md) for the client/server model,
+transport options and crate responsibilities. See [AGENTS.md](AGENTS.md) for
+repository rules and verification requirements.
 
 ## License
 

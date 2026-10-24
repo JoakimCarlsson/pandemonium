@@ -181,7 +181,6 @@ impl Work {
         let found = debugs.into_iter().find_map(|info| {
             let session = model.read(|screen| match screen {
                 Screen::Workspace(state) => state.session_in(host, &info.directory),
-                Screen::Onboarding(_) => None,
             })?;
             Some((session, info.debug))
         });

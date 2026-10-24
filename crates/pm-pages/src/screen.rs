@@ -1,11 +1,10 @@
-//! The screen the window shows: onboarding until it is finished, the workspace after.
+//! The workspace screen and the actions and auxiliary windows it exposes.
 
 use pm_acp::Event;
 use pm_input::FocusId;
 use pm_text::{Edit, Field, Shaper};
 use pm_ui::Node;
 
-use crate::onboarding::{ADD, AgentStatus, OnboardingState, PATH, onboarding};
 use crate::workspace::{Outgoing, WorkspaceState, workspace};
 use pm_components::Window;
 use pm_components::context_menu::{ContextMenu, field_menu};
@@ -18,23 +17,20 @@ use pm_components::tree_actions::TreeTarget;
 
 /// Which screen is showing, with what it remembers.
 #[derive(Clone, Debug, PartialEq)]
-#[allow(clippy::large_enum_variant)]
 pub enum Screen {
-    /// Adding a project and connecting agents.
-    Onboarding(OnboardingState),
     /// The projects, their sessions and the page being read.
     Workspace(WorkspaceState),
 }
 
 impl Default for Screen {
-    /// The first step of onboarding.
+    /// An empty workspace, ready to add a project.
     fn default() -> Self {
-        Self::Onboarding(OnboardingState::default())
+        Self::opened(&[])
     }
 }
 
 impl Screen {
-    /// The workspace of the projects at `paths`, for a launch after the app was set up.
+    /// The workspace of the projects at `paths`, including an empty first launch.
     pub fn opened(paths: &[String]) -> Self {
         let projects: Vec<Project> = paths
             .iter()
@@ -46,7 +42,6 @@ impl Screen {
     /// The screen listing `agents` as the ones that can be started.
     pub fn with_agent_list(self, agents: Vec<pm_protocol::AgentServer>) -> Self {
         match self {
-            Self::Onboarding(state) => Self::Onboarding(state.listing(&agents)),
             Self::Workspace(state) => Self::Workspace(state.with_agent_servers(agents)),
         }
     }
@@ -55,7 +50,6 @@ impl Screen {
     pub fn with_choices(self, choices: Vec<(String, String, String)>) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_choices(choices)),
-            onboarding => onboarding,
         }
     }
 
@@ -63,14 +57,12 @@ impl Screen {
     pub fn choices(&self) -> Option<&[(String, String, String)]> {
         match self {
             Self::Workspace(state) => Some(&state.choices),
-            Self::Onboarding(_) => None,
         }
     }
 
-    /// The paths of the projects of the workspace, or nothing while onboarding is showing.
+    /// The paths of the projects in the workspace.
     pub fn project_paths(&self) -> Option<Vec<String>> {
         match self {
-            Self::Onboarding(_) => None,
             Self::Workspace(state) => Some(
                 state
                     .projects
@@ -81,18 +73,9 @@ impl Screen {
         }
     }
 
-    /// The screen after `action` was pressed; finishing onboarding opens the
-    /// workspace with the projects it added.
+    /// The screen after `action` was pressed.
     pub fn after(self, action: FocusId) -> Self {
         match self {
-            Self::Onboarding(state) => {
-                let state = state.after(action);
-                if state.finished {
-                    Self::Workspace(WorkspaceState::new(&state.projects))
-                } else {
-                    Self::Onboarding(state)
-                }
-            }
             Self::Workspace(state) => Self::Workspace(state.after(action)),
         }
     }
@@ -100,7 +83,6 @@ impl Screen {
     /// The screen after `edit` is made to the field named `id`.
     pub fn edited(self, id: FocusId, edit: Edit) -> Self {
         match self {
-            Self::Onboarding(state) => Self::Onboarding(state.edited(id, edit)),
             Self::Workspace(state) => Self::Workspace(state.edited(id, edit)),
         }
     }
@@ -108,28 +90,18 @@ impl Screen {
     /// The text field `id` names, if the screen has one by that name.
     pub fn field(&self, id: FocusId) -> Option<&Field> {
         match self {
-            Self::Onboarding(state) => state.field(id),
             Self::Workspace(state) => state.field(id),
         }
     }
 
     /// Whether `id` names a text field of either screen.
     pub fn is_field(id: FocusId) -> bool {
-        OnboardingState::is_field(id) || WorkspaceState::is_field(id)
-    }
-
-    /// Which agent the button `id` acts on, if it is one of onboarding's.
-    pub fn agent_of(id: FocusId) -> Option<usize> {
-        OnboardingState::agent_of(id)
+        WorkspaceState::is_field(id)
     }
 
     /// What pressing Enter inside the field `id` presses.
     pub fn submit_of(id: FocusId) -> FocusId {
-        if id == PATH {
-            ADD
-        } else {
-            WorkspaceState::submit_of(id)
-        }
+        WorkspaceState::submit_of(id)
     }
 
     /// What pressing Control or Command with Enter inside the field `id` presses, when it presses something of its own.
@@ -146,7 +118,6 @@ impl Screen {
     pub fn settings_more_of(&self, id: FocusId) -> Option<usize> {
         match self {
             Self::Workspace(state) => state.settings_more_of(id),
-            Self::Onboarding(_) => None,
         }
     }
 
@@ -154,7 +125,6 @@ impl Screen {
     pub fn with_settings_menu(self, index: usize, at: (f32, f32)) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_settings_menu(index, at)),
-            other => other,
         }
     }
 
@@ -167,7 +137,6 @@ impl Screen {
     pub fn without_settings(self) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.without_settings()),
-            other => other,
         }
     }
 
@@ -175,14 +144,12 @@ impl Screen {
     pub fn adder_enter(&self) -> Option<FocusId> {
         match self {
             Self::Workspace(state) => state.adder_enter(),
-            Self::Onboarding(_) => None,
         }
     }
 
     /// The folder picker, while it is open.
     pub fn folder_picker(&self) -> Option<&FolderPicker> {
         match self {
-            Self::Onboarding(state) => state.folder_picker.as_ref(),
             Self::Workspace(state) => state.folder_picker.as_ref(),
         }
     }
@@ -205,7 +172,6 @@ impl Screen {
     /// The screen with the folder picker put away, which is what closing its window does.
     pub fn without_folder_picker(self) -> Self {
         match self {
-            Self::Onboarding(state) => Self::Onboarding(state.without_folder_picker()),
             Self::Workspace(state) => Self::Workspace(state.without_folder_picker()),
         }
     }
@@ -217,7 +183,6 @@ impl Screen {
         listed: Result<(String, Vec<String>), String>,
     ) -> Self {
         match self {
-            Self::Onboarding(state) => Self::Onboarding(state.with_folders(requested, listed)),
             Self::Workspace(state) => Self::Workspace(state.with_folders(requested, listed)),
         }
     }
@@ -226,24 +191,13 @@ impl Screen {
     /// logical pixels, downwards when positive, with `room` pixels to scroll.
     pub fn scrolled_folder_picker(self, delta: f32, room: f32) -> Self {
         match self {
-            Self::Onboarding(state) => Self::Onboarding(state.scrolled_folder_picker(delta, room)),
             Self::Workspace(state) => Self::Workspace(state.scrolled_folder_picker(delta, room)),
-        }
-    }
-
-    /// The screen after the onboarding language list is scrolled by `delta`
-    /// logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_languages(self, delta: f32, room: f32) -> Self {
-        match self {
-            Self::Onboarding(state) => Self::Onboarding(state.scrolled_languages(delta, room)),
-            workspace => workspace,
         }
     }
 
     /// The menu open over a field, and where, if one is.
     pub fn menu(&self) -> Option<ContextMenu> {
         match self {
-            Self::Onboarding(state) => state.menu,
             Self::Workspace(state) => state.menu,
         }
     }
@@ -251,7 +205,6 @@ impl Screen {
     /// The screen with a menu open over the field `field` at `at`.
     pub fn with_menu(self, field: FocusId, at: (f32, f32)) -> Self {
         match self {
-            Self::Onboarding(state) => Self::Onboarding(state.with_menu(field, at)),
             Self::Workspace(state) => Self::Workspace(state.with_menu(field, at)),
         }
     }
@@ -260,7 +213,6 @@ impl Screen {
     pub fn with_project_menu(self, project: usize, at: (f32, f32)) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_project_menu(project, at)),
-            onboarding => onboarding,
         }
     }
 
@@ -268,7 +220,6 @@ impl Screen {
     pub fn more_button_of(&self, id: FocusId) -> Option<usize> {
         match self {
             Self::Workspace(state) => state.more_button_of(id),
-            Self::Onboarding(_) => None,
         }
     }
 
@@ -276,7 +227,6 @@ impl Screen {
     pub fn header_of(&self, id: FocusId) -> Option<usize> {
         match self {
             Self::Workspace(state) => state.header_of(id),
-            Self::Onboarding(_) => None,
         }
     }
 
@@ -284,7 +234,6 @@ impl Screen {
     pub fn project_at(&self, id: FocusId) -> Option<usize> {
         match self {
             Self::Workspace(state) => state.project_at(id),
-            Self::Onboarding(_) => None,
         }
     }
 
@@ -292,7 +241,6 @@ impl Screen {
     pub fn dragged_over(self, from: usize, over: usize, at: (f32, f32)) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.dragged_over(from, over, at)),
-            onboarding => onboarding,
         }
     }
 
@@ -300,7 +248,6 @@ impl Screen {
     pub fn dropped(self) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.dropped()),
-            onboarding => onboarding,
         }
     }
 
@@ -308,7 +255,6 @@ impl Screen {
     pub fn with_pane_menu(self, at: (f32, f32)) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_pane_menu(at)),
-            onboarding => onboarding,
         }
     }
 
@@ -316,7 +262,6 @@ impl Screen {
     pub fn pane_tab_of(&self, id: FocusId) -> Option<pm_components::panes::Item> {
         match self {
             Self::Workspace(state) => state.pane_tab_of(id),
-            Self::Onboarding(_) => None,
         }
     }
 
@@ -329,7 +274,6 @@ impl Screen {
     ) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.pane_dragged(item, over, at)),
-            onboarding => onboarding,
         }
     }
 
@@ -337,7 +281,6 @@ impl Screen {
     pub fn pane_dropped(self) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.pane_dropped()),
-            onboarding => onboarding,
         }
     }
 
@@ -345,7 +288,6 @@ impl Screen {
     pub fn scrolled_peek(self, index: usize, delta: f32, room: f32) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.scrolled_peek(index, delta, room)),
-            onboarding => onboarding,
         }
     }
 
@@ -358,7 +300,6 @@ impl Screen {
     pub fn session_row_of(&self, id: FocusId) -> Option<usize> {
         match self {
             Self::Workspace(state) => state.session_row_of(id),
-            Self::Onboarding(_) => None,
         }
     }
 
@@ -370,7 +311,6 @@ impl Screen {
             Self::Workspace(state) => {
                 Self::Workspace(state.with_message_menu(message, at, selected))
             }
-            onboarding => onboarding,
         }
     }
 
@@ -378,7 +318,6 @@ impl Screen {
     pub fn with_terminal_menu(self, at: (f32, f32)) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_terminal_menu(at)),
-            onboarding => onboarding,
         }
     }
 
@@ -386,7 +325,6 @@ impl Screen {
     pub fn terminal_command(self, command: pm_components::terminal_menu::TerminalCommand) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.terminal_command(command)),
-            onboarding => onboarding,
         }
     }
 
@@ -394,7 +332,6 @@ impl Screen {
     pub fn with_session_menu(self, session: usize, at: (f32, f32)) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_session_menu(session, at)),
-            onboarding => onboarding,
         }
     }
 
@@ -402,7 +339,6 @@ impl Screen {
     pub fn closed_elsewhere(self, position: usize) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.closed_session(position, false, false)),
-            onboarding => onboarding,
         }
     }
 
@@ -410,7 +346,6 @@ impl Screen {
     pub fn asking_to_close(self, position: usize) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.asking_to_close(position)),
-            onboarding => onboarding,
         }
     }
 
@@ -418,7 +353,6 @@ impl Screen {
     pub fn navigated(self, delta: isize) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.navigated(delta)),
-            onboarding => onboarding,
         }
     }
 
@@ -429,7 +363,6 @@ impl Screen {
                 state.track();
                 Self::Workspace(state)
             }
-            onboarding => onboarding,
         }
     }
 
@@ -441,7 +374,6 @@ impl Screen {
     /// The screen with no menu open.
     pub fn without_menu(self) -> Self {
         match self {
-            Self::Onboarding(state) => Self::Onboarding(state.without_menu()),
             Self::Workspace(state) => Self::Workspace(state.without_menu()),
         }
     }
@@ -449,7 +381,6 @@ impl Screen {
     /// The screen after the reader chose the folder at `path` as a project: added, and open on a new session in it.
     pub fn with_project_opened(self, path: &str) -> Self {
         match self {
-            Self::Onboarding(state) => Self::Onboarding(state.with_project(path)),
             Self::Workspace(state) => Self::Workspace(state.with_project_opened(path)),
         }
     }
@@ -457,24 +388,7 @@ impl Screen {
     /// The screen with the project at `path` added, which the reader did not ask to see.
     pub fn with_project(self, path: &str) -> Self {
         match self {
-            Self::Onboarding(state) => Self::Onboarding(state.with_project(path)),
             Self::Workspace(state) => Self::Workspace(state.with_project(path)),
-        }
-    }
-
-    /// The screen with the agent at `index` standing at `status`.
-    pub fn with_agent(self, index: usize, status: AgentStatus) -> Self {
-        match self {
-            Self::Onboarding(state) => Self::Onboarding(state.with_agent(index, status)),
-            workspace => workspace,
-        }
-    }
-
-    /// Where the agent at `index` stands, while onboarding shows them.
-    pub fn agent(&self, index: usize) -> Option<&AgentStatus> {
-        match self {
-            Self::Onboarding(state) => state.agents.get(index),
-            Self::Workspace(_) => None,
         }
     }
 
@@ -494,7 +408,6 @@ impl Screen {
     pub fn scrolled_chat(self, delta: f32, room: f32) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.scrolled_chat(delta, room)),
-            other => other,
         }
     }
 
@@ -503,7 +416,6 @@ impl Screen {
     pub fn scrolled_menu(self, delta: f32, room: f32) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.scrolled_menu(delta, room)),
-            other => other,
         }
     }
 
@@ -512,7 +424,6 @@ impl Screen {
     pub fn scrolled_plan(self, delta: f32, room: f32) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.scrolled_plan(delta, room)),
-            other => other,
         }
     }
 
@@ -520,7 +431,6 @@ impl Screen {
     pub fn scrolled_subagents(self, delta: f32, room: f32) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.scrolled_subagents(delta, room)),
-            other => other,
         }
     }
 
@@ -529,7 +439,6 @@ impl Screen {
     pub fn scrolled_diff(self, delta: f32, room: f32) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.scrolled_diff(delta, room)),
-            other => other,
         }
     }
 
@@ -538,7 +447,6 @@ impl Screen {
     pub fn scrolled_settings_nav(self, delta: f32, room: f32) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.scrolled_settings_nav(delta, room)),
-            other => other,
         }
     }
 
@@ -547,7 +455,6 @@ impl Screen {
     pub fn scrolled_settings(self, delta: f32, room: f32) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.scrolled_settings(delta, room)),
-            other => other,
         }
     }
 
@@ -556,7 +463,6 @@ impl Screen {
     pub fn scrolled_tree(self, delta: f32, room: f32) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.scrolled_tree(delta, room)),
-            other => other,
         }
     }
 
@@ -564,7 +470,6 @@ impl Screen {
     pub fn change_row_of(&self, id: FocusId) -> Option<usize> {
         match self {
             Self::Workspace(state) => state.change_row_of(id),
-            Self::Onboarding(_) => None,
         }
     }
 
@@ -572,7 +477,6 @@ impl Screen {
     pub fn tree_row_of(&self, id: FocusId) -> Option<TreeTarget> {
         match self {
             Self::Workspace(state) => state.tree_row_of(id),
-            Self::Onboarding(_) => None,
         }
     }
 
@@ -580,7 +484,6 @@ impl Screen {
     pub fn with_tree_menu(self, target: TreeTarget, at: (f32, f32)) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_tree_menu(target, at)),
-            other => other,
         }
     }
 
@@ -590,7 +493,6 @@ impl Screen {
             Self::Workspace(state) => {
                 Self::Workspace(state.with_file_written(session, path, failed))
             }
-            other => other,
         }
     }
 
@@ -598,7 +500,6 @@ impl Screen {
     pub fn with_caret_shown(self, height: f32) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_caret_shown(height)),
-            other => other,
         }
     }
 
@@ -606,7 +507,6 @@ impl Screen {
     pub fn with_file_kept(self, id: FocusId) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_file_kept(id)),
-            other => other,
         }
     }
 
@@ -619,7 +519,6 @@ impl Screen {
     pub fn without_naming(self) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.without_naming()),
-            other => other,
         }
     }
 
@@ -627,7 +526,6 @@ impl Screen {
     pub fn with_tree_stale(self) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_tree_stale()),
-            other => other,
         }
     }
 
@@ -635,7 +533,6 @@ impl Screen {
     pub fn change_folder_row_of(&self, id: FocusId) -> Option<usize> {
         match self {
             Self::Workspace(state) => state.change_folder_row_of(id),
-            Self::Onboarding(_) => None,
         }
     }
 
@@ -643,7 +540,6 @@ impl Screen {
     pub fn with_folder_change_menu(self, position: usize, at: (f32, f32)) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_folder_change_menu(position, at)),
-            other => other,
         }
     }
 
@@ -651,7 +547,6 @@ impl Screen {
     pub fn with_change_menu(self, index: usize, at: (f32, f32)) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_change_menu(index, at)),
-            other => other,
         }
     }
 
@@ -659,7 +554,6 @@ impl Screen {
     pub fn change_picked(self, index: usize, how: Pick) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.change_picked(index, how)),
-            other => other,
         }
     }
 
@@ -667,7 +561,6 @@ impl Screen {
     pub fn tree_row_picked(self, target: TreeTarget, how: Pick) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.tree_row_picked(target, how)),
-            other => other,
         }
     }
 
@@ -675,7 +568,6 @@ impl Screen {
     pub fn tree_all_picked(self) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.tree_all_picked()),
-            other => other,
         }
     }
 
@@ -683,7 +575,6 @@ impl Screen {
     pub fn changes_all_picked(self) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.changes_all_picked()),
-            other => other,
         }
     }
 
@@ -691,7 +582,6 @@ impl Screen {
     pub fn with_session_branches(self, session: usize, names: Vec<String>) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_session_branches(session, names)),
-            other => other,
         }
     }
 
@@ -705,7 +595,6 @@ impl Screen {
     ) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_file(session, path, head, read)),
-            other => other,
         }
     }
 
@@ -721,7 +610,6 @@ impl Screen {
             Self::Workspace(state) => {
                 Self::Workspace(state.with_picture(session, path, head, read))
             }
-            other => other,
         }
     }
 
@@ -735,7 +623,6 @@ impl Screen {
     ) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_drawn(session, path, head, drawn)),
-            other => other,
         }
     }
 
@@ -747,7 +634,6 @@ impl Screen {
     ) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_figure(key, drawn)),
-            other => other,
         }
     }
 
@@ -755,7 +641,6 @@ impl Screen {
     pub fn without_figures(self) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.without_figures()),
-            other => other,
         }
     }
 
@@ -768,7 +653,6 @@ impl Screen {
     pub fn history_row_of(&self, id: FocusId) -> Option<usize> {
         match self {
             Self::Workspace(state) => state.history_row_of(id),
-            Self::Onboarding(_) => None,
         }
     }
 
@@ -781,7 +665,6 @@ impl Screen {
     pub fn with_git_menu(self, kind: MenuKind, at: (f32, f32)) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_git_menu(kind, at)),
-            other => other,
         }
     }
 
@@ -789,7 +672,6 @@ impl Screen {
     pub fn with_stashes(self, session: usize, stashes: Vec<pm_git::Stash>) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_stashes(session, stashes)),
-            other => other,
         }
     }
 
@@ -797,7 +679,6 @@ impl Screen {
     pub fn sash(&self, id: FocusId, window: (f32, f32)) -> Option<(f32, Grows)> {
         match self {
             Self::Workspace(state) => state.sash(id, window),
-            Self::Onboarding(_) => None,
         }
     }
 
@@ -805,7 +686,6 @@ impl Screen {
     pub fn with_sash_size(self, id: FocusId, size: f32, window: (f32, f32)) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_sash_size(id, size, window)),
-            other => other,
         }
     }
 
@@ -821,7 +701,6 @@ impl Screen {
             Self::Workspace(state) => {
                 Self::Workspace(state.tracked(session, branch, tracking, operation))
             }
-            other => other,
         }
     }
 
@@ -829,7 +708,6 @@ impl Screen {
     pub fn with_history(self, session: usize, commits: Vec<pm_git::Commit>) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_history(session, commits)),
-            other => other,
         }
     }
 
@@ -848,7 +726,6 @@ impl Screen {
                 }
                 Self::Workspace(state)
             }
-            other => other,
         }
     }
 
@@ -856,7 +733,6 @@ impl Screen {
     pub fn git_failed(self, reason: &str) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.git_failed(reason)),
-            other => other,
         }
     }
 
@@ -864,7 +740,6 @@ impl Screen {
     pub fn remote_done(self, session: usize, failure: Option<String>) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.remote_done(session, failure)),
-            other => other,
         }
     }
 
@@ -872,7 +747,6 @@ impl Screen {
     pub fn repository_of(&self, session: usize) -> Option<String> {
         match self {
             Self::Workspace(state) => state.repository_of(session),
-            Self::Onboarding(_) => None,
         }
     }
 
@@ -880,7 +754,6 @@ impl Screen {
     pub fn graph_wanted(&self) -> Option<bool> {
         match self {
             Self::Workspace(state) => state.graph_wanted(),
-            Self::Onboarding(_) => None,
         }
     }
 
@@ -888,7 +761,6 @@ impl Screen {
     pub fn scrolled_graph(self, delta: f32, room: f32) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.scrolled_graph(delta, room)),
-            other => other,
         }
     }
 
@@ -906,7 +778,6 @@ impl Screen {
     pub fn scrolled_excerpts(self, delta: f32, room: f32) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.scrolled_excerpts(delta, room)),
-            other => other,
         }
     }
 
@@ -914,7 +785,6 @@ impl Screen {
     pub fn scrolled_viewer(self, delta: f32, room: f32) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.scrolled_viewer(delta, room)),
-            other => other,
         }
     }
 
@@ -922,7 +792,6 @@ impl Screen {
     pub fn comment_drag_begun(self, id: FocusId) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.comment_drag_begun(id)),
-            other => other,
         }
     }
 
@@ -930,7 +799,6 @@ impl Screen {
     pub fn comment_drag_extended(self, id: FocusId) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.comment_drag_extended(id)),
-            other => other,
         }
     }
 
@@ -938,7 +806,6 @@ impl Screen {
     pub fn comment_drag_ended(self) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.comment_drag_ended()),
-            other => other,
         }
     }
 
@@ -961,7 +828,6 @@ impl Screen {
     pub fn slash_moved(self, delta: isize) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.slash_moved(delta)),
-            other => other,
         }
     }
 
@@ -969,7 +835,6 @@ impl Screen {
     pub fn slash_taken(self) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.slash_taken()),
-            other => other,
         }
     }
 
@@ -977,7 +842,6 @@ impl Screen {
     pub fn mode_cycled(self) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.mode_cycled()),
-            other => other,
         }
     }
 
@@ -995,7 +859,6 @@ impl Screen {
                 state.git.branch_menu = false;
                 Self::Workspace(state)
             }
-            other => other,
         }
     }
 
@@ -1003,7 +866,6 @@ impl Screen {
     pub fn with_discovery(self, agent: usize, found: pm_acp::Discovery) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_discovery(agent, found)),
-            onboarding => onboarding,
         }
     }
 
@@ -1011,7 +873,6 @@ impl Screen {
     pub fn with_attachments(self, paths: &[String]) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_attachments(paths)),
-            onboarding => onboarding,
         }
     }
 
@@ -1019,7 +880,6 @@ impl Screen {
     pub fn with_preview(self, path: &str, picture: pm_ui::Picture) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_preview(path, picture)),
-            onboarding => onboarding,
         }
     }
 
@@ -1031,7 +891,6 @@ impl Screen {
     ) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_accounts(logins, in_use)),
-            onboarding => onboarding,
         }
     }
 
@@ -1043,7 +902,6 @@ impl Screen {
                 state.outbox_identity(agent);
                 Self::Workspace(state)
             }
-            onboarding => onboarding,
         }
     }
 
@@ -1056,7 +914,6 @@ impl Screen {
     ) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_discovery_for(host, agent, found)),
-            onboarding => onboarding,
         }
     }
 
@@ -1069,7 +926,6 @@ impl Screen {
     ) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_discovery_of(host, id, found)),
-            onboarding => onboarding,
         }
     }
 
@@ -1084,7 +940,6 @@ impl Screen {
                 let added = state.restore_sessions(host, infos);
                 (Self::Workspace(state), added)
             }
-            onboarding => (onboarding, Vec::new()),
         }
     }
 
@@ -1100,7 +955,6 @@ impl Screen {
             Self::Workspace(state) => {
                 Self::Workspace(state.with_files(key, files, folders, ignored))
             }
-            onboarding => onboarding,
         }
     }
 
@@ -1108,7 +962,6 @@ impl Screen {
     pub fn with_branches(self, project: usize, branches: Vec<String>) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_branches(project, branches)),
-            onboarding => onboarding,
         }
     }
 
@@ -1124,7 +977,6 @@ impl Screen {
             Self::Workspace(state) => {
                 Self::Workspace(state.with_skills(agent, project, skills, names))
             }
-            onboarding => onboarding,
         }
     }
 
@@ -1140,7 +992,6 @@ impl Screen {
             Self::Workspace(state) => {
                 Self::Workspace(state.with_identity(agent, default, selected, naming))
             }
-            onboarding => onboarding,
         }
     }
 
@@ -1157,7 +1008,6 @@ impl Screen {
             Self::Workspace(state) => {
                 Self::Workspace(state.worktree_ready(session, directory, branch, head))
             }
-            onboarding => onboarding,
         }
     }
 
@@ -1170,7 +1020,6 @@ impl Screen {
     ) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.refreshed(session, changes, commits)),
-            onboarding => onboarding,
         }
     }
 
@@ -1178,7 +1027,6 @@ impl Screen {
     pub fn with_submodule_heads(self, session: usize, heads: Vec<(String, String)>) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_submodule_heads(session, heads)),
-            onboarding => onboarding,
         }
     }
 
@@ -1186,7 +1034,6 @@ impl Screen {
     pub fn with_submodules(self, project: usize, paths: Vec<String>) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_submodules(project, paths)),
-            onboarding => onboarding,
         }
     }
 
@@ -1194,7 +1041,6 @@ impl Screen {
     pub fn checked_out(self, session: usize, branch: Option<&str>, head: Option<&str>) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.checked_out(session, branch, head)),
-            onboarding => onboarding,
         }
     }
 
@@ -1202,7 +1048,6 @@ impl Screen {
     pub fn noted(self, session: usize, text: &str) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.noted(session, text)),
-            onboarding => onboarding,
         }
     }
 
@@ -1216,15 +1061,9 @@ impl Screen {
         matches!(self, Self::Workspace(state) if state.starting())
     }
 
-    /// Whether the workspace is showing.
-    pub fn is_workspace(&self) -> bool {
-        matches!(self, Self::Workspace(_))
-    }
-
     /// What the agents have yet to be told, taken off the workspace.
     pub fn take_outbox(&mut self) -> Vec<Outgoing> {
         match self {
-            Self::Onboarding(state) => state.take_outbox(),
             Self::Workspace(state) => state.take_outbox(),
         }
     }
@@ -1233,14 +1072,12 @@ impl Screen {
     pub fn heard(self, session: usize, event: Event) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.heard(session, event)),
-            onboarding => onboarding,
         }
     }
 
     /// Whether the workspace has something to send to the servers.
     pub fn has_outbox(&self) -> bool {
         match self {
-            Self::Onboarding(state) => !state.outbox.is_empty(),
             Self::Workspace(state) => !state.outbox.is_empty(),
         }
     }
@@ -1249,7 +1086,6 @@ impl Screen {
     pub fn inquiry_hotkey(&self, digit: usize) -> Option<FocusId> {
         match self {
             Self::Workspace(state) => state.inquiry_hotkey(digit),
-            Self::Onboarding(_) => None,
         }
     }
 
@@ -1268,66 +1104,57 @@ impl Screen {
 
     /// Reads what the shell of the tab `tab` printed, while the workspace is showing.
     pub fn terminal_output(&mut self, tab: u64, data: &[u8]) {
-        if let Self::Workspace(state) = self {
-            state.terminal_output(tab, data);
-        }
+        let Self::Workspace(state) = self;
+        state.terminal_output(tab, data);
     }
 
     /// Takes the shell of the tab `tab` out of the workspace because it ended.
     pub fn terminal_exited(&mut self, tab: u64) {
-        if let Self::Workspace(state) = self {
-            state.terminal_exited(tab);
-        }
+        let Self::Workspace(state) = self;
+        state.terminal_exited(tab);
     }
 
     /// Types `data` into the shell showing.
     pub fn type_into_terminal(&mut self, data: Vec<u8>) {
-        if let Self::Workspace(state) = self {
-            state.type_into_terminal(data);
-        }
+        let Self::Workspace(state) = self;
+        state.type_into_terminal(data);
     }
 
     /// Shows `text` an input method is composing at the cursor of the shell showing, or stops showing it when empty.
     pub fn compose_in_terminal(&mut self, text: &str) {
-        if let Self::Workspace(state) = self {
-            state.compose_in_terminal(text);
-        }
+        let Self::Workspace(state) = self;
+        state.compose_in_terminal(text);
     }
 
     /// Scrolls the shell showing `lines` lines back up, or down when negative.
     pub fn scroll_terminal(&mut self, lines: isize) {
-        if let Self::Workspace(state) = self {
-            state.scroll_terminal(lines);
-        }
+        let Self::Workspace(state) = self;
+        state.scroll_terminal(lines);
     }
 
     /// Tells the shell showing that its window is `columns` by `rows`.
     pub fn fit_terminal(&mut self, columns: u16, rows: u16) {
-        if let Self::Workspace(state) = self {
-            state.fit_terminal(columns, rows);
-        }
+        let Self::Workspace(state) = self;
+        state.fit_terminal(columns, rows);
     }
 
     /// Adds a tab for a shell the server already runs for the session at `session`, and returns its name in this window.
     pub fn adopt_terminal(&mut self, session: usize, columns: u16, rows: u16) -> Option<u64> {
         match self {
             Self::Workspace(state) => state.adopt_terminal(session, columns, rows),
-            Self::Onboarding(_) => None,
         }
     }
 
     /// Starts a shell in the open session when it is on the machine `host` and the dock shows none.
     pub fn revive_terminal(&mut self, host: &Option<String>) {
-        if let Self::Workspace(state) = self {
-            state.revive_terminal(host);
-        }
+        let Self::Workspace(state) = self;
+        state.revive_terminal(host);
     }
 
     /// The position of the session on the machine `host` whose folder holds `directory`, the innermost when several do.
     pub fn session_in(&self, host: &Option<String>, directory: &str) -> Option<usize> {
         match self {
             Self::Workspace(state) => state.session_in(host, directory),
-            Self::Onboarding(_) => None,
         }
     }
 
@@ -1335,7 +1162,6 @@ impl Screen {
     pub fn terminal_modes(&self) -> Option<(bool, bool)> {
         match self {
             Self::Workspace(state) => state.terminal_modes(),
-            Self::Onboarding(_) => None,
         }
     }
 
@@ -1343,29 +1169,25 @@ impl Screen {
     pub fn terminal_selection(&self) -> Option<String> {
         match self {
             Self::Workspace(state) => state.terminal_selection(),
-            Self::Onboarding(_) => None,
         }
     }
 
     /// Marks text in the shell showing, from `anchor` to `head`, each a line of its window and a column.
     pub fn select_in_terminal(&mut self, anchor: (usize, usize), head: (usize, usize)) {
-        if let Self::Workspace(state) = self {
-            state.select_in_terminal(anchor, head);
-        }
+        let Self::Workspace(state) = self;
+        state.select_in_terminal(anchor, head);
     }
 
     /// Underlines the web address at `at` of the window of the shell showing, a line of it and a column, or none when `at` is nothing.
     pub fn reach_terminal_link(&mut self, at: Option<(usize, usize)>) {
-        if let Self::Workspace(state) = self {
-            state.reach_terminal_link(at);
-        }
+        let Self::Workspace(state) = self;
+        state.reach_terminal_link(at);
     }
 
     /// Whether a web address of the shell showing is underlined as what a press opens.
     pub fn reaching_terminal_link(&self) -> bool {
         match self {
             Self::Workspace(state) => state.reaching_terminal_link(),
-            Self::Onboarding(_) => false,
         }
     }
 
@@ -1373,24 +1195,18 @@ impl Screen {
     pub fn open_terminal_link(&mut self, at: (usize, usize)) -> bool {
         match self {
             Self::Workspace(state) => state.open_terminal_link(at),
-            Self::Onboarding(_) => false,
         }
     }
 
     /// Unmarks the text of the shell showing.
     pub fn clear_terminal_selection(&mut self) {
-        if let Self::Workspace(state) = self {
-            state.clear_terminal_selection();
-        }
+        let Self::Workspace(state) = self;
+        state.clear_terminal_selection();
     }
 
     /// Whether an agent is being started, signed in or at work, so the app should keep looking.
     pub fn waiting(&self) -> bool {
         match self {
-            Self::Onboarding(state) => state
-                .agents
-                .iter()
-                .any(|status| matches!(status, AgentStatus::Checking | AgentStatus::Working)),
             Self::Workspace(state) => state.waiting(),
         }
     }
@@ -1399,7 +1215,6 @@ impl Screen {
 /// The whole screen for `state` in a window `width` by `height` logical pixels.
 pub fn screen(state: &Screen, width: f32, height: f32, shaper: &mut Shaper) -> Node {
     match state {
-        Screen::Onboarding(state) => onboarding(state),
         Screen::Workspace(state) => workspace(state, width, height, shaper),
     }
 }
@@ -1424,6 +1239,43 @@ pub fn picker_screen(state: &Screen) -> Option<Node> {
 pub fn settings_screen(state: &Screen, width: f32) -> Option<Node> {
     match state {
         Screen::Workspace(state) => crate::workspace::settings_window(state, width),
-        Screen::Onboarding(_) => None,
+    }
+}
+
+/// First launch and restored workspaces share the same entry point.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A fresh installation opens the workspace without waiting for agent setup.
+    #[test]
+    fn first_launch_opens_empty_workspace() {
+        let Screen::Workspace(state) = Screen::default();
+        assert!(state.projects.is_empty());
+        assert!(state.sessions.is_empty());
+        assert!(!state.offered_agents().is_empty());
+    }
+
+    /// Project selection and settings are accessible immediately on first launch.
+    #[test]
+    fn first_launch_can_add_projects_and_open_settings() {
+        assert!(
+            Screen::default()
+                .after(crate::workspace::ADD_PROJECT)
+                .adder_open()
+        );
+        assert!(
+            Screen::default()
+                .after(pm_components::state::SETTINGS)
+                .settings_open()
+        );
+    }
+
+    /// Existing local and remote projects still open directly without setup.
+    #[test]
+    fn saved_projects_open_directly() {
+        let paths = vec!["/project".to_owned(), "ssh://builder/project".to_owned()];
+        let screen = Screen::opened(&paths);
+        assert_eq!(screen.project_paths(), Some(paths));
     }
 }

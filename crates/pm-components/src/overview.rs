@@ -36,10 +36,12 @@ const COMMITS_SHOWN: usize = 8;
 const SHORT_ID: usize = 7;
 
 /// The groups the sessions fall in, in the order the overview shows them, each with its heading.
-const GROUPS: [(Status, &str); 3] = [
-    (Status::Review, "Needs review"),
+const GROUPS: [(Status, &str); 5] = [
+    (Status::NeedsInput, "Needs input"),
+    (Status::Error, "Error"),
+    (Status::Unread, "Unread"),
     (Status::Working, "Working"),
-    (Status::Done, "Done"),
+    (Status::Idle, "Idle"),
 ];
 
 impl WorkspaceState {
@@ -127,7 +129,7 @@ fn sessions(state: &WorkspaceState, project: usize) -> Vec<Node> {
                 title,
                 members
                     .iter()
-                    .filter(|&&index| state.sessions[index].status == status)
+                    .filter(|&&index| state.sessions[index].shown() == status)
                     .map(|&index| session_row(state, index))
                     .collect(),
             )
@@ -141,7 +143,7 @@ fn session_row(state: &WorkspaceState, index: usize) -> Node {
     let agent = state.agent_look(session.agent);
     let mut row = row()
         .styles([cursor_pointer(), bg(Role::SurfaceHover).hover()])
-        .child(status_icon(session.status))
+        .child(status_icon(session.shown()))
         .child(clipped(&session.title, 14, Role::Text))
         .child(
             node()
