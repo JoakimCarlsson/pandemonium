@@ -109,7 +109,7 @@ mod tests {
             Project::from_source("/work/one").unwrap(),
             Project::from_source("ssh://builder/work/two").unwrap(),
         ])));
-        let mut work = Work::new();
+        let mut work = Work::new(std::sync::Arc::new(|| {}));
         for host in [&local, &remote] {
             work.links.insert(host.clone(), Link::default());
         }

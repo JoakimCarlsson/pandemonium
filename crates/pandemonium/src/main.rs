@@ -214,7 +214,11 @@ fn main() {
         }
     };
     event_loop.set_control_flow(ControlFlow::Wait);
-    if let Err(error) = event_loop.run_app(&mut App::default()) {
+    let proxy = event_loop.create_proxy();
+    let wake: pm_client::Wake = std::sync::Arc::new(move || {
+        let _ = proxy.send_event(());
+    });
+    if let Err(error) = event_loop.run_app(&mut App::new(wake)) {
         eprintln!("pandemonium: the event loop failed: {error}");
         std::process::exit(1);
     }

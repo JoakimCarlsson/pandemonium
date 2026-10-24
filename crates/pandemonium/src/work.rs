@@ -406,11 +406,13 @@ pub struct Work {
     palette: picture::Palette,
     /// What looking for a newer release last found, kept for a workspace that opens after it was answered.
     release: Option<pm_components::update::Update>,
+    /// Tells the event loop that a connection has something to look at.
+    wake: pm_client::Wake,
 }
 
 impl Work {
-    /// No servers reached yet: they are looked for when something is first asked of them.
-    pub fn new() -> Self {
+    /// No servers reached yet: they are looked for when something is first asked of them, and `wake` is called whenever a server connection has something to look at.
+    pub fn new(wake: pm_client::Wake) -> Self {
         let (reporter, jobs) = mpsc::channel();
         Self {
             links: HashMap::new(),
@@ -440,6 +442,7 @@ impl Work {
             grammars: HashSet::new(),
             palette: picture::Palette::default(),
             release: None,
+            wake,
         }
     }
 
@@ -448,7 +451,7 @@ impl Work {
     /// Nothing is returned when the server cannot be reached in time; the window then opens with what is saved on this machine.
     pub fn bootstrap(&mut self) -> Option<Bootstrap> {
         let target = pm_client::local().ok()?;
-        let client = Client::connect(target);
+        let client = Client::connect(target, self.wake.clone());
         let projects_id = client.request(Request::Projects);
         let choices_id = client.request(Request::Choices);
         let accounts_id = client.request(Request::Accounts);
@@ -1541,7 +1544,7 @@ impl Work {
                 if !self.links.contains_key(&host) {
                     return;
                 }
-                let client = Client::connect(target);
+                let client = Client::connect(target, self.wake.clone());
                 let first = self.settings_for(&host);
                 let Some(link) = self.links.get_mut(&host) else {
                     return;

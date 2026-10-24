@@ -236,10 +236,10 @@ pub struct App {
     text_held: Option<(TextPoint, TextPoint, Unit)>,
 }
 
-impl Default for App {
-    /// An application with no window yet, whose clock starts now.
-    fn default() -> Self {
-        let mut work = Work::new();
+impl App {
+    /// An application with no window yet, whose clock starts now, and whose event loop `wake` brings out of its sleep.
+    pub fn new(wake: pm_client::Wake) -> Self {
+        let mut work = Work::new(wake);
         let opened = work.bootstrap();
         let connected = opened.is_some();
         let (saved, choices, logins, in_use, agents) = match opened {
