@@ -120,8 +120,11 @@ fn files_header(state: &WorkspaceState) -> Node {
 }
 
 /// Every file of the project, as a tree, under the buttons that act on it.
-fn files(state: &WorkspaceState) -> Node {
-    let mut list = scrolling_list(state).children(file_tree::rows(state));
+fn files(state: &WorkspaceState, height: f32) -> Node {
+    let mut list = scrolling_list(state).children(file_tree::rows(
+        state,
+        (height - 136.0 * pm_style::step_scale()).max(0.0),
+    ));
     if state.files.is_empty() {
         list = list.child(nothing("No files yet."));
     }
@@ -472,7 +475,7 @@ fn branch_button(state: &WorkspaceState, session: &Session, working: bool) -> No
 }
 
 /// The review panel for `session`.
-pub fn review(state: &WorkspaceState, session: &Session, shaper: &mut Shaper) -> Node {
+pub fn review(state: &WorkspaceState, session: &Session, height: f32, shaper: &mut Shaper) -> Node {
     node()
         .styles([
             flex(),
@@ -536,7 +539,7 @@ pub fn review(state: &WorkspaceState, session: &Session, shaper: &mut Shaper) ->
         )
         .child(match state.review_tab {
             ReviewTab::Changes => changes(state, session, shaper),
-            ReviewTab::Files => files(state),
+            ReviewTab::Files => files(state, height),
             ReviewTab::Search => crate::project_search::panel(state),
         })
         .children(state.git.branch_menu.then(|| branch_menu(state)))

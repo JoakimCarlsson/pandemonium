@@ -42,6 +42,8 @@ pub struct Node {
     pub(crate) text: Option<Arc<str>>,
     /// What names the box to the user: it can be pressed and takes focus.
     pub(crate) focus: Option<FocusId>,
+    /// Offscreen list entries kept in keyboard traversal order without child nodes.
+    pub(crate) virtual_focus: Vec<FocusId>,
     /// An icon the box draws, tinted with the text colour, in the largest
     /// square that fits its content area.
     pub(crate) icon: Option<pm_icon::Svg>,
@@ -140,6 +142,12 @@ pub fn text(content: impl Into<String>) -> Node {
 }
 
 impl Node {
+    /// Preserves offscreen entries in keyboard traversal order without laying out their contents.
+    pub fn virtual_focus(mut self, ids: Vec<FocusId>) -> Self {
+        self.virtual_focus = ids;
+        self
+    }
+
     /// Makes the box draw `name` in the text colour; size the box to size the icon.
     pub fn icon(mut self, name: IconName) -> Self {
         self.icon = Some(name.svg());

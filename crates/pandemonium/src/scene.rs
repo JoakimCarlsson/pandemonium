@@ -112,3 +112,52 @@ pub fn paint_picker(
     let root = picker_screen(state);
     paint_window(root, width, height, input, theme, shaper, list)
 }
+
+/// The main screen retained until its model, viewport, clock second or fonts change.
+#[derive(Default)]
+pub struct Cached {
+    /// The model version, logical viewport and clock second of the retained screen.
+    key: Option<(u64, u32, u32, u64)>,
+    /// The tree and layout of the last screen built.
+    scene: Option<pm_ui::Scene>,
+}
+
+impl Cached {
+    /// Drops geometry after a font change even when the model did not change.
+    pub fn clear(&mut self) {
+        self.key = None;
+        self.scene = None;
+    }
+
+    /// Rebuilds on content, viewport or clock-second changes; otherwise only repaints interaction styles.
+    #[allow(clippy::too_many_arguments)]
+    pub fn paint(
+        &mut self,
+        version: u64,
+        width: f32,
+        height: f32,
+        state: &Screen,
+        input: &Input,
+        theme: &Theme,
+        shaper: &mut Shaper,
+        list: &mut DrawList,
+    ) -> Output {
+        scale_for(state);
+        let key = (
+            version,
+            width.to_bits(),
+            height.to_bits(),
+            (input.elapsed_ms / 1000.0) as u64,
+        );
+        if self.key != Some(key) {
+            let root = screen(state, width, height, shaper);
+            self.scene = Some(pm_ui::Scene::new(root, width, height, shaper));
+            self.key = Some(key);
+        }
+        list.clear();
+        self.scene
+            .as_ref()
+            .expect("screen built above")
+            .paint(input, theme, shaper, list)
+    }
+}

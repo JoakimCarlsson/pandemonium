@@ -17,28 +17,15 @@ use crate::parts::{glyph, line};
 use crate::size::Size;
 use crate::state::{TREE_BASE, WorkspaceState};
 use crate::tile::Tile;
-use crate::tree::{Entry, Layout, build, folders};
+use crate::tree::{Entry, folders};
+
+mod cache;
+
 use crate::tree_actions::{ENTRY_FIELD, Naming, TREE_FILE_BASE, TreeTarget};
+use cache::tree;
 
 /// How far, in steps, each level of the tree indents its rows.
 const INDENT: f32 = 4.0;
-
-/// The tree of `files`, folders before files, with `empty` among the folders.
-fn tree(files: &[String], empty: &[String]) -> Vec<Entry> {
-    let paths: Vec<String> = files
-        .iter()
-        .cloned()
-        .chain(empty.iter().map(|folder| format!("{folder}/")))
-        .collect();
-    let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
-    build(
-        &paths,
-        Layout {
-            compact: false,
-            sorted: true,
-        },
-    )
-}
 
 /// The path of every folder of the tree of `files` and the `empty` folders, from the top down, open or not.
 pub fn folder_paths(files: &[String], empty: &[String]) -> Vec<String> {
@@ -157,7 +144,11 @@ fn row(
         .gap(1.5)
         .radius(Radius::Sm)
         .build()
-        .styles([pl(3.0 + depth as f32 * INDENT), pr(3)])
+        .styles([
+            pm_style::flex_none(),
+            pl(3.0 + depth as f32 * INDENT),
+            pr(3),
+        ])
         .child(chevron)
         .child(icon)
         .child(
@@ -245,89 +236,172 @@ fn picked(picked: &[TreeTarget], path: &str, folder: bool) -> bool {
         .any(|target| target.path == path && target.folder == folder)
 }
 
-/// The rows of `entries` and of everything in their open folders, `depth` levels down, those `chosen` drawn picked.
+/// Visible row nodes and compact spacers for entries outside the viewport.
+struct Rows {
+    /// The row indices built, with a small margin around the viewport.
+    visible: std::ops::Range<usize>,
+    /// The next row's position in the expanded tree.
+    index: usize,
+    /// The fixed row height at the current density.
+    height: f32,
+    /// Offscreen entries awaiting a single spacer.
+    skipped: Vec<FocusId>,
+    /// The visible nodes and spacers in tree order.
+    nodes: Vec<Node>,
+}
+
+impl Rows {
+    /// Adds a row, constructing its contents only when it can be seen.
+    fn push(&mut self, id: FocusId, build: impl FnOnce() -> Node) {
+        if self.visible.contains(&self.index) {
+            self.flush();
+            self.nodes.push(build());
+        } else {
+            self.skipped.push(id);
+        }
+        self.index += 1;
+    }
+
+    /// Replaces consecutive offscreen rows with their total height and keyboard identities.
+    fn flush(&mut self) {
+        if !self.skipped.is_empty() {
+            self.nodes.push(
+                node()
+                    .styles([
+                        pm_style::h_px(self.skipped.len() as f32 * self.height),
+                        pm_style::flex_none(),
+                    ])
+                    .virtual_focus(std::mem::take(&mut self.skipped)),
+            );
+        }
+    }
+}
+
+/// Adds the entries in open folders, building only the rows inside `rows`' viewport.
 fn rows_of(
     state: &WorkspaceState,
     marks: &HashMap<&str, &'static str>,
     chosen: &[TreeTarget],
     entries: &[Entry],
     depth: usize,
-) -> Vec<Node> {
-    let mut rows = Vec::new();
+    rows: &mut Rows,
+) {
     for entry in entries {
         match entry {
             Entry::File { name, index } => {
                 let path = state.files.get(*index).map_or("", String::as_str);
                 if renaming(state, path) {
-                    rows.extend(name_lines(state, false, depth));
+                    rows.nodes.extend(name_lines(state, false, depth));
                     continue;
                 }
-                let changed = match marks.get(path) {
-                    Some(letter) => Changed::file(letter),
-                    None if state.tree_ignored.contains(path) => Changed::ignored(),
-                    None => Changed::none(),
-                };
-                rows.push(row(
-                    file_icon(name, 4.0),
-                    name,
-                    depth,
-                    None,
-                    FocusId(TREE_FILE_BASE + *index as u64),
-                    &changed,
-                    picked(chosen, path, false),
-                ));
+                let id = FocusId(TREE_FILE_BASE + *index as u64);
+                rows.push(id, || {
+                    let changed = match marks.get(path) {
+                        Some(letter) => Changed::file(letter),
+                        None if state.tree_ignored.contains(path) => Changed::ignored(),
+                        None => Changed::none(),
+                    };
+                    row(
+                        file_icon(name, 4.0),
+                        name,
+                        depth,
+                        None,
+                        id,
+                        &changed,
+                        picked(chosen, path, false),
+                    )
+                });
             }
             Entry::Folder(folder) => {
                 let open = state.open_tree.contains(&folder.path);
-                let changed = if folder.files.iter().any(|index| {
-                    state
-                        .files
-                        .get(*index)
-                        .is_some_and(|path| marks.contains_key(path.as_str()))
-                }) {
-                    Changed::folder()
-                } else if state.tree_ignored.contains(&folder.path) {
-                    Changed::ignored()
-                } else {
-                    Changed::none()
-                };
                 if renaming(state, &folder.path) {
-                    rows.extend(name_lines(state, true, depth));
+                    rows.nodes.extend(name_lines(state, true, depth));
                 } else {
-                    rows.push(row(
-                        folder_icon(open, 4.0),
-                        &folder.name,
-                        depth,
-                        Some(open),
-                        FocusId(TREE_BASE + folder.position as u64),
-                        &changed,
-                        picked(chosen, &folder.path, true),
-                    ));
+                    let id = FocusId(TREE_BASE + folder.position as u64);
+                    rows.push(id, || {
+                        let changed = if folder.files.iter().any(|index| {
+                            state
+                                .files
+                                .get(*index)
+                                .is_some_and(|path| marks.contains_key(path.as_str()))
+                        }) {
+                            Changed::folder()
+                        } else if state.tree_ignored.contains(&folder.path) {
+                            Changed::ignored()
+                        } else {
+                            Changed::none()
+                        };
+                        row(
+                            folder_icon(open, 4.0),
+                            &folder.name,
+                            depth,
+                            Some(open),
+                            id,
+                            &changed,
+                            picked(chosen, &folder.path, true),
+                        )
+                    });
                 }
                 if open {
                     if let Some(is_folder) = new_in(state, &folder.path) {
-                        rows.extend(name_lines(state, is_folder, depth + 1));
+                        rows.nodes.extend(name_lines(state, is_folder, depth + 1));
                     }
-                    rows.extend(rows_of(state, marks, chosen, &folder.entries, depth + 1));
+                    rows_of(state, marks, chosen, &folder.entries, depth + 1, rows);
                 }
             }
         }
     }
-    rows
+}
+
+/// Counts entries in expanded folders without building row descriptions.
+fn row_count(entries: &[Entry], open: &HashSet<String>) -> usize {
+    entries
+        .iter()
+        .map(|entry| {
+            1 + match entry {
+                Entry::Folder(folder) if open.contains(&folder.path) => {
+                    row_count(&folder.entries, open)
+                }
+                _ => 0,
+            }
+        })
+        .sum()
 }
 
 /// The rows of the files of the project the open session works in, with the field a name is typed in where it goes.
-pub fn rows(state: &WorkspaceState) -> Vec<Node> {
-    let mut rows = Vec::new();
+pub fn rows(state: &WorkspaceState, viewport: f32) -> Vec<Node> {
+    let entries = tree(&state.files, &state.tree_folders);
+    let height = 24.0 * pm_style::step_scale();
+    let count = row_count(&entries, &state.open_tree);
+    let room = (count as f32 * height + 128.0 * pm_style::step_scale() - viewport).max(0.0);
+    let offset = state.tree_scroll.clamp(0.0, room);
+    let first = (offset / height).floor() as usize;
+    let visible = if state.git.naming.is_some() {
+        0..usize::MAX
+    } else {
+        first.saturating_sub(2)..((offset + viewport.max(0.0)) / height).ceil() as usize + 2
+    };
+    let mut rows = Rows {
+        visible,
+        index: 0,
+        height,
+        skipped: Vec::new(),
+        nodes: Vec::new(),
+    };
     if let Some(is_folder) = new_in(state, "") {
-        rows.extend(name_lines(state, is_folder, 0));
+        rows.nodes.extend(name_lines(state, is_folder, 0));
     }
-    rows.extend(rows_of(
+    rows_of(
         state,
         &marks(state),
         &state.tree_picked(),
-        &tree(&state.files, &state.tree_folders),
+        &entries,
         0,
-    ));
-    rows
+        &mut rows,
+    );
+    rows.flush();
+    rows.nodes
 }
+
+#[cfg(test)]
+mod tests;

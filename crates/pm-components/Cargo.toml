@@ -22,3 +22,6 @@ pm-treesitter.workspace = true
 pm-ui.workspace = true
 serde_json = "1.0.154"
 similar = "3.2.0"
+
+[dev-dependencies]
+pm-renderer = { path = "../pm-renderer" }

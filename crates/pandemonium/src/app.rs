@@ -57,6 +57,7 @@ mod code;
 mod frame;
 mod panes;
 mod paste;
+mod performance;
 mod select;
 mod terminal;
 
@@ -106,6 +107,10 @@ pub struct App {
     renderer: Option<Renderer>,
     /// Shapes the text on screen.
     shaper: Shaper,
+    /// The main screen and geometry retained across pointer-only frames.
+    scene: scene::Cached,
+    /// Optional CPU frame timings and pointer response measurements.
+    timings: performance::Timings,
     /// The light and the dark theme the window is drawn in.
     family: ThemeFamily,
     /// Whether the window is drawn light or dark.
@@ -335,6 +340,8 @@ impl Default for App {
             family: chosen_family(&window_settings.appearance),
             saved_window: window_settings,
             shaper,
+            scene: scene::Cached::default(),
+            timings: performance::Timings::default(),
             appearance: Appearance::Dark,
             system_appearance: Appearance::Dark,
             list: DrawList::new(),
@@ -465,6 +472,7 @@ impl App {
             self.redraw_aside(aside);
             return;
         }
+        let started = self.timings.start();
         self.fit_terminal();
         let reaching = self.reaching() || self.reaching_terminal_link();
         let edge = self.frame_edge();
@@ -482,7 +490,8 @@ impl App {
         let model = self.model.clone();
         let theme = self.family.variant(self.appearance);
         let scroll_to = model.read(|state| {
-            self.output = scene::paint(
+            self.output = self.scene.paint(
+                model.version(),
                 width,
                 height,
                 state,
@@ -578,9 +587,11 @@ impl App {
             self.edge_cursor = edge;
             window.set_cursor(edge.map_or_else(|| cursor_icon(cursor), frame::edge_icon));
         }
+        let painted = self.timings.start();
         let presented = renderer.render(&self.list, &mut self.shaper, scene::ground(theme), || {
             window.pre_present_notify()
         });
+        self.timings.frame(started, painted, presented);
         if self.output.animating || !presented {
             window.request_redraw();
         }
@@ -788,6 +799,7 @@ impl App {
         }
         let fonts = (settings.interface_font.clone(), settings.code_font.clone());
         if fonts != self.fonts_applied {
+            self.scene.clear();
             scene::set_fonts(&mut self.shaper, &fonts.0, &fonts.1);
             self.fonts_applied = fonts;
         }
@@ -2131,10 +2143,24 @@ impl App {
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
+                let received = self.timings.start();
+                let before = self.pointer;
+                let version = self.model.version();
                 self.pointer(PointerEvent::Moved(
                     position.x as f32 / scale,
                     position.y as f32 / scale,
                 ));
+                if self.on_aside.is_none()
+                    && self.model.version() == version
+                    && !self.dirty.get()
+                    && self.frame_edge() == self.edge_cursor
+                    && self.model.read(|screen| {
+                        performance::same_tree_hover(&self.output, screen, before, self.pointer)
+                    })
+                {
+                    return;
+                }
+                self.timings.pointer(received);
             }
             WindowEvent::CursorLeft { .. } => self.pointer(PointerEvent::Left),
             WindowEvent::MouseWheel { delta, .. } => {

@@ -110,6 +110,8 @@ fn main() {
             Some("worddiff") => Shot::WordDiff,
             Some("commenting") => Shot::Commenting,
             Some("files") => Shot::Files,
+            Some("files-large") => Shot::FilesLarge,
+            Some("files-scrolled") => Shot::FilesScrolled,
             Some("ignored-files") => Shot::IgnoredFiles,
             Some("source") => Shot::Source,
             Some("refused") => Shot::Refused,

@@ -190,6 +190,9 @@ impl WorkspaceState {
 
     /// The rows of the tree a command acts on, as they are shown: those marked, or the row last picked when none of them is shown.
     pub fn tree_picked(&self) -> Vec<TreeTarget> {
+        if self.git.tree_marked.is_empty() {
+            return self.git.tree_selected.clone().into_iter().collect();
+        }
         let marked: Vec<TreeTarget> = self
             .tree_shown()
             .into_iter()

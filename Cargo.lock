@@ -2476,6 +2476,7 @@ dependencies = [
  "pm-input",
  "pm-markdown",
  "pm-protocol",
+ "pm-renderer",
  "pm-style",
  "pm-terminal",
  "pm-text",

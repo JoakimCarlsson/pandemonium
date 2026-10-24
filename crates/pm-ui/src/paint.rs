@@ -194,6 +194,21 @@ pub fn draw(
     list: &mut DrawList,
 ) -> Output {
     let laid = solve(&root.item(shaper), width, height);
+    paint(root, &laid, width, height, input, theme, shaper, list)
+}
+
+/// Paints an already laid-out tree, resolving interaction styles afresh.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn paint(
+    root: &Node,
+    laid: &Placed,
+    width: f32,
+    height: f32,
+    input: &Input,
+    theme: &Theme,
+    shaper: &mut Shaper,
+    list: &mut DrawList,
+) -> Output {
     let mut frame = Frame {
         input,
         width,
@@ -212,7 +227,7 @@ pub fn draw(
     };
     frame.node(
         root,
-        &laid,
+        laid,
         Affine::IDENTITY,
         1.0,
         Cursor::Default,
@@ -293,6 +308,12 @@ impl Frame<'_> {
             return;
         }
 
+        self.output
+            .regions
+            .extend(node.virtual_focus.iter().map(|id| Region {
+                id: *id,
+                rect: Rect::new(rect.x, rect.y, 0.0, 0.0),
+            }));
         let outer_selectable = self.selectable;
         if let Some(id) = node.selectable {
             self.selectable = Some(id);
@@ -504,6 +525,12 @@ impl Frame<'_> {
         if node.style.base().layout.display.display == Display::None {
             return;
         }
+        self.output
+            .regions
+            .extend(node.virtual_focus.iter().map(|id| Region {
+                id: *id,
+                rect: Rect::new(laid.x + self.origin.0, laid.y + self.origin.1, 0.0, 0.0),
+            }));
         let outer_selectable = self.selectable;
         if let Some(id) = node.selectable {
             self.selectable = Some(id);
