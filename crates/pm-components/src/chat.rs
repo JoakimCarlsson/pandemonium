@@ -1,19 +1,18 @@
-//! The conversation with an agent: its messages, a summary of what it changed and the prompt box.
+//! The conversation with an agent: its messages and the prompt box.
 
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
-    Radius, Role, bg, border, border_b, border_color, cursor_pointer, flex, flex_1, flex_col,
-    flex_none, font_mono, gap, h, items_center, leading_ratio, max_w_px, mb, min_h, min_w_px, mt,
-    opacity, overflow_hidden, pb, px, py, rounded, rounded_full, self_end, self_start, size,
-    text_color, text_px, w_full,
+    Radius, Role, bg, border_b, border_color, cursor_pointer, flex, flex_1, flex_col, flex_none,
+    font_mono, gap, h, items_center, leading_ratio, max_w_px, mb, min_h, min_w_px, mt, opacity,
+    overflow_hidden, pb, px, py, rounded, rounded_full, self_end, self_start, size, text_color,
+    text_px, w_full,
 };
 use pm_text::Shaper;
 use pm_ui::{Node, node, text};
 
 use crate::Button;
 use crate::Markdown;
-use crate::Tally;
 use crate::activity::activity;
 use crate::button::Variant;
 use crate::composer::composer;
@@ -26,8 +25,8 @@ use crate::sidebar::status_icon;
 use crate::size::Size;
 use crate::state::{
     CHAT_SCROLL, CHAT_TEXT, COPY_BASE, DETAILS_BASE, FORK_BASE, KEEP_FILES, LINK_BASE,
-    LINKS_PER_PIECE, LINKS_PER_REPLY, OPEN_DIFF, RESTORE_BASE, RESTORE_FILES, REWIND_BASE,
-    TURN_BASE, WorkspaceState,
+    LINKS_PER_PIECE, LINKS_PER_REPLY, RESTORE_BASE, RESTORE_FILES, REWIND_BASE, TURN_BASE,
+    WorkspaceState,
 };
 use crate::steps::{question, steps};
 
@@ -308,39 +307,6 @@ fn agent_message(
     reply.group().selectable(CHAT_TEXT)
 }
 
-/// The card that sums up the changes and opens them for review.
-fn summary(session: &Session) -> Node {
-    let count = session.changes.len();
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            gap(3),
-            px(4),
-            py(3),
-            rounded(Radius::Xl),
-            border(),
-            border_color(Role::Border),
-            bg(Role::Surface),
-            bg(Role::SurfaceHover).hover(),
-            cursor_pointer(),
-        ])
-        .child(glyph(IconName::GitCompare, 4.0, Role::Muted))
-        .child(node().styles([flex_1()]).child(line(
-            format!("{count} file{} changed", if count == 1 { "" } else { "s" }),
-            13,
-            1.4,
-            Role::Text,
-        )))
-        .child(
-            Tally::new(session.added(), session.removed())
-                .size(12)
-                .build(),
-        )
-        .child(line("Review", 13, 1.4, Role::Text))
-        .focusable(OPEN_DIFF)
-}
-
 /// The strip above the conversation: its status, title, branch and agent.
 fn header(state: &WorkspaceState, session: &Session) -> Node {
     let mut strip = node()
@@ -438,9 +404,6 @@ pub fn chat(
                 .child(status_icon(session.shown()))
                 .child(line(label, 13, 1.4, Role::Muted)),
         );
-    }
-    if session.status != Status::Working && !session.changes.is_empty() {
-        messages = messages.child(summary(session));
     }
     messages = messages.children(crate::hooks_card::hooks_card(session, column));
     node()
