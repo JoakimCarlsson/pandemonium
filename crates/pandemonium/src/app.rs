@@ -547,7 +547,7 @@ impl App {
                 && field.is_multiline()
             {
                 if let Some(scroller) = self.output.scrollers.iter().find(|held| held.id == id)
-                    && (field.follows_caret() || (scroller.offset - field.scroll()).abs() > 0.5)
+                    && field.follows_caret()
                 {
                     scroll_to = Some((id, scroller.offset));
                 }
