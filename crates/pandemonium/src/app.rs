@@ -585,6 +585,9 @@ impl App {
             self.model
                 .update(|state| *state = std::mem::take(state).edited(id, Edit::ScrollTo(want)));
         }
+        if pm_components::chat::history_pending() {
+            self.model.update(|_| {});
+        }
         let cursor = match self.sash_drag {
             Some((.., Grows::Up)) => Cursor::RowResize,
             Some(_) => Cursor::ColResize,

@@ -14,7 +14,7 @@ use pm_typography::TextOverflow;
 
 use crate::node::{Anchor, CaretShape, Mark, Node, Paint};
 use crate::retain;
-use crate::select::{DrawnPiece, TextPiece, TextSelection};
+use crate::select::{DrawnPiece, Pieces, TextPiece, TextSelection};
 use crate::tooltip::{self, Showing};
 
 /// How long the caret stays on, and then off, in milliseconds.
@@ -87,8 +87,8 @@ pub struct Output {
     /// The boxes made selectable, where they were seen, in tree order, those
     /// off screen included with no size.
     pub selectables: Vec<Region>,
-    /// The lines of selectable text, in tree order, those off screen included.
-    pub pieces: Vec<TextPiece>,
+    /// The lines of selectable text, in tree order, those off screen included, kept as the subtrees they came from until [`Output::pieces`] is asked for.
+    pub pieces: Pieces,
 }
 
 /// One box whose contents scroll from their end, where it ended up.
@@ -451,6 +451,20 @@ impl Frame<'_> {
         }
     }
 
+    /// Counts `count` pieces of the selectable text `id` that are not recorded one by one, and gives back the number of the first.
+    fn skip_pieces(&mut self, id: FocusId, count: usize) -> usize {
+        match self.counts.iter_mut().find(|(owner, _)| *owner == id) {
+            Some((_, held)) => {
+                *held += count;
+                *held - count
+            }
+            None => {
+                self.counts.push((id, count));
+                0
+            }
+        }
+    }
+
     /// Records `content`, laid out at `laid`, as the next piece of the
     /// selectable text the box is in, if it is in one, with where it was
     /// `drawn`, and gives back that text and the piece's number.
@@ -573,25 +587,40 @@ impl Frame<'_> {
         self.selectable = outer_selectable;
     }
 
-    /// Replays only the metadata needed for selecting and copying an offscreen retained subtree.
-    fn hidden(&mut self, entries: &[retain::Hidden]) {
-        for entry in entries {
-            match entry {
-                retain::Hidden::Focus(id, rect) => self.output.regions.push(Region {
+    /// Replays the metadata needed for focusing, selecting and copying an offscreen retained subtree; its text stays in the subtree until a selection asks for it.
+    fn hidden(&mut self, retained: &std::sync::Arc<retain::Retained>) {
+        let Some(hidden) = &retained.hidden else {
+            return;
+        };
+        for mark in &hidden.marks {
+            match mark {
+                retain::HiddenMark::Focus(id, rect) => self.output.regions.push(Region {
                     id: *id,
                     rect: rect.offset(self.origin.0, self.origin.1),
                 }),
-                retain::Hidden::Selectable(id, rect) => self.output.selectables.push(Region {
+                retain::HiddenMark::Selectable(id, rect) => self.output.selectables.push(Region {
                     id: *id,
                     rect: rect.offset(self.origin.0, self.origin.1),
                 }),
-                retain::Hidden::Text(owner, text, rect) => {
-                    let outer = self.selectable;
-                    self.selectable = owner.or(outer);
-                    self.record_piece(text, rect.offset(self.origin.0, self.origin.1), None);
-                    self.selectable = outer;
-                }
             }
+        }
+        let outer = self.selectable;
+        let mut starts: Vec<(FocusId, usize)> = Vec::new();
+        for (owner, count) in &hidden.counts {
+            let Some(id) = owner.or(outer) else {
+                continue;
+            };
+            match starts.iter().find(|(held, _)| *held == id) {
+                Some(_) => {
+                    self.skip_pieces(id, *count);
+                }
+                None => starts.push((id, self.skip_pieces(id, *count))),
+            }
+        }
+        if !starts.is_empty() {
+            self.output
+                .pieces
+                .push_hidden(retained.clone(), self.origin, outer, starts);
         }
     }
 
@@ -622,8 +651,8 @@ impl Frame<'_> {
         if let Some(retained) = &node.retained {
             let outer = self.origin;
             self.origin = (laid.x + outer.0, laid.y + outer.1);
-            if let Some(hidden) = &retained.hidden {
-                self.hidden(hidden);
+            if retained.hidden.is_some() {
+                self.hidden(retained);
             } else {
                 self.unseen(
                     &retained.root,

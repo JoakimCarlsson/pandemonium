@@ -8,20 +8,57 @@ use pm_style::layout::{Display, Placed};
 
 use crate::Node;
 
-/// One offscreen metadata entry, replayed without walking styled nodes.
+/// A keyboard target or selectable group with a zero-area rectangle.
 #[derive(Clone, Debug)]
-pub(crate) enum Hidden {
-    /// A keyboard target with a zero-area rectangle.
+pub(crate) enum HiddenMark {
+    /// A keyboard target.
     Focus(FocusId, Rect),
-    /// A selectable group with a zero-area rectangle.
+    /// A selectable group.
     Selectable(FocusId, Rect),
-    /// Selectable text with its unscrolled geometry and optional owner override.
-    Text(Option<FocusId>, Arc<str>, Rect),
+}
+
+/// Selectable text with its unscrolled geometry and optional owner override.
+#[derive(Clone, Debug)]
+pub(crate) struct HiddenText {
+    /// The selectable text it belongs to, when it is not the one around the subtree.
+    pub(crate) owner: Option<FocusId>,
+    /// What it says.
+    pub(crate) content: Arc<str>,
+    /// Where it was laid out, from the subtree's top-left corner.
+    pub(crate) rect: Rect,
+}
+
+/// What a retained subtree outside the viewport adds to selection and focus,
+/// replayed without walking styled nodes.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Hidden {
+    /// Keyboard targets and selectable groups, in tree order.
+    pub(crate) marks: Vec<HiddenMark>,
+    /// Selectable text, in tree order.
+    pub(crate) texts: Vec<HiddenText>,
+    /// How many texts each owner override holds, so numbering the pieces after
+    /// the subtree needs no walk of them.
+    pub(crate) counts: Vec<(Option<FocusId>, usize)>,
+}
+
+impl Hidden {
+    /// Adds a piece of text held by `owner`.
+    fn text(&mut self, owner: Option<FocusId>, content: Arc<str>, rect: Rect) {
+        match self.counts.iter_mut().find(|(held, _)| *held == owner) {
+            Some((_, count)) => *count += 1,
+            None => self.counts.push((owner, 1)),
+        }
+        self.texts.push(HiddenText {
+            owner,
+            content,
+            rect,
+        });
+    }
 }
 
 /// Captures metadata for static text; editable fields keep the ordinary navigation traversal.
-pub(super) fn collect(root: &Node, placed: &Placed) -> Option<Vec<Hidden>> {
-    let mut hidden = Vec::new();
+pub(super) fn collect(root: &Node, placed: &Placed) -> Option<Hidden> {
+    let mut hidden = Hidden::default();
     append(root, placed, (0.0, 0.0), None, &mut hidden)?;
     Some(hidden)
 }
@@ -32,7 +69,7 @@ fn append(
     laid: &Placed,
     origin: (f32, f32),
     owner: Option<FocusId>,
-    hidden: &mut Vec<Hidden>,
+    hidden: &mut Hidden,
 ) -> Option<()> {
     if node.style.base().layout.display.display == Display::None {
         return Some(());
@@ -41,20 +78,24 @@ fn append(
         return None;
     }
     let rect = Rect::new(laid.x + origin.0, laid.y + origin.1, 0.0, 0.0);
-    hidden.extend(node.virtual_focus.iter().map(|id| Hidden::Focus(*id, rect)));
+    hidden.marks.extend(
+        node.virtual_focus
+            .iter()
+            .map(|id| HiddenMark::Focus(*id, rect)),
+    );
     let owner = node.selectable.or(owner);
     if let Some(id) = node.selectable {
-        hidden.push(Hidden::Selectable(id, rect));
+        hidden.marks.push(HiddenMark::Selectable(id, rect));
     }
     if let Some(text) = &node.text {
-        hidden.push(Hidden::Text(
+        hidden.text(
             owner,
             text.clone(),
             Rect::new(rect.x, rect.y, laid.width, laid.height),
-        ));
+        );
     }
     if let Some(id) = node.focus {
-        hidden.push(Hidden::Focus(id, rect));
+        hidden.marks.push(HiddenMark::Focus(id, rect));
     }
     for (child, placed) in node.children.iter().zip(&laid.children) {
         append(child, placed, origin, owner, hidden)?;
@@ -115,7 +156,7 @@ mod tests {
         assert_eq!(summarized.selectables, ordinary.selectables);
         let pieces = |output: &Output| {
             output
-                .pieces
+                .pieces()
                 .iter()
                 .map(|piece| (piece.id, piece.index, piece.content.clone(), piece.laid))
                 .collect::<Vec<_>>()

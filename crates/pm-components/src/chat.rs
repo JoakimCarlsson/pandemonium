@@ -397,6 +397,11 @@ fn header(state: &WorkspaceState, session: &Session) -> Node {
     strip
 }
 
+/// Whether the frame just drawn left messages far back unbuilt for a later frame, so another frame is wanted; asking clears the answer.
+pub fn history_pending() -> bool {
+    retained::pending()
+}
+
 /// The conversation of `session` in a column `width` logical pixels wide, with the prompt box below.
 pub fn chat(
     state: &WorkspaceState,
@@ -417,10 +422,7 @@ pub fn chat(
             px(6),
             py(8),
         ])
-        .children(
-            (0..session.messages.len())
-                .map(|index| retained::message(state, session, index, column, shaper)),
-        );
+        .children(retained::messages(state, session, column, shaper));
     let asking = session.ask.as_ref();
     if let Some(ask) = asking.filter(|ask| ask.plan.is_none()) {
         messages = messages.child(question(ask, column, shaper));

@@ -8,6 +8,7 @@ use pm_renderer::Rect;
 use pm_text::Run;
 
 use crate::paint::{Output, Region};
+use crate::retain::Retained;
 
 /// How far apart two rows stand at least to be told apart as paragraphs, as a share of the upper row's height.
 const PARAGRAPH_GAP: f32 = 0.4;
@@ -97,7 +98,115 @@ pub struct DrawnPiece {
     pub run: Run,
 }
 
+/// One run of the lines of selectable text: a line drawn on its own, or every line of an offscreen retained subtree.
+#[derive(Clone, Debug)]
+enum Part {
+    /// A line recorded as it was painted.
+    Piece(TextPiece),
+    /// The lines of a subtree that was not painted, found when asked for.
+    Hidden {
+        /// The subtree, whose text it keeps.
+        retained: Arc<Retained>,
+        /// Where its top-left corner was.
+        origin: (f32, f32),
+        /// The selectable text around it.
+        outer: Option<FocusId>,
+        /// The number of its first piece of each selectable text, when it began.
+        starts: Vec<(FocusId, usize)>,
+    },
+}
+
+/// The lines of selectable text of a frame, in tree order.
+///
+/// A subtree off screen adds one part however many lines it holds; the lines
+/// themselves are put together the first time something reads them, so a frame
+/// that nobody selects from costs nothing for the history.
+#[derive(Clone, Debug, Default)]
+pub struct Pieces {
+    /// The parts, in tree order.
+    parts: Vec<Part>,
+    /// Every line, once asked for.
+    all: std::cell::OnceCell<Vec<TextPiece>>,
+}
+
+impl Pieces {
+    /// Adds a line painted on its own.
+    pub(crate) fn push(&mut self, piece: TextPiece) {
+        self.parts.push(Part::Piece(piece));
+    }
+
+    /// Adds the lines of an offscreen subtree.
+    pub(crate) fn push_hidden(
+        &mut self,
+        retained: Arc<Retained>,
+        origin: (f32, f32),
+        outer: Option<FocusId>,
+        starts: Vec<(FocusId, usize)>,
+    ) {
+        self.parts.push(Part::Hidden {
+            retained,
+            origin,
+            outer,
+            starts,
+        });
+    }
+
+    /// The lines that were drawn on screen, which are the ones a point can land in.
+    pub(crate) fn painted(&self) -> impl DoubleEndedIterator<Item = &TextPiece> {
+        self.parts.iter().filter_map(|part| match part {
+            Part::Piece(piece) => Some(piece),
+            Part::Hidden { .. } => None,
+        })
+    }
+
+    /// Every line, in tree order.
+    pub(crate) fn all(&self) -> &[TextPiece] {
+        self.all.get_or_init(|| {
+            let mut found = Vec::new();
+            for part in &self.parts {
+                match part {
+                    Part::Piece(piece) => found.push(piece.clone()),
+                    Part::Hidden {
+                        retained,
+                        origin,
+                        outer,
+                        starts,
+                    } => {
+                        let Some(hidden) = &retained.hidden else {
+                            continue;
+                        };
+                        let mut next = starts.clone();
+                        for text in &hidden.texts {
+                            let Some(id) = text.owner.or(*outer) else {
+                                continue;
+                            };
+                            let Some((_, index)) = next.iter_mut().find(|(held, _)| *held == id)
+                            else {
+                                continue;
+                            };
+                            found.push(TextPiece {
+                                id,
+                                index: *index,
+                                content: text.content.clone(),
+                                laid: text.rect.offset(origin.0, origin.1),
+                                drawn: None,
+                            });
+                            *index += 1;
+                        }
+                    }
+                }
+            }
+            found
+        })
+    }
+}
+
 impl Output {
+    /// Every line of selectable text, in tree order, those off screen included.
+    pub fn pieces(&self) -> &[TextPiece] {
+        self.pieces.all()
+    }
+
     /// The selectable text under `point`, if a press there would select:
     /// its name, and the place in it nearest the point.
     pub fn text_under(&self, point: (f32, f32)) -> Option<(FocusId, TextPoint)> {
@@ -126,7 +235,7 @@ impl Output {
 
     /// A selection of the whole of the selectable text `id`, if it has any text.
     pub fn select_all(&self, id: FocusId) -> Option<TextSelection> {
-        let last = self.pieces.iter().rfind(|piece| piece.id == id)?;
+        let last = self.pieces().iter().rfind(|piece| piece.id == id)?;
         Some(TextSelection {
             id,
             anchor: TextPoint::default(),
@@ -143,7 +252,7 @@ impl Output {
         let (x, y) = point;
         let drawn = || {
             self.pieces
-                .iter()
+                .painted()
                 .filter(move |piece| piece.id == id)
                 .filter_map(|piece| piece.drawn.as_ref().map(|drawn| (piece, drawn)))
         };
@@ -171,7 +280,11 @@ impl Output {
     /// The stretch of the selectable text `id` that `unit` takes around
     /// `point`, the earlier end first.
     pub fn unit_around(&self, id: FocusId, point: TextPoint, unit: Unit) -> (TextPoint, TextPoint) {
-        let pieces: Vec<&TextPiece> = self.pieces.iter().filter(|piece| piece.id == id).collect();
+        let pieces: Vec<&TextPiece> = self
+            .pieces()
+            .iter()
+            .filter(|piece| piece.id == id)
+            .collect();
         let Some(at) = pieces.iter().position(|piece| piece.index == point.piece) else {
             return (point, point);
         };
@@ -240,7 +353,11 @@ impl Output {
     pub fn selected_text(&self, selection: &TextSelection) -> String {
         let mut text = String::new();
         let mut last: Option<&TextPiece> = None;
-        for piece in self.pieces.iter().filter(|piece| piece.id == selection.id) {
+        for piece in self
+            .pieces()
+            .iter()
+            .filter(|piece| piece.id == selection.id)
+        {
             let Some(range) = selection.covering(piece.index, piece.content.len()) else {
                 continue;
             };

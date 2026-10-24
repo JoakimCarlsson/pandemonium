@@ -335,6 +335,13 @@ impl Node {
         self
     }
 
+    /// How tall the subtree kept by [`crate::retained`] was laid out, when this node holds one.
+    pub fn laid_height(&self) -> Option<f32> {
+        self.retained
+            .as_ref()
+            .map(|retained| retained.placed.height)
+    }
+
     /// The box this node and its children ask the layout for.
     pub(crate) fn item(&self, shaper: &mut Shaper) -> Item {
         let base = self.style.base();

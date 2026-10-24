@@ -3,7 +3,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use pm_text::Shaper;
 use pm_ui::{Node, Picture};
@@ -15,8 +15,20 @@ use crate::state::WorkspaceState;
 /// How many recently displayed message layouts survive prompt edits.
 const CAPACITY: usize = 4096;
 
+/// How far back from what is shown, in logical pixels, messages are always built.
+const HORIZON: f32 = 3000.0;
+
+/// How long one frame spends building messages that are not near what is shown.
+const CATCH_UP: Duration = Duration::from_millis(6);
+
+/// The height assumed for a message that was never built when none has been measured.
+const GUESS: f32 = 160.0;
+
 /// The source bytes retained in one message generation.
 const BYTES: usize = 16 * 1024 * 1024;
+
+/// Which message of which session: the session's place in the workspace and the message's position.
+type MessageKey = (Option<usize>, usize);
 
 /// A message and every workspace value used to build its controls and contents.
 struct Cached {
@@ -134,10 +146,76 @@ impl Cache {
 }
 
 thread_local! {
+    /// How tall each message was last laid out, and at what width in bits.
+    static HEIGHTS: RefCell<HashMap<MessageKey, (u32, f32)>> = RefCell::default();
+    /// Whether the last conversation left messages unbuilt for a later frame.
+    static PENDING: Cell<bool> = const { Cell::new(false) };
     /// Recent messages, with old revisions replaced instead of accumulating during streaming.
     static CACHE: RefCell<Cache> = RefCell::default();
     /// Distinguishes message layouts from all other retained subtree keys.
     static NEXT: Cell<u64> = const { Cell::new(0) };
+}
+
+/// Whether the frame just drawn left messages far back in the conversation to be built, so another frame is wanted; asking clears it, so a frame that draws no conversation asks for nothing.
+pub(super) fn pending() -> bool {
+    PENDING.replace(false)
+}
+
+/// The messages of `session` as boxes, the newest first built.
+///
+/// Messages within [`HORIZON`] of what the reader is looking at are built now.
+/// Older ones are built while the frame has time to spare, [`CATCH_UP`] at a
+/// time, and stand as spaces as tall as they were or are likely to be until
+/// then, so opening a long conversation shows its end at once.
+pub(super) fn messages(
+    state: &WorkspaceState,
+    session: &Session,
+    width: f32,
+    shaper: &mut Shaper,
+) -> Vec<Node> {
+    let page = state.open_index();
+    let started = Instant::now();
+    let wanted = state.chat_back + HORIZON;
+    let mut built: Vec<Option<Node>> = (0..session.messages.len()).map(|_| None).collect();
+    let mut covered = 0.0;
+    let (mut total, mut counted) = (0.0, 0);
+    for index in (0..built.len()).rev() {
+        if covered >= wanted && started.elapsed() >= CATCH_UP {
+            break;
+        }
+        let node = message(state, session, index, width, shaper);
+        let height = node.laid_height();
+        if let Some(height) = height {
+            HEIGHTS.with_borrow_mut(|heights| {
+                heights.insert((page, index), (width.to_bits(), height));
+            });
+            total += height;
+            counted += 1;
+        }
+        covered += height.unwrap_or(GUESS);
+        built[index] = Some(node);
+    }
+    let average = if counted > 0 {
+        total / counted as f32
+    } else {
+        GUESS
+    };
+    PENDING.set(built.iter().any(Option::is_none));
+    built
+        .into_iter()
+        .enumerate()
+        .map(|(index, node)| {
+            node.unwrap_or_else(|| {
+                let height = HEIGHTS.with_borrow(|heights| {
+                    heights
+                        .get(&(page, index))
+                        .filter(|(held, _)| *held == width.to_bits())
+                        .map_or(average, |(_, height)| *height)
+                });
+                pm_ui::node().styles([pm_style::h_px(height.ceil()), pm_style::flex_none()])
+            })
+        })
+        .collect()
 }
 
 /// Reuses a message's construction and layout when only its surrounding input changed.
@@ -262,6 +340,34 @@ mod tests {
         )
     }
 
+    /// A long conversation shows its newest message built at once, keeps one box per message while older ones wait, and ends with every message built.
+    #[test]
+    fn long_history_is_built_newest_first_and_completes() {
+        let mut shaper = Shaper::new();
+        let mut state = WorkspaceState::sample();
+        let reply = state.sessions[0]
+            .messages
+            .iter()
+            .find(|message| !message.from_user)
+            .unwrap()
+            .clone();
+        state.sessions[0].messages = vec![reply; 400];
+        let session = &state.sessions[0];
+        let first = messages(&state, session, 600.0, &mut shaper);
+        assert_eq!(first.len(), 400);
+        assert!(first[399].laid_height().is_some());
+        assert!(first[0].laid_height().is_none() == pending());
+        let mut frames = 0;
+        while pending() || frames == 0 {
+            frames += 1;
+            assert!(frames < 10_000, "the history never finished building");
+            messages(&state, session, 600.0, &mut shaper);
+        }
+        let done = messages(&state, session, 600.0, &mut shaper);
+        assert!(!pending());
+        assert!(done.iter().all(|node| node.laid_height().is_some()));
+    }
+
     /// Prompt edits reuse a reply, while streaming, details and geometry updates produce current contents.
     #[test]
     fn prompt_edits_do_not_stale_message_content() {
@@ -290,7 +396,7 @@ mod tests {
             let expected = paint(fresh, &mut shaper);
             let text = |output: &Output| {
                 output
-                    .pieces
+                    .pieces()
                     .iter()
                     .map(|piece| piece.content.as_ref())
                     .collect::<Vec<_>>()

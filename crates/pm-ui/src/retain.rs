@@ -12,7 +12,7 @@ use crate::node::Node;
 
 mod hidden;
 
-pub(crate) use hidden::Hidden;
+pub(crate) use hidden::{Hidden, HiddenMark};
 
 /// How many subtrees the newer generation of the cache holds at the end of a
 /// frame before it becomes the older one and the oldest are let go.
@@ -29,7 +29,7 @@ pub(crate) struct Retained {
     /// Its boxes, the root's top-left corner at the origin.
     pub(crate) placed: Placed,
     /// Offscreen metadata avoids traversing every node of old conversation replies.
-    pub(crate) hidden: Option<Vec<Hidden>>,
+    pub(crate) hidden: Option<Hidden>,
 }
 
 /// The subtrees drawn lately, in two generations: one found in the older is
