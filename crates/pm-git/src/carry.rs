@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::Path;
 
-use crate::{WORKTREES, ignored};
+use crate::{WORKTREES, ignored, ignored_folders};
 
 /// Whether `text` is matched by `pattern`, where `*` stands for any run of characters other than `/`.
 fn matches(pattern: &str, text: &str) -> bool {
@@ -65,8 +65,9 @@ pub(crate) fn carry_ignored(
     if patterns.is_empty() {
         return Vec::new();
     }
-    ignored(repository, usize::MAX)
+    ignored_folders(repository, usize::MAX)
         .into_iter()
+        .chain(ignored(repository, usize::MAX))
         .filter(|entry| named(patterns, entry))
         .map(|entry| entry.trim_end_matches('/').to_owned())
         .filter(|entry| entry != ".git" && !WORKTREES.starts_with(entry.as_str()))
