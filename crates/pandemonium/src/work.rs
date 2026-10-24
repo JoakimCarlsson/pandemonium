@@ -376,6 +376,8 @@ pub struct Work {
     positions: HashMap<(Host, u64), usize>,
     /// The sessions the window let go of with their project, whose events are not wanted until the project is added again.
     forgotten: HashSet<(Host, u64)>,
+    /// The sessions, by position, that were closed while the server was still starting them, so the worktree is removed once it reports having made one.
+    cancelled: HashSet<usize>,
     /// What agents did before their session was known by position, each with its number.
     early: HashMap<(Host, u64), Vec<(u64, Event)>>,
     /// What the threads report.
@@ -424,6 +426,7 @@ impl Work {
             numbers: HashMap::new(),
             positions: HashMap::new(),
             forgotten: HashSet::new(),
+            cancelled: HashSet::new(),
             early: HashMap::new(),
             tabs: HashMap::new(),
             shells: HashMap::new(),
@@ -677,6 +680,23 @@ impl Work {
         })
     }
 
+    /// Closes the session at `session` while it is still starting: a start not yet sent is dropped, and one already sent has its worktree removed when the server answers.
+    fn cancel_start(&mut self, session: usize) {
+        let mut sent = false;
+        for link in self.links.values_mut() {
+            link.backlog.retain(
+                |(_, pending)| !matches!(pending, Pending::Start(started) if *started == session),
+            );
+            sent |= link
+                .waiting
+                .values()
+                .any(|pending| matches!(pending, Pending::Start(started) if *started == session));
+        }
+        if sent {
+            self.cancelled.insert(session);
+        }
+    }
+
     /// Asks the server that runs the session at `session` to do `request`, when that session is running there.
     fn ask_session(
         &mut self,
@@ -759,10 +779,12 @@ impl Work {
                         },
                         Pending::Close(number),
                     ),
-                    None if self.starting(session) => model.update(|screen| {
-                        *screen = std::mem::take(screen)
-                            .git_failed("Could not close the session: it is still starting");
-                    }),
+                    None if self.starting(session) => {
+                        self.cancel_start(session);
+                        model.update(|screen| {
+                            *screen = std::mem::take(screen).closed_elsewhere(session);
+                        });
+                    }
                     None => model.update(|screen| {
                         *screen = std::mem::take(screen).closed_elsewhere(session);
                     }),
@@ -1894,6 +1916,17 @@ impl Work {
                     head,
                     skipped,
                 } => {
+                    if self.cancelled.remove(&session) {
+                        self.ask(
+                            host,
+                            Request::CloseSession {
+                                session: number,
+                                discard: true,
+                            },
+                            Pending::Nothing,
+                        );
+                        return;
+                    }
                     self.numbers.insert(session, (host.clone(), number));
                     self.positions.insert((host.clone(), number), session);
                     if let Some(client) = self.links.get(host).and_then(|link| link.client.as_ref())
@@ -1922,9 +1955,14 @@ impl Work {
                         self.heard(model, host, number, seq, event);
                     }
                 }
-                Response::Failed { message } => model.update(|screen| {
-                    *screen = std::mem::take(screen).heard(session, Event::Failed(message));
-                }),
+                Response::Failed { message } if !self.cancelled.contains(&session) => {
+                    model.update(|screen| {
+                        *screen = std::mem::take(screen).heard(session, Event::Failed(message));
+                    });
+                }
+                Response::Failed { .. } => {
+                    self.cancelled.remove(&session);
+                }
                 _ => {}
             },
             Pending::Close(number) => {
