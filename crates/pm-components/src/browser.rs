@@ -70,6 +70,14 @@ pub enum Command {
     Forward,
     /// Load the page again.
     Reload,
+    /// Cut what is marked in the page.
+    Cut,
+    /// Copy what is marked in the page.
+    Copy,
+    /// Paste the clipboard into the page.
+    Paste,
+    /// Mark everything in the page.
+    SelectAll,
     /// Open the developer tools.
     OpenTools,
     /// Close the developer tools.

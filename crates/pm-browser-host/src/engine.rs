@@ -31,13 +31,13 @@ impl Engine {
             "noerrdialogs".to_owned(),
             "use-mock-keychain".to_owned(),
             "ozone-platform=x11".to_owned(),
+            "use-angle=gl-egl".to_owned(),
+            "disable-background-networking".to_owned(),
+            "disable-component-update".to_owned(),
+            "disable-features=MediaRouter".to_owned(),
             format!("remote-allow-origins=http://127.0.0.1:{port}"),
         ];
         let mut app = EngineApp::new(switches);
-        if std::env::var_os("FONTCONFIG_PATH").is_none() && Path::new("/etc/fonts").is_dir() {
-            // SAFETY: the engine starts before any other thread reads the environment.
-            unsafe { std::env::set_var("FONTCONFIG_PATH", "/etc/fonts") };
-        }
         let runtime = runtime_dir();
         let settings = Settings {
             resources_dir_path: runtime

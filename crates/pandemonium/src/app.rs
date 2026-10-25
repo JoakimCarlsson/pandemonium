@@ -697,6 +697,12 @@ impl App {
             self.message_menu_action(id);
             return;
         }
+        if let Some(command) = pm_components::browser_menu::BrowserCommand::of(id)
+            && self.model.read(|screen| screen.is_menu_row(id))
+        {
+            self.browser_menu_command(command);
+            return;
+        }
         if let Some(command) = TerminalCommand::of(id)
             && self.model.read(|screen| screen.is_menu_row(id))
         {
@@ -1240,6 +1246,7 @@ impl App {
                         self.open_git_menu(MenuKind::History(row));
                     }
                     Some(TERMINAL_BODY) => self.open_terminal_menu(),
+                    Some(pm_components::browser::BROWSER_BODY) => self.open_browser_menu(),
                     _ => self.open_message_menu(),
                 }
             }
@@ -2234,11 +2241,11 @@ impl App {
                     }
                     _ => return,
                 };
+                self.browser_button(button, state == ElementState::Pressed);
                 self.pointer(match state {
                     ElementState::Pressed => PointerEvent::Pressed(button),
                     ElementState::Released => PointerEvent::Released(button),
                 });
-                self.browser_button(button, state == ElementState::Pressed);
             }
             WindowEvent::Ime(Ime::Preedit(composing, _)) => {
                 if self.on_aside.is_none() {

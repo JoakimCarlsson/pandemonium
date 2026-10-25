@@ -1,6 +1,6 @@
 //! The engine's callbacks for one page: where it is drawn and how large it is, and what it reports about itself.
 //!
-//! `PaintHandler` writes what the page paints into shared files; `LifeHandler`
+//! `MenuHandler` empties the page's context menu, which cannot be drawn without a window; `PaintHandler` writes what the page paints into shared files; `LifeHandler`
 //! keeps the browser the engine made; `ReportHandler` tells the window the
 //! title, address and cursor; `PageClient` hands the engine those three.
 
@@ -301,11 +301,30 @@ wrap_display_handler! {
     }
 }
 
+wrap_context_menu_handler! {
+    pub(crate) struct MenuHandler;
+
+    impl ContextMenuHandler {
+        fn on_before_context_menu(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            _params: Option<&mut ContextMenuParams>,
+            model: Option<&mut MenuModel>,
+        ) {
+            if let Some(model) = model {
+                model.clear();
+            }
+        }
+    }
+}
+
 wrap_client! {
     pub(crate) struct PageClient {
         render: RenderHandler,
         life: LifeSpanHandler,
         display: DisplayHandler,
+        menu: ContextMenuHandler,
     }
 
     impl Client {
@@ -320,6 +339,10 @@ wrap_client! {
         fn display_handler(&self) -> Option<DisplayHandler> {
             Some(self.display.clone())
         }
+
+        fn context_menu_handler(&self) -> Option<ContextMenuHandler> {
+            Some(self.menu.clone())
+        }
     }
 }
 
@@ -329,5 +352,6 @@ pub(crate) fn client_for(page: &Arc<Page>) -> Client {
         PaintHandler::new(page.clone()),
         LifeHandler::new(page.clone()),
         ReportHandler::new(page.clone()),
+        MenuHandler::new(),
     )
 }

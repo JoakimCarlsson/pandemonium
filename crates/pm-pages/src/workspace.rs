@@ -130,6 +130,11 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
                 pm_components::terminal_menu::terminal_menu(open, &state.editor.keymap())
             }),
         )
+        .children(
+            state
+                .browser_menu
+                .map(pm_components::browser_menu::browser_menu),
+        )
         .children(adder::adder(state))
         .children(state.git_menu_node().filter(|_| reviewing))
         .children(state.tab_menu.and_then(|open| {

@@ -3,11 +3,13 @@
 use std::time::{Duration, Instant};
 
 use pm_browser::{
-    Button as Mouse, Cursor as Shape, Engine, Error, Key as Typed, Modifiers as Held, View,
+    Button as Mouse, Cursor as Shape, EditAction, Engine, Error, Key as Typed, Modifiers as Held,
+    View,
 };
 use pm_components::browser::{
     BROWSER_BODY, BROWSER_TOOLS_BODY, Command, PAGE_SURFACE, Pointer, TOOLS_SURFACE,
 };
+use pm_components::browser_menu::{BROWSER_MENU_HEIGHT, BrowserCommand};
 use pm_editor::{Action, Pressed};
 use pm_input::{Button, FocusId, Key, KeyEvent};
 use pm_pages::Screen;
@@ -249,6 +251,27 @@ impl App {
             .filter(|id| *id == BROWSER_BODY || *id == BROWSER_TOOLS_BODY)
     }
 
+    /// Carries out `command` of the menu over the page.
+    pub(super) fn browser_menu_command(&mut self, command: BrowserCommand) {
+        self.model
+            .update(|screen| *screen = std::mem::take(screen).browser_command(command));
+        self.focus.focus(BROWSER_BODY);
+    }
+
+    /// Opens the menu over the page just under the pointer and inside the window.
+    pub(super) fn open_browser_menu(&mut self) {
+        let Some((x, y)) = self.pointer.position else {
+            return;
+        };
+        let (width, height) = self.window_size();
+        let at = (
+            (x - 8.0).min(width - 200.0).max(0.0),
+            (y + 4.0).min(height - BROWSER_MENU_HEIGHT - 8.0).max(0.0),
+        );
+        self.model
+            .update(|screen| *screen = std::mem::take(screen).with_browser_menu(at));
+    }
+
     /// Opens the browser, or shows it when it is open.
     pub(super) fn open_browser(&mut self) {
         self.model.update(|screen| {
@@ -282,6 +305,9 @@ impl App {
         let Some(at) = self.pointer.position else {
             return;
         };
+        if pressed && self.model.read(Screen::list_menu_open) {
+            return;
+        }
         let target = if pressed {
             self.browser_under(at)
         } else {
@@ -535,6 +561,17 @@ impl App {
                                 Err(error) => eprintln!("pandemonium: {error}"),
                             }
                         }
+                    }
+                }
+                Command::Cut | Command::Copy | Command::Paste | Command::SelectAll => {
+                    let action = match command {
+                        Command::Cut => EditAction::Cut,
+                        Command::Copy => EditAction::Copy,
+                        Command::Paste => EditAction::Paste,
+                        _ => EditAction::SelectAll,
+                    };
+                    if let Some(page) = self.web.page.as_ref() {
+                        page.edit(action);
                     }
                 }
                 Command::Back => {

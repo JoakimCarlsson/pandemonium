@@ -149,6 +149,8 @@ pub enum Shot {
     TerminalLink,
     /// The workspace with text of the terminal marked and the menu over it open.
     TerminalMenu,
+    /// The workspace with the browser open and the menu over its page open.
+    BrowserMenu,
     /// The overview of a project.
     Overview,
     /// The sidebar with the submodules of a project under it, a session working in one, and work being started in another.
@@ -2120,6 +2122,11 @@ impl Shot {
                 let mut state = terminal();
                 state.select_in_terminal((1, 0), (2, 20));
                 Screen::Workspace(state.with_terminal_menu((420.0, 560.0)))
+            }
+            Self::BrowserMenu => {
+                let mut state = workspace_sample();
+                state.open_browser("http://localhost:5173");
+                Screen::Workspace(state.with_browser_menu((420.0, 300.0)))
             }
             Self::TerminalComposing => {
                 let mut state = terminal();

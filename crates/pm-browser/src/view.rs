@@ -7,7 +7,7 @@ use crate::error::Error;
 use crate::frame::Frame;
 use crate::input::{Button, Cursor, Key, Modifiers};
 use crate::link::{Link, PageState};
-use crate::wire::Request;
+use crate::wire::{EditAction, Request};
 
 /// A page open in the helper, painted into [`Frame`]s instead of a window.
 pub struct View {
@@ -158,6 +158,14 @@ impl View {
         self.link.send(&Request::CommitText {
             page: self.page,
             text: text.to_owned(),
+        });
+    }
+
+    /// Cuts, copies or pastes in the page, or marks everything in it.
+    pub fn edit(&self, action: EditAction) {
+        self.link.send(&Request::Edit {
+            page: self.page,
+            action,
         });
     }
 

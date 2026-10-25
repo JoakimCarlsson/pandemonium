@@ -4,6 +4,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::input::{Button, Cursor, Key};
 
+/// What an edit request does to the page.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum EditAction {
+    /// Cuts what is marked.
+    Cut,
+    /// Copies what is marked.
+    Copy,
+    /// Pastes the clipboard.
+    Paste,
+    /// Marks everything.
+    SelectAll,
+}
+
 /// What the window asks of the helper; every page is named by a number the window chose.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Request {
@@ -131,6 +144,13 @@ pub enum Request {
         page: u32,
         /// The text.
         text: String,
+    },
+    /// Cuts, copies or pastes in the page, or marks everything in it.
+    Edit {
+        /// The page.
+        page: u32,
+        /// What to do.
+        action: EditAction,
     },
     /// Closes the page.
     Close {

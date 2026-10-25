@@ -293,7 +293,7 @@ impl Screen {
 
     /// Whether a menu is open over a project, a session or a message, so that a press elsewhere has to close it.
     pub fn list_menu_open(&self) -> bool {
-        matches!(self, Self::Workspace(state) if state.project_menu.is_some() || state.session_menu.is_some() || state.message_menu.is_some() || state.terminal_menu.is_some() || state.git.menu.is_some() || state.settings_servers.menu.is_some() || state.tab_menu.is_some() || state.pane_menu.is_some())
+        matches!(self, Self::Workspace(state) if state.project_menu.is_some() || state.session_menu.is_some() || state.message_menu.is_some() || state.terminal_menu.is_some() || state.browser_menu.is_some() || state.git.menu.is_some() || state.settings_servers.menu.is_some() || state.tab_menu.is_some() || state.pane_menu.is_some())
     }
 
     /// Which session the row `id` of the sidebar opens, while the workspace is showing.
@@ -318,6 +318,20 @@ impl Screen {
     pub fn with_terminal_menu(self, at: (f32, f32)) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_terminal_menu(at)),
+        }
+    }
+
+    /// The screen with the menu over the page of the browser open at `at`, while the workspace is showing.
+    pub fn with_browser_menu(self, at: (f32, f32)) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_browser_menu(at)),
+        }
+    }
+
+    /// The screen after `command` was carried out on the page of the browser, which closes the menu over it.
+    pub fn browser_command(self, command: pm_components::browser_menu::BrowserCommand) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.browser_command(command)),
         }
     }
 

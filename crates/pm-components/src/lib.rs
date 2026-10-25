@@ -17,6 +17,7 @@ pub mod avatar;
 pub mod badge;
 pub mod branch_menu;
 pub mod browser;
+pub mod browser_menu;
 pub mod button;
 pub mod card;
 pub mod change_list;

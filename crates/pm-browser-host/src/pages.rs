@@ -7,7 +7,7 @@ use std::sync::mpsc::Receiver;
 
 use cef::*;
 use pm_browser::wire::Request;
-use pm_browser::{Button, Key};
+use pm_browser::{Button, EditAction, Key};
 
 use crate::devtools::find_tools;
 use crate::handler::{Out, Page, client_for};
@@ -237,6 +237,21 @@ impl Pages {
             Request::CommitText { page, text } => {
                 if let Some(host) = self.host(page) {
                     host.ime_commit_text(Some(&text.as_str().into()), None, 0);
+                }
+            }
+            Request::Edit { page, action } => {
+                if let Some(frame) = self
+                    .open
+                    .get(&page)
+                    .and_then(|p| p.browser())
+                    .and_then(|b| b.focused_frame().or_else(|| b.main_frame()))
+                {
+                    match action {
+                        EditAction::Cut => frame.cut(),
+                        EditAction::Copy => frame.copy(),
+                        EditAction::Paste => frame.paste(),
+                        EditAction::SelectAll => frame.select_all(),
+                    }
                 }
             }
             Request::Close { page } => {

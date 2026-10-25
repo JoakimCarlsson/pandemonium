@@ -146,6 +146,7 @@ fn main() {
             Some("terminal") => Shot::Terminal,
             Some("terminallink") => Shot::TerminalLink,
             Some("terminalmenu") => Shot::TerminalMenu,
+            Some("browsermenu") => Shot::BrowserMenu,
             Some("overview") => Shot::Overview,
             Some("submodules") => Shot::Submodules,
             Some("overviewdiff") => Shot::OverviewDiff,

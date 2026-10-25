@@ -22,6 +22,17 @@ pub struct Engine {
     folder: PathBuf,
 }
 
+/// Where the helper's own messages go: a file beside its profile, so that Chromium's noise does not fill the terminal and is still there to read.
+#[cfg(unix)]
+fn log_file(profile: &std::path::Path) -> std::process::Stdio {
+    let path = profile.with_file_name("browser.log");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    std::fs::File::create(path)
+        .map_or_else(|_| std::process::Stdio::null(), std::process::Stdio::from)
+}
+
 impl Engine {
     /// Starts the helper; fails when the browser is not installed.
     #[cfg(unix)]
@@ -59,6 +70,7 @@ impl Engine {
             .arg(&profile)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
+            .stderr(log_file(&profile))
             .spawn()
             .map_err(|error| fail(&error))?;
         let deadline = Instant::now() + Duration::from_secs(30);
