@@ -174,6 +174,9 @@ struct SavedBrowser {
     host: Option<String>,
     /// Whether the developer tools were open.
     tools: bool,
+    /// How wide the developer tools were, in logical pixels.
+    #[serde(default)]
+    tools_width: f32,
     /// Whether the browser was what the main area showed.
     shown: bool,
 }
@@ -320,10 +323,11 @@ impl View {
             typing,
             browser: state
                 .browser_saved()
-                .map(|(address, host, tools)| SavedBrowser {
+                .map(|(address, host, tools, tools_width)| SavedBrowser {
                     address,
                     host,
                     tools,
+                    tools_width,
                     shown: state.tab == Tab::Browser,
                 }),
             panes: Some(SavedPanes {
@@ -441,6 +445,7 @@ impl View {
                 &browser.address,
                 browser.host.clone(),
                 browser.tools,
+                browser.tools_width,
                 browser.shown,
             );
         }

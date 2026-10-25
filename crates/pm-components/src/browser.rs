@@ -4,13 +4,14 @@ use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
     Role, bg, border_b, border_color, cursor_text, flex, flex_1, flex_col, flex_none, gap, h_px,
-    items_center, min_w_px, overflow_hidden, px, w_full, w_px,
+    items_center, min_w_px, overflow_hidden, px, relative, w_full, w_px,
 };
 use pm_text::Field;
 use pm_ui::{Node, Picture, node};
 
 use crate::button::Variant;
 use crate::parts::line;
+use crate::sash::Sash;
 use crate::size::Size;
 use crate::state::{Tab, WorkspaceState};
 use crate::{Button, Input};
@@ -48,14 +49,20 @@ pub const BROWSER_GO: FocusId = FocusId(7_420_009);
 /// Turns on or off picking an element of the page to send to the agent.
 pub const BROWSER_PICK: FocusId = FocusId(7_420_010);
 
+/// The handle between the page and its developer tools, dragged to change how wide the tools are.
+pub const BROWSER_SASH: FocusId = FocusId(7_420_011);
+
 /// One past the last thing of the browser.
 const BROWSER_END: u64 = 7_421_000;
 
 /// How tall the bar above the page is, in logical pixels.
 pub const TOOLBAR: f32 = 44.0;
 
-/// Narrower than this many logical pixels, the developer tools go below the page instead of beside it.
-const STACK_BELOW: f32 = 900.0;
+/// How wide the developer tools are until they are dragged, in logical pixels.
+const TOOLS_WIDTH: f32 = 500.0;
+
+/// How narrow the developer tools, and the page beside them, can be made, in logical pixels.
+pub const TOOLS_LEAST: f32 = 200.0;
 
 /// The surface number the page's pictures are drawn on.
 pub const PAGE_SURFACE: u32 = 1;
@@ -125,6 +132,8 @@ pub struct Browser {
     pub tools_page: Option<Picture>,
     /// Whether the developer tools are open beside the page.
     pub tools: bool,
+    /// How wide the developer tools are when open, in logical pixels.
+    pub tools_width: f32,
     /// How the pointer looks over the page.
     pub pointer: Pointer,
     /// Whether a click on the page picks the element under the pointer.
@@ -146,6 +155,7 @@ impl Browser {
             page: None,
             tools_page: None,
             tools: false,
+            tools_width: TOOLS_WIDTH,
             pointer: Pointer::Arrow,
             picking: false,
             host,
@@ -194,15 +204,19 @@ impl WorkspaceState {
         self.tab = Tab::Browser;
     }
 
-    /// Opens the browser as it was left: on `address`, on the machine `host`, with the developer tools open when `tools`, shown when `shown`.
+    /// Opens the browser as it was left: on `address`, on the machine `host`, with the developer tools open when `tools`, `tools_width` wide, shown when `shown`.
     pub fn restore_browser(
         &mut self,
         address: &str,
         host: Option<String>,
         tools: bool,
+        tools_width: f32,
         shown: bool,
     ) {
         let mut browser = Browser::new(address, host);
+        if tools_width > 0.0 {
+            browser.tools_width = tools_width;
+        }
         if tools {
             browser.tools = true;
             browser.commands.push(Command::OpenTools);
@@ -213,13 +227,14 @@ impl WorkspaceState {
         }
     }
 
-    /// How the browser is to be put back after a restart: its address, its machine and whether its developer tools are open.
-    pub fn browser_saved(&self) -> Option<(String, Option<String>, bool)> {
+    /// How the browser is to be put back after a restart: its address, its machine, whether its developer tools are open and how wide they are.
+    pub fn browser_saved(&self) -> Option<(String, Option<String>, bool, f32)> {
         let browser = self.browser.as_ref()?;
         Some((
             browser.address.text().to_owned(),
             browser.host.clone(),
             browser.tools,
+            browser.tools_width,
         ))
     }
 
@@ -432,27 +447,23 @@ pub fn browser_view(state: &WorkspaceState, width: f32, height: f32) -> Node {
         node().styles([w_px(wide), h_px(tall), bg(Role::Border), flex_none()])
     };
     let mut row = node().styles([flex(), w_full(), h_px(room)]);
-    if browser.tools && width < STACK_BELOW {
-        let top = ((room - 1.0) / 2.0).floor();
-        row = node().styles([flex(), flex_col(), w_full(), h_px(room)]);
+    if browser.tools {
+        let tools = browser
+            .tools_width
+            .clamp(TOOLS_LEAST, (width - TOOLS_LEAST - 1.0).max(TOOLS_LEAST))
+            .floor();
+        let page = (width - tools - 1.0).max(0.0);
         row = row
-            .child(surface(BROWSER_BODY, &browser.page, width, top))
-            .child(divider(width, 1.0))
+            .child(surface(BROWSER_BODY, &browser.page, page, room))
+            .child(
+                divider(1.0, room)
+                    .styles([relative()])
+                    .child(Sash::column(BROWSER_SASH).bare().build()),
+            )
             .child(surface(
                 BROWSER_TOOLS_BODY,
                 &browser.tools_page,
-                width,
-                room - top - 1.0,
-            ));
-    } else if browser.tools {
-        let half = (width / 2.0).floor();
-        row = row
-            .child(surface(BROWSER_BODY, &browser.page, half, room))
-            .child(divider(1.0, room))
-            .child(surface(
-                BROWSER_TOOLS_BODY,
-                &browser.tools_page,
-                width - half - 1.0,
+                tools,
                 room,
             ));
     } else {

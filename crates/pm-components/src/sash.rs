@@ -69,6 +69,8 @@ pub struct Sash {
     layout: Layout,
     /// Where its middle line starts in the window, and how long it is, when it floats over an edge.
     placed: Option<((f32, f32), f32)>,
+    /// Whether it is built bare, to be put inside the element whose edge it is.
+    bare: bool,
 }
 
 impl Sash {
@@ -78,6 +80,7 @@ impl Sash {
             id,
             layout: Layout::Column,
             placed: None,
+            bare: false,
         }
     }
 
@@ -87,12 +90,19 @@ impl Sash {
             id,
             layout: Layout::Row,
             placed: None,
+            bare: false,
         }
     }
 
     /// The handle floating over the edge whose line starts at `at` in the window and runs `length` logical pixels.
     pub fn at(mut self, at: (f32, f32), length: f32) -> Self {
         self.placed = Some((at, length));
+        self
+    }
+
+    /// The handle without the zero-height element that holds it in a flow, for putting inside the element whose edge it lies over.
+    pub fn bare(mut self) -> Self {
+        self.bare = true;
         self
     }
 
@@ -144,6 +154,7 @@ impl Sash {
             .focusable(self.id);
         match self.placed {
             Some(_) => handle,
+            None if self.bare => handle,
             None => node()
                 .styles([relative(), flex_none(), w_full(), h_px(0.0)])
                 .child(handle),
@@ -166,6 +177,10 @@ impl WorkspaceState {
                 Grows::Up,
             )),
             GRAPH_SASH => Some((self.git.graph_height, Grows::Up)),
+            crate::browser::BROWSER_SASH => self
+                .browser
+                .as_ref()
+                .map(|browser| (browser.tools_width, Grows::Left)),
             _ => crate::panes::split_sash_of(id).and_then(|index| self.split_sash(index, window)),
         }
     }
@@ -182,6 +197,11 @@ impl WorkspaceState {
                 self.terminal_height = size.clamp(terminal::HEIGHTS.0, terminal::tallest(page));
             }
             GRAPH_SASH => self.git.graph_height = size.clamp(graph::HEIGHTS.0, graph::HEIGHTS.1),
+            crate::browser::BROWSER_SASH => {
+                if let Some(browser) = self.browser.as_mut() {
+                    browser.tools_width = size.clamp(crate::browser::TOOLS_LEAST, window.0);
+                }
+            }
             _ => {
                 if let Some(index) = crate::panes::split_sash_of(id) {
                     self.resize_split(index, size, window);
