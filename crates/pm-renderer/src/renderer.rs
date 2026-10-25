@@ -102,6 +102,8 @@ pub struct Renderer {
     image_sampler: wgpu::Sampler,
     /// The bind group of every picture uploaded so far, by key.
     images: HashMap<u64, wgpu::BindGroup>,
+    /// The texture and bind group each live surface draws from, and the key of the frame in them.
+    live: HashMap<u32, Live>,
     /// The buffer holding the picture instances of the frame being drawn.
     image_instances: Option<wgpu::Buffer>,
     /// The coverage of every glyph drawn so far.
@@ -110,6 +112,18 @@ pub struct Renderer {
     quad_instances: Option<wgpu::Buffer>,
     /// The buffer holding the glyph instances of the frame being drawn.
     glyph_instances: Option<wgpu::Buffer>,
+}
+
+/// What a live surface keeps on the GPU between frames.
+struct Live {
+    /// The texture its frames are written into.
+    texture: wgpu::Texture,
+    /// The size of the texture, in pixels.
+    size: (u32, u32),
+    /// What the pipeline draws it with.
+    group: wgpu::BindGroup,
+    /// The key of the frame the texture holds.
+    key: u64,
 }
 
 /// Which pipeline a run of instances is drawn with.
@@ -396,6 +410,7 @@ impl Renderer {
             image_layout,
             image_sampler,
             images: HashMap::new(),
+            live: HashMap::new(),
             image_instances: None,
             atlas,
             quad_instances: None,
@@ -406,6 +421,10 @@ impl Renderer {
     /// Puts `picture` on the GPU unless a picture with its key already is there.
     fn upload_picture(&mut self, picture: &Picture) {
         if self.images.contains_key(&picture.key) || picture.width == 0 || picture.height == 0 {
+            return;
+        }
+        if let Some(surface) = Picture::live_surface(picture.key) {
+            self.upload_live(surface, picture);
             return;
         }
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
@@ -457,6 +476,75 @@ impl Renderer {
             ],
         });
         self.images.insert(picture.key, group);
+    }
+
+    /// Writes `picture`, a frame of live `surface`, over the frame before it, making the texture only when the size changes.
+    fn upload_live(&mut self, surface: u32, picture: &Picture) {
+        let size = (picture.width, picture.height);
+        let extent = wgpu::Extent3d {
+            width: size.0,
+            height: size.1,
+            depth_or_array_layers: 1,
+        };
+        if self.live.get(&surface).is_none_or(|live| live.size != size) {
+            let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("live picture"),
+                size: extent,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("live picture"),
+                layout: &self.image_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.image_sampler),
+                    },
+                ],
+            });
+            if let Some(old) = self.live.insert(
+                surface,
+                Live {
+                    texture,
+                    size,
+                    group,
+                    key: picture.key,
+                },
+            ) {
+                self.images.remove(&old.key);
+            }
+        }
+        let Some(live) = self.live.get_mut(&surface) else {
+            return;
+        };
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &live.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &picture.pixels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(picture.width * 4),
+                rows_per_image: Some(picture.height),
+            },
+            extent,
+        );
+        self.images.remove(&live.key);
+        live.key = picture.key;
+        self.images.insert(picture.key, live.group.clone());
     }
 
     /// The target size in logical pixels.

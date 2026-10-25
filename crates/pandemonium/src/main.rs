@@ -22,6 +22,9 @@ use snapshot::Shot;
 /// on this machine with the options that follow, or, given
 /// `--snapshot <path> [elapsed_ms [x y [focus [light [screen]]]]]`, writes one frame to a PNG and leaves.
 fn main() {
+    if let Some(code) = pm_browser::run_helper() {
+        std::process::exit(code);
+    }
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     if arguments.first().map(String::as_str) == Some("--version") {
         println!("pandemonium {}", env!("CARGO_PKG_VERSION"));
@@ -32,6 +35,20 @@ fn main() {
             "pandemonium --server",
             arguments.into_iter().skip(1),
         ));
+    }
+    if arguments.first().map(String::as_str) == Some("--snapshot-browser") {
+        let (Some(path), Some(url)) = (arguments.get(1), arguments.get(2)) else {
+            eprintln!("pandemonium: --snapshot-browser needs a path and an address");
+            std::process::exit(2);
+        };
+        let flag = |name: &str| arguments.iter().skip(3).any(|argument| argument == name);
+        if let Err(error) =
+            snapshot::write_browser(Path::new(path), url, flag("tools"), flag("input"))
+        {
+            eprintln!("pandemonium: {error}");
+            std::process::exit(1);
+        }
+        return;
     }
     if arguments.first().map(String::as_str) == Some("--snapshot") {
         let Some(path) = arguments.get(1) else {

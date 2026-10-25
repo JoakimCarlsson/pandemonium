@@ -1,0 +1,9 @@
+[package]
+name = "pm-browser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+cef = "156.1.0"
+serde_json = "1.0.154"

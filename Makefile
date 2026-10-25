@@ -1,3 +1,5 @@
+export CEF_PATH ?= $(HOME)/.cache/cef
+
 .PHONY: fmt lint run install install-server release languages extension-sample
 
 fmt:

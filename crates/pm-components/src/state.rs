@@ -1406,6 +1406,8 @@ pub enum Tab {
     File,
     /// The lines around the hits of a search, from every file, edited in place.
     Excerpts,
+    /// A page of the web.
+    Browser,
 }
 
 /// About how wide the diff is, in logical pixels, when scrolling it to a file, which only the height of the notes on the files above depends on.
@@ -1461,6 +1463,8 @@ pub struct WorkspaceState {
     pub project_search: crate::project_search::ProjectSearch,
     /// The hits of a search shown as one document, while they are.
     pub excerpts: Option<crate::excerpts::Excerpts>,
+    /// The page of the web beside the work, while one is open.
+    pub browser: Option<crate::browser::Browser>,
     /// The folders of the project's files that are unfolded, by path.
     pub open_tree: std::collections::HashSet<String>,
     /// The folders of the changed files that are folded away, by group and path.
@@ -1720,6 +1724,7 @@ impl WorkspaceState {
             review_tab: ReviewTab::Changes,
             project_search: crate::project_search::ProjectSearch::default(),
             excerpts: None,
+            browser: None,
             open_tree: std::collections::HashSet::new(),
             closed_folders: std::collections::HashSet::new(),
             closed_diffs: std::collections::HashSet::new(),
@@ -1990,6 +1995,9 @@ impl WorkspaceState {
         if crate::excerpts::is_excerpt_part(action) {
             return self.excerpts_pressed(action);
         }
+        if crate::browser::is_browser_part(action) {
+            return self.browser_pressed(action);
+        }
         if crate::project_search::is_search_part(action) {
             return self.project_search_pressed(action);
         }
@@ -2124,6 +2132,11 @@ impl WorkspaceState {
             crate::debug::DEBUG_CONSOLE_FIELD | crate::debug::DEBUG_WATCH_FIELD => {
                 self.debug_field_edited(id, edit)
             }
+            crate::browser::BROWSER_ADDRESS => {
+                if let Some(browser) = self.browser.as_mut() {
+                    browser.address.apply(edit);
+                }
+            }
             crate::find::REPLACE_FIELD => return self.replacement_typed(edit),
             ENTRY_FIELD => {
                 if let Some((_, field)) = self.git.naming.as_mut() {
@@ -2178,6 +2191,9 @@ impl WorkspaceState {
                 self.renaming.as_ref().map(|renaming| &renaming.field)
             }
             crate::line_edits::GO_TO_LINE => self.going_to.as_ref().map(|going| &going.field),
+            crate::browser::BROWSER_ADDRESS => {
+                self.browser.as_ref().map(|browser| &browser.address)
+            }
             crate::find::FIND_FIELD => self.finding.as_ref().map(|finding| &finding.query),
             crate::project_search::PROJECT_SEARCH_FIELD => Some(&self.project_search.query),
             crate::listing::LISTING_FILTER => self.listing_filter(),
@@ -2210,6 +2226,7 @@ impl WorkspaceState {
             || id == EDITOR_FIELD
             || id == crate::navigate::RENAME_SYMBOL
             || id == crate::line_edits::GO_TO_LINE
+            || id == crate::browser::BROWSER_ADDRESS
             || id == crate::find::FIND_FIELD
             || id == crate::project_search::PROJECT_SEARCH_FIELD
             || id == crate::listing::LISTING_FILTER
@@ -2239,6 +2256,7 @@ impl WorkspaceState {
             EDITOR_FIELD => crate::open_files::EDITOR_SAVE,
             crate::navigate::RENAME_SYMBOL => crate::navigate::RENAME_SYMBOL_SUBMIT,
             crate::line_edits::GO_TO_LINE => crate::line_edits::GO_TO_LINE_SUBMIT,
+            crate::browser::BROWSER_ADDRESS => crate::browser::BROWSER_GO,
             crate::find::FIND_FIELD => crate::find::FIND_NEXT,
             crate::project_search::PROJECT_SEARCH_FIELD => crate::project_search::PROJECT_SEARCH_GO,
             crate::listing::LISTING_FILTER => crate::listing::LISTING_TAKE,

@@ -100,6 +100,7 @@ pub enum IconName {
     History,
     /// Two arrows chasing each other: refresh.
     Refresh,
+    Globe,
     /// An arrow turning back on itself: undo.
     Undo,
     /// A speech bubble: a chat message.
@@ -206,6 +207,7 @@ impl IconName {
             Self::GitFork => Svg::new("git_fork", include_icon!("git_fork")),
             Self::History => Svg::new("history", include_icon!("history")),
             Self::Refresh => Svg::new("refresh", include_icon!("refresh")),
+            Self::Globe => Svg::new("globe", include_icon!("globe")),
             Self::Undo => Svg::new("undo", include_icon!("undo")),
             Self::Message => Svg::new("message", include_icon!("message")),
             Self::CircleUser => Svg::new("circle_user", include_icon!("circle_user")),

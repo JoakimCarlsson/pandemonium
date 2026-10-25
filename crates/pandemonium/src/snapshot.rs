@@ -3389,3 +3389,175 @@ mod performance_tests {
         }
     }
 }
+
+/// Writes one frame of the window with a live page open in the browser to a PNG, after sending a few events into the page when `interact`, and with the developer tools open when `tools`; prints the title the page ends with.
+pub fn write_browser(path: &Path, url: &str, tools: bool, interact: bool) -> Result<(), String> {
+    use pm_browser::{Button as Mouse, Engine, Key as Typed, Modifiers as Held, Options, View};
+    use pm_components::browser::{
+        BROWSER_BODY, BROWSER_TOOLS_BODY, PAGE_SURFACE, Pointer, TOOLS_SURFACE,
+    };
+    use pm_renderer::Picture;
+    use std::time::{Duration, Instant};
+
+    let (width, height) = (WIDTH, HEIGHT);
+    let theme_family = default_family();
+    let theme = theme_family.variant(Appearance::Dark);
+    let mut shaper = scene::shaper();
+    let mut renderer = Renderer::headless(width, height, 1.0).map_err(|error| error.to_string())?;
+    let mut list = DrawList::new();
+    let input = Input {
+        pointer: PointerState::default(),
+        focused: None,
+        elapsed_ms: 0.0,
+        selection: None,
+        held_bar: None,
+    };
+    let mut workspace = workspace_sample();
+    workspace.open_browser(url);
+    if tools {
+        workspace = workspace.browser_tools_shown();
+    }
+    let mut screen = Screen::Workspace(workspace);
+    let region = |output: &pm_ui::Output, id: FocusId| {
+        output
+            .regions
+            .iter()
+            .find(|region| region.id == id)
+            .map(|region| region.rect)
+    };
+    let output = scene::paint(
+        width as f32,
+        height as f32,
+        &screen,
+        &input,
+        theme,
+        &mut shaper,
+        &mut list,
+    );
+    let body = region(&output, BROWSER_BODY).ok_or("the page has no window")?;
+    let cache = std::env::current_dir()
+        .map_err(|error| error.to_string())?
+        .join("build/pm-browser-cache");
+    let port = std::net::TcpListener::bind(("127.0.0.1", 0))
+        .and_then(|listener| listener.local_addr())
+        .map_err(|error| error.to_string())?
+        .port();
+    let engine = Engine::start(
+        &cache,
+        &Options {
+            switches: vec![
+                "ozone-platform=x11".to_owned(),
+                format!("remote-allow-origins=http://127.0.0.1:{port}"),
+            ],
+            shared_texture: false,
+            debugging_port: Some(port),
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    let page = View::open(&engine, url, body.width as u32, body.height as u32, 1.0)
+        .map_err(|error| error.to_string())?;
+    let pump = |seconds: f64| {
+        let until = Instant::now() + Duration::from_secs_f64(seconds);
+        while Instant::now() < until {
+            engine.pump();
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    };
+    let tools_view = if tools {
+        let room = region(&output, BROWSER_TOOLS_BODY).ok_or("the tools have no window")?;
+        pump(2.0);
+        let lookup = pm_browser::find_tools(port, page.address());
+        let mut found = None;
+        for _ in 0..600 {
+            engine.pump();
+            if let Ok(address) = lookup.try_recv() {
+                found = address;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let address = found.ok_or("the engine did not list the page for its tools")?;
+        eprintln!("tools at {address}");
+        Some(
+            View::open(
+                &engine,
+                &address,
+                room.width as u32,
+                room.height as u32,
+                1.0,
+            )
+            .map_err(|error| error.to_string())?,
+        )
+    } else {
+        None
+    };
+    pump(3.0);
+    if tools_view.is_some() {
+        pump(3.0);
+    }
+    if interact {
+        let none = Held::default();
+        page.focus(true);
+        page.pointer_moved(40, 40, none, false);
+        page.pointer_button(40, 40, Mouse::Left, true, 1, none);
+        page.pointer_button(40, 40, Mouse::Left, false, 1, none);
+        pump(0.3);
+        for letter in ['h', 'i'] {
+            for pressed in [true, false] {
+                page.key(&Typed {
+                    pressed,
+                    code: letter.to_ascii_uppercase() as i32,
+                    text: Some(letter.to_string()),
+                    modifiers: none,
+                });
+            }
+        }
+        pump(0.3);
+        page.pointer_moved(60, 130, none, false);
+        page.pointer_button(60, 130, Mouse::Left, true, 1, none);
+        page.pointer_button(60, 130, Mouse::Left, false, 1, none);
+        pump(0.3);
+        page.scrolled(200, 300, 0, -300, none);
+        pump(1.0);
+    }
+    let picture = |view: &View, surface: u32| {
+        view.frame().map(|frame| Picture {
+            key: Picture::live_key(surface, frame.generation),
+            width: frame.width,
+            height: frame.height,
+            pixels: frame.rgba,
+        })
+    };
+    let title = page.title();
+    let Screen::Workspace(state) = &mut screen;
+    {
+        state.browser_painted(
+            picture(&page, PAGE_SURFACE),
+            tools_view
+                .as_ref()
+                .and_then(|view| picture(view, TOOLS_SURFACE)),
+            &title,
+            &page.address(),
+            Pointer::Arrow,
+            false,
+        );
+    }
+    println!("title: {title}");
+    scene::paint(
+        width as f32,
+        height as f32,
+        &screen,
+        &input,
+        theme,
+        &mut shaper,
+        &mut list,
+    );
+    let pixels = renderer
+        .snapshot(&list, &mut shaper, scene::ground(theme))
+        .ok_or("the renderer could not read its frame back")?;
+    drop(tools_view);
+    drop(page);
+    engine.settle(Duration::from_millis(300));
+    image::save_buffer(path, &pixels, width, height, image::ColorType::Rgba8)
+        .map_err(|error| error.to_string())
+}
