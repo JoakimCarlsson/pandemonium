@@ -73,6 +73,17 @@ pub(super) struct Web {
     forwards: std::collections::HashMap<(String, u16), u16>,
 }
 
+/// Whether an agent may send the browser to `url`: a web address or the blank page, never a local file or an internal page of the browser.
+fn agent_may_open(url: &str) -> bool {
+    let url = url.trim();
+    let scheme = url
+        .split_once(':')
+        .map_or("", |(scheme, _)| scheme)
+        .to_ascii_lowercase();
+    url.eq_ignore_ascii_case("about:blank")
+        || (matches!(scheme.as_str(), "http" | "https") && url[scheme.len()..].starts_with("://"))
+}
+
 /// A run of backticks one longer than the longest run in `content`, and at least `least` long, so that `content` cannot close what it is put in.
 fn fence(content: &str, least: usize) -> String {
     let longest = content.split(|c| c != '`').map(str::len).max().unwrap_or(0);
@@ -939,6 +950,15 @@ impl App {
                 self.browser_answer(local, false, "no url was given".to_owned(), Vec::new());
                 return true;
             };
+            if !agent_may_open(&url) {
+                self.browser_answer(
+                    local,
+                    false,
+                    "Only http and https addresses can be opened.".to_owned(),
+                    Vec::new(),
+                );
+                return true;
+            }
             let resolved = match self.browser_resolve(&url, host.as_deref()) {
                 Ok(resolved) => resolved,
                 Err(message) => {
