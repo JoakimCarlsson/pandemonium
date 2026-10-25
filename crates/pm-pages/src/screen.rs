@@ -328,6 +328,13 @@ impl Screen {
         }
     }
 
+    /// The screen after the mode of picking an element of the browser's page ended, with the pick written as `text` when there was one.
+    pub fn browser_picked(self, text: Option<String>) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.browser_picked(text)),
+        }
+    }
+
     /// The screen after `command` was carried out on the page of the browser, which closes the menu over it.
     pub fn browser_command(self, command: pm_components::browser_menu::BrowserCommand) -> Self {
         match self {

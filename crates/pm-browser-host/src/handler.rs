@@ -10,9 +10,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use cef::*;
-use pm_browser::Cursor;
 use pm_browser::surface::SurfaceWriter;
 use pm_browser::wire::{Event, line};
+use pm_browser::{Cursor, PickedElement};
 
 /// Where reports to the window are written.
 pub(crate) struct Out(Mutex<Box<dyn Write + Send>>);
@@ -69,6 +69,8 @@ pub(crate) struct Page {
     address: Mutex<String>,
     /// The files painted into.
     surface: Mutex<Option<Surface>>,
+    /// The secret the pick script was given when pick mode was turned on, while it is on; only a report that carries it is believed.
+    pick_secret: Mutex<Option<String>>,
     /// How many files have been made, for naming.
     serial: AtomicU64,
     /// How many paints there have been.
@@ -93,9 +95,26 @@ impl Page {
             geometry: Mutex::new((width, height, scale)),
             address: Mutex::new(String::new()),
             surface: Mutex::new(None),
+            pick_secret: Mutex::new(None),
             serial: AtomicU64::new(0),
             generation: AtomicU64::new(0),
         })
+    }
+
+    /// Remembers the secret of the pick mode just turned on, or forgets it when there is none.
+    pub(crate) fn set_pick_secret(&self, secret: Option<String>) {
+        if let Ok(mut held) = self.pick_secret.lock() {
+            *held = secret;
+        }
+    }
+
+    /// What follows `prefix` in `message` when pick mode is on and the message carries its secret; the secret is used up by a message that does.
+    fn pick_report<'a>(&self, message: &'a str, prefix: &str) -> Option<&'a str> {
+        let rest = message.strip_prefix(prefix)?;
+        let mut held = self.pick_secret.lock().ok()?;
+        let rest = rest.strip_prefix(held.as_deref()?)?;
+        *held = None;
+        Some(rest)
     }
 
     /// The browser the engine made, once it has.
@@ -168,6 +187,36 @@ impl Page {
             generation,
         });
     }
+}
+
+/// `text` cut to at most `most` characters.
+fn cut(text: &mut String, most: usize) {
+    if let Some((end, _)) = text.char_indices().nth(most) {
+        text.truncate(end);
+    }
+}
+
+/// A picked element with every field cut to a size a prompt can take, as a page chooses what it says.
+fn limited(mut element: PickedElement) -> PickedElement {
+    for (text, most) in [
+        (&mut element.selector, 300),
+        (&mut element.tag, 40),
+        (&mut element.id, 200),
+        (&mut element.text, 400),
+        (&mut element.html, 2000),
+        (&mut element.url, 500),
+        (&mut element.title, 200),
+    ] {
+        cut(text, most);
+    }
+    element.classes.truncate(20);
+    element.classes.iter_mut().for_each(|class| cut(class, 100));
+    element.styles.truncate(20);
+    for (name, value) in &mut element.styles {
+        cut(name, 40);
+        cut(value, 200);
+    }
+    element
 }
 
 /// How the engine's cursor kinds look to the window.
@@ -283,6 +332,34 @@ wrap_display_handler! {
                     url: url.to_string(),
                 });
             }
+        }
+
+        fn on_console_message(
+            &self,
+            _browser: Option<&mut Browser>,
+            _level: LogSeverity,
+            message: Option<&CefString>,
+            _source: Option<&CefString>,
+            _line: ::std::os::raw::c_int,
+        ) -> ::std::os::raw::c_int {
+            let Some(message) = message.map(ToString::to_string) else {
+                return false as _;
+            };
+            if let Some(json) = self.page.pick_report(&message, "__pm_pick__") {
+                self.page.out.send(&Event::Picked {
+                    page: self.page.id,
+                    element: serde_json::from_str(json).ok().map(limited),
+                });
+                return true as _;
+            }
+            if self.page.pick_report(&message, "__pm_pick_cancel__").is_some() {
+                self.page.out.send(&Event::Picked {
+                    page: self.page.id,
+                    element: None,
+                });
+                return true as _;
+            }
+            false as _
         }
 
         fn on_cursor_change(

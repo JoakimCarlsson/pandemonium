@@ -12,6 +12,9 @@ use pm_browser::{Button, EditAction, Key};
 use crate::devtools::find_tools;
 use crate::handler::{Out, Page, client_for};
 
+/// The script that, run in a page, lets the reader pick an element and reports it through the console.
+const PICK_SCRIPT: &str = include_str!("pick.js");
+
 /// A request for developer tools that waits for the engine to say where they are served.
 struct PendingTools {
     /// The page the tools are shown in.
@@ -237,6 +240,33 @@ impl Pages {
             Request::CommitText { page, text } => {
                 if let Some(host) = self.host(page) {
                     host.ime_commit_text(Some(&text.as_str().into()), None, 0);
+                }
+            }
+            Request::Pick { page, on } => {
+                if let Some(frame) = self
+                    .open
+                    .get(&page)
+                    .and_then(|p| p.browser())
+                    .and_then(|b| b.main_frame())
+                {
+                    let script = if on {
+                        let mut secret = [0u8; 16];
+                        if getrandom::fill(&mut secret).is_err() {
+                            return true;
+                        }
+                        let secret: String =
+                            secret.iter().map(|byte| format!("{byte:02x}")).collect();
+                        if let Some(state) = self.open.get(&page) {
+                            state.set_pick_secret(Some(secret.clone()));
+                        }
+                        PICK_SCRIPT.replace("__NONCE__", &secret)
+                    } else {
+                        if let Some(state) = self.open.get(&page) {
+                            state.set_pick_secret(None);
+                        }
+                        "window.__pmPick && window.__pmPick.stop(true);".to_owned()
+                    };
+                    frame.execute_java_script(Some(&script.as_str().into()), None, 0);
                 }
             }
             Request::Edit { page, action } => {

@@ -2917,6 +2917,7 @@ name = "pm-browser-host"
 version = "0.13.0"
 dependencies = [
  "cef",
+ "getrandom 0.4.3",
  "pm-browser",
  "serde_json",
 ]

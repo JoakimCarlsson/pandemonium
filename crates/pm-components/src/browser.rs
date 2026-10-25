@@ -9,6 +9,7 @@ use pm_style::{
 use pm_text::Field;
 use pm_ui::{Node, Picture, node};
 
+use crate::button::Variant;
 use crate::parts::line;
 use crate::size::Size;
 use crate::state::{Tab, WorkspaceState};
@@ -44,6 +45,9 @@ pub const BROWSER_TOOLS_BODY: FocusId = FocusId(7_420_008);
 /// Loads the address that was typed.
 pub const BROWSER_GO: FocusId = FocusId(7_420_009);
 
+/// Turns on or off picking an element of the page to send to the agent.
+pub const BROWSER_PICK: FocusId = FocusId(7_420_010);
+
 /// One past the last thing of the browser.
 const BROWSER_END: u64 = 7_421_000;
 
@@ -78,6 +82,8 @@ pub enum Command {
     Paste,
     /// Mark everything in the page.
     SelectAll,
+    /// Turn on or off the mode in which a click picks an element of the page.
+    Pick(bool),
     /// Open the developer tools.
     OpenTools,
     /// Close the developer tools.
@@ -121,6 +127,8 @@ pub struct Browser {
     pub tools: bool,
     /// How the pointer looks over the page.
     pub pointer: Pointer,
+    /// Whether a click on the page picks the element under the pointer.
+    pub picking: bool,
     /// The machine the page is on when it is not this one, as the project that opened it names it.
     pub host: Option<String>,
     /// Why the page cannot be shown, when it cannot.
@@ -139,6 +147,7 @@ impl Browser {
             tools_page: None,
             tools: false,
             pointer: Pointer::Arrow,
+            picking: false,
             host,
             notice: None,
             commands: vec![Command::Load(address.to_owned())],
@@ -232,6 +241,10 @@ impl WorkspaceState {
                 browser.host = host;
                 browser.commands.push(Command::Load(address));
             }
+            BROWSER_PICK => {
+                browser.picking = !browser.picking;
+                browser.commands.push(Command::Pick(browser.picking));
+            }
             BROWSER_TOOLS => {
                 browser.tools = !browser.tools;
                 browser.commands.push(if browser.tools {
@@ -262,6 +275,18 @@ impl WorkspaceState {
             let address = address_of(browser.address.text());
             browser.commands.push(Command::Load(address));
         }
+    }
+
+    /// The state after the mode of picking an element ended: the pick, written as `text`, goes into the prompt of the chat and the chat is shown so the reader sees it; no text means the mode ended without a pick.
+    pub fn browser_picked(mut self, text: Option<String>) -> Self {
+        if let Some(browser) = self.browser.as_mut() {
+            browser.picking = false;
+        }
+        let Some(text) = text else {
+            return self;
+        };
+        self.tab = Tab::Chat;
+        self.edited(crate::state::PROMPT, pm_text::Edit::Paste(text))
     }
 
     /// Takes away the notice, as the page is about to be shown.
@@ -331,6 +356,15 @@ pub fn browser_view(state: &WorkspaceState, width: f32, height: f32) -> Node {
                     .placeholder("Search or enter an address")
                     .build(),
             ),
+        )
+        .child(
+            Button::icon(IconName::Pick, BROWSER_PICK)
+                .variant(if browser.picking {
+                    Variant::Secondary
+                } else {
+                    Variant::Ghost
+                })
+                .build(),
         )
         .child(
             Button::icon(

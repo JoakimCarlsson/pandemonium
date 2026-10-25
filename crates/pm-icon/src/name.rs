@@ -100,6 +100,8 @@ pub enum IconName {
     History,
     /// Two arrows chasing each other: refresh.
     Refresh,
+    /// A cursor inside a dashed box: pick an element on a page.
+    Pick,
     Globe,
     /// An arrow turning back on itself: undo.
     Undo,
@@ -208,6 +210,7 @@ impl IconName {
             Self::History => Svg::new("history", include_icon!("history")),
             Self::Refresh => Svg::new("refresh", include_icon!("refresh")),
             Self::Globe => Svg::new("globe", include_icon!("globe")),
+            Self::Pick => Svg::new("pick", include_icon!("pick")),
             Self::Undo => Svg::new("undo", include_icon!("undo")),
             Self::Message => Svg::new("message", include_icon!("message")),
             Self::CircleUser => Svg::new("circle_user", include_icon!("circle_user")),

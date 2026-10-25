@@ -8,13 +8,15 @@ use std::sync::{Arc, Mutex};
 use crate::frame::Frame;
 use crate::input::Cursor;
 use crate::surface::SurfaceReader;
-use crate::wire::{Event, Request, line};
+use crate::wire::{Event, PickedElement, Request, line};
 
 /// What the helper reported about one page.
 #[derive(Default)]
 pub(crate) struct PageState {
     /// The newest picture that was copied out of the shared files.
     frame: Mutex<Option<Frame>>,
+    /// A pick the window has not taken yet: the element, or nothing when the mode ended without one.
+    picked: Mutex<Option<Option<PickedElement>>>,
     /// Which file the newest paint is in, and how many paints there have been.
     latest: Mutex<Option<(u8, u64)>>,
     /// The title, the address and how the pointer should look.
@@ -26,6 +28,11 @@ pub(crate) struct PageState {
 }
 
 impl PageState {
+    /// The pick the helper reported since the last call, if any.
+    pub(crate) fn take_pick(&self) -> Option<Option<PickedElement>> {
+        self.picked.lock().ok()?.take()
+    }
+
     /// The newest picture, copied out of the shared files only when the page has painted since the last copy.
     pub(crate) fn frame(&self) -> Option<Frame> {
         let latest = *self.latest.lock().ok()?;
@@ -169,6 +176,13 @@ impl Link {
                     && let Ok(mut latest) = state.latest.lock()
                 {
                     *latest = Some((buffer, generation));
+                }
+            }
+            Event::Picked { page, element } => {
+                if let Some(state) = self.page(page)
+                    && let Ok(mut picked) = state.picked.lock()
+                {
+                    *picked = Some(element);
                 }
             }
             Event::Title { page, title } => {

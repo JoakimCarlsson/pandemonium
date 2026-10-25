@@ -7,7 +7,7 @@ use crate::error::Error;
 use crate::frame::Frame;
 use crate::input::{Button, Cursor, Key, Modifiers};
 use crate::link::{Link, PageState};
-use crate::wire::{EditAction, Request};
+use crate::wire::{EditAction, PickedElement, Request};
 
 /// A page open in the helper, painted into [`Frame`]s instead of a window.
 pub struct View {
@@ -159,6 +159,19 @@ impl View {
             page: self.page,
             text: text.to_owned(),
         });
+    }
+
+    /// Turns on or off the mode in which a click on the page picks the element under the pointer.
+    pub fn pick(&self, on: bool) {
+        self.link.send(&Request::Pick {
+            page: self.page,
+            on,
+        });
+    }
+
+    /// The pick the helper reported since the last call: the element, or nothing inside when the mode ended without one.
+    pub fn take_pick(&self) -> Option<Option<PickedElement>> {
+        self.state.take_pick()
     }
 
     /// Cuts, copies or pastes in the page, or marks everything in it.

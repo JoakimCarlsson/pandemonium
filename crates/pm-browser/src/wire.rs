@@ -4,6 +4,37 @@ use serde::{Deserialize, Serialize};
 
 use crate::input::{Button, Cursor, Key};
 
+/// An element of a page the reader picked.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct PickedElement {
+    /// A selector that finds it, from the nearest id or a few levels up.
+    pub selector: String,
+    /// Its tag name.
+    pub tag: String,
+    /// Its id, when it has one.
+    pub id: String,
+    /// Its classes.
+    pub classes: Vec<String>,
+    /// Its text, cut short.
+    pub text: String,
+    /// Its HTML, cut short.
+    pub html: String,
+    /// Where its box is in the page, in CSS pixels.
+    pub x: f64,
+    /// Where its box is in the page, in CSS pixels.
+    pub y: f64,
+    /// How wide its box is, in CSS pixels.
+    pub width: f64,
+    /// How tall its box is, in CSS pixels.
+    pub height: f64,
+    /// A few of its computed styles, name and value.
+    pub styles: Vec<(String, String)>,
+    /// The address of the page.
+    pub url: String,
+    /// The title of the page.
+    pub title: String,
+}
+
 /// What an edit request does to the page.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum EditAction {
@@ -152,6 +183,13 @@ pub enum Request {
         /// What to do.
         action: EditAction,
     },
+    /// Turns the mode on or off in which a click on the page picks the element under the pointer and reports it.
+    Pick {
+        /// The page.
+        page: u32,
+        /// Whether the mode is on.
+        on: bool,
+    },
     /// Closes the page.
     Close {
         /// The page.
@@ -190,6 +228,13 @@ pub enum Event {
         buffer: u8,
         /// How many paints the page has made.
         generation: u64,
+    },
+    /// The reader picked an element of the page, or ended the mode without picking one.
+    Picked {
+        /// The page.
+        page: u32,
+        /// What was picked, or nothing when the mode ended without a pick.
+        element: Option<PickedElement>,
     },
     /// The page's title changed.
     Title {
