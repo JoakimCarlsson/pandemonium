@@ -5,6 +5,9 @@ use std::net::TcpStream;
 use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
 
+/// The most bytes of the engine's list of pages that are read.
+const MAX_REPLY: usize = 1 << 20;
+
 /// Asks the engine, away from the thread that runs it, for the address of the developer tools of the page at `address`, and sends it on the channel returned, or sends nothing found.
 ///
 /// The engine answers from the thread that runs it, so this must not be
@@ -47,6 +50,9 @@ fn lookup(port: u16, address: &str) -> Option<String> {
             length = value.trim().parse().ok()?;
         }
     }
+    if length > MAX_REPLY {
+        return None;
+    }
     let mut body = vec![0; length];
     reader.read_exact(&mut body).ok()?;
     let targets: serde_json::Value = serde_json::from_slice(&body).ok()?;
@@ -54,7 +60,9 @@ fn lookup(port: u16, address: &str) -> Option<String> {
         .as_array()?
         .iter()
         .find(|target| target["type"] == "page" && target["url"].as_str() == Some(address))?;
-    let id = target["id"].as_str()?;
+    let id = target["id"]
+        .as_str()
+        .filter(|id| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))?;
     Some(format!(
         "http://127.0.0.1:{port}/devtools/inspector.html?ws=127.0.0.1:{port}/devtools/page/{id}"
     ))
