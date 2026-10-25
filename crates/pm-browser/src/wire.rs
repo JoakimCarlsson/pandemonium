@@ -4,8 +4,23 @@ use serde::{Deserialize, Serialize};
 
 use crate::input::{Button, Cursor, Key};
 
+/// What running a tool came to.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ToolResult {
+    /// The caller's number for the call.
+    pub call: u64,
+    /// Whether the tool worked.
+    pub ok: bool,
+    /// What it says: the result, or why it failed.
+    pub text: String,
+    /// Where a picture the tool took was saved, when it took one.
+    pub image: Option<String>,
+}
+
 /// An element of a page the reader picked.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct PickedElement {
     /// A selector that finds it, from the nearest id or a few levels up.
     pub selector: String,
@@ -27,6 +42,12 @@ pub struct PickedElement {
     pub width: f64,
     /// How tall its box is, in CSS pixels.
     pub height: f64,
+    /// How far the page was scrolled across when it was picked, in CSS pixels.
+    pub scroll_x: f64,
+    /// How far the page was scrolled down when it was picked, in CSS pixels.
+    pub scroll_y: f64,
+    /// Where a picture of the element was saved, when one could be taken.
+    pub screenshot: Option<String>,
     /// A few of its computed styles, name and value.
     pub styles: Vec<(String, String)>,
     /// The address of the page.
@@ -176,6 +197,17 @@ pub enum Request {
         /// The text.
         text: String,
     },
+    /// Runs a tool an agent called against the page; the answer comes as `ToolDone` with the same `call`.
+    Tool {
+        /// The page.
+        page: u32,
+        /// The caller's number for the call.
+        call: u64,
+        /// The tool, such as `browser_screenshot`.
+        tool: String,
+        /// What the agent gave it, as JSON text.
+        arguments: String,
+    },
     /// Cuts, copies or pastes in the page, or marks everything in it.
     Edit {
         /// The page.
@@ -234,7 +266,14 @@ pub enum Event {
         /// The page.
         page: u32,
         /// What was picked, or nothing when the mode ended without a pick.
-        element: Option<PickedElement>,
+        element: Option<Box<PickedElement>>,
+    },
+    /// A tool call ended.
+    ToolDone {
+        /// The page.
+        page: u32,
+        /// What the call came to.
+        result: Box<ToolResult>,
     },
     /// The page's title changed.
     Title {

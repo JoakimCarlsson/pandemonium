@@ -2916,10 +2916,12 @@ dependencies = [
 name = "pm-browser-host"
 version = "0.13.0"
 dependencies = [
+ "base64",
  "cef",
  "getrandom 0.4.3",
  "pm-browser",
  "serde_json",
+ "tungstenite",
 ]
 
 [[package]]
@@ -2964,6 +2966,7 @@ dependencies = [
  "pm-theme",
  "pm-treesitter",
  "pm-ui",
+ "serde",
  "serde_json",
  "similar",
 ]

@@ -194,6 +194,35 @@ impl WorkspaceState {
         self.tab = Tab::Browser;
     }
 
+    /// Opens the browser as it was left: on `address`, on the machine `host`, with the developer tools open when `tools`, shown when `shown`.
+    pub fn restore_browser(
+        &mut self,
+        address: &str,
+        host: Option<String>,
+        tools: bool,
+        shown: bool,
+    ) {
+        let mut browser = Browser::new(address, host);
+        if tools {
+            browser.tools = true;
+            browser.commands.push(Command::OpenTools);
+        }
+        self.browser = Some(browser);
+        if shown {
+            self.tab = Tab::Browser;
+        }
+    }
+
+    /// How the browser is to be put back after a restart: its address, its machine and whether its developer tools are open.
+    pub fn browser_saved(&self) -> Option<(String, Option<String>, bool)> {
+        let browser = self.browser.as_ref()?;
+        Some((
+            browser.address.text().to_owned(),
+            browser.host.clone(),
+            browser.tools,
+        ))
+    }
+
     /// Shows the developer tools beside the page when they are not shown, as pressing their button does.
     pub fn browser_tools_shown(mut self) -> Self {
         if let Some(browser) = self.browser.as_mut()
@@ -277,7 +306,7 @@ impl WorkspaceState {
         }
     }
 
-    /// The state after the mode of picking an element ended: the pick, written as `text`, goes into the prompt of the chat and the chat is shown so the reader sees it; no text means the mode ended without a pick.
+    /// The state after the mode of picking an element ended: the pick, written as `text`, goes into the prompt of the chat and the pane being looked at stays as it is; no text means the mode ended without a pick.
     pub fn browser_picked(mut self, text: Option<String>) -> Self {
         if let Some(browser) = self.browser.as_mut() {
             browser.picking = false;
@@ -285,7 +314,6 @@ impl WorkspaceState {
         let Some(text) = text else {
             return self;
         };
-        self.tab = Tab::Chat;
         self.edited(crate::state::PROMPT, pm_text::Edit::Paste(text))
     }
 

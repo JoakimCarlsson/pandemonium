@@ -15,5 +15,5 @@ version="$(awk '/^name = "cef"$/ { getline; gsub(/version = |"/, ""); print; exi
 [ -n "$version" ] || { echo "error: the lockfile has no cef package" >&2; exit 1; }
 
 echo "downloading the embedded browser engine $version to $DIR"
-cargo install --locked --quiet --root build/cef-tool export-cef-dir --version "${version%%+*}"
+cargo install --locked --quiet --root build/cef-tool export-cef-dir --version "=${version%%+*}"
 build/cef-tool/bin/export-cef-dir --force "$DIR"

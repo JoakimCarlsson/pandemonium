@@ -53,6 +53,12 @@ pub(super) struct Web {
     installing: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
     /// Whether the last download failed, so it is not started again until the setting is turned on again.
     install_failed: bool,
+    /// Whether the servers were last told this window can run browser tools.
+    announced: bool,
+    /// The number the last tool call got in this window.
+    next_call: u64,
+    /// The tool calls running, by this window's number, with the machine and the server's number.
+    calls: std::collections::HashMap<u64, (Option<String>, u64)>,
     /// Whether the setting was on when last looked at.
     was_enabled: bool,
     /// What the download says it is doing, written by its thread.
@@ -61,6 +67,8 @@ pub(super) struct Web {
     shown_note: Option<String>,
     /// What was last said of the install once it was no longer running.
     install_note: Option<String>,
+    /// Why the helper could not be started, shown whenever a page is asked for.
+    reason: Option<String>,
     /// The local port that carries each remote port, by machine and remote port.
     forwards: std::collections::HashMap<(String, u16), u16>,
 }
@@ -508,37 +516,41 @@ impl App {
         }
     }
 
-    /// Starts the helper when it is not running, and says why when it cannot be.
+    /// Starts the helper when it is not running, and says why when it cannot be, every time it is asked.
     fn browser_engine(&mut self) -> Option<&Engine> {
-        if self.web.engine.is_none()
-            && !self.web.failed
-            && !self.saved_window.general.embedded_browser
-        {
-            self.web.failed = true;
+        if self.web.engine.is_none() && !self.web.failed {
+            if self.saved_window.general.embedded_browser {
+                match Engine::start() {
+                    Ok(engine) => self.web.engine = Some(engine),
+                    Err(error) => {
+                        self.web.failed = true;
+                        self.web.reason = Some(match error {
+                            Error::NotInstalled => {
+                                "The embedded browser is not installed. It is downloaded when you turn it on in Settings under General, and this build has no download for it yet.".to_owned()
+                            }
+                            other => other.to_string(),
+                        });
+                    }
+                }
+            } else {
+                self.web.failed = true;
+                self.web.reason = Some(
+                    "The embedded browser is turned off. Turn it on in Settings under General to download it.".to_owned(),
+                );
+            }
+        }
+        if self.web.engine.is_none() {
+            let reason = self
+                .web
+                .install_note
+                .clone()
+                .filter(|_| self.web.install_failed)
+                .or_else(|| self.web.reason.clone())
+                .unwrap_or_else(|| "The embedded browser could not be started.".to_owned());
             self.model.update(|screen| {
                 let Screen::Workspace(state) = screen;
-                state.browser_notice(
-                    "The embedded browser is turned off. Turn it on in Settings under General to download it.",
-                );
+                state.browser_notice(&reason);
             });
-        }
-        if self.web.engine.is_none() && !self.web.failed {
-            match Engine::start() {
-                Ok(engine) => self.web.engine = Some(engine),
-                Err(error) => {
-                    self.web.failed = true;
-                    let notice = match error {
-                        Error::NotInstalled => {
-                            "The embedded browser is not installed. Turn it on in Settings under General to download it.".to_owned()
-                        }
-                        other => other.to_string(),
-                    };
-                    self.model.update(|screen| {
-                        let Screen::Workspace(state) = screen;
-                        state.browser_notice(&notice);
-                    });
-                }
-            }
         }
         self.web.engine.as_ref()
     }
@@ -602,7 +614,12 @@ impl App {
                         if let Some(engine) = self.browser_engine() {
                             match View::open(engine, &address, width, height, scale) {
                                 Ok(view) => self.web.page = Some(view),
-                                Err(error) => eprintln!("pandemonium: {error}"),
+                                Err(error) => {
+                                    self.model.update(|screen| {
+                                        let Screen::Workspace(state) = screen;
+                                        state.browser_notice(&error.to_string());
+                                    });
+                                }
                             }
                         }
                     }
@@ -782,6 +799,7 @@ impl App {
             self.web.was_enabled = enabled;
             self.web.install_failed = false;
             self.web.install_note = None;
+            self.web.reason = None;
             if enabled {
                 self.web.failed = false;
             }
@@ -855,6 +873,101 @@ impl App {
         downloading
     }
 
+    /// Tells the servers whether this window can run browser tools when that changes, and runs the calls their agents made.
+    fn browser_agent(&mut self, scale: f32) -> bool {
+        let usable = self.saved_window.general.embedded_browser
+            && pm_browser::install::supported()
+            && pm_browser::install::installed();
+        if usable != self.web.announced {
+            self.web.announced = usable;
+            self.work.announce_browser(usable);
+        }
+        for (host, server_call, tool, arguments) in self.work.take_browser_calls() {
+            self.web.next_call += 1;
+            let local = self.web.next_call;
+            self.web.calls.insert(local, (host.clone(), server_call));
+            if !self.browser_tool(&host, local, &tool, &arguments, scale) {
+                self.browser_answer(
+                    local,
+                    false,
+                    "The embedded browser is not usable here.".to_owned(),
+                    Vec::new(),
+                );
+            }
+        }
+        let results: Vec<_> = self
+            .web
+            .page
+            .as_ref()
+            .map(View::take_tool_results)
+            .unwrap_or_default();
+        for result in results {
+            let image = result
+                .image
+                .as_deref()
+                .and_then(|path| {
+                    let bytes = std::fs::read(path).ok();
+                    let _ = std::fs::remove_file(path);
+                    bytes
+                })
+                .unwrap_or_default();
+            self.browser_answer(result.call, result.ok, result.text, image);
+        }
+        !self.web.calls.is_empty()
+    }
+
+    /// Gives the server the answer of the tool call `local`.
+    fn browser_answer(&mut self, local: u64, ok: bool, text: String, image: Vec<u8>) {
+        if let Some((host, call)) = self.web.calls.remove(&local) {
+            self.work.browser_result(&host, call, ok, text, image);
+        }
+    }
+
+    /// Starts the tool `tool` an agent called; says whether it could be started, the answer coming later.
+    fn browser_tool(
+        &mut self,
+        host: &Option<String>,
+        local: u64,
+        tool: &str,
+        arguments: &str,
+        scale: f32,
+    ) -> bool {
+        let mut arguments_json: serde_json::Value =
+            serde_json::from_str(arguments).unwrap_or(serde_json::Value::Null);
+        if tool == "browser_navigate" {
+            let Some(url) = arguments_json["url"].as_str().map(str::to_owned) else {
+                self.browser_answer(local, false, "no url was given".to_owned(), Vec::new());
+                return true;
+            };
+            let resolved = match self.browser_resolve(&url, host.as_deref()) {
+                Ok(resolved) => resolved,
+                Err(message) => {
+                    self.browser_answer(local, false, message, Vec::new());
+                    return true;
+                }
+            };
+            if self.web.page.is_none() {
+                self.model.update(|screen| {
+                    let Screen::Workspace(state) = screen;
+                    state.open_browser("about:blank");
+                });
+                self.browser_commands(scale);
+            }
+            arguments_json["url"] = serde_json::Value::String(resolved);
+        }
+        let Some(page) = self.web.page.as_ref() else {
+            self.browser_answer(
+                local,
+                false,
+                "No page is open in the browser; use browser_navigate first.".to_owned(),
+                Vec::new(),
+            );
+            return true;
+        };
+        page.tool(local, tool, &arguments_json.to_string());
+        true
+    }
+
     /// Does the browser's work for one turn of the event loop, and says whether a page is open, which wants the loop to turn again soon.
     pub(super) fn browser_tick(&mut self) -> bool {
         let scale = self
@@ -862,9 +975,10 @@ impl App {
             .as_ref()
             .map_or(1.0, |window| window.scale_factor() as f32);
         let downloading = self.browser_install();
+        let calling = self.browser_agent(scale);
         self.browser_commands(scale);
         if self.web.page.is_none() {
-            return downloading;
+            return downloading || calling;
         }
         self.browser_fit(scale);
         self.browser_present();

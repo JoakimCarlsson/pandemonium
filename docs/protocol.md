@@ -188,6 +188,8 @@ request with exactly one `response` carrying the same `id`.
 | `repositories` | `owner`, `organization`                                                                          | `repositories`  |
 | `folders`      | `path`                                                                                           | `folders`       |
 | `clone`        | `url`, `under` (optional)                                                                        | `directory`     |
+| `browser_available` | `available`                                                                                  | `done`          |
+| `browser_result` | `call`, `ok`, `text`, `image` (PNG bytes, optional)                                              | `done`          |
 | `extensions`   | none                                                                                             | `extensions`    |
 | `install_extensions` | `ids`                                                                                       | `done`          |
 | `remove_extension` | `id`                                                                                          | `done`          |
@@ -999,6 +1001,29 @@ moves on.
   `standing: "ended"` and the server forgets it.
 - `debugs` lists the sessions the server holds, for a client that attaches after
   a restart of the window; `debug_watch` subscribes to one and answers its view.
+
+## Browser tools
+
+A window that has the embedded browser turned on lets the agents of a server
+look at and use its browser. Agents reach the tools as an MCP server the
+server hosts on its loopback address; the server hands each call to a window.
+
+```json
+{ "type": "browser_call", "call": 7, "tool": "browser_screenshot", "arguments": "{}" }
+```
+
+- `browser_available` tells the server whether this connection can run the
+  tools. Send it with `available: true` after connecting and again from time
+  to time; the server uses the connection that said so most recently, and
+  forgets it when the connection ends.
+- `browser_call` is sent to that connection when an agent calls a tool. The
+  tools are `browser_navigate`, `browser_snapshot`, `browser_screenshot`,
+  `browser_click`, `browser_type`, `browser_evaluate`, `browser_console`,
+  `browser_network` and `browser_wait`; `arguments` is the JSON the agent gave.
+- `browser_result` answers a call with the text the tool produced and, for
+  `browser_screenshot`, the PNG it took. The server answers the agent with it,
+  or with an error when no connection answers within a minute and a half or
+  none can run the tools.
 
 ## Extensions
 

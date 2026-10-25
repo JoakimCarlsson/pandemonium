@@ -3,27 +3,18 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::Sender;
 
 use cef::*;
-use pm_browser::wire::Request;
+use pm_browser::ToolResult;
+use pm_browser::wire::{Event, Request};
 use pm_browser::{Button, EditAction, Key};
 
-use crate::devtools::find_tools;
+use crate::agent;
+use crate::bridge::{Bridge, Wish};
+use crate::cdp::Cdp;
 use crate::handler::{Out, Page, client_for};
-
-/// The script that, run in a page, lets the reader pick an element and reports it through the console.
-const PICK_SCRIPT: &str = include_str!("pick.js");
-
-/// A request for developer tools that waits for the engine to say where they are served.
-struct PendingTools {
-    /// The page the tools are shown in.
-    page: u32,
-    /// Where the lookup will answer.
-    lookup: Receiver<Option<String>>,
-    /// The size the tools' page was asked for.
-    size: (u32, u32, f32),
-}
+use crate::pick;
 
 /// Every open page.
 pub(crate) struct Pages {
@@ -33,10 +24,12 @@ pub(crate) struct Pages {
     out: Arc<Out>,
     /// The folder shared files are made in.
     folder: PathBuf,
-    /// The port developer tools are served on.
-    port: u16,
-    /// Developer tools being looked up.
-    pending: Vec<PendingTools>,
+    /// Lets the DevTools pages reach the pages they inspect.
+    bridge: Bridge,
+    /// Where a timer says a call waited long enough.
+    timers: Sender<Wish>,
+    /// The secret path each DevTools page was given, by the page's number.
+    secrets: HashMap<u32, String>,
 }
 
 /// The engine's mouse event for a position and the modifiers held.
@@ -61,14 +54,20 @@ fn settings() -> BrowserSettings {
 }
 
 impl Pages {
-    /// No pages yet; reports go to `out`, shared files to `folder`, tools are served on `port`.
-    pub(crate) fn new(out: Arc<Out>, folder: PathBuf, port: u16) -> Self {
+    /// No pages yet; reports go to `out`, shared files to `folder`, and DevTools pages reach their pages through `bridge`.
+    pub(crate) fn new(
+        out: Arc<Out>,
+        folder: PathBuf,
+        bridge: Bridge,
+        timers: Sender<Wish>,
+    ) -> Self {
         Self {
             open: HashMap::new(),
             out,
             folder,
-            port,
-            pending: Vec::new(),
+            bridge,
+            timers,
+            secrets: HashMap::new(),
         }
     }
 
@@ -102,20 +101,30 @@ impl Pages {
         self.open.get(&id)?.browser()?.host()
     }
 
-    /// Opens the tools whose lookup has answered.
-    pub(crate) fn poll_tools(&mut self) {
-        let mut waiting = Vec::new();
-        for pending in std::mem::take(&mut self.pending) {
-            match pending.lookup.try_recv() {
-                Ok(Some(url)) => {
-                    let (width, height, scale) = pending.size;
-                    self.open(pending.page, &url, width, height, scale);
+    /// Carries out what a DevTools page asked through the bridge.
+    pub(crate) fn wish(&self, wish: Wish) {
+        match wish {
+            Wish::Send { target, message } => {
+                if let Some(host) = self.host(target) {
+                    Cdp::send_raw(&host, &message);
                 }
-                Ok(None) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {}
-                Err(std::sync::mpsc::TryRecvError::Empty) => waiting.push(pending),
+            }
+            Wish::Late { page, call } => {
+                if let Some(state) = self.open.get(&page) {
+                    state.tool_done(
+                        call,
+                        false,
+                        "The page did not finish loading in time.".to_owned(),
+                        None,
+                    );
+                }
+            }
+            Wish::Watch { target, sender } => {
+                if let Some(page) = self.open.get(&target) {
+                    page.cdp.subscribe(sender);
+                }
             }
         }
-        self.pending = waiting;
     }
 
     /// Carries out `request`; says whether to go on.
@@ -135,12 +144,19 @@ impl Pages {
                 height,
                 scale,
             } => {
-                if let Some(target) = self.open.get(&of) {
-                    self.pending.push(PendingTools {
-                        page,
-                        lookup: find_tools(self.port, target.address()),
-                        size: (width, height, scale),
-                    });
+                if self.open.contains_key(&of) {
+                    let mut secret = [0u8; 16];
+                    if getrandom::fill(&mut secret).is_err() {
+                        return true;
+                    }
+                    let secret: String = secret.iter().map(|byte| format!("{byte:02x}")).collect();
+                    self.bridge.allow(&secret, of);
+                    let url = format!(
+                        "devtools://devtools/bundled/inspector.html?ws=127.0.0.1:{}/{secret}",
+                        self.bridge.port
+                    );
+                    self.secrets.insert(page, secret);
+                    self.open(page, &url, width, height, scale);
                 }
             }
             Request::Load { page, url } => {
@@ -243,32 +259,34 @@ impl Pages {
                 }
             }
             Request::Pick { page, on } => {
-                if let Some(frame) = self
-                    .open
-                    .get(&page)
-                    .and_then(|p| p.browser())
-                    .and_then(|b| b.main_frame())
-                {
-                    let script = if on {
-                        let mut secret = [0u8; 16];
-                        if getrandom::fill(&mut secret).is_err() {
-                            return true;
-                        }
-                        let secret: String =
-                            secret.iter().map(|byte| format!("{byte:02x}")).collect();
-                        if let Some(state) = self.open.get(&page) {
-                            state.set_pick_secret(Some(secret.clone()));
-                        }
-                        PICK_SCRIPT.replace("__NONCE__", &secret)
+                if let Some(state) = self.open.get(&page) {
+                    if on {
+                        pick::start(state);
                     } else {
-                        if let Some(state) = self.open.get(&page) {
-                            state.set_pick_secret(None);
-                        }
-                        "window.__pmPick && window.__pmPick.stop(true);".to_owned()
-                    };
-                    frame.execute_java_script(Some(&script.as_str().into()), None, 0);
+                        pick::stop(state);
+                    }
                 }
             }
+            Request::Tool {
+                page,
+                call,
+                tool,
+                arguments,
+            } => match self.open.get(&page) {
+                Some(state) => {
+                    state.tool_started(call);
+                    agent::run(state, call, &tool, &arguments, &self.timers);
+                }
+                None => self.out.send(&Event::ToolDone {
+                    page,
+                    result: Box::new(ToolResult {
+                        call,
+                        ok: false,
+                        text: "there is no page".to_owned(),
+                        image: None,
+                    }),
+                }),
+            },
             Request::Edit { page, action } => {
                 if let Some(frame) = self
                     .open
@@ -285,6 +303,9 @@ impl Pages {
                 }
             }
             Request::Close { page } => {
+                if let Some(secret) = self.secrets.remove(&page) {
+                    self.bridge.forbid(&secret);
+                }
                 if let Some(host) = self.host(page) {
                     host.close_browser(true as _);
                 }

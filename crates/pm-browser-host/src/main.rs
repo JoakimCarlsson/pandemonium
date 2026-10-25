@@ -6,15 +6,21 @@
 //! surfaces folder that the window maps. It ends when the window hangs up.
 
 #[cfg(target_os = "linux")]
+mod agent;
+#[cfg(target_os = "linux")]
 mod app;
 #[cfg(target_os = "linux")]
-mod devtools;
+mod bridge;
+#[cfg(target_os = "linux")]
+mod cdp;
 #[cfg(target_os = "linux")]
 mod engine;
 #[cfg(target_os = "linux")]
 mod handler;
 #[cfg(target_os = "linux")]
 mod pages;
+#[cfg(target_os = "linux")]
+mod pick;
 #[cfg(target_os = "linux")]
 mod run;
 

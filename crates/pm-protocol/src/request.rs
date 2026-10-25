@@ -1108,4 +1108,21 @@ pub enum Request {
         #[serde(default)]
         under: Option<String>,
     },
+    /// Tells the server whether this client can run the browser's tools for agents; the server sends an agent's call to a client that can.
+    BrowserAvailable {
+        /// Whether it can.
+        available: bool,
+    },
+    /// What a call the server sent with `browser_call` came to.
+    BrowserResult {
+        /// The call.
+        call: u64,
+        /// Whether the tool worked.
+        ok: bool,
+        /// What it says: the result, or why it failed.
+        text: String,
+        /// A picture the tool took as PNG, or nothing when it took none.
+        #[serde(default, with = "crate::bytes")]
+        image: Vec<u8>,
+    },
 }

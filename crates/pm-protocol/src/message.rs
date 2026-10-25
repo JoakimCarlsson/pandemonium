@@ -118,4 +118,13 @@ pub enum ServerMessage {
         /// Every extension, as `extensions` lists them.
         extensions: Vec<crate::ExtensionInfo>,
     },
+    /// An agent asked for a browser tool, which this client is to run in its browser and answer with `browser_result`.
+    BrowserCall {
+        /// The call, to be given back with the answer.
+        call: u64,
+        /// The tool, such as `browser_screenshot`.
+        tool: String,
+        /// What the agent gave it, as JSON text.
+        arguments: String,
+    },
 }

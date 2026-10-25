@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use pm_browser::wire::{Event, Request};
 
+use crate::bridge::Bridge;
 use crate::engine::{Engine, run_helper};
 use crate::handler::Out;
 use crate::pages::Pages;
@@ -67,10 +68,21 @@ pub(crate) fn run() -> ExitCode {
             }
         }
     });
-    let mut pages = Pages::new(out, surfaces, engine.debugging_port);
+    let (wish_sender, wishes) = channel();
+    let timers = wish_sender.clone();
+    let bridge = match Bridge::start(wish_sender) {
+        Ok(bridge) => bridge,
+        Err(message) => {
+            out.send(&Event::Failed { message });
+            return ExitCode::FAILURE;
+        }
+    };
+    let mut pages = Pages::new(out, surfaces, bridge, timers);
     'running: loop {
         engine.pump();
-        pages.poll_tools();
+        while let Ok(wish) = wishes.try_recv() {
+            pages.wish(wish);
+        }
         loop {
             match receiver.try_recv() {
                 Ok(request) => {

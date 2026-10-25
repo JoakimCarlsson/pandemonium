@@ -1,6 +1,7 @@
 //! The panes of the main area: tab groups laid side by side or one above the other, each tab dragged to another group or to the edge of one to split it.
 
 use pm_input::FocusId;
+use serde::{Deserialize, Serialize};
 
 use crate::open_files::FILE_TAB_BASE;
 use crate::sash::Grows;
@@ -47,7 +48,7 @@ const SMALLEST: f32 = 160.0;
 const EDGE: f32 = 0.25;
 
 /// What a tab of a pane shows.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Item {
     /// The page itself: the conversation of a session, the page for starting work or a project's overview.
     Page,
@@ -67,7 +68,7 @@ pub enum Item {
 }
 
 /// A pane: the tabs it holds and the one it shows.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Group {
     /// Its tabs, in the order they are drawn.
     pub items: Vec<Item>,
@@ -76,7 +77,7 @@ pub struct Group {
 }
 
 /// Which way the two sides of a split lie.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Axis {
     /// Side by side.
     Row,
@@ -85,7 +86,7 @@ pub enum Axis {
 }
 
 /// How the main area is cut into panes.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Layout {
     /// One pane over the whole of its space.
     Group(Group),

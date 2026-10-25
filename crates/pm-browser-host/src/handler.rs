@@ -6,13 +6,16 @@
 
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use cef::*;
 use pm_browser::surface::SurfaceWriter;
+
+use crate::agent::Recorder;
+use crate::cdp::Cdp;
 use pm_browser::wire::{Event, line};
-use pm_browser::{Cursor, PickedElement};
+use pm_browser::{Cursor, PickedElement, ToolResult};
 
 /// Where reports to the window are written.
 pub(crate) struct Out(Mutex<Box<dyn Write + Send>>);
@@ -63,14 +66,20 @@ pub(crate) struct Page {
     folder: PathBuf,
     /// The browser the engine made, once it has.
     browser: Mutex<Option<Browser>>,
+    /// The page's DevTools protocol.
+    pub(crate) cdp: Arc<Cdp>,
+    /// What the page wrote to its console and asked of the network.
+    pub(crate) record: Arc<Recorder>,
+    /// The calls of tools that are still running, so a late end is told only once.
+    running: Mutex<Vec<u64>>,
     /// The page's size in logical pixels and the display scale it is drawn at.
     geometry: Mutex<(u32, u32, f32)>,
-    /// The page's address, as last reported.
-    address: Mutex<String>,
     /// The files painted into.
     surface: Mutex<Option<Surface>>,
-    /// The secret the pick script was given when pick mode was turned on, while it is on; only a report that carries it is believed.
-    pick_secret: Mutex<Option<String>>,
+    /// The scripting context the pick script runs in, while pick mode is on; only a report from it is believed.
+    pick_context: Mutex<Option<i64>>,
+    /// Whether the page's events are already being listened to for picks.
+    pub(crate) pick_listening: AtomicBool,
     /// How many files have been made, for naming.
     serial: AtomicU64,
     /// How many paints there have been.
@@ -92,29 +101,92 @@ impl Page {
             out,
             folder,
             browser: Mutex::new(None),
+            cdp: Cdp::new(),
+            record: Arc::new(Recorder::default()),
+            running: Mutex::new(Vec::new()),
             geometry: Mutex::new((width, height, scale)),
-            address: Mutex::new(String::new()),
             surface: Mutex::new(None),
-            pick_secret: Mutex::new(None),
+            pick_context: Mutex::new(None),
+            pick_listening: AtomicBool::new(false),
             serial: AtomicU64::new(0),
             generation: AtomicU64::new(0),
         })
     }
 
-    /// Remembers the secret of the pick mode just turned on, or forgets it when there is none.
-    pub(crate) fn set_pick_secret(&self, secret: Option<String>) {
-        if let Ok(mut held) = self.pick_secret.lock() {
-            *held = secret;
+    /// Remembers the scripting context pick mode runs in, or that it is off.
+    pub(crate) fn set_pick_context(&self, context: Option<i64>) {
+        if let Ok(mut held) = self.pick_context.lock() {
+            *held = context;
         }
     }
 
-    /// What follows `prefix` in `message` when pick mode is on and the message carries its secret; the secret is used up by a message that does.
-    fn pick_report<'a>(&self, message: &'a str, prefix: &str) -> Option<&'a str> {
-        let rest = message.strip_prefix(prefix)?;
-        let mut held = self.pick_secret.lock().ok()?;
-        let rest = rest.strip_prefix(held.as_deref()?)?;
-        *held = None;
-        Some(rest)
+    /// The scripting context pick mode runs in, while it is on.
+    pub(crate) fn pick_context(&self) -> Option<i64> {
+        self.pick_context.lock().ok().and_then(|held| *held)
+    }
+
+    /// The number the window knows the page by.
+    pub(crate) fn id(&self) -> u32 {
+        self.id
+    }
+
+    /// Notes that the tool call `call` started.
+    pub(crate) fn tool_started(&self, call: u64) {
+        if let Ok(mut running) = self.running.lock() {
+            running.push(call);
+        }
+    }
+
+    /// Ends the tool call `call` with what it came to, once; a call that already ended is not told again.
+    pub(crate) fn tool_done(&self, call: u64, ok: bool, text: String, image: Option<String>) {
+        let first = self
+            .running
+            .lock()
+            .map(|mut running| {
+                let before = running.len();
+                running.retain(|held| *held != call);
+                running.len() != before
+            })
+            .unwrap_or(false);
+        if first {
+            self.out.send(&Event::ToolDone {
+                page: self.id,
+                result: Box::new(ToolResult {
+                    call,
+                    ok,
+                    text,
+                    image,
+                }),
+            });
+        }
+    }
+
+    /// Saves `bytes`, a picture, beside the shared files and says where.
+    pub(crate) fn save_picture(&self, bytes: &[u8]) -> Option<String> {
+        let serial = self.serial.fetch_add(1, Ordering::Relaxed);
+        let path = self.folder.join(format!("pick-{}-{serial}.png", self.id));
+        std::fs::write(&path, bytes).ok()?;
+        Some(path.to_string_lossy().into_owned())
+    }
+
+    /// Tells the window what was picked, or that pick mode ended without a pick.
+    pub(crate) fn report_pick(&self, element: Option<PickedElement>) {
+        self.out.send(&Event::Picked {
+            page: self.id,
+            element: element.map(|element| Box::new(limited(element))),
+        });
+    }
+
+    /// Sends `method` with `params` to the page and hands the answer to `reply`.
+    pub(crate) fn call(
+        &self,
+        method: &str,
+        params: &serde_json::Value,
+        reply: impl FnOnce(&serde_json::Value) + Send + 'static,
+    ) {
+        if let Some(host) = self.browser().and_then(|browser| browser.host()) {
+            self.cdp.call(&host, method, params, reply);
+        }
     }
 
     /// The browser the engine made, once it has.
@@ -124,14 +196,16 @@ impl Page {
 
     /// Keeps the browser the engine made.
     pub(crate) fn set_browser(&self, browser: Browser) {
-        if let Ok(mut slot) = self.browser.lock() {
-            *slot = Some(browser);
+        let Ok(mut slot) = self.browser.lock() else {
+            return;
+        };
+        if slot.is_none()
+            && let Some(host) = browser.host()
+        {
+            self.cdp.attach(&host);
+            self.record.start(&self.cdp, &host);
         }
-    }
-
-    /// The page's address, as last reported.
-    pub(crate) fn address(&self) -> String {
-        self.address.lock().map(|a| a.clone()).unwrap_or_default()
+        *slot = Some(browser);
     }
 
     /// Records a new size and scale for the next paint.
@@ -197,7 +271,7 @@ fn cut(text: &mut String, most: usize) {
 }
 
 /// A picked element with every field cut to a size a prompt can take, as a page chooses what it says.
-fn limited(mut element: PickedElement) -> PickedElement {
+pub(crate) fn limited(mut element: PickedElement) -> PickedElement {
     for (text, most) in [
         (&mut element.selector, 300),
         (&mut element.tag, 40),
@@ -324,42 +398,11 @@ wrap_display_handler! {
             url: Option<&CefString>,
         ) {
             if let Some(url) = url {
-                if let Ok(mut address) = self.page.address.lock() {
-                    *address = url.to_string();
-                }
                 self.page.out.send(&Event::Address {
                     page: self.page.id,
                     url: url.to_string(),
                 });
             }
-        }
-
-        fn on_console_message(
-            &self,
-            _browser: Option<&mut Browser>,
-            _level: LogSeverity,
-            message: Option<&CefString>,
-            _source: Option<&CefString>,
-            _line: ::std::os::raw::c_int,
-        ) -> ::std::os::raw::c_int {
-            let Some(message) = message.map(ToString::to_string) else {
-                return false as _;
-            };
-            if let Some(json) = self.page.pick_report(&message, "__pm_pick__") {
-                self.page.out.send(&Event::Picked {
-                    page: self.page.id,
-                    element: serde_json::from_str(json).ok().map(limited),
-                });
-                return true as _;
-            }
-            if self.page.pick_report(&message, "__pm_pick_cancel__").is_some() {
-                self.page.out.send(&Event::Picked {
-                    page: self.page.id,
-                    element: None,
-                });
-                return true as _;
-            }
-            false as _
         }
 
         fn on_cursor_change(

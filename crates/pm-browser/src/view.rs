@@ -7,7 +7,7 @@ use crate::error::Error;
 use crate::frame::Frame;
 use crate::input::{Button, Cursor, Key, Modifiers};
 use crate::link::{Link, PageState};
-use crate::wire::{EditAction, PickedElement, Request};
+use crate::wire::{EditAction, PickedElement, Request, ToolResult};
 
 /// A page open in the helper, painted into [`Frame`]s instead of a window.
 pub struct View {
@@ -172,6 +172,21 @@ impl View {
     /// The pick the helper reported since the last call: the element, or nothing inside when the mode ended without one.
     pub fn take_pick(&self) -> Option<Option<PickedElement>> {
         self.state.take_pick()
+    }
+
+    /// Runs the tool `tool` of an agent against the page, given `arguments` as JSON text; the answer comes from [`View::take_tool_results`].
+    pub fn tool(&self, call: u64, tool: &str, arguments: &str) {
+        self.link.send(&Request::Tool {
+            page: self.page,
+            call,
+            tool: tool.to_owned(),
+            arguments: arguments.to_owned(),
+        });
+    }
+
+    /// The tool calls that ended since the last call.
+    pub fn take_tool_results(&self) -> Vec<ToolResult> {
+        self.state.take_tools()
     }
 
     /// Cuts, copies or pastes in the page, or marks everything in it.

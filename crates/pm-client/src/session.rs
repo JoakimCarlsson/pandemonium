@@ -70,6 +70,15 @@ pub enum Incoming {
     },
     /// The languages changed; these are all of them now.
     ExtensionsChanged(Vec<pm_protocol::ExtensionInfo>),
+    /// An agent asked for a browser tool, to be run here and answered.
+    BrowserCall {
+        /// The call.
+        call: u64,
+        /// The tool.
+        tool: String,
+        /// What the agent gave it, as JSON text.
+        arguments: String,
+    },
     /// The files of a folder this client watches changed; this is the folder, as the client named it.
     FolderChanged(String),
     /// Something an agent did, numbered within its session.
@@ -454,6 +463,17 @@ fn converse(
                     }
                     ServerMessage::ExtensionsChanged { extensions } => {
                         let _ = reporter.send(Incoming::ExtensionsChanged(extensions));
+                    }
+                    ServerMessage::BrowserCall {
+                        call,
+                        tool,
+                        arguments,
+                    } => {
+                        let _ = reporter.send(Incoming::BrowserCall {
+                            call,
+                            tool,
+                            arguments,
+                        });
                     }
                     ServerMessage::FolderChanged { directory } => {
                         let _ = reporter.send(Incoming::FolderChanged(directory));

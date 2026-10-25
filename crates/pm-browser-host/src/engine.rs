@@ -8,25 +8,13 @@ use cef::*;
 use crate::app::EngineApp;
 
 /// The running browser engine; it stays on the thread that started it and is shut down when dropped.
-pub(crate) struct Engine {
-    /// The local port the pages' developer tools are served on.
-    pub(crate) debugging_port: u16,
-}
-
-/// A free local port.
-fn free_port() -> Option<u16> {
-    std::net::TcpListener::bind(("127.0.0.1", 0))
-        .and_then(|listener| listener.local_addr())
-        .map(|address| address.port())
-        .ok()
-}
+pub(crate) struct Engine;
 
 impl Engine {
     /// Starts the engine, keeping profiles, cookies and caches under `profile`.
     pub(crate) fn start(profile: &Path) -> Result<Self, String> {
         let _ = api_hash(sys::CEF_API_VERSION_LAST, 0);
         let args = Args::new();
-        let port = free_port().ok_or("no free local port")?;
         let switches = vec![
             "noerrdialogs".to_owned(),
             "use-mock-keychain".to_owned(),
@@ -35,7 +23,6 @@ impl Engine {
             "disable-background-networking".to_owned(),
             "disable-component-update".to_owned(),
             "disable-features=MediaRouter".to_owned(),
-            format!("remote-allow-origins=http://127.0.0.1:{port}"),
         ];
         let mut app = EngineApp::new(switches);
         let runtime = runtime_dir();
@@ -52,7 +39,6 @@ impl Engine {
             external_message_pump: true as _,
             root_cache_path: CefString::from(profile.to_str().ok_or("bad profile path")?),
             log_severity: LogSeverity::WARNING,
-            remote_debugging_port: i32::from(port),
             ..Default::default()
         };
         let started = initialize(
@@ -64,9 +50,7 @@ impl Engine {
         if started != 1 {
             return Err("the engine failed to initialize".to_owned());
         }
-        Ok(Self {
-            debugging_port: port,
-        })
+        Ok(Self)
     }
 
     /// Lets the engine do the work it has queued.

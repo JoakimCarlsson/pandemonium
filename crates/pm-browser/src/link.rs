@@ -8,13 +8,15 @@ use std::sync::{Arc, Mutex};
 use crate::frame::Frame;
 use crate::input::Cursor;
 use crate::surface::SurfaceReader;
-use crate::wire::{Event, PickedElement, Request, line};
+use crate::wire::{Event, PickedElement, Request, ToolResult, line};
 
 /// What the helper reported about one page.
 #[derive(Default)]
 pub(crate) struct PageState {
     /// The newest picture that was copied out of the shared files.
     frame: Mutex<Option<Frame>>,
+    /// The tool calls that ended since the window last asked.
+    tools: Mutex<Vec<ToolResult>>,
     /// A pick the window has not taken yet: the element, or nothing when the mode ended without one.
     picked: Mutex<Option<Option<PickedElement>>>,
     /// Which file the newest paint is in, and how many paints there have been.
@@ -28,6 +30,14 @@ pub(crate) struct PageState {
 }
 
 impl PageState {
+    /// The tool calls that ended since the last call.
+    pub(crate) fn take_tools(&self) -> Vec<ToolResult> {
+        self.tools
+            .lock()
+            .map(|mut held| std::mem::take(&mut *held))
+            .unwrap_or_default()
+    }
+
     /// The pick the helper reported since the last call, if any.
     pub(crate) fn take_pick(&self) -> Option<Option<PickedElement>> {
         self.picked.lock().ok()?.take()
@@ -182,7 +192,14 @@ impl Link {
                 if let Some(state) = self.page(page)
                     && let Ok(mut picked) = state.picked.lock()
                 {
-                    *picked = Some(element);
+                    *picked = Some(element.map(|element| *element));
+                }
+            }
+            Event::ToolDone { page, result } => {
+                if let Some(state) = self.page(page)
+                    && let Ok(mut tools) = state.tools.lock()
+                {
+                    tools.push(*result);
                 }
             }
             Event::Title { page, title } => {

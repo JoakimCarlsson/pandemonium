@@ -1,5 +1,4 @@
 (() => {
-  const nonce = '__NONCE__';
   if (window.__pmPick) {
     window.__pmPick.stop(false);
   }
@@ -44,6 +43,7 @@
       text: (el.innerText || el.textContent || '').trim().slice(0, 400),
       html: el.outerHTML.slice(0, 2000),
       x: r.x, y: r.y, width: r.width, height: r.height,
+      scroll_x: window.scrollX, scroll_y: window.scrollY,
       styles: keys.map((k) => [k, s.getPropertyValue(k)]),
       url: location.href,
       title: document.title,
@@ -65,16 +65,17 @@
     e.stopImmediatePropagation();
   };
   const click = (e) => {
+    if (!e.isTrusted) return;
     swallow(e);
     const el = target || e.target;
     stop(true);
-    console.log('__pm_pick__' + nonce + JSON.stringify(describe(el)));
+    __pmPicked(JSON.stringify({ element: describe(el) }));
   };
   const key = (e) => {
-    if (e.key === 'Escape') {
+    if (e.isTrusted && e.key === 'Escape') {
       swallow(e);
       stop(true);
-      console.log('__pm_pick_cancel__' + nonce);
+      __pmPicked(JSON.stringify({}));
     }
   };
   const blocked = ['mousedown', 'mouseup', 'pointerdown', 'pointerup', 'dblclick', 'contextmenu', 'auxclick'];

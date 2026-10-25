@@ -380,6 +380,10 @@ pub struct Work {
     cancelled: HashSet<usize>,
     /// What agents did before their session was known by position, each with its number.
     early: HashMap<(Host, u64), Vec<(u64, Event)>>,
+    /// Whether this window can run the browser's tools, which each server is told as it connects.
+    browser_available: bool,
+    /// The browser tool calls agents made that the window has not taken yet, each with the machine, the call and the tool with its arguments.
+    browser_calls: Vec<(Host, u64, String, String)>,
     /// What the threads report.
     jobs: Receiver<Job>,
     /// Handed to each thread.
@@ -426,6 +430,8 @@ impl Work {
             numbers: HashMap::new(),
             positions: HashMap::new(),
             forgotten: HashSet::new(),
+            browser_calls: Vec::new(),
+            browser_available: false,
             cancelled: HashSet::new(),
             early: HashMap::new(),
             tabs: HashMap::new(),
@@ -543,6 +549,42 @@ impl Work {
     }
 
     /// Sends `request` to the server on `host`, or keeps it until that server is reached, and remembers what to do with the answer.
+    /// The browser tool calls agents made since this was last called.
+    pub fn take_browser_calls(&mut self) -> Vec<(Host, u64, String, String)> {
+        std::mem::take(&mut self.browser_calls)
+    }
+
+    /// Answers the browser tool call `call` of the server on `host`.
+    pub fn browser_result(
+        &mut self,
+        host: &Host,
+        call: u64,
+        ok: bool,
+        text: String,
+        image: Vec<u8>,
+    ) {
+        let request = Request::BrowserResult {
+            call,
+            ok,
+            text,
+            image,
+        };
+        self.ask(host, request, Pending::Nothing);
+    }
+
+    /// Tells every server this window is connected to whether it can run the browser's tools for their agents.
+    pub fn announce_browser(&mut self, available: bool) {
+        self.browser_available = available;
+        let hosts: Vec<Host> = self.links.keys().cloned().collect();
+        for host in hosts {
+            self.ask(
+                &host,
+                Request::BrowserAvailable { available },
+                Pending::Nothing,
+            );
+        }
+    }
+
     fn ask(&mut self, host: &Host, request: Request, pending: Pending) {
         if !self.links.contains_key(host) {
             self.links.insert(host.clone(), Link::default());
@@ -1409,6 +1451,13 @@ impl Work {
                         self.share_extensions(model, &host);
                         self.ask_extension_assets(&host);
                         self.ask_debugs(&host);
+                        if self.browser_available {
+                            self.ask(
+                                &host,
+                                Request::BrowserAvailable { available: true },
+                                Pending::Nothing,
+                            );
+                        }
                         model.update(|screen| {
                             *screen = std::mem::take(screen).reopen_documents(&host);
                         });
@@ -1486,6 +1535,13 @@ impl Work {
                             diagnostics,
                         );
                     }),
+                    Incoming::BrowserCall {
+                        call,
+                        tool,
+                        arguments,
+                    } => self
+                        .browser_calls
+                        .push((host.clone(), call, tool, arguments)),
                     Incoming::FolderChanged(directory) => {
                         self.folder_changed(model, &host, &directory);
                     }

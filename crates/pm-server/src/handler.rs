@@ -1038,6 +1038,19 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             Ok(changes) => Response::RevisionChanges { changes },
             Err(reason) => failed(reason),
         },
+        Request::BrowserAvailable { available } => {
+            crate::browser_tools::set_available(connection, available);
+            Response::Done
+        }
+        Request::BrowserResult {
+            call,
+            ok,
+            text,
+            image,
+        } => {
+            crate::browser_tools::answer(call, crate::browser_tools::Reply { ok, text, image });
+            Response::Done
+        }
         Request::Extensions => Response::Extensions {
             extensions: core.extension_infos(true),
         },

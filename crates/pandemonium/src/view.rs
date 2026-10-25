@@ -1,6 +1,7 @@
 //! Where the window was when it was closed, kept on this machine so that the next launch opens on the same page.
 
 use pm_components::open_files::{Contents, EDITOR_FIELD, Left};
+use pm_components::panes::{Layout, Panes};
 use pm_components::state::{
     PROMPT, Page, ReviewTab, SESSION_BASE, Tab, WorkspaceState, prompt_field,
 };
@@ -156,6 +157,34 @@ pub struct View {
     /// The field the reader was typing in, if one had the keyboard.
     #[serde(default)]
     typing: Option<Typing>,
+    /// The browser, when it was open.
+    #[serde(default)]
+    browser: Option<SavedBrowser>,
+    /// How the main area was cut into panes, and the pane worked in.
+    #[serde(default)]
+    panes: Option<SavedPanes>,
+}
+
+/// The browser as it was left.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct SavedBrowser {
+    /// The address in its address line.
+    address: String,
+    /// The machine the page was on, when it was not this one.
+    host: Option<String>,
+    /// Whether the developer tools were open.
+    tools: bool,
+    /// Whether the browser was what the main area showed.
+    shown: bool,
+}
+
+/// The panes of the main area as they were left.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct SavedPanes {
+    /// How the area was cut.
+    layout: Layout,
+    /// The pane last worked in, by position.
+    focused: usize,
 }
 
 /// A flag that was set before it was kept.
@@ -289,6 +318,18 @@ impl View {
             agent: state.agent,
             prompt: state.prompt.text().to_owned(),
             typing,
+            browser: state
+                .browser_saved()
+                .map(|(address, host, tools)| SavedBrowser {
+                    address,
+                    host,
+                    tools,
+                    shown: state.tab == Tab::Browser,
+                }),
+            panes: Some(SavedPanes {
+                layout: state.panes.layout.clone(),
+                focused: state.panes.focused,
+            }),
         }
     }
 
@@ -388,6 +429,21 @@ impl View {
         state.tree_scroll = self.tree_scroll;
         state.diff_scroll = self.diff_scroll;
         state.refresh_files();
+        if let Some(saved) = &self.panes {
+            state.panes = Panes {
+                layout: saved.layout.clone(),
+                focused: saved.focused,
+                parked: None,
+            };
+        }
+        if let Some(browser) = &self.browser {
+            state.restore_browser(
+                &browser.address,
+                browser.host.clone(),
+                browser.tools,
+                browser.shown,
+            );
+        }
         state
     }
 

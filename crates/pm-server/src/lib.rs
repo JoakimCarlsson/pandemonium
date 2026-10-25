@@ -4,6 +4,7 @@
 //! with [`pm_protocol::Request`] and are told what the agents do through
 //! numbered events. An agent keeps running when every client has gone.
 
+mod browser_tools;
 mod cli;
 mod connection;
 mod conversation;

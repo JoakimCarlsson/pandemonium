@@ -22,4 +22,4 @@ pub use error::Error;
 pub use frame::Frame;
 pub use input::{Button, Cursor, Key, Modifiers};
 pub use view::View;
-pub use wire::{EditAction, PickedElement};
+pub use wire::{EditAction, PickedElement, ToolResult};

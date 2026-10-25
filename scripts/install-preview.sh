@@ -52,6 +52,14 @@ install_app_bundle() {
     echo "installed $MAC_APPS_DIR/Pandemonium Preview.app"
 }
 
+# Builds the embedded browser helper and installs it beside the window, on Linux where it exists and when the engine runtime has been fetched.
+install_browser() {
+    [ "$(uname -s)" = Linux ] || return 0
+    [ -d "${CEF_PATH:-$HOME/.cache/cef}" ] || { echo "note: the embedded browser runtime is missing, run scripts/fetch-cef.sh to include it"; return 0; }
+    CEF_PATH="${CEF_PATH:-$HOME/.cache/cef}" cargo build --release --locked -p pm-browser-host
+    install -m 0755 target/release/pandemonium-browser "$BIN_DIR/pandemonium-browser"
+}
+
 # Builds and installs the window, which carries the local server in its `--server` mode.
 install_editor() {
     revision="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
@@ -59,6 +67,7 @@ install_editor() {
     PANDEMONIUM_CHANNEL=preview cargo build --release --locked -p pandemonium
     mkdir -p "$BIN_DIR"
     install -m 0755 target/release/pandemonium "$BIN_DIR/$NAME"
+    install_browser
     case "$(uname -s)" in
         Linux)
             install_icons assets/brand/png assets/brand/pandemonium.svg
