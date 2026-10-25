@@ -1,21 +1,24 @@
-//! An embedded Chromium that paints web pages offscreen.
+//! An embedded Chromium that paints web pages offscreen, run in a helper program of its own.
 //!
-//! An [`Engine`] starts the browser process; a [`View`] is one page drawn
-//! into frames the renderer can show as a picture. The crate knows nothing of
-//! windows or GPUs: it hands back [`Frame`]s and takes sizes and input.
+//! The engine is large, so it is not linked into the window: `pandemonium-browser`
+//! (the `pm-browser-host` crate) holds it, and the reader downloads it when
+//! they turn the browser on. An [`Engine`] starts that helper; a [`View`] is
+//! one page the helper paints into shared files, handed back as [`Frame`]s the
+//! renderer can show as a picture. This crate knows nothing of windows, GPUs or
+//! Chromium: it takes sizes and input and hands back pictures.
 
-mod app;
-mod devtools;
 mod engine;
 mod error;
 mod frame;
-mod handler;
 mod input;
+pub mod install;
+mod link;
+pub mod surface;
 mod view;
+pub mod wire;
 
-pub use devtools::find_tools;
-pub use engine::{Engine, Options, run_helper};
+pub use engine::Engine;
 pub use error::Error;
-pub use frame::{Frame, PaintStats};
+pub use frame::Frame;
 pub use input::{Button, Cursor, Key, Modifiers};
 pub use view::View;

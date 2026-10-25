@@ -35,6 +35,8 @@ pub struct SettingsPage {
     pub mono_fonts: Vec<String>,
     /// What looking for a newer release on the channel followed found, once it was looked for.
     pub release: Option<crate::update::Update>,
+    /// What the embedded browser's install is doing, or has done, said in a line.
+    pub browser: Option<String>,
     /// The form for adding or changing a server of the servers page, while it is open.
     pub server_form: Option<crate::settings_machines::MachineForm>,
     /// What the pages of what agents are given hold.
@@ -151,6 +153,11 @@ impl WorkspaceState {
     pub fn with_release(mut self, update: crate::update::Update) -> Self {
         self.settings_page.release = self.window.general.check_updates.then_some(update);
         self
+    }
+
+    /// Records what the embedded browser's install is doing, or has done, for the General page to say.
+    pub fn set_browser_status(&mut self, status: Option<String>) {
+        self.settings_page.browser = status;
     }
 
     /// Whether a newer release than the running build is out.

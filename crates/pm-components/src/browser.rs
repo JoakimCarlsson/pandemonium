@@ -50,6 +50,9 @@ const BROWSER_END: u64 = 7_421_000;
 /// How tall the bar above the page is, in logical pixels.
 pub const TOOLBAR: f32 = 44.0;
 
+/// Narrower than this many logical pixels, the developer tools go below the page instead of beside it.
+const STACK_BELOW: f32 = 900.0;
+
 /// The surface number the page's pictures are drawn on.
 pub const PAGE_SURFACE: u32 = 1;
 
@@ -110,13 +113,17 @@ pub struct Browser {
     pub tools: bool,
     /// How the pointer looks over the page.
     pub pointer: Pointer,
+    /// The machine the page is on when it is not this one, as the project that opened it names it.
+    pub host: Option<String>,
+    /// Why the page cannot be shown, when it cannot.
+    pub notice: Option<String>,
     /// What the engine has not yet been told to do.
     pub commands: Vec<Command>,
 }
 
 impl Browser {
     /// A browser about to load `address`.
-    fn new(address: &str) -> Self {
+    fn new(address: &str, host: Option<String>) -> Self {
         Self {
             address: Field::new(address),
             title: String::new(),
@@ -124,6 +131,8 @@ impl Browser {
             tools_page: None,
             tools: false,
             pointer: Pointer::Arrow,
+            host,
+            notice: None,
             commands: vec![Command::Load(address.to_owned())],
         }
     }
@@ -154,10 +163,16 @@ pub fn is_browser_part(id: FocusId) -> bool {
 }
 
 impl WorkspaceState {
+    /// The machine of the project the reader is in when it is not this one.
+    fn current_project_host(&self) -> Option<String> {
+        self.projects.get(self.current_project())?.host()
+    }
+
     /// Opens the browser on `address`, or shows it when it is open, and shows it.
     pub fn open_browser(&mut self, address: &str) {
+        let host = self.current_project_host();
         if self.browser.is_none() {
-            self.browser = Some(Browser::new(address));
+            self.browser = Some(Browser::new(address, host));
         }
         self.tab = Tab::Browser;
     }
@@ -195,6 +210,7 @@ impl WorkspaceState {
         if id == BROWSER_CLOSE {
             return self.browser_closed();
         }
+        let host = self.current_project_host();
         let Some(browser) = self.browser.as_mut() else {
             return self;
         };
@@ -205,6 +221,7 @@ impl WorkspaceState {
             BROWSER_RELOAD => browser.commands.push(Command::Reload),
             BROWSER_GO => {
                 let address = address_of(browser.address.text());
+                browser.host = host;
                 browser.commands.push(Command::Load(address));
             }
             BROWSER_TOOLS => {
@@ -226,6 +243,31 @@ impl WorkspaceState {
             .as_mut()
             .map(|browser| std::mem::take(&mut browser.commands))
             .unwrap_or_default()
+    }
+
+    /// Clears the notice and loads the address in the bar again, as after the browser was installed.
+    pub fn browser_retry(&mut self) {
+        let host = self.current_project_host();
+        if let Some(browser) = self.browser.as_mut() {
+            browser.notice = None;
+            browser.host = host;
+            let address = address_of(browser.address.text());
+            browser.commands.push(Command::Load(address));
+        }
+    }
+
+    /// Takes away the notice, as the page is about to be shown.
+    pub fn browser_notice_cleared(&mut self) {
+        if let Some(browser) = self.browser.as_mut() {
+            browser.notice = None;
+        }
+    }
+
+    /// Says why the page cannot be shown.
+    pub fn browser_notice(&mut self, notice: &str) {
+        if let Some(browser) = self.browser.as_mut() {
+            browser.notice = Some(notice.to_owned());
+        }
     }
 
     /// Records what the engine reports: the pictures and title of the page, and, unless the address is being typed, its address.
@@ -294,34 +336,57 @@ pub fn browser_view(state: &WorkspaceState, width: f32, height: f32) -> Node {
             .build(),
         );
     let room = (height - TOOLBAR).max(0.0);
-    let surface = |id: FocusId, picture: &Option<Picture>, wide: f32| {
+    let surface = |id: FocusId, picture: &Option<Picture>, wide: f32, tall: f32| {
         let body = node()
             .styles([
                 flex_none(),
                 w_px(wide),
-                h_px(room),
+                h_px(tall),
                 overflow_hidden(),
                 cursor_text(),
             ])
             .focusable(id);
         match picture {
-            Some(picture) => body.picture(picture.clone()),
-            None => body.child(line("Loading", 12, 1.4, Role::Muted)),
+            Some(picture) if browser.notice.is_none() || id != BROWSER_BODY => {
+                body.picture(picture.clone())
+            }
+            _ => body.child(line(
+                browser.notice.as_deref().unwrap_or("Loading"),
+                12,
+                1.4,
+                Role::Muted,
+            )),
         }
     };
+    let divider = |wide: f32, tall: f32| {
+        node().styles([w_px(wide), h_px(tall), bg(Role::Border), flex_none()])
+    };
     let mut row = node().styles([flex(), w_full(), h_px(room)]);
-    if browser.tools {
+    if browser.tools && width < STACK_BELOW {
+        let top = ((room - 1.0) / 2.0).floor();
+        row = node().styles([flex(), flex_col(), w_full(), h_px(room)]);
+        row = row
+            .child(surface(BROWSER_BODY, &browser.page, width, top))
+            .child(divider(width, 1.0))
+            .child(surface(
+                BROWSER_TOOLS_BODY,
+                &browser.tools_page,
+                width,
+                room - top - 1.0,
+            ));
+    } else if browser.tools {
         let half = (width / 2.0).floor();
         row = row
-            .child(surface(BROWSER_BODY, &browser.page, half))
-            .child(node().styles([w_px(1.0), h_px(room), bg(Role::Border), flex_none()]))
+            .child(surface(BROWSER_BODY, &browser.page, half, room))
+            .child(divider(1.0, room))
             .child(surface(
                 BROWSER_TOOLS_BODY,
                 &browser.tools_page,
                 width - half - 1.0,
+                room,
             ));
     } else {
-        row = row.child(surface(BROWSER_BODY, &browser.page, width));
+        row = row.child(surface(BROWSER_BODY, &browser.page, width, room));
     }
     node()
         .styles([

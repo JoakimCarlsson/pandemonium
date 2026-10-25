@@ -789,7 +789,14 @@ pub(crate) fn body(state: &WorkspaceState, section: Section, room: f32) -> Node 
         Section::General => inner
             .child(about)
             .child(crate::settings_pages::page_rows(state, section, room))
-            .children(release_note(state, room)),
+            .children(release_note(state, room))
+            .children(
+                state
+                    .settings_page
+                    .browser
+                    .as_deref()
+                    .map(|said| wrapped_note(said, room)),
+            ),
         Section::Appearance | Section::Terminal | Section::Git | Section::Worktrees => inner
             .child(about)
             .child(crate::settings_pages::page_rows(state, section, room)),

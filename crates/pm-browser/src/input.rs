@@ -1,7 +1,9 @@
 //! What the page is told about the pointer and the keyboard, in terms that need no engine types.
 
+use serde::{Deserialize, Serialize};
+
 /// Which modifiers and mouse buttons are held, as the engine counts them.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Modifiers(pub u32);
 
 impl Modifiers {
@@ -22,7 +24,7 @@ impl Modifiers {
 }
 
 /// A mouse button.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Button {
     /// The primary button.
     Left,
@@ -33,7 +35,7 @@ pub enum Button {
 }
 
 /// One press or release of a key.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Key {
     /// Whether the key went down, not up.
     pub pressed: bool,
@@ -46,7 +48,7 @@ pub struct Key {
 }
 
 /// How the pointer looks over the page.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub enum Cursor {
     /// The ordinary arrow.
     #[default]

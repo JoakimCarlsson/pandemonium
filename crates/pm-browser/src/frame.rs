@@ -1,4 +1,4 @@
-//! What a page paints: pixels and counters.
+//! What a page paints.
 
 use std::sync::Arc;
 
@@ -13,13 +13,4 @@ pub struct Frame {
     pub generation: u64,
     /// Tightly packed RGBA bytes, row by row from the top.
     pub rgba: Arc<Vec<u8>>,
-}
-
-/// How many paints of each kind a page has delivered.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct PaintStats {
-    /// Paints delivered as CPU pixel buffers.
-    pub software: u64,
-    /// Paints delivered as GPU shared textures.
-    pub shared_texture: u64,
 }

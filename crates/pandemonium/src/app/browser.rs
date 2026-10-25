@@ -1,10 +1,9 @@
 //! The browser pane in the window: the engine that paints pages, the pointer and keyboard sent into them, and the pictures drawn from what they paint.
 
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use pm_browser::{
-    Button as Mouse, Cursor as Shape, Engine, Key as Typed, Modifiers as Held, Options, View,
+    Button as Mouse, Cursor as Shape, Engine, Error, Key as Typed, Modifiers as Held, View,
 };
 use pm_components::browser::{
     BROWSER_BODY, BROWSER_TOOLS_BODY, Command, PAGE_SURFACE, Pointer, TOOLS_SURFACE,
@@ -47,23 +46,67 @@ pub(super) struct Web {
     focused: Option<FocusId>,
     /// Whether the engine could not start.
     failed: bool,
-    /// The answer to the question of where the developer tools of the page are served, while it is awaited.
-    tools_lookup: Option<std::sync::mpsc::Receiver<Option<String>>>,
+    /// The download of the browser, while it runs, and whether it already failed.
+    installing: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+    /// Whether the last download failed, so it is not started again until the setting is turned on again.
+    install_failed: bool,
+    /// Whether the setting was on when last looked at.
+    was_enabled: bool,
+    /// What the download says it is doing, written by its thread.
+    download_note: std::sync::Arc<std::sync::Mutex<String>>,
+    /// The line last handed to the settings page.
+    shown_note: Option<String>,
+    /// What was last said of the install once it was no longer running.
+    install_note: Option<String>,
+    /// The local port that carries each remote port, by machine and remote port.
+    forwards: std::collections::HashMap<(String, u16), u16>,
 }
 
-/// Where the engine keeps cookies and caches.
-fn cache_dir() -> PathBuf {
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_default();
-    if cfg!(target_os = "macos") {
-        home.join("Library/Caches/Pandemonium/browser")
+/// An address cut at its host and port: what comes before the host, the host, the port when written, and what follows.
+struct Parts<'a> {
+    /// The scheme and the two slashes.
+    before: &'a str,
+    /// The host name or address.
+    host: &'a str,
+    /// The port, when the address names one.
+    port: Option<u16>,
+    /// The path, query and fragment.
+    after: &'a str,
+}
+
+/// `address` cut into its parts, if it is a web address with a host.
+fn parts(address: &str) -> Option<Parts<'_>> {
+    let start = address.find("://")? + 3;
+    let (authority, after) = address[start..]
+        .find(['/', '?', '#'])
+        .map_or((&address[start..], ""), |end| {
+            (&address[start..start + end], &address[start + end..])
+        });
+    let authority = authority.rsplit('@').next()?;
+    let (host, port) = if authority.starts_with('[') {
+        let close = authority.find(']')? + 1;
+        (&authority[..close], authority[close..].strip_prefix(':'))
     } else {
-        std::env::var_os("XDG_CACHE_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join(".cache"))
-            .join("pandemonium/browser")
-    }
+        match authority.split_once(':') {
+            Some((host, port)) => (host, Some(port)),
+            None => (authority, None),
+        }
+    };
+    let port = match port {
+        Some(text) => Some(text.parse().ok()?),
+        None => None,
+    };
+    Some(Parts {
+        before: &address[..start],
+        host,
+        port,
+        after,
+    })
+}
+
+/// Whether `host` names the machine the address is opened on.
+fn is_local(host: &str) -> bool {
+    matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "0.0.0.0")
 }
 
 /// The engine's modifiers for the keyboard keys held and the buttons down.
@@ -338,31 +381,92 @@ impl App {
         })
     }
 
-    /// Starts the engine when it is not running.
+    /// The address to open for `address` of a page on `host`: a local one is carried to that machine's port, and what no transport can carry is said.
+    fn browser_resolve(&mut self, address: &str, host: Option<&str>) -> Result<String, String> {
+        let Some(host) = host else {
+            return Ok(address.to_owned());
+        };
+        let Some(cut) = parts(address).filter(|cut| is_local(cut.host)) else {
+            return Ok(address.to_owned());
+        };
+        let port = cut.port.unwrap_or(if cut.before.starts_with("https") {
+            443
+        } else {
+            80
+        });
+        match pm_protocol::route_of(Some(host)) {
+            pm_protocol::Route::Ssh(destination) => {
+                let key = (destination.to_owned(), port);
+                let local = match self.web.forwards.get(&key) {
+                    Some(local) => *local,
+                    None => {
+                        let local = pm_ssh::forward(destination, port)?;
+                        self.web.forwards.insert(key, local);
+                        local
+                    }
+                };
+                Ok(format!("{}127.0.0.1:{local}{}", cut.before, cut.after))
+            }
+            pm_protocol::Route::Direct(target) => {
+                let machine = target.rsplit_once(':').map_or(target, |(name, _)| name);
+                Ok(format!("{}{machine}:{port}{}", cut.before, cut.after))
+            }
+            pm_protocol::Route::Wsl(_) => Ok(address.to_owned()),
+            _ => Err(
+                "Pages of this kind of machine cannot be opened here yet: only ssh, tcp and WSL machines are supported."
+                    .to_owned(),
+            ),
+        }
+    }
+
+    /// How the page shows its address: a local port that carries a remote one is shown as the remote port on `localhost`, so the address typed and the address shown are the same.
+    fn browser_unresolve(&self, address: &str) -> String {
+        let Some(cut) = parts(address).filter(|cut| is_local(cut.host)) else {
+            return address.to_owned();
+        };
+        let Some(local) = cut.port else {
+            return address.to_owned();
+        };
+        match self
+            .web
+            .forwards
+            .iter()
+            .find(|(_, forwarded)| **forwarded == local)
+        {
+            Some(((_, remote), _)) => format!("{}localhost:{remote}{}", cut.before, cut.after),
+            None => address.to_owned(),
+        }
+    }
+
+    /// Starts the helper when it is not running, and says why when it cannot be.
     fn browser_engine(&mut self) -> Option<&Engine> {
+        if self.web.engine.is_none()
+            && !self.web.failed
+            && !self.saved_window.general.embedded_browser
+        {
+            self.web.failed = true;
+            self.model.update(|screen| {
+                let Screen::Workspace(state) = screen;
+                state.browser_notice(
+                    "The embedded browser is turned off. Turn it on in Settings under General to download it.",
+                );
+            });
+        }
         if self.web.engine.is_none() && !self.web.failed {
-            let port = std::net::TcpListener::bind(("127.0.0.1", 0))
-                .and_then(|listener| listener.local_addr())
-                .map(|address| address.port())
-                .ok();
-            let options = Options {
-                switches: vec![
-                    "ozone-platform=x11".to_owned(),
-                    format!(
-                        "remote-allow-origins=http://127.0.0.1:{}",
-                        port.unwrap_or(0)
-                    ),
-                ],
-                shared_texture: false,
-                debugging_port: port,
-            };
-            let cache = cache_dir();
-            let _ = std::fs::create_dir_all(&cache);
-            match Engine::start(&cache, &options) {
+            match Engine::start() {
                 Ok(engine) => self.web.engine = Some(engine),
                 Err(error) => {
-                    eprintln!("pandemonium: the browser could not start: {error}");
                     self.web.failed = true;
+                    let notice = match error {
+                        Error::NotInstalled => {
+                            "The embedded browser is not installed. Turn it on in Settings under General to download it.".to_owned()
+                        }
+                        other => other.to_string(),
+                    };
+                    self.model.update(|screen| {
+                        let Screen::Workspace(state) = screen;
+                        state.browser_notice(&notice);
+                    });
                 }
             }
         }
@@ -400,6 +504,27 @@ impl App {
         for command in commands {
             match command {
                 Command::Load(address) => {
+                    let host = self.model.read(|screen| {
+                        let Screen::Workspace(state) = screen;
+                        state
+                            .browser
+                            .as_ref()
+                            .and_then(|browser| browser.host.clone())
+                    });
+                    let address = match self.browser_resolve(&address, host.as_deref()) {
+                        Ok(address) => address,
+                        Err(message) => {
+                            self.model.update(|screen| {
+                                let Screen::Workspace(state) = screen;
+                                state.browser_notice(&message);
+                            });
+                            continue;
+                        }
+                    };
+                    self.model.update(|screen| {
+                        let Screen::Workspace(state) = screen;
+                        state.browser_notice_cleared();
+                    });
                     if let Some(page) = self.web.page.as_ref() {
                         page.load(&address);
                     } else {
@@ -428,15 +553,12 @@ impl App {
                     }
                 }
                 Command::OpenTools => {
-                    if let (Some(port), Some(page)) = (
-                        self.web.engine.as_ref().and_then(Engine::debugging_port),
-                        self.web.page.as_ref(),
-                    ) {
-                        self.web.tools_lookup = Some(pm_browser::find_tools(port, page.address()));
+                    let (width, height, scale) = self.browser_size(BROWSER_TOOLS_BODY, scale);
+                    if let Some(page) = self.web.page.as_ref() {
+                        self.web.tools = Some(page.open_devtools(width.max(1), height, scale));
                     }
                 }
                 Command::CloseTools => {
-                    self.web.tools_lookup = None;
                     self.web.tools = None;
                     self.web.sized[1] = None;
                     self.web.shown[1] = 0;
@@ -451,33 +573,11 @@ impl App {
         }
     }
 
-    /// Opens the developer tools once the engine has said where they are served.
-    fn browser_tools_ready(&mut self, scale: f32) {
-        let Some(lookup) = self.web.tools_lookup.as_ref() else {
-            return;
-        };
-        let address = match lookup.try_recv() {
-            Ok(address) => address,
-            Err(std::sync::mpsc::TryRecvError::Empty) => return,
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => None,
-        };
-        self.web.tools_lookup = None;
-        let (width, height, scale) = self.browser_size(BROWSER_TOOLS_BODY, scale);
-        if let (Some(address), Some(engine)) = (address, self.web.engine.as_ref()) {
-            match View::open(engine, &address, width.max(1), height, scale) {
-                Ok(view) => self.web.tools = Some(view),
-                Err(error) => eprintln!("pandemonium: {error}"),
-            }
-        }
-    }
-
-    /// Closes the pages and lets the engine finish, so the process can leave.
+    /// Closes the pages and ends the helper, so the process can leave.
     pub(super) fn browser_shutdown(&mut self) {
         self.web.tools = None;
         self.web.page = None;
-        if let Some(engine) = self.web.engine.take() {
-            engine.settle(Duration::from_millis(300));
-        }
+        self.web.engine = None;
     }
 
     /// Gives each window of a page the size of the room the pane has for it.
@@ -536,7 +636,13 @@ impl App {
             .and_then(|view| picture(view, TOOLS_SURFACE, &mut shown[1]));
         let (title, address, pointer) = self.web.page.as_ref().map_or_else(
             || (String::new(), String::new(), Pointer::Arrow),
-            |view| (view.title(), view.address(), pointer_of(view.cursor())),
+            |view| {
+                (
+                    view.title(),
+                    self.browser_unresolve(&view.address()),
+                    pointer_of(view.cursor()),
+                )
+            },
         );
         let typing = self.focus.current() == Some(pm_components::browser::BROWSER_ADDRESS);
         let changed = self.model.read(|screen| {
@@ -557,20 +663,114 @@ impl App {
         });
     }
 
+    /// The line the General page says about the browser's install: what the download is doing, or how it ended, or that it is there.
+    fn browser_status(&self, downloading: bool) -> Option<String> {
+        if !self.saved_window.general.embedded_browser {
+            return None;
+        }
+        if downloading {
+            return self.web.download_note.lock().ok().map(|note| note.clone());
+        }
+        if let Some(note) = self.web.install_note.as_ref() {
+            return Some(note.clone());
+        }
+        if !pm_browser::install::supported() {
+            return Some("The embedded browser is not available on this system yet.".to_owned());
+        }
+        Some("The embedded browser is installed.".to_owned())
+    }
+
+    /// Downloads the browser when the setting is on and it is missing, takes in how the download went, and keeps the General page saying what is happening.
+    fn browser_install(&mut self) -> bool {
+        let enabled = self.saved_window.general.embedded_browser;
+        if enabled != self.web.was_enabled {
+            self.web.was_enabled = enabled;
+            self.web.install_failed = false;
+            self.web.install_note = None;
+            if enabled {
+                self.web.failed = false;
+            }
+        }
+        let mut downloading = false;
+        if let Some(download) = self.web.installing.as_ref() {
+            match download.try_recv() {
+                Err(std::sync::mpsc::TryRecvError::Empty) => downloading = true,
+                other => {
+                    let outcome = other.unwrap_or_else(|_| Err("the download stopped".to_owned()));
+                    self.web.installing = None;
+                    self.web.install_failed = outcome.is_err();
+                    self.web.failed = outcome.is_err();
+                    self.web.install_note = Some(match &outcome {
+                        Ok(()) => "The embedded browser is installed.".to_owned(),
+                        Err(message) => {
+                            format!("The embedded browser could not be installed: {message}")
+                        }
+                    });
+                    self.model.update(|screen| {
+                        let Screen::Workspace(state) = screen;
+                        match &outcome {
+                            Ok(()) => state.browser_retry(),
+                            Err(message) => state.browser_notice(message),
+                        }
+                    });
+                }
+            }
+        } else if enabled
+            && !self.web.install_failed
+            && pm_browser::install::supported()
+            && !pm_browser::install::installed()
+        {
+            let (sender, receiver) = std::sync::mpsc::channel();
+            let note = self.web.download_note.clone();
+            std::thread::spawn(move || {
+                let say = |text: String| {
+                    if let Ok(mut held) = note.lock() {
+                        *held = text;
+                    }
+                };
+                let outcome = pm_browser::install::install(&|step| match step {
+                    pm_browser::install::Step::Downloading(bytes) => say(format!(
+                        "Downloading the embedded browser: {} of about 110 MB.",
+                        bytes / 1_000_000
+                    )),
+                    pm_browser::install::Step::Verifying => {
+                        say("Checking the embedded browser download.".to_owned());
+                    }
+                    pm_browser::install::Step::Unpacking => {
+                        say("Unpacking the embedded browser.".to_owned());
+                    }
+                });
+                let _ = sender.send(outcome);
+            });
+            self.web.installing = Some(receiver);
+            self.model.update(|screen| {
+                let Screen::Workspace(state) = screen;
+                state.browser_notice("Downloading the embedded browser, about 110 MB...");
+            });
+            downloading = true;
+        }
+        let status = self.browser_status(downloading);
+        if status != self.web.shown_note {
+            self.web.shown_note.clone_from(&status);
+            self.model.update(|screen| {
+                let Screen::Workspace(state) = screen;
+                state.set_browser_status(status);
+            });
+        }
+        downloading
+    }
+
     /// Does the browser's work for one turn of the event loop, and says whether a page is open, which wants the loop to turn again soon.
     pub(super) fn browser_tick(&mut self) -> bool {
         let scale = self
             .window
             .as_ref()
             .map_or(1.0, |window| window.scale_factor() as f32);
+        let downloading = self.browser_install();
         self.browser_commands(scale);
         if self.web.page.is_none() {
-            return false;
+            return downloading;
         }
-        if let Some(engine) = self.web.engine.as_ref() {
-            engine.pump();
-        }
-        self.browser_tools_ready(scale);
         self.browser_fit(scale);
         self.browser_present();
         true

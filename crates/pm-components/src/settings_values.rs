@@ -90,6 +90,7 @@ impl Setting {
             Self::ConfirmClose => Control::Switch(window.general.confirm_close),
             Self::CheckUpdates => Control::Switch(window.general.check_updates),
             Self::OfferLanguages => Control::Switch(window.general.offer_languages),
+            Self::EmbeddedBrowser => Control::Switch(window.general.embedded_browser),
             Self::Channel => Control::Choice(
                 &["Stable", "Preview"],
                 place_of(
@@ -336,6 +337,7 @@ impl Setting {
             Self::ConfirmClose => window.general.confirm_close ^= true,
             Self::CheckUpdates => window.general.check_updates ^= true,
             Self::OfferLanguages => window.general.offer_languages ^= true,
+            Self::EmbeddedBrowser => window.general.embedded_browser ^= true,
             Self::Channel => {
                 window.general.channel = [Channel::Stable, Channel::Preview][option.min(1)];
             }
@@ -723,6 +725,9 @@ impl Setting {
             Self::CheckUpdates => window.general.check_updates = own.general.check_updates,
             Self::OfferLanguages => {
                 window.general.offer_languages = own.general.offer_languages;
+            }
+            Self::EmbeddedBrowser => {
+                window.general.embedded_browser = own.general.embedded_browser;
             }
             Self::Channel => window.general.channel = own.general.channel,
             Self::ThemeMode => window.appearance.theme_mode = own.appearance.theme_mode,

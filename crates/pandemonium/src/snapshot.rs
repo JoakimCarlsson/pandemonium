@@ -2290,7 +2290,14 @@ impl Shot {
                 Screen::Workspace(welcome().edited(PROMPT, Edit::Paste("@zzzzqq".to_owned())))
             }
             Self::SettingsPage(section, _) => {
-                Screen::Workspace(settings_sample().after(section.id()))
+                let mut state = settings_sample().after(section.id());
+                let mut window = state.window.clone();
+                window.general.embedded_browser = true;
+                state = state.with_window_settings(window);
+                state.set_browser_status(Some(
+                    "Downloading the embedded browser: 42 of about 110 MB.".to_owned(),
+                ));
+                Screen::Workspace(state)
             }
             Self::SettingsSearch(_) => Screen::Workspace(
                 settings_sample().edited(SETTINGS_FIND, Edit::Paste("font".to_owned())),
@@ -3392,12 +3399,12 @@ mod performance_tests {
 
 /// Writes one frame of the window with a live page open in the browser to a PNG, after sending a few events into the page when `interact`, and with the developer tools open when `tools`; prints the title the page ends with.
 pub fn write_browser(path: &Path, url: &str, tools: bool, interact: bool) -> Result<(), String> {
-    use pm_browser::{Button as Mouse, Engine, Key as Typed, Modifiers as Held, Options, View};
+    use pm_browser::{Button as Mouse, Engine, Key as Typed, Modifiers as Held, View};
     use pm_components::browser::{
         BROWSER_BODY, BROWSER_TOOLS_BODY, PAGE_SURFACE, Pointer, TOOLS_SURFACE,
     };
     use pm_renderer::Picture;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     let (width, height) = (WIDTH, HEIGHT);
     let theme_family = default_family();
@@ -3435,59 +3442,14 @@ pub fn write_browser(path: &Path, url: &str, tools: bool, interact: bool) -> Res
         &mut list,
     );
     let body = region(&output, BROWSER_BODY).ok_or("the page has no window")?;
-    let cache = std::env::current_dir()
-        .map_err(|error| error.to_string())?
-        .join("build/pm-browser-cache");
-    let port = std::net::TcpListener::bind(("127.0.0.1", 0))
-        .and_then(|listener| listener.local_addr())
-        .map_err(|error| error.to_string())?
-        .port();
-    let engine = Engine::start(
-        &cache,
-        &Options {
-            switches: vec![
-                "ozone-platform=x11".to_owned(),
-                format!("remote-allow-origins=http://127.0.0.1:{port}"),
-            ],
-            shared_texture: false,
-            debugging_port: Some(port),
-        },
-    )
-    .map_err(|error| error.to_string())?;
+    let engine = Engine::start().map_err(|error| error.to_string())?;
     let page = View::open(&engine, url, body.width as u32, body.height as u32, 1.0)
         .map_err(|error| error.to_string())?;
-    let pump = |seconds: f64| {
-        let until = Instant::now() + Duration::from_secs_f64(seconds);
-        while Instant::now() < until {
-            engine.pump();
-            std::thread::sleep(Duration::from_millis(2));
-        }
-    };
+    let pump = |seconds: f64| std::thread::sleep(Duration::from_secs_f64(seconds));
     let tools_view = if tools {
         let room = region(&output, BROWSER_TOOLS_BODY).ok_or("the tools have no window")?;
         pump(2.0);
-        let lookup = pm_browser::find_tools(port, page.address());
-        let mut found = None;
-        for _ in 0..600 {
-            engine.pump();
-            if let Ok(address) = lookup.try_recv() {
-                found = address;
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        let address = found.ok_or("the engine did not list the page for its tools")?;
-        eprintln!("tools at {address}");
-        Some(
-            View::open(
-                &engine,
-                &address,
-                room.width as u32,
-                room.height as u32,
-                1.0,
-            )
-            .map_err(|error| error.to_string())?,
-        )
+        Some(page.open_devtools(room.width as u32, room.height as u32, 1.0))
     } else {
         None
     };
@@ -3557,7 +3519,7 @@ pub fn write_browser(path: &Path, url: &str, tools: bool, interact: bool) -> Res
         .ok_or("the renderer could not read its frame back")?;
     drop(tools_view);
     drop(page);
-    engine.settle(Duration::from_millis(300));
+    drop(engine);
     image::save_buffer(path, &pixels, width, height, image::ColorType::Rgba8)
         .map_err(|error| error.to_string())
 }

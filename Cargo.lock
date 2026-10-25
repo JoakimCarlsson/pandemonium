@@ -2902,7 +2902,22 @@ dependencies = [
 name = "pm-browser"
 version = "0.13.0"
 dependencies = [
+ "flate2",
+ "memmap2",
+ "pm-store",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tar",
+ "ureq",
+]
+
+[[package]]
+name = "pm-browser-host"
+version = "0.13.0"
+dependencies = [
  "cef",
+ "pm-browser",
  "serde_json",
 ]
 

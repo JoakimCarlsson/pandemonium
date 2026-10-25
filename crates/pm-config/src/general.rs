@@ -41,6 +41,8 @@ pub struct GeneralSettings {
     pub offer_languages: bool,
     /// The languages, by folder name, the reader turned the offer down for.
     pub declined_languages: Vec<String>,
+    /// Whether the embedded browser is turned on, which downloads it once.
+    pub embedded_browser: bool,
 }
 
 impl Default for GeneralSettings {
@@ -53,6 +55,7 @@ impl Default for GeneralSettings {
             channel: Channel::Stable,
             offer_languages: true,
             declined_languages: Vec::new(),
+            embedded_browser: false,
         }
     }
 }

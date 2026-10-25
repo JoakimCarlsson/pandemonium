@@ -76,6 +76,8 @@ pub enum Setting {
     Channel,
     /// Whether a file in a language that is not installed offers to install it.
     OfferLanguages,
+    /// Whether the embedded browser is turned on.
+    EmbeddedBrowser,
     /// Whether the window is light, dark or as the desktop says.
     ThemeMode,
     /// The theme drawn while it is light.
@@ -246,12 +248,13 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting, in the order the pages show them.
-    pub const ALL: [Self; 88] = [
+    pub const ALL: [Self; 89] = [
         Self::Launch,
         Self::ConfirmClose,
         Self::CheckUpdates,
         Self::Channel,
         Self::OfferLanguages,
+        Self::EmbeddedBrowser,
         Self::ThemeMode,
         Self::LightTheme,
         Self::DarkTheme,
@@ -344,7 +347,8 @@ impl Setting {
             | Self::ConfirmClose
             | Self::CheckUpdates
             | Self::Channel
-            | Self::OfferLanguages => Section::General,
+            | Self::OfferLanguages
+            | Self::EmbeddedBrowser => Section::General,
             Self::ThemeMode
             | Self::LightTheme
             | Self::DarkTheme
@@ -476,6 +480,10 @@ impl Setting {
             Self::OfferLanguages => (
                 "Offer to install languages",
                 "Offer to install a language when a file is opened that is written in one that is not installed.",
+            ),
+            Self::EmbeddedBrowser => (
+                "Embedded browser",
+                "Show web pages, such as a dev server, in a pane beside the work. Turning it on downloads the browser once, about 110 MB.",
             ),
             Self::ThemeMode => (
                 "Theme mode",

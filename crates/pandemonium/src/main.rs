@@ -22,9 +22,6 @@ use snapshot::Shot;
 /// on this machine with the options that follow, or, given
 /// `--snapshot <path> [elapsed_ms [x y [focus [light [screen]]]]]`, writes one frame to a PNG and leaves.
 fn main() {
-    if let Some(code) = pm_browser::run_helper() {
-        std::process::exit(code);
-    }
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     if arguments.first().map(String::as_str) == Some("--version") {
         println!("pandemonium {}", env!("CARGO_PKG_VERSION"));
