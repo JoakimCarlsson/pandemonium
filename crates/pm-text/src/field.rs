@@ -369,9 +369,33 @@ impl Field {
         }
     }
 
-    /// Makes `edit`.
+    /// Makes `edit`. A multiline view follows the caret afterwards only when the edit changed the text, the caret, a selection or what is being composed; one that changes none of them leaves where the reader scrolled to alone.
     pub fn apply(&mut self, edit: Edit) {
-        self.follow_caret = !matches!(edit, Edit::ScrollTo(_));
+        let scrolling = matches!(edit, Edit::ScrollTo(_));
+        let before = (
+            self.revision,
+            self.caret,
+            self.anchor,
+            self.others.clone(),
+            self.composing.clone(),
+        );
+        self.carry_out(edit);
+        let after = (
+            self.revision,
+            self.caret,
+            self.anchor,
+            self.others.clone(),
+            self.composing.clone(),
+        );
+        if scrolling {
+            self.follow_caret = false;
+        } else if after != before {
+            self.follow_caret = true;
+        }
+    }
+
+    /// Carries out `edit` on the text, caret and selections, leaving the scroll to [`Field::apply`].
+    fn carry_out(&mut self, edit: Edit) {
         match &edit {
             Edit::Undo => return self.undo(),
             Edit::Redo => return self.redo(),
