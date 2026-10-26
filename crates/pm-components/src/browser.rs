@@ -55,6 +55,9 @@ pub const BROWSER_SASH: FocusId = FocusId(7_420_011);
 /// One past the last thing of the browser.
 const BROWSER_END: u64 = 7_421_000;
 
+/// Where a page opens when the browser is opened with nothing typed.
+pub const HOME: &str = "http://localhost:5173";
+
 /// How tall the bar above the page is, in logical pixels.
 pub const TOOLBAR: f32 = 44.0;
 

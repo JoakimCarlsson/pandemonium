@@ -320,9 +320,9 @@ fn excerpts_item(state: &WorkspaceState, width: f32, height: f32) -> Node {
     }
 }
 
-/// What an empty pane at `index` offers: the page and the diff brought into it, the files shown to open one in it, and closing it.
+/// What an empty pane at `index` offers: the page, the diff and the browser brought into it, the files shown to open one in it, and closing it.
 fn empty_pane(state: &WorkspaceState, index: usize) -> Node {
-    let put = |kind: u64| FocusId(PANE_PUT_BASE + index as u64 * 4 + kind);
+    let put = |kind: u64| FocusId(PANE_PUT_BASE + index as u64 * 5 + kind);
     let (icon, label) = page_label(state);
     let mut buttons = node()
         .styles([flex(), flex_col(), items_center(), gap(2)])
@@ -346,6 +346,13 @@ fn empty_pane(state: &WorkspaceState, index: usize) -> Node {
         );
     }
     let buttons = buttons
+        .child(
+            Button::new("Browser", put(4))
+                .with_icon(IconName::Globe)
+                .variant(Variant::Secondary)
+                .size(Size::Sm)
+                .build(),
+        )
         .child(
             Button::new("Open a file", put(2))
                 .with_icon(IconName::File)

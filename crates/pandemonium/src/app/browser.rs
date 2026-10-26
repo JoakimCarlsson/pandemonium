@@ -7,7 +7,7 @@ use pm_browser::{
     PickedElement, View,
 };
 use pm_components::browser::{
-    BROWSER_BODY, BROWSER_TOOLS_BODY, Command, PAGE_SURFACE, Pointer, TOOLS_SURFACE,
+    BROWSER_BODY, BROWSER_TOOLS_BODY, Command, HOME, PAGE_SURFACE, Pointer, TOOLS_SURFACE,
 };
 use pm_components::browser_menu::{BROWSER_MENU_HEIGHT, BrowserCommand};
 use pm_components::elements::Element;
@@ -19,9 +19,6 @@ use pm_renderer::{Picture, Rect};
 use pm_ui::Cursor;
 
 use super::App;
-
-/// Where a page opens when the command to open the browser was given with nothing typed.
-const HOME: &str = "http://localhost:5173";
 
 /// How often the engine is given time to work while a page is open.
 pub(super) const PUMP: Duration = Duration::from_millis(4);

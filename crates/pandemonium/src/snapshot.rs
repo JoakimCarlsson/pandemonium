@@ -249,6 +249,8 @@ pub enum Shot {
     ElementsSent,
     /// The page for starting work split with the browser beside it, after the first prompt was sent.
     SplitStarted,
+    /// A pane that was split and had the browser brought into it with the button of the empty pane.
+    PaneBrowser,
     /// The workspace on its first session with the fold-out of its last reply open.
     Unfolded,
     /// The page for starting work with a dead key's accent waiting for its letter in the prompt.
@@ -2368,6 +2370,11 @@ impl Shot {
                 state.picker = Some(pm_components::state::Picker::Element(0));
                 Screen::Workspace(state)
             }
+            Self::PaneBrowser => Screen::Workspace(
+                code()
+                    .after(SPLIT_RIGHT)
+                    .after(FocusId(pm_components::panes::PANE_PUT_BASE + 5 + 4)),
+            ),
             Self::SplitStarted => {
                 let mut state = welcome();
                 state.open_browser("http://localhost:5173");

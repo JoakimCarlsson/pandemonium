@@ -32,7 +32,7 @@ pub const SPLIT_UP: FocusId = FocusId(7099);
 /// The row of the menu of panes that splits the pane worked in with its tab below.
 pub const SPLIT_DOWN: FocusId = FocusId(7100);
 
-/// The first of the buttons of empty panes; each pane has four, by its position: bring the page in, bring the diff in, show the files, close it.
+/// The first of the buttons of empty panes; each pane has five, by its position: bring the page in, bring the diff in, show the files, close it, bring the browser in.
 pub const PANE_PUT_BASE: u64 = 4_800_000;
 
 /// How many ids each range above holds.
@@ -888,7 +888,7 @@ impl WorkspaceState {
         }
     }
 
-    /// Carries out the button `id` of an empty pane, if it is one: brings the page or the diff into it, shows the files to open one in it, or closes it.
+    /// Carries out the button `id` of an empty pane, if it is one: brings the page, the diff or the browser into it, shows the files to open one in it, or closes it.
     pub(crate) fn press_empty_pane(&mut self, id: FocusId) -> bool {
         let Some(offset) =
             id.0.checked_sub(PANE_PUT_BASE)
@@ -896,7 +896,7 @@ impl WorkspaceState {
         else {
             return false;
         };
-        let (pane, put) = ((offset / 4) as usize, offset % 4);
+        let (pane, put) = ((offset / 5) as usize, offset % 5);
         match put {
             0 | 1 => {
                 let item = if put == 0 { Item::Page } else { Item::Diff };
@@ -907,6 +907,19 @@ impl WorkspaceState {
                     parked: None,
                 };
                 self.show_item(&item);
+                self.settle_panes();
+            }
+            4 => {
+                if self.browser.is_none() {
+                    self.open_browser(crate::browser::HOME);
+                }
+                let panes = self.panes();
+                self.panes = Panes {
+                    layout: panes.layout.moved(&Item::Browser, pane, Side::Center),
+                    focused: pane,
+                    parked: None,
+                };
+                self.show_item(&Item::Browser);
                 self.settle_panes();
             }
             2 => {

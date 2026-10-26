@@ -169,6 +169,7 @@ fn main() {
             Some("panes-dragging") => Shot::PanesDragging,
             Some("pane-menu") => Shot::PaneMenu,
             Some("pane-split") => Shot::PaneSplit,
+            Some("pane-browser") => Shot::PaneBrowser,
             Some("pane-split-file") => Shot::PaneSplitFile,
             Some("wrapped") => Shot::Wrapped,
             Some("slashed") => Shot::Slashed,
