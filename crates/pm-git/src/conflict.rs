@@ -30,7 +30,9 @@ fn staged_version(directory: &Path, path: &str, stage: u8) -> Option<String> {
 
 /// The three versions of the conflicted file `path` of the repository `directory` is in.
 pub fn sides(directory: &Path, path: &str) -> Result<Sides, String> {
-    let path = inside(path)?;
+    let (directory, path) = crate::multirepo::holder(directory, inside(path)?)?;
+    let directory = directory.as_path();
+    let path = path.as_str();
     let sides = Sides {
         base: staged_version(directory, path, 1),
         ours: staged_version(directory, path, 2),

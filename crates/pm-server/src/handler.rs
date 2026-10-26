@@ -242,9 +242,9 @@ fn start_session(
     };
     let mut skipped = Vec::new();
     let (folder, head) = match base {
-        Some(_) if !pm_git::is_repository(&place(repository)) => {
+        Some(_) if pm_git::layout(&place(repository)) == pm_git::Layout::Neither => {
             return failed(format!(
-                "{repository} is not a git repository, so it has no worktrees"
+                "{repository} holds no git repository, so it has no worktrees"
             ));
         }
         Some(base) => match pm_git::add_worktree(
@@ -523,12 +523,15 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             expanded: _,
         } => {
             let place = place(&directory);
+            let children = pm_git::child_repositories(&place);
             let mut paths = pm_git::files(&place, limit);
             let mut folders = pm_git::untracked_folders(&place, limit);
             let mut ignored = Vec::new();
             for entry in pm_git::ignored(&place, limit) {
                 for (index, _) in entry.match_indices('/') {
-                    ignored.push(entry[..index].to_owned());
+                    if !children.iter().any(|child| *child == entry[..index]) {
+                        ignored.push(entry[..index].to_owned());
+                    }
                 }
                 paths.push(entry.clone());
                 ignored.push(entry);
@@ -834,7 +837,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
         Request::Inspect { directory, base } => {
             let directory = place(&directory);
             let directory = directory.as_path();
-            if !pm_git::is_repository(directory) {
+            if pm_git::layout(directory) == pm_git::Layout::Neither {
                 return Response::Inspected {
                     changes: Vec::new(),
                     commits: None,
@@ -842,6 +845,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                     head: None,
                     tracking: pm_git::Tracking::default(),
                     operation: None,
+                    repositories: Vec::new(),
                 };
             }
             Response::Inspected {
@@ -851,6 +855,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                 head: pm_git::resolve(directory, "HEAD"),
                 tracking: pm_git::tracking(directory),
                 operation: pm_git::operation(directory),
+                repositories: pm_git::standings(directory),
             }
         }
         Request::Stage {

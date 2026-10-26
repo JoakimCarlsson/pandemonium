@@ -131,6 +131,8 @@ pub struct Change {
     pub from: Option<String>,
     /// The submodule it is in, from the root of the project, or nothing when it is in the project itself.
     pub submodule: Option<String>,
+    /// The repository it is in, as its folder name, when the project holds several repositories side by side, or nothing when it is one.
+    pub repository: Option<String>,
     /// What a submodule checked out at another commit than the one recorded moved through, when the change is that.
     pub moved: Option<pm_git::Moved>,
 }
@@ -181,6 +183,7 @@ impl Change {
             worktree: Some('M'),
             from: None,
             submodule: None,
+            repository: None,
             moved: None,
         }
     }
@@ -193,6 +196,19 @@ impl Change {
             moved.from.as_deref().unwrap_or("new"),
             moved.to
         ))
+    }
+
+    /// The repository it is in, innermost first: the submodule when it is in one, otherwise the repository of a project that holds several, or nothing for the project itself.
+    pub fn holder(&self) -> Option<&str> {
+        self.submodule.as_deref().or(self.repository.as_deref())
+    }
+
+    /// Whether the list of the repository `picked`, a submodule or a repository of the project or nothing for all of the project's own, shows it: all those not in a submodule when nothing is picked.
+    pub fn is_listed_in(&self, picked: Option<&str>) -> bool {
+        match picked {
+            Some(picked) => self.holder() == Some(picked),
+            None => self.submodule.is_none(),
+        }
     }
 
     /// Whether all of it is in the index.
@@ -465,6 +481,8 @@ pub struct Session {
     pub on_branch: bool,
     /// What the branch follows and how far apart they are.
     pub tracking: pm_git::Tracking,
+    /// Where each repository stands when the folder holds several side by side, and nothing when it is one.
+    pub standings: Vec<pm_git::Standing>,
     /// The folder the agent works in.
     pub directory: String,
     /// The submodule of `directory` the agent works in, from its root, or nothing for the project itself.
@@ -551,6 +569,7 @@ impl Session {
             branch: branch.to_owned(),
             on_branch: !branch.is_empty(),
             tracking: pm_git::Tracking::default(),
+            standings: Vec::new(),
             directory: String::new(),
             submodule: None,
             base: None,

@@ -3,7 +3,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::run;
+use crate::multirepo::{self, Layout};
+use crate::{layout, run};
 
 /// An operation waiting for its next step.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -97,8 +98,13 @@ fn prepared_message(directory: &Path) -> String {
         .to_owned()
 }
 
-/// The operation waiting in the repository `directory` is in, if there is one.
+/// The operation waiting in the repository `directory` is in, if there is one. Of a folder of repositories, the one waiting in the first that has one.
 pub fn operation(directory: &Path) -> Option<Operation> {
+    if let Layout::Repositories(children) = layout(directory) {
+        return children
+            .iter()
+            .find_map(|child| operation(&directory.join(child)));
+    }
     for folder in ["rebase-merge", "rebase-apply"] {
         if git_path(directory, folder)?.is_dir() {
             let read = |name: &str| git_file(directory, &format!("{folder}/{name}"));
@@ -145,6 +151,16 @@ pub fn operation(directory: &Path) -> Option<Operation> {
 
 /// Takes the next step of the operation waiting in `directory`: `continue` it, finishing a merge or a cherry-pick under `message` when there is one, `skip` the commit it stopped on, or `abort` it.
 pub fn step(directory: &Path, action: &str, message: Option<&str>) -> Result<(), String> {
+    if let Layout::Repositories(children) = layout(directory) {
+        let waiting: Vec<String> = children
+            .into_iter()
+            .filter(|child| operation(&directory.join(child)).is_some())
+            .collect();
+        if waiting.is_empty() {
+            return Err("Nothing is waiting".to_owned());
+        }
+        return multirepo::each(directory, &waiting, |child| step(child, action, message));
+    }
     let waiting = operation(directory).ok_or("Nothing is waiting")?;
     match (action, &waiting) {
         ("abort", Operation::Merge { .. }) => run(directory, &["merge", "--abort"]),

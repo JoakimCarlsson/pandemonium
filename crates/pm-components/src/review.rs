@@ -401,7 +401,7 @@ fn repositories(state: &WorkspaceState, session: &Session) -> Option<Node> {
             let changed = session
                 .changes
                 .iter()
-                .filter(|change| change.submodule == *repository)
+                .filter(|change| change.is_listed_in(repository.as_deref()))
                 .count();
             let head = state.head_of(repository.as_deref()).unwrap_or_default();
             Tile::new(FocusId(REPOSITORY_BASE + row as u64))

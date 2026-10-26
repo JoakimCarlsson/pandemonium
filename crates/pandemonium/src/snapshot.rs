@@ -313,6 +313,8 @@ pub enum Shot {
     Conflict,
     /// The diff of a session that edited files inside a submodule and moved it to another commit.
     DiffSubmodule,
+    /// The changes of a session in a folder that holds two repositories side by side: files edited in both, listed under the repository each is in, or, `true`, only those of the repository `api` picked in the list of repositories.
+    ChangesRepositories(bool),
     /// The source control panel of a folder with submodules: the list of repositories with the folder's own picked, or, `true`, a submodule picked with its branches open.
     BranchesSubmodule(bool),
     /// The same file with the caret in a call, its signature over it and the uses of a name marked.
@@ -1098,6 +1100,59 @@ fn diff_submodule() -> WorkspaceState {
     state.after(TAB_DIFF)
 }
 
+/// The first session in a folder that holds the repositories `api` and `web`, with files edited in both and one of them staged, where each repository stands, and, when `picked`, `api` picked in the list of repositories.
+fn changes_repositories(picked: bool) -> WorkspaceState {
+    let mut state = workspace_sample();
+    if let Some(session) = state.sessions.first_mut() {
+        let mut changes = Vec::new();
+        for (repository, path) in [
+            ("api", "api/src/routes.rs"),
+            ("api", "api/src/main.rs"),
+            ("web", "web/src/app.tsx"),
+        ] {
+            let mut change = pm_components::sample::Change::new(
+                path,
+                "@@ -1,3 +1,4 @@\n fn handler() {\n-    todo!()\n+    let body = read();\n+    respond(body)\n }",
+            );
+            change.repository = Some(repository.to_owned());
+            changes.push(change);
+        }
+        changes[1].staged = true;
+        changes[1].unstaged = false;
+        changes[1].index = Some('M');
+        changes[1].worktree = None;
+        session.changes = changes;
+        session.branch = "task/339-shared-branch".to_owned();
+        session.on_branch = true;
+        session.standings = vec![
+            pm_git::Standing {
+                path: "api".to_owned(),
+                branch: Some("task/339-shared-branch".to_owned()),
+                head: Some("3f2a1c9".to_owned()),
+                tracking: pm_git::Tracking {
+                    upstream: Some("origin/task/339-shared-branch".to_owned()),
+                    ahead: 2,
+                    behind: 0,
+                },
+            },
+            pm_git::Standing {
+                path: "web".to_owned(),
+                branch: Some("task/339-shared-branch".to_owned()),
+                head: Some("9b8c7d6".to_owned()),
+                tracking: pm_git::Tracking::default(),
+            },
+        ];
+    }
+    state.git.submodule_heads = vec![
+        ("api".to_owned(), "task/339-shared-branch".to_owned()),
+        ("web".to_owned(), "task/339-shared-branch".to_owned()),
+    ];
+    if picked {
+        state.git.repository = Some("api".to_owned());
+    }
+    state.after(TAB_DIFF)
+}
+
 /// The session of [`diff_submodule`] with its submodules listed as repositories, the folder's own picked, or, when `inside`, the submodule `vendor/inner` picked with its branches open.
 fn branches_submodule(inside: bool) -> WorkspaceState {
     let mut state = diff_submodule();
@@ -1855,6 +1910,7 @@ impl Shot {
             Self::Timeline => Screen::Workspace(timeline()),
             Self::Conflict => Screen::Workspace(conflict()),
             Self::DiffSubmodule => Screen::Workspace(diff_submodule()),
+            Self::ChangesRepositories(picked) => Screen::Workspace(changes_repositories(picked)),
             Self::BranchesSubmodule(inside) => Screen::Workspace(branches_submodule(inside)),
             Self::Signing => Screen::Workspace(signing()),
             Self::Annotated => Screen::Workspace(annotated()),
