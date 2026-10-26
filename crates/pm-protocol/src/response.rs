@@ -242,6 +242,9 @@ pub enum Response {
         /// The merge, rebase or cherry-pick the folder is stopped in, if it is in one.
         #[serde(default)]
         operation: Option<pm_git::Operation>,
+        /// Where each repository stands when the folder holds several repositories side by side, and nothing when it is one; `branch`, `head` and `tracking` then sum them up.
+        #[serde(default)]
+        repositories: Vec<pm_git::Standing>,
     },
     /// A shell was started.
     Terminal {

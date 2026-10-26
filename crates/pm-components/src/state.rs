@@ -3223,6 +3223,14 @@ impl WorkspaceState {
         self
     }
 
+    /// The state after the folder of the session at `session` was seen to hold repositories that stand as `standings` say, none when it is one repository.
+    pub fn with_standings(mut self, session: usize, standings: Vec<pm_git::Standing>) -> Self {
+        if let Some(held) = self.sessions.get_mut(session) {
+            held.standings = standings;
+        }
+        self
+    }
+
     /// The state after the project at `project` was seen to hold the submodules at `paths`.
     pub fn with_submodules(mut self, project: usize, paths: Vec<String>) -> Self {
         if let Some(held) = self.projects.get_mut(project) {
@@ -3284,6 +3292,7 @@ impl WorkspaceState {
                     change.worktree = found.worktree;
                     change.from = found.from.clone();
                     change.submodule = found.submodule.clone();
+                    change.repository = found.repository.clone();
                     change.moved = found.moved.clone();
                     change.viewed = held
                         .changes

@@ -74,6 +74,7 @@ fn main() {
             Some("timeline") => Shot::Timeline,
             Some("conflict") => Shot::Conflict,
             Some("diffsubmodule") => Shot::DiffSubmodule,
+            Some("changesrepositories") => Shot::ChangesRepositories,
             Some("branchessubmodule") => Shot::BranchesSubmodule(false),
             Some("branchessubmoduleinside") => Shot::BranchesSubmodule(true),
             Some("signing") => Shot::Signing,

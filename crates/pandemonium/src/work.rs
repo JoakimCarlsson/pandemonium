@@ -1998,13 +1998,15 @@ impl Work {
                     head,
                     tracking,
                     operation,
+                    repositories,
                 } = response
                 {
                     model.update(|screen| {
                         *screen = std::mem::take(screen)
                             .refreshed(session, &changes, commits)
                             .checked_out(session, branch.as_deref(), head.as_deref())
-                            .tracked(session, branch.as_deref(), tracking, operation);
+                            .tracked(session, branch.as_deref(), tracking, operation)
+                            .with_standings(session, repositories);
                     });
                 }
                 if self.read_again.remove(&session) {

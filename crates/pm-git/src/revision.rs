@@ -88,6 +88,7 @@ pub fn revision_changes(
             conflicted: false,
             from: before,
             submodule: None,
+            repository: None,
             moved: None,
         });
     }

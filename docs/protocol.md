@@ -236,6 +236,25 @@ each listing. Ignored paths are marked in the `ignored` response field so the
 tree can dim them. The optional `expanded` array is accepted for older clients
 and has no effect. Clients list again when notified of changes.
 
+A `directory` that is no repository but has repositories as direct children
+(each with a `.git` entry, hidden and bulky folders such as `node_modules`,
+`target`, `build` and `dist` not looked into) is a **folder of repositories**,
+and every request that works on a repository works across them. Paths stay
+relative to `directory`, so `api/src/main.rs` is `src/main.rs` of the child
+`api`. A path is acted on by the child that holds it: `stage`, `discard`,
+`ignore`, `read` of the last commit, `file_history`, `blame`, `permalink` and
+`read_conflict` run there, and fail for a path in none of them (a file that
+sits directly in the folder). `files` and `search_files` list the children's
+files under their paths from `directory`. `branches` lists the branches every
+child has before those only some have; `checkout`, `create_branch`, `commit`
+(only in children with something to commit, as staged or, with `tracked`,
+changed) and every `sync` operation run in each child, all of them even when
+one fails, and the `failed` message names each child that did, as `name: why`.
+`log` and `stashes` list nothing, and `stash`, `cherry_pick` and
+`revision_changes` fail, for such a folder: they need one repository. A folder with a repository above it is that
+repository, not a folder of repositories. A child that has submodules keeps
+everything said of them, its submodules' paths written from `directory`.
+
 - **`discover`:** starts the agent briefly and returns what it lets the reader
   change (models, modes, effort) and the commands it offers behind a slash.
   It can take several seconds.
@@ -267,6 +286,14 @@ and has no effect. Clients list again when notified of changes.
   of the worktree (or of `directory`). When the worktree has a branch, every
   submodule it checked out is put on a branch of the same name; one that cannot
   be is named in `skipped` too.
+  For a folder of repositories the worktree is a folder holding one worktree
+  per child, laid out under the child's name (`<worktree>/api`,
+  `<worktree>/web`), all checked out from `base` and, when the settings give a
+  branch, all on the same new branch; the agent works in the folder, and files
+  that sit directly in the project are not copied. `head` is the first child's.
+  When a child cannot be made the request fails naming it (`web: <why>`) and
+  the worktrees made before it are removed again, or named when they cannot
+  be; `skipped` names a child's submodules and files as `<child>/<path>`.
 - **`close_session`:** stops the session's agent and waits for its process to exit, drops its queued prompts and marks it `closed`. The
   log is kept, so the session still shows in `sessions` (with `closed: true`)
   and can be opened with `attach`. A session that has a worktree of its own
@@ -274,7 +301,10 @@ and has no effect. Clients list again when notified of changes.
   folder; while the worktree has changes that are not committed the request
   is answered `uncommitted` and the session stays open, unless `discard` is `true`.
   The branch the worktree was made on is deleted with it when every commit on
-  it is also on the session's base or a remote, and kept otherwise. A later `prompt` opens a closed session
+  it is also on the session's base or a remote, and kept otherwise. For a
+  folder of repositories every child's worktree and its branch are removed,
+  whatever commits the branch has, a child that fails does not stop the rest and is named in the
+  failure, and the folder goes when they are all removed. A later `prompt` opens a closed session
   again, and fails when its folder was removed. Other clients are told with `session_closed`.
 - **`rename_session`:** keeps `title` as the session's title, trimmed, and fails when it is empty.
   Every client watching the session is told with a `Titled` event, the one that asked included. The
@@ -699,8 +729,8 @@ embedded context, and anything else as a link to the stored file.
 | `discovery`  | `settings`, `commands`                                    |
 | `skills`     | `skills` (`[{name, description}]`), `names` (`[string]`)  |
 | `files`      | `paths`: repository-relative tracked, untracked and ignored files, `folders` (optional): untracked and ignored folders that may hold no file yet, `ignored` (optional): which paths and folders git ignores, listed so a tree can dim them |
-| `branches`   | `names`: local branches, the current one first, then remote ones such as `origin/main`; read from git at each request |
-| `submodules` | `paths`: every submodule's path from the root of the repository, nested ones included, initialised or not |
+| `branches`   | `names`: local branches, the current one first, then remote ones such as `origin/main`; read from git at each request. Of a folder of repositories, those every child has, then the rest |
+| `submodules` | `paths`: every submodule's path from the root of the repository, nested ones included, initialised or not; in a folder of repositories, each child's, from the folder |
 | `submodule_heads` | `heads`: `[[path, head]]` for each checked out submodule, nested ones included: its branch, or `@ <commit>` on a detached head. `branches`, `checkout` and `create_branch` on a submodule's folder act on the submodule |
 | `stashes`    | `stashes`: `[{index, message, when}]`, newest first |
 | `log`        | `commits`: `[{id, refs, summary, lanes}]`, newest first |
@@ -708,7 +738,7 @@ embedded context, and anything else as a link to the stored file.
 | `bytes`      | `bytes` (base64): what a file holds, `truncated`: whether it was cut short |
 | `identity`   | `default`, `selected`: who the agent is signed in as, or null |
 | `started`    | `session`, `directory`, `branch` (always null for now), `head` (null without a worktree), `skipped`: `[[path, reason]]` for submodules the worktree could not check out |
-| `inspected`  | `changes`: `[{path, diff, words, staged, untracked, index, worktree, conflicted, from, submodule, moved}]`, files inside submodules listed under their paths from the root with `submodule` the submodule's path, and a submodule checked out at another commit than the one recorded as its own path with `moved`: `{from, to, commits, back}` (abbreviated commits, the subjects between them oldest first, `back` when it went back past them) and an empty `diff`, `commits`: `[string]` or null, `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind}`, `operation`: `Merge`, `Rebase` or `CherryPick` with what git prepared, or null |
+| `inspected`  | `changes`: `[{path, diff, words, staged, untracked, index, worktree, conflicted, from, submodule, repository, moved}]`, files inside submodules listed under their paths from the root with `submodule` the submodule's path, files of a folder of repositories listed under their paths from the folder with `repository` the child's folder name and null for one repository, and a submodule checked out at another commit than the one recorded as its own path with `moved`: `{from, to, commits, back}` (abbreviated commits, the subjects between them oldest first, `back` when it went back past them) and an empty `diff`, `commits`: `[string]` or null, `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind}`, `operation`: `Merge`, `Rebase` or `CherryPick` with what git prepared, or null, `repositories` (optional): `[{path, branch, head, tracking}]` for each child of a folder of repositories, empty for one repository; `branch`, `head` and `tracking` then sum up the children: the one branch they are all on or the branches joined by ` · `, the first child's commit, and the commits ahead and behind added up, following something only when every child does |
 | `projects`   | `paths`, `saved`                                          |
 | `choices`    | `choices`: `[[agent, setting, value]]`                    |
 | `agent_servers` | `servers`: `[{id, name, command, env, package, installer, home}]`                |

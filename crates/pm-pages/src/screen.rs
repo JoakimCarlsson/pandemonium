@@ -704,6 +704,13 @@ impl Screen {
         }
     }
 
+    /// The screen after the folder of the session at `session` was seen to hold repositories that stand as `standings` say.
+    pub fn with_standings(self, session: usize, standings: Vec<pm_git::Standing>) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_standings(session, standings)),
+        }
+    }
+
     /// The screen after the server listed the commits of the repository of the session at `session`.
     pub fn with_history(self, session: usize, commits: Vec<pm_git::Commit>) -> Self {
         match self {

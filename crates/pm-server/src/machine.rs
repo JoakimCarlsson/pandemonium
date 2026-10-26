@@ -62,7 +62,7 @@ pub(crate) fn with_mode(settings: &[(String, String)]) -> Vec<(String, String)> 
     held
 }
 
-/// The repositories the server works for: those of the sessions it holds that are not closed, and the projects saved on its machine.
+/// The repositories the server works for: those of the sessions it holds that are not closed, and the projects saved on its machine, each repository of a folder that holds several counted on its own.
 fn repositories(core: &Core) -> BTreeSet<PathBuf> {
     let mut found: BTreeSet<PathBuf> = BTreeSet::new();
     if let Ok(sessions) = core.sessions.lock() {
@@ -82,7 +82,13 @@ fn repositories(core: &Core) -> BTreeSet<PathBuf> {
     );
     found
         .into_iter()
-        .filter(|repository| pm_git::is_repository(repository))
+        .flat_map(|folder| match pm_git::layout(&folder) {
+            pm_git::Layout::Repository => vec![folder],
+            pm_git::Layout::Repositories(children) => {
+                children.iter().map(|child| folder.join(child)).collect()
+            }
+            pm_git::Layout::Neither => Vec::new(),
+        })
         .collect()
 }
 

@@ -167,7 +167,30 @@ fn submodule_folders<'a>(changes: &'a [Change], repository: Option<&str>) -> Vec
         .collect()
 }
 
-/// The tree of the files of `group` in `repository`: folders that hold only a folder are joined into one row, except that a submodule's row always ends at it.
+/// The repositories the changes are in when the project holds several side by side, each by its folder name and each once, in the order they came in; nothing inside a submodule, where the changes are all in the one repository.
+fn repository_folders<'a>(changes: &'a [Change], repository: Option<&str>) -> Vec<&'a str> {
+    let mut found: Vec<&str> = Vec::new();
+    if repository.is_none() {
+        for name in changes
+            .iter()
+            .filter_map(|change| change.repository.as_deref())
+        {
+            if !found.contains(&name) {
+                found.push(name);
+            }
+        }
+    }
+    found
+}
+
+/// The folders of the tree of `repository` whose rows always end at them: submodules moved to another commit and the repositories of a project that holds several.
+fn stops<'a>(changes: &'a [Change], repository: Option<&str>) -> Vec<&'a str> {
+    let mut found = submodule_folders(changes, repository);
+    found.extend(repository_folders(changes, repository));
+    found
+}
+
+/// The tree of the files of `group` in `repository`: folders that hold only a folder are joined into one row, except that the row of a submodule or of a repository always ends at it.
 fn tree(changes: &[Change], members: &[usize], repository: Option<&str>) -> Vec<Entry> {
     let paths: Vec<String> = members
         .iter()
@@ -180,7 +203,7 @@ fn tree(changes: &[Change], members: &[usize], repository: Option<&str>) -> Vec<
             compact: true,
             sorted: false,
         },
-        &submodule_folders(changes, repository),
+        &stops(changes, repository),
     )
 }
 
@@ -310,9 +333,26 @@ fn file_row(
         )
 }
 
-/// The row of a folder, `depth` levels down, open or folded: a chevron, the box that stages everything in it, its name and what it changed.
+/// What the branch of the repository `standing` says stands as is written: its name, or the commit on a detached head, and how many commits it is ahead of and behind what it follows.
+fn standing_label(standing: &pm_git::Standing) -> String {
+    let mut label = match (&standing.branch, &standing.head) {
+        (Some(branch), _) => branch.clone(),
+        (None, Some(head)) => format!("@ {head}"),
+        (None, None) => String::new(),
+    };
+    if standing.tracking.ahead > 0 {
+        label.push_str(&format!(" ↑{}", standing.tracking.ahead));
+    }
+    if standing.tracking.behind > 0 {
+        label.push_str(&format!(" ↓{}", standing.tracking.behind));
+    }
+    label
+}
+
+/// The row of a folder, `depth` levels down, open or folded: a chevron, the box that stages everything in it, its name and what it changed; a repository's row says what it has checked out, from `standings`.
 fn folder_row(
     changes: &[Change],
+    standings: &[pm_git::Standing],
     folder: &Folder,
     files: &[usize],
     position: usize,
@@ -351,7 +391,7 @@ fn folder_row(
             .build(),
         )
         .children(
-            submodule_folders(changes, None)
+            stops(changes, None)
                 .contains(&folder.path.as_str())
                 .then(|| glyph(IconName::Git, 3.5, Role::Muted)),
         )
@@ -360,13 +400,22 @@ fn folder_row(
                 .styles([flex_1(), min_w_px(0), overflow_hidden()])
                 .child(line(&folder.name, 13, 1.4, Role::Text).styles([truncate()])),
         )
+        .children(
+            standings
+                .iter()
+                .find(|standing| standing.path == folder.path)
+                .map(|standing| {
+                    line(standing_label(standing), 11, 1.4, Role::Subtle)
+                        .styles([flex_none(), font_mono()])
+                }),
+        )
         .child(Tally::new(added, removed).size(11).build())
 }
 
 /// The rows of `entries` and of everything in their open folders, `depth` levels down; `counter` numbers the folders across the groups as [`folder_table`] does.
 fn rows_of(
     state: &WorkspaceState,
-    changes: &[Change],
+    session: &Session,
     entries: &[Entry],
     group: Group,
     files: &[usize],
@@ -378,7 +427,7 @@ fn rows_of(
         match entry {
             Entry::File { name, index } => {
                 let at = files[*index];
-                rows.push(file_row(state, &changes[at], at, name, depth));
+                rows.push(file_row(state, &session.changes[at], at, name, depth));
             }
             Entry::Folder(folder) => {
                 let position = *counter;
@@ -386,10 +435,18 @@ fn rows_of(
                 let open = !state
                     .closed_folders
                     .contains(&fold_key(group, &folder.path));
-                rows.push(folder_row(changes, folder, files, position, depth, open));
+                rows.push(folder_row(
+                    &session.changes,
+                    &session.standings,
+                    folder,
+                    files,
+                    position,
+                    depth,
+                    open,
+                ));
                 let inner = rows_of(
                     state,
-                    changes,
+                    session,
                     &folder.entries,
                     group,
                     files,
@@ -418,7 +475,7 @@ pub fn rows(state: &WorkspaceState, session: &Session) -> Vec<Node> {
         rows.push(heading(&session.changes, group, repository));
         rows.extend(rows_of(
             state,
-            &session.changes,
+            session,
             &tree(&session.changes, &files, repository),
             group,
             &files,
