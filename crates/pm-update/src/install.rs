@@ -114,7 +114,11 @@ fn runs(launch: &Path) -> Result<(), String> {
 pub fn install(staged: &Path) -> Result<Installed, String> {
     let (target, program) = running()?;
     let relative = program.strip_prefix(&target).unwrap_or(Path::new(""));
-    let launch = target.join(relative);
+    let launch = if relative.as_os_str().is_empty() {
+        target.clone()
+    } else {
+        target.join(relative)
+    };
     let trial = if staged.is_dir() {
         staged.join(relative)
     } else {
