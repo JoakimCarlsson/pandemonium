@@ -147,7 +147,7 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
                 .git
                 .prompt
                 .as_ref()
-                .map(|open| git_prompts::prompt(state, open)),
+                .map(|open| git_prompts::prompt(state, open, shaper)),
         )
         .children(pm_components::assist::assist(state, height, shaper))
 }

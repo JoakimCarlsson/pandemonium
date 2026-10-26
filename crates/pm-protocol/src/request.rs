@@ -566,6 +566,15 @@ pub enum Request {
         /// `stable` for the releases made for everyone, `preview` for the pre-releases; `nightly`, which a client from before the rename sends, means `preview`.
         channel: String,
     },
+    /// Downloads the build of the release `version` on `channel` made for the server's platform, checks it against the release's `SHA256SUMS` and unpacks it into the server's cache folder; answered with `update_staged` once it is ready, with `done` when [`Request::CancelUpdate`] stopped it, and with progress told as `update_progress` messages meanwhile.
+    DownloadUpdate {
+        /// `stable` or `preview`, which decides the names of the files.
+        channel: String,
+        /// The version to fetch, as `0.14.0` or `0.15.0-rc.1`.
+        version: String,
+    },
+    /// Stops the download of an update, leaving nothing of it behind.
+    CancelUpdate,
     /// The named logins and the one in use for each agent.
     Accounts,
     /// Every session the server holds, running or not.

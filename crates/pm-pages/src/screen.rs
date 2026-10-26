@@ -419,6 +419,13 @@ impl Screen {
         }
     }
 
+    /// The screen after the notes of an update are scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
+    pub fn scrolled_update(self, delta: f32, room: f32) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.scrolled_update(delta, room)),
+        }
+    }
+
     /// The screen after the plan panel is scrolled by `delta` logical
     /// pixels, downwards when positive, with `room` pixels to scroll.
     pub fn scrolled_plan(self, delta: f32, room: f32) -> Self {

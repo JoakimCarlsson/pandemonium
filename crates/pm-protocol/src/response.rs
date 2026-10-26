@@ -211,6 +211,23 @@ pub enum Response {
         version: Option<String>,
         /// The page it is published on.
         url: String,
+        /// What the release is called, when it is given a name.
+        #[serde(default)]
+        name: Option<String>,
+        /// When it was published, as the releases API writes it.
+        #[serde(default)]
+        published: Option<String>,
+        /// The notes of the release, in markdown, as its page shows them; nothing when it has none.
+        #[serde(default)]
+        body: Option<String>,
+        /// The files attached to it.
+        #[serde(default)]
+        assets: Vec<crate::ReleaseAsset>,
+    },
+    /// An update was downloaded, checked and unpacked, ready to be installed.
+    UpdateStaged {
+        /// What is installed from: the program, or the app bundle on macOS, as a path on the server's machine.
+        path: String,
     },
     /// The named logins and the one in use for each agent.
     Accounts {

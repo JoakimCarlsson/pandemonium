@@ -161,15 +161,6 @@ impl WorkspaceState {
         )
     }
 
-    /// Opens the page of the newer release found, when one was.
-    pub(crate) fn open_release(&mut self) {
-        if let Some(crate::update::Update::Newer { url, .. }) = &self.settings_page.release {
-            self.outbox.push(Outgoing::Open {
-                address: url.clone(),
-            });
-        }
-    }
-
     /// The language whose settings the languages page shows, by id, when any is installed.
     pub(crate) fn settings_language(&self) -> Option<String> {
         let installed = || self.installed_languages().into_iter().map(|(id, _)| id);

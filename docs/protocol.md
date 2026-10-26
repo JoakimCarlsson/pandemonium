@@ -142,6 +142,8 @@ request with exactly one `response` carrying the same `id`.
 | `machine_settings`| none                                                                                          | `machine_settings` |
 | `save_machine_settings`| `settings`: `{git, history, agents, shell, languages, extensions}`                       | `done`          |
 | `latest_release`| `channel`: `stable` or `preview`                                                                 | `latest_release` |
+| `download_update`| `channel`, `version`                                                                            | `update_staged` |
+| `cancel_update`| none                                                                                              | `done`          |
 | `registry_agents`| none                                                                                             | `registry_agents`|
 | `search_tools` | `query`                                                                                          | `tool_listings` |
 | `accounts`     | none                                                                                             | `accounts`      |
@@ -463,6 +465,12 @@ everything said of them, its submodules' paths written from `directory`.
 - **`latest_release`:** the newest release of the app on `channel`, looked up
   on the project's releases: the latest made for everyone for `stable`, the
   newest pre-release for `preview` (`nightly`, from a client older than the rename, is read as `preview`).
+- **`download_update`:** downloads the build of `version` made for the
+  server's platform from the release on `channel`, checks it against the
+  release's `SHA256SUMS` and unpacks it into the server's cache folder.
+  Progress is told to the asking client as `update_progress` messages
+  (`received` and `total` bytes, `total` zero when unknown); the answer is
+  `update_staged`, or `done` when `cancel_update` stopped it.
 - **`open_terminal`:** starts the user's shell (`$SHELL`, with `TERM=xterm-256color`)
   in a pseudo-terminal in `directory`, with a window of `columns` by `rows`. The
   connection is attached to the shell already. The shell keeps running when no
@@ -762,7 +770,8 @@ embedded context, and anything else as a link to the stored file.
 | `library`    | `product`, `items`, `withheld`, as described under `library` above |
 | `tool_sets`  | `product`, `sets`, `withheld`, as described under `library` above |
 | `machine_settings` | `settings`: `{git, history, agents, shell, languages, extensions}`, as `save_machine_settings` takes them |
-| `latest_release` | `version`: the version, or null when none was found; `url`: its page |
+| `latest_release` | `version`: the version, or null when none was found; `url`: its page; `name`, `published`, `body` (markdown notes): each null when absent; `assets`: `[{name, url, size}]` |
+| `update_staged` | `path`: where the checked and unpacked update is, to install from |
 | `registry_agents` | `agents`: `[{id, name, version, description, website, command, env}]` |
 | `tool_listings` | `listings`: `[{id, title, description, name, target, env, inputs, asks, website}]` |
 | `accounts`   | `logins`: `[{agent, id, name}]`, `in_use`: `[[agent, id]]` |

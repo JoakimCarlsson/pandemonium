@@ -98,6 +98,8 @@ enum Job {
     Starting(Host, String),
     /// The grammar of the language with this folder name was compiled, or could not be.
     Grammar(String, Result<(), String>),
+    /// The downloaded update was put in place and the new version started, or it could not be.
+    Installed(Result<(), String>),
 }
 
 /// What is to be done with the answer to a request.
@@ -109,6 +111,8 @@ enum Pending {
     MachineSettings,
     /// The newest release on a channel.
     LatestRelease,
+    /// The update the reader asked for, being downloaded.
+    Update,
     /// The agents the reader added by hand.
     AgentServers,
     /// The tool servers every agent is started with.
@@ -1376,6 +1380,10 @@ impl Work {
                 Outgoing::Copy { text } => copies.push(text),
                 Outgoing::SaveMachineSettings(settings) => self.save_machine_settings(settings),
                 Outgoing::LatestRelease { channel } => self.ask_release(channel),
+                Outgoing::DownloadUpdate { channel, version } => {
+                    self.download_update(channel, version)
+                }
+                Outgoing::CancelUpdate => self.ask(&None, Request::CancelUpdate, Pending::Nothing),
                 Outgoing::Notify { title, body, how } => crate::notify::tell(how, &title, &body),
                 debugging @ (Outgoing::DebugScenarios { .. }
                 | Outgoing::DebugProcesses { .. }
@@ -1413,6 +1421,13 @@ impl Work {
             };
             for item in items {
                 match item {
+                    Incoming::UpdateProgress { received, total } => {
+                        if host.is_none() {
+                            Self::in_workspace(model, |state| {
+                                state.with_update_progress(received, total)
+                            });
+                        }
+                    }
                     Incoming::Connected => {
                         self.watched.remove(&host);
                         self.ask(&host, Request::Sessions, Pending::Sessions(host.clone()));
@@ -1591,6 +1606,10 @@ impl Work {
                 link.client = Some(client);
             }
             Job::Grammar(language, outcome) => self.grammar_compiled(model, &language, outcome),
+            Job::Installed(outcome) => Self::in_workspace(model, |state| match outcome {
+                Ok(()) => state.with_update_installed(),
+                Err(reason) => state.with_update_failed(reason),
+            }),
             Job::Starting(host, text) => {
                 let Some(link) = self.links.get(&host) else {
                     return;
@@ -2217,7 +2236,7 @@ impl Work {
             Pending::Tasks(_) | Pending::Toolchains(_) => {
                 self.answered_tasks(model, pending, response)
             }
-            Pending::MachineSettings | Pending::LatestRelease => {
+            Pending::MachineSettings | Pending::LatestRelease | Pending::Update => {
                 self.answered_machine(model, pending, response)
             }
             Pending::Back(session, failing) => {

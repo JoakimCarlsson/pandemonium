@@ -1000,6 +1000,9 @@ impl App {
                 MENU_SCROLL => std::mem::take(state).scrolled_menu(pixels, room),
                 SUBAGENTS_SCROLL => std::mem::take(state).scrolled_subagents(pixels, room),
                 PLAN_SCROLL => std::mem::take(state).scrolled_plan(pixels, room),
+                pm_components::update_dialog::UPDATE_SCROLL => {
+                    std::mem::take(state).scrolled_update(pixels, room)
+                }
                 DIFF_SCROLL => std::mem::take(state).scrolled_diff(pixels, room),
                 TREE_SCROLL => std::mem::take(state).scrolled_tree(pixels, room),
                 PICKER_SCROLL => std::mem::take(state).scrolled_folder_picker(pixels, room),

@@ -49,6 +49,7 @@ pm-wasm = { path = "crates/pm-wasm" }
 pm-plugin = { path = "crates/pm-plugin" }
 pm-agent-library = { path = "crates/pm-agent-library" }
 pm-mcp = { path = "crates/pm-mcp" }
+pm-update = { path = "crates/pm-update" }
 
 [profile.dist]
 inherits = "release"
