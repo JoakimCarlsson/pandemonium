@@ -59,15 +59,9 @@ jobs:
 
       - run: cargo build -p pandemonium -p pm-server --locked --profile dist --target ${{ matrix.target }}
 
-      - name: Build the embedded browser
+      - name: Bundle the embedded browser
         if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: |
-          scripts/fetch-cef.sh "$RUNNER_TEMP/cef"
-          CEF_PATH="$RUNNER_TEMP/cef" cargo build -p pm-browser-host --locked --profile dist --target ${{ matrix.target }}
-          mkdir -p build/dist
-          scripts/bundle-browser.sh "$RUNNER_TEMP/cef" \
-            "target/${{ matrix.target }}/dist/pandemonium-browser" \
-            "build/dist/pandemonium-browser-linux-x86_64.tar.gz"
+        run: scripts/bundle-browser.sh build/dist/pandemonium-browser-linux-x86_64.tar.gz
 
       - name: Package
         run: |

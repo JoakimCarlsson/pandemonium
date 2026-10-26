@@ -483,7 +483,7 @@ impl Setting {
             ),
             Self::EmbeddedBrowser => (
                 "Embedded browser",
-                "Show web pages, such as a dev server, in a pane beside the work. Turning it on downloads the browser once, about 110 MB.",
+                "Show web pages, such as a dev server, in a pane beside the work. Turning it on downloads the browser once, about 120 MB.",
             ),
             Self::ThemeMode => (
                 "Theme mode",

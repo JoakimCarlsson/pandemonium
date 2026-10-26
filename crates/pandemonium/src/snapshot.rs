@@ -2302,7 +2302,7 @@ impl Shot {
                 window.general.embedded_browser = true;
                 state = state.with_window_settings(window);
                 state.set_browser_status(Some(
-                    "Downloading the embedded browser: 42 of about 110 MB.".to_owned(),
+                    "Downloading the embedded browser: 42 of about 120 MB.".to_owned(),
                 ));
                 Screen::Workspace(state)
             }

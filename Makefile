@@ -1,6 +1,4 @@
-export CEF_PATH ?= $(HOME)/.cache/cef
-
-.PHONY: fmt lint run install install-server release languages extension-sample
+.PHONY: fmt lint run browser-helper install install-server release languages extension-sample
 
 fmt:
 	cargo fmt --all
@@ -8,9 +6,13 @@ fmt:
 lint:
 	cargo clippy --workspace --all-targets -- -D warnings
 
-run:
-	cargo build -p pm-browser-host
-	XDG_DATA_HOME="$${XDG_DATA_HOME:-$$HOME/.local/share/pandemonium-dev}" cargo run -p pandemonium
+run: browser-helper
+	XDG_DATA_HOME="$${XDG_DATA_HOME:-$$HOME/.local/share/pandemonium-dev}" PANDEMONIUM_BROWSER_HELPER="$(CURDIR)/helpers/electron-browser/pandemonium-browser-electron" cargo run -p pandemonium
+
+browser-helper: helpers/electron-browser/node_modules/electron/dist/electron
+
+helpers/electron-browser/node_modules/electron/dist/electron: helpers/electron-browser/package-lock.json
+	cd helpers/electron-browser && npm ci --no-audit --no-fund && node node_modules/electron/install.js
 
 install:
 	scripts/install-preview.sh

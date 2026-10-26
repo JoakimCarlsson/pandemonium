@@ -854,7 +854,7 @@ impl App {
                 };
                 let outcome = pm_browser::install::install(&|step| match step {
                     pm_browser::install::Step::Downloading(bytes) => say(format!(
-                        "Downloading the embedded browser: {} of about 110 MB.",
+                        "Downloading the embedded browser: {} of about 120 MB.",
                         bytes / 1_000_000
                     )),
                     pm_browser::install::Step::Verifying => {
@@ -869,7 +869,7 @@ impl App {
             self.web.installing = Some(receiver);
             self.model.update(|screen| {
                 let Screen::Workspace(state) = screen;
-                state.browser_notice("Downloading the embedded browser, about 110 MB...");
+                state.browser_notice("Downloading the embedded browser, about 120 MB...");
             });
             downloading = true;
         }

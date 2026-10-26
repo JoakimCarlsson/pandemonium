@@ -170,7 +170,9 @@ $env:PANDEMONIUM_CHANNEL = "preview"; irm https://raw.githubusercontent.com/Joak
 ## Building
 
 You need a recent stable Rust toolchain (edition 2024) and a GPU that wgpu is
-happy with. Agents are fetched with `npx` on first run, so Node helps too.
+happy with. Agents are fetched with `npx` on first run, so Node helps too. The
+embedded browser's helper is an Electron app, so `make run` and `make install`
+use `npm` to fetch it; see [docs/browser.md](docs/browser.md).
 
 ```sh
 git clone https://github.com/JoakimCarlsson/pandemonium.git

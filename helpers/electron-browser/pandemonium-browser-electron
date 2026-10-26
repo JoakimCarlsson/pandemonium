@@ -1,0 +1,4 @@
+#!/bin/sh
+# Starts the Electron browser helper; the window finds it through PANDEMONIUM_BROWSER_HELPER.
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+exec "$here/node_modules/electron/dist/electron" --ozone-platform-hint=auto "$here/main.js" "$@"

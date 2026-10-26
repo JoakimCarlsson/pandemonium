@@ -63,7 +63,8 @@
 - Use [docs/architecture.md](docs/architecture.md) when choosing a crate or
   changing layer boundaries.
 - Use [docs/protocol.md](docs/protocol.md) for requests, events and reconnects;
-  [docs/extensions.md](docs/extensions.md) for extension packages; and
-  [docs/performance.md](docs/performance.md) for performance work.
+  [docs/extensions.md](docs/extensions.md) for extension packages;
+  [docs/browser.md](docs/browser.md) for the embedded browser and its helper;
+  and [docs/performance.md](docs/performance.md) for performance work.
 - Keep project instructions in `AGENTS.md`. Keep project descriptions, crate
   inventories and long explanations in the reference docs.
