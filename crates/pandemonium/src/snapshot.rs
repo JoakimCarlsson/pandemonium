@@ -279,6 +279,12 @@ pub enum Shot {
     Folders,
     /// A Rust file being written: highlighted, with what the language server finds wrong under it and the brackets at the caret paired.
     Code,
+    /// A TSX component highlighted: JSX tags, attributes and braces, and the CSS of a styled-components template.
+    CodeTsx,
+    /// An MDX file highlighted: its Markdown, with the JSX and the import and export lines read as TSX.
+    CodeMdx,
+    /// A dotenv file highlighted.
+    CodeEnv,
     /// A file written in a language that is not installed, with the offer to install it above its lines.
     LanguageOffer,
     /// A markdown file shown rendered as a page, with the switch to its source.
@@ -386,6 +392,8 @@ fn load_installed_grammar(id: &str) {
         tabs: manifest.tabs,
         line_comment: manifest.line_comment.clone(),
         pairs: pm_treesitter::Editing::pairs_of(&manifest.pairs),
+        scopes: crate::work::code::scopes_of(&manifest.scopes),
+        tags: crate::work::code::tags_of(manifest.tags.as_ref()),
     };
     if let Ok(loaded) =
         pm_treesitter::Grammar::load(id, &manifest.grammar, &wasm, &queries, editing)
@@ -488,6 +496,30 @@ fn code() -> WorkspaceState {
                 summary: "Reopen files browsed on a project page".to_owned(),
             },
         )
+}
+
+/// The TSX component the TSX snapshot shows.
+const CODE_TSX: &str = "import styled, { css } from \"styled-components\";\n\nconst Card = styled.div`\n  color: ${(props) => props.color};\n  margin: 0 auto;\n  ${(props) => props.wide && css`width: 100%;`}\n`;\n\nexport function Button({ label, count }: { label: string; count: number }) {\n  return (\n    <>\n      <Card color=\"red\" {...rest}>\n        <Icon.Check size={16} />\n        {/* the label */}\n        <button className=\"flex items-center\" disabled>\n          {label} &amp; {count}\n        </button>\n      </Card>\n    </>\n  );\n}\n";
+
+/// The MDX file the MDX snapshot shows.
+const CODE_MDX: &str = "---\ntitle: Release notes\n---\n\nimport { Chart } from \"./chart.js\"\nexport const year = 2018\n\n# Hello, *MDX*\n\nSome `inline` text with a [link](https://example.com).\n\n<Chart year={year} color=\"red\" />\n\n```ts\nconst answer: number = 42;\n```\n";
+
+/// The dotenv file the dotenv snapshot shows.
+const CODE_ENV: &str = "# Database\nDATABASE_URL=\"postgres://user:secret@localhost:5432/app\"\nexport PORT=3000\nDEBUG=true\nSITE_URL='https://example.com'\nAPI_BASE=${SITE_URL}/api\nNEXT_PUBLIC_NAME=My app\n";
+
+/// A workspace with the file `path`, written in the installed language `language` and holding `text`, open for writing, the grammars of the languages `grammars` loaded.
+fn written(path: &str, language: &str, grammars: &[&str], text: &str) -> WorkspaceState {
+    for id in grammars {
+        load_installed_grammar(id);
+    }
+    let mut state = workspace_sample().after(TAB_DIFF);
+    state.open_viewer(path.to_owned(), false);
+    state.with_file(
+        0,
+        path,
+        false,
+        Ok((Some(text.to_owned()), false, Some(language.to_owned()))),
+    )
 }
 
 /// The review panel on its search tab, after a search for `names` that found lines in three files.
@@ -1332,8 +1364,10 @@ fn sample_languages() -> Vec<pm_protocol::ExtensionInfo> {
             server: Some("gopls v0.24.0".to_owned()),
             ..language("go", "Go", "go", true)
         },
+        language("dotenv", "Dotenv", "env", false),
         language("javascript", "JavaScript", "js", false),
         language("json", "JSON", "json", false),
+        language("mdx", "MDX", "mdx", false),
         pm_protocol::ExtensionInfo {
             busy: Some("Installing the language server".to_owned()),
             ..language("markdown", "Markdown", "md", false)
@@ -1352,6 +1386,7 @@ fn sample_languages() -> Vec<pm_protocol::ExtensionInfo> {
             server: Some("zls 0.14.0".to_owned()),
             ..language("zig", "Zig", "zig", true)
         },
+        language("tsx", "TSX", "tsx", true),
         language("typescript", "TypeScript", "ts", false),
     ]
 }
@@ -1812,6 +1847,24 @@ impl Shot {
         let workspace = workspace_sample;
         match self {
             Self::Code => Screen::Workspace(code()),
+            Self::CodeTsx => Screen::Workspace(written(
+                "src/Button.tsx",
+                "tsx",
+                &["tsx", "css"],
+                CODE_TSX,
+            )),
+            Self::CodeMdx => Screen::Workspace(written(
+                "docs/post.mdx",
+                "mdx",
+                &["mdx", "tsx", "markdown-inline", "yaml"],
+                CODE_MDX,
+            )),
+            Self::CodeEnv => Screen::Workspace(written(
+                ".env.local",
+                "dotenv",
+                &["dotenv"],
+                CODE_ENV,
+            )),
             Self::LanguageOffer => Screen::Workspace(language_offer()),
             Self::MarkdownPreview => Screen::Workspace(previewed("README.md")),
             Self::VectorPreview => Screen::Workspace(previewed("assets/logo.svg")),

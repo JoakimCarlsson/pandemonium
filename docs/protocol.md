@@ -200,7 +200,7 @@ request with exactly one `response` carrying the same `id`.
 | `open_document`| `directory`, `path`, `language`, `version`, `text`                                               | `opened`        |
 | `change_document` | `directory`, `path`, `version`, `changes`: `[{span, text}]`                                   | `done`          |
 | `close_document` | `directory`, `path`                                                                            | `done`          |
-| `completion`   | `directory`, `path`, `version`, `position`, `trigger` (optional)                                 | `completions`   |
+| `completion`   | `directory`, `path`, `version`, `position`, `trigger` (optional), `scope` (optional)             | `completions`   |
 | `hover`        | `directory`, `path`, `version`, `position`                                                       | `hovered`       |
 | `format`       | `directory`, `path`, `version`, `range` (optional)                                               | `formatted`     |
 | `format_on_type` | `directory`, `path`, `version`, `position`, `character`                                        | `formatted`     |
@@ -534,12 +534,12 @@ and has no effect. Clients list again when notified of changes.
   branches.
 - **`read_file`:** reads `path` from the working folder or, when `head`, from
   the last commit, or from the commit `revision` names by its object name. The response holds no text for a file that is not text, and
-  names the installed language the file is written in, by the endings and names
-  of files its manifest lists.
+  names the installed language the file is written in, by the endings, names
+  and name patterns of files its manifest lists.
 - **`extensions`:** every extension the list offers, then those
   installed on the server's machine that it does not, each as `{id, name,
-  kind, version, description, icon, color, hidden, suffixes, names, installed,
-  busy, problem, server, local}`. `kind` is what the extension is; `language` is the
+  kind, version, description, icon, color, hidden, suffixes, names, patterns,
+  installed, busy, problem, server, local}`. `kind` is what the extension is; `language` is the
   only kind so far. `icon` is the SVG an installed language's files are shown
   with and `color` its tint as `#rrggbb`; a client shows a file of no installed
   language as a plain file. `hidden` languages are
@@ -612,7 +612,16 @@ and has no effect. Clients list again when notified of changes.
   line_comment, pairs}`. `wasm` is the tree-sitter grammar compiled to
   WebAssembly, in base64; a client parses and highlights with it itself.
   `pairs` lists what the editor closes as it is opened, each the opening and
-  the closing character, such as `"()"`.
+  the closing character, such as `"()"`. `scopes` names parts of a file that are
+  edited differently, each as `{nodes, line_comment, block_comment, emmet}`:
+  `nodes` are the grammar's node kinds the scope is made of, the caret is in the
+  scope of the innermost of them it is strictly inside, `line_comment` replaces
+  the language's (an empty one means there are none inside), `block_comment` is
+  the `[open, close]` marks used when there is no line comment, and `emmet`
+  says whether abbreviations expand there; a language that sets `emmet` in any
+  scope expands them only in those that set it true. `tags` names the node kinds
+  of `element`, `open`, `close` and tag `names`, with which the editor writes
+  the closing tag when the `>` of an opening tag is typed.
 - **`open_document`:** opens `path` of the folder `directory` for the language
   server of `language`, holding `text` at `version`, and starts that server for
   the folder when it is not running, which can take a while. The response gives
@@ -628,7 +637,14 @@ and has no effect. Clients list again when notified of changes.
   server once no open file of the folder uses it. A connection that goes away
   closes what it had open.
 - **`completion`, `hover`:** wait until the open file reaches `version`, then
-  ask its language server. `completions` holds `[{label, detail, kind, text,
+  ask its language server, and the companion servers the language names for the
+  project, whose answers are added to its own: a language's `[[companion]]` is a
+  second server that reads the same file, started only where its `detect` finds
+  a dependency in the root `package.json` or a file at the root, such as the
+  Tailwind CSS server for a project with `tailwindcss`. `scope` is the name of
+  the scope of the language the place is in; a companion that names `scopes` is
+  asked for completions only inside those. Companion servers' diagnostics are
+  not published. `completions` holds `[{label, detail, kind, text,
   span, filter, sort, documentation}]`, the best match for the word before
   `position` first, with snippets made plain text; `span`, when given, is what
   choosing it replaces, and `documentation` is markdown when the server sent
@@ -733,11 +749,11 @@ embedded context, and anything else as a link to the stored file.
 | `repositories` | `repositories`: `[{name, description, private, url}]`   |
 | `folders`    | `path`: absolute, `names`: the folders inside it           |
 | `directory`  | `path`: a `clone` made   |
-| `extensions` | `extensions`: `[{id, name, kind, version, description, icon, color, hidden, suffixes, names, installed, busy, problem, server, local, owner, provides, requests, granted}]` |
+| `extensions` | `extensions`: `[{id, name, kind, version, description, icon, color, hidden, suffixes, names, patterns, installed, busy, problem, server, local, owner, provides, requests, granted}]` |
 | `extension_preview` | `extension`: one entry as `extensions` lists them, not installed, with what it `provides` and `requests` |
 | `extension_assets` | `themes`: `[{extension, name, dark, light}]`, `icon_themes`: `[{extension, name, icons: [{suffix, svg, color}]}]`, `commands`: `[{extension, id, title, description}]` |
 | `extension_command` | `prompt`: the text to put in the prompt box, `message`: a line to tell the reader; each is optional |
-| `grammar`    | `{id, symbol, aliases, wasm, highlights, indents, outline, injections, brackets, indent, tabs, line_comment}` |
+| `grammar`    | `{id, symbol, aliases, wasm, highlights, indents, outline, injections, brackets, indent, tabs, line_comment, pairs, scopes, tags}` |
 | `opened`     | `triggers`: the characters after which the server offers completions; `signature`: those after which it tells what the call the caret is in looks like; `format`: those after which it formats what was typed; `formats_ranges`, `folds`, `links`, `semantic_tokens`, `inlay_hints`, `code_lens`, `inline_values`: whether it formats a stretch, says what can be folded, says what is edited together, says what each name is, says what to show inside lines, says what to show with stretches and says which names to show the values of while a program is paused |
 | `completions`| `items`: `[{label, detail, kind, text, span, filter, sort, documentation}]`, `kind` one of `function`, `variable`, `type`, `module`, `keyword`, `constant`, `snippet`, `other` |
 | `hovered`    | `hover`: `{text, span}` or null |
@@ -931,7 +947,8 @@ one.
 - `tasks` lists them: those written in `.pandemonium.tasks.json` in the root of
   the folder, `{"tasks": [{"name", "command", …}]}`, then those its manifests
   imply: Cargo (`build`, `check`, `test`, `clippy`, `run`), the scripts of a
-  `package.json` run with the package manager its lockfile names, the targets of
+  `package.json` run with the package manager its lockfile names (a Next.js
+  app lists its `dev`, `build`, `start` and `lint` scripts), the targets of
   a Makefile, Go modules and Python projects. A detected task a written one has
   the name of is left out.
 - `run_task` starts the user's shell in the task's folder with the task's

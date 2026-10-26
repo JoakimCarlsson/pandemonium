@@ -19,7 +19,7 @@ use pm_state::State;
 
 use crate::view::View;
 
-mod code;
+pub(crate) mod code;
 mod debug;
 mod machine;
 pub(crate) mod picture;

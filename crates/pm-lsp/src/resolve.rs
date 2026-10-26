@@ -137,8 +137,12 @@ fn install_into(spec: &ServerSpec, install: &Install, folder: &Path) -> Result<(
                 .as_deref()
                 .ok_or("an npm install needs the language folder that pins it")?;
             for pin in ["package.json", "package-lock.json"] {
-                std::fs::copy(origin.join(pin), folder.join(pin)).map_err(|error| {
-                    format!("the language has no {pin} pinning its server: {error}")
+                let held = match &install.pin {
+                    Some(prefix) => format!("{prefix}.{pin}"),
+                    None => pin.to_owned(),
+                };
+                std::fs::copy(origin.join(&held), folder.join(pin)).map_err(|error| {
+                    format!("the language has no {held} pinning its server: {error}")
                 })?;
             }
             let arguments = [

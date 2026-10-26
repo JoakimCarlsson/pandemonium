@@ -37,6 +37,7 @@
         "PKGBUILD",
         "APKBUILD"
       ],
+      "patterns": [],
       "server": "bash-language-server",
       "files": {
         "brackets.scm": "a258c9e63984a0409969aed98317c1483645d0876951e6958c1e692e69400835",
@@ -64,6 +65,7 @@
         "h"
       ],
       "names": [],
+      "patterns": [],
       "server": "clangd",
       "files": {
         "brackets.scm": "7b7a54bd5e81a35953566c1a3d48fcd88e79f321e95eec371f20883da77de757",
@@ -90,6 +92,7 @@
       "names": [
         "CMakeLists.txt"
       ],
+      "patterns": [],
       "server": "neocmakelsp",
       "files": {
         "brackets.scm": "923753dd3d71b7d4a0dff97f478fa5ce175303f490cb38aa51a01b12c592ec04",
@@ -127,6 +130,7 @@
         "ixx"
       ],
       "names": [],
+      "patterns": [],
       "server": "clangd",
       "files": {
         "brackets.scm": "270e1ba449ced4fe104dc1e3e31ed7ed0c71b40ba34b2a13bf313311ec1359d1",
@@ -152,6 +156,7 @@
         "csx"
       ],
       "names": [],
+      "patterns": [],
       "server": "csharp-ls",
       "files": {
         "brackets.scm": "c0eda163cc24f7a3cf17c8fe4878b06ce74226c6a752c486d24dfb8a39016cb4",
@@ -176,17 +181,20 @@
         "css"
       ],
       "names": [],
+      "patterns": [],
       "server": "vscode-css-language-server",
       "files": {
         "brackets.scm": "d10cdedd33cd9902cd04bed29257edc4b8cbbf26bf3b3086c163bee8a59fa832",
-        "config.toml": "0ead99a3226425ed996d5cfe1e7bbc1c8b6c3c7811e1e13f43713e0ce7d2892c",
+        "config.toml": "ecbbe61e0524a7fe8bd2cb88690c477fc81a9701afd3ef831682354d5a82a314",
         "highlights.scm": "f7c74ce493683c6de23017bf9af506ea4d8a4f0205281b98d63f249d1fb9b0c5",
         "icon.svg": "176382bf3cd6f4065d064afecb1668702b8aa0412ba977cdf67eac2cbb29c8a9",
         "indents.scm": "424fbba80dcbef6d52b0db9331cfb8c04512e2bd35c5ad4b02b6b8597ff46207",
         "injections.scm": "64f7110bbd544b0d33cdfd34ac124503fd8b56c688b6e10844e0099fe89d87f3",
         "outline.scm": "a10253f8873258af2f0ad3b096f88782e1e6ad4cedfd98e08ba0cf4c4df66350",
         "package-lock.json": "184cf57ad65dd7d217ea02a303d4c9431cd84f3550330911ba50a31a81ff34c3",
-        "package.json": "6f361a86fcae3a6917884ebda9eb4ed15119b78d90d4b171a56da20ecfe0785b"
+        "package.json": "6f361a86fcae3a6917884ebda9eb4ed15119b78d90d4b171a56da20ecfe0785b",
+        "tailwindcss.package-lock.json": "5dae08a96f79e954db31829abdb6778641ee2d29fc38af2d837be3f55fe3e6d1",
+        "tailwindcss.package.json": "2a834de339e3cd8c0f2e2b7418f471432ff1f73f2903c5d640239fbcc06b31ab"
       },
       "local": false
     },
@@ -206,6 +214,7 @@
         "Dockerfile",
         "Containerfile"
       ],
+      "patterns": [],
       "server": "docker-langserver",
       "files": {
         "brackets.scm": "36d8696012a74b1994a84a481fd10e76ca030cc7b164fe5cac6de3cceb3e218f",
@@ -218,6 +227,31 @@
         "outline.scm": "dc19152c22191440ac66802fcff6697ff8dc6782e12d1c5305e9cd617f1f6d01",
         "package-lock.json": "7c3d1bee93d00edb34f009f56ad718908ed4df977358221bf2a3098ed15c5995",
         "package.json": "897db1fccc5288d8b0f1946c8256e1ee7465da63d03da84195710fe7cfab35b6"
+      },
+      "local": false
+    },
+    {
+      "id": "dotenv",
+      "name": "Dotenv",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "Environment files: .env, .env.local, .env.production and the like.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [
+        "env"
+      ],
+      "names": [
+        ".env"
+      ],
+      "patterns": [
+        ".env.*"
+      ],
+      "server": null,
+      "files": {
+        "config.toml": "17877eaf2983c11ceed76e34bb0df55d784d30836730fda21b43800f15da34da",
+        "highlights.scm": "8d1c42fb1c84177d4010080e525dda3a31b8bb9d6a71a4cc22ecd7411edf6aeb",
+        "icon.svg": "6c6a16c771036899e3fc748daafd102b109c72562afa61ba5666b5fffa28d85e"
       },
       "local": false
     },
@@ -247,6 +281,7 @@
         "rcall"
       ],
       "names": [],
+      "patterns": [],
       "server": "glsl_analyzer",
       "files": {
         "brackets.scm": "66ba3f2803a135291c6ec6e0d424c92e0cc19fad928fcd10533c8e6ed61e5398",
@@ -272,6 +307,7 @@
         "go"
       ],
       "names": [],
+      "patterns": [],
       "server": "gopls",
       "files": {
         "brackets.scm": "f0353a09140622170b89963be336b7bf1dfb4d3630516204a0d9a71de0244dde",
@@ -298,6 +334,7 @@
         "graphqls"
       ],
       "names": [],
+      "patterns": [],
       "server": "graphql-lsp",
       "files": {
         "brackets.scm": "0e3ce5ff1db5b65199040d96b389af72bdf59357f392b31b95616fb7380e3ece",
@@ -329,6 +366,7 @@
         ".terraformrc",
         "terraform.rc"
       ],
+      "patterns": [],
       "server": null,
       "files": {
         "brackets.scm": "844b2cb8936826cd310c3b645e3c914453718f21517165a48d2e13f1e9f617c8",
@@ -358,6 +396,7 @@
         "psh"
       ],
       "names": [],
+      "patterns": [],
       "server": "shader-language-server",
       "files": {
         "brackets.scm": "c75af484d525c98470f2c9ded63a6c6395af5421da0b7769b25e7d1c6eea1d9e",
@@ -385,17 +424,20 @@
         "xhtml"
       ],
       "names": [],
+      "patterns": [],
       "server": "vscode-html-language-server",
       "files": {
         "brackets.scm": "44892505b21a08f4eb83cb646e6a150de6466c86e57505b4228f5f7a039f148c",
-        "config.toml": "f7b8a5ff5cfdc2772dded5043981f77506ee845ed8907af686130dbc5a9281db",
+        "config.toml": "8dc6c0f51b8031b61d0c3f6ab87a302f4b3b153cca2b9ae17b22e0eb13bdc1c4",
         "highlights.scm": "ee0c83f83af8129bc12d279aadc68c8b8b112871f238583b428633c8fe8e1895",
         "icon.svg": "e88c73d6a408483c6ea905180467f7ca141ed9d88b51e60fd34b190d429de0cf",
         "indents.scm": "d25b65145936d25d8c55ff67c84ff0b3093f61eb59118f9776896e80afd68923",
         "injections.scm": "65dbf39ebe9542c51d7e910bfa69a62dade801aa6bbaff50fd6e1e2ff9b8b840",
         "outline.scm": "ef6f45d173d05b7274195ab33e1c4a0e311c6b4a570d5e87ea2399272d284ddf",
         "package-lock.json": "b17601471757ec4d464bd72f6ea6a4cce6224e06b81cb188703e2be0bbcb001b",
-        "package.json": "64351c88dcd260f3ce6719abb14904e82130d5b1b2db13d41ba65fa7bcff01c6"
+        "package.json": "64351c88dcd260f3ce6719abb14904e82130d5b1b2db13d41ba65fa7bcff01c6",
+        "tailwindcss.package-lock.json": "5dae08a96f79e954db31829abdb6778641ee2d29fc38af2d837be3f55fe3e6d1",
+        "tailwindcss.package.json": "2a834de339e3cd8c0f2e2b7418f471432ff1f73f2903c5d640239fbcc06b31ab"
       },
       "local": false
     },
@@ -411,6 +453,7 @@
         "java"
       ],
       "names": [],
+      "patterns": [],
       "server": "jdtls",
       "files": {
         "brackets.scm": "38c5c582bb6c3d0d9c621f43463cbea7de4ae9b0c7bef9111020aaaa26007208",
@@ -428,7 +471,7 @@
       "name": "JavaScript",
       "kind": "language",
       "version": "0.1.0",
-      "description": "JavaScript and JSX with typescript-language-server.",
+      "description": "JavaScript and JSX, React and Next.js components with typescript-language-server.",
       "hidden": false,
       "requires": [],
       "suffixes": [
@@ -438,17 +481,20 @@
         "jsx"
       ],
       "names": [],
+      "patterns": [],
       "server": "typescript-language-server",
       "files": {
         "brackets.scm": "17d43133e8204321af678d982fc4952fecbda68995324a9be04b92677f17124a",
-        "config.toml": "4a3c14959d370d907e1043176afe48c4e68a575d1118f5bf40b8f541f153eb9a",
-        "highlights.scm": "8c40d2b7d43982fc34929b92fa594b17759bf4f00fbdc185435d1c2e372c86a3",
+        "config.toml": "5f2a1d0f8d4e982182e46e11ce21584b1cb5ac781680b0540a12407c3f5e6653",
+        "highlights.scm": "656af77ce62fe324c95d8b0b92acc7cdba9a78537964bb9770ab0223a5108922",
         "icon.svg": "12b4bbacd7fbf2b1a685b791ce8c5c0196a3f01f78aff3f75cc05929868e17c6",
         "indents.scm": "8c6500f9272158bf36044cf0bce758b81f71910ff87d4840b8c612ecc4d92501",
-        "injections.scm": "851622253f579747bbdf74bf57b3e3fece122995617cb5e348d4d0b28bc4ea19",
+        "injections.scm": "e9768a51e3a095f2770f5e910d2377d4f076dfc2c7faf7ded8865421422b34d8",
         "outline.scm": "36680a2012f2f4478c54f77f7b36282ce9cff3f7ad3466c47263e108c0e61757",
         "package-lock.json": "c189d4f360f0e680a42b980556c9c40cc5eae5a28f5dc5ddeb4b57764cabf209",
-        "package.json": "3788f0a00bcb75e7dc63603a9b1af6ede654cc00a6976aea8eaca317a07e5185"
+        "package.json": "3788f0a00bcb75e7dc63603a9b1af6ede654cc00a6976aea8eaca317a07e5185",
+        "tailwindcss.package-lock.json": "5dae08a96f79e954db31829abdb6778641ee2d29fc38af2d837be3f55fe3e6d1",
+        "tailwindcss.package.json": "2a834de339e3cd8c0f2e2b7418f471432ff1f73f2903c5d640239fbcc06b31ab"
       },
       "local": false
     },
@@ -470,6 +516,7 @@
         ".eslintrc",
         "flake.lock"
       ],
+      "patterns": [],
       "server": "vscode-json-language-server",
       "files": {
         "brackets.scm": "d13aeee7b2b6ff238a68e2029bfa42543e624415911624e2fb88cd93abf47bc5",
@@ -497,6 +544,7 @@
         "kts"
       ],
       "names": [],
+      "patterns": [],
       "server": "kotlin-lsp",
       "files": {
         "brackets.scm": "838f05f2b4bc332feacdb4c9cd9e0ab2d01bb1ac31fde486503c590da94668ee",
@@ -524,6 +572,7 @@
         ".luacheckrc",
         ".busted"
       ],
+      "patterns": [],
       "server": "lua-language-server",
       "files": {
         "brackets.scm": "fee46493d8cea9166cc93de72d87671a48219629a46fff70c8dba8527f865316",
@@ -553,6 +602,7 @@
         "makefile",
         "GNUmakefile"
       ],
+      "patterns": [],
       "server": null,
       "files": {
         "brackets.scm": "c54dac6541b82a63f109aa3c66e55c3e2074a6b17a450905ec008fd9e038633e",
@@ -577,14 +627,14 @@
       ],
       "suffixes": [
         "md",
-        "markdown",
-        "mdx"
+        "markdown"
       ],
       "names": [],
+      "patterns": [],
       "server": "marksman",
       "files": {
         "brackets.scm": "b7ab133d108eac96fb9b228121b068542f1ccf2984358ff15e4db33e59388bd9",
-        "config.toml": "cfbd7dd327a88c46a7fabe7594511a38cc0c7e732792427c32ae5958af255c85",
+        "config.toml": "2882cd6b83cda088cffdd1ed265388add09e8e8b4fc6a1554ed2915a86b1ec88",
         "highlights.scm": "c4d57d2a10100af9a75f21fedebc1d913cf88f9ea46f769f92d78530853ac636",
         "icon.svg": "be8f2f8d1aa65c6f8cd6d46c1d9ca3f2160f3c946f38b161646dd1e078a71d52",
         "indents.scm": "9ee17887c03d262070cfc98369bbca1f509f11fdb05b0f68ea9b5e6a96088354",
@@ -603,6 +653,7 @@
       "requires": [],
       "suffixes": [],
       "names": [],
+      "patterns": [],
       "server": null,
       "files": {
         "brackets.scm": "00d13c1625889737dfefb1bdf41b28c8e9324404e984393c8e5707f5b4bee105",
@@ -611,6 +662,34 @@
         "indents.scm": "e5141ae41c4a38dcfb0eddcab50d06e4033f185f850979cc2c17caa7f8779d72",
         "injections.scm": "226f70cda97f0ad289ca501d80ee518f93208d9e9f38955d43e2a29660260fd1",
         "outline.scm": "249325de79d83e8663592ccb129546935f8babebf2f0887357726da2eb848f35"
+      },
+      "local": false
+    },
+    {
+      "id": "mdx",
+      "name": "MDX",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "MDX: Markdown grammar with its JSX, import and export lines highlighted as TSX.",
+      "hidden": false,
+      "requires": [
+        "markdown-inline",
+        "tsx"
+      ],
+      "suffixes": [
+        "mdx"
+      ],
+      "names": [],
+      "patterns": [],
+      "server": null,
+      "files": {
+        "brackets.scm": "b7ab133d108eac96fb9b228121b068542f1ccf2984358ff15e4db33e59388bd9",
+        "config.toml": "566936f1e575975b9e5aed47f2efa45d4d66c99bde9806d914e6ba54f4d21135",
+        "highlights.scm": "c4d57d2a10100af9a75f21fedebc1d913cf88f9ea46f769f92d78530853ac636",
+        "icon.svg": "be8f2f8d1aa65c6f8cd6d46c1d9ca3f2160f3c946f38b161646dd1e078a71d52",
+        "indents.scm": "9ee17887c03d262070cfc98369bbca1f509f11fdb05b0f68ea9b5e6a96088354",
+        "injections.scm": "61e810cebcbe25a82d713fc7ac8706ab3656aeffd878e699e00d552adf5e7f0d",
+        "outline.scm": "27b5c20a376c1e3f0618110e06da9bc7e461c23c5052bc538d5d5cbe8b00c1f6"
       },
       "local": false
     },
@@ -626,6 +705,7 @@
         "nix"
       ],
       "names": [],
+      "patterns": [],
       "server": "nil",
       "files": {
         "brackets.scm": "04082d638799a472be09578b1134c62a7f099838c5cf7ed76a21302a47ad40a5",
@@ -653,6 +733,7 @@
         "psd1"
       ],
       "names": [],
+      "patterns": [],
       "server": null,
       "files": {
         "brackets.scm": "efde855fb586cf429d62b5cf0e2bc23c52361a685a8c556535c08f6357aec8fb",
@@ -678,6 +759,7 @@
         "proto"
       ],
       "names": [],
+      "patterns": [],
       "server": "buf",
       "files": {
         "brackets.scm": "ba9eda11f3e2f5d4a5ed02733b61cd7fdea414830a4b699eedcd36b2dbf43654",
@@ -704,6 +786,7 @@
         "pyi"
       ],
       "names": [],
+      "patterns": [],
       "server": "pyright-langserver",
       "files": {
         "brackets.scm": "4d23538e4730c901b85c049aa4f18c246b7aff9b4dbce9f7edaafc616352a2a3",
@@ -730,6 +813,7 @@
         "rs"
       ],
       "names": [],
+      "patterns": [],
       "server": "rust-analyzer",
       "files": {
         "brackets.scm": "914f67dd435081dc1e4744104acda3ddc62c8dce73706f1117223c488b9de5e7",
@@ -755,6 +839,7 @@
         "scss"
       ],
       "names": [],
+      "patterns": [],
       "server": "vscode-css-language-server",
       "files": {
         "brackets.scm": "f913a23a7da353dfc04becf612ef28eaa93576d6337662836ee9d6bda27ed1fa",
@@ -782,6 +867,7 @@
         "sql"
       ],
       "names": [],
+      "patterns": [],
       "server": "sqls",
       "files": {
         "brackets.scm": "9528eba98e7be0b61d8e573afd30e2c64bc09866dea8afc55c6b8020bb590d5a",
@@ -807,6 +893,7 @@
         "svelte"
       ],
       "names": [],
+      "patterns": [],
       "server": "svelteserver",
       "files": {
         "brackets.scm": "2b990e69b11146dfc8dfbc0cb7461ab93fcedd03ce6154494efc3e31f296b702",
@@ -834,6 +921,7 @@
         "swift"
       ],
       "names": [],
+      "patterns": [],
       "server": "sourcekit-lsp",
       "files": {
         "brackets.scm": "ddbf3f1406267674c11c18da47a542e828590e2d557beaf19c32ae6d882c4189",
@@ -860,6 +948,7 @@
         "tofu"
       ],
       "names": [],
+      "patterns": [],
       "server": "terraform-ls",
       "files": {
         "brackets.scm": "16775b4d215bea366f23336444fa775bc5f1a428e3e0969bc998ae3848e8ba01",
@@ -888,6 +977,7 @@
         "uv.lock",
         "poetry.lock"
       ],
+      "patterns": [],
       "server": "taplo",
       "files": {
         "brackets.scm": "a0d7d33c46c561c820e4b4b5e83a2c358eb5831a06b538338a0d3c950aa7e48e",
@@ -905,24 +995,27 @@
       "name": "TSX",
       "kind": "language",
       "version": "0.1.0",
-      "description": "TSX, installed with TypeScript.",
-      "hidden": true,
+      "description": "TSX, React and Next.js components with typescript-language-server.",
+      "hidden": false,
       "requires": [],
       "suffixes": [
         "tsx"
       ],
       "names": [],
+      "patterns": [],
       "server": "typescript-language-server",
       "files": {
         "brackets.scm": "970b02fb5bf6b37f95ae18de20d95274ea3adfcde501744d0188dcc514acd55c",
-        "config.toml": "faad2d4491fca9cfaeca7dabf3c88ae097291babdc99fe8abe5c97f2b975edf3",
-        "highlights.scm": "f4deb8a99b627a6257479f40cb392fe82763f5a0d8af77b273bb873ca6792212",
+        "config.toml": "b943c5b3dd65a5cd7571d5233b4cdc17554f80badeba532754cce692a31a0d49",
+        "highlights.scm": "eda831a60ee976265446248da5f0691dd0ee289bd676cb3cdfc74a4dad05f8d7",
         "icon.svg": "dfe113def52fc72b2975392c6a5648883f8e4feb908a66f41f4092753cac1f1b",
         "indents.scm": "540da706c65dc1b5f126673895334cdb5ac386a606d05d9ef8f4e36e96f57888",
-        "injections.scm": "3156d4f0bafa8341cc21344b1c121f73d4d84177cd04fa7e2e958f44626ed063",
+        "injections.scm": "22688b1a7fbbf190807013992d55290dc3edf994b98f4c6579306cd5b6c0d234",
         "outline.scm": "516b6a18de1bb65e277e2f0a862c0182158e2cd3f8df99bf97300071f28cef9d",
         "package-lock.json": "c189d4f360f0e680a42b980556c9c40cc5eae5a28f5dc5ddeb4b57764cabf209",
-        "package.json": "3788f0a00bcb75e7dc63603a9b1af6ede654cc00a6976aea8eaca317a07e5185"
+        "package.json": "3788f0a00bcb75e7dc63603a9b1af6ede654cc00a6976aea8eaca317a07e5185",
+        "tailwindcss.package-lock.json": "5dae08a96f79e954db31829abdb6778641ee2d29fc38af2d837be3f55fe3e6d1",
+        "tailwindcss.package.json": "2a834de339e3cd8c0f2e2b7418f471432ff1f73f2903c5d640239fbcc06b31ab"
       },
       "local": false
     },
@@ -942,6 +1035,7 @@
         "cts"
       ],
       "names": [],
+      "patterns": [],
       "server": "typescript-language-server",
       "files": {
         "brackets.scm": "e7319b052b3ac296c901ac7183841072b5a9fe57d8032944ead6f0ef431c5644",
@@ -949,7 +1043,7 @@
         "highlights.scm": "3ee958b8f7217a26f9e683a916a7872d8e79e81a57f2424a4d6ccd613f6017f4",
         "icon.svg": "0004d33f46b2175e90f8ea86aef139e29af5f7a3a3cf310e6dd6b8c084bab884",
         "indents.scm": "a95eaed00775b56c91e823fdbca801ff691db2e1fc9922309b4ded21b90c2784",
-        "injections.scm": "b163fa4d3644dfc021f0947d31194d95c8fd9071027541039a7ea5aa81299d0a",
+        "injections.scm": "712bdbc75ea8ece21bcc76118b5ec070a926784369ec448ae24dc36ba31dafd0",
         "outline.scm": "77ac576398b2b5170d7fa02e8d8b1bf30c365a00a6a536c05c8e5a2206895d52",
         "package-lock.json": "c189d4f360f0e680a42b980556c9c40cc5eae5a28f5dc5ddeb4b57764cabf209",
         "package.json": "3788f0a00bcb75e7dc63603a9b1af6ede654cc00a6976aea8eaca317a07e5185"
@@ -968,6 +1062,7 @@
         "wesl"
       ],
       "names": [],
+      "patterns": [],
       "server": "wgsl-analyzer",
       "files": {
         "brackets.scm": "c68e9e0c6167338ca2f63b211224977736a190e7045622f727000beb129babd8",
@@ -993,6 +1088,7 @@
         "wgsl"
       ],
       "names": [],
+      "patterns": [],
       "server": "wgsl-analyzer",
       "files": {
         "brackets.scm": "477b09f1a179a35abc285c95f75dd4e97c93769a50a3242aa6c4501c3f4d7c43",
@@ -1037,6 +1133,7 @@
         "storyboard"
       ],
       "names": [],
+      "patterns": [],
       "server": "lemminx",
       "files": {
         "brackets.scm": "d9d5505ec143503948b4feb03e401188b5001abb1c466e0b480a9f0962ece492",
@@ -1066,6 +1163,7 @@
         ".clang-tidy",
         ".clangd"
       ],
+      "patterns": [],
       "server": "yaml-language-server",
       "files": {
         "brackets.scm": "8961d89bbb61e3890c556510daecc24cd4002ebac72010cafa46171e4d0b4df0",
@@ -1093,6 +1191,7 @@
         "zon"
       ],
       "names": [],
+      "patterns": [],
       "server": "zls",
       "files": {
         "brackets.scm": "4de737f1fbc56247ac99d6dd5046c008363b861bd98d1b43acf4ac31908e181f",

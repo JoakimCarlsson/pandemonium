@@ -66,7 +66,7 @@ impl Document {
     }
 
     /// The edit that makes `splices`, sorted by where they start and not overlapping, as one change, the selection carried along with the text.
-    fn spliced(&self, splices: Vec<Splice>) -> Option<Edit> {
+    pub(crate) fn spliced(&self, splices: Vec<Splice>) -> Option<Edit> {
         let first = splices.first()?.0;
         let last = splices.iter().map(|(at, removed, _)| at + removed).max()?;
         let text = self.field.text();
@@ -93,9 +93,8 @@ impl Document {
         ))
     }
 
-    /// The edit that comments out the lines the selection is on with the language's line comment, or takes the comment away when every line that holds anything has one; nothing for a language without line comments.
+    /// The edit that comments out the lines the selection is on with the line comment of the scope the first of them is in, or of the language, or takes the comment away when every line that holds anything has one; where there are no line comments it wraps them in the scope's block comment, and does nothing where there are neither.
     pub fn toggle_comment_edit(&self) -> Option<Edit> {
-        let prefix = self.editing.line_comment.clone()?;
         let text = self.field.text();
         let lines: Vec<(Range<usize>, usize)> = self
             .lines_in(self.picked_lines())
@@ -106,9 +105,10 @@ impl Document {
                 (line, indent)
             })
             .collect();
-        if lines.is_empty() {
-            return None;
-        }
+        let first = lines.first().map(|(line, indent)| line.start + indent)?;
+        let Some(prefix) = self.line_comment_at(first) else {
+            return self.toggle_block_comment_edit(&lines, first);
+        };
         let commented = lines
             .iter()
             .all(|(line, indent)| text[line.start + indent..line.end].starts_with(&prefix));

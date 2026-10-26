@@ -37,7 +37,8 @@ pub use install::{
     remove_folder,
 };
 pub use manifest::{
-    Archive, Download, Install, InstallKind, Manifest, Pinned, RunnableSpec, ServerSpec,
+    Archive, Companion, Detect, Download, Install, InstallKind, Manifest, Pinned, RunnableSpec,
+    ScopeSpec, ServerSpec, TagSpec, glob,
 };
 pub use paths::{grammar_file, language_folder, local_root};
 pub use resolve::{server_ready, server_state};

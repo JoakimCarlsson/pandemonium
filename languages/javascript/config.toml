@@ -4,7 +4,7 @@
 
 name = "JavaScript"
 version = "0.1.0"
-description = "JavaScript and JSX with typescript-language-server."
+description = "JavaScript and JSX, React and Next.js components with typescript-language-server."
 icon = "icon.svg"
 color = "#e6c84f"
 grammar = "javascript"
@@ -14,6 +14,29 @@ line_comment = "//"
 indent = 2
 pairs = ["()", "[]", "{}", "\"\"", "''", "``"]
 
+# Parts of a file that are edited differently. Inside the children of a JSX
+# element, comments are written {/* */} and there are no line comments, and
+# Emmet abbreviations expand. Inside a tag's attributes and the braces of an
+# expression the language's own rules hold.
+[scope.jsx]
+nodes = ["jsx_element"]
+line_comment = ""
+block_comment = ["{/*", "*/}"]
+emmet = true
+
+[scope.jsx-code]
+nodes = ["jsx_opening_element", "jsx_closing_element", "jsx_self_closing_element", "jsx_expression"]
+
+[scope.string]
+nodes = ["string", "template_string"]
+
+# The nodes that make up a tag, so that typing the `>` of an opening tag writes
+# its closing tag after it.
+[tags]
+element = "jsx_element"
+open = "jsx_opening_element"
+close = "jsx_closing_element"
+names = ["identifier", "member_expression", "jsx_namespace_name"]
 
 [grammar_file]
 url = "https://github.com/tree-sitter/tree-sitter-javascript/releases/download/v0.25.0/tree-sitter-javascript.wasm"
@@ -26,7 +49,38 @@ command = "typescript-language-server"
 args = ["--stdio"]
 project = ["node_modules/.bin"]
 
+# The server tells a JSX file from a plain script by what it is sent, which
+# decides whether `<div>` is read as an element.
+[server.language_ids]
+jsx = "javascriptreact"
+
 [server.install]
 kind = "npm"
 version = "6.0.2"
 packages = ["typescript-language-server@6.0.2", "typescript@6.0.3"]
+
+# Tailwind CSS class names, read alongside the main server in projects that use
+# Tailwind. Completions are offered only inside strings and template strings, where class names are written.
+[[companion]]
+suffixes = ["jsx"]
+scopes = ["string"]
+
+[companion.detect]
+dependencies = ["tailwindcss"]
+files = ["tailwind.config.*"]
+
+[companion.server]
+id = "tailwindcss-language-server"
+language_id = "javascriptreact"
+command = "tailwindcss-language-server"
+args = ["--stdio"]
+project = ["node_modules/.bin"]
+
+[companion.server.settings.tailwindCSS]
+classAttributes = ["class", "className", "ngClass", "class:list"]
+
+[companion.server.install]
+kind = "npm"
+version = "0.16.0"
+packages = ["@tailwindcss/language-server@0.16.0"]
+pin = "tailwindcss"

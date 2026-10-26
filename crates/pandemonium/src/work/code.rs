@@ -1,13 +1,41 @@
 //! The work behind writing code: grammars fetched from the server that holds a file and compiled away from the window, open files kept in step with their language servers, and the extensions installed on this machine.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use pm_pages::{Outgoing, Screen};
 use pm_protocol::{GrammarBundle, Request, Response};
 use pm_state::State;
-use pm_treesitter::{Editing, Grammar, Queries};
+use pm_treesitter::{Editing, Grammar, Queries, Scope, Tags};
 
 use super::{Host, Job, Pending, Work};
+
+/// The scopes a language's manifest declares, as the editor reads them.
+pub(crate) fn scopes_of(declared: &BTreeMap<String, pm_lsp::ScopeSpec>) -> Vec<Scope> {
+    declared
+        .iter()
+        .map(|(name, scope)| Scope {
+            name: name.clone(),
+            nodes: scope.nodes.clone(),
+            line_comment: scope.line_comment.clone(),
+            block_comment: scope
+                .block_comment
+                .clone()
+                .map(|[open, close]| (open, close)),
+            emmet: scope.emmet,
+        })
+        .collect()
+}
+
+/// The tag nodes a language's manifest declares, as the editor reads them.
+pub(crate) fn tags_of(declared: Option<&pm_lsp::TagSpec>) -> Option<Tags> {
+    declared.map(|tags| Tags {
+        element: tags.element.clone(),
+        open: tags.open.clone(),
+        close: tags.close.clone(),
+        names: tags.names.clone(),
+    })
+}
 
 /// The grammar of `bundle`, compiled.
 fn compile(bundle: &GrammarBundle) -> Result<Arc<Grammar>, String> {
@@ -33,6 +61,8 @@ fn compile(bundle: &GrammarBundle) -> Result<Arc<Grammar>, String> {
                     .clone()
                     .unwrap_or_else(pm_treesitter::default_pairs),
             ),
+            scopes: scopes_of(&bundle.scopes),
+            tags: tags_of(bundle.tags.as_ref()),
         },
     )
 }
@@ -157,6 +187,7 @@ impl Work {
                 version,
                 position,
                 trigger,
+                scope,
             } => {
                 let asked = path.clone();
                 self.ask_in_folder(
@@ -168,6 +199,7 @@ impl Work {
                         version,
                         position,
                         trigger,
+                        scope,
                     },
                     Pending::Completions(session, asked, version),
                 );
@@ -757,7 +789,7 @@ impl Work {
     ) {
         match (pending, response) {
             (Pending::Grammar(_), Response::Grammar(bundle)) => {
-                if pm_treesitter::registry::loaded(&bundle.id).is_some() {
+                if pm_treesitter::registry::called(&bundle.id).is_some() {
                     let id = bundle.id.clone();
                     model.update(|screen| *screen = std::mem::take(screen).with_grammar(&id));
                     return;

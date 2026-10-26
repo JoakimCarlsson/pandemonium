@@ -53,6 +53,8 @@ pub(crate) fn grammar(name: &str) -> Result<GrammarBundle, String> {
         tabs: manifest.tabs,
         line_comment: manifest.line_comment,
         pairs: Some(manifest.pairs),
+        scopes: manifest.scopes,
+        tags: manifest.tags,
         id,
     })
 }
@@ -115,6 +117,7 @@ impl Core {
                 hidden: listing.hidden,
                 suffixes: listing.suffixes.clone(),
                 names: listing.names.clone(),
+                patterns: listing.patterns.clone(),
                 installed: false,
                 busy: None,
                 problem: None,
@@ -134,6 +137,7 @@ impl Core {
                     hidden: manifest.hidden,
                     suffixes: manifest.suffixes.clone(),
                     names: manifest.names.clone(),
+                    patterns: manifest.patterns.clone(),
                     ..ExtensionInfo::default()
                 });
             }

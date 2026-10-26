@@ -20,10 +20,12 @@ mod kind;
 mod outline;
 pub mod registry;
 mod runnables;
+mod scope;
 mod select;
 mod syntax;
+mod tags;
 
-pub use grammar::{Editing, Grammar, Queries, default_pairs};
+pub use grammar::{Editing, Grammar, Queries, Scope, Tags, default_pairs};
 pub use highlight::Highlight;
 pub use indent::Indent;
 pub use kind::Kind;

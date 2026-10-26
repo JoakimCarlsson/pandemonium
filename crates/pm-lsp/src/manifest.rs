@@ -70,6 +70,9 @@ pub struct Install {
     /// What `npm` installs, each with its version; the language folder's `package.json` and `package-lock.json` pin them and the checksum of every package.
     #[serde(default)]
     pub packages: Vec<String>,
+    /// What the pin files of the language folder are named before `package.json` and `package-lock.json`, when the folder pins more than one install through `npm`; none when it pins one.
+    #[serde(default)]
+    pub pin: Option<String>,
 }
 
 /// The language server that reads a language's files.
@@ -79,6 +82,9 @@ pub struct ServerSpec {
     pub id: String,
     /// What the server calls the language.
     pub language_id: String,
+    /// What the server calls the language for the files with an ending, by the ending, where it is not the same for them all, such as `jsx` for `javascriptreact`.
+    #[serde(default)]
+    pub language_ids: BTreeMap<String, String>,
     /// The program.
     pub command: String,
     /// The arguments it is started with.
@@ -102,6 +108,62 @@ pub struct ServerSpec {
     /// The folder of the installed language this was read from, which holds the lockfile an install through `npm` is pinned by.
     #[serde(skip)]
     pub origin: Option<std::path::PathBuf>,
+}
+
+/// A named set of syntax nodes whose insides are edited differently from the rest of the file, such as the children of a JSX element or a string.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ScopeSpec {
+    /// The grammar's nodes the scope is made of, by kind; the caret is in the scope of the innermost of these around it.
+    pub nodes: Vec<String>,
+    /// What starts a comment that runs to the end of the line inside the scope in place of the language's, none written when the language's is kept and an empty one when there are no line comments inside it.
+    #[serde(default)]
+    pub line_comment: Option<String>,
+    /// What opens and closes a comment inside the scope, such as `["{/*", "*/}"]`, used when it has no line comment.
+    #[serde(default)]
+    pub block_comment: Option<[String; 2]>,
+    /// Whether Emmet abbreviations are expanded inside the scope; a language that sets it for any scope expands them only where it is set.
+    #[serde(default)]
+    pub emmet: Option<bool>,
+}
+
+/// The grammar nodes that make up a tag, which let the editor close the tags it opens; an opening tag with no name, such as `<>`, is closed with `</>`.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct TagSpec {
+    /// The node of an element, an opening tag, what is inside it and a closing tag.
+    pub element: String,
+    /// The node of an opening tag.
+    pub open: String,
+    /// The node of a closing tag.
+    pub close: String,
+    /// The nodes that can be the name of a tag, such as an identifier or a member expression.
+    pub names: Vec<String>,
+}
+
+/// What a project has to hold for a companion server to be started for it: any one of the dependencies in its `package.json`, or any one of the files.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct Detect {
+    /// Dependencies a `package.json` at the root of the project names.
+    #[serde(default)]
+    pub dependencies: Vec<String>,
+    /// File names at the root of the project, where `*` stands for any run of characters.
+    #[serde(default)]
+    pub files: Vec<String>,
+}
+
+/// A language server that reads a file alongside the one its language comes with, started only for the projects that need it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Companion {
+    /// The endings of the files it reads, without the dot; every file of the language when none.
+    #[serde(default)]
+    pub suffixes: Vec<String>,
+    /// The scopes of the language its completions are offered in; everywhere when none.
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    /// What a project holds that needs it; every project when nothing.
+    #[serde(default)]
+    pub detect: Detect,
+    /// The server.
+    pub server: ServerSpec,
 }
 
 /// What running one kind of runnable place of a language's files comes to.
@@ -146,6 +208,9 @@ pub struct Manifest {
     /// Whole file names that are written in it.
     #[serde(default)]
     pub names: Vec<String>,
+    /// File names that are written in it, where `*` stands for any run of characters, such as `.env.*`.
+    #[serde(default)]
+    pub patterns: Vec<String>,
     /// Other names a code fence may call it by.
     #[serde(default)]
     pub aliases: Vec<String>,
@@ -173,6 +238,15 @@ pub struct Manifest {
     /// The language server, when it has one.
     #[serde(default)]
     pub server: Option<ServerSpec>,
+    /// The language servers that read its files besides that one, each for the projects that need it.
+    #[serde(default, rename = "companion")]
+    pub companions: Vec<Companion>,
+    /// The parts of a file edited differently from the rest, by name.
+    #[serde(default, rename = "scope")]
+    pub scopes: BTreeMap<String, ScopeSpec>,
+    /// How its tags are closed as they are opened, for a language that has them.
+    #[serde(default)]
+    pub tags: Option<TagSpec>,
     /// What running each kind of place its `runnables.scm` marks comes to.
     #[serde(default, rename = "runnable")]
     pub runnables: Vec<RunnableSpec>,
@@ -204,7 +278,11 @@ impl Manifest {
         let text = std::fs::read_to_string(folder.join("config.toml"))
             .map_err(|error| format!("{} has no config.toml: {error}", folder.display()))?;
         let mut manifest = Self::parse(&text)?;
-        if let Some(server) = &mut manifest.server {
+        for server in manifest
+            .server
+            .iter_mut()
+            .chain(manifest.companions.iter_mut().map(|held| &mut held.server))
+        {
             server.origin = Some(folder.to_path_buf());
         }
         Ok(manifest)
@@ -214,6 +292,7 @@ impl Manifest {
     pub fn matches(&self, path: &str) -> bool {
         let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
         self.names.iter().any(|whole| whole == name)
+            || self.patterns.iter().any(|pattern| glob(pattern, name))
             || name.rsplit_once('.').is_some_and(|(stem, suffix)| {
                 !stem.is_empty()
                     && self
@@ -221,5 +300,39 @@ impl Manifest {
                         .iter()
                         .any(|held| held.eq_ignore_ascii_case(suffix))
             })
+    }
+}
+
+/// Whether `name` is what `pattern` describes, where `*` stands for any run of characters and everything else stands for itself.
+pub fn glob(pattern: &str, name: &str) -> bool {
+    let mut parts = pattern.split('*');
+    let first = parts.next().unwrap_or_default();
+    let Some(mut rest) = name.strip_prefix(first) else {
+        return false;
+    };
+    let mut parts: Vec<&str> = parts.collect();
+    let Some(last) = parts.pop() else {
+        return rest.is_empty();
+    };
+    for part in parts {
+        let Some(at) = rest.find(part) else {
+            return false;
+        };
+        rest = &rest[at + part.len()..];
+    }
+    rest.ends_with(last)
+}
+
+impl ServerSpec {
+    /// What the server calls the language of the file at `path`: by its ending when the spec names one for it, or the language's name.
+    pub fn language_id_of(&self, path: &str) -> &str {
+        let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+        name.rsplit_once('.')
+            .and_then(|(_, suffix)| {
+                self.language_ids
+                    .iter()
+                    .find(|(held, _)| held.eq_ignore_ascii_case(suffix))
+            })
+            .map_or(self.language_id.as_str(), |(_, id)| id.as_str())
     }
 }

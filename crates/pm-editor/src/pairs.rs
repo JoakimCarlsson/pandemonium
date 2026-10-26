@@ -37,6 +37,13 @@ impl Document {
     /// The edit that types `character` as the language pairs it, closing what it opens only when `close` and going around a selection only when `surround`, or nothing when it is typed as it is.
     pub fn typed_edit_with(&self, character: char, close: bool, surround: bool) -> Option<Edit> {
         let caret = self.field.caret();
+        if character == '>'
+            && close
+            && self.field.selection().is_none()
+            && let Some(edit) = self.closing_tag_edit()
+        {
+            return Some(edit);
+        }
         let pair = self
             .editing
             .pairs
