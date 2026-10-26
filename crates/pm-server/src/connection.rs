@@ -17,6 +17,12 @@ const HELLO_WAIT: Duration = Duration::from_secs(5);
 /// How long the connection waits for a message before it looks at what is to be sent.
 const TICK: Duration = Duration::from_millis(25);
 
+/// How long the connection waits for a message while it has been sending, so what comes next leaves at once.
+const BRISK: Duration = Duration::from_millis(1);
+
+/// How long after its last message the connection keeps waiting [`BRISK`]ly.
+const BRISK_FOR: Duration = Duration::from_secs(1);
+
 /// Sends `message` to the client as one frame of text.
 fn send(socket: &mut WebSocket<TcpStream>, message: &ServerMessage) -> bool {
     match serde_json::to_string(message) {
@@ -108,12 +114,19 @@ pub(crate) fn serve(core: &Arc<Core>, stream: TcpStream, token: &str) {
     if let Ok(mut connections) = core.connections.lock() {
         connections.push(connection.clone());
     }
+    let mut last_sent: Option<Instant> = None;
     'serving: loop {
         while let Ok(message) = pending.try_recv() {
             if !send(&mut socket, &message) {
                 break 'serving;
             }
+            last_sent = Some(Instant::now());
         }
+        let wait = match last_sent {
+            Some(sent) if sent.elapsed() < BRISK_FOR => BRISK,
+            _ => TICK,
+        };
+        let _ = socket.get_ref().set_read_timeout(Some(wait));
         match socket.read() {
             Ok(Message::Text(text)) => {
                 if let Ok(ClientMessage::Request { id, request }) =

@@ -4,12 +4,12 @@ use std::net::TcpListener;
 use std::time::Duration;
 
 use crate::connection::serve;
-use crate::core::Core;
+use crate::core::{BELL, Core};
 use crate::credential::write_credential;
 use pm_protocol::{Build, Credential};
 
-/// How often the agents are looked at for what they did.
-const PUMP: Duration = Duration::from_millis(25);
+/// How long the pump waits for the bell before it looks at the agents anyway.
+const PUMP: Duration = Duration::from_millis(500);
 
 /// How the server is run.
 #[derive(Clone, Debug)]
@@ -50,7 +50,7 @@ pub fn run(settings: Settings) -> std::io::Result<()> {
     std::thread::spawn(move || {
         loop {
             watching.pump();
-            std::thread::sleep(PUMP);
+            BELL.wait(PUMP);
         }
     });
     for stream in listener.incoming().flatten() {

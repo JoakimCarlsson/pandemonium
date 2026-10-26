@@ -56,7 +56,7 @@ install_app_bundle() {
 install_editor() {
     revision="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
     echo "building pandemonium preview at $revision"
-    cargo build --release --locked -p pandemonium
+    PANDEMONIUM_CHANNEL=preview cargo build --release --locked -p pandemonium
     mkdir -p "$BIN_DIR"
     install -m 0755 target/release/pandemonium "$BIN_DIR/$NAME"
     case "$(uname -s)" in

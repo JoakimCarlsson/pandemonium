@@ -6,13 +6,13 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::time::{Duration, SystemTime};
 
 use serde_json::{Value, json};
 
 use crate::agent::{Agent, RUNNER, Source};
-use crate::chat::Event;
+use crate::chat::{Event, Events};
 use crate::client::{Answer, Client};
 use pm_tools::{installed, path_beside};
 
@@ -283,13 +283,13 @@ pub(crate) fn watch(
     agent: Agent,
     directory: PathBuf,
     home: Option<PathBuf>,
-    events: Sender<Event>,
+    events: Events,
     stop: Receiver<()>,
 ) {
     let mut files: Vec<PathBuf> = Vec::new();
     loop {
         if let Ok((held, read_from)) = review(agent, &directory, home.as_deref()) {
-            if events.send(Event::Hooks(held)).is_err() {
+            if !events.send(Event::Hooks(held)) {
                 return;
             }
             files = read_from;

@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::net::{TcpStream, ToSocketAddrs};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::time::Duration;
@@ -107,6 +108,26 @@ struct Memory {
     waiting: Vec<(u64, Request)>,
 }
 
+/// What the connection thread calls after it reports something, so the owner of the [`Client`] looks at once instead of when it next happens to.
+pub type Wake = Arc<dyn Fn() + Send + Sync>;
+
+/// Where the connection thread reports to: the client's queue, and the [`Wake`] that tells its owner something is there.
+struct Reporter {
+    /// The queue [`Client::incoming`] reads.
+    sender: Sender<Incoming>,
+    /// Called after each report.
+    wake: Wake,
+}
+
+impl Reporter {
+    /// Queues `item` for the owner and wakes it, and says whether the owner still listens.
+    fn send(&self, item: Incoming) -> bool {
+        let sent = self.sender.send(item).is_ok();
+        (self.wake)();
+        sent
+    }
+}
+
 /// A connection to a server.
 pub struct Client {
     /// Orders for the connection thread.
@@ -118,10 +139,11 @@ pub struct Client {
 }
 
 impl Client {
-    /// Connects to `target` on a thread of its own, and keeps the connection up.
-    pub fn connect(target: Target) -> Self {
+    /// Connects to `target` on a thread of its own, and keeps the connection up, calling `wake` whenever the thread has something for [`Client::incoming`].
+    pub fn connect(target: Target, wake: Wake) -> Self {
         let (orders, ordered) = mpsc::channel();
-        let (reporter, incoming) = mpsc::channel();
+        let (sender, incoming) = mpsc::channel();
+        let reporter = Reporter { sender, wake };
         std::thread::spawn(move || keep(&target, &ordered, &reporter));
         Self {
             orders,
@@ -213,7 +235,7 @@ fn dial(target: &Target) -> Result<WebSocket<TcpStream>, String> {
 }
 
 /// Keeps a connection to `target`, passing orders to the server and what it says to `reporter`, until the client is dropped.
-fn keep(target: &Target, ordered: &Receiver<Order>, reporter: &Sender<Incoming>) {
+fn keep(target: &Target, ordered: &Receiver<Order>, reporter: &Reporter) {
     let mut memory = Memory::default();
     loop {
         match dial(target) {
@@ -293,7 +315,7 @@ fn fresh_output(heard: u64, offset: u64, data: Vec<u8>) -> Option<(Vec<u8>, u64)
 fn converse(
     socket: &mut WebSocket<TcpStream>,
     ordered: &Receiver<Order>,
-    reporter: &Sender<Incoming>,
+    reporter: &Reporter,
     memory: &mut Memory,
 ) -> Option<String> {
     for terminal in memory.shells.iter() {

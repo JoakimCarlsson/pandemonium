@@ -1,8 +1,6 @@
 //! Selecting the text of the conversation with the pointer, copying it, and
 //! the menu over a message that copies it or the message.
 
-use std::time::Instant;
-
 use pm_components::assist::HOVER_CARD;
 use pm_components::message_menu::{
     MESSAGE_MENU_COPY, MESSAGE_MENU_SELECT_ALL, is_message_menu_item,
@@ -11,9 +9,9 @@ use pm_components::panes::pane_of;
 use pm_components::state::CHAT_TEXT;
 use pm_input::{FocusId, Key, KeyEvent};
 use pm_pages::Screen;
-use pm_text::Edit;
-use pm_ui::{TextSelection, Unit};
+use pm_text::{Edit, Reach};
 
+use super::gesture::ChatText;
 use super::{App, DOUBLE_CLICK};
 use crate::keys::{self, Clip};
 
@@ -30,7 +28,7 @@ impl App {
             return;
         }
         let before = self.text_selection.take();
-        self.text_held = None;
+        self.text_gesture.release();
         if self
             .pressed_on
             .is_some_and(|id| id != HOVER_CARD && pane_of(id).is_none())
@@ -47,51 +45,43 @@ impl App {
         if self.modifiers.shift
             && let Some(before) = before.filter(|held| held.id == id)
         {
-            self.text_held = Some((before.anchor, before.anchor, Unit::Point));
-            self.text_selection = Some(TextSelection {
-                head: point,
-                ..before
-            });
+            let mut text = ChatText {
+                output: &self.output,
+                selection: &mut self.text_selection,
+                id,
+            };
+            self.text_gesture
+                .press_from(&mut text, before.anchor, point);
             return;
         }
-        let clicks = match self.last_press {
-            Some((at, last, clicks)) if last == id && at.elapsed() < DOUBLE_CLICK => clicks + 1,
-            _ => 1,
-        };
-        self.last_press = Some((Instant::now(), id, clicks));
-        let unit = match clicks {
-            1 => Unit::Point,
-            2 => Unit::Word,
-            _ => Unit::Paragraph,
-        };
-        let (start, end) = self.output.unit_around(id, point, unit);
-        self.text_held = Some((start, end, unit));
-        self.text_selection = Some(TextSelection {
+        let reach = Reach::of_clicks(self.clicks.press(id, DOUBLE_CLICK));
+        let mut text = ChatText {
+            output: &self.output,
+            selection: &mut self.text_selection,
             id,
-            anchor: start,
-            head: end,
-        });
+        };
+        self.text_gesture.press(&mut text, point, reach);
     }
 
     /// Extends the selection to the point `at` while the button is held, a
     /// word or a paragraph at a time when the press took one.
     pub(super) fn text_drag(&mut self, at: (f32, f32)) {
-        let (Some((start, end, unit)), Some(selection)) = (self.text_held, self.text_selection)
-        else {
+        let Some(selection) = self.text_selection else {
             return;
         };
         if let Some(point) = self.output.text_point(selection.id, at) {
-            self.text_selection =
-                Some(
-                    self.output
-                        .select_from(selection.id, (start, end), point, unit),
-                );
+            let mut text = ChatText {
+                output: &self.output,
+                selection: &mut self.text_selection,
+                id: selection.id,
+            };
+            self.text_gesture.drag(&mut text, point);
         }
     }
 
     /// Ends a selection when the button comes up, letting go of it when it holds nothing.
     pub(super) fn text_release(&mut self) {
-        self.text_held = None;
+        self.text_gesture.release();
         if self
             .text_selection
             .is_some_and(|selection| selection.is_empty())
@@ -128,7 +118,7 @@ impl App {
     /// Selects the text of the whole conversation, when one is drawn.
     fn select_all_text(&mut self) {
         self.text_selection = self.output.select_all(CHAT_TEXT);
-        self.text_held = None;
+        self.text_gesture.release();
     }
 
     /// Puts the selected text on the clipboard, when some is selected.

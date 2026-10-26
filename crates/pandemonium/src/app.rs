@@ -40,9 +40,9 @@ use pm_pages::{
 use pm_renderer::{DrawList, Renderer};
 use pm_state::State;
 
-use pm_text::{Edit, Shaper};
+use pm_text::{Clicks, Edit, Gesture, Reach, Shaper};
 use pm_theme::{Appearance, ThemeFamily};
-use pm_ui::{Cursor, Input, Output, SCROLLBAR_GRIP, TextPoint, TextSelection, Unit};
+use pm_ui::{Cursor, Input, Output, SCROLLBAR_GRIP, TextPoint, TextSelection};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalPosition, LogicalSize};
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
@@ -52,12 +52,14 @@ use winit::window::{CursorIcon, Window, WindowId};
 mod asides;
 mod code;
 mod frame;
+mod gesture;
 mod panes;
 mod paste;
 mod performance;
 mod select;
 mod terminal;
 
+use self::gesture::FieldText;
 use crate::keys::Clip;
 use crate::view::View;
 use crate::work::Work;
@@ -158,8 +160,10 @@ pub struct App {
     clipboard: Option<arboard::Clipboard>,
     /// The field a press began in, while the button is held, so dragging selects.
     dragging: Option<FocusId>,
-    /// The last press that landed in a field, for noticing a double click.
-    last_press: Option<(Instant, FocusId, u8)>,
+    /// What the press held in a field took, so dragging extends by the same amount.
+    field_gesture: Gesture<usize>,
+    /// The last press that landed in a field, selectable text or the shell, for counting double and triple clicks.
+    clicks: Clicks<FocusId>,
     /// The field or shell showing what an input method is composing, while it composes something.
     composing_in: Option<FocusId>,
     /// The project paths last written to disk, so only changes are written.
@@ -208,8 +212,8 @@ pub struct App {
     focus_filter: bool,
     /// Whether the shell is to take the keyboard once it is drawn.
     focus_terminal: bool,
-    /// The cell of the shell's window a press began in, while the button is held, so dragging marks text.
-    terminal_anchor: Option<(usize, usize)>,
+    /// What the press held in the shell's window took, so dragging marks the same amount.
+    terminal_gesture: Gesture<(usize, usize)>,
     /// The part of a line the wheel has scrolled the shell that was not enough to move it.
     terminal_scroll_rest: f32,
     /// The stretch of the conversation's text that is selected, if any.
@@ -230,16 +234,15 @@ pub struct App {
     highlighted: Option<(String, i32, usize)>,
     /// The file, version and caret waiting to settle before the language server is asked about them, and since when.
     highlight_wait: Option<((String, i32, usize), Instant)>,
-    /// What a press on selectable text took, from its start to its end, and
-    /// how much it takes at a time, while the button is held, so dragging
-    /// selects from it.
-    text_held: Option<(TextPoint, TextPoint, Unit)>,
+    /// What the press held on selectable text took, so dragging selects the
+    /// same amount.
+    text_gesture: Gesture<TextPoint>,
 }
 
-impl Default for App {
-    /// An application with no window yet, whose clock starts now.
-    fn default() -> Self {
-        let mut work = Work::new();
+impl App {
+    /// An application with no window yet, whose clock starts now, and whose event loop `wake` brings out of its sleep.
+    pub fn new(wake: pm_client::Wake) -> Self {
+        let mut work = Work::new(wake);
         let opened = work.bootstrap();
         let connected = opened.is_some();
         let (saved, choices, logins, in_use, agents) = match opened {
@@ -358,7 +361,8 @@ impl Default for App {
             cursor: Cursor::Default,
             clipboard: None,
             dragging: None,
-            last_press: None,
+            field_gesture: Gesture::default(),
+            clicks: Clicks::default(),
             composing_in: None,
             saved,
             refocus: saved_view.as_ref().and_then(View::typing),
@@ -383,10 +387,10 @@ impl Default for App {
             closing: false,
             focus_filter: false,
             focus_terminal: false,
-            terminal_anchor: None,
+            terminal_gesture: Gesture::default(),
             terminal_scroll_rest: 0.0,
             text_selection: None,
-            text_held: None,
+            text_gesture: Gesture::default(),
             hover_rest: None,
             hover_leaving: None,
             hover_entered: false,
@@ -1320,7 +1324,7 @@ impl App {
                 if let Some(id) = self.dragging
                     && let Some(offset) = self.output.offset_in(id, x, y)
                 {
-                    self.edit_field(id, Edit::Place(offset, true));
+                    self.drag_in_field(id, offset);
                 }
             }
             PointerEvent::Released(Button::Left) => {
@@ -1329,7 +1333,8 @@ impl App {
                 self.sash_drag = None;
                 self.end_comment_drag();
                 self.dragging = None;
-                if self.terminal_anchor.take().is_some() {
+                self.field_gesture.release();
+                if self.terminal_gesture.release() {
                     self.copy_terminal_selection();
                 }
                 self.text_release();
@@ -1581,14 +1586,14 @@ impl App {
         self.pressed_on = Some(EDITOR_FIELD);
         self.focus.focus(EDITOR_FIELD);
         if let Some(offset) = offset {
-            self.edit_field(EDITOR_FIELD, Edit::Place(offset, false));
-            self.dragging = Some(EDITOR_FIELD);
+            self.press_field_at(EDITOR_FIELD, offset, Reach::Point, false);
         }
     }
 
     /// Takes a press inside the field `id`: focuses it, puts the caret where
     /// the pointer is, and starts a selection that dragging extends. A second
-    /// press soon after the first selects the word under it.
+    /// press soon after the first selects the word under it and a third the
+    /// line, which dragging then extends by words or lines.
     fn press_in_field(&mut self, id: FocusId) {
         let Some((x, y)) = self.pointer.position else {
             return;
@@ -1601,18 +1606,40 @@ impl App {
             self.edit_field(id, Edit::AddSelection(offset, offset));
             return;
         }
-        let clicks = match self.last_press {
-            Some((at, last, clicks)) if last == id && at.elapsed() < DOUBLE_CLICK => clicks + 1,
-            _ => 1,
+        let reach = Reach::of_clicks(self.clicks.press(id, DOUBLE_CLICK));
+        self.press_field_at(id, offset, reach, self.modifiers.shift);
+    }
+
+    /// Starts the press in the field `id` at the shown offset `offset`, taking `reach` of the text, or running the selection there was out to it when `extending`.
+    fn press_field_at(&mut self, id: FocusId, offset: usize, reach: Reach, extending: bool) {
+        let Some((byte, anchor)) = self.model.read(|screen| {
+            screen
+                .field(id)
+                .map(|field| (field.to_text(offset), field.anchor()))
+        }) else {
+            return;
         };
-        self.last_press = Some((Instant::now(), id, clicks));
+        let mut gesture = std::mem::take(&mut self.field_gesture);
+        let mut surface = FieldText { app: self, id };
+        match extending {
+            true => gesture.press_from(&mut surface, anchor, byte),
+            false => gesture.press(&mut surface, byte, reach),
+        }
+        self.field_gesture = gesture;
         self.dragging = Some(id);
-        let edit = match clicks {
-            1 => Edit::Place(offset, self.modifiers.shift),
-            2 => Edit::SelectWordAt(offset),
-            _ => Edit::SelectAll,
+    }
+
+    /// Extends the press held in the field `id` to the shown offset `offset`.
+    fn drag_in_field(&mut self, id: FocusId, offset: usize) {
+        let Some(byte) = self
+            .model
+            .read(|screen| screen.field(id).map(|field| field.to_text(offset)))
+        else {
+            return;
         };
-        self.edit_field(id, edit);
+        let gesture = std::mem::take(&mut self.field_gesture);
+        gesture.drag(&mut FieldText { app: self, id }, byte);
+        self.field_gesture = gesture;
     }
 
     /// Moves the caret of the multiline field `id` by `by` lines as they are

@@ -5,6 +5,7 @@ use std::rc::Rc;
 
 use pm_input::FocusId;
 use pm_terminal::{Emulator, Link};
+use pm_text::Reach;
 
 use crate::sample::Session;
 
@@ -510,6 +511,26 @@ impl WorkspaceState {
             tab.emulator
                 .write()
                 .select((first + anchor.0, anchor.1), (first + head.0, head.1));
+        }
+    }
+
+    /// The line counted from the oldest kept that is the first of the window of the shell showing.
+    pub fn terminal_first_line(&self) -> Option<usize> {
+        let tab = self.active_terminal()?;
+        let emulator = tab.emulator.read();
+        Some(emulator.first_line(tab.back))
+    }
+
+    /// What `reach` takes around the cell at `at`, a line counted from the oldest kept and a column, of the shell showing, as its first and last cell.
+    pub fn terminal_reach(&self, reach: Reach, at: (usize, usize)) -> Option<pm_terminal::Span> {
+        let tab = self.active_terminal()?;
+        Some(tab.emulator.read().reach_around(reach, at))
+    }
+
+    /// Marks text in the shell showing, from `anchor` to `head`, each a line counted from the oldest kept and a column.
+    pub fn select_terminal_span(&mut self, anchor: (usize, usize), head: (usize, usize)) {
+        if let Some(tab) = self.active_terminal() {
+            tab.emulator.write().select(anchor, head);
         }
     }
 
