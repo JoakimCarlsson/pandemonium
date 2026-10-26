@@ -2133,7 +2133,7 @@ impl Shot {
                     body: Some("## Changes\n\n- Update from inside the app\n- Faster diffs".to_owned()),
                     blocker: None,
                 },
-            ).asked(Prompt::Update)),
+            ).after(pm_components::title_bar::UPDATE)),
             Self::MessageMenu => {
                 Screen::Workspace(workspace().with_message_menu(3, (520.0, 230.0), true))
             }

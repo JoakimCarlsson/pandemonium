@@ -2,7 +2,6 @@
 
 use pm_input::FocusId;
 use pm_style::{Role, flex, flex_col, gap, items_center, p, pb, px};
-use pm_text::Shaper;
 use pm_ui::{Node, node};
 
 use crate::button::Variant;
@@ -95,8 +94,6 @@ pub enum Prompt {
     Rename(usize),
     /// Whether to close the window while agents are working.
     Quit,
-    /// Whether to download the newer release found and restart into it.
-    Update,
 }
 
 impl WorkspaceState {
@@ -128,9 +125,6 @@ impl WorkspaceState {
 
     /// Carries out `action` if it presses a question or one of its rows, and says whether it did.
     pub(crate) fn press_prompt(&mut self, action: FocusId) -> bool {
-        if self.git.prompt == Some(Prompt::Update) {
-            return self.press_update(action);
-        }
         match action {
             PROMPT_INSIDE | STASH_FIELD => {}
             PROMPT_CANCEL | PROMPT_OUTSIDE => self.git.prompt = None,
@@ -201,11 +195,7 @@ impl WorkspaceState {
                     message: Some(message).filter(|message| !message.is_empty()),
                 });
             }
-            Prompt::Stashes(_)
-            | Prompt::Close(_)
-            | Prompt::Rename(_)
-            | Prompt::Quit
-            | Prompt::Update => {}
+            Prompt::Stashes(_) | Prompt::Close(_) | Prompt::Rename(_) | Prompt::Quit => {}
             Prompt::Unsaved(index) => self.discard_file(index),
             Prompt::Remove(targets) => {
                 for target in targets {
@@ -358,7 +348,7 @@ fn stash_list(state: &WorkspaceState, action: StashAction) -> Node {
 }
 
 /// The question or list open, as a node.
-pub fn prompt(state: &WorkspaceState, open: &Prompt, shaper: &mut Shaper) -> Node {
+pub fn prompt(state: &WorkspaceState, open: &Prompt) -> Node {
     match open {
         Prompt::Discard(indices) => {
             let paths = state.paths_of(indices);
@@ -466,10 +456,6 @@ pub fn prompt(state: &WorkspaceState, open: &Prompt, shaper: &mut Shaper) -> Nod
             question(title, words, "Delete", Variant::Destructive)
         }
         Prompt::Stashes(action) => stash_list(state, *action),
-        Prompt::Update => match state.settings_page.release.as_ref() {
-            Some(update) => crate::update_dialog::dialog(state, update, shaper),
-            None => node(),
-        },
         Prompt::Quit => question(
             "Close the window while agents are working?".to_owned(),
             "The agents keep working on the server; open the window again to see what they did.",

@@ -1,17 +1,19 @@
-//! The window that offers a newer release: its notes, and the button that downloads it and restarts into it.
+//! The page that offers a newer release: its notes, and the button that downloads it and restarts into it.
 
 use pm_input::FocusId;
-use pm_style::{Role, flex, flex_col, gap, h, items_center, overflow_hidden, p, pb, px};
+use pm_style::{
+    Role, bg, flex, flex_1, flex_col, gap, items_center, justify_center, max_w_px, min_h, min_w_px,
+    overflow_hidden, px, py, w_full,
+};
 use pm_text::Shaper;
 use pm_ui::{Node, node};
 
 use crate::button::Variant;
-use crate::git_prompts::{PROMPT_CANCEL, PROMPT_INSIDE, PROMPT_OUTSIDE};
 use crate::parts::{line, spacer, wrap};
 use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
 use crate::update::{RUNNING, Update};
-use crate::{Button, Markdown, Modal};
+use crate::{Button, Markdown};
 
 /// Downloads the release and restarts into it.
 pub const UPDATE_NOW: FocusId = FocusId(7_019);
@@ -19,14 +21,23 @@ pub const UPDATE_NOW: FocusId = FocusId(7_019);
 /// Opens the page of the release.
 pub const UPDATE_PAGE: FocusId = FocusId(7_025);
 
+/// The tab of the release notes in a pane's strip.
+pub const TAB_UPDATE: FocusId = FocusId(7_411_000);
+
+/// Closes the tab of the release notes.
+pub const UPDATE_CLOSE: FocusId = FocusId(7_411_001);
+
+/// Closes the tab of the release notes, or cancels the download first.
+pub const UPDATE_LATER: FocusId = FocusId(7_411_002);
+
 /// The box the notes of the release scroll in.
 pub const UPDATE_SCROLL: FocusId = FocusId(7_026);
 
-/// How wide the window is, in logical pixels.
-const WIDTH: f32 = 520.0;
+/// The widest the page's column gets, in logical pixels, so the notes stay readable on a wide window.
+const COLUMN_WIDTH: u32 = 820;
 
-/// How tall the box of notes is, in spacing units.
-const NOTES_HEIGHT: u32 = 64;
+/// The space around the page's column, in logical pixels, which the notes' width is taken from.
+const MARGIN: f32 = 48.0;
 
 /// How far an update has got.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -48,11 +59,28 @@ pub enum UpdateRun {
 }
 
 impl WorkspaceState {
-    /// Opens the window that offers the newer release found, when one was.
+    /// Opens the tab that offers the newer release found, when one was.
     pub(crate) fn open_release(&mut self) {
         if matches!(self.settings_page.release, Some(Update::Newer { .. })) {
-            self.update_scroll = 0.0;
-            self.ask(crate::git_prompts::Prompt::Update);
+            if !self.update_open {
+                self.update_scroll = 0.0;
+            }
+            self.update_open = true;
+            self.tab = crate::state::Tab::Update;
+        }
+    }
+
+    /// Closes the tab of the release notes, stopping a download under way.
+    fn close_release(&mut self) {
+        if matches!(self.update_run, UpdateRun::Downloading { .. }) {
+            self.outbox.push(Outgoing::CancelUpdate);
+        }
+        if !matches!(self.update_run, UpdateRun::Installing) {
+            self.update_run = UpdateRun::Idle;
+            self.update_open = false;
+            if self.tab == crate::state::Tab::Update {
+                self.tab = crate::state::Tab::Chat;
+            }
         }
     }
 
@@ -88,7 +116,7 @@ impl WorkspaceState {
         self
     }
 
-    /// Carries out `action` if it presses the window of an update, and says whether it did.
+    /// Carries out `action` if it presses the tab of an update, and says whether it did.
     pub(crate) fn press_update(&mut self, action: FocusId) -> bool {
         let Some(Update::Newer {
             url,
@@ -100,7 +128,7 @@ impl WorkspaceState {
             return false;
         };
         match action {
-            PROMPT_INSIDE | UPDATE_SCROLL => {}
+            TAB_UPDATE => self.tab = crate::state::Tab::Update,
             UPDATE_PAGE => self.outbox.push(Outgoing::Open { address: url }),
             UPDATE_NOW if blocker.is_none() => {
                 self.update_run = UpdateRun::Downloading {
@@ -112,16 +140,8 @@ impl WorkspaceState {
                     version,
                 });
             }
-            PROMPT_CANCEL | PROMPT_OUTSIDE => match self.update_run {
-                UpdateRun::Installing => {}
-                UpdateRun::Downloading { .. } => {
-                    self.outbox.push(Outgoing::CancelUpdate);
-                    self.update_run = UpdateRun::Idle;
-                    self.git.prompt = None;
-                }
-                _ => self.git.prompt = None,
-            },
-            _ => {}
+            UPDATE_CLOSE | UPDATE_LATER => self.close_release(),
+            _ => return false,
         }
         true
     }
@@ -149,8 +169,8 @@ fn status(state: &WorkspaceState, blocker: Option<&str>) -> Option<String> {
     }
 }
 
-/// The window that offers `update`, the newer release found, with its notes.
-pub fn dialog(state: &WorkspaceState, update: &Update, shaper: &mut Shaper) -> Node {
+/// The page, `width` logical pixels across, that offers `update`, the newer release found, with its notes.
+pub fn page(state: &WorkspaceState, update: &Update, width: f32, shaper: &mut Shaper) -> Node {
     let Update::Newer {
         name,
         published,
@@ -161,14 +181,23 @@ pub fn dialog(state: &WorkspaceState, update: &Update, shaper: &mut Shaper) -> N
     else {
         return node();
     };
-    let width = WIDTH - 40.0;
+    let text_width = (width - 2.0 * MARGIN).min(COLUMN_WIDTH as f32);
     let date = published
         .as_deref()
         .map(|date| format!(", published {}", date.split('T').next().unwrap_or(date)))
         .unwrap_or_default();
-    let mut panel = node()
-        .styles([flex(), flex_col(), gap(3), p(5)])
-        .child(line(name, 15, 1.4, Role::Text).styles([pm_style::font_medium()]))
+    let mut column = node()
+        .styles([
+            flex(),
+            flex_col(),
+            gap(3),
+            flex_1(),
+            min_h(0),
+            w_full(),
+            max_w_px(COLUMN_WIDTH),
+            py(8),
+        ])
+        .child(line(name, 22, 1.3, Role::Text).styles([pm_style::font_medium()]))
         .child(line(
             format!("This is {RUNNING}{date}."),
             13,
@@ -176,12 +205,14 @@ pub fn dialog(state: &WorkspaceState, update: &Update, shaper: &mut Shaper) -> N
             Role::Muted,
         ));
     if let Some(notes) = body {
-        panel = panel.child(
+        column = column.child(
             node()
-                .styles([h(NOTES_HEIGHT), overflow_hidden()])
+                .styles([flex_1(), min_h(0), overflow_hidden()])
                 .scroll_from_start(UPDATE_SCROLL, state.update_scroll)
-                .child(Markdown::new(notes, width).build(shaper)),
+                .child(Markdown::new(notes, text_width).build(shaper)),
         );
+    } else {
+        column = column.child(node().styles([flex_1()]));
     }
     let said = status(state, blocker.as_deref());
     let busy = matches!(
@@ -189,28 +220,37 @@ pub fn dialog(state: &WorkspaceState, update: &Update, shaper: &mut Shaper) -> N
         UpdateRun::Downloading { .. } | UpdateRun::Installing
     );
     let mut buttons = node()
-        .styles([flex(), items_center(), gap(2), px(5), pb(5)])
+        .styles([flex(), items_center(), gap(2)])
         .child(button("View on GitHub", UPDATE_PAGE, Variant::Ghost))
         .child(spacer());
     if !matches!(state.update_run, UpdateRun::Installing) {
         buttons = buttons.child(button(
             if busy { "Cancel" } else { "Later" },
-            PROMPT_CANCEL,
+            UPDATE_LATER,
             Variant::Ghost,
         ));
     }
     if !busy && blocker.is_none() {
         buttons = buttons.child(button("Update and Restart", UPDATE_NOW, Variant::Default));
     }
-    Modal::new(PROMPT_OUTSIDE, PROMPT_INSIDE)
-        .width(WIDTH)
-        .child(panel.children(said.map(|said| {
+    let column = column
+        .children(said.map(|said| {
             node().styles([flex(), flex_col()]).children(
-                wrap(&said, 13, width)
+                wrap(&said, 13, text_width)
                     .iter()
                     .map(|words| line(words, 13, 1.5, Role::Muted)),
             )
-        })))
-        .child(buttons)
-        .build()
+        }))
+        .child(buttons);
+    node()
+        .styles([
+            flex(),
+            justify_center(),
+            flex_1(),
+            min_w_px(0),
+            min_h(0),
+            px(6),
+            bg(Role::Background),
+        ])
+        .child(column)
 }
