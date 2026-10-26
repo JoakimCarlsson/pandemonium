@@ -24,7 +24,7 @@ mod standing;
 mod subagent;
 mod tool_registry;
 
-pub use account::{account, default_account, skill_names};
+pub use account::{account, account_in_folder, default_account, skill_names};
 pub use agent::{AGENTS, Agent, Definition, Source};
 pub use agent_registry::{Available, fetch as registry_agents};
 pub use chat::{

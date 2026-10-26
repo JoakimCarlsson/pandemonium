@@ -41,6 +41,12 @@ impl Agent {
         self.sign_in_in(self.home())
     }
 
+    /// Signs the agent in under the account folder `home`, set up like any account folder, leaving the folder in use and the agent's default one alone.
+    pub fn sign_in_folder(self, home: PathBuf) -> Result<(), String> {
+        share_setup(self, &home);
+        self.sign_in_in(Some(home))
+    }
+
     /// Signs in using the offered methods and the session's explicit account folder.
     pub fn sign_in_in(self, home: Option<PathBuf>) -> Result<(), String> {
         if !self.startable() {

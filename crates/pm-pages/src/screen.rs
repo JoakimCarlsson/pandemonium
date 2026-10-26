@@ -894,12 +894,12 @@ impl Screen {
         }
     }
 
-    /// The screen after the agent at `agent` signed in, which may have changed who it is.
-    pub fn signed_in(self, agent: usize) -> Self {
+    /// The screen after the agent at `agent` signed in under the login `login`, which may have changed who it is.
+    pub fn signed_in(self, agent: usize, login: Option<String>) -> Self {
         match self {
             Self::Workspace(mut state) => {
                 state.forget_identity(agent);
-                state.outbox_identity(agent);
+                state.outbox_identity(agent, login);
                 Self::Workspace(state)
             }
         }
@@ -986,7 +986,7 @@ impl Screen {
         agent: usize,
         default: Option<String>,
         selected: Option<String>,
-        naming: bool,
+        naming: Option<String>,
     ) -> Self {
         match self {
             Self::Workspace(state) => {

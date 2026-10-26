@@ -106,10 +106,10 @@ request with exactly one `response` carrying the same `id`.
 | `branches`     | `directory`                                                                                      | `branches`      |
 | `submodules`   | `directory`                                                                                      | `submodules`    |
 | `submodule_heads` | `directory`                                                                                   | `submodule_heads` |
-| `identity`     | `agent`                                                                                          | `identity`      |
+| `identity`     | `agent`, `login` (optional): a login id whose folder answers `selected`, instead of the one in use | `identity`      |
 | `set_accounts` | `logins`: `[{agent, id, name}]`, `in_use`: `[[agent, id]]`                                       | `done`          |
 | `set_session_account` | `session`, `login` (a login id, or `null` for the agent's own)                            | `done`          |
-| `sign_in`      | `agent`                                                                                          | `done`          |
+| `sign_in`      | `agent`, `login` (optional): a login id, signed in under its own folder and never the agent's default one | `done`          |
 | `sign_in_session` | `session` | `done` |
 | `start_session`| `agent`, `repository`, `directory`, `title`, `base`, `settings`, `text`, `attachments`, `submodule` | `started`       |
 | `prompt`       | `session`, `text`, `attachments`, `now` (optional, `false` by default)                           | `done`          |

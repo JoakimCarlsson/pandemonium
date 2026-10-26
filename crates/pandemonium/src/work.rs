@@ -120,7 +120,7 @@ enum Pending {
     /// The agent with this id told what it lets the reader change.
     Discover(Host, String),
     /// The agent at this position was signed in, or could not be.
-    SignIn(usize),
+    SignIn(usize, Option<String>),
     /// The skills of an agent in a project.
     Skills(usize, usize),
     /// What the agent at the second position is given in the project at the first.
@@ -137,8 +137,8 @@ enum Pending {
     Submodules(usize),
     /// What the submodules of the folder of the session at this position have checked out.
     SubmoduleHeads(usize),
-    /// Who an agent is signed in as, and whether that names the login in use.
-    Identity(usize, bool),
+    /// Who an agent is signed in as, and which login that names.
+    Identity(usize, Option<String>),
     /// The session at this position was started.
     Start(usize),
     /// The session with this number on the server answering was asked to close.
@@ -1189,9 +1189,16 @@ impl Work {
                     |session| Request::SignInSession { session },
                     Pending::Nothing,
                 ),
-                Outgoing::SignIn { agent } => {
+                Outgoing::SignIn { agent, login } => {
                     if let Some(id) = self.agent_id(agent) {
-                        self.ask(&None, Request::SignIn { agent: id }, Pending::SignIn(agent));
+                        self.ask(
+                            &None,
+                            Request::SignIn {
+                                agent: id,
+                                login: login.clone(),
+                            },
+                            Pending::SignIn(agent, login),
+                        );
                     }
                 }
                 Outgoing::Files {
@@ -1263,7 +1270,10 @@ impl Work {
                     if let Some(id) = self.agent_id(agent) {
                         self.ask(
                             &None,
-                            Request::Identity { agent: id },
+                            Request::Identity {
+                                agent: id,
+                                login: naming.clone(),
+                            },
                             Pending::Identity(agent, naming),
                         );
                     }
@@ -1716,8 +1726,8 @@ impl Work {
                     *screen = std::mem::take(screen).with_discovery_of(origin, &id, found);
                 });
             }
-            Pending::SignIn(agent) => {
-                model.update(|screen| *screen = std::mem::take(screen).signed_in(agent));
+            Pending::SignIn(agent, login) => {
+                model.update(|screen| *screen = std::mem::take(screen).signed_in(agent, login));
                 if let Some(message) = failure {
                     eprintln!("sign-in failed: {message}");
                 } else if let Some(id) = self.agent_id(agent) {

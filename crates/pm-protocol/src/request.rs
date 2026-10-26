@@ -161,6 +161,9 @@ pub enum Request {
     Identity {
         /// The agent, by its id.
         agent: String,
+        /// The login whose folder answers `selected`, instead of the one in use; nothing for the one in use.
+        #[serde(default)]
+        login: Option<String>,
     },
     /// Saves the logins and points each agent at the folder of the login in use for it.
     SetAccounts {
@@ -176,10 +179,13 @@ pub enum Request {
         /// The login's id, or nothing for the agent's own.
         login: Option<String>,
     },
-    /// Signs the agent in under the login now in use.
+    /// Signs the agent in under the login `login`, or the one now in use when there is none.
     SignIn {
         /// The agent, by its id.
         agent: String,
+        /// The login's id; its own folder is signed in to whatever else is set.
+        #[serde(default)]
+        login: Option<String>,
     },
     /// Signs in again as the account of an existing session, on its server.
     SignInSession {

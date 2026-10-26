@@ -552,10 +552,15 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
         Request::SubmoduleHeads { directory } => Response::SubmoduleHeads {
             heads: pm_git::submodule_heads(&place(&directory)),
         },
-        Request::Identity { agent } => match agent_named(&agent) {
+        Request::Identity { agent, login } => match agent_named(&agent) {
             Some(agent) => Response::Identity {
                 default: pm_acp::default_account(agent),
-                selected: pm_acp::account(agent),
+                selected: match login {
+                    Some(login) => login_folder(agent.id, Some(&login))
+                        .or_else(|| pm_store::account_directory(agent.id, &login).ok())
+                        .and_then(|home| pm_acp::account_in_folder(agent, home)),
+                    None => pm_acp::account(agent),
+                },
             },
             None => failed(format!("no agent is called {agent}")),
         },
@@ -698,8 +703,8 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             sessions::save_meta(session, &held.meta);
         }),
         Request::SignInSession { session } => sign_in_session(core, session),
-        Request::SignIn { agent } => match agent_named(&agent) {
-            Some(agent) => match agent.sign_in() {
+        Request::SignIn { agent, login } => match agent_named(&agent) {
+            Some(agent) => match sign_in_login(agent, login.as_deref()) {
                 Ok(()) => Response::Done,
                 Err(reason) => failed(reason),
             },
@@ -1589,6 +1594,17 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             directory,
             operation,
         } => done(pm_git::remote(&place(&directory), &operation)),
+    }
+}
+
+/// Signs `agent` in under the folder of the login `login`, so that the sign-in does not depend on which folder other requests have set; the folder in use when there is no login.
+fn sign_in_login(agent: Agent, login: Option<&str>) -> Result<(), String> {
+    match login {
+        Some(login) => {
+            let home = pm_store::account_directory(agent.id, login).map_err(|e| e.to_string())?;
+            agent.sign_in_folder(home)
+        }
+        None => agent.sign_in(),
     }
 }
 
