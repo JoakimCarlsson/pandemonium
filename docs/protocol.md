@@ -6,7 +6,10 @@ document says what they mean and how a client behaves.
 
 - **Version:** `1` (`pm_protocol::VERSION`).
 - **Transport:** a WebSocket on a TCP connection. Every message is one text
-  frame holding one JSON object. Binary frames are not used.
+  message holding one JSON object. Server messages larger than 16 MiB use
+  continuation frames, each carrying at most 16 MiB. Clients reassemble them
+  before decoding JSON, with the existing 64 MiB message limit. Binary frames
+  are not used.
 - **Direction:** the client sends `ClientMessage`s, the server sends
   `ServerMessage`s.
 

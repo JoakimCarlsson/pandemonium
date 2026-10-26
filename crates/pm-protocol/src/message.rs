@@ -1,4 +1,4 @@
-//! What goes over the connection, each message one frame of text.
+//! What goes over the connection, each message one JSON text message, possibly split across frames.
 
 use pm_acp::Event;
 use serde::{Deserialize, Serialize};
