@@ -353,7 +353,7 @@ const TAGS: [&str; 62] = [
 /// What the language `language` an Emmet abbreviation is written in, when it takes them.
 fn dialect_of(language: &str) -> Option<Dialect> {
     match language {
-        "html" | "svelte" | "tsx" | "xml" => Some(Dialect::Markup),
+        "html" | "javascript" | "svelte" | "tsx" | "xml" => Some(Dialect::Markup),
         "css" | "scss" => Some(Dialect::Style),
         _ => None,
     }
@@ -452,6 +452,9 @@ impl Document {
         let unit = self.editing.unit(1);
         let trimmed = before.trim_start();
         let begin = before.len() - trimmed.len();
+        if !self.emmet_at(line_start + begin..line_start + before.len()) {
+            return None;
+        }
         let after_space = trimmed.rfind(char::is_whitespace).map_or(0, |at| {
             at + trimmed[at..].chars().next().map_or(1, char::len_utf8)
         });

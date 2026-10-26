@@ -73,7 +73,7 @@ impl WorkspaceState {
             && let Some(document) = document_of(viewer)
         {
             document.language = Some(language.clone());
-            match pm_treesitter::registry::loaded(&language) {
+            match pm_treesitter::registry::called(&language) {
                 Some(grammar) => {
                     if let Some(syntax) = Syntax::parse(grammar, document.field.text()) {
                         document.with_syntax(syntax);
@@ -158,7 +158,7 @@ impl WorkspaceState {
 
     /// The state after the grammar of `language` was loaded: every open file written in it that is not parsed yet is parsed.
     pub fn with_grammar(mut self, language: &str) -> Self {
-        let Some(grammar) = pm_treesitter::registry::loaded(language) else {
+        let Some(grammar) = pm_treesitter::registry::called(language) else {
             return self;
         };
         for (_, viewer) in self.every_viewer() {
@@ -476,12 +476,14 @@ impl WorkspaceState {
             return self;
         };
         let (version, position) = document.open_completion(at);
+        let scope = document.scope_name();
         self.outbox.push(Outgoing::Completion {
             session,
             path,
             version,
             position,
             trigger: None,
+            scope,
         });
         self
     }
@@ -857,6 +859,7 @@ fn edit_viewer(
             version,
             position,
             trigger,
+            scope: document.scope_name(),
         });
     }
     told

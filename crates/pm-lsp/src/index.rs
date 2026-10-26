@@ -73,6 +73,9 @@ pub struct Listing {
     /// Whole file names that are written in it.
     #[serde(default)]
     pub names: Vec<String>,
+    /// File names written in it, where `*` stands for any run of characters.
+    #[serde(default)]
+    pub patterns: Vec<String>,
     /// The program of its language server, when it has one.
     #[serde(default)]
     pub server: Option<String>,
@@ -201,6 +204,7 @@ fn listing_of(folder: &Path) -> Result<Listing, String> {
         requires: manifest.requires,
         suffixes: manifest.suffixes,
         names: manifest.names,
+        patterns: manifest.patterns,
         server: manifest.server.map(|server| server.command),
         files,
         local: false,

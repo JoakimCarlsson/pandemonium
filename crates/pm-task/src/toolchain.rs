@@ -28,7 +28,9 @@ const SYSTEM: &str = "system";
 /// The family of toolchains a file of the language `language`, by its folder name, is built and run with.
 pub fn family(language: &str) -> &str {
     match language {
-        "typescript" | "tsx" | "javascript" | "svelte" => "javascript",
+        "typescript" | "tsx" | "typescriptreact" | "javascript" | "javascriptreact" | "svelte" => {
+            "javascript"
+        }
         other => other,
     }
 }

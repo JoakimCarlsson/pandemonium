@@ -1148,12 +1148,14 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             version,
             position,
             trigger,
+            scope,
         } => match core.documents.hub.completion(
             &place(&directory),
             &path,
             version,
             position,
             trigger.as_deref(),
+            scope.as_deref(),
         ) {
             Ok(items) => Response::Completions { items },
             Err(reason) => failed(reason),

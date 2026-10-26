@@ -102,6 +102,29 @@
     "<"
     "/>"
   ] @punctuation.bracket)
+(jsx_opening_element
+  name: (member_expression
+    object: (identifier) @type
+    property: (property_identifier) @type))
+(jsx_closing_element
+  name: (member_expression
+    object: (identifier) @type
+    property: (property_identifier) @type))
+(jsx_self_closing_element
+  name: (member_expression
+    object: (identifier) @type
+    property: (property_identifier) @type))
+(jsx_namespace_name
+  (identifier) @tag)
+(jsx_attribute
+  (jsx_namespace_name
+    (identifier) @attribute))
+(jsx_expression
+  [
+    "{"
+    "}"
+  ] @punctuation.special)
+(html_character_reference) @string.escape
 
 (this) @variable.builtin
 (super) @variable.builtin

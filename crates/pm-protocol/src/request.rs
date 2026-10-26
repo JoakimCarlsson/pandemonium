@@ -839,6 +839,9 @@ pub enum Request {
         /// The character typed that asked for completions, when one did.
         #[serde(default)]
         trigger: Option<String>,
+        /// The name of the scope of the language the place is in, when it is in one, which limits the servers that read the file besides its own to those that offer completions there.
+        #[serde(default)]
+        scope: Option<String>,
     },
     /// The edits that format an open file as its language says, or only a stretch of it, once the file reaches `version`.
     Format {

@@ -56,6 +56,9 @@ fn main() {
         };
         let shot = match arguments.get(7).map(String::as_str) {
             Some("code") => Shot::Code,
+            Some("codetsx") => Shot::CodeTsx,
+            Some("codemdx") => Shot::CodeMdx,
+            Some("codeenv") => Shot::CodeEnv,
             Some("languageoffer") => Shot::LanguageOffer,
             Some("markdownpreview") => Shot::MarkdownPreview,
             Some("vectorpreview") => Shot::VectorPreview,

@@ -36,6 +36,38 @@ pub struct Editing {
     pub line_comment: Option<String>,
     /// The characters that open a pair the editor closes as the opening one is typed, each with the one that closes it.
     pub pairs: Vec<(char, char)>,
+    /// The parts of a file that are edited differently from the rest.
+    pub scopes: Vec<Scope>,
+    /// The nodes that make up a tag, for a language whose files have tags the editor closes as they are opened.
+    pub tags: Option<Tags>,
+}
+
+/// A named set of syntax nodes whose insides are edited differently from the rest of the file, such as the children of a JSX element.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Scope {
+    /// What the scope is called.
+    pub name: String,
+    /// The kinds of the nodes it is made of.
+    pub nodes: Vec<String>,
+    /// What starts a comment that runs to the end of the line inside it in place of the language's; empty when it has none.
+    pub line_comment: Option<String>,
+    /// What opens and closes a comment inside it, used when it has no line comment.
+    pub block_comment: Option<(String, String)>,
+    /// Whether Emmet abbreviations are expanded inside it.
+    pub emmet: Option<bool>,
+}
+
+/// The kinds of the nodes that make up a tag.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Tags {
+    /// The element: an opening tag, what is inside it and a closing tag.
+    pub element: String,
+    /// The opening tag.
+    pub open: String,
+    /// The closing tag.
+    pub close: String,
+    /// The nodes that can be the name of a tag.
+    pub names: Vec<String>,
 }
 
 impl Default for Editing {
@@ -46,6 +78,8 @@ impl Default for Editing {
             tabs: false,
             line_comment: None,
             pairs: Editing::pairs_of(&default_pairs()),
+            scopes: Vec::new(),
+            tags: None,
         }
     }
 }

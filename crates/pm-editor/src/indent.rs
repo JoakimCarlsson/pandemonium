@@ -15,7 +15,7 @@ impl Document {
         let caret = self.field.caret();
         let text = self.field.text();
         let base = self.indentation_at(caret);
-        if comments && let Some(prefix) = self.editing.line_comment.as_deref() {
+        if comments && let Some(prefix) = self.line_comment_at(caret).as_deref() {
             let start = self.line(self.line_of(caret)).start;
             let before = &text[start..caret];
             let trimmed = before.trim_start();

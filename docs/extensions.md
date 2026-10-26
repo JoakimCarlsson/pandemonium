@@ -54,7 +54,16 @@ prompt = "Say hello to {argument}."     # a command without `prompt` is run by t
   queries, the grammar named by `grammar_file` or carried as `grammar.wasm`. An
   installed extension hands each to the language index as `<extension>-<folder>`,
   so it highlights, indents and starts its language server as a built-in
-  language does.
+  language does. A manifest may also hold `patterns`, file names with `*` for
+  any run of characters such as `.env.*`; `[server.language_ids]`, the name the
+  server is told for the files with an ending (`jsx = "javascriptreact"`);
+  `[scope.<name>]`, a set of grammar `nodes` inside which `line_comment`,
+  `block_comment` and `emmet` differ; `[tags]`, the node kinds of `element`,
+  `open`, `close` and `names` of the tags that are closed as they are opened;
+  and `[[companion]]`, a second language server for the files (`suffixes`,
+  `scopes`, `detect` with `dependencies` and `files`, and its own `server`),
+  whose npm install is pinned by `<pin>.package.json` and
+  `<pin>.package-lock.json` in the folder.
 - **Themes** name a colour, `#rrggbb` or `#rrggbbaa`, for each role they change,
   in `[dark]` and `[light]`; the rest is the default theme's. They appear in the
   theme settings.

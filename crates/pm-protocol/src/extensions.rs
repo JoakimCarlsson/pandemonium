@@ -33,6 +33,9 @@ pub struct ExtensionInfo {
     /// Whole file names written in it, such as `Makefile`.
     #[serde(default)]
     pub names: Vec<String>,
+    /// File names written in it, where `*` stands for any run of characters, such as `.env.*`.
+    #[serde(default)]
+    pub patterns: Vec<String>,
     /// Whether it is installed.
     pub installed: bool,
     /// What installing it is doing now, while it is being installed.
@@ -172,4 +175,29 @@ pub struct GrammarBundle {
     /// The pairs the editor closes as the opening character is typed, each the opening and the closing character; brackets and double quotes when the server says nothing.
     #[serde(default)]
     pub pairs: Option<Vec<String>>,
+    /// The parts of a file edited differently from the rest, by name.
+    #[serde(default)]
+    pub scopes: std::collections::BTreeMap<String, pm_lsp::ScopeSpec>,
+    /// How the language's tags are closed as they are opened, when it has tags.
+    #[serde(default)]
+    pub tags: Option<pm_lsp::TagSpec>,
+}
+
+impl ExtensionInfo {
+    /// Whether the language reads the file at `path`, by its whole name, a pattern its name matches or the ending of its name.
+    pub fn reads(&self, path: &str) -> bool {
+        let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+        self.names.iter().any(|whole| whole == name)
+            || self
+                .patterns
+                .iter()
+                .any(|pattern| pm_lsp::glob(pattern, name))
+            || name.rsplit_once('.').is_some_and(|(stem, suffix)| {
+                !stem.is_empty()
+                    && self
+                        .suffixes
+                        .iter()
+                        .any(|held| held.eq_ignore_ascii_case(suffix))
+            })
+    }
 }

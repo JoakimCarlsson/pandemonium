@@ -366,6 +366,8 @@ pub enum Outgoing {
         position: pm_protocol::Position,
         /// The character typed that asked, when one did.
         trigger: Option<String>,
+        /// The name of the scope of the language the place is in, when it is in one.
+        scope: Option<String>,
     },
     /// Asks the language server for the edits that format a file of the session at this position.
     Format {
