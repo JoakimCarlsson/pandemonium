@@ -5,7 +5,9 @@
  * it; it is not loaded as a module and is left out of the type check, which has no page to check
  * it against.
  *
- * Everything the page can touch is untrusted: only events the reader made (`isTrusted`) count.
+ * Everything the page can touch is untrusted: only events the reader made (`isTrusted`) count. The
+ * element picked carries the attribute `data-pm-picked` until the helper has read what the page's
+ * own scripts say about it, and takes the attribute off again.
  */
 (() => {
   if (window.__pmPick) {
@@ -30,7 +32,7 @@
    */
   const path = (el) => {
     const parts = [];
-    for (let node = el; node && node.nodeType === 1 && parts.length < 6; node = node.parentElement) {
+    for (let node = el; node && node.nodeType === 1 && parts.length < 8; node = node.parentElement) {
       let part = node.tagName.toLowerCase();
       if (node.id) {
         parts.unshift(part + '#' + CSS.escape(node.id));
@@ -50,25 +52,30 @@
     return parts.join(' > ');
   };
 
+  /** The computed styles the reader is told about. */
+  const styled = [
+    'color', 'background-color', 'opacity', 'font-family', 'font-size', 'font-weight', 'line-height',
+    'text-align', 'display', 'position', 'z-index', 'overflow', 'width', 'height', 'margin', 'padding',
+    'border', 'border-radius', 'box-shadow', 'flex-direction', 'justify-content', 'align-items', 'gap',
+    'cursor',
+  ];
+
   /**
    * What the reader is told about an element.
    * @param {Element} el The element.
-   * @returns {Record<string, unknown>} Its selector, text, markup, box and a few styles.
+   * @returns {Record<string, unknown>} Its path, tag, attributes, text, computed styles and box.
    */
   const describe = (el) => {
     const r = el.getBoundingClientRect();
     const s = getComputedStyle(el);
-    const keys = ['color', 'background-color', 'font-family', 'font-size', 'font-weight', 'display', 'position', 'margin', 'padding', 'border'];
     return {
       selector: path(el),
       tag: el.tagName.toLowerCase(),
-      id: el.id || '',
-      classes: Array.from(el.classList),
-      text: ((/** @type {HTMLElement} */ (el)).innerText || el.textContent || '').trim().slice(0, 400),
-      html: el.outerHTML.slice(0, 2000),
-      x: r.x, y: r.y, width: r.width, height: r.height,
-      scroll_x: window.scrollX, scroll_y: window.scrollY,
-      styles: keys.map((k) => [k, s.getPropertyValue(k)]),
+      attributes: Array.from(el.attributes).map((a) => [a.name, a.value]),
+      text: ((/** @type {HTMLElement} */ (el)).innerText || el.textContent || '').trim(),
+      styles: styled.map((k) => [k, s.getPropertyValue(k)]),
+      width: r.width,
+      height: r.height,
       url: location.href,
       title: document.title,
     };
@@ -110,8 +117,10 @@
     if (!e.isTrusted) return;
     swallow(e);
     const el = target || /** @type {Element} */ (e.target);
+    const picked = describe(el);
+    el.setAttribute('data-pm-picked', '');
     stop(true);
-    __pmPicked(JSON.stringify({ element: describe(el) }));
+    __pmPicked(JSON.stringify({ element: picked }));
   };
 
   /**

@@ -20,14 +20,74 @@ const WORLD = 'pm-pick';
 /** The name of the function that world reports through. */
 const BINDING = '__pmPicked';
 
+/** The attribute that marks the element picked, for the script that reads what the page's own scripts say about it. */
+const MARK = 'data-pm-picked';
+
+/** The script that, run in the page's own world, finds the marked element, takes the mark off and gives the component that rendered it and that component's properties, when the page is built with React. */
+const COMPONENT = `(() => {
+  const el = document.querySelector('[${MARK}]');
+  if (!el) return null;
+  el.removeAttribute('${MARK}');
+  const key = Object.keys(el).find((k) => k.startsWith('__reactFiber$') || k.startsWith('__reactInternalInstance$'));
+  let fiber = key ? el[key] : null;
+  while (fiber) {
+    const type = fiber.type;
+    let name = '';
+    if (typeof type === 'function') {
+      name = type.displayName || type.name || '';
+    } else if (type && typeof type === 'object') {
+      const inner = type.render || type.type;
+      name = type.displayName || (inner && (inner.displayName || inner.name)) || '';
+    }
+    if (name) {
+      const props = [];
+      const own = fiber.memoizedProps || {};
+      for (const k of Object.keys(own)) {
+        if (k === 'children' || k === 'key' || k === 'ref') continue;
+        const v = own[k];
+        if (typeof v === 'string') props.push([k, JSON.stringify(v)]);
+        else if (typeof v === 'number' || typeof v === 'boolean') props.push([k, '{' + v + '}']);
+        else if (v === null) props.push([k, '{null}']);
+        if (props.length >= 10) break;
+      }
+      return { name, props };
+    }
+    fiber = fiber.return;
+  }
+  return null;
+})()`;
+
 /**
- * A string cut to at most `most` characters.
+ * Text as one line: runs of white space become one space, and what is longer than `most` is cut and ends in an ellipsis.
  * @param {unknown} value What a page said.
  * @param {number} most The most characters to keep.
- * @returns {string} The text cut short, or nothing when `value` is not text.
+ * @returns {string} The text, or nothing when `value` is not text.
  */
-function cut(value, most) {
-  return typeof value === 'string' ? value.slice(0, most) : '';
+function line(value, most) {
+  if (typeof value !== 'string') return '';
+  const text = value.replace(/\s+/g, ' ').trim();
+  return text.length > most ? `${text.slice(0, most)}\u2026` : text;
+}
+
+/**
+ * Name and value pairs as a page gave them, kept short and without repeats.
+ * @param {unknown} pairs What a page said: a list of two-item lists.
+ * @param {number} most The most pairs to keep.
+ * @param {string[]} [skip] Names to leave out.
+ * @returns {[string, string][]} The pairs.
+ */
+function pairsOf(pairs, most, skip = []) {
+  /** @type {[string, string][]} */
+  const kept = [];
+  const seen = new Set(skip);
+  for (const pair of Array.isArray(pairs) ? pairs : []) {
+    if (kept.length >= most) break;
+    const name = line(Array.isArray(pair) ? pair[0] : '', 60);
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    kept.push([name, line(Array.isArray(pair) ? pair[1] : '', 400)]);
+  }
+  return kept;
 }
 
 /**
@@ -40,33 +100,24 @@ function number(value) {
 }
 
 /**
- * A picked element with every field cut to a size a prompt can take, as a page chooses what it says.
- * @param {Record<string, any>} element What the page reported.
+ * What a picked element is told as, with every field cut to a size a prompt can take, as a page chooses what it says.
+ * @param {Record<string, any>} element What the picker script reported.
+ * @param {Record<string, any> | null} component What the page's own scripts said about the element's component, if anything.
  * @returns {PickedElement} The element, safe to pass on.
  */
-function limited(element) {
-  const classes = (Array.isArray(element.classes) ? element.classes : []).slice(0, 20).map((c) => cut(c, 100));
-  /** @type {[string, string][]} */
-  const styles = (Array.isArray(element.styles) ? element.styles : [])
-    .slice(0, 20)
-    .map((/** @type {[unknown, unknown]} */ [name, value]) => [cut(name, 40), cut(value, 200)]);
+function limited(element, component) {
   return {
-    selector: cut(element.selector, 300),
-    tag: cut(element.tag, 40),
-    id: cut(element.id, 200),
-    classes,
-    text: cut(element.text, 400),
-    html: cut(element.html, 2000),
-    x: number(element.x),
-    y: number(element.y),
+    selector: line(element.selector, 600),
+    tag: line(element.tag, 40),
+    attributes: pairsOf(element.attributes, 60, [MARK]),
+    text: line(element.text, 2000),
+    styles: pairsOf(element.styles, 40),
     width: number(element.width),
     height: number(element.height),
-    scroll_x: number(element.scroll_x),
-    scroll_y: number(element.scroll_y),
-    screenshot: null,
-    styles,
-    url: cut(element.url, 500),
-    title: cut(element.title, 200),
+    component: component ? line(component.name, 100) : '',
+    props: component ? pairsOf(component.props, 10) : [],
+    url: line(element.url, 500),
+    title: line(element.title, 200),
   };
 }
 
@@ -92,7 +143,18 @@ async function start(page, report) {
         return;
       }
       page.pickContext = null;
-      report(found && found.element ? limited(found.element) : null);
+      if (!found || !found.element) {
+        report(null);
+        return;
+      }
+      const element = found.element;
+      cdp
+        .call('Runtime.evaluate', { expression: COMPONENT, returnByValue: true })
+        .then(
+          (reply) => reply.result.value || null,
+          () => null,
+        )
+        .then((component) => report(limited(element, component)));
     });
   }
   await cdp.call('Runtime.enable');

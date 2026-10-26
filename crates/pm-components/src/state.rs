@@ -1356,6 +1356,8 @@ pub enum Picker {
     Location,
     /// Which login of the agent is used.
     Account,
+    /// An element of a web page picked for the prompt, by position among those picked.
+    Element(usize),
 }
 
 /// Where new work is done.
@@ -1519,6 +1521,8 @@ pub struct WorkspaceState {
     pub prompt: Field,
     /// The files attached to the prompt, by path.
     pub attachments: Vec<String>,
+    /// The elements of web pages picked for the prompt.
+    pub elements: Vec<crate::elements::Element>,
     /// The machine, by destination, that the settings and commands held belong to; nothing for this one.
     pub discovery_host: Option<String>,
     /// What other machines said about the agents, by destination, while the settings of one machine are showing.
@@ -1581,7 +1585,8 @@ pub struct WorkspaceState {
     /// The panes of each session other than the one whose files are open now, by its position.
     pub pane_stash: std::collections::HashMap<usize, crate::panes::Panes>,
     /// What was typed in the prompt, and the files attached to it, for every session but the one being worked in, by session, so that coming back to one finds its message as it was left.
-    pub prompt_stash: std::collections::HashMap<usize, (Field, Vec<String>)>,
+    pub prompt_stash:
+        std::collections::HashMap<usize, (Field, Vec<String>, Vec<crate::elements::Element>)>,
     /// The search of the review panel of every session but the one being worked in, by session.
     pub search_stash: std::collections::HashMap<usize, crate::project_search::ProjectSearch>,
     /// The tab being dragged to another pane, if one is.
@@ -1801,6 +1806,7 @@ impl WorkspaceState {
             skills_of: None,
             skill_names: std::collections::HashSet::new(),
             attachments: Vec::new(),
+            elements: Vec::new(),
             previews: std::collections::HashMap::new(),
             figures: crate::figures::Figures::new(),
             figures_asked: std::collections::HashSet::new(),
@@ -2774,7 +2780,13 @@ impl WorkspaceState {
     /// the server queues it, or, `now`, stops the turn and hands it over in
     /// its place.
     fn send(&mut self, now: bool) {
-        let text = self.prompt.text().trim().to_owned();
+        let mut text = self.prompt.text().trim().to_owned();
+        if !self.elements.is_empty() {
+            if !text.is_empty() {
+                text.push_str("\n\n");
+            }
+            text.push_str(&crate::elements::message(&self.elements));
+        }
         if text.is_empty() && self.attachments.is_empty() {
             return;
         }
@@ -2819,6 +2831,8 @@ impl WorkspaceState {
                 session.skills = self.skills.clone();
                 session.messages[0].attachments = self.attachments.clone();
                 self.sessions.push(session);
+                self.pane_stash
+                    .insert(self.sessions.len() - 1, self.panes.clone());
                 self.page = Page::Session(self.sessions.len() - 1);
                 self.tab = Tab::Chat;
                 self.sessions.len() - 1
@@ -2870,6 +2884,10 @@ impl WorkspaceState {
             self.sessions[index].chat_back = 0.0;
         }
         self.slash = 0;
+        self.elements.clear();
+        if matches!(self.picker, Some(Picker::Element(_))) {
+            self.picker = None;
+        }
         std::mem::take(&mut self.attachments)
     }
 

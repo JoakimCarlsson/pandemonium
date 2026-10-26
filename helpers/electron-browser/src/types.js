@@ -49,20 +49,15 @@
 /**
  * An element of a page the reader picked.
  * @typedef {object} PickedElement
- * @property {string} selector A selector that finds it, from the nearest id or a few levels up.
+ * @property {string} selector A selector path that finds it, from the nearest id or a few levels up.
  * @property {string} tag Its tag name.
- * @property {string} id Its id, when it has one.
- * @property {string[]} classes Its classes.
- * @property {string} text Its text, cut short.
- * @property {string} html Its HTML, cut short.
- * @property {number} x Where its box is in the page, across, in CSS pixels.
- * @property {number} y Where its box is in the page, down, in CSS pixels.
+ * @property {[string, string][]} attributes Its attributes, name and value, in the order the page gave them.
+ * @property {string} text Its text, on one line and cut short.
+ * @property {[string, string][]} styles A few of its computed styles, name and value.
  * @property {number} width How wide its box is, in CSS pixels.
  * @property {number} height How tall its box is, in CSS pixels.
- * @property {number} scroll_x How far the page was scrolled across when it was picked.
- * @property {number} scroll_y How far the page was scrolled down when it was picked.
- * @property {string | null} screenshot Where a picture of the element was saved; the helper takes none.
- * @property {[string, string][]} styles A few of its computed styles, name and value.
+ * @property {string} component The name of the component that rendered it, when the page says so.
+ * @property {[string, string][]} props That component's properties, name and value as written in markup: a string in quotes, anything else in braces.
  * @property {string} url The address of the page.
  * @property {string} title The title of the page.
  */

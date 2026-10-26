@@ -36,6 +36,7 @@ pub mod diff_syntax;
 pub mod dock;
 pub mod draft;
 pub mod editor;
+pub mod elements;
 pub mod excerpts;
 pub mod extensions;
 pub mod figures;

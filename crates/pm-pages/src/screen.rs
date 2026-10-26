@@ -328,10 +328,10 @@ impl Screen {
         }
     }
 
-    /// The screen after the mode of picking an element of the browser's page ended, with the pick written as `text` when there was one.
-    pub fn browser_picked(self, text: Option<String>) -> Self {
+    /// The screen after the mode of picking an element of the browser's page ended, with the pick held for the prompt when there was one.
+    pub fn browser_picked(self, element: Option<pm_components::elements::Element>) -> Self {
         match self {
-            Self::Workspace(state) => Self::Workspace(state.browser_picked(text)),
+            Self::Workspace(state) => Self::Workspace(state.browser_picked(element)),
         }
     }
 

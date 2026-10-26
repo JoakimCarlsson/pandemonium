@@ -35,6 +35,24 @@ window's pointer, scroll and key requests as input events. The picker and the
 agent tools use the page's DevTools protocol through Electron's debugger. The
 developer tools are Electron's own, painted into a second page.
 
+## Picking an element
+
+The Pick button of the pane turns on a mode in which a click on the page picks
+the element under the pointer instead of pressing it. The helper reads the
+element: its tag, attributes, text, path, box and a few computed styles, and,
+when the page is built with React, the component that rendered it with its
+properties. The window holds each pick as a chip above the prompt box
+(`crates/pm-components/src/elements.rs`); a chip opens a popover that lists
+everything about the element in cards, and has a button that takes it off.
+
+Sending the prompt writes the chips out after what the reader typed as a
+structured Markdown message, one section for each element, with everything the
+page said set off in code spans so that it cannot pass for instructions. In the
+conversation the reader's own bubble shows what they typed with the elements as
+chips above it, not the Markdown; the window finds the elements in the text by
+the line that begins them, so a conversation read back from the server looks the
+same.
+
 The helper is plain JavaScript typed with JSDoc. `tsconfig.json` in the helper's
 folder checks it in strict mode (`npx tsc -p tsconfig.json`), and CI runs the
 same check. The message shapes are defined once in `src/types.js`, mirroring

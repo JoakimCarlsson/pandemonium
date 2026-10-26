@@ -239,6 +239,16 @@ pub enum Shot {
     Missing,
     /// The page for starting work with files attached.
     Attached,
+    /// The page for starting work with two elements of a web page picked.
+    Elements,
+    /// The page for starting work with two elements of a web page picked and the first one's details open.
+    ElementDetails,
+    /// The same, scrolled down to the attributes and styles.
+    ElementScrolled,
+    /// A conversation whose first message was sent with two picked elements.
+    ElementsSent,
+    /// The page for starting work split with the browser beside it, after the first prompt was sent.
+    SplitStarted,
     /// The workspace on its first session with the fold-out of its last reply open.
     Unfolded,
     /// The page for starting work with a dead key's accent waiting for its letter in the prompt.
@@ -1742,6 +1752,65 @@ fn projects() -> Vec<Project> {
         .collect()
 }
 
+/// The page for starting work with a link and a card of a web page picked.
+fn picked_elements() -> WorkspaceState {
+    let pairs = |rows: &[(&str, &str)]| -> Vec<(String, String)> {
+        rows.iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect()
+    };
+    let link = pm_components::elements::Element {
+        selector: "div#root > div.relative.flex > header.sticky.top-0 > nav.flex.items-center > a.mr-3.flex:nth-of-type(1)".to_owned(),
+        tag: "a".to_owned(),
+        attributes: pairs(&[
+            ("title", "Home"),
+            ("class", "mr-3 flex items-center gap-2 rounded px-1 py-0.5 outline-none focus-visible:ring-3 focus-visible:ring-ring/50"),
+            ("href", "/"),
+            ("data-discover", "true"),
+        ]),
+        text: "VAULT".to_owned(),
+        styles: pairs(&[
+            ("color", "oklch(0.95 0.005 250)"),
+            ("background-color", "rgba(0, 0, 0, 0)"),
+            ("font-family", "Inter, ui-sans-serif, system-ui, sans-serif"),
+            ("font-size", "14px"),
+            ("font-weight", "600"),
+            ("display", "flex"),
+            ("padding", "2px 4px"),
+            ("border-radius", "4px"),
+            ("cursor", "pointer"),
+        ]),
+        width: 78.0,
+        height: 24.0,
+        component: "Link".to_owned(),
+        props: pairs(&[("to", "\"/\""), ("replace", "{false}"), ("title", "\"Home\"")]),
+        url: "http://localhost:5173/scenes/582".to_owned(),
+        title: "vault".to_owned(),
+    };
+    let card = pm_components::elements::Element {
+        selector: "div.flex.flex-col > div.relative.isolate > div.w-64.shrink-0.snap-start"
+            .to_owned(),
+        tag: "div".to_owned(),
+        attributes: pairs(&[
+            ("class", "w-64 shrink-0 snap-start sm:w-72"),
+            ("data-id", "card-2"),
+        ]),
+        text: "Soph Stardust ASMR - Body Triggers & Bra Scratching 15:06".to_owned(),
+        styles: pairs(&[
+            ("color", "#e5e7eb"),
+            ("background-color", "rgb(24, 24, 27)"),
+            ("width", "256px"),
+            ("display", "block"),
+        ]),
+        width: 256.0,
+        height: 190.0,
+        url: "http://localhost:5173/".to_owned(),
+        title: "vault".to_owned(),
+        ..Default::default()
+    };
+    welcome().with_element(link).with_element(card)
+}
+
 impl Shot {
     /// Whether this snapshot shows the folder picker's window instead of the main one.
     fn in_picker_window(self) -> bool {
@@ -2293,6 +2362,44 @@ impl Shot {
                     .with_attachments(&["/home/me/shot.png".to_owned(), "/home/me/notes.md".to_owned()])
                     .with_preview("/home/me/shot.png", gradient()),
             ),
+            Self::Elements => Screen::Workspace(picked_elements()),
+            Self::ElementDetails => {
+                let mut state = picked_elements();
+                state.picker = Some(pm_components::state::Picker::Element(0));
+                Screen::Workspace(state)
+            }
+            Self::SplitStarted => {
+                let mut state = welcome();
+                state.open_browser("http://localhost:5173");
+                let state = state
+                    .pane_dragged(Item::Browser, Some((0, Side::Right)), (0.0, 0.0))
+                    .pane_dropped()
+                    .edited(PROMPT, Edit::Paste("hello".to_owned()))
+                    .after(SEND);
+                Screen::Workspace(state)
+            }
+            Self::ElementsSent => {
+                let mut state = workspace_sample();
+                let elements = picked_elements().elements;
+                if let Some(message) = state
+                    .sessions
+                    .first_mut()
+                    .and_then(|session| session.messages.first_mut())
+                {
+                    message.text = format!(
+                        "these cards need to look like the other cards, with the proper checkbox\n\n{}",
+                        pm_components::elements::message(&elements)
+                    );
+                }
+                state.chat_back = 1.0e6;
+                Screen::Workspace(state)
+            }
+            Self::ElementScrolled => {
+                let mut state = picked_elements();
+                state.picker = Some(pm_components::state::Picker::Element(0));
+                state.menu_scroll = 330.0;
+                Screen::Workspace(state)
+            }
             Self::Missing => {
                 Screen::Workspace(welcome().edited(PROMPT, Edit::Paste("@zzzzqq".to_owned())))
             }

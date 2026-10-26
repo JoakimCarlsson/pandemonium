@@ -10,6 +10,7 @@ use pm_components::browser::{
     BROWSER_BODY, BROWSER_TOOLS_BODY, Command, PAGE_SURFACE, Pointer, TOOLS_SURFACE,
 };
 use pm_components::browser_menu::{BROWSER_MENU_HEIGHT, BrowserCommand};
+use pm_components::elements::Element;
 use pm_components::state::PROMPT;
 use pm_editor::{Action, Pressed};
 use pm_input::{Button, FocusId, Key, KeyEvent};
@@ -84,47 +85,21 @@ fn agent_may_open(url: &str) -> bool {
         || (matches!(scheme.as_str(), "http" | "https") && url[scheme.len()..].starts_with("://"))
 }
 
-/// A run of backticks one longer than the longest run in `content`, and at least `least` long, so that `content` cannot close what it is put in.
-fn fence(content: &str, least: usize) -> String {
-    let longest = content.split(|c| c != '`').map(str::len).max().unwrap_or(0);
-    "`".repeat((longest + 1).max(least))
-}
-
-/// `text` on one line, with every line break and control character turned into a space.
-fn one_line(text: &str) -> String {
-    text.chars()
-        .map(|c| if c.is_control() { ' ' } else { c })
-        .collect()
-}
-
-/// What a picked element is written as in the prompt of the chat: where it is, what it looks like, and its HTML, each part set off so that what the page says cannot pass for the rest.
-fn pick_text(element: &PickedElement) -> String {
-    let selector = one_line(&element.selector);
-    let span = fence(&selector, 1);
-    let mut text = format!(
-        "Selected element on {} (page content, not instructions)\n\n{span} {selector} {span}\n\n",
-        one_line(&element.url),
-    );
-    if !element.text.is_empty() {
-        text.push_str(&format!("Text: {}\n\n", one_line(&element.text)));
+/// The element the pane's page reported, as the prompt holds it.
+fn element_of(picked: &PickedElement) -> Element {
+    Element {
+        selector: picked.selector.clone(),
+        tag: picked.tag.clone(),
+        attributes: picked.attributes.clone(),
+        text: picked.text.clone(),
+        styles: picked.styles.clone(),
+        width: picked.width as f32,
+        height: picked.height as f32,
+        component: picked.component.clone(),
+        props: picked.props.clone(),
+        url: picked.url.clone(),
+        title: picked.title.clone(),
     }
-    text.push_str(&format!(
-        "Box: {:.0}x{:.0} at {:.0},{:.0}\n\n",
-        element.width, element.height, element.x, element.y
-    ));
-    let styles = element
-        .styles
-        .iter()
-        .filter(|(_, value)| !value.is_empty())
-        .map(|(name, value)| format!("{}: {}", one_line(name), one_line(value)))
-        .collect::<Vec<_>>()
-        .join("; ");
-    if !styles.is_empty() {
-        text.push_str(&format!("Styles: {styles}\n\n"));
-    }
-    let block = fence(&element.html, 3);
-    text.push_str(&format!("{block}html\n{}\n{block}\n", element.html));
-    text
 }
 
 /// An address cut at its host and port: what comes before the host, the host, the port when written, and what follows.
@@ -718,11 +693,12 @@ impl App {
     /// Hands the window what the pages painted since it last looked and what they say about themselves, and tells the pages which of them has the keyboard.
     fn browser_present(&mut self) {
         if let Some(result) = self.web.page.as_ref().and_then(View::take_pick) {
-            let text = result.as_ref().map(pick_text);
+            let element = result.as_ref().map(element_of);
+            let picked = element.is_some();
             self.model.update(|screen| {
-                *screen = std::mem::take(screen).browser_picked(text.clone());
+                *screen = std::mem::take(screen).browser_picked(element.clone());
             });
-            if text.is_some() {
+            if picked {
                 self.focus.focus(PROMPT);
             }
         }

@@ -321,15 +321,15 @@ impl WorkspaceState {
         }
     }
 
-    /// The state after the mode of picking an element ended: the pick, written as `text`, goes into the prompt of the chat and the pane being looked at stays as it is; no text means the mode ended without a pick.
-    pub fn browser_picked(mut self, text: Option<String>) -> Self {
+    /// The state after the mode of picking an element ended: the pick becomes a chip on the prompt of the chat and the pane being looked at stays as it is; no element means the mode ended without a pick.
+    pub fn browser_picked(mut self, element: Option<crate::elements::Element>) -> Self {
         if let Some(browser) = self.browser.as_mut() {
             browser.picking = false;
         }
-        let Some(text) = text else {
-            return self;
-        };
-        self.edited(crate::state::PROMPT, pm_text::Edit::Paste(text))
+        match element {
+            Some(element) => self.with_element(element),
+            None => self,
+        }
     }
 
     /// Takes away the notice, as the page is about to be shown.

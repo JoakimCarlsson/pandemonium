@@ -139,9 +139,14 @@ fn user_message(state: &WorkspaceState, session: &Session, index: usize, width: 
         true => bubble,
         false => bubble.child(crate::composer::sent_files(state, &message.attachments)),
     };
-    let bubble = match message.text.is_empty() {
+    let (typed, elements) = crate::elements::split(&message.text);
+    let bubble = match elements.is_empty() {
         true => bubble,
-        false => bubble.child(paragraph(&message.text, Role::Text, width * 0.85 - 32.0)),
+        false => bubble.child(crate::elements::sent_chips(&elements)),
+    };
+    let bubble = match typed.is_empty() {
+        true => bubble,
+        false => bubble.child(paragraph(typed, Role::Text, width * 0.85 - 32.0)),
     };
     node()
         .styles([flex(), flex_col(), gap(1)])

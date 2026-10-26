@@ -22,34 +22,24 @@ pub struct ToolResult {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PickedElement {
-    /// A selector that finds it, from the nearest id or a few levels up.
+    /// A selector path that finds it, from the nearest id or a few levels up.
     pub selector: String,
     /// Its tag name.
     pub tag: String,
-    /// Its id, when it has one.
-    pub id: String,
-    /// Its classes.
-    pub classes: Vec<String>,
-    /// Its text, cut short.
+    /// Its attributes, name and value, in the order the page gave them.
+    pub attributes: Vec<(String, String)>,
+    /// Its text, on one line and cut short.
     pub text: String,
-    /// Its HTML, cut short.
-    pub html: String,
-    /// Where its box is in the page, in CSS pixels.
-    pub x: f64,
-    /// Where its box is in the page, in CSS pixels.
-    pub y: f64,
+    /// A few of its computed styles, name and value.
+    pub styles: Vec<(String, String)>,
     /// How wide its box is, in CSS pixels.
     pub width: f64,
     /// How tall its box is, in CSS pixels.
     pub height: f64,
-    /// How far the page was scrolled across when it was picked, in CSS pixels.
-    pub scroll_x: f64,
-    /// How far the page was scrolled down when it was picked, in CSS pixels.
-    pub scroll_y: f64,
-    /// Where a picture of the element was saved, when one could be taken.
-    pub screenshot: Option<String>,
-    /// A few of its computed styles, name and value.
-    pub styles: Vec<(String, String)>,
+    /// The name of the component that rendered it, when the page is built from components and says so.
+    pub component: String,
+    /// That component's properties, name and value as they are written in markup: a string in quotes, anything else in braces.
+    pub props: Vec<(String, String)>,
     /// The address of the page.
     pub url: String,
     /// The title of the page.
