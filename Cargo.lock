@@ -2292,7 +2292,7 @@ dependencies = [
 
 [[package]]
 name = "pandemonium"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "arboard",
  "image",
@@ -2414,7 +2414,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "pm-acp"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "base64",
  "pm-agent-library",
@@ -2427,7 +2427,7 @@ dependencies = [
 
 [[package]]
 name = "pm-agent-library"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2436,21 +2436,21 @@ dependencies = [
 
 [[package]]
 name = "pm-animation"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "pm-primitives",
 ]
 
 [[package]]
 name = "pm-buffer"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "pm-client"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "pm-acp",
  "pm-protocol",
@@ -2461,11 +2461,11 @@ dependencies = [
 
 [[package]]
 name = "pm-color"
-version = "0.13.0"
+version = "0.13.1"
 
 [[package]]
 name = "pm-components"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "chrono",
  "pm-acp",
@@ -2489,7 +2489,7 @@ dependencies = [
 
 [[package]]
 name = "pm-config"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "pm-protocol",
  "serde",
@@ -2498,7 +2498,7 @@ dependencies = [
 
 [[package]]
 name = "pm-dap"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "pm-tools",
  "serde",
@@ -2507,7 +2507,7 @@ dependencies = [
 
 [[package]]
 name = "pm-decoration"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "pm-color",
  "pm-primitives",
@@ -2515,7 +2515,7 @@ dependencies = [
 
 [[package]]
 name = "pm-editor"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "pm-buffer",
  "pm-lsp",
@@ -2530,7 +2530,7 @@ dependencies = [
 
 [[package]]
 name = "pm-git"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "pm-tools",
  "reflink-copy",
@@ -2541,18 +2541,18 @@ dependencies = [
 
 [[package]]
 name = "pm-icon"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "resvg",
 ]
 
 [[package]]
 name = "pm-input"
-version = "0.13.0"
+version = "0.13.1"
 
 [[package]]
 name = "pm-layout"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "pm-primitives",
  "taffy",
@@ -2560,7 +2560,7 @@ dependencies = [
 
 [[package]]
 name = "pm-lsp"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "flate2",
  "pm-buffer",
@@ -2576,14 +2576,14 @@ dependencies = [
 
 [[package]]
 name = "pm-markdown"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "pulldown-cmark",
 ]
 
 [[package]]
 name = "pm-mcp"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "pm-tools",
  "serde_json",
@@ -2592,7 +2592,7 @@ dependencies = [
 
 [[package]]
 name = "pm-pages"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "pm-acp",
  "pm-components",
@@ -2610,7 +2610,7 @@ dependencies = [
 
 [[package]]
 name = "pm-plugin"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "pm-lsp",
  "pm-plugin-api",
@@ -2625,7 +2625,7 @@ dependencies = [
 
 [[package]]
 name = "pm-plugin-api"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2633,18 +2633,18 @@ dependencies = [
 
 [[package]]
 name = "pm-policy"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "pm-primitives"
-version = "0.13.0"
+version = "0.13.1"
 
 [[package]]
 name = "pm-protocol"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "base64",
  "pm-acp",
@@ -2660,7 +2660,7 @@ dependencies = [
 
 [[package]]
 name = "pm-renderer"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "bytemuck",
  "pm-color",
@@ -2673,11 +2673,11 @@ dependencies = [
 
 [[package]]
 name = "pm-review"
-version = "0.13.0"
+version = "0.13.1"
 
 [[package]]
 name = "pm-server"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "getrandom 0.4.3",
  "notify",
@@ -2701,15 +2701,15 @@ dependencies = [
 
 [[package]]
 name = "pm-session"
-version = "0.13.0"
+version = "0.13.1"
 
 [[package]]
 name = "pm-shaders"
-version = "0.13.0"
+version = "0.13.1"
 
 [[package]]
 name = "pm-ssh"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "pm-protocol",
  "pm-transport",
@@ -2718,18 +2718,18 @@ dependencies = [
 
 [[package]]
 name = "pm-state"
-version = "0.13.0"
+version = "0.13.1"
 
 [[package]]
 name = "pm-store"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "dirs",
 ]
 
 [[package]]
 name = "pm-style"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "pm-animation",
  "pm-color",
@@ -2741,7 +2741,7 @@ dependencies = [
 
 [[package]]
 name = "pm-task"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2750,7 +2750,7 @@ dependencies = [
 
 [[package]]
 name = "pm-terminal"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "pm-text",
  "vte",
@@ -2758,7 +2758,7 @@ dependencies = [
 
 [[package]]
 name = "pm-text"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "cosmic-text",
  "pm-typography",
@@ -2766,18 +2766,18 @@ dependencies = [
 
 [[package]]
 name = "pm-theme"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "pm-color",
 ]
 
 [[package]]
 name = "pm-tools"
-version = "0.13.0"
+version = "0.13.1"
 
 [[package]]
 name = "pm-transport"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "pm-protocol",
  "serde_json",
@@ -2785,7 +2785,7 @@ dependencies = [
 
 [[package]]
 name = "pm-treesitter"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "pm-buffer",
  "tree-sitter",
@@ -2793,7 +2793,7 @@ dependencies = [
 
 [[package]]
 name = "pm-typography"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "pm-color",
  "pm-primitives",
@@ -2801,7 +2801,7 @@ dependencies = [
 
 [[package]]
 name = "pm-ui"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "pm-icon",
  "pm-input",
@@ -2814,7 +2814,7 @@ dependencies = [
 
 [[package]]
 name = "pm-wasm"
-version = "0.13.0"
+version = "0.13.1"
 dependencies = [
  "pm-plugin-api",
  "serde_json",
