@@ -7,8 +7,10 @@ use pm_editor::{Action, Pressed};
 use pm_input::{Key, KeyEvent};
 use pm_pages::{PROMPT, TERMINAL_BODY};
 use pm_renderer::Rect;
+use pm_text::Reach;
 
-use super::App;
+use super::gesture::TerminalWindow;
+use super::{App, DOUBLE_CLICK};
 use crate::keys::{self, Clip};
 
 impl App {
@@ -242,7 +244,7 @@ impl App {
 
     /// Opens the web address under the pointer when Ctrl is held as the primary button goes down in the shell's window, or else begins marking text there.
     pub(super) fn terminal_press(&mut self) {
-        self.terminal_anchor = None;
+        self.terminal_gesture.release();
         let Some(cell) = self.terminal_cell_under_pointer() else {
             return;
         };
@@ -255,21 +257,31 @@ impl App {
             self.deliver();
             return;
         }
-        self.terminal_anchor = Some(cell);
-        self.model
-            .update(|screen| screen.clear_terminal_selection());
+        let Some(cell) = self.absolute_terminal_cell(cell) else {
+            return;
+        };
+        let reach = Reach::of_clicks(self.clicks.press(TERMINAL_BODY, DOUBLE_CLICK));
+        self.terminal_gesture
+            .press(&mut TerminalWindow { model: &self.model }, cell, reach);
+    }
+
+    /// The cell `cell` of the shell's window as a line counted from the oldest kept and a column.
+    fn absolute_terminal_cell(&self, cell: (usize, usize)) -> Option<(usize, usize)> {
+        let first = self.model.read(|screen| screen.terminal_first_line())?;
+        Some((first + cell.0, cell.1))
     }
 
     /// Extends the marked text to the point `at` while the button is held.
     pub(super) fn terminal_drag(&mut self, at: (f32, f32)) {
-        let Some(anchor) = self.terminal_anchor else {
+        if !self.terminal_gesture.is_held() {
             return;
-        };
-        if let Some(head) = self.terminal_cell(at)
-            && head != anchor
+        }
+        if let Some(cell) = self
+            .terminal_cell(at)
+            .and_then(|cell| self.absolute_terminal_cell(cell))
         {
-            self.model
-                .update(|screen| screen.select_in_terminal(anchor, head));
+            self.terminal_gesture
+                .drag(&mut TerminalWindow { model: &self.model }, cell);
         }
     }
 

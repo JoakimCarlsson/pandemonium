@@ -1178,6 +1178,30 @@ impl Screen {
         state.select_in_terminal(anchor, head);
     }
 
+    /// The line counted from the oldest kept that is the first of the window of the shell showing.
+    pub fn terminal_first_line(&self) -> Option<usize> {
+        match self {
+            Self::Workspace(state) => state.terminal_first_line(),
+        }
+    }
+
+    /// What `reach` takes around the cell at `at`, a line counted from the oldest kept and a column, of the shell showing, as its first and last cell.
+    pub fn terminal_reach(
+        &self,
+        reach: pm_text::Reach,
+        at: (usize, usize),
+    ) -> Option<pm_terminal::Span> {
+        match self {
+            Self::Workspace(state) => state.terminal_reach(reach, at),
+        }
+    }
+
+    /// Marks text in the shell showing, from `anchor` to `head`, each a line counted from the oldest kept and a column.
+    pub fn select_terminal_span(&mut self, anchor: (usize, usize), head: (usize, usize)) {
+        let Self::Workspace(state) = self;
+        state.select_terminal_span(anchor, head);
+    }
+
     /// Underlines the web address at `at` of the window of the shell showing, a line of it and a column, or none when `at` is nothing.
     pub fn reach_terminal_link(&mut self, at: Option<(usize, usize)>) {
         let Self::Workspace(state) = self;

@@ -28,5 +28,5 @@ pub use pm_renderer::Picture;
 pub use pm_style::Cursor;
 pub use retain::retained;
 pub use scene::Scene;
-pub use select::{DrawnPiece, TextPiece, TextPoint, TextSelection, Unit};
+pub use select::{DrawnPiece, TextPiece, TextPoint, TextSelection};
 pub use wrap::{Line, wrap};
