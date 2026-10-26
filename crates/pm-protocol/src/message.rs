@@ -118,4 +118,11 @@ pub enum ServerMessage {
         /// Every extension, as `extensions` lists them.
         extensions: Vec<crate::ExtensionInfo>,
     },
+    /// How far the download of an update has got. Sent to the client that asked for it.
+    UpdateProgress {
+        /// How many bytes have arrived.
+        received: u64,
+        /// How many there are in all; zero when not known.
+        total: u64,
+    },
 }

@@ -33,6 +33,7 @@ fn main() {
             arguments.into_iter().skip(1),
         ));
     }
+    pm_update::forget_previous();
     if arguments.first().map(String::as_str) == Some("--snapshot") {
         let Some(path) = arguments.get(1) else {
             eprintln!("pandemonium: --snapshot needs a path");

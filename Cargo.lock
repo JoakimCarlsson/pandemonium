@@ -912,6 +912,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "filetime"
+version = "0.2.29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c287a33c7f0a620c38e641e7f60827713987b3c0f26e8ddc9462cc69cf75759"
+dependencies = [
+ "cfg-if",
+ "libc",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2321,6 +2331,7 @@ dependencies = [
  "pm-transport",
  "pm-treesitter",
  "pm-ui",
+ "pm-update",
  "resvg",
  "rfd",
  "serde",
@@ -2455,6 +2466,7 @@ dependencies = [
  "pm-acp",
  "pm-protocol",
  "pm-store",
+ "pm-update",
  "serde_json",
  "tungstenite",
 ]
@@ -2692,6 +2704,7 @@ dependencies = [
  "pm-protocol",
  "pm-store",
  "pm-task",
+ "pm-update",
  "portable-pty",
  "serde",
  "serde_json",
@@ -2810,6 +2823,18 @@ dependencies = [
  "pm-text",
  "pm-theme",
  "pm-typography",
+]
+
+[[package]]
+name = "pm-update"
+version = "0.13.0"
+dependencies = [
+ "flate2",
+ "pm-store",
+ "sha2 0.11.1",
+ "tar",
+ "ureq",
+ "zip",
 ]
 
 [[package]]
@@ -3777,6 +3802,16 @@ dependencies = [
  "serde",
  "slotmap",
  "smallvec",
+]
+
+[[package]]
+name = "tar"
+version = "0.4.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f6221d9a6003c78398e3b239969f352578258df48c8eb051caadae0015bc840"
+dependencies = [
+ "filetime",
+ "libc",
 ]
 
 [[package]]

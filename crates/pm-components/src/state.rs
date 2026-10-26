@@ -795,6 +795,15 @@ pub enum Outgoing {
         /// How they are told.
         how: pm_config::Notification,
     },
+    /// Asks the server on this machine to download the release `version` on `channel`, and installs it and restarts into it.
+    DownloadUpdate {
+        /// The channel the window follows.
+        channel: pm_config::Channel,
+        /// The version to install.
+        version: String,
+    },
+    /// Stops the download of the update.
+    CancelUpdate,
     /// Asks the server on this machine for the newest release on `channel`.
     LatestRelease {
         /// The channel the window follows.
@@ -1410,6 +1419,8 @@ pub enum Tab {
     File,
     /// The lines around the hits of a search, from every file, edited in place.
     Excerpts,
+    /// The notes of the newer release, and the button that installs it.
+    Update,
 }
 
 /// About how wide the diff is, in logical pixels, when scrolling it to a file, which only the height of the notes on the files above depends on.
@@ -1677,6 +1688,12 @@ pub struct WorkspaceState {
     pub code_view: Option<(f32, f32)>,
     /// Whether the reader asked to close the window and nothing is left to ask first.
     pub quitting: bool,
+    /// How far down the notes in the window of an update are scrolled, in logical pixels.
+    pub update_scroll: f32,
+    /// Whether the release notes of the newer release are open as a tab.
+    pub update_open: bool,
+    /// How far the update the reader asked for has got.
+    pub update_run: crate::update_dialog::UpdateRun,
     /// The breakpoints and the program being debugged.
     pub debug: crate::debug::DebugState,
     /// What the project can be built, tested and run with.
@@ -1832,6 +1849,9 @@ impl WorkspaceState {
             editor_loaded: false,
             code_view: None,
             quitting: false,
+            update_scroll: 0.0,
+            update_open: false,
+            update_run: crate::update_dialog::UpdateRun::Idle,
             debug: crate::debug::DebugState::default(),
             tasks: crate::tasks::TaskState::default(),
             window: pm_config::WindowSettings::default(),
@@ -2042,6 +2062,7 @@ impl WorkspaceState {
             ADD_PROJECT => return self.with_adder(),
             SETTINGS => return self.with_settings(),
             crate::title_bar::UPDATE => self.open_release(),
+            update if self.press_update(update) => {}
             action if crate::settings::is_settings(action) => {
                 return self.settings_pressed(action);
             }

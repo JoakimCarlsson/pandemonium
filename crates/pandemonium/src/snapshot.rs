@@ -2126,10 +2126,14 @@ impl Shot {
             Self::Quitting => Screen::Workspace(workspace().close_asked()),
             Self::Update => Screen::Workspace(workspace().with_release(
                 pm_components::update::Update::Newer {
-                name: "Pandemonium 0.14.0".to_owned(),
-                url: "https://github.com".to_owned(),
-            },
-            )),
+                    name: "Pandemonium 0.14.0".to_owned(),
+                    url: "https://github.com".to_owned(),
+                    version: "0.14.0".to_owned(),
+                    published: Some("2026-10-20T09:00:00Z".to_owned()),
+                    body: Some("## Changes\n\n- Update from inside the app\n- Faster diffs".to_owned()),
+                    blocker: None,
+                },
+            ).after(pm_components::title_bar::UPDATE)),
             Self::MessageMenu => {
                 Screen::Workspace(workspace().with_message_menu(3, (520.0, 230.0), true))
             }
@@ -2634,6 +2638,10 @@ fn settings_sample() -> WorkspaceState {
         .with_release(pm_components::update::Update::Newer {
             name: "Pandemonium 0.14.0".to_owned(),
             url: "https://github.com".to_owned(),
+            version: "0.14.0".to_owned(),
+            published: None,
+            body: None,
+            blocker: None,
         })
         .after(SETTINGS);
     with_library_sample(state)

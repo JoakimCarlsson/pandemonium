@@ -698,6 +698,13 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             answer
         }
         Request::LatestRelease { channel } => crate::releases::latest(&channel),
+        Request::DownloadUpdate { channel, version } => {
+            crate::releases::download(connection, &channel, &version)
+        }
+        Request::CancelUpdate => {
+            crate::releases::cancel();
+            Response::Done
+        }
         Request::Sessions => Response::Sessions {
             sessions: core.infos(),
         },

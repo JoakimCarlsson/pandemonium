@@ -9,6 +9,7 @@ mod extensions;
 mod history;
 mod machine;
 mod message;
+mod release;
 mod request;
 mod response;
 mod task;
@@ -43,6 +44,7 @@ pub use pm_lsp::{
     Severity, Signature, TextChange, TokenKind, Triggers,
 };
 pub use pm_task::Task;
+pub use release::ReleaseAsset;
 pub use request::{AgentServer, Attachment, Login, McpServer, RegistryAgent, Request, ToolListing};
 pub use response::{Response, SessionInfo, TerminalInfo};
 pub use task::ToolchainInfo;

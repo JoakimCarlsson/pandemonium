@@ -25,6 +25,7 @@ use pm_components::parts::{glyph, line, spacer};
 use pm_components::sash::Sash;
 use pm_components::state::{Page, TAB_CHAT, TAB_DIFF, WorkspaceState};
 use pm_components::title_bar::TITLE_BAR_HEIGHT;
+use pm_components::update_dialog::{TAB_UPDATE, UPDATE_CLOSE};
 use pm_components::{
     Button, Changes, Conflict, chat, diff, input, overview, terminal, viewer, welcome,
 };
@@ -126,6 +127,21 @@ fn excerpts_tab(state: &WorkspaceState, shown: bool) -> Option<Node> {
     )
 }
 
+/// The tab of the release notes, filled while `shown`.
+fn update_tab(shown: bool) -> Node {
+    let tone = if shown { Role::Text } else { Role::Muted };
+    node()
+        .styles(tab_styles(shown))
+        .child(glyph(IconName::ArrowDown, 3.5, tone))
+        .child(line("Update", 13, 1.4, tone))
+        .child(
+            Button::icon(IconName::Close, UPDATE_CLOSE)
+                .size(pm_components::Size::Sm)
+                .build(),
+        )
+        .focusable(TAB_UPDATE)
+}
+
 /// A square button in the strip of tabs holding only `icon`, filled while `on`, saying `hint` when the pointer rests on it.
 fn strip_button(icon: IconName, id: FocusId, on: bool, hint: &str) -> Node {
     let mut styles = vec![
@@ -204,6 +220,7 @@ fn item_tab(state: &WorkspaceState, item: &Item, shown: bool) -> Option<Node> {
         }
         Item::Diff => Some(tab(IconName::GitCompare, "Diff", TAB_DIFF, shown)),
         Item::Excerpts => excerpts_tab(state, shown),
+        Item::Update => Some(update_tab(shown)),
         Item::File { .. } => {
             viewer_of(state, item).map(|(index, viewer)| viewer_tab(viewer, index, shown))
         }
@@ -274,6 +291,10 @@ fn item_view(
             None => node(),
         },
         (Item::Excerpts, _, _) => excerpts_item(state, width, tall),
+        (Item::Update, _, _) => match state.settings_page.release.as_ref() {
+            Some(update) => pm_components::update_dialog::page(state, update, width, shaper),
+            None => node(),
+        },
         (Item::File { .. }, _, _) => match viewer_of(state, item) {
             Some((index, _)) => viewer::file_view(state, index, width, tall, shaper),
             None => node(),

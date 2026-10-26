@@ -113,6 +113,7 @@ pub mod trail;
 pub mod tree;
 pub mod tree_actions;
 pub mod update;
+pub mod update_dialog;
 pub mod usage;
 pub mod viewer;
 pub mod welcome;
