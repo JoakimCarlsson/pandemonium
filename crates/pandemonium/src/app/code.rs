@@ -1139,7 +1139,7 @@ impl App {
         let on_card = over.is_some_and(|id| {
             id == HOVER_CARD || (HOVER_LINK_BASE..HOVER_LINK_END).contains(&id.0)
         });
-        let selecting = self.text_held.is_some()
+        let selecting = self.text_gesture.is_held()
             && self
                 .text_selection
                 .is_some_and(|held| held.id == HOVER_TEXT);

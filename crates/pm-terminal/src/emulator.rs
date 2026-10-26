@@ -1,5 +1,6 @@
 //! The emulator: the bytes a shell prints, turned into what a terminal window shows.
 
+use pm_text::Reach;
 use vte::{Params, Parser, Perform};
 
 use crate::cell::{Cell, Color, Flags};
@@ -19,6 +20,9 @@ const LINES: [char; 31] = [
     '◆', '▒', '␉', '␌', '␍', '␊', '°', '±', '␤', '␋', '┘', '┐', '┌', '└', '┼', '⎺', '⎻', '─', '⎼',
     '⎽', '├', '┤', '┴', '┬', '│', '≤', '≥', 'π', '≠', '£', '·',
 ];
+
+/// The first and last cell of a stretch of output, each a line counted from the oldest kept and a column.
+pub type Span = ((usize, usize), (usize, usize));
 
 /// A part of the output the reader marked, from where the press began to where the pointer is, in lines counted from the oldest kept.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -371,6 +375,32 @@ impl Emulator {
     pub fn select(&mut self, anchor: (usize, usize), head: (usize, usize)) {
         self.selection = Some(Selection { anchor, head });
         self.version += 1;
+    }
+
+    /// The first and last cell, each a line counted from the oldest kept and a column, that `reach` takes around `cell`: the cell itself, the word it is in, or the line it is on with the lines it wraps from and into.
+    pub fn reach_around(&self, reach: Reach, cell: (usize, usize)) -> Span {
+        let (line, column) = cell;
+        match reach {
+            Reach::Point => (cell, cell),
+            Reach::Word => {
+                let text: String = self.absolute(line).iter().map(|cell| cell.ch).collect();
+                let starts: Vec<usize> = text.char_indices().map(|(at, _)| at).collect();
+                let word =
+                    pm_text::word_at(&text, starts.get(column).copied().unwrap_or(text.len()));
+                let first = starts.partition_point(|&at| at < word.start);
+                let last = starts
+                    .partition_point(|&at| at < word.end)
+                    .saturating_sub(1);
+                ((line, first), (line, last.max(first)))
+            }
+            Reach::Line => {
+                let (_, places) = self.wrapped_text(line);
+                (
+                    places.first().copied().unwrap_or(cell),
+                    places.last().copied().unwrap_or(cell),
+                )
+            }
+        }
     }
 
     /// Marks every line kept, from the oldest to the last of the window.

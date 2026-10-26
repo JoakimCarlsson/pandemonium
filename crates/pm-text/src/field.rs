@@ -2,6 +2,7 @@
 
 use std::ops::Range;
 
+use crate::reach::Reach;
 use crate::word::Class;
 
 /// Where a caret moves to.
@@ -52,8 +53,6 @@ pub enum Edit {
     /// Put the caret at a byte offset of what is shown, extending the
     /// selection when the flag is set and dropping it otherwise.
     Place(usize, bool),
-    /// Select the word around a byte offset of what is shown.
-    SelectWordAt(usize),
     /// Take back the last change.
     Undo,
     /// Make again the change that was taken back.
@@ -328,6 +327,11 @@ impl Field {
         self.caret
     }
 
+    /// The byte of [`Field::text`] where the selection stays put while the caret moves; the caret when nothing is selected.
+    pub fn anchor(&self) -> usize {
+        self.anchor
+    }
+
     /// The selected bytes of [`Field::text`], or nothing when none are.
     pub fn selection(&self) -> Option<Range<usize>> {
         (self.anchor != self.caret)
@@ -528,11 +532,6 @@ impl Field {
                 self.anchor = self.boundary(anchor);
                 self.caret = self.boundary(caret);
             }
-            Edit::SelectWordAt(shown) => {
-                let byte = self.to_text(shown);
-                self.anchor = self.word_before(self.after(byte).unwrap_or(byte));
-                self.caret = self.word_after(self.before(byte).unwrap_or(byte));
-            }
             Edit::AddSelection(anchor, caret) => {
                 let anchor = self.boundary(anchor);
                 let caret = self.boundary(caret);
@@ -657,6 +656,18 @@ impl Field {
         self.caret = target;
         if !extend {
             self.anchor = target;
+        }
+    }
+
+    /// The start and end of the word or line `reach` names around the byte `offset`.
+    pub fn reach_around(&self, reach: Reach, offset: usize) -> (usize, usize) {
+        match reach {
+            Reach::Point => (offset, offset),
+            Reach::Word => (
+                self.word_before(self.after(offset).unwrap_or(offset)),
+                self.word_after(self.before(offset).unwrap_or(offset)),
+            ),
+            Reach::Line => (self.line_start(offset), self.line_end(offset)),
         }
     }
 

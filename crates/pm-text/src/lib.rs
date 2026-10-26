@@ -7,11 +7,13 @@
 //! the word around a place in a text.
 
 mod field;
+mod reach;
 mod run;
 mod shaper;
 mod word;
 
 pub use field::{Edit, Field, Motion};
+pub use reach::{Clicks, Gesture, Reach, Surface};
 pub use run::{Bitmap, GlyphKey, PlacedGlyph, Run};
 pub use shaper::{Extent, Shaper};
 pub use word::word_at;

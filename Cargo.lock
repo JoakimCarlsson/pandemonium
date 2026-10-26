@@ -2603,6 +2603,7 @@ dependencies = [
  "pm-input",
  "pm-protocol",
  "pm-style",
+ "pm-terminal",
  "pm-text",
  "pm-ui",
 ]
@@ -2751,6 +2752,7 @@ dependencies = [
 name = "pm-terminal"
 version = "0.13.0"
 dependencies = [
+ "pm-text",
  "vte",
 ]
 

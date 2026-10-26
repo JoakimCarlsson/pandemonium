@@ -5,4 +5,5 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+pm-text.workspace = true
 vte = "0.15.0"
