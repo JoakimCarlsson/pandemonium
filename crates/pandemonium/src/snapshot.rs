@@ -313,8 +313,8 @@ pub enum Shot {
     Conflict,
     /// The diff of a session that edited files inside a submodule and moved it to another commit.
     DiffSubmodule,
-    /// The changes of a session in a folder that holds two repositories side by side: files edited in both, listed under the repository each is in.
-    ChangesRepositories,
+    /// The changes of a session in a folder that holds two repositories side by side: files edited in both, listed under the repository each is in, or, `true`, only those of the repository `api` picked in the list of repositories.
+    ChangesRepositories(bool),
     /// The source control panel of a folder with submodules: the list of repositories with the folder's own picked, or, `true`, a submodule picked with its branches open.
     BranchesSubmodule(bool),
     /// The same file with the caret in a call, its signature over it and the uses of a name marked.
@@ -1100,8 +1100,8 @@ fn diff_submodule() -> WorkspaceState {
     state.after(TAB_DIFF)
 }
 
-/// The first session in a folder that holds the repositories `api` and `web`, with files edited in both and one of them staged, and where each repository stands.
-fn changes_repositories() -> WorkspaceState {
+/// The first session in a folder that holds the repositories `api` and `web`, with files edited in both and one of them staged, where each repository stands, and, when `picked`, `api` picked in the list of repositories.
+fn changes_repositories(picked: bool) -> WorkspaceState {
     let mut state = workspace_sample();
     if let Some(session) = state.sessions.first_mut() {
         let mut changes = Vec::new();
@@ -1142,6 +1142,13 @@ fn changes_repositories() -> WorkspaceState {
                 tracking: pm_git::Tracking::default(),
             },
         ];
+    }
+    state.git.submodule_heads = vec![
+        ("api".to_owned(), "task/339-shared-branch".to_owned()),
+        ("web".to_owned(), "task/339-shared-branch".to_owned()),
+    ];
+    if picked {
+        state.git.repository = Some("api".to_owned());
     }
     state.after(TAB_DIFF)
 }
@@ -1903,7 +1910,7 @@ impl Shot {
             Self::Timeline => Screen::Workspace(timeline()),
             Self::Conflict => Screen::Workspace(conflict()),
             Self::DiffSubmodule => Screen::Workspace(diff_submodule()),
-            Self::ChangesRepositories => Screen::Workspace(changes_repositories()),
+            Self::ChangesRepositories(picked) => Screen::Workspace(changes_repositories(picked)),
             Self::BranchesSubmodule(inside) => Screen::Workspace(branches_submodule(inside)),
             Self::Signing => Screen::Workspace(signing()),
             Self::Annotated => Screen::Workspace(annotated()),

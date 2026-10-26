@@ -251,8 +251,8 @@ child has before those only some have; `checkout`, `create_branch`, `commit`
 changed) and every `sync` operation run in each child, all of them even when
 one fails, and the `failed` message names each child that did, as `name: why`.
 `log` and `stashes` list nothing, and `stash`, `cherry_pick` and
-`revision_changes` fail, for such a folder: they need one repository. A folder with a repository above it is that
-repository, not a folder of repositories. A child that has submodules keeps
+`revision_changes` fail, for such a folder: they need one repository. Such a folder is one even when it sits inside another
+repository; a folder with a `.git` entry of its own is a repository. A child that has submodules keeps
 everything said of them, its submodules' paths written from `directory`.
 
 - **`discover`:** starts the agent briefly and returns what it lets the reader
@@ -730,8 +730,8 @@ embedded context, and anything else as a link to the stored file.
 | `skills`     | `skills` (`[{name, description}]`), `names` (`[string]`)  |
 | `files`      | `paths`: repository-relative tracked, untracked and ignored files, `folders` (optional): untracked and ignored folders that may hold no file yet, `ignored` (optional): which paths and folders git ignores, listed so a tree can dim them |
 | `branches`   | `names`: local branches, the current one first, then remote ones such as `origin/main`; read from git at each request. Of a folder of repositories, those every child has, then the rest |
-| `submodules` | `paths`: every submodule's path from the root of the repository, nested ones included, initialised or not; in a folder of repositories, each child's, from the folder |
-| `submodule_heads` | `heads`: `[[path, head]]` for each checked out submodule, nested ones included: its branch, or `@ <commit>` on a detached head. `branches`, `checkout` and `create_branch` on a submodule's folder act on the submodule |
+| `submodules` | `paths`: every submodule's path from the root of the repository, nested ones included, initialised or not; in a folder of repositories, each child followed by its submodules, from the folder, so a child is listed like a submodule |
+| `submodule_heads` | `heads`: `[[path, head]]` for each checked out submodule, nested ones included (in a folder of repositories each child first, then its submodules): its branch, or `@ <commit>` on a detached head. `branches`, `checkout` and `create_branch` on a submodule's or a child's folder act on that repository alone |
 | `stashes`    | `stashes`: `[{index, message, when}]`, newest first |
 | `log`        | `commits`: `[{id, refs, summary, lanes}]`, newest first |
 | `file`       | `text`: string or null for a file that is not text, `truncated`: whether it was cut short, `language` (optional): the installed language it is written in |

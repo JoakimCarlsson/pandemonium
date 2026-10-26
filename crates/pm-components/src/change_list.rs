@@ -69,7 +69,7 @@ pub fn members(changes: &[Change], group: Group, repository: Option<&str>) -> Ve
     changes
         .iter()
         .enumerate()
-        .filter(|(_, change)| group.holds(change) && change.submodule.as_deref() == repository)
+        .filter(|(_, change)| group.holds(change) && change.is_listed_in(repository))
         .map(|(index, _)| index)
         .collect()
 }

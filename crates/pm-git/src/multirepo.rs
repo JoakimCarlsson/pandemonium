@@ -18,9 +18,9 @@ pub enum Layout {
 
 /// Whether `directory` is a repository, a folder of repositories or neither.
 ///
-/// A folder of repositories is found by a shallow scan of its direct children that have a `.git` entry, a folder or the file a worktree has, leaving out hidden and bulky folders; repositories nested deeper are not looked for.
+/// A folder with a `.git` entry of its own is a repository. Otherwise it is a folder of repositories when it has repositories as direct children, found by a shallow scan of those with a `.git` entry, a folder or the file a worktree has, leaving out hidden and bulky folders; this holds even when the folder sits inside another repository, which is then not what its files belong to. A folder with neither is a repository when git finds one above it. Repositories nested deeper are not looked for.
 pub fn layout(directory: &Path) -> Layout {
-    if directory.join(".git").exists() || is_repository(directory) {
+    if directory.join(".git").exists() {
         return Layout::Repository;
     }
     let Ok(entries) = fs::read_dir(directory) else {
@@ -33,11 +33,15 @@ pub fn layout(directory: &Path) -> Layout {
         .filter(|name| !name.starts_with('.') && !SKIPPED.contains(&name.as_str()))
         .filter(|name| directory.join(name).join(".git").exists())
         .collect();
-    if found.is_empty() {
-        return Layout::Neither;
+    if !found.is_empty() {
+        found.sort();
+        return Layout::Repositories(found);
     }
-    found.sort();
-    Layout::Repositories(found)
+    if is_repository(directory) {
+        Layout::Repository
+    } else {
+        Layout::Neither
+    }
 }
 
 /// The repositories `directory` holds side by side, each one's folder name, or nothing when it is a repository, or neither.

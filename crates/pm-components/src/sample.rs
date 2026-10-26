@@ -198,6 +198,19 @@ impl Change {
         ))
     }
 
+    /// The repository it is in, innermost first: the submodule when it is in one, otherwise the repository of a project that holds several, or nothing for the project itself.
+    pub fn holder(&self) -> Option<&str> {
+        self.submodule.as_deref().or(self.repository.as_deref())
+    }
+
+    /// Whether the list of the repository `picked`, a submodule or a repository of the project or nothing for all of the project's own, shows it: all those not in a submodule when nothing is picked.
+    pub fn is_listed_in(&self, picked: Option<&str>) -> bool {
+        match picked {
+            Some(picked) => self.holder() == Some(picked),
+            None => self.submodule.is_none(),
+        }
+    }
+
     /// Whether all of it is in the index.
     pub fn fully_staged(&self) -> bool {
         self.staged && !self.unstaged
