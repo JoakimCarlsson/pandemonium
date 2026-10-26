@@ -267,8 +267,8 @@ pub enum Shot {
     SettingsMcp,
     /// The settings panel on the Agent Servers inside Agents, with the form for adding one open.
     SettingsForm,
-    /// The settings panel on the Agent Servers inside Agents, with two accounts added to the first agent.
-    SettingsAccounts,
+    /// The settings panel on the Agent Servers inside Agents, with two accounts added to the first agent, at its narrowest when the flag is set.
+    SettingsAccounts(bool),
     /// The same panel waiting for the accounts and organizations to clone from.
     Loading,
     /// The same panel on the accounts and organizations to clone from.
@@ -1757,7 +1757,7 @@ impl Shot {
                 | Self::SettingsCompact(_)
                 | Self::SettingsMcp
                 | Self::SettingsForm
-                | Self::SettingsAccounts
+                | Self::SettingsAccounts(_)
         )
     }
 
@@ -1770,6 +1770,7 @@ impl Shot {
                 | Self::SettingsPicker(true)
                 | Self::SettingsMachine(true)
                 | Self::SettingsCompact(true)
+                | Self::SettingsAccounts(true)
         )
     }
 
@@ -1788,7 +1789,7 @@ impl Shot {
             "machine" => Some(Self::SettingsMachine(narrow)),
             "compact" => Some(Self::SettingsCompact(narrow)),
             "form" => Some(Self::SettingsForm),
-            "accounts" => Some(Self::SettingsAccounts),
+            "accounts" => Some(Self::SettingsAccounts(narrow)),
             "mcp" => Some(Self::SettingsMcp),
             slug => SETTINGS_SHOTS
                 .iter()
@@ -2348,7 +2349,7 @@ impl Shot {
                     .after(Section::AgentServers.id())
                     .after(SETTINGS_ADD),
             ),
-            Self::SettingsAccounts => {
+            Self::SettingsAccounts(_) => {
                 let agent = welcome().agent_id_at(0).unwrap_or_default();
                 Screen::Workspace(
                     welcome()

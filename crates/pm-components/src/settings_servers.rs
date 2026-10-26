@@ -1167,6 +1167,24 @@ fn installed_rows(state: &WorkspaceState, section: Section, needle: &str) -> Vec
                         account: Some(position),
                         adds_account: None,
                     });
+                let default = InstalledRow {
+                    title: match state.defaults.get(index) {
+                        Some(Some(Some(name))) => name.clone(),
+                        Some(Some(None)) => "Not signed in".to_owned(),
+                        _ => "Default account".to_owned(),
+                    },
+                    badges: if state.in_use.iter().any(|(owner, _)| *owner == agent.id) {
+                        Vec::new()
+                    } else {
+                        vec![("In use", Role::Subtle)]
+                    },
+                    description: String::new(),
+                    detail: format!("default account of {}", agent.name),
+                    place: None,
+                    enabled: None,
+                    account: None,
+                    adds_account: None,
+                };
                 std::iter::once(InstalledRow {
                     title: agent.name.clone(),
                     badges: Vec::new(),
@@ -1177,6 +1195,7 @@ fn installed_rows(state: &WorkspaceState, section: Section, needle: &str) -> Vec
                     account: None,
                     adds_account: Some(index),
                 })
+                .chain(std::iter::once(default))
                 .chain(accounts)
             })
             .filter(matching)

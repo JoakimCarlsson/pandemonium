@@ -19,6 +19,11 @@ pub fn default_account(agent: Agent) -> Option<String> {
     account_in(agent, None)
 }
 
+/// Who `agent` is signed in as in the account folder `home`, whichever folder is in use.
+pub fn account_in_folder(agent: Agent, home: PathBuf) -> Option<String> {
+    account_in(agent, Some(home))
+}
+
 /// Who `agent` is signed in as in the home folder `own`, or in its default one when there is none.
 fn account_in(agent: Agent, own: Option<PathBuf>) -> Option<String> {
     let home = std::env::home_dir()?;

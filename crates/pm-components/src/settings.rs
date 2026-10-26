@@ -402,6 +402,9 @@ impl WorkspaceState {
                     self.settings_page.picker = None;
                     self.recording = None;
                     self.section_changed();
+                    if section == Section::AgentServers {
+                        self.ask_default_accounts();
+                    }
                     if crate::settings_library::lists(section) {
                         self.read_library();
                     }

@@ -1019,17 +1019,19 @@ pub enum Outgoing {
         /// The machine, or nothing for this one.
         host: Option<String>,
     },
-    /// Asks who the agent at `agent` is signed in as, for naming the login in use after it when `naming`.
+    /// Asks who the agent at `agent` is signed in as, under the login `naming` and naming it after the answer, or under the login in use when there is none.
     Identity {
         /// The agent, by position.
         agent: usize,
-        /// Whether the answer names the login in use.
-        naming: bool,
+        /// The login the answer names, by id.
+        naming: Option<String>,
     },
-    /// Signs the agent, by its position, in under the login now in use.
+    /// Signs the agent, by its position, in under the login `login`, or the one now in use when there is none.
     SignIn {
         /// The agent, by position.
         agent: usize,
+        /// The login's id.
+        login: Option<String>,
     },
     /// Signs in again as the account of the open session.
     SignInSession {
