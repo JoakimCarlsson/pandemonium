@@ -6,6 +6,43 @@ use crate::ecosystem::{Ecosystem, file_name};
 /// The Go ecosystem.
 pub(crate) struct Go;
 
+/// What Go is set to do about private modules and proxies.
+struct Settings {
+    /// `GOPRIVATE`.
+    private: String,
+    /// `GONOPROXY`.
+    no_proxy: String,
+    /// `GOPROXY`.
+    proxy: String,
+}
+
+/// The settings of this machine, asked of `go` once and from the variables when it cannot be run.
+fn settings() -> &'static Settings {
+    static SETTINGS: std::sync::OnceLock<Settings> = std::sync::OnceLock::new();
+    SETTINGS.get_or_init(|| {
+        let asked = std::process::Command::new("go")
+            .args(["env", "GOPRIVATE", "GONOPROXY", "GOPROXY"])
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).into_owned());
+        if let Some(text) = asked {
+            let mut lines = text.lines().map(|line| line.trim().to_owned());
+            return Settings {
+                private: lines.next().unwrap_or_default(),
+                no_proxy: lines.next().unwrap_or_default(),
+                proxy: lines.next().unwrap_or_default(),
+            };
+        }
+        let variable = |name: &str| std::env::var(name).unwrap_or_default();
+        Settings {
+            private: variable("GOPRIVATE"),
+            no_proxy: variable("GONOPROXY"),
+            proxy: variable("GOPROXY"),
+        }
+    })
+}
+
 /// The module and the version `line`, an entry of a `require` block or what follows `require`, names, with the bytes of the version relative to the line; nothing for a line marked `// indirect`.
 fn entry(line: &str) -> Option<(String, String, std::ops::Range<usize>)> {
     let (code, comment) = line.split_once("//").unwrap_or((line, ""));
@@ -86,18 +123,29 @@ impl Ecosystem for Go {
         found
     }
 
-    /// Whether the module is private by `GOPRIVATE` or `GONOPROXY`, or the machine uses a proxy of its own, so that the public proxy is not asked about it.
+    /// Whether the module is private by `GOPRIVATE` or `GONOPROXY`, or the machine uses a proxy of its own, so that the public proxy is not asked about it; the settings are what `go env` reports, which includes the `go env` file, and the variables when `go` cannot be run.
     fn skips(&self, name: &str) -> bool {
-        let own_proxy = std::env::var("GOPROXY")
-            .is_ok_and(|proxy| !proxy.trim().is_empty() && !proxy.contains("proxy.golang.org"));
+        let settings = settings();
+        let own_proxy = settings.proxy.split([',', '|']).any(|entry| {
+            let entry = entry.trim();
+            !entry.is_empty()
+                && entry != "direct"
+                && entry != "off"
+                && entry
+                    .split_once("://")
+                    .map_or(entry, |(_, rest)| rest)
+                    .split('/')
+                    .next()
+                    != Some("proxy.golang.org")
+        });
         own_proxy
-            || ["GOPRIVATE", "GONOPROXY"].iter().any(|variable| {
-                std::env::var(variable).is_ok_and(|patterns| {
+            || [&settings.private, &settings.no_proxy]
+                .iter()
+                .any(|patterns| {
                     patterns
                         .split(',')
                         .any(|pattern| private(pattern.trim(), name))
                 })
-            })
     }
 
     /// The module proxy's address for the latest version, with capital letters written as `!` and the lower case letter, as the proxy asks.

@@ -160,6 +160,7 @@ impl Ecosystem for Cargo {
                         }
                     } else if value.starts_with('{')
                         && string_after(line, "registry", start).is_none()
+                        && string_after(line, "git", start).is_none()
                         && let Some((version, span)) = string_after(
                             &line[line.find('{').unwrap_or(0)..],
                             "version",

@@ -11,6 +11,16 @@ const SECTIONS: [&str; 4] = [
     "optionalDependencies",
 ];
 
+/// Whether the registry address `value` is npm's own: its host is exactly `registry.npmjs.org`.
+fn is_public(value: &str) -> bool {
+    value
+        .split_once("://")
+        .map_or(value, |(_, rest)| rest)
+        .split(['/', ':'])
+        .next()
+        .is_some_and(|host| host.eq_ignore_ascii_case("registry.npmjs.org"))
+}
+
 /// The npm ecosystem.
 pub(crate) struct Npm;
 
@@ -107,19 +117,34 @@ impl Ecosystem for Npm {
         found
     }
 
-    /// Whether the package's scope has a registry of its own in the user's `.npmrc`, or the default registry is not npm's, so that the public registry is not asked about it.
+    /// Whether the package's scope, or the default, has a registry other than npm's in the user's `.npmrc` or the `npm_config_` variables, so that the public registry is not asked about it. A project's own `.npmrc` is not read, as the manifest is looked at without its folder.
     fn skips(&self, name: &str) -> bool {
-        let Some(config) = std::env::var_os("HOME")
+        let scope = name.split('/').next().filter(|_| name.starts_with('@'));
+        let mut settings: Vec<(String, String)> = std::env::var_os("HOME")
             .map(|home| std::path::Path::new(&home).join(".npmrc"))
             .and_then(|path| std::fs::read_to_string(path).ok())
-        else {
-            return false;
-        };
-        let scope = name.split('/').next().filter(|_| name.starts_with('@'));
-        config.lines().map(str::trim).any(|line| {
-            let own_default = line.starts_with("registry=") && !line.contains("registry.npmjs.org");
-            let scoped = scope.is_some_and(|scope| line.starts_with(&format!("{scope}:registry=")));
-            own_default || scoped
+            .map(|text| {
+                text.lines()
+                    .filter_map(|line| line.split_once('='))
+                    .map(|(key, value)| {
+                        (
+                            key.trim().trim_matches(['"', '\'']).to_owned(),
+                            value.trim().trim_matches(['"', '\'']).to_owned(),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        settings.extend(std::env::vars().filter_map(|(key, value)| {
+            key.to_lowercase()
+                .strip_prefix("npm_config_")
+                .map(|key| (key.to_owned(), value))
+        }));
+        settings.iter().any(|(key, value)| {
+            let applies = key.eq_ignore_ascii_case("registry")
+                || scope
+                    .is_some_and(|scope| key.eq_ignore_ascii_case(&format!("{scope}:registry")));
+            applies && !is_public(value)
         })
     }
 
