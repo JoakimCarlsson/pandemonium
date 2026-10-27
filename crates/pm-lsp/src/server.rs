@@ -9,7 +9,7 @@ use pm_buffer::{Position, Span};
 use serde_json::{Value, json};
 
 use crate::manifest::ServerSpec;
-use crate::resolve::{found, managed};
+use crate::resolve::{found, managed, resolved};
 use crate::rpc::{Handler, Rpc};
 use crate::snippet;
 use crate::types::{
@@ -375,6 +375,16 @@ impl LanguageServer {
         env: &BTreeMap<String, String>,
         sink: DiagnosticsSink,
     ) -> Result<Self, String> {
+        if let Some(chosen) = resolved(spec, root) {
+            let chosen = chosen?;
+            let mut with = spec.clone();
+            if !chosen.args.is_empty() {
+                with.args = chosen.args;
+            }
+            let mut environment = env.clone();
+            environment.extend(chosen.env);
+            return Self::start_program(&chosen.program, &with, root, &environment, sink);
+        }
         let first_try = match found(spec, Some(root)) {
             Some(program) => match Self::start_program(&program, spec, root, env, sink.clone()) {
                 Ok(server) => return Ok(server),

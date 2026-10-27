@@ -219,6 +219,30 @@ pub(crate) fn language_owners() -> HashMap<String, Package> {
         .collect()
 }
 
+/// The installed extension that carries the language `language`, when one does.
+pub(crate) fn owner_of(language: &str) -> Option<Package> {
+    language_owners().remove(language)
+}
+
+/// What the module of `package` answers to `call`, which is about one of its languages, in `project` when it is about one; nothing when the module does not answer it.
+pub(crate) fn language_hook(
+    package: &Package,
+    call: &pm_plugin_api::LanguageCall,
+    project: Option<&std::path::Path>,
+) -> Option<Result<pm_plugin_api::LanguageReply, String>> {
+    match pm_plugin::run_language(package, call, project, &grants_of(&package.id)) {
+        Ok(pm_plugin_api::LanguageReply::Unsupported) => None,
+        other => Some(other),
+    }
+}
+
+/// The folder of `project` as a module may be told it: nothing unless the extension `package` may read the project.
+pub(crate) fn project_for(package: &Package, project: &std::path::Path) -> Option<String> {
+    grants_of(&package.id)
+        .allows(Capability::ReadProject)
+        .then(|| project.to_string_lossy().into_owned())
+}
+
 /// What each language that an extension brought is refused: its language server is not started unless the extension may run programs.
 pub(crate) fn refused_servers() -> HashMap<String, pm_lsp::ServerChoice> {
     language_owners()

@@ -12,6 +12,7 @@
 //! that a stretch written in another language can be highlighted in it.
 
 mod brackets;
+mod dependencies;
 mod engine;
 mod grammar;
 mod highlight;
@@ -26,6 +27,7 @@ mod select;
 mod syntax;
 mod tags;
 
+pub use dependencies::DependencyPlace;
 pub use grammar::{Editing, Grammar, Queries, Scope, Tags, default_pairs};
 pub use highlight::Highlight;
 pub use indent::Indent;

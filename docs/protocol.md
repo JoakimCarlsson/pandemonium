@@ -628,8 +628,8 @@ everything said of them, its submodules' paths written from `directory`.
   language server against the checksums the language's `config.toml` gives
   them. A language server is looked for in the project's own folders and on the
   machine's path first; one that is missing is installed into the data folder
-  under its version, by download, `go install` or `npm ci` as the manifest
-  says, and a version installed before is used when that fails. `npm ci` runs
+  under its version, by download, `go install`, `npm ci` or a command the
+  manifest names as the manifest says, and a version installed before is used when that fails. `npm ci` runs
   from the `package-lock.json` in the language's folder, which pins the
   checksum of every package, and `go install` runs with Go's checksum database
   enforced. Every client is
@@ -745,21 +745,18 @@ everything said of them, its submodules' paths written from `directory`.
   `version`, each already filled in by the server: first what the language
   server says, then the lenses the file's language folder declares (a
   `lenses.scm` and `[[lens]]` entries, see [`docs/extensions.md`](extensions.md))
-  and, unless `registry` is false, one for each dependency a `package.json`,
-  `Cargo.toml` or `go.mod` names whose version is behind the latest its
-  registry has (npm, crates.io, the Go module proxy), saying `Latest <version>
+  and, unless `registry` is false, one for each dependency a manifest names
+  whose version is behind the latest its registry has, saying `Latest <version>
   · Upgrade`. A lens has `runs` set when pressing it runs a command in a shell
   and must be sent with `run_code_lens`. The server keeps the list as given, and
   `press_code_lens` and `run_code_lens` take one by its place in it. Lookups in
   registries are kept for an hour (five minutes when they failed), spaced at
   least 100 ms apart for each registry, limited to 80 dependencies and eight
   seconds for each request, and a lookup that fails leaves its dependency out
-  without failing the request. A name is never sent to a public registry when the machine says
-  it is private: a Go module matching `GOPRIVATE` or `GONOPROXY`, any Go module
-  when `GOPROXY` does not list `proxy.golang.org` (as `go env`
-  reports it, so `direct` and `off` count), a crate with a `registry` or `git` key, and an npm package whose
-  scope, or the default, has a registry other than `registry.npmjs.org` in
-  `~/.npmrc` or the `npm_config_` variables.
+  without failing the request. Which manifests are read, where
+  the registry is and when a name is not sent to it, because the machine says it
+  is private (`GOPRIVATE`, `GOPROXY`, `.npmrc` and the like), are declared by the
+  language folders of the manifests, not by the server.
 - **`press_code_lens`:** presses one of the lenses last given for the open
   file: the places it points to when it counts uses, and otherwise the
   changes the language server made carrying out its command, as for
@@ -1040,12 +1037,12 @@ one.
   `go`) or empty. `source` is where it was found. Only `name` and `command` are
   required when a client sends one.
 - `tasks` lists them: those written in `.pandemonium.tasks.json` in the root of
-  the folder, `{"tasks": [{"name", "command", …}]}`, then those its manifests
-  imply: Cargo (`build`, `check`, `test`, `clippy`, `run`), the scripts of a
-  `package.json` run with the package manager its lockfile names (a Next.js
-  app lists its `dev`, `build`, `start` and `lint` scripts), the targets of
-  a Makefile, Go modules and Python projects. A detected task a written one has
-  the name of is left out.
+  the folder, `{"tasks": [{"name", "command", …}]}`, then those the installed
+  languages say its files imply, each by the `[[task]]` entries of its
+  `config.toml` (for example `languages/cargo`, `package-json`, `make`, `gomod`
+  and `python`; see [`docs/extensions.md`](extensions.md)). The server knows no
+  kind of project, so a language that is not installed adds none. A detected task
+  a written one has the name of is left out.
 - `run_task` starts the user's shell in the task's folder with the task's
   environment and the toolchain chosen for its language, types the command into
   it, and answers `terminal` as `open_terminal` does: the connection is attached
@@ -1060,10 +1057,11 @@ one.
   names is the folder the command runs in. A language marks places with its
   `runnables.scm`, whose captures `@run.<kind>` and `@name` clients read.
 - `toolchains` lists what is installed on the server's machine, and the virtual
-  environments the project keeps, for each language: the toolchains of rustup,
-  the Node.js versions nvm and fnm keep, Python found on the path, in the
-  project's `.venv` and in pyenv, and Go found on the path, in `/usr/local/go`
-  and in `~/sdk`. `system` is the one the machine's own path finds. `selected`
+  environments the project keeps, for each language family that an installed
+  language gives a `[[toolchain]]` entry (the ones shipped list the toolchains of
+  rustup, the Node.js versions nvm and fnm keep, Python found on the path, in
+  the project's `.venv` and in pyenv, and Go found on the path, in `/usr/local/go`
+  and in `~/sdk`). `system` is the one the machine's own path finds. `selected`
   marks the one the project's language is set to, which is `system` until one is
   chosen. `select_toolchain` chooses `toolchain` for `language` in `project`, or
   clears the choice when it is missing. The choice is kept by the server and used

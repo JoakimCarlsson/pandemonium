@@ -988,9 +988,9 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             revision.as_deref().or(head.then_some("HEAD")),
         ) {
             Ok(pm_git::Contents::Text { text, truncated }) => Response::File {
+                language: pm_lsp::language_of_text(&path, &text),
                 text: Some(text),
                 truncated,
-                language: pm_lsp::language_of(&path),
             },
             Ok(pm_git::Contents::Binary) => Response::File {
                 text: None,
@@ -1042,9 +1042,9 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             version,
         } => match crate::local_history::read(&place(&directory), &path, version) {
             Ok(text) => Response::File {
+                language: pm_lsp::language_of_text(&path, &text),
                 text: Some(text),
                 truncated: false,
-                language: pm_lsp::language_of(&path),
             },
             Err(reason) => failed(reason),
         },
@@ -1065,8 +1065,8 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                         ours: sides.ours,
                         theirs: sides.theirs,
                         base: sides.base,
+                        language: pm_lsp::language_of_text(&path, &text),
                         merged: text,
-                        language: pm_lsp::language_of(&path),
                     },
                 },
                 (Err(reason), _) => failed(reason),
@@ -1167,9 +1167,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                     links: triggers.links,
                     semantic_tokens: triggers.semantic_tokens,
                     inlay_hints: triggers.inlay_hints,
-                    code_lens: triggers.code_lens
-                        || crate::lenses::Lenses::declares(&language)
-                        || pm_deps::ecosystem_for(&path).is_some(),
+                    code_lens: triggers.code_lens || crate::lenses::Lenses::declares(&language),
                     inline_values: triggers.inline_values,
                 },
                 Err(reason) => failed(reason),

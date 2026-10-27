@@ -34,3 +34,62 @@ diagnosticMode = "openFilesOnly"
 kind = "npm"
 version = "1.1.414"
 packages = ["pyright@1.1.414"]
+
+[[task]]
+name = "pip install"
+command = "python -m pip install -r requirements.txt"
+files = ["requirements.txt"]
+
+[[task]]
+name = "pip install"
+command = "python -m pip install -e ."
+files = ["pyproject.toml"]
+absent = ["requirements.txt"]
+
+[[task]]
+name = "pytest"
+command = "python -m pytest"
+group = "test"
+files = ["pytest.ini", "conftest.py", "tests"]
+source = "pyproject.toml"
+
+[[task]]
+name = "pytest"
+command = "python -m pytest"
+group = "test"
+files = ["pyproject.toml"]
+text = [["pyproject.toml", "pytest"]]
+
+[[task]]
+name = "python: {name}"
+command = "{name}"
+group = "run"
+files = ["pyproject.toml"]
+
+[task.each]
+toml = ["project.scripts", "tool.poetry.scripts"]
+
+[[task]]
+name = "python main.py"
+command = "python main.py"
+group = "run"
+files = ["main.py"]
+
+[[toolchain]]
+system = [["python3", "--version"], ["python", "--version"]]
+
+[[toolchain]]
+project = [".venv", "venv", "env"]
+bin = ["bin", "Scripts"]
+program = "python"
+name = "venv {name}"
+env = { VIRTUAL_ENV = "{folder}" }
+detail_file = "pyvenv.cfg"
+detail_keys = ["version", "version_info"]
+detail_prefix = "Python "
+
+[[toolchain]]
+children = ["~/.pyenv/versions"]
+bin = ["bin"]
+program = "python"
+name = "pyenv {name}"

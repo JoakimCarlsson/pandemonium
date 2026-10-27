@@ -29,3 +29,10 @@ check = ["version"]
 kind = "go"
 version = "v0.24.0"
 package = "golang.org/x/tools/gopls@v0.24.0"
+
+[[toolchain]]
+system = [["go", "version"]]
+fixed = ["/usr/local/go"]
+children = ["~/sdk"]
+bin = ["bin"]
+program = "go"

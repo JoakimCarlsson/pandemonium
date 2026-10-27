@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "TSX, React and Next.js components with typescript-language-server."
 icon = "icon.svg"
 color = "#5aa9e6"
+family = "javascript"
 grammar = "tsx"
 suffixes = ["tsx"]
 aliases = ["typescriptreact"]

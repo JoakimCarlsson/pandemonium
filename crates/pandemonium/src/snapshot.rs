@@ -401,6 +401,7 @@ fn load_installed_grammar(id: &str) {
         brackets: read("brackets.scm"),
         runnables: read("runnables.scm"),
         lenses: String::new(),
+        dependencies: String::new(),
     };
     let editing = pm_treesitter::Editing {
         indent: manifest.indent,

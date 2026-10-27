@@ -32,6 +32,17 @@ pub fn language_of(path: &str) -> Option<String> {
         .map(|(id, _)| id.clone())
 }
 
+/// The installed language a file at `path` whose text is `text` is written in: by its name or ending when that tells, and otherwise by the pattern a language gives for the first line, which tells scripts that name their interpreter.
+pub fn language_of_text(path: &str, text: &str) -> Option<String> {
+    language_of(path).or_else(|| {
+        let first = text.lines().next().unwrap_or_default();
+        installed()
+            .into_iter()
+            .find(|(_, manifest)| manifest.matches_first_line(first))
+            .map(|(id, _)| id)
+    })
+}
+
 /// The languages installed on this machine, by folder name, each with its manifest.
 pub fn installed() -> Vec<(String, Manifest)> {
     let Ok(root) = languages_root() else {

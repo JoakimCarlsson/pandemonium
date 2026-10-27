@@ -7,13 +7,14 @@ version = "0.1.0"
 description = "TypeScript with typescript-language-server."
 icon = "icon.svg"
 color = "#5aa9e6"
+family = "javascript"
 grammar = "typescript"
 suffixes = ["ts", "mts", "cts"]
 aliases = ["ts"]
 line_comment = "//"
 indent = 2
 pairs = ["()", "[]", "{}", "\"\"", "''", "``"]
-requires = ["tsx"]
+requires = ["tsx", "package-json"]
 
 [grammar_file]
 url = "https://github.com/tree-sitter/tree-sitter-typescript/releases/download/v0.23.2/tree-sitter-typescript.wasm"

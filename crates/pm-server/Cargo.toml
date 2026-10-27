@@ -20,6 +20,7 @@ pm-git.workspace = true
 pm-lsp.workspace = true
 pm-mcp.workspace = true
 pm-plugin.workspace = true
+pm-plugin-api.workspace = true
 pm-policy.workspace = true
 pm-protocol.workspace = true
 pm-store.workspace = true

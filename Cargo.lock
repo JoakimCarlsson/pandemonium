@@ -2529,6 +2529,7 @@ dependencies = [
 name = "pm-deps"
 version = "0.14.0-rc.1"
 dependencies = [
+ "regex",
  "serde_json",
  "ureq",
 ]
@@ -2585,7 +2586,9 @@ dependencies = [
  "flate2",
  "pm-buffer",
  "pm-store",
+ "pm-task",
  "pm-tools",
+ "regex",
  "serde",
  "serde_json",
  "sha2 0.11.1",
@@ -2636,6 +2639,7 @@ dependencies = [
  "pm-plugin-api",
  "pm-policy",
  "pm-store",
+ "pm-tools",
  "pm-wasm",
  "serde",
  "serde_json",
@@ -2710,6 +2714,7 @@ dependencies = [
  "pm-lsp",
  "pm-mcp",
  "pm-plugin",
+ "pm-plugin-api",
  "pm-policy",
  "pm-protocol",
  "pm-store",
@@ -2768,6 +2773,7 @@ dependencies = [
 name = "pm-task"
 version = "0.14.0-rc.1"
 dependencies = [
+ "regex",
  "serde",
  "serde_json",
  "toml",

@@ -556,7 +556,7 @@ impl Setting {
             ),
             Self::RegistryLookups => (
                 "Dependency versions",
-                "Ask the package registries for the latest version of the dependencies in package.json, Cargo.toml and go.mod, and show an upgrade above the ones that are behind. Turn off to stop asking.",
+                "Ask the package registries for the latest version of the dependencies a manifest names, for the languages whose folders declare it, and show an upgrade above the ones that are behind. Turn off to stop asking.",
             ),
             Self::Minimap => (
                 "Minimap",

@@ -79,6 +79,32 @@
       "local": false
     },
     {
+      "id": "cargo",
+      "name": "Cargo Manifest",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "Cargo.toml with taplo, and the latest version of each dependency from crates.io.",
+      "hidden": true,
+      "requires": [],
+      "suffixes": [],
+      "names": [
+        "Cargo.toml"
+      ],
+      "patterns": [],
+      "server": "taplo",
+      "files": {
+        "brackets.scm": "a0d7d33c46c561c820e4b4b5e83a2c358eb5831a06b538338a0d3c950aa7e48e",
+        "config.toml": "7bbe130e5ddef4e80584519393e5f5cdfadb28cdb7a8f7638d5cab4316682de6",
+        "dependencies.scm": "5e1120c614698e2027330b9c7d00097c9743b45d43f28e8608a00187f2b703a6",
+        "highlights.scm": "25a36ce579bff0ac2d3ca0233d2b81fc05e4c4092c4b172bd7be32297fd78aec",
+        "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d",
+        "indents.scm": "9a3247ddd5fcc06a840724120ec90be62f8896f51801ae7504afedc7addbea97",
+        "injections.scm": "ab9da020af6105fee23299dc79805483f1143a8f40313af6cef147a93e5748c5",
+        "outline.scm": "9b4802a88954ac160f59aa3f505406615f35fb21ba59f1bc5ddf5a4c810885d0"
+      },
+      "local": false
+    },
+    {
       "id": "cmake",
       "name": "CMake",
       "kind": "language",
@@ -354,7 +380,7 @@
       "server": "gopls",
       "files": {
         "brackets.scm": "f0353a09140622170b89963be336b7bf1dfb4d3630516204a0d9a71de0244dde",
-        "config.toml": "a2eb85fadbbb5ec411ce20ccc9285ae910d3efed77856dee62221d2213ef9644",
+        "config.toml": "81d1ea62cae903e3205e862c88c4bc5e6f588255c842029e29824a30cd0e648c",
         "highlights.scm": "b845477ebabd708f06ff69438b4e309b1eadc8c014f9de78f2fa865652679528",
         "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d",
         "indents.scm": "a748e02c783a8758db59509a5d80db5c3ca3ea664699436444b7280b60ae8f18",
@@ -368,7 +394,7 @@
       "name": "Go Module",
       "kind": "language",
       "version": "0.1.0",
-      "description": "go.mod files with gopls.",
+      "description": "go.mod files with gopls, and the latest version of each module from the Go module proxy.",
       "hidden": true,
       "requires": [],
       "suffixes": [],
@@ -379,7 +405,8 @@
       "server": "gopls",
       "files": {
         "brackets.scm": "e98e812efd7ec6fa313ff2e47bd96eb5d07d0d2cfa3ecc1a0e845a5f838787a5",
-        "config.toml": "01a9a3700d3833121a2079bb4a05b3f55feac25b342624ac46b081f2da098109",
+        "config.toml": "7cf19a9f65a7a372441034b56d44a9f80c8a7af023ab9f6af4aca1d7704d8cec",
+        "dependencies.scm": "632d3a206b1433381fa757ef3ad9c0e1a9b206663802b843dcfcc5121848c95c",
         "grammar.wasm": "30eb00e1c4b4516ccfad39d0a8d79e5f98a823de45705ad3c6e232dfa7d5e36c",
         "highlights.scm": "4af8cc939548e0511af75e8ceecf9d484e18f163975793dcb3609ac1e9c5be9d",
         "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d"
@@ -585,7 +612,9 @@
       "version": "0.1.0",
       "description": "JavaScript and JSX, React and Next.js components with typescript-language-server.",
       "hidden": false,
-      "requires": [],
+      "requires": [
+        "package-json"
+      ],
       "suffixes": [
         "js",
         "mjs",
@@ -597,7 +626,7 @@
       "server": "typescript-language-server",
       "files": {
         "brackets.scm": "17d43133e8204321af678d982fc4952fecbda68995324a9be04b92677f17124a",
-        "config.toml": "5f2a1d0f8d4e982182e46e11ce21584b1cb5ac781680b0540a12407c3f5e6653",
+        "config.toml": "cc626d3b8492e754af6274e9d2bb487a8310e230f674b4c7c1f6bc190f6dfc82",
         "highlights.scm": "656af77ce62fe324c95d8b0b92acc7cdba9a78537964bb9770ab0223a5108922",
         "icon.svg": "12b4bbacd7fbf2b1a685b791ce8c5c0196a3f01f78aff3f75cc05929868e17c6",
         "indents.scm": "8c6500f9272158bf36044cf0bce758b81f71910ff87d4840b8c612ecc4d92501",
@@ -632,12 +661,11 @@
       "server": "vscode-json-language-server",
       "files": {
         "brackets.scm": "d13aeee7b2b6ff238a68e2029bfa42543e624415911624e2fb88cd93abf47bc5",
-        "config.toml": "d55bc6f88c7280ee9c2ca1958743b4bdbed1f77c8b32ac22980f2c59bd9ca6bc",
+        "config.toml": "e26f0eb9ef164de062671b5ed9d7f3633f2fe9d210c9ae9611f284a63017a9ce",
         "highlights.scm": "86cb3d2ca3aada199a87998e2d948de975e92c47d5258bcedbe71f193fe8fa4d",
         "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d",
         "indents.scm": "8d640f47854fdfb20e09a5ed3aec2c427b168ed62b2026350adc0b83dea69a2d",
         "injections.scm": "bf5e206d7ce8cf219cb98657904930f236cbeb830c186a6c62fa82500f9f08c3",
-        "lenses.scm": "c67f60b5cfb19f07d57e6ad3b8c69f4f954d302d5cd01d5746b4219c10df93e0",
         "outline.scm": "0dddd12b8c6b67923ce700ff0c65adef827a7ae40a6aec1d855f9aa88c9c4783",
         "package-lock.json": "114277b435719d7f6c5410f85076b2eed8b7dc8190663a085651f0b99aa1d1fe",
         "package.json": "2a4446da171df7890c82ecbdfe1de27a922991023178205d6c2ef0b57fe0d329"
@@ -719,7 +747,7 @@
       "server": null,
       "files": {
         "brackets.scm": "c54dac6541b82a63f109aa3c66e55c3e2074a6b17a450905ec008fd9e038633e",
-        "config.toml": "454da0007631383dfb92b55299c386e35b98e580176ab06d49e9f6b447ff663f",
+        "config.toml": "7aa75499a56284ce23443ab3599b37e544419e13d4ae0a1d8c1ab9be4b1cebb2",
         "highlights.scm": "5b4481cb03a2cef43789bec78bfb4e7741f31ee0888072623aaa9b8df52b855e",
         "icon.svg": "c08d36925b4afc2155c821e3ffe9412b24cc60c224be06a65d06a55cf311554d",
         "indents.scm": "00abeee62a9ac43016d26cd9fab371c1e9aef55fc39510792d97a814f1f50091",
@@ -834,6 +862,35 @@
       "local": false
     },
     {
+      "id": "package-json",
+      "name": "npm Manifest",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "package.json with the VS Code JSON language server, a lens to run each script and the latest version of each dependency from npm.",
+      "hidden": true,
+      "requires": [],
+      "suffixes": [],
+      "names": [
+        "package.json"
+      ],
+      "patterns": [],
+      "server": "vscode-json-language-server",
+      "files": {
+        "brackets.scm": "d13aeee7b2b6ff238a68e2029bfa42543e624415911624e2fb88cd93abf47bc5",
+        "config.toml": "6a1a78c8d20ec8ea8a26eac00a11ecbb69d643bcfaae190fe5ea04a4a071abe7",
+        "dependencies.scm": "137c42971026fbe3cf42ec7e2dfe6621a71c82cdd7d62cebc4fe08fab19a3938",
+        "highlights.scm": "86cb3d2ca3aada199a87998e2d948de975e92c47d5258bcedbe71f193fe8fa4d",
+        "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d",
+        "indents.scm": "8d640f47854fdfb20e09a5ed3aec2c427b168ed62b2026350adc0b83dea69a2d",
+        "injections.scm": "bf5e206d7ce8cf219cb98657904930f236cbeb830c186a6c62fa82500f9f08c3",
+        "lenses.scm": "1ca4d458de3a305262d9dd01c5e7370767def5df070abd792056066c5c55910c",
+        "outline.scm": "0dddd12b8c6b67923ce700ff0c65adef827a7ae40a6aec1d855f9aa88c9c4783",
+        "package-lock.json": "114277b435719d7f6c5410f85076b2eed8b7dc8190663a085651f0b99aa1d1fe",
+        "package.json": "2a4446da171df7890c82ecbdfe1de27a922991023178205d6c2ef0b57fe0d329"
+      },
+      "local": false
+    },
+    {
       "id": "powershell",
       "name": "PowerShell",
       "kind": "language",
@@ -904,7 +961,7 @@
       "server": "pyright-langserver",
       "files": {
         "brackets.scm": "4d23538e4730c901b85c049aa4f18c246b7aff9b4dbce9f7edaafc616352a2a3",
-        "config.toml": "69bd5e1f03b46227cf22595007a521b96dfb623f6667d5b63021bec473fc59ed",
+        "config.toml": "bbd76a6acea01fdba1953b3fedbee3bb60b17713640c579d99de4b2b22a3309e",
         "highlights.scm": "5fbf61e4a31701ccbb46a41328cce553e0944648d9f450d24fdf14029919f8a8",
         "icon.svg": "87315ba89d065698044335641ca2dc26dda120866e508c58b7177d44dbe17c1c",
         "indents.scm": "b243ab33a226ec1f0bc5d7e1c16607903d393222561f582bcdf794ceb2a1fc35",
@@ -922,7 +979,9 @@
       "version": "0.1.0",
       "description": "Rust with rust-analyzer.",
       "hidden": false,
-      "requires": [],
+      "requires": [
+        "cargo"
+      ],
       "suffixes": [
         "rs"
       ],
@@ -931,7 +990,7 @@
       "server": "rust-analyzer",
       "files": {
         "brackets.scm": "914f67dd435081dc1e4744104acda3ddc62c8dce73706f1117223c488b9de5e7",
-        "config.toml": "17e1ffcb937a32363e849c9af3bdb93c6730b21cb4db4c4989e84ac99503405b",
+        "config.toml": "f57222df02f7fc718e39f3ed89941f7eb795decfff6d7e56770b52c2151dd6a7",
         "highlights.scm": "48a60820fe574a37494db0f7decb2fbf586235be9d5110557b7c37c710256277",
         "icon.svg": "641040fc553ae4db835a47b49fd2690dcc9fadc84da024e3fc63c4322e3d11be",
         "indents.scm": "75b96136a0eda604b13de69a37c9329ad2ef79e715b6d458f393fed854caf95a",
@@ -1011,7 +1070,7 @@
       "server": "svelteserver",
       "files": {
         "brackets.scm": "2b990e69b11146dfc8dfbc0cb7461ab93fcedd03ce6154494efc3e31f296b702",
-        "config.toml": "54f3fc1a1b577536e4fe3e5dabe5672e77ddcd042bb7f2ac458ff71e18163c0f",
+        "config.toml": "c80d481ab07391cb486c921cf5a747707634ca7a7adfb358561bc00d2cbc54dc",
         "grammar.wasm": "751461809861a9197a7f5ee0eceeb600e03121ce9f6bc6225d569a8c504454e0",
         "highlights.scm": "e4799b788338ab73f86ff9370ea1c3d8fa65b06c4a90d3782a89189bdd437467",
         "icon.svg": "f73a1d7267fe0338d6f8bc033ebb4c5e22d16d89511ad50c9c10d73e75f88344",
@@ -1120,7 +1179,7 @@
       "server": "typescript-language-server",
       "files": {
         "brackets.scm": "970b02fb5bf6b37f95ae18de20d95274ea3adfcde501744d0188dcc514acd55c",
-        "config.toml": "b943c5b3dd65a5cd7571d5233b4cdc17554f80badeba532754cce692a31a0d49",
+        "config.toml": "4d4d7a608c8403dca70606f42663e06530b375d7297cb239da305b70e4256be5",
         "highlights.scm": "eda831a60ee976265446248da5f0691dd0ee289bd676cb3cdfc74a4dad05f8d7",
         "icon.svg": "dfe113def52fc72b2975392c6a5648883f8e4feb908a66f41f4092753cac1f1b",
         "indents.scm": "540da706c65dc1b5f126673895334cdb5ac386a606d05d9ef8f4e36e96f57888",
@@ -1141,7 +1200,8 @@
       "description": "TypeScript with typescript-language-server.",
       "hidden": false,
       "requires": [
-        "tsx"
+        "tsx",
+        "package-json"
       ],
       "suffixes": [
         "ts",
@@ -1153,7 +1213,7 @@
       "server": "typescript-language-server",
       "files": {
         "brackets.scm": "e7319b052b3ac296c901ac7183841072b5a9fe57d8032944ead6f0ef431c5644",
-        "config.toml": "504df80446b59646f3cd6470db166e91a9d66f2a34bac53ffc2a0028ea34715a",
+        "config.toml": "d0a6d535b73ab5e23895055c5f7289036dc3be91c2fc4d006b1e5193e7209eb3",
         "highlights.scm": "3ee958b8f7217a26f9e683a916a7872d8e79e81a57f2424a4d6ccd613f6017f4",
         "icon.svg": "0004d33f46b2175e90f8ea86aef139e29af5f7a3a3cf310e6dd6b8c084bab884",
         "indents.scm": "a95eaed00775b56c91e823fdbca801ff691db2e1fc9922309b4ded21b90c2784",

@@ -6,6 +6,7 @@ version = "0.1.0"
 description = "Makefiles."
 icon = "icon.svg"
 color = "#c9a27a"
+family = ""
 grammar = "make"
 suffixes = ["mk", "mak"]
 names = ["Makefile", "makefile", "GNUmakefile"]
@@ -23,3 +24,12 @@ sha256 = "1254d1e5787be8bb944d55d1f6552b6b2b7908272ed498013bfdc07bd7d042dd"
 kind = "target"
 title = "Run Target"
 command = "make {name}"
+
+[[task]]
+name = "make: {name}"
+command = "make {name}"
+files = ["GNUmakefile", "makefile", "Makefile"]
+groups = { build = ["all", "build", "release"], test = ["test", "check", "lint"], run = ["run", "start", "dev"] }
+
+[task.each]
+regex = '(?m)^(?<name>[A-Za-z0-9_][A-Za-z0-9_./-]*)[ \t]*:([^=]|$)'

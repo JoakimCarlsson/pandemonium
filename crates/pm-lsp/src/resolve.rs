@@ -8,6 +8,34 @@ use crate::fetch::{fetch_checked, unpack, write_program};
 use crate::manifest::{Install, InstallKind, ServerSpec};
 use crate::paths::{platform, program_name, server_root};
 
+/// A program an extension's module says starts a language server.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Resolved {
+    /// The program.
+    pub program: PathBuf,
+    /// What it is started with, when the language's own arguments are not wanted.
+    pub args: Vec<String>,
+    /// What the environment holds besides.
+    pub env: std::collections::BTreeMap<String, String>,
+}
+
+/// Asks whoever runs extensions how to start the server of a language in a project: nothing when no module has a say.
+pub type Resolver =
+    std::sync::Arc<dyn Fn(&ServerSpec, &Path) -> Option<Result<Resolved, String>> + Send + Sync>;
+
+/// The resolver that was set, if one was.
+static RESOLVER: std::sync::OnceLock<Resolver> = std::sync::OnceLock::new();
+
+/// Sets who is asked how to start a language server, before the program is looked for. It can be set once.
+pub fn set_resolver(resolver: Resolver) {
+    let _ = RESOLVER.set(resolver);
+}
+
+/// What an extension's module says starts the server of `spec` in the project at `root`, when one does.
+pub(crate) fn resolved(spec: &ServerSpec, root: &Path) -> Option<Result<Resolved, String>> {
+    RESOLVER.get().and_then(|resolver| resolver(spec, root))
+}
+
 /// How long a found program may take to say it works.
 const CHECK: Duration = Duration::from_secs(10);
 
@@ -62,6 +90,13 @@ fn works(program: &Path, arguments: &[String]) -> bool {
 fn installed_program(spec: &ServerSpec, install: &Install, folder: &Path) -> Option<PathBuf> {
     match install.kind {
         InstallKind::Npm => in_folder(&folder.join("node_modules").join(".bin"), &spec.command),
+        InstallKind::Command => in_folder(
+            &install
+                .bin
+                .as_deref()
+                .map_or_else(|| folder.to_path_buf(), |bin| folder.join(bin)),
+            &spec.command,
+        ),
         InstallKind::Download | InstallKind::Go => in_folder(folder, &spec.command),
     }
 }
@@ -129,6 +164,27 @@ fn install_into(spec: &ServerSpec, install: &Install, folder: &Path) -> Result<(
                     .env_remove("GOPRIVATE")
                     .env_remove("GOINSECURE")
                     .current_dir(folder);
+            })
+        }
+        InstallKind::Command => {
+            let program = install
+                .command
+                .first()
+                .ok_or("the manifest names no command to install with")?;
+            let version = install.version.as_str();
+            let folder_text = folder.to_string_lossy();
+            let arguments: Vec<String> = install.command[1..]
+                .iter()
+                .map(|argument| {
+                    argument
+                        .replace("{folder}", &folder_text)
+                        .replace("{version}", version)
+                })
+                .collect();
+            let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
+            let needs = install.needs.as_deref().unwrap_or(program);
+            run(program, needs, &arguments, |command| {
+                command.current_dir(folder);
             })
         }
         InstallKind::Npm => {

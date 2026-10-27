@@ -201,6 +201,16 @@ impl Host for Gate {
                     .map_err(|denied| denied.to_string())?;
                 self.process(&program, &args, cwd.as_deref())
             }
+            HostCall::Which { program } => {
+                self.grants
+                    .check(Capability::Process)
+                    .map_err(|denied| denied.to_string())?;
+                Ok(
+                    pm_tools::installed(&program).map_or(serde_json::Value::Null, |found| {
+                        serde_json::Value::String(found.to_string_lossy().into_owned())
+                    }),
+                )
+            }
             HostCall::Download { url } => {
                 self.grants
                     .check(Capability::Download)

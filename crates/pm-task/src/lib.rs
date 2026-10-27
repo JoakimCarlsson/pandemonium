@@ -8,19 +8,16 @@
 //! a debug scenario needs it first, to the end with [`Launch::finish`]. This
 //! crate knows nothing of panes, sessions or protocols.
 
-mod cargo;
 mod detect;
 mod file;
-mod go;
 mod launch;
-mod make;
-mod npm;
-mod python;
+mod spec;
 mod task;
 mod toolchain;
 
 pub use detect::{Found, detect, tasks};
 pub use file::FILE;
 pub use launch::Launch;
+pub use spec::{Each, TaskSpec, ToolchainSpec};
 pub use task::Task;
-pub use toolchain::{Toolchain, family, toolchains};
+pub use toolchain::{Toolchain, toolchains};

@@ -1,0 +1,138 @@
+# Cargo.toml: how the manifest of a Rust crate is told apart from other TOML,
+# how it is edited, the language server that reads it and how the latest version
+# of each dependency is found. It comes with Rust.
+
+name = "Cargo Manifest"
+version = "0.1.0"
+description = "Cargo.toml with taplo, and the latest version of each dependency from crates.io."
+icon = "icon.svg"
+color = "#d98b8b"
+grammar = "toml"
+hidden = true
+family = "rust"
+names = ["Cargo.toml"]
+aliases = ["cargo"]
+line_comment = "#"
+indent = 2
+pairs = ["[]", "{}", "\"\"", "''"]
+
+[grammar_file]
+url = "https://github.com/tree-sitter-grammars/tree-sitter-toml/releases/download/v0.7.0/tree-sitter-toml.wasm"
+sha256 = "1ac6a83826c35a68857f8325e00c78f6bcbef4eb6db3931a6cf3041f76e5e09f"
+
+[server]
+id = "taplo"
+language_id = "toml"
+command = "taplo"
+args = ["lsp", "stdio"]
+check = ["--version"]
+
+[server.install]
+kind = "download"
+version = "0.10.0"
+
+[server.install.downloads.linux-x86_64]
+url = "https://github.com/tamasfe/taplo/releases/download/0.10.0/taplo-linux-x86_64.gz"
+sha256 = "8fe196b894ccf9072f98d4e1013a180306e17d244830b03986ee5e8eabeb6156"
+archive = "gz"
+
+[server.install.downloads.linux-aarch64]
+url = "https://github.com/tamasfe/taplo/releases/download/0.10.0/taplo-linux-aarch64.gz"
+sha256 = "033681d01eec8376c3fd38fa3703c79316f5e14bb013d859943b60a07bccdcc3"
+archive = "gz"
+
+[server.install.downloads.macos-x86_64]
+url = "https://github.com/tamasfe/taplo/releases/download/0.10.0/taplo-darwin-x86_64.gz"
+sha256 = "898122cde3a0b1cd1cbc2d52d3624f23338218c91b5ddb71518236a4c2c10ef2"
+archive = "gz"
+
+[server.install.downloads.macos-aarch64]
+url = "https://github.com/tamasfe/taplo/releases/download/0.10.0/taplo-darwin-aarch64.gz"
+sha256 = "713734314c3e71894b9e77513c5349835eefbd52908445a0d73b0c7dc469347d"
+archive = "gz"
+
+[server.install.downloads.windows-x86_64]
+url = "https://github.com/tamasfe/taplo/releases/download/0.10.0/taplo-windows-x86_64.gz"
+sha256 = "550fdc955343f8a196447a05346ecf8827e391726e4ded577bb00a0a36cf220c"
+archive = "gz"
+
+[dependencies]
+url = "https://crates.io/api/v1/crates/{name}"
+latest = ["crate.max_stable_version", "crate.max_version"]
+requirement = '^(?<prefix>[\^~=v ]*)(?<version>[0-9]+(?:\.[0-9]+)*)(?<pre>-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$'
+
+[dependencies.private]
+ini = ["$CARGO_HOME/config.toml", "~/.cargo/config.toml", ".cargo/config.toml"]
+ini_keys = ["replace-with"]
+
+
+[[task]]
+name = "cargo build"
+command = "cargo build"
+group = "build"
+files = ["Cargo.toml"]
+text = [["Cargo.toml", '(?m)^\[package\]']]
+
+[[task]]
+name = "cargo build"
+command = "cargo build --workspace"
+group = "build"
+files = ["Cargo.toml"]
+no_text = [["Cargo.toml", '(?m)^\[package\]']]
+
+[[task]]
+name = "cargo check"
+command = "cargo check"
+group = "build"
+files = ["Cargo.toml"]
+text = [["Cargo.toml", '(?m)^\[package\]']]
+
+[[task]]
+name = "cargo check"
+command = "cargo check --workspace"
+group = "build"
+files = ["Cargo.toml"]
+no_text = [["Cargo.toml", '(?m)^\[package\]']]
+
+[[task]]
+name = "cargo test"
+command = "cargo test"
+group = "test"
+files = ["Cargo.toml"]
+text = [["Cargo.toml", '(?m)^\[package\]']]
+
+[[task]]
+name = "cargo test"
+command = "cargo test --workspace"
+group = "test"
+files = ["Cargo.toml"]
+no_text = [["Cargo.toml", '(?m)^\[package\]']]
+
+[[task]]
+name = "cargo clippy"
+command = "cargo clippy --all-targets"
+group = "build"
+files = ["Cargo.toml"]
+text = [["Cargo.toml", '(?m)^\[package\]']]
+
+[[task]]
+name = "cargo clippy"
+command = "cargo clippy --workspace --all-targets"
+group = "build"
+files = ["Cargo.toml"]
+no_text = [["Cargo.toml", '(?m)^\[package\]']]
+
+[[task]]
+name = "cargo run"
+command = "cargo run"
+group = "run"
+files = ["Cargo.toml"]
+text = [["Cargo.toml", '(?m)^\[package\]'], ["Cargo.toml", '(?m)^\[\[bin\]\]']]
+
+[[task]]
+name = "cargo run"
+command = "cargo run"
+group = "run"
+files = ["Cargo.toml"]
+text = [["Cargo.toml", '(?m)^\[package\]']]
+requires = ["src/main.rs"]

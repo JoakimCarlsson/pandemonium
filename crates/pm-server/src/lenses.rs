@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use pm_buffer::Buffer;
-use pm_lsp::{CodeLens, FileEdit, LensSpec, TextChange};
+use pm_lsp::{CodeLens, DependencySpec, FileEdit, LensSpec, TextChange};
 use pm_task::Task;
 use pm_treesitter::{Editing, Grammar, Queries, Syntax};
 
@@ -24,6 +24,8 @@ struct Evaluator {
     grammar: Arc<Grammar>,
     /// The lenses the folder declares.
     specs: Vec<LensSpec>,
+    /// How the dependencies of its manifests are checked, when it reads manifests.
+    dependencies: Option<DependencySpec>,
 }
 
 /// The lenses of the open files, as last offered, and what is needed to work them out.
@@ -65,18 +67,19 @@ fn folder_of(root: &Path, path: &str, marker: Option<&str>) -> String {
 /// The evaluator of the installed language `language`, or nothing when it declares no lenses or its grammar does not load.
 fn evaluator_of(language: &str) -> Option<Arc<Evaluator>> {
     let (id, manifest) = crate::languages::installed_named(language)?;
-    if manifest.lenses.is_empty() {
+    if manifest.lenses.is_empty() && manifest.dependencies.is_none() {
         return None;
     }
     let folder = pm_lsp::language_folder(&id).ok()?;
-    let lenses = std::fs::read_to_string(folder.join("lenses.scm")).ok()?;
+    let read = |file: &str| std::fs::read_to_string(folder.join(file)).unwrap_or_default();
     let wasm = std::fs::read(pm_lsp::grammar_file(&id).ok()?).ok()?;
     let grammar = Grammar::load(
         &id,
         &manifest.grammar,
         &wasm,
         &Queries {
-            lenses,
+            lenses: read("lenses.scm"),
+            dependencies: read("dependencies.scm"),
             ..Queries::default()
         },
         Editing {
@@ -92,7 +95,32 @@ fn evaluator_of(language: &str) -> Option<Arc<Evaluator>> {
     Some(Arc::new(Evaluator {
         grammar,
         specs: manifest.lenses,
+        dependencies: manifest.dependencies,
     }))
+}
+
+/// Whether a file at `path` is one of those the names or globs `files` list, or any when it lists none.
+fn for_file(files: &[String], path: &str) -> bool {
+    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+    files.is_empty() || files.iter().any(|pattern| pm_lsp::glob(pattern, name))
+}
+
+/// The provider a language folder's dependency spec declares.
+fn provider_of(spec: &DependencySpec) -> pm_deps::Provider {
+    pm_deps::Provider {
+        url: spec.url.clone(),
+        latest: spec.latest.clone(),
+        escape: spec.escape.clone(),
+        capitals: spec.capitals.clone(),
+        requirement: spec.requirement.clone(),
+        private: pm_deps::Private {
+            read: spec.private.read.clone(),
+            patterns: spec.private.patterns.clone(),
+            hosts: spec.private.hosts.clone(),
+            ini: spec.private.ini.clone(),
+            ini_keys: spec.private.ini_keys.clone(),
+        },
+    }
 }
 
 impl Lenses {
@@ -107,10 +135,11 @@ impl Lenses {
             .clone()
     }
 
-    /// Whether a language folder declares lenses for the language `language`, which makes its files worth asking for lenses even when no language server reads them.
+    /// Whether a language folder declares lenses or dependencies for the language `language`, which makes its files worth asking for lenses even when no language server reads them.
     pub(crate) fn declares(language: &str) -> bool {
-        crate::languages::installed_named(language)
-            .is_some_and(|(_, manifest)| !manifest.lenses.is_empty())
+        crate::languages::installed_named(language).is_some_and(|(_, manifest)| {
+            !manifest.lenses.is_empty() || manifest.dependencies.is_some()
+        })
     }
 
     /// The lenses of the file `path` of the project at `root`, written in `language`, whose text is `text`: those its language folder declares, and upgrades for the dependencies it names when `registry` allows asking for them. Each is numbered from `first`, and what pressing it does is kept for [`Lenses::run`] and [`Lenses::upgrade`].
@@ -133,10 +162,20 @@ impl Lenses {
             number += 1;
         };
         let file = path.rsplit(['/', '\\']).next().unwrap_or(path);
-        if let Some(evaluator) = self
-            .evaluator(language)
-            .filter(|evaluator| evaluator.specs.iter().any(|spec| spec.is_for(path)))
-            && let Some(syntax) = Syntax::parse(evaluator.grammar.clone(), text)
+        let evaluator = self.evaluator(language);
+        let dependencies = evaluator
+            .as_ref()
+            .and_then(|evaluator| evaluator.dependencies.as_ref())
+            .filter(|spec| registry && for_file(&spec.files, path));
+        let wants_lenses = evaluator
+            .as_ref()
+            .is_some_and(|evaluator| evaluator.specs.iter().any(|spec| spec.is_for(path)));
+        let syntax = evaluator
+            .as_ref()
+            .filter(|_| wants_lenses || dependencies.is_some())
+            .and_then(|evaluator| Syntax::parse(evaluator.grammar.clone(), text));
+        if let (Some(evaluator), Some(syntax)) = (&evaluator, &syntax)
+            && wants_lenses
         {
             let mut shown: Vec<&str> = Vec::new();
             for place in syntax.lens_places(text) {
@@ -166,7 +205,7 @@ impl Lenses {
                     language: spec
                         .toolchain
                         .clone()
-                        .map(|family| pm_task::family(&family).to_owned())
+                        .map(|family| crate::languages::family_of(&family))
                         .unwrap_or_default(),
                     source: path.to_owned(),
                 };
@@ -181,8 +220,27 @@ impl Lenses {
                 );
             }
         }
-        if registry {
-            for outdated in self.registry.outdated(path, text) {
+        if let (Some(spec), Some(syntax)) = (dependencies, &syntax) {
+            let named: Vec<pm_deps::Dependency> = syntax
+                .dependency_places(text)
+                .into_iter()
+                .map(|place| pm_deps::Dependency {
+                    name: place.name,
+                    requirement: place.requirement,
+                    span: place.version,
+                })
+                .collect();
+            let folder = root
+                .join(path)
+                .parent()
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| root.to_path_buf());
+            let outdated = if spec.hook {
+                self.outdated_by_module(language, root, named)
+            } else {
+                self.registry.outdated(&provider_of(spec), &folder, named)
+            };
+            for outdated in outdated {
                 let span = outdated.dependency.span.clone();
                 add(
                     CodeLens {
@@ -210,6 +268,55 @@ impl Lenses {
             }
         }
         offered
+    }
+
+    /// The dependencies among `named` that are behind, as the module of the extension that carries `language` says: it is asked for the latest version of each, which is kept for a while, and whether the requirement is behind it. Nothing when no module answers.
+    fn outdated_by_module(
+        &self,
+        language: &str,
+        root: &Path,
+        named: Vec<pm_deps::Dependency>,
+    ) -> Vec<pm_deps::Outdated> {
+        let Some(package) = crate::extensions::owner_of(language) else {
+            return Vec::new();
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+        let mut found = Vec::new();
+        for dependency in named.into_iter().take(80) {
+            if std::time::Instant::now() >= deadline {
+                break;
+            }
+            let latest =
+                self.registry
+                    .lookup(&format!("module:{language}"), &dependency.name, || {
+                        let call = pm_plugin_api::LanguageCall::LatestVersion {
+                            language: language.to_owned(),
+                            name: dependency.name.clone(),
+                        };
+                        match crate::extensions::language_hook(&package, &call, Some(root)) {
+                            Some(Ok(pm_plugin_api::LanguageReply::Version(version))) => version,
+                            _ => None,
+                        }
+                    });
+            let Some(latest) = latest else {
+                continue;
+            };
+            let call = pm_plugin_api::LanguageCall::Behind {
+                language: language.to_owned(),
+                requirement: dependency.requirement.clone(),
+                latest: latest.clone(),
+            };
+            if let Some(Ok(pm_plugin_api::LanguageReply::Replacement(Some(replacement)))) =
+                crate::extensions::language_hook(&package, &call, Some(root))
+            {
+                found.push(pm_deps::Outdated {
+                    dependency,
+                    latest,
+                    replacement,
+                });
+            }
+        }
+        found
     }
 
     /// What the lens numbered `index` last offered for the file `path` of the project at `root` does.

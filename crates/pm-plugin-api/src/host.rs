@@ -22,6 +22,11 @@ pub enum HostCall {
         /// The address, `http` or `https`.
         url: String,
     },
+    /// Finds a program on the machine and returns its path, or null when there is none; needs `process`.
+    Which {
+        /// The program's name.
+        program: String,
+    },
     /// Reads a text file of the project; needs `read-project`.
     ReadFile {
         /// The path inside the project.

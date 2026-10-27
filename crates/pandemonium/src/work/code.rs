@@ -51,6 +51,7 @@ fn compile(bundle: &GrammarBundle) -> Result<Arc<Grammar>, String> {
             brackets: bundle.brackets.clone(),
             runnables: bundle.runnables.clone(),
             lenses: String::new(),
+            dependencies: String::new(),
         },
         Editing {
             indent: bundle.indent,

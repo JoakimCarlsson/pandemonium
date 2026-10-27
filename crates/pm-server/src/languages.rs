@@ -38,6 +38,41 @@ pub(crate) fn installed_named(name: &str) -> Option<(String, Manifest)> {
         .cloned()
 }
 
+/// The family of toolchains the files of the installed language `language` are built and run with, which its language folder names, or the language's own folder name when it names none or the language is not installed.
+pub(crate) fn family_of(language: &str) -> String {
+    installed_named(language)
+        .map(|(id, manifest)| manifest.family.unwrap_or(id))
+        .unwrap_or_else(|| language.to_owned())
+}
+
+/// The tasks the installed languages declare, each with the family of toolchains it runs with.
+pub(crate) fn task_specs() -> Vec<(String, pm_task::TaskSpec)> {
+    pm_lsp::installed()
+        .into_iter()
+        .flat_map(|(id, manifest)| {
+            let family = manifest.family.unwrap_or(id);
+            manifest
+                .tasks
+                .into_iter()
+                .map(move |spec| (family.clone(), spec))
+        })
+        .collect()
+}
+
+/// How the installed languages say toolchains are found, each with the family it is for.
+pub(crate) fn toolchain_specs() -> Vec<(String, pm_task::ToolchainSpec)> {
+    pm_lsp::installed()
+        .into_iter()
+        .flat_map(|(id, manifest)| {
+            let family = manifest.family.unwrap_or(id);
+            manifest
+                .toolchains
+                .into_iter()
+                .map(move |spec| (family.clone(), spec))
+        })
+        .collect()
+}
+
 /// The grammar and queries of the installed language `name`, found by folder name or another name.
 pub(crate) fn grammar(name: &str) -> Result<GrammarBundle, String> {
     let (id, manifest) =

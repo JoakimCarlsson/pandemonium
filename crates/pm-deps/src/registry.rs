@@ -5,9 +5,10 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
+use crate::dependency::Dependency;
 use crate::dependency::Outdated;
-use crate::ecosystem::{Ecosystem, ecosystem_for};
-use crate::version::{Version, rewritten};
+use crate::provider::Provider;
+use crate::version::Version;
 
 /// How long what a registry said is kept before it is asked again.
 const FRESH: Duration = Duration::from_secs(60 * 60);
@@ -41,16 +42,26 @@ struct Learnt {
 /// The registries' answers, kept, and the pace at which they are asked.
 #[derive(Default)]
 pub struct Registry {
-    /// What was learnt, by ecosystem and dependency.
-    learnt: Mutex<HashMap<(&'static str, String), Learnt>>,
-    /// When each ecosystem's registry was asked last.
-    asked: Mutex<HashMap<&'static str, Instant>>,
+    /// What was learnt, by registry and dependency.
+    learnt: Mutex<HashMap<(String, String), Learnt>>,
+    /// When each registry was asked last.
+    asked: Mutex<HashMap<String, Instant>>,
 }
 
 impl Registry {
-    /// The latest version of `name` in the registry of `ecosystem`, from what was kept when that is recent, or nothing when the registry does not say.
-    fn latest(&self, ecosystem: &dyn Ecosystem, name: &str) -> Option<String> {
-        let key = (ecosystem.name(), name.to_owned());
+    /// The latest version of `name` in the registry of `provider`, from what was kept when that is recent, or nothing when the registry does not say.
+    fn latest(&self, provider: &Provider, name: &str) -> Option<String> {
+        self.lookup(&provider.url, name, || self.fetch(provider, name))
+    }
+
+    /// The latest version of `name` in the registry called `registry`, from what was kept when that is recent, and otherwise what `fetch` finds, which is kept; for a registry that something other than a [`Provider`] answers for.
+    pub fn lookup(
+        &self,
+        registry: &str,
+        name: &str,
+        fetch: impl FnOnce() -> Option<String>,
+    ) -> Option<String> {
+        let key = (registry.to_owned(), name.to_owned());
         if let Some(held) = self.learnt.lock().ok().and_then(|learnt| {
             learnt.get(&key).and_then(|held| {
                 let keeps = if held.latest.is_some() { FRESH } else { FAILED };
@@ -59,7 +70,7 @@ impl Registry {
         }) {
             return held;
         }
-        let latest = self.fetch(ecosystem, name);
+        let latest = fetch();
         if let Ok(mut learnt) = self.learnt.lock() {
             learnt.insert(
                 key,
@@ -72,15 +83,15 @@ impl Registry {
         latest
     }
 
-    /// Asks the registry of `ecosystem` about `name`, after the pause that spaces its requests out.
-    fn fetch(&self, ecosystem: &dyn Ecosystem, name: &str) -> Option<String> {
+    /// Asks the registry of `provider` about `name`, after the pause that spaces its requests out.
+    fn fetch(&self, provider: &Provider, name: &str) -> Option<String> {
         let wait = {
             let mut asked = self.asked.lock().ok()?;
             let now = Instant::now();
             let turn = asked
-                .get(ecosystem.name())
+                .get(&provider.url)
                 .map_or(now, |last| (*last + SPACING).max(now));
-            asked.insert(ecosystem.name(), turn);
+            asked.insert(provider.url.clone(), turn);
             turn - now
         };
         std::thread::sleep(wait);
@@ -90,25 +101,30 @@ impl Registry {
             .build()
             .into();
         let answer = agent
-            .get(ecosystem.address(name))
+            .get(provider.address(name))
             .call()
             .ok()?
             .body_mut()
             .read_to_string()
             .ok()?;
-        ecosystem.latest_in(&answer)
+        provider.latest_in(&answer)
     }
 
-    /// The dependencies of `text`, the manifest at `path`, whose version is behind the latest their registry has, each with the requirement that asks for the latest; none when `path` is not a manifest, and a dependency whose lookup fails or takes too long is left out.
-    pub fn outdated(&self, path: &str, text: &str) -> Vec<Outdated> {
-        let Some(ecosystem) = ecosystem_for(path) else {
+    /// The dependencies among `dependencies`, those the manifest in `folder` names, whose version is behind the latest the registry of `provider` has, each with the requirement that asks for the latest; a dependency that is private, whose lookup fails or takes too long is left out.
+    pub fn outdated(
+        &self,
+        provider: &Provider,
+        folder: &std::path::Path,
+        dependencies: Vec<Dependency>,
+    ) -> Vec<Outdated> {
+        let Ok(pattern) = regex::Regex::new(&provider.requirement) else {
             return Vec::new();
         };
-        let dependencies: Vec<_> = ecosystem
-            .dependencies(text)
+        let settings = provider.settings(folder);
+        let dependencies: Vec<Dependency> = dependencies
             .into_iter()
-            .filter(|dependency| Version::parse(&dependency.requirement).is_some())
-            .filter(|dependency| !ecosystem.skips(&dependency.name))
+            .filter(|dependency| Version::parse(&pattern, &dependency.requirement).is_some())
+            .filter(|dependency| !provider.skips(&dependency.name, &settings))
             .take(MOST)
             .collect();
         let deadline = Instant::now() + BUDGET;
@@ -125,7 +141,7 @@ impl Registry {
                         if Instant::now() >= deadline {
                             return;
                         }
-                        if let Some(latest) = self.latest(ecosystem, &dependency.name)
+                        if let Some(latest) = self.latest(provider, &dependency.name)
                             && let Ok(mut answers) = answers.lock()
                         {
                             answers.push((at, latest));
@@ -140,9 +156,10 @@ impl Registry {
             .into_iter()
             .filter_map(|(at, latest)| {
                 let dependency = dependencies[at].clone();
-                let held = Version::parse(&dependency.requirement)?;
-                held.is_behind(&Version::parse(&latest)?).then(|| Outdated {
-                    replacement: rewritten(&dependency.requirement, &latest),
+                let held = Version::parse(&pattern, &dependency.requirement)?;
+                let newest = Version::parse(&pattern, &latest)?;
+                held.is_behind(&newest).then(|| Outdated {
+                    replacement: held.rewritten(&newest),
                     dependency,
                     latest,
                 })

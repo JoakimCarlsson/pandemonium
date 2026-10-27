@@ -9,6 +9,7 @@ version = "0.1.0"
 description = "Svelte components with the Svelte language server."
 icon = "icon.svg"
 color = "#ff4a1c"
+family = "javascript"
 grammar = "svelte"
 suffixes = ["svelte"]
 indent = 2

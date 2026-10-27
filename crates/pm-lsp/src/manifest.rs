@@ -50,6 +50,8 @@ pub enum InstallKind {
     Download,
     /// Built with `go install`, which needs Go on the machine.
     Go,
+    /// Installed by a command the language folder names, run with the program it names found on the machine.
+    Command,
     /// Installed with `npm`, which needs Node.js on the machine.
     Npm,
 }
@@ -67,6 +69,15 @@ pub struct Install {
     /// What `go install` builds, with its version.
     #[serde(default)]
     pub package: Option<String>,
+    /// The program, with its arguments, a `command` install runs, where `{folder}` stands for the folder the server is installed in and `{version}` for `version`; the program is found on the machine and run without a shell.
+    #[serde(default)]
+    pub command: Vec<String>,
+    /// What the program of a `command` install needs, in words for the reader, when it is not on the machine.
+    #[serde(default)]
+    pub needs: Option<String>,
+    /// The folder inside the install folder that a `command` install puts the server's program in; the install folder itself when nothing.
+    #[serde(default)]
+    pub bin: Option<String>,
     /// What `npm` installs, each with its version; the language folder's `package.json` and `package-lock.json` pin them and the checksum of every package.
     #[serde(default)]
     pub packages: Vec<String>,
@@ -171,9 +182,9 @@ pub struct Companion {
 pub struct RunnableSpec {
     /// The kind of place the language's `runnables.scm` marks, such as `main` or `test`.
     pub kind: String,
-    /// What running it is called, with `{name}` standing for the place's name.
+    /// What running it is called, with `{name}` standing for the place's name, `{file}` for the name of the file and `{path}` for its path from the folder the command runs in.
     pub label: String,
-    /// The command that runs it, with `{name}` standing for the place's name.
+    /// The command that runs it, with `{name}`, `{file}` and `{path}` standing as they do in the label.
     pub command: String,
     /// The file that marks the folder the command runs in, such as `Cargo.toml`: the nearest folder above the file that holds it; the root of the project when nothing.
     #[serde(default)]
@@ -211,6 +222,55 @@ impl LensSpec {
     }
 }
 
+/// The settings of the machine that make a dependency private, so that its name is not sent to a registry.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PrivateSpec {
+    /// A program, with its arguments, that prints the value of each variable named in `patterns` and `hosts` on a line of its own when they are put after it, such as `["go", "env"]`; the variables of the process are read when it cannot be run.
+    #[serde(default)]
+    pub read: Vec<String>,
+    /// Variables that hold comma-separated names, or paths whose elements may be globs, of dependencies that are private.
+    #[serde(default)]
+    pub patterns: Vec<String>,
+    /// Variables that list the hosts dependencies are fetched from: every dependency is private unless the host of the registry is the only one listed.
+    #[serde(default)]
+    pub hosts: Vec<String>,
+    /// Files of `key=value` lines that can name another registry: one that starts with `~/` is in the home folder, one that starts with `$NAME/` in the folder the variable names, and any other is looked for in the folder of the manifest and every folder above it.
+    #[serde(default)]
+    pub ini: Vec<String>,
+    /// The keys of that file that name another registry, where `{scope}` stands for the scope a name starts with, such as `@types`.
+    #[serde(default)]
+    pub ini_keys: Vec<String>,
+}
+
+/// How the dependencies of the manifests a language reads are checked for newer versions: its `dependencies.scm` says where a manifest names them, and this where their registry says what the latest is.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DependencySpec {
+    /// Whether the language's extension module says what the latest version of a dependency is and whether a requirement is behind it, which `url`, `latest` and `requirement` then need not say.
+    #[serde(default)]
+    pub hook: bool,
+    /// The address that answers with what the registry knows of a dependency, where `{name}` stands for its name.
+    #[serde(default)]
+    pub url: String,
+    /// The places in the answer, a JSON document, that hold the latest version, as keys joined by dots; the first that has one is used.
+    #[serde(default)]
+    pub latest: Vec<String>,
+    /// How a name is written in the address: each pair has what is found in the name and what it is written as instead, such as `["/", "%2f"]`.
+    #[serde(default)]
+    pub escape: Vec<[String; 2]>,
+    /// What is written before a capital letter, which is then written in lower case; capitals are left as they are when nothing.
+    #[serde(default)]
+    pub capitals: Option<String>,
+    /// The pattern a version or requirement in a manifest is read with: its `version` group holds dot-separated numbers, its `prefix` group what stands before them and its `pre` group a pre-release tag; a requirement it does not match, such as a range or an address, is left alone.
+    #[serde(default)]
+    pub requirement: String,
+    /// The names of the files it is for, where `*` stands for any run of characters; every file of the language when none.
+    #[serde(default)]
+    pub files: Vec<String>,
+    /// When a dependency is not asked about.
+    #[serde(default)]
+    pub private: PrivateSpec,
+}
+
 /// A language: how its files are told apart, how they are edited, its grammar and its language server.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Manifest {
@@ -242,6 +302,9 @@ pub struct Manifest {
     /// File names that are written in it, where `*` stands for any run of characters, such as `.env.*`.
     #[serde(default)]
     pub patterns: Vec<String>,
+    /// A pattern the first line of a file that is not told by its name is matched against, such as `^#!.*\\bperl\\b` for a script that names its interpreter.
+    #[serde(default)]
+    pub first_line_pattern: Option<String>,
     /// Other names a code fence may call it by.
     #[serde(default)]
     pub aliases: Vec<String>,
@@ -284,6 +347,18 @@ pub struct Manifest {
     /// The lenses its `lenses.scm` has shown above the places it marks, each with what pressing it runs.
     #[serde(default, rename = "lens")]
     pub lenses: Vec<LensSpec>,
+    /// How the dependencies its manifests name are checked for newer versions, for a language that reads manifests.
+    #[serde(default)]
+    pub dependencies: Option<DependencySpec>,
+    /// The family of toolchains its files are built and run with, shared by the languages that use the same ones, such as `javascript` for TypeScript; its own folder name when nothing.
+    #[serde(default)]
+    pub family: Option<String>,
+    /// The tasks a project has when its files say so, such as the scripts of a manifest.
+    #[serde(default, rename = "task")]
+    pub tasks: Vec<pm_task::TaskSpec>,
+    /// How the toolchains of its family are found on a machine.
+    #[serde(default, rename = "toolchain")]
+    pub toolchains: Vec<pm_task::ToolchainSpec>,
 }
 
 /// An extension is a language unless its manifest says otherwise.
@@ -327,6 +402,14 @@ impl Manifest {
         let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
         self.names.iter().any(|whole| whole == name)
             || self.patterns.iter().any(|pattern| glob(pattern, name))
+    }
+
+    /// Whether a file whose first line is `line` is written in the language, by the pattern it gives for the first line.
+    pub fn matches_first_line(&self, line: &str) -> bool {
+        self.first_line_pattern
+            .as_deref()
+            .and_then(|pattern| regex::Regex::new(pattern).ok())
+            .is_some_and(|pattern| pattern.is_match(line))
     }
 
     /// Whether a file at `path` is written in the language, by its name or the ending of its name.

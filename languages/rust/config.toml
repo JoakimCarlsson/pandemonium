@@ -9,6 +9,7 @@ color = "#e8956a"
 grammar = "rust"
 suffixes = ["rs"]
 aliases = ["rs"]
+requires = ["cargo"]
 line_comment = "//"
 indent = 4
 
@@ -75,3 +76,8 @@ kind = "module"
 label = "Test module {name}"
 command = "cargo test {name}::"
 marker = "Cargo.toml"
+
+[[toolchain]]
+list = ["rustup", "toolchain", "list"]
+system = [["rustc", "--version"]]
+env = { RUSTUP_TOOLCHAIN = "{id}" }

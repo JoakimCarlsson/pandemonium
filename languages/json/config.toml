@@ -31,10 +31,3 @@ provideFormatter = true
 kind = "npm"
 version = "4.10.0"
 packages = ["vscode-langservers-extracted@4.10.0"]
-
-[[lens]]
-kind = "script"
-title = "Run Script"
-command = "npm run {name}"
-files = ["package.json"]
-toolchain = "javascript"

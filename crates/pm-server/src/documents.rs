@@ -47,6 +47,34 @@ impl Documents {
                 crate::tasks::server_environment(root, spec)
             }),
         );
+        pm_lsp::set_resolver(Arc::new(
+            |spec: &pm_lsp::ServerSpec, root: &std::path::Path| {
+                let language = spec
+                    .origin
+                    .as_ref()?
+                    .file_name()?
+                    .to_string_lossy()
+                    .into_owned();
+                let package = crate::extensions::owner_of(&language)?;
+                let call = pm_plugin_api::LanguageCall::ServerCommand {
+                    project: crate::extensions::project_for(&package, root),
+                    language,
+                };
+                match crate::extensions::language_hook(&package, &call, Some(root))? {
+                    Ok(pm_plugin_api::LanguageReply::Command(launch)) => {
+                        Some(Ok(pm_lsp::Resolved {
+                            program: std::path::PathBuf::from(launch.program),
+                            args: launch.args,
+                            env: launch.env,
+                        }))
+                    }
+                    Ok(pm_plugin_api::LanguageReply::Error(reason)) | Err(reason) => {
+                        Some(Err(reason))
+                    }
+                    Ok(_) => None,
+                }
+            },
+        ));
         let documents = Self { hub, openers };
         documents.settings_changed(&crate::machine::settings());
         documents

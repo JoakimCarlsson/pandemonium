@@ -79,7 +79,9 @@ One crate per layer, each depending only on the layers below it.
   `config.toml` declares the lenses shown above a file's lines, such as a button
   that runs a Compose service. A language that others need lists them in
   `requires`, and they are installed with it (Go brings `go.mod`, `go.sum` and
-  `go.work`; Docker brings Compose).
+  `go.work`; Rust brings `Cargo.toml`; JavaScript and TypeScript bring
+  `package.json`; Docker brings Compose), and each carries what is particular to
+  its files, so a user who does not install Go has none of what reads `go.mod`.
   `make languages` writes `languages/languages.json` with every file's checksum
   after a folder changes; a release build reads the folders from the repository
   at its own release tag, a debug build or `scripts/install-preview.sh` build from its checkout, and either from
@@ -91,10 +93,12 @@ One crate per layer, each depending only on the layers below it.
   of tool servers, which lists the tools they offer), `pm-dap`
   (programs debugged through debug adapters over the Debug Adapter Protocol:
   the adapters, what a folder can be debugged as, and a running session),
-  `pm-deps` (the dependencies a `package.json`, `Cargo.toml` or `go.mod` names
-  and the latest version their registry has, kept, spaced out and never fatal),
-  `pm-task` (what a project can be built, tested and run with: tasks read from
-  its manifests and its own file, and the toolchains installed on the machine),
+  `pm-deps` (asking the registry a language folder names for the latest
+  version of a dependency, kept, spaced out and never fatal; it knows no kind of
+  manifest or registry),
+  `pm-task` (what a project can be built, tested and run with: tasks the
+  installed languages declare for its files and its own file, and the toolchains
+  the languages say are installed on the machine; it knows no language),
   `pm-git`,
   `pm-store` (persistence under the data directory). The server uses them; the
   window does not.
@@ -109,8 +113,10 @@ One crate per layer, each depending only on the layers below it.
   until the reader grants them), `pm-plugin-api` (the versioned, append-only
   contract between the editor and an extension's module), `pm-wasm` (the
   sandbox that runs a module under a budget) and `pm-plugin` (the manifest, the
-  installed extensions, installing one through the language index and running
-  its commands). An extension lives on the server of its machine; its themes,
+  installed extensions, installing one through the language index, running
+  its commands and answering what the host asks of the languages it carries:
+  how to start their servers, the latest version of a dependency, tasks and
+  toolchains). An extension lives on the server of its machine; its themes,
   icon themes and command names are read by the window. `docs/extensions.md`
   describes the package.
 - **Binary:** `pandemonium`: the event loop, the window and the threads that

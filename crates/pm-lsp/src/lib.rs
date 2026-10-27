@@ -33,15 +33,15 @@ pub use choice::ServerChoice;
 pub use hub::{Environment, Hub, Published, Sink, rank, score};
 pub use index::{Index, Listing, build_index};
 pub use install::{
-    add_extension, add_folder, install, installed, installed_manifest, language_of, remove,
-    remove_folder, update_available,
+    add_extension, add_folder, install, installed, installed_manifest, language_of,
+    language_of_text, remove, remove_folder, update_available,
 };
 pub use manifest::{
-    Archive, Companion, Detect, Download, Install, InstallKind, LensSpec, Manifest, Pinned,
-    RunnableSpec, ScopeSpec, ServerSpec, TagSpec, glob,
+    Archive, Companion, DependencySpec, Detect, Download, Install, InstallKind, LensSpec, Manifest,
+    Pinned, PrivateSpec, RunnableSpec, ScopeSpec, ServerSpec, TagSpec, glob,
 };
 pub use paths::{grammar_file, language_folder, local_root};
-pub use resolve::{server_ready, server_state};
+pub use resolve::{Resolved, Resolver, server_ready, server_state, set_resolver};
 pub use types::{
     CodeAction, CodeLens, Completion, CompletionKind, Diagnostic, FileEdit, FoldRange, HintKind,
     Hover, InlayHint, InlineValue, InlineValueKind, Location, Problem, Seek, SemanticToken,

@@ -1,14 +1,16 @@
-# go.mod: how the file is told to be a Go module file, how it is edited and the
-# language server that reads it. The folder holds its own grammar, built with
+# go.mod: how the file is told to be a Go module file, how it is edited, the
+# language server that reads it and how the latest version of each module is
+# found. The folder holds its own grammar, built with
 # tree-sitter CLI 0.27.1 from camdencheek/tree-sitter-go-mod v1.1.0.
 
 name = "Go Module"
 version = "0.1.0"
-description = "go.mod files with gopls."
+description = "go.mod files with gopls, and the latest version of each module from the Go module proxy."
 icon = "icon.svg"
 color = "#6fc7d9"
 grammar = "gomod"
 hidden = true
+family = "go"
 names = ["go.mod"]
 aliases = ["go.mod", "gomod"]
 line_comment = "//"
@@ -26,3 +28,39 @@ check = ["version"]
 kind = "go"
 version = "v0.24.0"
 package = "golang.org/x/tools/gopls@v0.24.0"
+
+[dependencies]
+url = "https://proxy.golang.org/{name}/@latest"
+latest = ["Version"]
+capitals = "!"
+requirement = '^(?<prefix>[\^~=v ]*)(?<version>[0-9]+(?:\.[0-9]+)*)(?<pre>-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$'
+
+[dependencies.private]
+read = ["go", "env"]
+patterns = ["GOPRIVATE", "GONOPROXY"]
+hosts = ["GOPROXY"]
+
+[[task]]
+name = "go build"
+command = "go build ./..."
+group = "build"
+files = ["go.mod"]
+
+[[task]]
+name = "go test"
+command = "go test ./..."
+group = "test"
+files = ["go.mod"]
+
+[[task]]
+name = "go vet"
+command = "go vet ./..."
+group = "test"
+files = ["go.mod"]
+
+[[task]]
+name = "go run"
+command = "go run ."
+group = "run"
+files = ["go.mod"]
+requires = ["main.go"]

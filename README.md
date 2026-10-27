@@ -108,7 +108,8 @@ and the icon its files are shown with, so no file icon ships with the app
 either. The manifest pins the grammar and says how the language server is
 found and installed: a program you already have is used first, in the project
 (`.venv/bin`, `node_modules/.bin`) and then on your path; otherwise it is
-downloaded, built with `go install` or installed with `npm ci`, into a folder
+downloaded, built with `go install`, installed with `npm ci` or with a command
+the language names, into a folder
 per version. `languages/languages.json` lists the folders with a checksum for
 every file, every download is checked against the checksum it is pinned to,
 an npm install is pinned by the lockfile in the language's folder and a Go one

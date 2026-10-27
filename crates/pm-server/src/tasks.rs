@@ -38,10 +38,68 @@ pub(crate) fn project_key(directory: &Path, project: Option<&str>) -> String {
         .into_owned()
 }
 
+/// Every task of `root`: those written in its own file, those the installed languages declare and those the modules of the extensions that carry languages say it has.
+pub(crate) fn all_tasks(root: &Path) -> pm_task::Found {
+    let mut found = pm_task::tasks(root, &crate::languages::task_specs());
+    for (language, package) in crate::extensions::language_owners() {
+        let call = pm_plugin_api::LanguageCall::Tasks {
+            project: crate::extensions::project_for(&package, root),
+            language: language.clone(),
+        };
+        let Some(Ok(pm_plugin_api::LanguageReply::Tasks(items))) =
+            crate::extensions::language_hook(&package, &call, Some(root))
+        else {
+            continue;
+        };
+        let family = crate::languages::family_of(&language);
+        for item in items {
+            if found.tasks.iter().any(|held| held.is_named(&item.name)) {
+                continue;
+            }
+            found.tasks.push(Task {
+                name: item.name,
+                command: item.command,
+                folder: item.folder,
+                env: BTreeMap::new(),
+                group: item.group,
+                language: family.clone(),
+                source: item.source,
+            });
+        }
+    }
+    found
+}
+
+/// Every toolchain on this machine and in the project at `root`: those the installed languages say are found, and those the modules of the extensions that carry languages say are.
+pub(crate) fn all_toolchains(root: &Path) -> Vec<Toolchain> {
+    let mut found = pm_task::toolchains(root, &crate::languages::toolchain_specs());
+    for (language, package) in crate::extensions::language_owners() {
+        let call = pm_plugin_api::LanguageCall::Toolchains {
+            project: crate::extensions::project_for(&package, root),
+            language: language.clone(),
+        };
+        let Some(Ok(pm_plugin_api::LanguageReply::Toolchains(items))) =
+            crate::extensions::language_hook(&package, &call, Some(root))
+        else {
+            continue;
+        };
+        let family = crate::languages::family_of(&language);
+        found.extend(items.into_iter().map(|item| Toolchain {
+            language: family.clone(),
+            id: item.id,
+            name: item.name,
+            detail: item.detail,
+            path: item.path.into_iter().map(PathBuf::from).collect(),
+            env: item.env,
+        }));
+    }
+    found
+}
+
 /// The toolchain of `language`, by family, chosen for the project `project` whose root is `root`, when it is installed and not the machine's own.
 fn toolchain_of(root: &Path, project: &str, language: &str) -> Option<Toolchain> {
     let id = choices().get(project)?.get(language)?.clone();
-    pm_task::toolchains(root)
+    all_toolchains(root)
         .into_iter()
         .find(|toolchain| toolchain.language == language && toolchain.id == id)
         .filter(|toolchain| !toolchain.path.is_empty() || !toolchain.env.is_empty())
@@ -52,15 +110,15 @@ pub(crate) fn server_environment(
     root: &Path,
     spec: &pm_lsp::ServerSpec,
 ) -> BTreeMap<String, String> {
-    let family = pm_task::family(&spec.language_id);
-    toolchain_of(root, &project_key(root, None), family)
+    let family = crate::languages::family_of(&spec.language_id);
+    toolchain_of(root, &project_key(root, None), &family)
         .map(|toolchain| toolchain.environment(std::env::var_os("PATH")))
         .unwrap_or_default()
 }
 
 /// The answer to asking what the folder `root` can be built, tested and run with.
 pub(crate) fn listed(root: &Path) -> Response {
-    let found = pm_task::tasks(root);
+    let found = all_tasks(root);
     Response::Tasks {
         tasks: found.tasks,
         problem: found.problem,
@@ -72,7 +130,7 @@ pub(crate) fn toolchains(root: &Path, project: Option<&str>) -> Response {
     let chosen = choices()
         .remove(&project_key(root, project))
         .unwrap_or_default();
-    let toolchains = pm_task::toolchains(root)
+    let toolchains = all_toolchains(root)
         .into_iter()
         .map(|toolchain| {
             let selected = match chosen.get(&toolchain.language) {
@@ -109,7 +167,7 @@ pub(crate) fn select(project: &str, language: &str, toolchain: Option<&str>) -> 
 
 /// Runs the task of the project at `root` that is called `name` to its end, with the toolchains chosen for `project`, and says why it did not succeed when it did not.
 pub(crate) fn finish_named(root: &Path, project: Option<&str>, name: &str) -> Result<(), String> {
-    let task = pm_task::tasks(root)
+    let task = all_tasks(root)
         .tasks
         .into_iter()
         .find(|task| task.is_named(name))
@@ -145,6 +203,14 @@ fn is_plain(name: &str) -> bool {
             .all(|character| character.is_alphanumeric() || character == '_')
 }
 
+/// Whether `path` is made of the characters a path is written with, so that it is safe to put in a command.
+fn is_plain_path(path: &str) -> bool {
+    !path.starts_with('-')
+        && path
+            .chars()
+            .all(|character| character.is_alphanumeric() || "_-./@+".contains(character))
+}
+
 /// The task that runs the place called `name` of kind `kind` in the file `path` of the project at `root`, as the language of the file says.
 pub(crate) fn runnable(root: &Path, path: &str, kind: &str, name: &str) -> Result<Task, String> {
     if !is_plain(name) {
@@ -158,13 +224,31 @@ pub(crate) fn runnable(root: &Path, path: &str, kind: &str, name: &str) -> Resul
         .iter()
         .find(|spec| spec.kind == kind)
         .ok_or_else(|| format!("{} has no way to run a {kind}", manifest.name))?;
+    let folder = folder_of(root, path, spec.marker.as_deref());
+    let inside = path
+        .strip_prefix(&format!("{folder}/"))
+        .filter(|_| !folder.is_empty())
+        .unwrap_or(path);
+    let uses_path = [&spec.label, &spec.command]
+        .iter()
+        .any(|template| template.contains("{file}") || template.contains("{path}"));
+    if uses_path && !is_plain_path(path) {
+        return Err(format!("{path} is not a path that can be run"));
+    }
+    let file = path.rsplit('/').next().unwrap_or(path);
+    let fill = |template: &str| {
+        template
+            .replace("{name}", name)
+            .replace("{file}", file)
+            .replace("{path}", inside)
+    };
     Ok(Task {
-        name: spec.label.replace("{name}", name),
-        command: spec.command.replace("{name}", name),
-        folder: folder_of(root, path, spec.marker.as_deref()),
+        name: fill(&spec.label),
+        command: fill(&spec.command),
+        folder,
         env: BTreeMap::new(),
         group: if kind == "main" { "run" } else { "test" }.to_owned(),
-        language: pm_task::family(&language).to_owned(),
+        language: crate::languages::family_of(&language),
         source: path.to_owned(),
     })
 }
