@@ -82,7 +82,7 @@ One crate per layer, each depending only on the layers below it.
   `go.work`; Docker brings Compose).
   `make languages` writes `languages/languages.json` with every file's checksum
   after a folder changes; a release build reads the folders from the repository
-  at its own release tag, a debug or preview build from its checkout, and either from
+  at its own release tag, a debug build or `scripts/install-preview.sh` build from its checkout, and either from
   `PANDEMONIUM_LANGUAGES` when it is set.
 - **Domain:** `pm-acp` (agents over the Agent Client Protocol),
   `pm-agent-library` (the skills, instructions, agent definitions, hooks and

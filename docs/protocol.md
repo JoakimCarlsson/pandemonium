@@ -756,8 +756,8 @@ everything said of them, its submodules' paths written from `directory`.
   seconds for each request, and a lookup that fails leaves its dependency out
   without failing the request. A name is never sent to a public registry when the machine says
   it is private: a Go module matching `GOPRIVATE` or `GONOPROXY`, any Go module
-  when `GOPROXY` lists a host other than `proxy.golang.org` (as `go env`
-  reports them), a crate with a `registry` or `git` key, and an npm package whose
+  when `GOPROXY` does not list `proxy.golang.org` (as `go env`
+  reports it, so `direct` and `off` count), a crate with a `registry` or `git` key, and an npm package whose
   scope, or the default, has a registry other than `registry.npmjs.org` in
   `~/.npmrc` or the `npm_config_` variables.
 - **`press_code_lens`:** presses one of the lenses last given for the open

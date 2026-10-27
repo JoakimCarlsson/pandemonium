@@ -126,18 +126,17 @@ impl Ecosystem for Go {
     /// Whether the module is private by `GOPRIVATE` or `GONOPROXY`, or the machine uses a proxy of its own, so that the public proxy is not asked about it; the settings are what `go env` reports, which includes the `go env` file, and the variables when `go` cannot be run.
     fn skips(&self, name: &str) -> bool {
         let settings = settings();
-        let own_proxy = settings.proxy.split([',', '|']).any(|entry| {
-            let entry = entry.trim();
-            !entry.is_empty()
-                && entry != "direct"
-                && entry != "off"
-                && entry
+        let uses_public = settings.proxy.trim().is_empty()
+            || settings.proxy.split([',', '|']).any(|entry| {
+                entry
+                    .trim()
                     .split_once("://")
-                    .map_or(entry, |(_, rest)| rest)
+                    .map_or(entry.trim(), |(_, rest)| rest)
                     .split('/')
                     .next()
-                    != Some("proxy.golang.org")
-        });
+                    == Some("proxy.golang.org")
+            });
+        let own_proxy = !uses_public;
         own_proxy
             || [&settings.private, &settings.no_proxy]
                 .iter()
