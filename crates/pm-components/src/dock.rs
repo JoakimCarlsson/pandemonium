@@ -11,7 +11,8 @@ use crate::sample::Session;
 
 use crate::state::{
     BOTTOM_PROBLEMS, BOTTOM_PROBLEMS_COUNT, BOTTOM_TERMINAL, MAXIMIZE_TERMINAL, NEW_TERMINAL,
-    Outgoing, PROBLEM_ROW_BASE, TERMINAL, TERMINAL_CLOSE_BASE, TERMINAL_TAB_BASE, WorkspaceState,
+    Outgoing, PROBLEM_ROW_BASE, ProblemsKey, TERMINAL, TERMINAL_CLOSE_BASE, TERMINAL_TAB_BASE,
+    WorkspaceState,
 };
 
 /// The tabs of the dock, one of which shows at a time.
@@ -238,22 +239,58 @@ impl WorkspaceState {
         self.ask_problems();
     }
 
-    /// Asks the server what is wrong with the files of the project of the session the dock is about, unless it was asked and has not answered.
+    /// The folder, and the machine it is on, of the session at `session`.
+    fn problems_key(&self, session: usize) -> Option<ProblemsKey> {
+        let held = self.sessions.get(session)?;
+        let host = self.projects.get(held.project)?.host();
+        Some((host, held.directory.clone()))
+    }
+
+    /// Asks the server what is wrong with the files of the folder of the session the dock is about, unless it was asked about that folder and has not answered.
     pub(crate) fn ask_problems(&mut self) {
-        if self.problems_asked {
+        let Some(session) = self.docked_position() else {
+            return;
+        };
+        let key = self.problems_key(session);
+        if key.is_none() || self.problems_asked == key {
             return;
         }
-        if let Some(session) = self.docked_position() {
-            self.problems_asked = true;
-            self.outbox.push(Outgoing::Problems { session });
+        self.problems_asked = key;
+        self.outbox.push(Outgoing::Problems { session });
+    }
+
+    /// Asks again when the list of problems is showing but is about another folder than the one the dock is about, as after another session was brought into view.
+    pub(crate) fn ask_problems_again(&mut self) {
+        if !self.terminal || self.bottom != BottomTab::Problems {
+            return;
+        }
+        let key = self.docked_position().and_then(|at| self.problems_key(at));
+        if self.problems_of != key {
+            self.ask_problems();
         }
     }
 
-    /// The state after the server said what is wrong with the files of the project of the session at `session`.
+    /// The problems of the folder of the session the dock is about, none while the list held is about another folder.
+    pub fn current_problems(&self) -> &[pm_protocol::Problem] {
+        let key = self.docked_position().and_then(|at| self.problems_key(at));
+        match &self.problems_of {
+            Some(held) if key.as_ref() == Some(held) => &self.problems,
+            _ => &[],
+        }
+    }
+
+    /// The state after the server said what is wrong with the files of the folder of the session at `session`; an answer about a folder the dock is no longer about is dropped.
     pub fn with_problems(mut self, session: usize, problems: Vec<pm_protocol::Problem>) -> Self {
-        self.problems_asked = false;
-        if self.docked_position() == Some(session) {
+        let key = self.problems_key(session);
+        if self.problems_asked == key {
+            self.problems_asked = None;
+        }
+        if key.is_some() && self.docked_position().and_then(|at| self.problems_key(at)) == key {
+            if self.problems_of != key {
+                self.problems_scroll = 0.0;
+            }
             self.problems = problems;
+            self.problems_of = key;
         }
         self
     }
@@ -269,9 +306,10 @@ impl WorkspaceState {
         let Some(index) = self.problem_picked.take() else {
             return self;
         };
-        let (Some(session), Some(problem)) =
-            (self.docked_position(), self.problems.get(index).cloned())
-        else {
+        let (Some(session), Some(problem)) = (
+            self.docked_position(),
+            self.current_problems().get(index).cloned(),
+        ) else {
             return self;
         };
         self.go_to_location(
@@ -331,7 +369,7 @@ impl WorkspaceState {
                 } else if let Some(index) = number
                     .checked_sub(PROBLEM_ROW_BASE)
                     .map(|offset| offset as usize)
-                    .filter(|offset| *offset < self.problems.len())
+                    .filter(|offset| *offset < self.current_problems().len())
                 {
                     self.problem_picked = Some(index);
                 } else {
