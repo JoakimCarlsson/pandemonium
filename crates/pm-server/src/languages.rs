@@ -59,10 +59,16 @@ pub(crate) fn task_specs() -> Vec<(String, pm_task::TaskSpec)> {
         .collect()
 }
 
-/// How the installed languages say toolchains are found, each with the family it is for.
+/// How the installed languages say toolchains are found, each with the family it is for; finding them runs programs, so a language an extension carries is left out unless the extension may run programs.
 pub(crate) fn toolchain_specs() -> Vec<(String, pm_task::ToolchainSpec)> {
+    let owners = crate::extensions::language_owners();
     pm_lsp::installed()
         .into_iter()
+        .filter(|(id, _)| {
+            owners.get(id).is_none_or(|package| {
+                crate::extensions::grants_of(&package.id).allows(pm_policy::Capability::Process)
+            })
+        })
         .flat_map(|(id, manifest)| {
             let family = manifest.family.unwrap_or(id);
             manifest

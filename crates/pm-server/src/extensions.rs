@@ -219,6 +219,11 @@ pub(crate) fn language_owners() -> HashMap<String, Package> {
         .collect()
 }
 
+/// Whether what the language `language` declares may run programs on this machine: it is not carried by an extension, or the extension was granted `process`. An extension's data must not run what its module could not.
+pub(crate) fn may_run_programs(language: &str) -> bool {
+    owner_of(language).is_none_or(|package| grants_of(&package.id).allows(Capability::Process))
+}
+
 /// The installed extension that carries the language `language`, when one does.
 pub(crate) fn owner_of(language: &str) -> Option<Package> {
     language_owners().remove(language)

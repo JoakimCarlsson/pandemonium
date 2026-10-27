@@ -42,6 +42,9 @@ pub(crate) fn project_key(directory: &Path, project: Option<&str>) -> String {
 pub(crate) fn all_tasks(root: &Path) -> pm_task::Found {
     let mut found = pm_task::tasks(root, &crate::languages::task_specs());
     for (language, package) in crate::extensions::language_owners() {
+        if !crate::extensions::grants_of(&package.id).allows(pm_policy::Capability::Process) {
+            continue;
+        }
         let call = pm_plugin_api::LanguageCall::Tasks {
             project: crate::extensions::project_for(&package, root),
             language: language.clone(),
@@ -53,7 +56,13 @@ pub(crate) fn all_tasks(root: &Path) -> pm_task::Found {
         };
         let family = crate::languages::family_of(&language);
         for item in items {
-            if found.tasks.iter().any(|held| held.is_named(&item.name)) {
+            let escapes = std::path::Path::new(&item.folder).components().any(|part| {
+                !matches!(
+                    part,
+                    std::path::Component::Normal(_) | std::path::Component::CurDir
+                )
+            });
+            if escapes || found.tasks.iter().any(|held| held.is_named(&item.name)) {
                 continue;
             }
             found.tasks.push(Task {
@@ -74,6 +83,9 @@ pub(crate) fn all_tasks(root: &Path) -> pm_task::Found {
 pub(crate) fn all_toolchains(root: &Path) -> Vec<Toolchain> {
     let mut found = pm_task::toolchains(root, &crate::languages::toolchain_specs());
     for (language, package) in crate::extensions::language_owners() {
+        if !crate::extensions::grants_of(&package.id).allows(pm_policy::Capability::Process) {
+            continue;
+        }
         let call = pm_plugin_api::LanguageCall::Toolchains {
             project: crate::extensions::project_for(&package, root),
             language: language.clone(),

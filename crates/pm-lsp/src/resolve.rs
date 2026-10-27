@@ -31,6 +31,17 @@ pub fn set_resolver(resolver: Resolver) {
     let _ = RESOLVER.set(resolver);
 }
 
+/// Asks whoever runs extensions whether the language of `spec` may install its server by a command it names, which runs a program: an error saying why not.
+pub type CommandGate = std::sync::Arc<dyn Fn(&ServerSpec) -> Result<(), String> + Send + Sync>;
+
+/// The gate that was set, if one was.
+static COMMAND_GATE: std::sync::OnceLock<CommandGate> = std::sync::OnceLock::new();
+
+/// Sets who is asked before a server is installed by a command. It can be set once.
+pub fn set_command_gate(gate: CommandGate) {
+    let _ = COMMAND_GATE.set(gate);
+}
+
 /// What an extension's module says starts the server of `spec` in the project at `root`, when one does.
 pub(crate) fn resolved(spec: &ServerSpec, root: &Path) -> Option<Result<Resolved, String>> {
     RESOLVER.get().and_then(|resolver| resolver(spec, root))
@@ -167,6 +178,9 @@ fn install_into(spec: &ServerSpec, install: &Install, folder: &Path) -> Result<(
             })
         }
         InstallKind::Command => {
+            if let Some(gate) = COMMAND_GATE.get() {
+                gate(spec)?;
+            }
             let program = install
                 .command
                 .first()

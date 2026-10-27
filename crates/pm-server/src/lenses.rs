@@ -105,8 +105,17 @@ fn for_file(files: &[String], path: &str) -> bool {
     files.is_empty() || files.iter().any(|pattern| pm_lsp::glob(pattern, name))
 }
 
-/// The provider a language folder's dependency spec declares.
-fn provider_of(spec: &DependencySpec) -> pm_deps::Provider {
+/// Whether `text` is made of the characters a version is written with, so that what a module says is written into a file is no more than one.
+fn is_version_text(text: &str) -> bool {
+    !text.is_empty()
+        && text.len() <= 64
+        && text
+            .chars()
+            .all(|held| held.is_ascii_alphanumeric() || "._+~^=<>-".contains(held))
+}
+
+/// The provider a language folder's dependency spec declares; its settings are read by running `read` only when `may_run`.
+fn provider_of(spec: &DependencySpec, may_run: bool) -> pm_deps::Provider {
     pm_deps::Provider {
         url: spec.url.clone(),
         latest: spec.latest.clone(),
@@ -114,7 +123,11 @@ fn provider_of(spec: &DependencySpec) -> pm_deps::Provider {
         capitals: spec.capitals.clone(),
         requirement: spec.requirement.clone(),
         private: pm_deps::Private {
-            read: spec.private.read.clone(),
+            read: if may_run {
+                spec.private.read.clone()
+            } else {
+                Vec::new()
+            },
             patterns: spec.private.patterns.clone(),
             hosts: spec.private.hosts.clone(),
             ini: spec.private.ini.clone(),
@@ -238,7 +251,11 @@ impl Lenses {
             let outdated = if spec.hook {
                 self.outdated_by_module(language, root, named)
             } else {
-                self.registry.outdated(&provider_of(spec), &folder, named)
+                self.registry.outdated(
+                    &provider_of(spec, crate::extensions::may_run_programs(language)),
+                    &folder,
+                    named,
+                )
             };
             for outdated in outdated {
                 let span = outdated.dependency.span.clone();
@@ -298,7 +315,7 @@ impl Lenses {
                             _ => None,
                         }
                     });
-            let Some(latest) = latest else {
+            let Some(latest) = latest.filter(|held| is_version_text(held)) else {
                 continue;
             };
             let call = pm_plugin_api::LanguageCall::Behind {
@@ -308,6 +325,7 @@ impl Lenses {
             };
             if let Some(Ok(pm_plugin_api::LanguageReply::Replacement(Some(replacement)))) =
                 crate::extensions::language_hook(&package, &call, Some(root))
+                && is_version_text(&replacement)
             {
                 found.push(pm_deps::Outdated {
                     dependency,

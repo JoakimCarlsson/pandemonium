@@ -47,6 +47,21 @@ impl Documents {
                 crate::tasks::server_environment(root, spec)
             }),
         );
+        pm_lsp::set_command_gate(Arc::new(|spec: &pm_lsp::ServerSpec| {
+            let language = spec
+                .origin
+                .as_ref()
+                .and_then(|folder| folder.file_name())
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if crate::extensions::may_run_programs(&language) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "{language} is carried by an extension that is not allowed to run programs"
+                ))
+            }
+        }));
         pm_lsp::set_resolver(Arc::new(
             |spec: &pm_lsp::ServerSpec, root: &std::path::Path| {
                 let language = spec

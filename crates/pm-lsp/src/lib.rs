@@ -41,7 +41,9 @@ pub use manifest::{
     Pinned, PrivateSpec, RunnableSpec, ScopeSpec, ServerSpec, TagSpec, glob,
 };
 pub use paths::{grammar_file, language_folder, local_root};
-pub use resolve::{Resolved, Resolver, server_ready, server_state, set_resolver};
+pub use resolve::{
+    CommandGate, Resolved, Resolver, server_ready, server_state, set_command_gate, set_resolver,
+};
 pub use types::{
     CodeAction, CodeLens, Completion, CompletionKind, Diagnostic, FileEdit, FoldRange, HintKind,
     Hover, InlayHint, InlineValue, InlineValueKind, Location, Problem, Seek, SemanticToken,

@@ -103,6 +103,16 @@ program or finds one with `which`, `download` fetches a page, and `read-project`
 reads a file; the project is named in a call only when the extension may read it.
 Modules run in the same sandbox as commands, under the same limits.
 
+What a language's data and module may make the machine run follows the same
+grants. For a language an extension carries, `[[toolchain]]` entries (which run
+programs to find versions), `private.read`, a `kind = "command"` install and the
+`tasks`, `toolchains` and `server-command` hooks are all refused unless the
+extension was granted `process`. What a module says the latest version is, or
+what to write instead, is accepted only as a version (letters, digits and
+`._+~^=<>-`, at most 64 characters), and a task's folder may not leave the
+project. A lens or task a language declares is a command the reader presses to
+run, as a runnable is, and is not gated.
+
 A script that has no ending is told by its first line: `first_line_pattern` in
 the language's `config.toml` is a pattern matched against it, such as
 `^#!.*\bperl\b`. A language's name or ending is tried first. In `[[runnable]]`,
