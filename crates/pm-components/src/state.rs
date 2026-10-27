@@ -232,6 +232,9 @@ pub const SIDEBAR_TOGGLE: FocusId = FocusId(20_200_004);
 /// The dock's tab showing the shells.
 pub const BOTTOM_TERMINAL: FocusId = FocusId(20_200_001);
 
+/// A folder of a machine, which the problems of the dock are about: the machine the folder is on, when it is not this one, and the folder.
+pub type ProblemsKey = (Option<String>, String);
+
 /// The list of problems in the dock, which scrolls.
 pub const PROBLEMS_SCROLL: FocusId = FocusId(20_200_002);
 
@@ -1528,10 +1531,12 @@ pub struct WorkspaceState {
     pub sidebar_open: bool,
     /// Which tab of the dock is showing.
     pub bottom: crate::dock::BottomTab,
-    /// What is wrong with the files of the project of the session the dock is about, as the server last said.
+    /// What is wrong with the files of the folder `problems_of` names, as the server last said.
     pub problems: Vec<pm_protocol::Problem>,
-    /// Whether the server was asked what is wrong with the files and has not answered.
-    pub problems_asked: bool,
+    /// The folder, and the machine it is on, that `problems` is about.
+    pub problems_of: Option<ProblemsKey>,
+    /// The folder, and the machine it is on, the server was asked about and has not answered.
+    pub problems_asked: Option<ProblemsKey>,
     /// How far down the list of problems is scrolled, in logical pixels.
     pub problems_scroll: f32,
     /// The problem of the list the reader pressed, whose place is to be shown.
@@ -1781,7 +1786,8 @@ impl WorkspaceState {
             sidebar_open: true,
             bottom: crate::dock::BottomTab::default(),
             problems: Vec::new(),
-            problems_asked: false,
+            problems_of: None,
+            problems_asked: None,
             problems_scroll: 0.0,
             problem_picked: None,
             terminal_height: crate::terminal::HEIGHT,
@@ -2361,6 +2367,7 @@ impl WorkspaceState {
 
     /// Takes what the agents have yet to be told off the state.
     pub fn take_outbox(&mut self) -> Vec<Outgoing> {
+        self.ask_problems_again();
         std::mem::take(&mut self.outbox)
     }
 

@@ -22,7 +22,7 @@ const NOTHING_WRONG: &str = "No problems have been detected in the workspace.";
 pub fn tally(state: &WorkspaceState) -> (usize, usize) {
     let count = |severity: Severity| {
         state
-            .problems
+            .current_problems()
             .iter()
             .filter(|problem| problem.diagnostic.severity == severity)
             .count()
@@ -78,14 +78,14 @@ pub fn problems_tab(state: &WorkspaceState) -> Node {
     let mut body = node()
         .styles([flex(), flex_col(), flex_1(), min_h(0), overflow_hidden()])
         .scroll_from_start(PROBLEMS_SCROLL, state.problems_scroll);
-    if state.problems.is_empty() {
+    if state.current_problems().is_empty() {
         return body.child(
             node()
                 .styles([flex(), items_center(), h(7), px(3), flex_none()])
                 .child(line(NOTHING_WRONG, 12, 1.4, Role::Subtle)),
         );
     }
-    for (index, problem) in state.problems.iter().take(MOST_ROWS).enumerate() {
+    for (index, problem) in state.current_problems().iter().take(MOST_ROWS).enumerate() {
         body = body.child(row(index, problem));
     }
     body
