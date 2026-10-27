@@ -79,7 +79,7 @@ impl Work {
         }
     }
 
-    /// Refreshes matching project submodules and reads the git panel again when `directory`, which the server on `host` watches, is the folder of the session shown.
+    /// Refreshes matching project submodules and reads the git panel, the file tree and the open files again when `directory`, which the server on `host` watches, is the folder of the session shown.
     pub(super) fn folder_changed(&mut self, model: &State<Screen>, host: &Host, directory: &str) {
         for (project, root) in Self::project_folders(model, host) {
             if root == directory {
@@ -102,7 +102,11 @@ impl Work {
             && shown == directory
         {
             self.refresh(model, position);
-            model.update(|screen| *screen = std::mem::take(screen).with_tree_stale());
+            model.update(|screen| {
+                *screen = std::mem::take(screen)
+                    .with_tree_stale()
+                    .open_files_wanted(position);
+            });
         }
     }
 }
