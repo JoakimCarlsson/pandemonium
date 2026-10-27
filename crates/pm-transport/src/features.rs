@@ -117,6 +117,7 @@ fn download(reference: &str, into: &Path) -> Result<(), String> {
         &headers,
         Some(&archive),
     )?;
+    refuse_links(&archive)?;
     output_of(
         Command::new("tar")
             .arg("-xf")
@@ -125,6 +126,22 @@ fn download(reference: &str, into: &Path) -> Result<(), String> {
             .arg(into),
     )?;
     std::fs::remove_file(&archive).map_err(|error| format!("could not clean up: {error}"))
+}
+
+/// Refuses the archive at `archive` when it holds a link, or a path that is absolute or climbs out of the folder it is extracted to, so that nothing in it can make a later write on this machine land elsewhere.
+fn refuse_links(archive: &Path) -> Result<(), String> {
+    let listing = output_of(Command::new("tar").arg("-tvf").arg(archive))?;
+    let names = output_of(Command::new("tar").arg("-tf").arg(archive))?;
+    let linked = String::from_utf8_lossy(&listing)
+        .lines()
+        .any(|line| line.starts_with(['l', 'h']));
+    let escaping = String::from_utf8_lossy(&names)
+        .lines()
+        .any(|name| name.starts_with('/') || name.split('/').any(|part| part == ".."));
+    if linked || escaping {
+        return Err("the feature holds a link or a path outside its folder".to_owned());
+    }
+    Ok(())
 }
 
 /// The name of an option as the install script reads it from its environment.
@@ -202,17 +219,23 @@ fn build(
         std::fs::create_dir_all(&folder)
             .map_err(|error| format!("could not make {}: {error}", folder.display()))?;
         download(&feature.reference, &folder)?;
-        let metadata: Value = std::fs::read_to_string(folder.join("devcontainer-feature.json"))
-            .ok()
+        let described = folder.join("devcontainer-feature.json");
+        let metadata: Value = std::fs::symlink_metadata(&described)
+            .is_ok_and(|entry| entry.is_file())
+            .then(|| std::fs::read_to_string(&described).ok())
+            .flatten()
             .and_then(|text| serde_json::from_str(&crate::devcontainer::plain_json(&text)).ok())
             .unwrap_or(Value::Null);
+        let options = scratch.join(format!("env{index}"));
+        std::fs::create_dir_all(&options)
+            .map_err(|error| format!("could not make {}: {error}", options.display()))?;
         std::fs::write(
-            folder.join("pandemonium-env.sh"),
+            options.join("pandemonium-env.sh"),
             environment(feature, &metadata),
         )
         .map_err(|error| format!("could not write the options: {error}"))?;
         dockerfile.push_str(&format!(
-            "COPY feature{index} /tmp/pandemonium-feature{index}\nRUN cd /tmp/pandemonium-feature{index} && . ./pandemonium-env.sh && chmod +x install.sh && ./install.sh && rm -rf /tmp/pandemonium-feature{index}\n"
+            "COPY feature{index} /tmp/pandemonium-feature{index}\nCOPY env{index}/pandemonium-env.sh /tmp/pandemonium-feature{index}/pandemonium-env.sh\nRUN cd /tmp/pandemonium-feature{index} && . ./pandemonium-env.sh && chmod +x install.sh && ./install.sh && rm -rf /tmp/pandemonium-feature{index}\n"
         ));
         if let Some(variables) = metadata["containerEnv"].as_object() {
             for (name, value) in variables {
