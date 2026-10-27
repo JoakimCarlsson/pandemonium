@@ -112,7 +112,10 @@ impl Provider {
         let names: Vec<&String> = private.patterns.iter().chain(&private.hosts).collect();
         let asked = (!private.read.is_empty() && !names.is_empty())
             .then(|| {
-                std::process::Command::new(&private.read[0])
+                let program = pm_tools::installed(&private.read[0])
+                    .unwrap_or_else(|| PathBuf::from(&private.read[0]));
+                std::process::Command::new(&program)
+                    .env("PATH", pm_tools::path_beside(&program))
                     .args(&private.read[1..])
                     .args(&names)
                     .output()

@@ -70,14 +70,28 @@ fn receive(output: &mut impl BufRead) -> Option<Value> {
     serde_json::from_slice(&body).ok()
 }
 
-/// The path a server runs with: the folders `first` that exist, then `base`, or the machine's own path when there is none.
-fn path_with(first: &[PathBuf], base: Option<std::ffi::OsString>) -> Option<std::ffi::OsString> {
-    let existing = first.iter().filter(|folder| folder.is_dir()).cloned();
+/// The path a server runs with: the folders `first` that exist, then `base`, or the machine's own path when there is none, then the folder of `program` and the usual places tools install themselves, which a program started from a desktop session does not have on its path and which a server needs to find the toolchain it runs, such as `go` for `gopls`.
+fn path_with(
+    first: &[PathBuf],
+    base: Option<std::ffi::OsString>,
+    program: &Path,
+) -> Option<std::ffi::OsString> {
     let machine = base
         .or_else(|| std::env::var_os("PATH"))
-        .map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
         .unwrap_or_default();
-    std::env::join_paths(existing.chain(machine)).ok()
+    let mut folders: Vec<PathBuf> = Vec::new();
+    for folder in first
+        .iter()
+        .filter(|folder| folder.is_dir())
+        .cloned()
+        .chain(std::env::split_paths(&machine))
+        .chain(std::env::split_paths(&pm_tools::path_beside(program)))
+    {
+        if !folders.contains(&folder) {
+            folders.push(folder);
+        }
+    }
+    std::env::join_paths(folders).ok()
 }
 
 impl Rpc {
@@ -100,7 +114,11 @@ impl Rpc {
         for (name, value) in env.iter().filter(|(name, _)| *name != "PATH") {
             command.env(name, value);
         }
-        if let Some(path) = path_with(first, env.get("PATH").map(std::ffi::OsString::from)) {
+        if let Some(path) = path_with(
+            first,
+            env.get("PATH").map(std::ffi::OsString::from),
+            program,
+        ) {
             command.env("PATH", path);
         }
         let mut child = command

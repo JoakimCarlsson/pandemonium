@@ -43,9 +43,21 @@ impl Toolchain {
     }
 }
 
+/// A command that starts `program`, found on the path and in the places tools install themselves, with the path such a program finds its own tools on, since a server started from a desktop session has a short one.
+fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    let name = program.as_ref();
+    let found = name
+        .to_str()
+        .and_then(pm_tools::installed)
+        .unwrap_or_else(|| PathBuf::from(name));
+    let mut command = Command::new(&found);
+    command.env("PATH", pm_tools::path_beside(&found));
+    command
+}
+
 /// The first line `program` prints for `argument`, when it runs and succeeds.
 fn first_line(program: impl AsRef<std::ffi::OsStr>, argument: &str) -> Option<String> {
-    let output = Command::new(program).arg(argument).output().ok()?;
+    let output = command(program).arg(argument).output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -123,7 +135,7 @@ fn system(family: &str, program: &str, argument: &str) -> Option<Toolchain> {
 /// The toolchains `spec` lists by running a program that prints one on each line, or nothing when it cannot be run.
 fn listed(family: &str, spec: &ToolchainSpec) -> Option<Vec<Toolchain>> {
     let program = spec.list.first()?;
-    let output = Command::new(program).args(&spec.list[1..]).output().ok()?;
+    let output = command(program).args(&spec.list[1..]).output().ok()?;
     if !output.status.success() {
         return None;
     }

@@ -2529,6 +2529,7 @@ dependencies = [
 name = "pm-deps"
 version = "0.14.0-rc.1"
 dependencies = [
+ "pm-tools",
  "regex",
  "serde_json",
  "ureq",
@@ -2773,6 +2774,7 @@ dependencies = [
 name = "pm-task"
 version = "0.14.0-rc.1"
 dependencies = [
+ "pm-tools",
  "regex",
  "serde",
  "serde_json",
