@@ -108,13 +108,14 @@ request with exactly one `response` carrying the same `id`.
 | `files`        | `directory`, `limit`, `expanded` (optional)                                                      | `files`         |
 | `branches`     | `directory`                                                                                      | `branches`      |
 | `submodules`   | `directory`                                                                                      | `submodules`    |
+| `dev_container` | `directory`                                                                                    | `dev_container` |
 | `submodule_heads` | `directory`                                                                                   | `submodule_heads` |
 | `identity`     | `agent`, `login` (optional): a login id whose folder answers `selected`, instead of the one in use | `identity`      |
 | `set_accounts` | `logins`: `[{agent, id, name}]`, `in_use`: `[[agent, id]]`                                       | `done`          |
 | `set_session_account` | `session`, `login` (a login id, or `null` for the agent's own)                            | `done`          |
 | `sign_in`      | `agent`, `login` (optional): a login id, signed in under its own folder and never the agent's default one | `done`          |
 | `sign_in_session` | `session` | `done` |
-| `start_session`| `agent`, `repository`, `directory`, `title`, `base`, `settings`, `text`, `attachments`, `submodule` | `started`       |
+| `start_session`| `agent`, `repository`, `directory`, `title`, `base`, `settings`, `text`, `attachments`, `submodule`, `container` | `started`       |
 | `prompt`       | `session`, `text`, `attachments`, `now` (optional, `false` by default)                           | `done`          |
 | `remove_queued` | `session`, `queued`                                                                            | `done`          |
 | `hurry`        | `session`, `queued`                                                                              | `done`          |
@@ -291,6 +292,16 @@ everything said of them, its submodules' paths written from `directory`.
   of the worktree (or of `directory`). When the worktree has a branch, every
   submodule it checked out is put on a branch of the same name; one that cannot
   be is named in `skipped` too.
+  With `container`, set only for a folder that holds a `devcontainer.json`
+  (`dev_container` answers `configured`), the agent and the session's
+  terminals run in a dev container of their own for that session, started
+  before the agent: the same container path as a dev container machine, but
+  owned by the session's folder instead of the project folder, so two such
+  sessions of one project have two containers. The session's worktree gets a
+  copy of the git-ignored `.devcontainer` configuration, is mounted at the
+  workspace folder, and the container is removed with the session. Build and
+  start steps arrive as `Container` events; the agent keeps running when the
+  client disconnects. A folder without a `devcontainer.json` fails the request.
   For a folder of repositories the worktree is a folder holding one worktree
   per child, laid out under the child's name (`<worktree>/api`,
   `<worktree>/web`), all checked out from `base` and, when the settings give a
@@ -909,6 +920,7 @@ Events use serde's default form, one key naming the type.
 | `{"SignedOut": {"reason", "account"}}` | The turn ended because the session account needs signing in again. Send `sign_in_session`; do not append the reason as an assistant reply. |
 | `"SignedIn"` | The session account was signed in again. Clear its sign-in notice. |
 | `{"Failed": "reason"}`        | The agent could not be started or stopped. The next `prompt` starts it again.                             |
+| `{"Container": "step"}`       | The dev container of the session is coming up: what it is doing now. Cleared when the agent starts.      |
 | `{"Titled": "text"}`          | The agent named the session, or named it again. The server keeps it as the session's `title`.            |
 | `{"Hooks": [Hook]}`           | The hooks the session's Codex holds back until the reader trusts them, all of them as they stand now. Replaces the earlier list; empty when none is held back. Told when a Codex session starts and again when a file the hooks are read from changes. Trust them with `trust_hooks`. |
 | `{"Prompted": {text, files, checkpoint}}` | A client handed the agent a turn. Sent to every client watching the session, the one that sent it included. `files` are names. `checkpoint` (absent means `false`) says the files were kept before the turn, so `restore` can put them back. |

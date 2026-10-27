@@ -93,7 +93,12 @@ pub(crate) fn plain_json(text: &str) -> String {
     plain
 }
 
-/// The `devcontainer.json` of `folder`, when it has one.
+/// Whether `folder` holds a `devcontainer.json`.
+pub(crate) fn exists(folder: &Path) -> bool {
+    locate(folder).is_some()
+}
+
+/// Where the `devcontainer.json` of `folder` is, when it has one.
 fn locate(folder: &Path) -> Option<PathBuf> {
     LOCATIONS
         .iter()

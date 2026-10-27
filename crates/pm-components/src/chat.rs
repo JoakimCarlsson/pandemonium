@@ -393,7 +393,9 @@ pub fn chat(
     if let Some(ask) = asking.filter(|ask| ask.plan.is_none()) {
         messages = messages.child(question(ask, column, shaper));
     } else if asking.is_none() && session.inquiry.is_none() && session.status == Status::Working {
-        let label = if session.echoes > 0 {
+        let label = if let Some(step) = &session.container {
+            step.as_str()
+        } else if session.echoes > 0 {
             "Sending prompt…"
         } else {
             "Thinking…"

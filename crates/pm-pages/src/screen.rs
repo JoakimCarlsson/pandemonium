@@ -1051,6 +1051,13 @@ impl Screen {
         }
     }
 
+    /// The screen after the project at `project` was seen to have, or lack, a `devcontainer.json`.
+    pub fn with_devcontainer(self, project: usize, configured: bool) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_devcontainer(project, configured)),
+        }
+    }
+
     /// The screen after the folder of the session at `session` was seen to have `branch` checked out, or a detached `head`.
     pub fn checked_out(self, session: usize, branch: Option<&str>, head: Option<&str>) -> Self {
         match self {

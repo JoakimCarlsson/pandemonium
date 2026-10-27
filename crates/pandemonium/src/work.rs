@@ -139,6 +139,8 @@ enum Pending {
     Branches(usize),
     /// The submodules of the project at this position.
     Submodules(usize),
+    /// Whether the folder of the project at this position holds a `devcontainer.json`.
+    DevContainer(usize),
     /// What the submodules of the folder of the session at this position have checked out.
     SubmoduleHeads(usize),
     /// Who an agent is signed in as, and which login that names.
@@ -799,6 +801,7 @@ impl Work {
                     files,
                     settings,
                     base,
+                    container,
                 } => {
                     let Some(placement) = Self::session_of(model, session) else {
                         continue;
@@ -818,6 +821,7 @@ impl Work {
                             text,
                             attachments: Self::attachments(&files),
                             submodule: placement.submodule,
+                            container,
                         },
                         Pending::Start(session),
                     );
@@ -1234,6 +1238,15 @@ impl Work {
                     &host,
                     Request::Branches { directory },
                     Pending::Branches(project),
+                ),
+                Outgoing::DevContainer {
+                    project,
+                    host,
+                    directory,
+                } => self.ask(
+                    &host,
+                    Request::DevContainer { directory },
+                    Pending::DevContainer(project),
                 ),
                 Outgoing::Submodules {
                     project,
@@ -1918,6 +1931,13 @@ impl Work {
                 if let Response::Branches { names } = response {
                     model.update(|screen| {
                         *screen = std::mem::take(screen).with_branches(project, names)
+                    });
+                }
+            }
+            Pending::DevContainer(project) => {
+                if let Response::DevContainer { configured } = response {
+                    model.update(|screen| {
+                        *screen = std::mem::take(screen).with_devcontainer(project, configured)
                     });
                 }
             }

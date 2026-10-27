@@ -489,6 +489,8 @@ pub struct Session {
     pub submodule: Option<String>,
     /// The branch its worktree was made from, when it has one of its own.
     pub base: Option<String>,
+    /// Whether its agent and terminals run in a dev container.
+    pub in_container: bool,
     /// Which agent, by position in the list of agents, runs it.
     pub agent: usize,
     /// Where it stands.
@@ -525,6 +527,8 @@ pub struct Session {
     pub login: Option<String>,
     /// Why this session needs signing in again and its account's name on its server, when named.
     pub signed_out: Option<(String, Option<String>)>,
+    /// The step the session's dev container is on while it is built and started, and nothing once the agent is up.
+    pub container: Option<String>,
     /// The question the agent waits on the reader to answer, if it waits on one.
     pub ask: Option<Permission>,
     /// The form of questions the agent waits on the reader to answer, if it waits on one.
@@ -573,6 +577,7 @@ impl Session {
             directory: String::new(),
             submodule: None,
             base: None,
+            in_container: false,
             agent: 0,
             status: if status == Status::Unread {
                 Status::Idle
@@ -596,6 +601,7 @@ impl Session {
             skills: Vec::new(),
             login: None,
             signed_out: None,
+            container: None,
             ask: None,
             inquiry: None,
             held_hooks: Vec::new(),
@@ -767,6 +773,7 @@ pub fn projects() -> Vec<Project> {
             name: name.to_owned(),
             path: format!("~/{name}"),
             submodules: Vec::new(),
+            devcontainer: false,
         })
         .collect()
 }

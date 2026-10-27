@@ -261,6 +261,8 @@ pub enum Event {
     SignedIn,
     /// The agent could not be started or stopped, for this reason.
     Failed(String),
+    /// The dev container the agent runs in is being built or started, and this is the step it is on.
+    Container(String),
     /// The agent named the conversation, or named it again.
     Titled(String),
     /// The hooks the agent's Codex holds back until the reader trusts them, all of them as they stand now; empty when none is held back.
@@ -364,6 +366,13 @@ impl Events {
     }
 }
 
+/// How a command is made to run inside the dev container of a session.
+pub type Enclose = Arc<dyn Fn(std::process::Command) -> std::process::Command + Send + Sync>;
+
+/// Brings the dev container of a session up, reporting each step to the closure it is given, and returns the folder the session works in inside it and how commands run there.
+pub type Enclosure =
+    Box<dyn FnOnce(&dyn Fn(&str)) -> Result<(PathBuf, Enclose), String> + Send + 'static>;
+
 /// A running agent and the conversation held with it.
 ///
 /// Everything the agent does happens on a thread of its own, so nothing it
@@ -383,13 +392,15 @@ pub struct Chat {
 }
 
 impl Chat {
-    /// Starts `agent` in the folder `directory`, keeping its config and login in the folder `home` or in its own when there is none, and opens a conversation with it that has the tool servers `tools`, leaving out what `launch` says to; `notify` is called whenever the agent has something for [`Chat::events`].
+    /// Starts `agent` in the folder `directory`, keeping its config and login in the folder `home` or in its own when there is none, and opens a conversation with it that has the tool servers `tools`, leaving out what `launch` says to; `notify` is called whenever the agent has something for [`Chat::events`]. With an `enclosure` the agent runs in the dev container it brings up instead of on this machine.
+    #[allow(clippy::too_many_arguments)]
     pub fn start(
         agent: Agent,
         directory: PathBuf,
         home: Option<PathBuf>,
         tools: Vec<serde_json::Value>,
         launch: pm_agent_library::Launch,
+        enclosure: Option<Enclosure>,
         notify: Notify,
     ) -> Self {
         let (commands, received) = mpsc::channel();
@@ -409,7 +420,7 @@ impl Chat {
         }
         let driver = std::thread::spawn(move || {
             if let Err(reason) = drive(
-                agent, &directory, home, &tools, &launch, &shared, &received, &sender,
+                agent, &directory, home, &tools, &launch, enclosure, &shared, &received, &sender,
             ) {
                 let _ = sender.send(Event::Failed(reason));
             }
@@ -623,6 +634,7 @@ fn drive(
     home: Option<PathBuf>,
     tools: &[serde_json::Value],
     launch: &pm_agent_library::Launch,
+    enclosure: Option<Enclosure>,
     ending: &Mutex<Ending>,
     commands: &Receiver<Command>,
     events: &Events,
@@ -634,11 +646,22 @@ fn drive(
         return Err(format!("{} is not a folder", directory.display()));
     }
     let patience = if agent.fetches() { FETCH } else { QUICK };
+    let enclosed = match enclosure {
+        Some(enclosure) => Some(enclosure(&|step| {
+            let _ = events.send(Event::Container(step.to_owned()));
+        })?),
+        None => None,
+    };
+    let home = home.filter(|_| enclosed.is_none());
     if let Some(home) = &home {
         crate::profile::share_setup(agent, home);
     }
     let mut command = agent.command_in(&[], home);
     command.envs(launch.env.iter().map(|(name, value)| (name, value)));
+    let (working, command) = match enclosed {
+        Some((workspace, enclose)) => (workspace, enclose(command)),
+        None => (directory.to_path_buf(), command),
+    };
     let mut client = Client::start_in(command, directory)?;
     {
         let mut ending = ending.lock().map_err(|_| "the chat was dropped")?;
@@ -649,7 +672,7 @@ fn drive(
     }
     let shaken = client.initialize(patience)?;
     let prompts = shaken["agentCapabilities"]["promptCapabilities"].clone();
-    let mut opening = json!({ "cwd": directory, "mcpServers": tools });
+    let mut opening = json!({ "cwd": working, "mcpServers": tools });
     if let Some(meta) = &launch.meta {
         opening["_meta"] = meta.clone();
     }

@@ -124,21 +124,34 @@ fn setting_menu(state: &WorkspaceState, index: usize, rows: u32, above: f32) -> 
 fn location_menu(state: &WorkspaceState) -> Node {
     let worktree = state.location == Location::Worktree;
     let chosen = state.base.as_ref().or(state.branches.first());
-    let mut menu = Popover::new()
-        .width(MENU_WIDTH)
-        .heading("Run in", None)
-        .row(
-            "Worktree",
-            "A worktree of its own on a detached head",
-            worktree,
-            FocusId(PLACE_BASE),
-        )
-        .row(
-            "Local",
-            "Work directly in the main checkout",
-            !worktree,
-            FocusId(PLACE_BASE + 1),
+    let mut menu = Popover::new().width(MENU_WIDTH).heading("Run in", None);
+    if state.is_repository() {
+        menu = menu
+            .row(
+                "Worktree",
+                "A worktree of its own on a detached head",
+                worktree,
+                FocusId(PLACE_BASE),
+            )
+            .row(
+                "Local",
+                "Work directly in the main checkout",
+                !worktree,
+                FocusId(PLACE_BASE + 1),
+            );
+    }
+    if state.offers_container() {
+        menu = menu.child(
+            node()
+                .styles([border_t(), border_color(Role::Border), mt(1)])
+                .child(row(
+                    "Dev container",
+                    "Run the agent and terminal in a container",
+                    state.container,
+                    FocusId(PLACE_BASE + 2),
+                )),
         );
+    }
     if worktree {
         menu = menu
             .child(
@@ -576,16 +589,19 @@ pub fn composer(
                 .flatten(),
         ));
     }
-    if session.is_none() && state.is_repository() {
+    if session.is_none() && (state.is_repository() || state.offers_container()) {
         let base = state
             .base
             .as_ref()
             .filter(|base| state.branches.first() != Some(base));
-        let label = match (state.location, base) {
+        let mut label = match (state.location, base) {
             (Location::Worktree, Some(base)) => format!("Worktree from {base}"),
             (Location::Worktree, None) => "Worktree".to_owned(),
             (Location::Local, _) => "Local".to_owned(),
         };
+        if state.container_for_new_work() {
+            label.push_str(" in a dev container");
+        }
         let open = state.picker == Some(Picker::Location);
         strip = strip.child(anchored(
             chip(&label, Some(IconName::GitFork), LOCATION, open),

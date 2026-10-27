@@ -11,6 +11,9 @@ mod wsl;
 
 pub use bridge::Progress;
 pub use bridge::bridge;
-pub use container::container;
+pub use container::{
+    Enclosed, configured, container, remove_session_container, running_session_container,
+    session_container,
+};
 pub use tunnel::tunnel;
 pub use wsl::wsl;

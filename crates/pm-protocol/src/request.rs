@@ -152,6 +152,11 @@ pub enum Request {
         /// The folder.
         directory: String,
     },
+    /// Whether a folder holds a `devcontainer.json`, so that a session in it can run in a dev container.
+    DevContainer {
+        /// The folder.
+        directory: String,
+    },
     /// What each checked out submodule of the repository a folder is has checked out.
     SubmoduleHeads {
         /// The folder.
@@ -213,6 +218,9 @@ pub enum Request {
         /// The submodule the agent works in, from the root of the project, or nothing for the project itself.
         #[serde(default)]
         submodule: Option<String>,
+        /// Whether the agent runs in the dev container of the folder it works in, which is built and started first.
+        #[serde(default)]
+        container: bool,
     },
     /// Closes a session: stops its agent and marks it finished. Its log is kept; a worktree it made is removed, and without `discard` that is refused while the worktree has changes that are not committed.
     CloseSession {

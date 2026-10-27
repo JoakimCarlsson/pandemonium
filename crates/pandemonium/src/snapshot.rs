@@ -18,11 +18,11 @@ use pm_components::panes::{Item, SPLIT_RIGHT, Side};
 use pm_components::settings::{SETTINGS_ADD, SETTINGS_FIND, Section};
 use pm_components::settings_catalog::{OPEN_LIST, Setting as SettingsCatalogue};
 use pm_components::settings_machines::{MACHINE_ADD, MACHINE_ADDRESS, MACHINE_NAME};
-use pm_components::state::SETTINGS;
 use pm_components::state::{
     AGENT_BASE, CHAT_TEXT, COMMENT_ADD, COMMENT_FIELD, COMMIT_MESSAGE, DETAILS_BASE, FILE_BASE,
     RESTORE_BASE, REVIEW_FILES, STAGE_BASE, SUBAGENTS_CHIP, TAB_CHAT,
 };
+use pm_components::state::{LOCATION, SETTINGS};
 use pm_components::tree_actions::{TREE_NEW_FOLDER, TreeTarget};
 use pm_input::{FocusId, PointerState};
 use pm_pages::{ADD_PROJECT, HISTORY, PROMPT, SEND, Screen, TAB_DIFF, TERMINAL, WorkspaceState};
@@ -241,6 +241,8 @@ pub enum Shot {
     Unfolded,
     /// The page for starting work with a dead key's accent waiting for its letter in the prompt.
     Composing,
+    /// The page for starting work in a project with a `devcontainer.json`, the menu of where work runs open with the dev container turned on.
+    DevContainer,
     /// The workspace with the terminal open and a dead key's accent waiting for its letter at the cursor.
     TerminalComposing,
     /// The workspace on its first session with a stretch of the conversation's text selected.
@@ -2244,6 +2246,13 @@ impl Shot {
                 welcome()
                     .edited(PROMPT, Edit::Paste("Varför försvinner sm".to_owned()))
                     .edited(PROMPT, Edit::Compose("¨".to_owned())),
+            ),
+            Self::DevContainer => Screen::Workspace(
+                welcome()
+                    .with_devcontainer(0, true)
+                    .with_branches(0, vec!["main".to_owned(), "next".to_owned()])
+                    .after(LOCATION)
+                    .after(FocusId(pm_components::state::PLACE_BASE + 2)),
             ),
             Self::New => Screen::Workspace(WorkspaceState::new(&projects())),
             Self::Empty => Screen::default(),

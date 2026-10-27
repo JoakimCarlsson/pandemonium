@@ -24,7 +24,11 @@ impl Session {
             self.updates += 1;
         }
         match event {
-            Event::Settings(settings) => self.settings = settings,
+            Event::Container(step) => self.container = Some(step),
+            Event::Settings(settings) => {
+                self.container = None;
+                self.settings = settings;
+            }
             Event::Commands(commands) => self.commands = commands,
             Event::Used(usage) => self.context = Some(usage),
             Event::Said(text) => self.say(&text),
@@ -48,7 +52,10 @@ impl Session {
             }
             Event::SignedIn => self.signed_out = None,
             Event::Finished(error) => self.finish(error),
-            Event::Failed(reason) => self.finish(Some(reason)),
+            Event::Failed(reason) => {
+                self.container = None;
+                self.finish(Some(reason));
+            }
             Event::Titled(title) => self.title = title,
             Event::Hooks(hooks) => self.hooks_held(hooks),
             Event::Prompted {
