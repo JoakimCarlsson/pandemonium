@@ -40,6 +40,8 @@ pub(crate) struct Config {
     pub run_arguments: Vec<String>,
     /// The command run in the container once, when it is made.
     pub after_create: Option<String>,
+    /// The features installed in the image, in the order they are installed.
+    pub features: Vec<crate::features::Feature>,
 }
 
 /// `text` without the comments and trailing commas that a `devcontainer.json` may hold beyond plain JSON.
@@ -212,6 +214,7 @@ pub(crate) fn parse(text: &str, directory: &Path, folder: &Path) -> Result<Confi
             .unwrap_or_default(),
         run_arguments: strings(file.get("runArgs")),
         after_create: after_create(file.get("postCreateCommand")),
+        features: crate::features::parse(file.get("features")),
     })
 }
 

@@ -589,6 +589,7 @@ pub fn composer(
                 .flatten(),
         ));
     }
+    let mut place = None;
     if session.is_none() && (state.is_repository() || state.offers_container()) {
         let base = state
             .base
@@ -603,10 +604,14 @@ pub fn composer(
             label.push_str(" in a dev container");
         }
         let open = state.picker == Some(Picker::Location);
-        strip = strip.child(anchored(
-            chip(&label, Some(IconName::GitFork), LOCATION, open),
-            open.then(|| location_menu(state)),
-        ));
+        place = Some(
+            node()
+                .styles([flex(), items_center(), gap(1), px(2.5)])
+                .child(anchored(
+                    chip(&label, Some(IconName::GitFork), LOCATION, open),
+                    open.then(|| location_menu(state)),
+                )),
+        );
     }
     if state.on_this_computer() && state.agent_has_accounts(state.agent_now()) {
         let account = state.account().unwrap_or("Account");
@@ -620,7 +625,7 @@ pub fn composer(
     let strip = strip.child(spacer());
     let strip = strip.children(session.and_then(usage::context_ring));
     let strip = strip.children(send_buttons(working, empty));
-    node()
+    let prompt_box = node()
         .styles([
             relative(),
             flex(),
@@ -649,5 +654,9 @@ pub fn composer(
                 .wrap(text_width, shaper)
                 .build(),
         )
-        .child(strip)
+        .child(strip);
+    node()
+        .styles([flex(), flex_col(), gap(1.5), w_full()])
+        .children(place)
+        .child(prompt_box)
 }

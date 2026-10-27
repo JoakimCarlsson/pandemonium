@@ -5,6 +5,7 @@
 mod bridge;
 mod container;
 mod devcontainer;
+mod features;
 mod provision;
 mod tunnel;
 mod vet;

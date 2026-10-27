@@ -23,7 +23,7 @@ const OWNER_LABEL: &str = "pandemonium.folder";
 const SERVER_PORT: u16 = 6868;
 
 /// A command of the engine with these arguments.
-fn engine<I, S>(arguments: I) -> Command
+pub(crate) fn engine<I, S>(arguments: I) -> Command
 where
     I: IntoIterator<Item = S>,
     S: AsRef<std::ffi::OsStr>,
@@ -48,6 +48,15 @@ fn image_name(folder: &str) -> String {
     let mut hasher = DefaultHasher::new();
     folder.hash(&mut hasher);
     format!("pandemonium-devcontainer-{:016x}", hasher.finish())
+}
+
+/// Where the features of the container of `folder` are fetched to and built from.
+fn features_scratch(folder: &str) -> std::path::PathBuf {
+    let home = std::env::var_os("XDG_CACHE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| Path::new(&home).join(".cache")))
+        .unwrap_or_else(std::env::temp_dir);
+    home.join("pandemonium").join(image_name(folder))
 }
 
 /// The label a container carries, with the worktree of the session it was made for as its value, so that each opted-in session owns one container.
@@ -185,12 +194,22 @@ fn ready(label: &str, folder: &str, progress: Progress) -> Result<String, String
         None => {
             progress("Reading devcontainer.json");
             let config = read(Path::new(folder))?;
-            let image = prepare_image(&config, &image_name(folder), progress)?;
+            let mut image = prepare_image(&config, &image_name(folder), progress)?;
+            if !config.features.is_empty() {
+                let tag = format!("{}-features", image_name(folder));
+                image = crate::features::install(
+                    &config.features,
+                    &image,
+                    &tag,
+                    &features_scratch(folder),
+                    progress,
+                )?;
+            }
             progress("Creating the container");
             let identity = create(label, folder, &image, &config)?;
             if let Some(command) = &config.after_create {
                 progress("Running the post create command");
-                ask([
+                if let Err(reason) = ask([
                     "exec",
                     "-w",
                     config.workspace.as_str(),
@@ -198,7 +217,10 @@ fn ready(label: &str, folder: &str, progress: Progress) -> Result<String, String
                     "sh",
                     "-c",
                     command.as_str(),
-                ])?;
+                ]) {
+                    let _ = ask(["rm", "-f", identity.as_str()]);
+                    return Err(reason);
+                }
             }
             identity
         }
