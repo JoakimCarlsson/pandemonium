@@ -754,7 +754,10 @@ everything said of them, its submodules' paths written from `directory`.
   registries are kept for an hour (five minutes when they failed), spaced at
   least 100 ms apart for each registry, limited to 80 dependencies and eight
   seconds for each request, and a lookup that fails leaves its dependency out
-  without failing the request.
+  without failing the request. A name is never sent to a public registry when the machine says
+  it is private: a Go module matching `GOPRIVATE` or `GONOPROXY`, any Go module
+  when `GOPROXY` names another proxy, a crate with a `registry` or `git` key, and
+  an npm package whose scope has its own registry in `~/.npmrc`.
 - **`press_code_lens`:** presses one of the lenses last given for the open
   file: the places it points to when it counts uses, and otherwise the
   changes the language server made carrying out its command, as for

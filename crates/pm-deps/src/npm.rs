@@ -107,6 +107,22 @@ impl Ecosystem for Npm {
         found
     }
 
+    /// Whether the package's scope has a registry of its own in the user's `.npmrc`, or the default registry is not npm's, so that the public registry is not asked about it.
+    fn skips(&self, name: &str) -> bool {
+        let Some(config) = std::env::var_os("HOME")
+            .map(|home| std::path::Path::new(&home).join(".npmrc"))
+            .and_then(|path| std::fs::read_to_string(path).ok())
+        else {
+            return false;
+        };
+        let scope = name.split('/').next().filter(|_| name.starts_with('@'));
+        config.lines().map(str::trim).any(|line| {
+            let own_default = line.starts_with("registry=") && !line.contains("registry.npmjs.org");
+            let scoped = scope.is_some_and(|scope| line.starts_with(&format!("{scope}:registry=")));
+            own_default || scoped
+        })
+    }
+
     /// The registry's answer about the latest version, which is `/latest` after the package; a scoped name has its slash written as `%2f`.
     fn address(&self, name: &str) -> String {
         format!(

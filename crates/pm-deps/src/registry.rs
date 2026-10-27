@@ -108,6 +108,7 @@ impl Registry {
             .dependencies(text)
             .into_iter()
             .filter(|dependency| Version::parse(&dependency.requirement).is_some())
+            .filter(|dependency| !ecosystem.skips(&dependency.name))
             .take(MOST)
             .collect();
         let deadline = Instant::now() + BUDGET;

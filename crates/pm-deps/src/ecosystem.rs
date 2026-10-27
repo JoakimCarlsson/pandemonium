@@ -13,6 +13,11 @@ pub trait Ecosystem: Sync {
     /// The dependencies `text`, a manifest, names with a version of a registry, in the order they are written.
     fn dependencies(&self, text: &str) -> Vec<Dependency>;
 
+    /// Whether the dependency `name` is one the public registry must not be asked about, because the machine's own settings say it is private or comes from another registry; a name sent to a registry is disclosed to it.
+    fn skips(&self, _name: &str) -> bool {
+        false
+    }
+
     /// The address that answers with what the registry knows of the dependency `name`.
     fn address(&self, name: &str) -> String;
 
@@ -28,6 +33,26 @@ pub fn ecosystem_for(path: &str) -> Option<&'static dyn Ecosystem> {
         .iter()
         .copied()
         .find(|ecosystem| ecosystem.reads(path))
+}
+
+/// Whether `name` is what `pattern` describes, where `*` stands for any run of characters.
+pub(crate) fn glob(pattern: &str, name: &str) -> bool {
+    let mut parts = pattern.split('*');
+    let first = parts.next().unwrap_or_default();
+    let Some(mut rest) = name.strip_prefix(first) else {
+        return false;
+    };
+    let mut parts: Vec<&str> = parts.collect();
+    let Some(last) = parts.pop() else {
+        return rest.is_empty();
+    };
+    for part in parts {
+        let Some(at) = rest.find(part) else {
+            return false;
+        };
+        rest = &rest[at + part.len()..];
+    }
+    rest.ends_with(last)
 }
 
 /// The name of the file at `path`, without the folders before it.

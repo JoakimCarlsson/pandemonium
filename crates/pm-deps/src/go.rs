@@ -25,6 +25,20 @@ fn entry(line: &str) -> Option<(String, String, std::ops::Range<usize>)> {
     })
 }
 
+/// Whether the module `name` is, or lies under, what `pattern` names, a path whose elements may be globs such as `*.corp.example.com`.
+fn private(pattern: &str, name: &str) -> bool {
+    if pattern.is_empty() {
+        return false;
+    }
+    let count = pattern.split('/').count();
+    let head: Vec<&str> = name.split('/').take(count).collect();
+    head.len() == count
+        && pattern
+            .split('/')
+            .zip(head)
+            .all(|(pattern, element)| crate::ecosystem::glob(pattern, element))
+}
+
 impl Ecosystem for Go {
     /// Its name.
     fn name(&self) -> &'static str {
@@ -70,6 +84,20 @@ impl Ecosystem for Go {
             }
         }
         found
+    }
+
+    /// Whether the module is private by `GOPRIVATE` or `GONOPROXY`, or the machine uses a proxy of its own, so that the public proxy is not asked about it.
+    fn skips(&self, name: &str) -> bool {
+        let own_proxy = std::env::var("GOPROXY")
+            .is_ok_and(|proxy| !proxy.trim().is_empty() && !proxy.contains("proxy.golang.org"));
+        own_proxy
+            || ["GOPRIVATE", "GONOPROXY"].iter().any(|variable| {
+                std::env::var(variable).is_ok_and(|patterns| {
+                    patterns
+                        .split(',')
+                        .any(|pattern| private(pattern.trim(), name))
+                })
+            })
     }
 
     /// The module proxy's address for the latest version, with capital letters written as `!` and the lower case letter, as the proxy asks.

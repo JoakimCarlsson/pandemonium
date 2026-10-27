@@ -76,6 +76,7 @@ impl Ecosystem for Cargo {
         let mut found = Vec::new();
         let mut table = Table::Other;
         let mut renamed: Option<String> = None;
+        let mut elsewhere = false;
         let mut pending: Option<(String, Dependency)> = None;
         let mut offset = 0;
         let finish = |pending: &mut Option<(String, Dependency)>,
@@ -101,6 +102,7 @@ impl Ecosystem for Cargo {
                     .next()
                     .unwrap_or_default();
                 table = table_of(header);
+                elsewhere = false;
                 continue;
             }
             if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -109,7 +111,14 @@ impl Ecosystem for Cargo {
             match &table {
                 Table::Other => {}
                 Table::One(name) => {
-                    if let Some((version, span)) = string_after(line, "version", start) {
+                    if string_after(line, "registry", start).is_some()
+                        || string_after(line, "git", start).is_some()
+                    {
+                        elsewhere = true;
+                        pending = None;
+                    } else if !elsewhere
+                        && let Some((version, span)) = string_after(line, "version", start)
+                    {
                         pending = Some((
                             name.clone(),
                             Dependency {
@@ -150,6 +159,7 @@ impl Ecosystem for Cargo {
                             });
                         }
                     } else if value.starts_with('{')
+                        && string_after(line, "registry", start).is_none()
                         && let Some((version, span)) = string_after(
                             &line[line.find('{').unwrap_or(0)..],
                             "version",
