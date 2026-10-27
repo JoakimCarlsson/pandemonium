@@ -151,6 +151,10 @@ enum Pending {
     Close(u64),
     /// The folder of the session at this position was looked at.
     Inspect(usize),
+    /// What the folder of the session at this position is, and where it stands.
+    Standing(usize),
+    /// The diffs of these files of the session at this position were asked for.
+    Diffs(usize, Vec<String>),
     /// Files of the session at this position were staged or unstaged.
     Stage(usize),
     /// A commit was made in the folder of the session at this position.
@@ -297,6 +301,8 @@ mod tests {
     fn git_progress_ignores_background_reads() {
         for pending in [
             Pending::Inspect(0),
+            Pending::Standing(0),
+            Pending::Diffs(0, Vec::new()),
             Pending::Log(0),
             Pending::Stashes(0),
             Pending::SessionBranches(0),
@@ -718,7 +724,10 @@ impl Work {
     /// Carries out what the reader asked of the agents and the folders since the last look, and returns what to copy.
     pub fn deliver(&mut self, model: &State<Screen>) -> Vec<String> {
         let mut outbox = Vec::new();
-        model.update(|screen| outbox = screen.take_outbox());
+        model.update(|screen| {
+            screen.diffs_wanted();
+            outbox = screen.take_outbox();
+        });
         let mut copies = Vec::new();
         for outgoing in outbox {
             match outgoing {
@@ -1112,6 +1121,15 @@ impl Work {
                     },
                     Pending::SessionBranches(session),
                 ),
+                Outgoing::Diffs { session, paths } => {
+                    let asked = paths.clone();
+                    self.ask_in_folder(
+                        model,
+                        session,
+                        |directory| Request::Diffs { directory, paths },
+                        Pending::Diffs(session, asked),
+                    );
+                }
                 Outgoing::SubmoduleHeads { session } => self.ask_in_folder(
                     model,
                     session,
@@ -2047,10 +2065,46 @@ impl Work {
                             .tracked(session, branch.as_deref(), tracking, operation)
                             .with_standings(session, repositories);
                     });
+                } else if let Some(message) = failure {
+                    let reason = format!("Could not read the folder: {message}");
+                    model.update(|screen| *screen = std::mem::take(screen).git_failed(&reason));
                 }
                 if self.read_again.remove(&session) {
                     self.refresh(model, session);
                 }
+            }
+            Pending::Standing(session) => {
+                if let Response::Standing {
+                    branch,
+                    head,
+                    tracking,
+                    operation,
+                    repositories,
+                    repository: _,
+                } = response
+                {
+                    model.update(|screen| {
+                        *screen = std::mem::take(screen).with_standing(
+                            session,
+                            pm_components::lazy_diffs::Standing {
+                                branch,
+                                head,
+                                tracking,
+                                operation,
+                                repositories,
+                            },
+                        );
+                    });
+                }
+            }
+            Pending::Diffs(session, asked) => {
+                let files = match response {
+                    Response::Diffs { files } => files,
+                    _ => Vec::new(),
+                };
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_diffs(session, &asked, files);
+                });
             }
             Pending::Stage(session) => {
                 if let Some(message) = failure {
@@ -2498,6 +2552,13 @@ impl Work {
             return;
         }
         let log = model.read(|screen| screen.graph_wanted());
+        self.ask(
+            &placement.host,
+            Request::Standing {
+                directory: placement.directory.clone(),
+            },
+            Pending::Standing(session),
+        );
         self.ask(
             &placement.host,
             Request::Inspect {

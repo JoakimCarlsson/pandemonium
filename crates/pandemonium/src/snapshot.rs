@@ -103,6 +103,8 @@ pub enum Shot {
     Diff,
     /// The workspace on the diff of its first session with the words that changed inside changed lines marked.
     WordDiff,
+    /// The workspace on the diff of its first session with the files after the first listed by the server and their diffs still to come.
+    DiffListed,
     /// The workspace on the diff of its first session with a comment kept and another being written.
     Commenting,
     /// The workspace on the diff of its first session with the project's files listed in the review panel.
@@ -1476,6 +1478,19 @@ fn word_diff() -> WorkspaceState {
     state
 }
 
+/// The workspace on the diff with every file but the first as the server lists them: with the lines they change counted and their diffs not yet read.
+fn diff_listed() -> WorkspaceState {
+    let mut state = workspace_sample().after(TAB_DIFF);
+    for change in state.sessions[0].changes.iter_mut().skip(1) {
+        let (added, removed) = (change.added(), change.removed());
+        change.counts = Some((added, removed));
+        change.diff.clear();
+        change.words.clear();
+        change.loaded = false;
+    }
+    state
+}
+
 /// The workspace on the diff with a comment kept on some lines and a box open to write another on a file.
 fn commenting() -> WorkspaceState {
     let state = workspace_sample()
@@ -2147,6 +2162,10 @@ impl Shot {
             Self::WordDiff => {
                 load_installed_grammar("rust");
                 Screen::Workspace(word_diff())
+            }
+            Self::DiffListed => {
+                load_installed_grammar("rust");
+                Screen::Workspace(diff_listed())
             }
             Self::Commenting => Screen::Workspace(commenting()),
             Self::Files => Screen::Workspace(files()),

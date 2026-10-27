@@ -189,6 +189,9 @@ fn rows(change: &Change) -> Vec<Row<'_>> {
 
 /// How many rows the diff of `change` shows, counted without building them.
 fn row_count(change: &Change) -> usize {
+    if !change.loaded {
+        return change.expected_rows();
+    }
     let (mut rows, mut removed, mut added) = (0, 0, 0);
     for line in &change.diff {
         match line.kind {
@@ -220,7 +223,12 @@ fn notes_height(state: &WorkspaceState, session: &Session, index: usize, column:
 }
 
 /// About how tall the file at `index` is with its header, its rows and its notes, in logical pixels, folded away or not.
-fn section_height(state: &WorkspaceState, session: &Session, index: usize, width: f32) -> f32 {
+pub(crate) fn section_height(
+    state: &WorkspaceState,
+    session: &Session,
+    index: usize,
+    width: f32,
+) -> f32 {
     let change = &session.changes[index];
     if state.closed_diffs.contains(&change.path) {
         return SECTION_CHROME + HEADER;
@@ -629,6 +637,14 @@ fn file(
         .child(header);
     if !open {
         return section;
+    }
+    if !change.loaded {
+        return section.child(
+            node()
+                .styles([flex(), px(3), py(2), flex_none()])
+                .styles([h(change.expected_rows() as f32 * ROW / 4.0)])
+                .child(line("Reading the diff…", 12, 1.4, Role::Subtle)),
+        );
     }
     if let Some(target) = target.filter(|target| target.range.is_none() && !target.dragging) {
         section = section.child(comment_box(state, target));

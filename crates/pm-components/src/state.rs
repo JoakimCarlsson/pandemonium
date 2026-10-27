@@ -577,6 +577,13 @@ pub enum Outgoing {
         /// The change, by its place in the list offered.
         index: usize,
     },
+    /// Asks the server of the session at this position for the diffs of changed files it listed without them.
+    Diffs {
+        /// The session, by position.
+        session: usize,
+        /// The files, as the changes name them.
+        paths: Vec<String>,
+    },
     /// Reads a file of the session at this position as the last commit holds it, to mark how the open file differs from it.
     ReadBase {
         /// The session, by position.
@@ -1435,7 +1442,7 @@ pub enum Tab {
 }
 
 /// About how wide the diff is, in logical pixels, when scrolling it to a file, which only the height of the notes on the files above depends on.
-const DIFF_WIDTH: f32 = 900.0;
+pub(crate) const DIFF_WIDTH: f32 = 900.0;
 
 /// What the review panel lists.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1499,6 +1506,8 @@ pub struct WorkspaceState {
     pub comment_text: Field,
     /// How far down the diff is scrolled, in logical pixels.
     pub diff_scroll: f32,
+    /// The files, by session and path, whose diffs were asked of the server and have not come.
+    pub(crate) asking_diffs: std::collections::HashSet<(usize, String)>,
     /// How far down the review panel's list is scrolled, in logical pixels.
     pub tree_scroll: f32,
     /// The project whose folder the review panel was last asked to read while no session was open.
@@ -1760,6 +1769,7 @@ impl WorkspaceState {
             comment_target: None,
             comment_text: Field::default(),
             diff_scroll: 0.0,
+            asking_diffs: std::collections::HashSet::new(),
             tree_scroll: 0.0,
             homed: None,
             plan_open: false,
@@ -3332,10 +3342,20 @@ impl WorkspaceState {
     ) -> Self {
         let marked = self.marked_by_path();
         if let Some(held) = self.sessions.get_mut(session) {
-            held.changes = changes
+            held.unknown = false;
+            let before: std::collections::HashMap<&str, &Change> = held
+                .changes
+                .iter()
+                .map(|change| (change.path.as_str(), change))
+                .collect();
+            let now: Vec<Change> = changes
                 .iter()
                 .map(|found| {
-                    let mut change = Change::new(&found.path, &found.diff);
+                    let mut change = if found.lazy {
+                        Change::listed(&found.path, found.added, found.removed)
+                    } else {
+                        Change::new(&found.path, &found.diff)
+                    };
                     change.words.clone_from(&found.words);
                     change.staged = found.index.is_some() || found.staged;
                     change.unstaged = found.worktree.is_some() || !found.staged;
@@ -3347,13 +3367,18 @@ impl WorkspaceState {
                     change.submodule = found.submodule.clone();
                     change.repository = found.repository.clone();
                     change.moved = found.moved.clone();
-                    change.viewed = held
-                        .changes
-                        .iter()
-                        .any(|before| before.path == found.path && before.viewed);
+                    let known = before.get(found.path.as_str());
+                    change.viewed = known.is_some_and(|known| known.viewed);
+                    if let Some(read) = known.filter(|known| found.lazy && known.loaded) {
+                        change.diff.clone_from(&read.diff);
+                        change.words.clone_from(&read.words);
+                        change.loaded = true;
+                        change.stale = true;
+                    }
                     change
                 })
                 .collect();
+            held.changes = now;
             if let Some(commits) = commits {
                 held.commits = commits;
             }

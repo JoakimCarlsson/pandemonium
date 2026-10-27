@@ -113,6 +113,7 @@ fn main() {
             Some("update") => Shot::Update,
             Some("diff") => Shot::Diff,
             Some("worddiff") => Shot::WordDiff,
+            Some("diff-listed") => Shot::DiffListed,
             Some("commenting") => Shot::Commenting,
             Some("files") => Shot::Files,
             Some("files-large") => Shot::FilesLarge,

@@ -268,6 +268,26 @@ pub enum Response {
         #[serde(default)]
         repositories: Vec<pm_git::Standing>,
     },
+    /// Where a folder stands.
+    Standing {
+        /// The branch the folder has checked out, when it is a repository and on one.
+        branch: Option<String>,
+        /// The commit the folder is at, abbreviated, when it is a repository with one.
+        head: Option<String>,
+        /// What the checked out branch follows and how far apart they are.
+        tracking: pm_git::Tracking,
+        /// The merge, rebase or cherry-pick the folder is stopped in, if it is in one.
+        operation: Option<pm_git::Operation>,
+        /// Where each repository stands when the folder holds several repositories side by side, and nothing when it is one.
+        repositories: Vec<pm_git::Standing>,
+        /// Whether the folder is a repository, or holds some, at all.
+        repository: bool,
+    },
+    /// The diffs of the files asked for, those the folder has none of left out.
+    Diffs {
+        /// Each file's.
+        files: Vec<pm_git::FileDiff>,
+    },
     /// A shell was started.
     Terminal {
         /// The shell.

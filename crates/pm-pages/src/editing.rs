@@ -545,6 +545,25 @@ impl Screen {
         self.in_workspace(|state| state.bases_wanted(session))
     }
 
+    /// The screen after the server sent the diffs `files` of the session at `session`, in answer to the request for `asked`.
+    pub fn with_diffs(
+        self,
+        session: usize,
+        asked: &[String],
+        files: Vec<pm_git::FileDiff>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_diffs(session, asked, files))
+    }
+
+    /// The screen after the server said what the folder of the session at `session` is and where it stands.
+    pub fn with_standing(
+        self,
+        session: usize,
+        standing: pm_components::lazy_diffs::Standing,
+    ) -> Self {
+        self.in_workspace(|state| state.with_standing(session, standing))
+    }
+
     /// The screen asking the language server where the thing at the caret of the file shown is used.
     pub fn highlights_requested(self) -> Self {
         self.in_workspace(WorkspaceState::highlights_requested)

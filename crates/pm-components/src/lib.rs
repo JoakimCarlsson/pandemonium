@@ -55,6 +55,7 @@ pub mod input;
 pub mod inquiry;
 pub mod jumps;
 pub mod language_offer;
+pub mod lazy_diffs;
 pub mod line_edits;
 pub mod listing;
 pub mod markdown;
