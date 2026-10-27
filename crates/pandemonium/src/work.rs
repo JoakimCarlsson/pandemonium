@@ -2312,7 +2312,7 @@ impl Work {
         }
     }
 
-    /// Adds a tab for each shell of the server on `origin` that runs in the folder of a session the window shows and has no tab yet, and starts a fresh one when the dock was left open on a session whose shells are gone.
+    /// Adds a tab for each shell of the server on `origin` that runs in the folder of a session the window shows and has no tab yet, as after a reconnect. It never starts a shell that was not running.
     fn adopt_terminals(
         &mut self,
         model: &State<Screen>,
@@ -2340,7 +2340,6 @@ impl Work {
                 client.watch_terminal(info.terminal, 0);
             }
         }
-        model.update(|screen| screen.revive_terminal(origin));
     }
 
     /// Adds the sessions of the server of `origin` that the window does not show yet, and starts watching them.
