@@ -23,6 +23,8 @@ pub struct Queries {
     pub brackets: String,
     /// Which nodes are places that can be run, such as a `main` or a test: `runnables.scm`.
     pub runnables: String,
+    /// Which nodes carry a lens a language folder declares, such as a service of a Compose file: `lenses.scm`.
+    pub lenses: String,
 }
 
 /// How a language's files are edited.
@@ -132,6 +134,8 @@ pub struct Grammar {
     pub(crate) brackets: Option<Query>,
     /// The runnables query, when the language has one.
     pub(crate) runnables: Option<Query>,
+    /// The lenses query, when the language has one.
+    pub(crate) lenses: Option<Query>,
     /// How its files are edited.
     editing: Editing,
 }
@@ -183,6 +187,7 @@ impl Grammar {
             injections: compile(&language, &queries.injections, "injections.scm")?,
             brackets: compile(&language, &queries.brackets, "brackets.scm")?,
             runnables: compile(&language, &queries.runnables, "runnables.scm")?,
+            lenses: compile(&language, &queries.lenses, "lenses.scm")?,
             highlights,
             kinds,
             language,

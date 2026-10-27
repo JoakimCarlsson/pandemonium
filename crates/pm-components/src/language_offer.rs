@@ -21,6 +21,12 @@ pub const OFFER_INSTALL: FocusId = FocusId(7101);
 /// Turns the offer down for the language it is for, for good.
 pub const OFFER_DECLINE: FocusId = FocusId(7102);
 
+/// Updates the language the bar over the file is about, which is installed and behind the list.
+pub const OFFER_UPDATE: FocusId = FocusId(7104);
+
+/// Turns the offer to update down until the window is closed.
+pub const OFFER_UPDATE_DECLINE: FocusId = FocusId(7105);
+
 /// Whether `extension` is a language written in the file `path`, by the whole name or the ending of the name.
 fn reads(extension: &ExtensionInfo, path: &str) -> bool {
     let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
@@ -55,18 +61,72 @@ fn offered<'a>(state: &'a WorkspaceState, viewer: &Viewer) -> Option<&'a Extensi
     })
 }
 
-/// The bar at the top of `viewer`'s file that offers to install its language, or nothing when there is none on offer.
-pub(crate) fn offer(state: &WorkspaceState, viewer: &Viewer) -> Option<Node> {
-    let extension = offered(state, viewer)?;
-    let words = match (&extension.busy, &extension.problem) {
-        (Some(step), _) => format!("Installing {}: {step}", extension.name),
-        (None, Some(problem)) => format!("Installing {} failed: {problem}", extension.name),
-        (None, None) => format!(
-            "{} is not installed. Install it for highlighting and language features.",
-            extension.name
-        ),
+/// What the offer to update a language is remembered by when it is turned down: the language and the version the list offers.
+fn update_key(extension: &ExtensionInfo) -> String {
+    format!(
+        "{}@{}",
+        extension.id,
+        extension.update.as_deref().unwrap_or_default()
+    )
+}
+
+/// The language `viewer`'s file is written in when it is installed and behind the list, and the reader has not turned the update down.
+fn updatable<'a>(state: &'a WorkspaceState, viewer: &Viewer) -> Option<&'a ExtensionInfo> {
+    if !state.window.general.offer_languages || viewer.head || viewer.rendering().is_some() {
+        return None;
+    }
+    let Contents::Text(document) = &viewer.contents else {
+        return None;
     };
-    let mut bar = node()
+    let language = document.language.as_deref()?;
+    state.extensions.iter().find(|extension| {
+        extension.kind == "language"
+            && extension.installed
+            && extension.id == language
+            && extension.update.is_some()
+            && !state
+                .extensions_page
+                .dismissed_updates
+                .contains(&update_key(extension))
+    })
+}
+
+/// The bar at the top of `viewer`'s file that says its language is behind the list, with the buttons that update it or leave it be.
+fn update_offer(extension: &ExtensionInfo) -> Node {
+    let words = match (&extension.busy, &extension.problem) {
+        (Some(step), _) => format!("Updating {}: {step}", extension.name),
+        (None, Some(problem)) => format!("Updating {} failed: {problem}", extension.name),
+        (None, None) => format!("A newer version of {} is available.", extension.name),
+    };
+    let mut bar = bar(words);
+    if extension.busy.is_none() {
+        bar = bar
+            .child(
+                Button::new(
+                    if extension.problem.is_some() {
+                        "Try again"
+                    } else {
+                        "Update"
+                    },
+                    OFFER_UPDATE,
+                )
+                .variant(Variant::Secondary)
+                .size(Size::Sm)
+                .build(),
+            )
+            .child(
+                Button::new("Not now", OFFER_UPDATE_DECLINE)
+                    .variant(Variant::Ghost)
+                    .size(Size::Sm)
+                    .build(),
+            );
+    }
+    bar
+}
+
+/// A bar over a file saying `words`, with room after them for buttons.
+fn bar(words: String) -> Node {
+    node()
         .styles([
             flex(),
             items_center(),
@@ -79,7 +139,23 @@ pub(crate) fn offer(state: &WorkspaceState, viewer: &Viewer) -> Option<Node> {
             bg(Role::Surface),
         ])
         .child(line(words, 12, 1.4, Role::Muted).styles([min_w_px(0), overflow_hidden()]))
-        .child(crate::parts::spacer());
+        .child(crate::parts::spacer())
+}
+
+/// The bar at the top of `viewer`'s file that offers to install its language or to update it, or nothing when there is none on offer.
+pub(crate) fn offer(state: &WorkspaceState, viewer: &Viewer) -> Option<Node> {
+    let Some(extension) = offered(state, viewer) else {
+        return updatable(state, viewer).map(update_offer);
+    };
+    let words = match (&extension.busy, &extension.problem) {
+        (Some(step), _) => format!("Installing {}: {step}", extension.name),
+        (None, Some(problem)) => format!("Installing {} failed: {problem}", extension.name),
+        (None, None) => format!(
+            "{} is not installed. Install it for highlighting and language features.",
+            extension.name
+        ),
+    };
+    let mut bar = bar(words);
     if extension.busy.is_none() {
         bar = bar
             .child(
@@ -112,6 +188,12 @@ impl WorkspaceState {
         offered(self, viewer).map(|extension| extension.id.clone())
     }
 
+    /// The language whose update the bar over the file shown offers, by folder name and the version offered.
+    fn updatable_language(&self) -> Option<(String, String)> {
+        let viewer = self.shown_viewer()?;
+        updatable(self, viewer).map(|extension| (extension.id.clone(), update_key(extension)))
+    }
+
     /// Handles a press on the offer's buttons; false when `action` is not one of them.
     pub(crate) fn offer_pressed(&mut self, action: FocusId) -> bool {
         match action {
@@ -124,6 +206,17 @@ impl WorkspaceState {
             OFFER_DECLINE => {
                 if let Some(id) = self.offered_language() {
                     self.window.general.declined_languages.push(id);
+                }
+            }
+            OFFER_UPDATE => {
+                if let Some((id, _)) = self.updatable_language() {
+                    self.outbox
+                        .push(Outgoing::InstallExtensions { ids: vec![id] });
+                }
+            }
+            OFFER_UPDATE_DECLINE => {
+                if let Some((_, key)) = self.updatable_language() {
+                    self.extensions_page.dismissed_updates.push(key);
                 }
             }
             _ => return false,

@@ -1056,6 +1056,25 @@ pub enum Request {
         path: String,
         /// The version of the text the lenses are about.
         version: i32,
+        /// Whether registries may be asked for newer versions of the dependencies a manifest names, which are shown as lenses; on when a client does not say.
+        #[serde(default = "enabled")]
+        registry: bool,
+    },
+    /// Runs the command of one of the lenses last offered for an open file that a language folder declares or that stands for a dependency's upgrade, in a shell as `run_task` does.
+    RunCodeLens {
+        /// The folder.
+        directory: String,
+        /// The project the folder is part of, as for `run_task`.
+        #[serde(default)]
+        project: Option<String>,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The lens, by its place in the list offered.
+        index: usize,
+        /// How many characters wide the window of the shell is.
+        columns: u16,
+        /// How many lines tall the window of the shell is.
+        rows: u16,
     },
     /// Presses one of the lenses last offered for an open file.
     PressCodeLens {

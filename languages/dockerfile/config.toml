@@ -12,6 +12,7 @@ grammar = "dockerfile"
 suffixes = ["dockerfile", "containerfile"]
 names = ["Dockerfile", "Containerfile"]
 aliases = ["docker", "containerfile"]
+requires = ["compose"]
 line_comment = "#"
 indent = 4
 pairs = ["[]", "{}", "\"\"", "''"]
@@ -26,3 +27,14 @@ args = ["--stdio"]
 kind = "npm"
 version = "0.15.0"
 packages = ["dockerfile-language-server-nodejs@0.15.0"]
+
+[[lens]]
+kind = "build"
+title = "Build Image"
+command = "docker build -f {file} ."
+once = true
+
+[[lens]]
+kind = "stage"
+title = "Build Stage"
+command = "docker build -f {file} --target {name} ."

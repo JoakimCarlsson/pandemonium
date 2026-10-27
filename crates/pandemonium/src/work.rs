@@ -1424,6 +1424,7 @@ impl Work {
                 tasking @ (Outgoing::Tasks { .. }
                 | Outgoing::RunTask { .. }
                 | Outgoing::RunRunnable { .. }
+                | Outgoing::RunCodeLens { .. }
                 | Outgoing::Toolchains { .. }
                 | Outgoing::SelectToolchain { .. }) => self.deliver_tasks(model, tasking),
                 code => self.deliver_code(model, code),

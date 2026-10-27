@@ -34,11 +34,11 @@ pub use hub::{Environment, Hub, Published, Sink, rank, score};
 pub use index::{Index, Listing, build_index};
 pub use install::{
     add_extension, add_folder, install, installed, installed_manifest, language_of, remove,
-    remove_folder,
+    remove_folder, update_available,
 };
 pub use manifest::{
-    Archive, Companion, Detect, Download, Install, InstallKind, Manifest, Pinned, RunnableSpec,
-    ScopeSpec, ServerSpec, TagSpec, glob,
+    Archive, Companion, Detect, Download, Install, InstallKind, LensSpec, Manifest, Pinned,
+    RunnableSpec, ScopeSpec, ServerSpec, TagSpec, glob,
 };
 pub use paths::{grammar_file, language_folder, local_root};
 pub use resolve::{server_ready, server_state};

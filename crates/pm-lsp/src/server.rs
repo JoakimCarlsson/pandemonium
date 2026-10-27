@@ -1139,6 +1139,7 @@ impl LanguageServer {
                 span,
                 title: title.to_owned(),
                 pressable: self.presses(&lens),
+                runs: false,
             });
             raw.push(lens);
         }

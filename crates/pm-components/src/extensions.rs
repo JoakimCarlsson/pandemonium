@@ -46,6 +46,9 @@ const PREVIEW_GRANT_END: u64 = 9_000_020;
 /// The first of the buttons installing or uninstalling an extension, in the order the page lists them; the rest follow it.
 const ROW_BASE: u64 = 9_001_000;
 
+/// The first of the buttons updating an extension, in the order the page lists those that are behind; the rest follow it.
+const UPDATE_BASE: u64 = 9_030_000;
+
 /// The first of the switches that allow or refuse an installed extension a capability: a block of them for each row, in the order the page lists them.
 const GRANT_BASE: u64 = 9_050_000;
 
@@ -87,6 +90,8 @@ pub struct ExtensionsPage {
     pub scroll: f32,
     /// The extension waiting to be installed, when one is.
     pub preview: Option<Preview>,
+    /// The updates the reader turned down in the bar over a file, each as the language and the version offered, until the window is closed.
+    pub dismissed_updates: Vec<String>,
     /// Why the last folder chosen could not be installed.
     pub problem: Option<String>,
 }
@@ -141,6 +146,9 @@ pub fn standing(extension: &ExtensionInfo) -> (String, Role) {
     }
     if let Some(problem) = &extension.problem {
         return (shortened(problem, PROBLEM_LENGTH), Role::Danger);
+    }
+    if extension.installed && extension.update.is_some() {
+        return ("A newer version is available.".to_owned(), Role::Warning);
     }
     if extension.kind == "extension" {
         return (String::new(), Role::Subtle);
@@ -366,6 +374,13 @@ impl WorkspaceState {
             self.extension_card_pressed(action);
             return self;
         }
+        if (UPDATE_BASE..GRANT_BASE).contains(&action.0) {
+            let place = (action.0 - UPDATE_BASE) as usize;
+            if let Some(extension) = self.behind_extensions().get(place).copied().cloned() {
+                self.update_extension(&extension);
+            }
+            return self;
+        }
         if action.0 >= GRANT_BASE {
             self.grant_pressed(action);
             return self;
@@ -376,6 +391,23 @@ impl WorkspaceState {
         };
         self.install_or_remove(&extension);
         self
+    }
+
+    /// The installed extensions that are behind the list, in the order the page lists them.
+    pub(crate) fn behind_extensions(&self) -> Vec<&ExtensionInfo> {
+        self.listed_extensions()
+            .into_iter()
+            .filter(|extension| extension.installed && extension.update.is_some())
+            .collect()
+    }
+
+    /// Installs `extension` again from the list as it stands now, which brings it up to date, unless it is busy being installed; nothing is changed until the reader presses the button that asks for it.
+    pub(crate) fn update_extension(&mut self, extension: &ExtensionInfo) {
+        if extension.busy.is_none() {
+            self.outbox.push(Outgoing::InstallExtensions {
+                ids: vec![extension.id.clone()],
+            });
+        }
     }
 
     /// Installs `extension`, or uninstalls it when it is installed, unless it is busy being installed.
@@ -453,8 +485,22 @@ fn mark(extension: &ExtensionInfo) -> Node {
     }
 }
 
-/// The row of `extension`: its icon, then its name and version over what it is for and how it stands, and the button, answering to `action`, that installs or uninstalls it.
-pub(crate) fn row(extension: &ExtensionInfo, action: FocusId) -> Node {
+/// The row of `extension`: its icon, then its name and version over what it is for and how it stands, and the button, answering to `action`, that installs or uninstalls it; a language that is behind the list has a button before it, answering to `update`, that brings it up to date.
+pub(crate) fn row(extension: &ExtensionInfo, action: FocusId, update: Option<FocusId>) -> Node {
+    let updating = update
+        .filter(|_| extension.installed && extension.busy.is_none())
+        .zip(extension.update.as_ref())
+        .map(|(id, version)| {
+            let label = if *version == extension.version || version.is_empty() {
+                "Update".to_owned()
+            } else {
+                format!("Update to {version}")
+            };
+            Button::new(label, id)
+                .variant(Variant::Secondary)
+                .size(Size::Sm)
+                .build()
+        });
     let button = match (extension.busy.is_some(), extension.installed) {
         (true, _) => Button::new("Installing", action)
             .variant(Variant::Ghost)
@@ -505,6 +551,7 @@ pub(crate) fn row(extension: &ExtensionInfo, action: FocusId) -> Node {
                 .children(owner)
                 .children((!said.is_empty()).then(|| line(said, 12, 1.4, tone))),
         )
+        .children(updating)
         .child(button)
 }
 
@@ -632,8 +679,13 @@ pub fn extensions(state: &WorkspaceState) -> Node {
     let listed = state.listed_extensions();
     let mut installed = Vec::new();
     let mut available = Vec::new();
+    let mut behind = 0;
     for (place, extension) in listed.iter().enumerate() {
-        let mut built = row(extension, FocusId(ROW_BASE + place as u64));
+        let update = (extension.installed && extension.update.is_some()).then(|| {
+            behind += 1;
+            FocusId(UPDATE_BASE + behind - 1)
+        });
+        let mut built = row(extension, FocusId(ROW_BASE + place as u64), update);
         if let Some(allowed) = permissions(extension, place) {
             built = node()
                 .styles([flex(), flex_col(), flex_none()])

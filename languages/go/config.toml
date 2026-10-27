@@ -9,6 +9,7 @@ color = "#6fc7d9"
 grammar = "go"
 suffixes = ["go"]
 aliases = ["golang"]
+requires = ["gomod", "gosum", "gowork"]
 line_comment = "//"
 indent = 4
 tabs = true

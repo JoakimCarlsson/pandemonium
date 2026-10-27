@@ -94,6 +94,30 @@ impl Work {
                     );
                 }
             }
+            Outgoing::RunCodeLens {
+                session,
+                path,
+                index,
+                tab,
+                columns,
+                rows,
+            } => {
+                if let Some(place) = Self::task_place(model, session) {
+                    self.held.insert(tab, Vec::new());
+                    self.ask(
+                        &place.host,
+                        Request::RunCodeLens {
+                            directory: place.directory,
+                            project: Some(place.project),
+                            path,
+                            index,
+                            columns,
+                            rows,
+                        },
+                        Pending::OpenTerminal(tab),
+                    );
+                }
+            }
             Outgoing::Toolchains { session } => {
                 if let Some(place) = Self::task_place(model, session) {
                     self.ask(

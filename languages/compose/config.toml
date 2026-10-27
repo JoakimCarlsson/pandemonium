@@ -1,0 +1,41 @@
+# Compose: how files are told to be Compose files, how they are edited and the
+# language server that reads them. It reads them as YAML, with the lenses that
+# run a service or all of them.
+
+name = "Docker Compose"
+version = "0.1.0"
+description = "Compose files with the Docker Compose language server, and a lens to run each service."
+icon = "icon.svg"
+color = "#4fa3e0"
+grammar = "yaml"
+names = ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"]
+patterns = ["docker-compose.*.yml", "docker-compose.*.yaml", "compose.*.yml", "compose.*.yaml"]
+aliases = ["compose", "docker-compose"]
+line_comment = "#"
+indent = 2
+pairs = ["[]", "{}", "\"\"", "''"]
+
+[grammar_file]
+url = "https://github.com/tree-sitter-grammars/tree-sitter-yaml/releases/download/v0.7.2/tree-sitter-yaml.wasm"
+sha256 = "0a0e5ebcfeb0b2bf272d071396eeed107b2c4b2617b69d5959b13f78b357a4d6"
+
+[server]
+id = "docker-compose-langserver"
+language_id = "dockercompose"
+command = "docker-compose-langserver"
+args = ["--stdio"]
+
+[server.install]
+kind = "npm"
+version = "1.0.0"
+packages = ["@microsoft/compose-language-service@1.0.0"]
+
+[[lens]]
+kind = "all"
+title = "Run All Services"
+command = "docker compose -f {file} up"
+
+[[lens]]
+kind = "service"
+title = "Run Service"
+command = "docker compose -f {file} up {name}"

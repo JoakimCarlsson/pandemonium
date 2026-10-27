@@ -17,6 +17,7 @@ mod fetch;
 mod folders;
 mod handler;
 mod languages;
+mod lenses;
 mod library;
 mod listener;
 mod local_history;

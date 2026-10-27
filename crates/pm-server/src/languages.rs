@@ -19,17 +19,23 @@ pub(crate) struct Installs {
     problems: Mutex<HashMap<String, String>>,
 }
 
-/// The installed language whose folder name, or one of whose other names, is `name`, with its manifest.
+/// The installed language whose folder name is `name`, or failing that one of whose other names is, with its manifest.
 pub(crate) fn installed_named(name: &str) -> Option<(String, Manifest)> {
     let name = name.trim().to_ascii_lowercase();
-    pm_lsp::installed().into_iter().find(|(id, manifest)| {
-        *id == name
-            || manifest.grammar.eq_ignore_ascii_case(&name)
-            || manifest
-                .aliases
-                .iter()
-                .any(|alias| alias.eq_ignore_ascii_case(&name))
-    })
+    let languages = pm_lsp::installed();
+    languages
+        .iter()
+        .find(|(id, _)| *id == name)
+        .or_else(|| {
+            languages.iter().find(|(_, manifest)| {
+                manifest.grammar.eq_ignore_ascii_case(&name)
+                    || manifest
+                        .aliases
+                        .iter()
+                        .any(|alias| alias.eq_ignore_ascii_case(&name))
+            })
+        })
+        .cloned()
 }
 
 /// The grammar and queries of the installed language `name`, found by folder name or another name.
@@ -152,6 +158,10 @@ impl Core {
             let mut server_ready = false;
             if let Some(manifest) = installed.get(&info.id) {
                 info.installed = true;
+                info.update = listed
+                    .iter()
+                    .find(|listing| listing.id == info.id)
+                    .and_then(pm_lsp::update_available);
                 info.server = manifest.server.as_ref().map(pm_lsp::server_state);
                 server_ready = manifest.server.as_ref().is_none_or(pm_lsp::server_ready);
                 info.icon = icon_of(&info.id, manifest);

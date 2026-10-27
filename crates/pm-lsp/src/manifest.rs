@@ -180,6 +180,37 @@ pub struct RunnableSpec {
     pub marker: Option<String>,
 }
 
+/// A lens a language folder declares for the places its `lenses.scm` marks, which runs a command in a shell of the project when pressed.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct LensSpec {
+    /// The kind of place the language's `lenses.scm` marks, such as `service`.
+    pub kind: String,
+    /// What the lens says, with `{name}` standing for the place's name.
+    pub title: String,
+    /// The command it runs, with `{name}` standing for the place's name and `{file}` for the name of the file.
+    pub command: String,
+    /// The names of the files it is shown above, where `*` stands for any run of characters; every file of the language when none.
+    #[serde(default)]
+    pub files: Vec<String>,
+    /// The file that marks the folder the command runs in, such as `Cargo.toml`: the nearest folder above the file that holds it; the folder of the file when nothing.
+    #[serde(default)]
+    pub marker: Option<String>,
+    /// The family of toolchain the command runs with, such as `javascript`; none when it needs no choice of toolchain.
+    #[serde(default)]
+    pub toolchain: Option<String>,
+    /// Whether the lens is shown above the first place of its kind alone.
+    #[serde(default)]
+    pub once: bool,
+}
+
+impl LensSpec {
+    /// Whether the lens is shown above the file at `path`, by the name of the file.
+    pub fn is_for(&self, path: &str) -> bool {
+        let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+        self.files.is_empty() || self.files.iter().any(|pattern| glob(pattern, name))
+    }
+}
+
 /// A language: how its files are told apart, how they are edited, its grammar and its language server.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Manifest {
@@ -250,6 +281,9 @@ pub struct Manifest {
     /// What running each kind of place its `runnables.scm` marks comes to.
     #[serde(default, rename = "runnable")]
     pub runnables: Vec<RunnableSpec>,
+    /// The lenses its `lenses.scm` has shown above the places it marks, each with what pressing it runs.
+    #[serde(default, rename = "lens")]
+    pub lenses: Vec<LensSpec>,
 }
 
 /// An extension is a language unless its manifest says otherwise.
@@ -288,11 +322,17 @@ impl Manifest {
         Ok(manifest)
     }
 
-    /// Whether a file at `path` is written in the language, by its name or the ending of its name.
-    pub fn matches(&self, path: &str) -> bool {
+    /// Whether a file at `path` is written in the language by its whole name or a pattern its name matches, which tells it apart from the languages that read files by their ending.
+    pub fn matches_name(&self, path: &str) -> bool {
         let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
         self.names.iter().any(|whole| whole == name)
             || self.patterns.iter().any(|pattern| glob(pattern, name))
+    }
+
+    /// Whether a file at `path` is written in the language, by its name or the ending of its name.
+    pub fn matches(&self, path: &str) -> bool {
+        let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+        self.matches_name(path)
             || name.rsplit_once('.').is_some_and(|(stem, suffix)| {
                 !stem.is_empty()
                     && self

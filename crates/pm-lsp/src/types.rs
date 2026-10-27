@@ -330,6 +330,9 @@ pub struct CodeLens {
     /// Whether pressing it does something.
     #[serde(default)]
     pub pressable: bool,
+    /// Whether pressing it runs a command in a shell of the project rather than asking the language server.
+    #[serde(default)]
+    pub runs: bool,
 }
 
 /// A block of lines a language server says can be folded: the line it starts on and the line it ends on, counted from 0.

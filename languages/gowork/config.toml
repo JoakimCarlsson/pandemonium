@@ -1,0 +1,29 @@
+# go.work: how the file is told to be a Go workspace file, how it is edited and
+# the language server that reads it. The folder holds its own grammar, built
+# with tree-sitter CLI 0.27.1 from omertuc/tree-sitter-go-work at
+# 949a8a470559543857a62102c84700d291fc984c.
+
+name = "Go Workspace"
+version = "0.1.0"
+description = "go.work files with gopls."
+icon = "icon.svg"
+color = "#6fc7d9"
+grammar = "gowork"
+hidden = true
+names = ["go.work"]
+aliases = ["go.work", "gowork"]
+line_comment = "//"
+indent = 4
+tabs = true
+pairs = ["()", "[]", "\"\"", "``"]
+
+[server]
+id = "gopls"
+language_id = "go.work"
+command = "gopls"
+check = ["version"]
+
+[server.install]
+kind = "go"
+version = "v0.24.0"
+package = "golang.org/x/tools/gopls@v0.24.0"

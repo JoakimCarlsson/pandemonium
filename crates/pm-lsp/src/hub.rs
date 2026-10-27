@@ -702,6 +702,35 @@ impl Hub {
         }
     }
 
+    /// The language and the text of the open file at `path` of the project at `root`, once it reaches `version`, whether or not a language server reads it.
+    pub fn text_at(
+        &self,
+        root: &Path,
+        path: &str,
+        version: i32,
+    ) -> Result<(String, String), String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let deadline = Instant::now() + CATCHING_UP;
+        let mut documents = self
+            .documents
+            .lock()
+            .map_err(|_| "the server is shutting down".to_owned())?;
+        loop {
+            let document = documents
+                .get(&key)
+                .ok_or_else(|| format!("{path} is not open"))?;
+            let now = Instant::now();
+            if document.buffer.version() >= version || now >= deadline {
+                return Ok((document.language.clone(), document.buffer.text().to_owned()));
+            }
+            documents = self
+                .changed
+                .wait_timeout(documents, deadline - now)
+                .map_err(|_| "the server is shutting down".to_owned())?
+                .0;
+        }
+    }
+
     /// What could be written at `position` of the open file at `path` of the project at `root`, once it reaches `version`, the best match for the word typed there first; `trigger` is the character typed that asked for them, if one did.
     pub fn completion(
         &self,

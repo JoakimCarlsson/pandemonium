@@ -75,7 +75,11 @@ One crate per layer, each depending only on the layers below it.
   returns the edits it calls for and `pm-components` draws it). A language is a
   folder in `languages/`: a `config.toml` manifest and its tree-sitter queries,
   among them `runnables.scm`, which marks the places the gutter puts a run
-  button beside.
+  button beside, and `lenses.scm`, which with the `[[lens]]` entries of
+  `config.toml` declares the lenses shown above a file's lines, such as a button
+  that runs a Compose service. A language that others need lists them in
+  `requires`, and they are installed with it (Go brings `go.mod`, `go.sum` and
+  `go.work`; Docker brings Compose).
   `make languages` writes `languages/languages.json` with every file's checksum
   after a folder changes; a release build reads the folders from the repository
   at its own release tag, a debug build from its checkout, and either from
@@ -87,6 +91,8 @@ One crate per layer, each depending only on the layers below it.
   of tool servers, which lists the tools they offer), `pm-dap`
   (programs debugged through debug adapters over the Debug Adapter Protocol:
   the adapters, what a folder can be debugged as, and a running session),
+  `pm-deps` (the dependencies a `package.json`, `Cargo.toml` or `go.mod` names
+  and the latest version their registry has, kept, spaced out and never fatal),
   `pm-task` (what a project can be built, tested and run with: tasks read from
   its manifests and its own file, and the toolchains installed on the machine),
   `pm-git`,

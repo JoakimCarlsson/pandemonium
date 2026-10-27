@@ -50,6 +50,7 @@ fn compile(bundle: &GrammarBundle) -> Result<Arc<Grammar>, String> {
             injections: bundle.injections.clone(),
             brackets: bundle.brackets.clone(),
             runnables: bundle.runnables.clone(),
+            lenses: String::new(),
         },
         Editing {
             indent: bundle.indent,
@@ -543,6 +544,7 @@ impl Work {
                 session,
                 path,
                 version,
+                registry,
             } => {
                 let asked = path.clone();
                 self.ask_in_folder(
@@ -552,6 +554,7 @@ impl Work {
                         directory,
                         path,
                         version,
+                        registry,
                     },
                     Pending::CodeLenses(session, asked, version),
                 );

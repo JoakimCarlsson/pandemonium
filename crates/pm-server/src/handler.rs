@@ -1167,7 +1167,9 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                     links: triggers.links,
                     semantic_tokens: triggers.semantic_tokens,
                     inlay_hints: triggers.inlay_hints,
-                    code_lens: triggers.code_lens,
+                    code_lens: triggers.code_lens
+                        || crate::lenses::Lenses::declares(&language)
+                        || pm_deps::ecosystem_for(&path).is_some(),
                     inline_values: triggers.inline_values,
                 },
                 Err(reason) => failed(reason),
@@ -1428,26 +1430,70 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             directory,
             path,
             version,
-        } => match core
-            .documents
-            .hub
-            .code_lenses(&place(&directory), &path, version)
-        {
-            Ok(lenses) => Response::CodeLenses { lenses },
-            Err(reason) => failed(reason),
-        },
+            registry,
+        } => {
+            let root = place(&directory);
+            let from_server = core.documents.hub.code_lenses(&root, &path, version);
+            let added = core
+                .documents
+                .hub
+                .text_at(&root, &path, version)
+                .map(|(language, text)| {
+                    let first = from_server.as_ref().map_or(0, Vec::len);
+                    core.lenses
+                        .offered(&root, &path, &language, &text, first, registry)
+                })
+                .unwrap_or_default();
+            match from_server {
+                Ok(mut lenses) => {
+                    lenses.extend(added);
+                    Response::CodeLenses { lenses }
+                }
+                Err(_) if !added.is_empty() => Response::CodeLenses { lenses: added },
+                Err(reason) => failed(reason),
+            }
+        }
+        Request::RunCodeLens {
+            directory,
+            project,
+            path,
+            index,
+            columns,
+            rows,
+        } => {
+            let root = place(&directory);
+            match core.lenses.run(&root, &path, index) {
+                Ok(task) => run_started(
+                    core.run_task(
+                        &root,
+                        &directory,
+                        project.as_deref(),
+                        &task,
+                        (columns, rows),
+                    ),
+                    connection,
+                    core,
+                ),
+                Err(reason) => failed(reason),
+            }
+        }
         Request::PressCodeLens {
             directory,
             path,
             index,
-        } => match core
-            .documents
-            .hub
-            .press_lens(&place(&directory), &path, index)
-        {
-            Ok((places, files)) => Response::LensPressed { places, files },
-            Err(reason) => failed(reason),
-        },
+        } => {
+            let root = place(&directory);
+            if let Some(edit) = core.lenses.upgrade(&root, &path, index) {
+                return Response::LensPressed {
+                    places: Vec::new(),
+                    files: vec![edit],
+                };
+            }
+            match core.documents.hub.press_lens(&root, &path, index) {
+                Ok((places, files)) => Response::LensPressed { places, files },
+                Err(reason) => failed(reason),
+            }
+        }
         Request::TakeCodeAction {
             directory,
             path,

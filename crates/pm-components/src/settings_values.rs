@@ -135,6 +135,7 @@ impl Setting {
             Self::SemanticHighlighting => Control::Switch(editor.semantic_highlighting),
             Self::InlayHints => Control::Switch(editor.inlay_hints),
             Self::CodeLens => Control::Switch(editor.code_lens),
+            Self::RegistryLookups => Control::Switch(editor.registry_lookups),
             Self::Minimap => Control::Switch(editor.minimap),
             Self::StickyScroll => Control::Switch(editor.sticky_scroll),
             Self::FormatOnType => Control::Switch(editor.format_on_type),
@@ -372,6 +373,7 @@ impl Setting {
             Self::SemanticHighlighting => editor.semantic_highlighting ^= true,
             Self::InlayHints => editor.inlay_hints ^= true,
             Self::CodeLens => editor.code_lens ^= true,
+            Self::RegistryLookups => editor.registry_lookups ^= true,
             Self::Minimap => editor.minimap ^= true,
             Self::StickyScroll => editor.sticky_scroll ^= true,
             Self::FormatOnType => editor.format_on_type ^= true,
@@ -765,6 +767,7 @@ impl Setting {
             }
             Self::InlayHints => editor.inlay_hints = source.inlay_hints,
             Self::CodeLens => editor.code_lens = source.code_lens,
+            Self::RegistryLookups => editor.registry_lookups = source.registry_lookups,
             Self::Minimap => editor.minimap = source.minimap,
             Self::StickyScroll => editor.sticky_scroll = source.sticky_scroll,
             Self::FormatOnType => editor.format_on_type = source.format_on_type,

@@ -44,6 +44,15 @@ pub enum Rerun {
         /// What it is called.
         name: String,
     },
+    /// A lens above a line of a file whose command runs in a shell.
+    Lens {
+        /// The file, from the root of the session's folder.
+        path: String,
+        /// The lens, by its place in the list the server gave.
+        index: usize,
+        /// What the lens says.
+        title: String,
+    },
 }
 
 /// What the workspace holds of tasks and toolchains.
@@ -119,6 +128,7 @@ impl WorkspaceState {
         let title = match &how {
             Rerun::Task(task) => task.name.clone(),
             Rerun::Runnable { name, .. } => name.clone(),
+            Rerun::Lens { title, .. } => title.clone(),
         };
         if let Some(held) = self
             .sessions
@@ -146,8 +156,21 @@ impl WorkspaceState {
                 columns,
                 rows,
             },
+            Rerun::Lens { path, index, .. } => Outgoing::RunCodeLens {
+                session,
+                path,
+                index,
+                tab,
+                columns,
+                rows,
+            },
         });
         self.tasks.last = Some(how);
+    }
+
+    /// Runs the command of the lens at `index` of the list the server gave for the file at `path`, which says `title`, in the dock.
+    pub(crate) fn lens_run(&mut self, path: String, index: usize, title: String) {
+        self.run_in_terminal(Rerun::Lens { path, index, title });
     }
 
     /// Runs `task` in the dock.

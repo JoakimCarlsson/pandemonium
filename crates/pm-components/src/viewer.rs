@@ -410,11 +410,7 @@ pub(crate) fn file_line(
     .into_iter()
     .chain(document.values_on(index))
     .collect();
-    let lenses = if settings.code_lens {
-        document.lenses_on(index)
-    } else {
-        &[]
-    };
+    let lenses = document.lenses_on(index);
     let rows = segments.iter().enumerate().map(|(place, segment)| {
         let absolute = line.start + segment.start..line.start + segment.end;
         let standing: Vec<&Hint> = hints
@@ -485,25 +481,34 @@ pub(crate) fn file_line(
             return held;
         }
         held.children(document.is_folded_at(index).then(|| fold_chip(index)))
-            .children(lenses.iter().map(|lens| lens_chip(lens, font)))
             .children(blamed.clone().map(|said| {
                 node()
                     .styles([flex_1(), ml(8), min_w_px(0), overflow_hidden()])
                     .child(crate::parts::line(said, font, 1.4, Role::Subtle))
             }))
     });
+    let lens_rows = usize::from(!lenses.is_empty());
+    let above = |content: Node| {
+        if lens_rows == 0 {
+            return content;
+        }
+        node()
+            .styles([flex(), flex_col(), flex_none()])
+            .child(node().styles([h_px(height), flex_none()]))
+            .child(content)
+    };
     let mut row = node()
         .styles([
             flex(),
-            h_px(height * segments.len().max(1) as f32),
+            h_px(height * (segments.len().max(1) + lens_rows) as f32),
             flex_none(),
             overflow_hidden(),
         ])
-        .child(breakpoint)
-        .child(change_bar(
+        .child(above(breakpoint))
+        .child(above(change_bar(
             document.line_change(index).filter(|_| settings.git_gutter),
             height * segments.len().max(1) as f32,
-        ));
+        )));
     if paused {
         row = row.styles([bg(Role::SurfaceActive)]);
     } else if settings.current_line_highlight
@@ -521,6 +526,7 @@ pub(crate) fn file_line(
         node()
             .styles([flex(), flex_col(), flex_none(), pr(3)])
             .styles([if settings.line_numbers { w(13) } else { w(2) }])
+            .children((lens_rows > 0).then(|| node().styles([h_px(height), flex_none()])))
             .child(
                 node()
                     .styles([flex(), items_center(), justify_end(), h_px(height)])
@@ -544,6 +550,7 @@ pub(crate) fn file_line(
                 overflow_hidden(),
                 px(2),
             ])
+            .children((lens_rows > 0).then(|| lens_row(lenses, font, height)))
             .children(rows),
     )
 }
@@ -568,13 +575,32 @@ fn hint_chip(hint: &Hint, font: u32) -> Node {
     chip.child(line(&hint.label, (font - 1).max(8), 1.2, tone).styles([font_mono(), flex_none()]))
 }
 
-/// The text of `lens` at the end of its line, pressed to do what the server says when it can be.
+/// The row above a line that holds its `lenses`, each a chip separated from the next by a bar.
+fn lens_row(lenses: &[Lens], font: u32, height: f32) -> Node {
+    let mut row = node().styles([
+        flex(),
+        items_center(),
+        h_px(height),
+        flex_none(),
+        min_w_px(0),
+    ]);
+    for (place, lens) in lenses.iter().enumerate() {
+        if place > 0 {
+            row = row.child(
+                line("|", (font - 1).max(8), 1.2, Role::Muted).styles([flex_none(), px(1.5)]),
+            );
+        }
+        row = row.child(lens_chip(lens, font));
+    }
+    row
+}
+
+/// The text of `lens` in the row above its line, pressed to do what the server says when it can be.
 fn lens_chip(lens: &Lens, font: u32) -> Node {
     let chip = node().styles([
         flex(),
         items_center(),
         flex_none(),
-        ml(4),
         px(1.5),
         h(4),
         rounded(Radius::Sm),
@@ -723,7 +749,7 @@ fn visible(document: &Document, scroll: f32, height: f32, look: &Look) -> Vec<No
                         paint: Paint::Guide,
                     }));
                     let segments = document.line_segments(index, columns);
-                    drawn += segments.len();
+                    drawn += document.line_rows(index, columns);
                     let cell =
                         breakpoint_cell(file, index, gutter, document_row(settings, &segments));
                     file_line(

@@ -1,0 +1,28 @@
+# go.mod: how the file is told to be a Go module file, how it is edited and the
+# language server that reads it. The folder holds its own grammar, built with
+# tree-sitter CLI 0.27.1 from camdencheek/tree-sitter-go-mod v1.1.0.
+
+name = "Go Module"
+version = "0.1.0"
+description = "go.mod files with gopls."
+icon = "icon.svg"
+color = "#6fc7d9"
+grammar = "gomod"
+hidden = true
+names = ["go.mod"]
+aliases = ["go.mod", "gomod"]
+line_comment = "//"
+indent = 4
+tabs = true
+pairs = ["()", "[]", "\"\"", "``"]
+
+[server]
+id = "gopls"
+language_id = "go.mod"
+command = "gopls"
+check = ["version"]
+
+[server.install]
+kind = "go"
+version = "v0.24.0"
+package = "golang.org/x/tools/gopls@v0.24.0"

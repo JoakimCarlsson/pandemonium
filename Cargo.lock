@@ -2526,6 +2526,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "pm-deps"
+version = "0.14.0-rc.1"
+dependencies = [
+ "serde_json",
+ "ureq",
+]
+
+[[package]]
 name = "pm-editor"
 version = "0.14.0-rc.1"
 dependencies = [
@@ -2695,7 +2703,9 @@ dependencies = [
  "notify",
  "pm-acp",
  "pm-agent-library",
+ "pm-buffer",
  "pm-dap",
+ "pm-deps",
  "pm-git",
  "pm-lsp",
  "pm-mcp",
@@ -2705,6 +2715,7 @@ dependencies = [
  "pm-store",
  "pm-task",
  "pm-transport",
+ "pm-treesitter",
  "pm-update",
  "portable-pty",
  "serde",

@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use crate::fetch::{fetch_checked, sha256};
-use crate::index::{Index, source};
+use crate::index::{Index, Listing, source};
 use crate::manifest::Manifest;
 use crate::paths::{grammar_file, language_folder, languages_root, local_root};
 use crate::resolve::ensure_server;
@@ -18,12 +18,18 @@ pub fn installed_manifest(id: &str) -> Option<Manifest> {
     Manifest::read(&folder).ok()
 }
 
-/// The installed language a file at `path` is written in, by folder name.
+/// The installed language a file at `path` is written in, by folder name; a language that names the file or a pattern its name matches is chosen before one that reads it by its ending, so that `docker-compose.yml` is Compose and not YAML.
 pub fn language_of(path: &str) -> Option<String> {
-    installed()
-        .into_iter()
-        .find(|(_, manifest)| manifest.matches(path))
-        .map(|(id, _)| id)
+    let languages = installed();
+    languages
+        .iter()
+        .find(|(_, manifest)| manifest.matches_name(path))
+        .or_else(|| {
+            languages
+                .iter()
+                .find(|(_, manifest)| manifest.matches(path))
+        })
+        .map(|(id, _)| id.clone())
 }
 
 /// The languages installed on this machine, by folder name, each with its manifest.
@@ -106,15 +112,44 @@ fn fetch_folder(index: &Index, id: &str, staging: &Path) -> Result<Manifest, Str
     Ok(manifest)
 }
 
-/// Whether the installed language `id` already holds exactly the files `index` lists for it.
-fn is_current(index: &Index, id: &str) -> bool {
-    let (Some(listing), Ok(folder)) = (index.find(id), language_folder(id)) else {
+/// Whether the installed language `id` already holds exactly the files `listing` lists for it.
+fn holds(listing: &Listing, id: &str) -> bool {
+    let Ok(folder) = language_folder(id) else {
         return false;
     };
     folder.join("grammar.wasm").is_file()
         && listing.files.iter().all(|(name, checksum)| {
             std::fs::read(folder.join(name)).is_ok_and(|bytes| sha256(&bytes) == *checksum)
         })
+}
+
+/// Whether the installed language `id` already holds exactly the files `index` lists for it.
+fn is_current(index: &Index, id: &str) -> bool {
+    index.find(id).is_some_and(|listing| holds(listing, id))
+}
+
+/// The version of the language `listing` lists when the language is installed and what it holds is behind that: its grammar, its queries or the language server it pins differ from what the list has now. Languages of your own are never behind.
+pub fn update_available(listing: &Listing) -> Option<String> {
+    (!listing.local && installed_manifest(&listing.id).is_some() && !holds(listing, &listing.id))
+        .then(|| listing.version.clone())
+}
+
+/// Puts the folder `staging` in the place of `folder`, keeping what was there in `previous` until it has, and putting it back when it cannot, so that a language that works is never left without its folder.
+fn swap_in(staging: &Path, folder: &Path, previous: &Path) -> Result<(), String> {
+    let _ = std::fs::remove_dir_all(previous);
+    let had = folder.exists();
+    if had {
+        std::fs::rename(folder, previous).map_err(|error| error.to_string())?;
+    }
+    if let Err(error) = std::fs::rename(staging, folder) {
+        if had {
+            let _ = std::fs::rename(previous, folder);
+        }
+        let _ = std::fs::remove_dir_all(staging);
+        return Err(error.to_string());
+    }
+    let _ = std::fs::remove_dir_all(previous);
+    Ok(())
 }
 
 /// Installs the language `id` and the languages it needs, as the index lists them, then their language servers, telling `progress` what it is doing; returns why a language server could not be installed, if one could not, while the languages themselves are.
@@ -139,8 +174,7 @@ pub fn install(id: &str, progress: &dyn Fn(&str, &str)) -> Result<Vec<String>, S
             return Err(reason);
         }
         let folder = language_folder(id)?;
-        let _ = std::fs::remove_dir_all(&folder);
-        std::fs::rename(&staging, &folder).map_err(|error| error.to_string())?;
+        swap_in(&staging, &folder, &root.join(format!(".{id}.previous")))?;
         manifests.push((id.clone(), Manifest::read(&folder)?));
     }
     let mut problems = Vec::new();

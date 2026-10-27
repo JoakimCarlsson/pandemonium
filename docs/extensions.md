@@ -75,6 +75,41 @@ prompt = "Say hello to {argument}."     # a command without `prompt` is run by t
 - **Commands** appear in the command palette and behind the slash of the prompt
   box as `<extension>:<id>`; running one puts what it comes to in the prompt box.
 
+## Lenses
+
+A language folder declares the lenses shown in a row above the lines of its
+files with a tree-sitter query, `lenses.scm`, and `[[lens]]` entries in its
+`config.toml`; no Rust is needed. The query marks places with
+`@lens.<kind>` (the whole place, whose first line gets the lens) and,
+optionally, `@name`:
+
+```scheme
+(rule (targets (word) @name) (#not-match? @name "^[.%]")) @lens.target
+```
+
+```toml
+[[lens]]
+kind = "target"                  # the <kind> of the capture
+title = "Run Target"             # {name} stands for the captured name
+command = "make {name}"          # {name} and {file} (the file's name) stand in it
+files = ["Makefile"]             # optional: names or globs it is shown above
+marker = "Cargo.toml"            # optional: the nearest folder above the file that holds it
+toolchain = "javascript"         # optional: the family of toolchain it runs with
+once = true                      # optional: only above the first place of its kind
+```
+
+Pressing the lens runs `command` in a shell of the project, as a task does, on
+the machine the project is on. A `{name}` that is not made of letters, digits
+and `_-.:/@+`, or that starts with `-`, gets no lens, so that a name read from a
+file is never typed into a shell as more than a word. The server evaluates the
+query, so lenses work for projects reached over `ssh://` as for local ones.
+`languages/compose`, `json` (for `package.json`), `make` and `dockerfile` are
+the examples. `lenses.scm` is listed in `languages.json` like the other
+queries, so `make languages` must be run after changing it.
+
+A language lists the languages it needs in `requires`, which are installed with
+it and left out of the list when `hidden`.
+
 ## Capabilities
 
 Everything is denied until the reader allows it. The manifest lists in

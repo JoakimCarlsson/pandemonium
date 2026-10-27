@@ -73,6 +73,8 @@ pub struct Lens {
     pub title: String,
     /// Whether pressing it does something.
     pub pressable: bool,
+    /// Whether pressing it runs a command in a shell of the dock.
+    pub runs: bool,
     /// Its place in the list the server last gave, which names it when it is pressed.
     pub index: usize,
 }
@@ -86,6 +88,8 @@ pub(crate) struct Annotations {
     pub(crate) hints: Said<Hint>,
     /// The lenses, in the order of the text.
     pub(crate) lenses: Said<Lens>,
+    /// Whether registries were allowed to be asked about dependencies when the lenses were last asked for.
+    pub(crate) lenses_with_registry: bool,
     /// The values of names at the end of the lines, while a program is paused, in the order of the text.
     pub(crate) values: Vec<Hint>,
 }
@@ -288,6 +292,7 @@ impl Document {
                 offset: self.offset_of(lens.span.start),
                 title: lens.title,
                 pressable: lens.pressable,
+                runs: lens.runs,
                 index,
             })
             .collect();
@@ -295,14 +300,18 @@ impl Document {
         self.annotations.lenses.take(version, self.version, kept);
     }
 
-    /// Notes that the language server was asked what to show with stretches of the text at `version`.
-    pub fn code_lenses_asked(&mut self, version: i32) {
+    /// Notes that the server was asked what to show with stretches of the text at `version`, with registries allowed to be asked about dependencies or not.
+    pub fn code_lenses_asked(&mut self, version: i32, registry: bool) {
         self.annotations.lenses.asked = Some(version);
+        self.annotations.lenses_with_registry = registry;
     }
 
-    /// Whether the language server should be asked what to show with stretches of the text as it is now.
-    pub fn wants_code_lenses(&self) -> bool {
-        self.synced && self.code_lens_supported && self.annotations.lenses.wanted_at(self.version)
+    /// Whether the server should be asked what to show with stretches of the text as it is now: it was not asked for this text, or registries were allowed or forbidden since.
+    pub fn wants_code_lenses(&self, registry: bool) -> bool {
+        self.synced
+            && self.code_lens_supported
+            && (self.annotations.lenses.wanted_at(self.version)
+                || self.annotations.lenses_with_registry != registry)
     }
 
     /// Lets go of the lenses, as when the reader turned them off.
@@ -318,6 +327,25 @@ impl Document {
             .iter()
             .find(|lens| lens.index == index && lens.pressable)
             .map(|lens| lens.title.as_str())
+    }
+
+    /// Whether any lens is held, which gives the lines they stand above a row of their own.
+    pub fn shows_lens_rows(&self) -> bool {
+        !self.annotations.lenses.items.is_empty()
+    }
+
+    /// Whether the line at `index` has lenses, which stand in a row above it.
+    pub fn has_lens_row(&self, index: usize) -> bool {
+        self.shows_lens_rows() && !self.lenses_on(index).is_empty()
+    }
+
+    /// Whether pressing the lens at `index` of the list the server gave runs a command in a shell.
+    pub fn lens_runs(&self, index: usize) -> bool {
+        self.annotations
+            .lenses
+            .items
+            .iter()
+            .any(|lens| lens.index == index && lens.runs)
     }
 
     /// The lenses whose stretch starts in line `row`, in order.

@@ -1,0 +1,27 @@
+# go.sum: how the file is told to be a Go checksum file, how it is edited and
+# the language server that reads it. No grammar is published for it, so the
+# folder holds its own: grammar.js, built with tree-sitter CLI 0.27.1.
+
+name = "Go Checksums"
+version = "0.1.0"
+description = "go.sum files with gopls."
+icon = "icon.svg"
+color = "#6fc7d9"
+grammar = "gosum"
+hidden = true
+names = ["go.sum"]
+aliases = ["go.sum", "gosum"]
+indent = 4
+tabs = true
+pairs = []
+
+[server]
+id = "gopls"
+language_id = "go.sum"
+command = "gopls"
+check = ["version"]
+
+[server.install]
+kind = "go"
+version = "v0.24.0"
+package = "golang.org/x/tools/gopls@v0.24.0"

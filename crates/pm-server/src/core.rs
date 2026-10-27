@@ -240,6 +240,8 @@ pub(crate) struct Core {
     pub(crate) documents: Documents,
     /// What the server knows of installing languages.
     pub(crate) installs: Installs,
+    /// The lenses the server adds to a language server's.
+    pub(crate) lenses: crate::lenses::Lenses,
     /// The folders clients watch.
     pub(crate) folders: Folders,
 }
@@ -257,6 +259,7 @@ impl Core {
             next_debug: AtomicU64::new(1),
             documents: Documents::new(),
             installs: Installs::default(),
+            lenses: crate::lenses::Lenses::default(),
             folders: Folders::new(),
         })
     }

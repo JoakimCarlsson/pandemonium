@@ -43,12 +43,13 @@ impl Document {
         }
     }
 
-    /// How many rows the line at `index` takes when a row has room for `columns` characters.
+    /// How many rows the line at `index` takes when a row has room for `columns` characters, the row its lenses stand in above it included.
     pub fn line_rows(&self, index: usize, columns: Option<usize>) -> usize {
-        match columns {
+        let text = match columns {
             Some(_) => self.line_segments(index, columns).len(),
             None => 1,
-        }
+        };
+        text + usize::from(self.has_lens_row(index))
     }
 
     /// The lines that show, by index, in order.
@@ -58,19 +59,18 @@ impl Document {
 
     /// How many rows the lines that show take when a row has room for `columns` characters.
     pub fn wrapped_rows(&self, columns: Option<usize>) -> usize {
-        match columns {
-            Some(_) => self
-                .every_shown_line()
-                .into_iter()
-                .map(|index| self.line_rows(index, columns))
-                .sum(),
-            None => self.rows(),
+        if columns.is_none() && !self.shows_lens_rows() {
+            return self.rows();
         }
+        self.every_shown_line()
+            .into_iter()
+            .map(|index| self.line_rows(index, columns))
+            .sum()
     }
 
     /// The first row the line at `index` is drawn in when a row has room for `columns` characters; a hidden line is drawn in the rows of the line that stands for it.
     pub fn wrapped_row_of_line(&self, index: usize, columns: Option<usize>) -> usize {
-        if columns.is_none() {
+        if columns.is_none() && !self.shows_lens_rows() {
             return self.row_of_line(index);
         }
         let standing = self.standing_for(index);
@@ -100,7 +100,7 @@ impl Document {
             .iter()
             .position(|segment| within < segment.end)
             .unwrap_or(last);
-        self.wrapped_row_of_line(index, columns) + segment
+        self.wrapped_row_of_line(index, columns) + usize::from(self.has_lens_row(index)) + segment
     }
 
     /// The lines that show from the one drawn in row `first` until the rows they take reach `count` past it, when a row has room for `columns` characters, with the row the first of them starts in.
@@ -110,7 +110,7 @@ impl Document {
         count: usize,
         columns: Option<usize>,
     ) -> (Vec<usize>, usize) {
-        if columns.is_none() {
+        if columns.is_none() && !self.shows_lens_rows() {
             return (self.shown_lines(first, count), first.min(self.rows()));
         }
         let mut row = 0;

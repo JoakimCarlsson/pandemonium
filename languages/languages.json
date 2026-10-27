@@ -107,6 +107,42 @@
       "local": false
     },
     {
+      "id": "compose",
+      "name": "Docker Compose",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "Compose files with the Docker Compose language server, and a lens to run each service.",
+      "hidden": false,
+      "requires": [],
+      "suffixes": [],
+      "names": [
+        "docker-compose.yml",
+        "docker-compose.yaml",
+        "compose.yml",
+        "compose.yaml"
+      ],
+      "patterns": [
+        "docker-compose.*.yml",
+        "docker-compose.*.yaml",
+        "compose.*.yml",
+        "compose.*.yaml"
+      ],
+      "server": "docker-compose-langserver",
+      "files": {
+        "brackets.scm": "8961d89bbb61e3890c556510daecc24cd4002ebac72010cafa46171e4d0b4df0",
+        "config.toml": "529d21eefe6155497525ab944e344979cfa7c989dbf7680c58cad2e462bea53f",
+        "highlights.scm": "0077c042836f8ffed7d13505316f4d3c9ce0f107c4078fb37b937ffc339f8c49",
+        "icon.svg": "410ce23bdffce1cd383cb5112e0c7e0c43127c926ab3dfbd185482a3e64ce790",
+        "indents.scm": "b49dab22c3ef077815fb0907550da600cdb760b4ac400765d31bec5659f36658",
+        "injections.scm": "41e7282e0b6f4fe7cd6ea45535af3c69d9a8cd2dfa2da46bbba830fd05689707",
+        "lenses.scm": "5b288956ee80650a5755dcb1414151480b38f56ea1fee336bb1656b5ceaef5f2",
+        "outline.scm": "477701c984e32a81d7add82ac11650d26885a1beb669ce0158e28122a3038bcb",
+        "package-lock.json": "997241f00d29a7b40b100daf64745c9b7def6f347fda1964e363dd27c52c0c04",
+        "package.json": "aa321aff4991cfb8467d521260eb4c580481a8f3c6612ac3e505846fe5f5d431"
+      },
+      "local": false
+    },
+    {
       "id": "cpp",
       "name": "C++",
       "kind": "language",
@@ -205,7 +241,9 @@
       "version": "0.1.0",
       "description": "Dockerfiles and Containerfiles with the Docker language server.",
       "hidden": false,
-      "requires": [],
+      "requires": [
+        "compose"
+      ],
       "suffixes": [
         "dockerfile",
         "containerfile"
@@ -218,12 +256,13 @@
       "server": "docker-langserver",
       "files": {
         "brackets.scm": "36d8696012a74b1994a84a481fd10e76ca030cc7b164fe5cac6de3cceb3e218f",
-        "config.toml": "834ba23c7237f9dc97452425f9c09b0a019ca9a7637a4f01d1c3bf41ee6d3c8e",
+        "config.toml": "a6666d1bad2e3b97f2ebf15aea3de706e9d2ce483892a442493237a1cf6372ae",
         "grammar.wasm": "295dbbe840e80ad2582d07d9266cf6b7210d702cd9c6878a1fb8650e8c1385a0",
         "highlights.scm": "b0f8d65584dc1e65b7c9dff288de83ee9702478f84d953da3e684b5e34cb0338",
         "icon.svg": "410ce23bdffce1cd383cb5112e0c7e0c43127c926ab3dfbd185482a3e64ce790",
         "indents.scm": "8fd4c3431980bbf7a6b4de42fb7ea9256bf03b82cd3b44660bcf4e8b46a3f301",
         "injections.scm": "a77ef474f544f54780f12846e090b015983aa2eaf1d602f1570c52d8caaa7ee9",
+        "lenses.scm": "424bfefdcbb4da3dfcee142e778e051ef627e1c860b2e0f3cab8f6578ab6fe2f",
         "outline.scm": "dc19152c22191440ac66802fcff6697ff8dc6782e12d1c5305e9cd617f1f6d01",
         "package-lock.json": "7c3d1bee93d00edb34f009f56ad718908ed4df977358221bf2a3098ed15c5995",
         "package.json": "897db1fccc5288d8b0f1946c8256e1ee7465da63d03da84195710fe7cfab35b6"
@@ -302,7 +341,11 @@
       "version": "0.1.0",
       "description": "Go with gopls.",
       "hidden": false,
-      "requires": [],
+      "requires": [
+        "gomod",
+        "gosum",
+        "gowork"
+      ],
       "suffixes": [
         "go"
       ],
@@ -311,12 +354,81 @@
       "server": "gopls",
       "files": {
         "brackets.scm": "f0353a09140622170b89963be336b7bf1dfb4d3630516204a0d9a71de0244dde",
-        "config.toml": "aa01b358529d696e9cd4071f0458582d20811bab6339b3691a4b637833e7181b",
+        "config.toml": "a2eb85fadbbb5ec411ce20ccc9285ae910d3efed77856dee62221d2213ef9644",
         "highlights.scm": "b845477ebabd708f06ff69438b4e309b1eadc8c014f9de78f2fa865652679528",
         "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d",
         "indents.scm": "a748e02c783a8758db59509a5d80db5c3ca3ea664699436444b7280b60ae8f18",
         "injections.scm": "84aafde3ba3b8da8c13e67e149aa41faa3938b46b09ec96394040492bf711325",
         "outline.scm": "ccfac5aaf8a1d295a958424274a9baa5d0eed9d64fe7a10f16788c5ac908377a"
+      },
+      "local": false
+    },
+    {
+      "id": "gomod",
+      "name": "Go Module",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "go.mod files with gopls.",
+      "hidden": true,
+      "requires": [],
+      "suffixes": [],
+      "names": [
+        "go.mod"
+      ],
+      "patterns": [],
+      "server": "gopls",
+      "files": {
+        "brackets.scm": "e98e812efd7ec6fa313ff2e47bd96eb5d07d0d2cfa3ecc1a0e845a5f838787a5",
+        "config.toml": "01a9a3700d3833121a2079bb4a05b3f55feac25b342624ac46b081f2da098109",
+        "grammar.wasm": "30eb00e1c4b4516ccfad39d0a8d79e5f98a823de45705ad3c6e232dfa7d5e36c",
+        "highlights.scm": "4af8cc939548e0511af75e8ceecf9d484e18f163975793dcb3609ac1e9c5be9d",
+        "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d"
+      },
+      "local": false
+    },
+    {
+      "id": "gosum",
+      "name": "Go Checksums",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "go.sum files with gopls.",
+      "hidden": true,
+      "requires": [],
+      "suffixes": [],
+      "names": [
+        "go.sum"
+      ],
+      "patterns": [],
+      "server": "gopls",
+      "files": {
+        "config.toml": "86c29cd55dd95a5b3068d9e22ee6d60cfaa9cb831788b09c78cf43bb8b3a3034",
+        "grammar.js": "d0a1c96d93f7e5c5fa6bf0ec647516aea5eb859f5c570ce70b2a0dfc9b187b71",
+        "grammar.wasm": "b8c0f85c2a92c39349647e5b061d9a5f37c6abd8360d73bb673b0aef691f6727",
+        "highlights.scm": "d8f478b21d49ecb2fbb667b7958425a3d7e38dce13466a785863ef1772ac64a6",
+        "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d"
+      },
+      "local": false
+    },
+    {
+      "id": "gowork",
+      "name": "Go Workspace",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "go.work files with gopls.",
+      "hidden": true,
+      "requires": [],
+      "suffixes": [],
+      "names": [
+        "go.work"
+      ],
+      "patterns": [],
+      "server": "gopls",
+      "files": {
+        "brackets.scm": "5f1c960e39d9443aa045f88aaa53f5dec478b307bdf7bd67ed4ed8c038794f12",
+        "config.toml": "fa76071d9f73aea544c4a176d371fbe619c2f1018f76f30a9a0dac180498f56e",
+        "grammar.wasm": "87c89914ca750eab04edf69541de2a14a2e94c72fef41af57f0ff14fd2f03b7d",
+        "highlights.scm": "7339839e41777ab1736d976f60fe266e15ea99d1b780476e19f668af867347d5",
+        "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d"
       },
       "local": false
     },
@@ -520,11 +632,12 @@
       "server": "vscode-json-language-server",
       "files": {
         "brackets.scm": "d13aeee7b2b6ff238a68e2029bfa42543e624415911624e2fb88cd93abf47bc5",
-        "config.toml": "e26f0eb9ef164de062671b5ed9d7f3633f2fe9d210c9ae9611f284a63017a9ce",
+        "config.toml": "d55bc6f88c7280ee9c2ca1958743b4bdbed1f77c8b32ac22980f2c59bd9ca6bc",
         "highlights.scm": "86cb3d2ca3aada199a87998e2d948de975e92c47d5258bcedbe71f193fe8fa4d",
         "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d",
         "indents.scm": "8d640f47854fdfb20e09a5ed3aec2c427b168ed62b2026350adc0b83dea69a2d",
         "injections.scm": "bf5e206d7ce8cf219cb98657904930f236cbeb830c186a6c62fa82500f9f08c3",
+        "lenses.scm": "c67f60b5cfb19f07d57e6ad3b8c69f4f954d302d5cd01d5746b4219c10df93e0",
         "outline.scm": "0dddd12b8c6b67923ce700ff0c65adef827a7ae40a6aec1d855f9aa88c9c4783",
         "package-lock.json": "114277b435719d7f6c5410f85076b2eed8b7dc8190663a085651f0b99aa1d1fe",
         "package.json": "2a4446da171df7890c82ecbdfe1de27a922991023178205d6c2ef0b57fe0d329"
@@ -606,11 +719,12 @@
       "server": null,
       "files": {
         "brackets.scm": "c54dac6541b82a63f109aa3c66e55c3e2074a6b17a450905ec008fd9e038633e",
-        "config.toml": "01c4d1f399a9b201d3bd109f2b4d7f627bf13f26cc5b8037a8cac33cfb604e97",
+        "config.toml": "454da0007631383dfb92b55299c386e35b98e580176ab06d49e9f6b447ff663f",
         "highlights.scm": "5b4481cb03a2cef43789bec78bfb4e7741f31ee0888072623aaa9b8df52b855e",
         "icon.svg": "c08d36925b4afc2155c821e3ffe9412b24cc60c224be06a65d06a55cf311554d",
         "indents.scm": "00abeee62a9ac43016d26cd9fab371c1e9aef55fc39510792d97a814f1f50091",
         "injections.scm": "ca80e7c5d0577b1fb46091aa62d46512ddc35cddbd03478591e8718038de846a",
+        "lenses.scm": "e4c1157a03c68160dfebf2d447e978edde049120bd3f3ce612ca5e76226db4a3",
         "outline.scm": "f3a121e2c7e56da7a9f7d92ced02c00dbf55b44333278cf2949736ef2879b27d"
       },
       "local": false

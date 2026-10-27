@@ -18,3 +18,8 @@ pairs = ["()", "{}", "\"\"", "''"]
 [grammar_file]
 url = "https://github.com/tree-sitter-grammars/tree-sitter-make/releases/download/v1.1.1/tree-sitter-make.wasm"
 sha256 = "1254d1e5787be8bb944d55d1f6552b6b2b7908272ed498013bfdc07bd7d042dd"
+
+[[lens]]
+kind = "target"
+title = "Run Target"
+command = "make {name}"

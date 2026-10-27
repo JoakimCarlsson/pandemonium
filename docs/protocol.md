@@ -218,7 +218,8 @@ request with exactly one `response` carrying the same `id`.
 | `semantic_tokens` | `directory`, `path`, `version`                                                                | `semantic_tokens` |
 | `inlay_hints`  | `directory`, `path`, `version`, `span`                                                           | `inlay_hints`   |
 | `inline_values` | `directory`, `path`, `version`, `span`, `frame`, `stopped`                                      | `inline_values` |
-| `code_lenses`  | `directory`, `path`, `version`                                                                   | `code_lenses`   |
+| `code_lenses`  | `directory`, `path`, `version`, `registry` (optional, on when absent)                            | `code_lenses`   |
+| `run_code_lens`| `directory`, `project` (optional), `path`, `index`, `columns`, `rows`                            | `terminal`      |
 | `press_code_lens` | `directory`, `path`, `index`                                                                  | `lens_pressed`  |
 | `definition`   | `directory`, `path`, `version`, `position`, `seek` (optional)                                    | `definitions`   |
 | `workspace_symbols` | `directory`, `path`, `query`                                                                | `definitions`   |
@@ -632,7 +633,13 @@ everything said of them, its submodules' paths written from `directory`.
   from the `package-lock.json` in the language's folder, which pins the
   checksum of every package, and `go install` runs with Go's checksum database
   enforced. Every client is
-  told how it goes with `extensions_changed`.
+  told how it goes with `extensions_changed`. An installed language whose
+  folder or pinned language server differs from what `languages.json` lists now
+  is listed with `update` set to the version offered; installing it again is how
+  it is updated, by the same path as the first install, and never happens
+  unless a client asks. The new folder is fetched and checked beside the old
+  one and swapped in only once it is whole, so that a failed update leaves the
+  working install in place.
 - **`install_extension`:** installs the folder at `path` on the server's
   machine. A folder holding an `extension.toml` is an extension package, which
   [`docs/extensions.md`](extensions.md) describes: its folder is kept under
@@ -735,13 +742,28 @@ everything said of them, its submodules' paths written from `directory`.
   the debugger's `frame`, as the language server says; none when it does not
   say.
 - **`code_lenses`:** what to show with stretches of the open file at
-  `version`, as the language server says, each already filled in by the
-  server. The server keeps the list as given, and `press_code_lens` takes one
-  by its place in it.
+  `version`, each already filled in by the server: first what the language
+  server says, then the lenses the file's language folder declares (a
+  `lenses.scm` and `[[lens]]` entries, see [`docs/extensions.md`](extensions.md))
+  and, unless `registry` is false, one for each dependency a `package.json`,
+  `Cargo.toml` or `go.mod` names whose version is behind the latest its
+  registry has (npm, crates.io, the Go module proxy), saying `Latest <version>
+  · Upgrade`. A lens has `runs` set when pressing it runs a command in a shell
+  and must be sent with `run_code_lens`. The server keeps the list as given, and
+  `press_code_lens` and `run_code_lens` take one by its place in it. Lookups in
+  registries are kept for an hour (five minutes when they failed), spaced at
+  least 100 ms apart for each registry, limited to 80 dependencies and eight
+  seconds for each request, and a lookup that fails leaves its dependency out
+  without failing the request.
 - **`press_code_lens`:** presses one of the lenses last given for the open
   file: the places it points to when it counts uses, and otherwise the
   changes the language server made carrying out its command, as for
-  `take_code_action`.
+  `take_code_action`. The lens of a dependency's upgrade answers with the one
+  change to the file that writes the latest version in place of the old one.
+- **`run_code_lens`:** runs the command of a lens with `runs` set, in a shell
+  as `run_task` does and in the project's choice of toolchain, and answers with
+  the shell's `terminal`. The folder is the one of the file, or the nearest
+  above it that holds the lens's `marker`.
 - **`definition`:** the places `seek` looks for from `position`: `definition`
   (the default), `declaration`, `type_definition`, `implementation`,
   `references`, `incoming_calls`, `outgoing_calls`, `supertypes` or `subtypes`. A file inside the folder
@@ -816,7 +838,7 @@ embedded context, and anything else as a link to the stored file.
 | `repositories` | `repositories`: `[{name, description, private, url}]`   |
 | `folders`    | `path`: absolute, `names`: the folders inside it           |
 | `directory`  | `path`: a `clone` made   |
-| `extensions` | `extensions`: `[{id, name, kind, version, description, icon, color, hidden, suffixes, names, patterns, installed, busy, problem, server, local, owner, provides, requests, granted}]` |
+| `extensions` | `extensions`: `[{id, name, kind, version, description, icon, color, hidden, suffixes, names, patterns, installed, busy, problem, server, local, owner, update, provides, requests, granted}]` |
 | `extension_preview` | `extension`: one entry as `extensions` lists them, not installed, with what it `provides` and `requests` |
 | `extension_assets` | `themes`: `[{extension, name, dark, light}]`, `icon_themes`: `[{extension, name, icons: [{suffix, svg, color}]}]`, `commands`: `[{extension, id, title, description}]` |
 | `extension_command` | `prompt`: the text to put in the prompt box, `message`: a line to tell the reader; each is optional |
@@ -830,7 +852,7 @@ embedded context, and anything else as a link to the stored file.
 | `semantic_tokens` | `tokens`: `[{line, start, length, kind}]`, `start` and `length` in UTF-16 code units, `kind` one of `keyword`, `function`, `type`, `string`, `constant`, `comment`, `property`, `operator`, `variable` |
 | `inlay_hints` | `hints`: `[{position, label, kind, pad_left, pad_right}]`, `kind` one of `type`, `parameter`, `other`, `value` |
 | `inline_values` | `values`: `[{span, kind, text}]`, `kind` one of `text` (`text` is the text), `variable` (`text` the name, or none for the one the span spells), `expression` (`text` the expression, or none for the one the span spells) |
-| `code_lenses` | `lenses`: `[{span, title, pressable}]` |
+| `code_lenses` | `lenses`: `[{span, title, pressable, runs}]` |
 | `lens_pressed` | `places`: as `locations` of `definitions`; `files`: as of `edited` |
 | `definitions`| `locations`: `[{path, span, inside, text, language, name, line}]`; `name` names a calling or called function, `line` is the line the span starts on |
 | `code_actions` | `actions`: `[{title, kind, preferred, disabled}]` |

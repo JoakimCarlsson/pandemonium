@@ -53,6 +53,9 @@ pub struct ExtensionInfo {
     /// The extension that installed it, for a language that came with one.
     #[serde(default)]
     pub owner: Option<String>,
+    /// The version the list offers when what is installed is behind it, so that it can be updated; nothing when it is current, not installed or the reader's own.
+    #[serde(default)]
+    pub update: Option<String>,
     /// What an extension package carries, one line for each thing, such as `theme: Hello Dusk`; empty for a language.
     #[serde(default)]
     pub provides: Vec<String>,

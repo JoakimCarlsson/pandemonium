@@ -331,6 +331,14 @@ pub enum Shot {
     Signing,
     /// The same file with brackets coloured by depth, names coloured by what the language server says they are, hints inside lines and lenses at the ends of lines.
     Annotated,
+    /// A Go file whose language is installed and behind the list, with the bar over it that offers the update.
+    LanguageUpdate,
+    /// A `go.mod` with the lenses gopls gives it and the upgrade of an outdated dependency, each in a row above its line.
+    LensGoMod,
+    /// A Compose file with a lens to run all services and one to run each.
+    LensCompose,
+    /// A `package.json` with a lens to run each script and the upgrade of an outdated dependency.
+    LensPackage,
     /// The review panel on its search tab, with the hits of a search for a word, grouped by file.
     ProjectSearch,
     /// The hits of a search as excerpts of three files, one under another, edited in place.
@@ -392,6 +400,7 @@ fn load_installed_grammar(id: &str) {
         injections: read("injections.scm"),
         brackets: read("brackets.scm"),
         runnables: read("runnables.scm"),
+        lenses: String::new(),
     };
     let editing = pm_treesitter::Editing {
         indent: manifest.indent,
@@ -526,6 +535,62 @@ fn written(path: &str, language: &str, grammars: &[&str], text: &str) -> Workspa
         false,
         Ok((Some(text.to_owned()), false, Some(language.to_owned()))),
     )
+}
+
+/// The `go.mod` the lens snapshot shows.
+const CODE_GOMOD: &str = "module example.com/app\n\ngo 1.22\n\nrequire (\n\tgithub.com/google/uuid v1.0.0\n\tgolang.org/x/text v0.3.0\n)\n";
+
+/// The Compose file the lens snapshot shows.
+const CODE_COMPOSE: &str = "services:\n  web:\n    image: nginx\n    ports:\n      - \"8080:80\"\n  db:\n    image: postgres\n";
+
+/// The `package.json` the lens snapshot shows.
+const CODE_PACKAGE: &str = "{\n  \"name\": \"app\",\n  \"scripts\": {\n    \"build\": \"vite build\",\n    \"test\": \"vitest\"\n  },\n  \"dependencies\": {\n    \"lodash\": \"4.17.0\"\n  }\n}\n";
+
+/// A workspace with the file `path`, written in `language` and holding `text`, open for writing with lenses above the lines that hold each `(line, word, title, runs)`.
+fn lensed(
+    path: &str,
+    language: &str,
+    text: &str,
+    lenses: &[(&str, &str, &str, bool)],
+) -> WorkspaceState {
+    let state = written(path, language, &[], text);
+    let version = state
+        .shown_document()
+        .map(|document| document.version)
+        .unwrap_or_default();
+    let lenses = lenses
+        .iter()
+        .map(|(line, word, title, runs)| {
+            let row = text
+                .lines()
+                .position(|held| held.contains(line))
+                .unwrap_or(0);
+            let column = text
+                .lines()
+                .nth(row)
+                .and_then(|held| held.find(word))
+                .unwrap_or(0);
+            pm_protocol::CodeLens {
+                span: pm_protocol::Span::new(
+                    pm_protocol::Position::new(row as u32, column as u32),
+                    pm_protocol::Position::new(row as u32, (column + word.len()) as u32),
+                ),
+                title: (*title).to_owned(),
+                pressable: true,
+                runs: *runs,
+            }
+        })
+        .collect();
+    state
+        .with_opened(
+            0,
+            path,
+            Ok(pm_protocol::Triggers {
+                code_lens: true,
+                ..Default::default()
+            }),
+        )
+        .with_code_lenses(0, path, version, lenses)
 }
 
 /// The review panel on its search tab, after a search for `names` that found lines in three files.
@@ -665,6 +730,7 @@ fn annotated() -> WorkspaceState {
             ),
             title: title.to_owned(),
             pressable,
+            runs: false,
         }
     };
     state
@@ -1225,6 +1291,29 @@ fn language_offer() -> WorkspaceState {
             Some("const fs = require(\"fs\");\n\nfunction build(files) {\n  return files.map((file) => fs.readFileSync(file, \"utf8\"));\n}\n\nmodule.exports = { build };\n".to_owned()),
             false,
             None,
+        )),
+    )
+}
+
+/// A Go file whose language is installed and behind the list, with the bar over it that offers the update.
+fn language_update() -> WorkspaceState {
+    let path = "cmd/app/main.go";
+    let mut state = workspace_sample().after(TAB_DIFF);
+    state.extensions = sample_languages();
+    for extension in &mut state.extensions {
+        if extension.id == "go" {
+            extension.update = Some("0.2.0".to_owned());
+        }
+    }
+    state.open_viewer(path.to_owned(), false);
+    state.with_file(
+        0,
+        path,
+        false,
+        Ok((
+            Some("package main\n\nfunc main() {\n}\n".to_owned()),
+            false,
+            Some("go".to_owned()),
         )),
     )
 }
@@ -1984,6 +2073,37 @@ impl Shot {
             Self::BranchesSubmodule(inside) => Screen::Workspace(branches_submodule(inside)),
             Self::Signing => Screen::Workspace(signing()),
             Self::Annotated => Screen::Workspace(annotated()),
+            Self::LanguageUpdate => Screen::Workspace(language_update()),
+            Self::LensGoMod => Screen::Workspace(lensed(
+                "go.mod",
+                "gomod",
+                CODE_GOMOD,
+                &[
+                    ("module example.com/app", "module", "Run go mod tidy", false),
+                    ("github.com/google/uuid", "github.com", "Latest v1.6.0 · Upgrade", false),
+                    ("golang.org/x/text", "golang.org", "Latest v0.21.0 · Upgrade", false),
+                ],
+            )),
+            Self::LensCompose => Screen::Workspace(lensed(
+                "docker-compose.yml",
+                "compose",
+                CODE_COMPOSE,
+                &[
+                    ("services:", "services", "Run All Services", true),
+                    ("  web:", "web", "Run Service", true),
+                    ("  db:", "db", "Run Service", true),
+                ],
+            )),
+            Self::LensPackage => Screen::Workspace(lensed(
+                "package.json",
+                "json",
+                CODE_PACKAGE,
+                &[
+                    ("\"build\"", "build", "Run Script", true),
+                    ("\"test\"", "test", "Run Script", true),
+                    ("\"lodash\"", "lodash", "Latest 4.18.1 · Upgrade", false),
+                ],
+            )),
             Self::ProjectSearch => Screen::Workspace(project_search()),
             Self::Excerpts => Screen::Workspace(excerpts()),
             Self::TabMenu => Screen::Workspace(code().with_tab_menu(0, (500.0, 52.0))),

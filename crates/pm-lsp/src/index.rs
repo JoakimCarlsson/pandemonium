@@ -16,7 +16,7 @@ const REPOSITORY: &str = "https://raw.githubusercontent.com/JoakimCarlsson/pande
 const OVERRIDE: &str = "PANDEMONIUM_LANGUAGES";
 
 /// The files a language folder holds, listed first when they are there; a folder may hold more, such as the lockfile that pins an npm install or, in a folder of your own, the grammar itself.
-const FILES: [&str; 7] = [
+const FILES: [&str; 8] = [
     "config.toml",
     "highlights.scm",
     "indents.scm",
@@ -24,6 +24,7 @@ const FILES: [&str; 7] = [
     "injections.scm",
     "brackets.scm",
     "runnables.scm",
+    "lenses.scm",
 ];
 
 /// The names of the files in `folder`, the usual ones of a language folder first, those starting with a dot left out.

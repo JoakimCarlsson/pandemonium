@@ -13,7 +13,9 @@ getrandom = "0.4.3"
 notify = "8.2.0"
 pm-acp.workspace = true
 pm-agent-library.workspace = true
+pm-buffer.workspace = true
 pm-dap.workspace = true
+pm-deps.workspace = true
 pm-git.workspace = true
 pm-lsp.workspace = true
 pm-mcp.workspace = true
@@ -23,6 +25,7 @@ pm-protocol.workspace = true
 pm-store.workspace = true
 pm-task.workspace = true
 pm-transport.workspace = true
+pm-treesitter.workspace = true
 pm-update.workspace = true
 portable-pty = "0.9.0"
 serde = { version = "1.0.229", features = ["derive"] }

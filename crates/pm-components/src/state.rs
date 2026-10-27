@@ -515,6 +515,8 @@ pub enum Outgoing {
         path: String,
         /// The version of the text the lenses are about.
         version: i32,
+        /// Whether registries may be asked for newer versions of the dependencies the file names.
+        registry: bool,
     },
     /// Presses one of the lenses the language server last gave for a file of the session at this position.
     PressCodeLens {
@@ -890,6 +892,21 @@ pub enum Outgoing {
         kind: String,
         /// What it is called.
         name: String,
+        /// The tab, by the name this window knows it by.
+        tab: u64,
+        /// How many columns wide its window is.
+        columns: u16,
+        /// How many lines tall its window is.
+        rows: u16,
+    },
+    /// Runs the command of a lens of a file, as the server holds it, in the shell of a tab, in the folder of the session at this position.
+    RunCodeLens {
+        /// The session, by position.
+        session: usize,
+        /// The file, from the root of the session's folder.
+        path: String,
+        /// The lens, by its place in the list the server gave.
+        index: usize,
         /// The tab, by the name this window knows it by.
         tab: u64,
         /// How many columns wide its window is.

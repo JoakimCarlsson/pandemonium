@@ -116,6 +116,8 @@ pub struct EditorSettings {
     pub inlay_hints: bool,
     /// Whether the language server's lenses, such as how many times a function is used, are shown beside the lines.
     pub code_lens: bool,
+    /// Whether the registries of the dependencies a manifest names are asked for newer versions, which are shown as lenses.
+    pub registry_lookups: bool,
     /// Whether a word that is the name of a snippet is written out when Tab is pressed after it.
     pub snippets_on_tab: bool,
     /// Whether an Emmet abbreviation written in a markup or style file is written out when Tab is pressed after it.
@@ -192,6 +194,7 @@ impl Default for EditorSettings {
             semantic_highlighting: true,
             inlay_hints: true,
             code_lens: true,
+            registry_lookups: true,
             snippets_on_tab: true,
             emmet: true,
             snippets: std::collections::BTreeMap::new(),

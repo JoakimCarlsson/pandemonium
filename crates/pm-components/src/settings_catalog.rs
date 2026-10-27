@@ -120,6 +120,8 @@ pub enum Setting {
     InlayHints,
     /// Whether the language server's lenses are shown beside the lines.
     CodeLens,
+    /// Whether registries are asked for newer versions of the dependencies a manifest names.
+    RegistryLookups,
     /// How the caret is drawn.
     CursorShape,
     /// Whether the caret blinks.
@@ -246,7 +248,7 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting, in the order the pages show them.
-    pub const ALL: [Self; 88] = [
+    pub const ALL: [Self; 89] = [
         Self::Launch,
         Self::ConfirmClose,
         Self::CheckUpdates,
@@ -274,6 +276,7 @@ impl Setting {
         Self::SemanticHighlighting,
         Self::InlayHints,
         Self::CodeLens,
+        Self::RegistryLookups,
         Self::Minimap,
         Self::StickyScroll,
         Self::CursorShape,
@@ -367,6 +370,7 @@ impl Setting {
             | Self::SemanticHighlighting
             | Self::InlayHints
             | Self::CodeLens
+            | Self::RegistryLookups
             | Self::Minimap
             | Self::StickyScroll
             | Self::CursorShape
@@ -548,7 +552,11 @@ impl Setting {
             ),
             Self::CodeLens => (
                 "Code lens",
-                "Show what the language server says about a function or type at the end of its line, such as how many times it is used.",
+                "Show what the language server and the language's own rules say about a place, such as how many times a function is used or a button that runs a service, in a row above its line.",
+            ),
+            Self::RegistryLookups => (
+                "Dependency versions",
+                "Ask the package registries for the latest version of the dependencies in package.json, Cargo.toml and go.mod, and show an upgrade above the ones that are behind. Turn off to stop asking.",
             ),
             Self::Minimap => (
                 "Minimap",

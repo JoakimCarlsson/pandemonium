@@ -33,10 +33,11 @@ impl WorkspaceState {
         let Some(path) = self.shown_viewer().map(|viewer| viewer.path.clone()) else {
             return self;
         };
-        let (names, hints, lenses) = (
+        let (names, hints, lenses, registry) = (
             self.editor.semantic_highlighting,
             self.editor.inlay_hints,
             self.editor.code_lens,
+            self.editor.registry_lookups,
         );
         let Some(document) = self.shown_text() else {
             return self;
@@ -69,12 +70,13 @@ impl WorkspaceState {
                 span: document.whole_span(),
             });
         }
-        if lenses && document.wants_code_lenses() {
-            document.code_lenses_asked(version);
+        if lenses && document.wants_code_lenses(registry) {
+            document.code_lenses_asked(version, registry);
             asking.push(Outgoing::CodeLenses {
                 session,
                 path,
                 version,
+                registry,
             });
         }
         self.outbox.extend(asking);
@@ -131,12 +133,18 @@ impl WorkspaceState {
         let Some(path) = self.shown_viewer().map(|viewer| viewer.path.clone()) else {
             return self;
         };
-        let Some(title) = self
-            .shown_document()
-            .and_then(|document| document.lens_titled(index).map(str::to_owned))
-        else {
+        let Some((title, runs)) = self.shown_document().and_then(|document| {
+            Some((
+                document.lens_titled(index).map(str::to_owned)?,
+                document.lens_runs(index),
+            ))
+        }) else {
             return self;
         };
+        if runs {
+            self.lens_run(path, index, title);
+            return self;
+        }
         self.listing = Some(Listing::waiting(
             session,
             Items::Places {
