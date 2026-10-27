@@ -888,6 +888,21 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                 repositories: pm_git::standings(directory),
             }
         }
+        Request::Standing { directory } => {
+            let directory = place(&directory);
+            let directory = directory.as_path();
+            Response::Standing {
+                branch: pm_git::current_branch(directory),
+                head: pm_git::resolve(directory, "HEAD"),
+                tracking: pm_git::tracking(directory),
+                operation: pm_git::operation(directory),
+                repositories: pm_git::standings(directory),
+                repository: pm_git::layout(directory) != pm_git::Layout::Neither,
+            }
+        }
+        Request::Diffs { directory, paths } => Response::Diffs {
+            files: pm_git::diffs(&place(&directory), &paths),
+        },
         Request::Stage {
             directory,
             paths,

@@ -592,6 +592,13 @@ impl Screen {
         }
     }
 
+    /// The screen asking again for the open files of the session at `session`, which may have changed in the folder.
+    pub fn open_files_wanted(self, session: usize) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.open_files_wanted(session)),
+        }
+    }
+
     /// The screen after the server answered for the file at `path` of the session at `session`.
     pub fn with_file(
         self,
@@ -1086,6 +1093,13 @@ impl Screen {
     pub fn take_outbox(&mut self) -> Vec<Outgoing> {
         match self {
             Self::Workspace(state) => state.take_outbox(),
+        }
+    }
+
+    /// Asks for the diffs of the changed files in or near the view of the diff that the server listed without them.
+    pub fn diffs_wanted(&mut self) {
+        match self {
+            Self::Workspace(state) => state.diffs_wanted(),
         }
     }
 

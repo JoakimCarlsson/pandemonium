@@ -132,6 +132,8 @@ request with exactly one `response` carrying the same `id`.
 | `set`          | `session`, `setting`, `value`                                                                    | `done`          |
 | `attach`       | `session`, `after`                                                                               | `done`          |
 | `inspect`      | `directory`, `base`                                                                              | `inspected`     |
+| `standing`     | `directory`                                                                                      | `standing`      |
+| `diffs`        | `directory`, `paths`                                                                             | `diffs`         |
 | `projects`     | none                                                                                             | `projects`      |
 | `save_projects`| `paths`                                                                                          | `done`          |
 | `choices`      | none                                                                                             | `choices`       |
@@ -389,9 +391,18 @@ everything said of them, its submodules' paths written from `directory`.
   so that it runs the hooks trusted. Nothing is trusted without this request.
 - **`attach`:** subscribes the connection to a session and replays the events
   numbered after `after`. See [Events](#events).
-- **`inspect`:** the files that differ from the last commit, with their diffs,
-  and, when `base` is given, the messages of the commits the branch has that
-  `base` has not, plus the branch and abbreviated head commit the folder is on.
+- **`standing`:** where a folder stands, answered from git's refs alone and so
+  at once however many files differ: the branch, the abbreviated head, what the
+  branch follows, the operation it is stopped in, and whether the folder is a
+  repository or holds some. A client asks for it beside `inspect` and shows the
+  branch from it without waiting for the files.
+- **`diffs`:** the diffs of the files `paths` names, each as `inspect` named it,
+  for a client to show only the files in view. Each answer is `{path, diff,
+  words}`, a file's lines from its first hunk on, at most 2000 of them, and for a
+  file git does not track all its lines as added.
+- **`inspect`:** the files that differ from the last commit, listed with the
+  lines they change but without their diffs (`lazy`), and, when `base` is
+  given, the messages of the commits the branch has that `base` has not, plus the branch and abbreviated head commit the folder is on.
   Each change's `words` is `[{line, ranges}]`: for a removed or added line of its
   diff, counted from 0 among the lines of `diff`, the `[start, end]` bytes of the
   line, without its marker, that differ from the line paired with it in the same
@@ -777,7 +788,9 @@ embedded context, and anything else as a link to the stored file.
 | `bytes`      | `bytes` (base64): what a file holds, `truncated`: whether it was cut short |
 | `identity`   | `default`, `selected`: who the agent is signed in as, or null |
 | `started`    | `session`, `directory`, `branch` (always null for now), `head` (null without a worktree), `skipped`: `[[path, reason]]` for submodules the worktree could not check out |
-| `inspected`  | `changes`: `[{path, diff, words, staged, untracked, index, worktree, conflicted, from, submodule, repository, moved}]`, files inside submodules listed under their paths from the root with `submodule` the submodule's path, files of a folder of repositories listed under their paths from the folder with `repository` the child's folder name and null for one repository, and a submodule checked out at another commit than the one recorded as its own path with `moved`: `{from, to, commits, back}` (abbreviated commits, the subjects between them oldest first, `back` when it went back past them) and an empty `diff`, `commits`: `[string]` or null, `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind}`, `operation`: `Merge`, `Rebase` or `CherryPick` with what git prepared, or null, `repositories` (optional): `[{path, branch, head, tracking}]` for each child of a folder of repositories, empty for one repository; `branch`, `head` and `tracking` then sum up the children: the one branch they are all on or the branches joined by ` · `, the first child's commit, and the commits ahead and behind added up, following something only when every child does |
+| `standing`   | `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind}`, `operation`: as in `inspected`, `repositories`: `[{path, branch, head, tracking}]`, `repository`: whether the folder is a repository or holds some |
+| `diffs`      | `files`: `[{path, diff, words}]`, one for each of the files asked for that a repository of the folder holds |
+| `inspected`  | `changes`: `[{path, diff, words, staged, untracked, index, worktree, conflicted, from, submodule, repository, moved, added, removed, lazy}]`, `added` and `removed` the lines the file puts in and takes out, counted over the whole file, and `lazy` true when `diff` and `words` are left out because the file's diff is asked for with `diffs` (an older server leaves `lazy` false and sends them), files inside submodules listed under their paths from the root with `submodule` the submodule's path, files of a folder of repositories listed under their paths from the folder with `repository` the child's folder name and null for one repository, and a submodule checked out at another commit than the one recorded as its own path with `moved`: `{from, to, commits, back}` (abbreviated commits, the subjects between them oldest first, `back` when it went back past them) and an empty `diff`, `commits`: `[string]` or null, `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind}`, `operation`: `Merge`, `Rebase` or `CherryPick` with what git prepared, or null, `repositories` (optional): `[{path, branch, head, tracking}]` for each child of a folder of repositories, empty for one repository; `branch`, `head` and `tracking` then sum up the children: the one branch they are all on or the branches joined by ` · `, the first child's commit, and the commits ahead and behind added up, following something only when every child does |
 | `projects`   | `paths`, `saved`                                          |
 | `choices`    | `choices`: `[[agent, setting, value]]`                    |
 | `agent_servers` | `servers`: `[{id, name, command, env, package, installer, home}]`                |

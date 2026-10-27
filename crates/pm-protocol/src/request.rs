@@ -337,6 +337,18 @@ pub enum Request {
         /// The branch the session's worktree was made from, when it has one.
         base: Option<String>,
     },
+    /// Where a folder stands: its branch, head, what the branch follows and the operation it is stopped in, answered without looking at its files.
+    Standing {
+        /// The folder.
+        directory: String,
+    },
+    /// The diffs of some files of a folder that `inspect` listed without them.
+    Diffs {
+        /// The folder.
+        directory: String,
+        /// The files, each as `inspect` named it.
+        paths: Vec<String>,
+    },
     /// Stages or unstages files in a folder.
     Stage {
         /// The folder.

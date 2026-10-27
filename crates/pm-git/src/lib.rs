@@ -34,7 +34,7 @@ pub use words::{Words, words};
 const WORKTREES: &str = ".pandemonium/worktrees";
 
 /// The most lines of a file's diff that are read.
-const DIFF_LINES: usize = 2000;
+pub const DIFF_LINES: usize = 2000;
 
 /// The longest a folder name made from a title is, in characters.
 const SLUG_LENGTH: usize = 40;
@@ -75,6 +75,27 @@ pub struct Change {
     /// What a submodule checked out at another commit than the one recorded moved through, when the change is that.
     #[serde(default)]
     pub moved: Option<Moved>,
+    /// How many lines the change puts in, counted over the whole file.
+    #[serde(default)]
+    pub added: usize,
+    /// How many lines the change takes out, counted over the whole file.
+    #[serde(default)]
+    pub removed: usize,
+    /// Whether `diff` and `words` are left out, to be asked for with [`diffs`] when the file is shown.
+    #[serde(default)]
+    pub lazy: bool,
+}
+
+/// The diff of one file, as [`diffs`] answers.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct FileDiff {
+    /// Where the file is, from the root of the folder asked about.
+    pub path: String,
+    /// The lines of its diff, from the first hunk on.
+    pub diff: String,
+    /// The words that changed inside its removed and added lines.
+    #[serde(default)]
+    pub words: Vec<Words>,
 }
 
 /// A submodule checked out at another commit than the one its repository records.
@@ -752,17 +773,21 @@ fn in_repository(mut change: Change, child: &str) -> Change {
     change
 }
 
-/// Every file of the one repository `directory` is in that differs from the last commit, submodules included.
+/// Every file of the one repository `directory` is in that differs from the last commit, submodules included, the files themselves without their diffs.
 fn repository_changes(directory: &Path) -> Vec<Change> {
     let direct = submodule::direct(directory);
     let mut found = Vec::new();
-    for change in own_changes(directory) {
+    for mut change in own_changes(directory) {
         if !direct.contains(&change.path) {
             found.push(change);
             continue;
         }
         let path = change.path.clone();
         let inner = directory.join(&path);
+        change.diff = file_diff(directory, &path);
+        change.words = words(&change.diff);
+        (change.added, change.removed) = tally(&change.diff);
+        change.lazy = false;
         found.extend(submodule::moved(directory, change));
         if submodule::populated(&inner) {
             found.extend(
@@ -775,11 +800,12 @@ fn repository_changes(directory: &Path) -> Vec<Change> {
     found
 }
 
-/// The files of the repository `directory` is in itself that differ from its last commit, a submodule as one entry.
+/// The files of the repository `directory` is in itself that differ from its last commit, a submodule as one entry, each with how many lines it changes and without its diff.
 fn own_changes(directory: &Path) -> Vec<Change> {
     let Ok(status) = run(directory, &["status", "--porcelain=v1", "-z", "-uall"]) else {
         return Vec::new();
     };
+    let counted = counts(directory);
     let mut found = Vec::new();
     let mut entries = status.split('\0').filter(|entry| entry.len() > 3);
     while let Some(entry) = entries.next() {
@@ -793,14 +819,10 @@ fn own_changes(directory: &Path) -> Vec<Change> {
         };
         let untracked = index == '?';
         let conflicted = unmerged(index, tree);
-        let diff = if untracked {
-            added(directory, path)
+        let (added, removed) = if untracked {
+            (lines_of(&directory.join(path)), 0)
         } else {
-            let against_head = run(directory, &["diff", "HEAD", "--no-color", "--", path]);
-            let shown = against_head
-                .or_else(|_| run(directory, &["diff", "--cached", "--no-color", "--", path]))
-                .unwrap_or_default();
-            hunks(&shown)
+            counted.get(path).copied().unwrap_or_default()
         };
         let side = |mark: char| (!matches!(mark, ' ' | '!')).then_some(mark);
         let (index_side, worktree_side) = if untracked {
@@ -810,8 +832,8 @@ fn own_changes(directory: &Path) -> Vec<Change> {
         };
         found.push(Change {
             path: path.to_owned(),
-            words: words(&diff),
-            diff,
+            words: Vec::new(),
+            diff: String::new(),
             staged: !untracked && !conflicted && index != ' ' && tree == ' ',
             untracked,
             index: index_side,
@@ -821,7 +843,94 @@ fn own_changes(directory: &Path) -> Vec<Change> {
             submodule: None,
             repository: None,
             moved: None,
+            added,
+            removed,
+            lazy: true,
         });
+    }
+    found
+}
+
+/// How many lines each file of the repository `directory` is in has put in and taken out since the last commit, by path, as one run of git tells it; a file git does not track is not in it.
+fn counts(directory: &Path) -> std::collections::HashMap<String, (usize, usize)> {
+    let said = run(
+        directory,
+        &["diff", "HEAD", "--numstat", "-z", "--no-renames"],
+    )
+    .or_else(|_| {
+        run(
+            directory,
+            &["diff", "--cached", "--numstat", "-z", "--no-renames"],
+        )
+    })
+    .unwrap_or_default();
+    said.split('\0')
+        .filter_map(|entry| {
+            let mut parts = entry.splitn(3, '\t');
+            let added = parts.next()?;
+            let removed = parts.next()?;
+            let path = parts.next()?;
+            Some((
+                path.to_owned(),
+                (added.parse().unwrap_or(0), removed.parse().unwrap_or(0)),
+            ))
+        })
+        .collect()
+}
+
+/// How many lines the file at `path` has, or none when it is not text.
+fn lines_of(path: &Path) -> usize {
+    let Ok(held) = fs::read(path) else {
+        return 0;
+    };
+    if held.iter().take(8000).any(|byte| *byte == 0) {
+        return 0;
+    }
+    let breaks = held.iter().filter(|byte| **byte == b'\n').count();
+    breaks + usize::from(held.last().is_some_and(|last| *last != b'\n'))
+}
+
+/// How many lines `diff` puts in and takes out.
+fn tally(diff: &str) -> (usize, usize) {
+    diff.lines().fold((0, 0), |(added, removed), line| {
+        match line.as_bytes().first() {
+            Some(b'+') => (added + 1, removed),
+            Some(b'-') => (added, removed + 1),
+            _ => (added, removed),
+        }
+    })
+}
+
+/// The diff of the file at `path` of the repository `directory` is in against the last commit, from its first hunk on, or all of it as added when git does not track it.
+fn file_diff(directory: &Path, path: &str) -> String {
+    let shown = run(directory, &["diff", "HEAD", "--no-color", "--", path])
+        .or_else(|_| run(directory, &["diff", "--cached", "--no-color", "--", path]))
+        .unwrap_or_default();
+    let diff = hunks(&shown);
+    if diff.is_empty() && run(directory, &["ls-files", "--error-unmatch", "--", path]).is_err() {
+        return added(directory, path);
+    }
+    diff
+}
+
+/// The diffs of `paths` of the folder `directory`, each file's from the repository it is in: one of a folder that holds several, or a submodule. A path no repository of the folder holds is left out.
+pub fn diffs(directory: &Path, paths: &[String]) -> Vec<FileDiff> {
+    let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+    let Ok(owners) = submodule::by_owner(directory, &paths) else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    for (folder, inner) in owners {
+        let from_root = folder.strip_prefix(directory).unwrap_or(Path::new(""));
+        for path in inner {
+            let diff = file_diff(&folder, &path);
+            let shown = from_root.join(&path).to_string_lossy().replace('\\', "/");
+            found.push(FileDiff {
+                words: words(&diff),
+                path: shown,
+                diff,
+            });
+        }
     }
     found
 }
