@@ -414,6 +414,8 @@ fn load_installed_grammar(id: &str) {
         tags: crate::work::code::tags_of(manifest.tags.as_ref()),
         emmet: manifest.emmet.clone(),
         emmet_tables: std::fs::read_to_string(folder.join("emmet.toml")).ok(),
+        word_characters: manifest.word_characters.clone(),
+        block_openers: manifest.block_openers.clone(),
     };
     if let Ok(loaded) =
         pm_treesitter::Grammar::load(id, &manifest.grammar, &wasm, &queries, editing)
@@ -583,6 +585,7 @@ fn lensed(
                 title: (*title).to_owned(),
                 pressable: true,
                 runs: *runs,
+                inline: title.starts_with("Latest"),
             }
         })
         .collect();
@@ -736,6 +739,7 @@ fn annotated() -> WorkspaceState {
             title: title.to_owned(),
             pressable,
             runs: false,
+            inline: false,
         }
     };
     state

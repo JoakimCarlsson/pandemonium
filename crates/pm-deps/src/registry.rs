@@ -10,22 +10,22 @@ use crate::dependency::Outdated;
 use crate::provider::Provider;
 use crate::version::Version;
 
-/// How long what a registry said is kept before it is asked again.
+/// How long what a registry said is kept before it is asked again, unless the language says another.
 const FRESH: Duration = Duration::from_secs(60 * 60);
 
 /// How long the failure of a lookup is kept, so that a registry that is down is not asked again for every edit.
 const FAILED: Duration = Duration::from_secs(5 * 60);
 
-/// The least time between two requests to the same registry.
+/// The least time between two requests to the same registry, unless the language says another.
 const SPACING: Duration = Duration::from_millis(100);
 
-/// How long one call to [`Registry::outdated`] spends asking.
+/// How long one call to [`Registry::outdated`] spends asking, unless the language says another.
 const BUDGET: Duration = Duration::from_secs(8);
 
 /// How long one request waits for an answer.
 const PATIENCE: Duration = Duration::from_secs(5);
 
-/// How many dependencies of one manifest are looked up.
+/// How many dependencies of one manifest are looked up, unless the language says another.
 const MOST: usize = 80;
 
 /// How many requests run at once.
@@ -51,7 +51,10 @@ pub struct Registry {
 impl Registry {
     /// The latest version of `name` in the registry of `provider`, from what was kept when that is recent, or nothing when the registry does not say.
     fn latest(&self, provider: &Provider, name: &str) -> Option<String> {
-        self.lookup(&provider.url, name, || self.fetch(provider, name))
+        let fresh = provider
+            .fresh_minutes
+            .map_or(FRESH, |minutes| Duration::from_secs(minutes * 60));
+        self.lookup_for(&provider.url, name, fresh, || self.fetch(provider, name))
     }
 
     /// The latest version of `name` in the registry called `registry`, from what was kept when that is recent, and otherwise what `fetch` finds, which is kept; for a registry that something other than a [`Provider`] answers for.
@@ -61,10 +64,21 @@ impl Registry {
         name: &str,
         fetch: impl FnOnce() -> Option<String>,
     ) -> Option<String> {
+        self.lookup_for(registry, name, FRESH, fetch)
+    }
+
+    /// As [`Registry::lookup`], keeping what was found for `fresh` before asking again.
+    fn lookup_for(
+        &self,
+        registry: &str,
+        name: &str,
+        fresh: Duration,
+        fetch: impl FnOnce() -> Option<String>,
+    ) -> Option<String> {
         let key = (registry.to_owned(), name.to_owned());
         if let Some(held) = self.learnt.lock().ok().and_then(|learnt| {
             learnt.get(&key).and_then(|held| {
-                let keeps = if held.latest.is_some() { FRESH } else { FAILED };
+                let keeps = if held.latest.is_some() { fresh } else { FAILED };
                 (held.at.elapsed() < keeps).then(|| held.latest.clone())
             })
         }) {
@@ -85,12 +99,13 @@ impl Registry {
 
     /// Asks the registry of `provider` about `name`, after the pause that spaces its requests out.
     fn fetch(&self, provider: &Provider, name: &str) -> Option<String> {
+        let spacing = provider.spacing_ms.map_or(SPACING, Duration::from_millis);
         let wait = {
             let mut asked = self.asked.lock().ok()?;
             let now = Instant::now();
             let turn = asked
                 .get(&provider.url)
-                .map_or(now, |last| (*last + SPACING).max(now));
+                .map_or(now, |last| (*last + spacing).max(now));
             asked.insert(provider.url.clone(), turn);
             turn - now
         };
@@ -125,9 +140,9 @@ impl Registry {
             .into_iter()
             .filter(|dependency| Version::parse(&pattern, &dependency.requirement).is_some())
             .filter(|dependency| !provider.skips(&dependency.name, &settings))
-            .take(MOST)
+            .take(provider.most.unwrap_or(MOST))
             .collect();
-        let deadline = Instant::now() + BUDGET;
+        let deadline = Instant::now() + provider.budget_seconds.map_or(BUDGET, Duration::from_secs);
         let next = AtomicUsize::new(0);
         let answers: Mutex<Vec<(usize, String)>> = Mutex::new(Vec::new());
         std::thread::scope(|scope| {

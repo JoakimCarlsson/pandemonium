@@ -152,6 +152,8 @@ files = ["Makefile"]             # optional: names or globs it is shown above
 marker = "Cargo.toml"            # optional: the nearest folder above the file that holds it
 toolchain = "javascript"         # optional: the family of toolchain it runs with
 once = true                      # optional: only above the first place of its kind
+inline = true                    # optional: a note at the end of its line, not a row above it
+group = "run"                    # optional: the kind of task its command is: build, test or run (run)
 ```
 
 Pressing the lens runs `command` in a shell of the project, as a task does, on
@@ -177,6 +179,12 @@ captured as `@skip` takes the dependencies inside it out (a crate from git):
 
 ```toml
 [dependencies]
+title = "Latest {version} · Upgrade"   # what the lens of a dependency that is behind says
+inline = true                    # shown at the end of the dependency's line, not above it
+spacing_ms = 1000                # optional: the least time between requests, as the registry asks (100)
+budget_seconds = 30              # optional: how long one batch of lookups may take (8)
+most = 80                        # optional: how many dependencies of a manifest are looked up (80)
+fresh_minutes = 60               # optional: how long an answer is kept (60)
 url = "https://proxy.golang.org/{name}/@latest"   # {name} stands for the name
 latest = ["Version"]             # where in the JSON answer the version stands, tried in order
 escape = [["/", "%2f"]]          # optional: what is found in a name and what it is written as instead
@@ -315,7 +323,11 @@ of a project leave out and new worktrees are given a copy of by default, and a
 companion server's `[companion.detect]` is `files` and `text = [["package.json",
 '"tailwindcss"\\s*:']]`, pairs of a file and a pattern its text must match.
 
-`emmet = "markup"` or `"style"` at the top of a language's `config.toml` says
+`block_openers = ":"` adds characters a line may end with for the next to be
+indented deeper, besides the opening brackets of its `pairs`.
+`word_characters = "-"` adds characters to what a word of its files is made of
+(besides letters, digits and the underscore), which double clicks, moving by word,
+completions and the next occurrence follow. `emmet = "markup"` or `"style"` at the top of a language's `config.toml` says
 its files take that kind of Emmet abbreviation, and its `emmet.toml` holds what
 they know: the tags, aliases and default attributes of markup, or the
 properties, units and keywords of style rules. `title = "Node.js"` in a

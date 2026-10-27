@@ -16,6 +16,10 @@ suffixes = ["svelte"]
 indent = 2
 pairs = ["()", "[]", "{}", "\"\"", "''", "``"]
 
+word_characters = "-$"
+
+block_openers = ":"
+
 [server]
 id = "svelteserver"
 language_id = "svelte"

@@ -4,11 +4,6 @@ use pm_text::Edit;
 
 use crate::document::Document;
 
-/// Whether `character` is part of a word.
-fn is_word(character: char) -> bool {
-    character.is_alphanumeric() || character == '_'
-}
-
 impl Document {
     /// The word around the caret, as a byte range, when the caret touches one.
     fn word_around_caret(&self) -> Option<std::ops::Range<usize>> {
@@ -17,7 +12,7 @@ impl Document {
         let start = self.word_start(caret);
         let end = text[caret..]
             .char_indices()
-            .find(|(_, character)| !is_word(*character))
+            .find(|(_, character)| !self.is_word_character(*character))
             .map_or(text.len(), |(at, _)| caret + at);
         (start < end).then_some(start..end)
     }
@@ -25,9 +20,18 @@ impl Document {
     /// Whether the bytes `range` are a whole word: word characters, with none just before or after them.
     fn whole_word(&self, range: std::ops::Range<usize>) -> bool {
         let text = self.field.text();
-        let inside = !range.is_empty() && text[range.clone()].chars().all(is_word);
-        let before = text[..range.start].chars().next_back().is_some_and(is_word);
-        let after = text[range.end..].chars().next().is_some_and(is_word);
+        let inside = !range.is_empty()
+            && text[range.clone()]
+                .chars()
+                .all(|held| self.is_word_character(held));
+        let before = text[..range.start]
+            .chars()
+            .next_back()
+            .is_some_and(|held| self.is_word_character(held));
+        let after = text[range.end..]
+            .chars()
+            .next()
+            .is_some_and(|held| self.is_word_character(held));
         inside && !before && !after
     }
 

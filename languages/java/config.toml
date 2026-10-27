@@ -14,6 +14,8 @@ line_comment = "//"
 indent = 4
 pairs = ["()", "[]", "{}", "\"\"", "''"]
 
+block_openers = ":"
+
 [grammar_file]
 url = "https://github.com/tree-sitter/tree-sitter-java/releases/download/v0.23.5/tree-sitter-java.wasm"
 sha256 = "4fdeac4ca6ca089f06c6f7e562abcac1733cd465728cc7031ebb73c2019122c4"

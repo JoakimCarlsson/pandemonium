@@ -153,6 +153,8 @@ pub(crate) fn grammar(name: &str) -> Result<GrammarBundle, String> {
             .emmet
             .as_ref()
             .and_then(|_| std::fs::read_to_string(folder.join("emmet.toml")).ok()),
+        word_characters: manifest.word_characters.clone(),
+        block_openers: manifest.block_openers.clone(),
         emmet: manifest.emmet,
         id,
     })

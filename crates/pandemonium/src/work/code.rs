@@ -67,6 +67,8 @@ fn compile(bundle: &GrammarBundle) -> Result<Arc<Grammar>, String> {
             tags: tags_of(bundle.tags.as_ref()),
             emmet: bundle.emmet.clone(),
             emmet_tables: bundle.emmet_tables.clone(),
+            word_characters: bundle.word_characters.clone(),
+            block_openers: bundle.block_openers.clone(),
         },
     )
 }

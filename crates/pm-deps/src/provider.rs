@@ -33,6 +33,14 @@ pub struct Provider {
     pub requirement: String,
     /// When a dependency is not asked about.
     pub private: Private,
+    /// The least time between two requests to the registry, in milliseconds; the default when nothing.
+    pub spacing_ms: Option<u64>,
+    /// How long one batch of lookups may take, in seconds; the default when nothing.
+    pub budget_seconds: Option<u64>,
+    /// How many dependencies of one manifest are looked up; the default when nothing.
+    pub most: Option<usize>,
+    /// How long an answer is kept, in minutes; the default when nothing.
+    pub fresh_minutes: Option<u64>,
 }
 
 /// The host of the address `url`.

@@ -45,11 +45,15 @@ impl Document {
             .map(|syntax| syntax.indent_at(text, self.line_index(), caret))
             .unwrap_or_default();
         let before = text[self.line(self.line_of(caret)).start..caret].trim_end();
-        let deeper = indent.deeper || before.ends_with(['{', '(', '[', ':']);
+        let deeper = indent.deeper
+            || before
+                .chars()
+                .next_back()
+                .is_some_and(|last| self.editing.opens_block(last));
         let closing = deeper
             && text[caret..]
                 .trim_start_matches([' ', '\t'])
-                .starts_with(['}', ')', ']']);
+                .starts_with(|next| self.editing.closes_block(next));
         let inner = if deeper {
             format!("{base}{unit}")
         } else {
@@ -66,7 +70,7 @@ impl Document {
 
     /// The edits that take a closing bracket `character`, just typed where its line held nothing else, back one level of indentation; none when it is not one or does not close a block.
     pub fn outdent_edits(&self, character: char) -> Vec<Edit> {
-        if !matches!(character, '}' | ')' | ']') {
+        if !self.editing.closes_block(character) {
             return Vec::new();
         }
         let caret = self.field.caret();

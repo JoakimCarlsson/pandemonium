@@ -91,6 +91,8 @@ fn evaluator_of(language: &str) -> Option<Arc<Evaluator>> {
             tags: None,
             emmet: None,
             emmet_tables: None,
+            word_characters: String::new(),
+            block_openers: String::new(),
         },
     )
     .ok()?;
@@ -124,6 +126,10 @@ fn provider_of(spec: &DependencySpec, may_run: bool) -> pm_deps::Provider {
         escape: spec.escape.clone(),
         capitals: spec.capitals.clone(),
         requirement: spec.requirement.clone(),
+        spacing_ms: spec.spacing_ms,
+        budget_seconds: spec.budget_seconds,
+        most: spec.most,
+        fresh_minutes: spec.fresh_minutes,
         private: pm_deps::Private {
             read: if may_run {
                 spec.private.read.clone()
@@ -216,7 +222,7 @@ impl Lenses {
                     command: fill(&spec.command),
                     folder: folder_of(root, path, spec.marker.as_deref()),
                     env: Default::default(),
-                    group: "run".to_owned(),
+                    group: spec.group.clone().unwrap_or_else(|| "run".to_owned()),
                     language: spec
                         .toolchain
                         .clone()
@@ -230,6 +236,7 @@ impl Lenses {
                         title,
                         pressable: true,
                         runs: true,
+                        inline: spec.inline,
                     },
                     Held::Run(task),
                 );
@@ -264,9 +271,16 @@ impl Lenses {
                 add(
                     CodeLens {
                         span: buffer.span_of(span.start..span.start),
-                        title: format!("Latest {} · Upgrade", outdated.latest),
+                        title: if spec.title.is_empty() {
+                            outdated.latest.clone()
+                        } else {
+                            spec.title
+                                .replace("{version}", &outdated.latest)
+                                .replace("{name}", &outdated.dependency.name)
+                        },
                         pressable: true,
                         runs: false,
+                        inline: spec.inline,
                     },
                     Held::Upgrade(FileEdit {
                         path: path.to_owned(),

@@ -12,6 +12,8 @@ suffixes = ["css"]
 indent = 2
 pairs = ["()", "[]", "{}", "\"\"", "''"]
 
+word_characters = "-"
+
 [grammar_file]
 url = "https://github.com/tree-sitter/tree-sitter-css/releases/download/v0.25.0/tree-sitter-css.wasm"
 sha256 = "8a23977fe271357cce6f254ef88c9bebf3854602d8046605aef6a45c02135c59"

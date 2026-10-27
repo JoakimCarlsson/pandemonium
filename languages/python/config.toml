@@ -16,6 +16,8 @@ pairs = ["()", "[]", "{}", "\"\"", "''"]
 
 generated = [".venv", "venv", "__pycache__"]
 
+block_openers = ":"
+
 [grammar_file]
 url = "https://github.com/tree-sitter/tree-sitter-python/releases/download/v0.25.0/tree-sitter-python.wasm"
 sha256 = "16108b50df4ee9a30168794252ab55e7c93bfc5765d7fa0aa3e335752c515f47"

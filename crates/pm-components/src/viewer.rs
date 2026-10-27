@@ -410,7 +410,9 @@ pub(crate) fn file_line(
     .into_iter()
     .chain(document.values_on(index))
     .collect();
-    let lenses = document.lenses_on(index);
+    let held = document.lenses_on(index);
+    let lenses: Vec<Lens> = held.iter().filter(|lens| !lens.inline).cloned().collect();
+    let notes: Vec<&Lens> = held.iter().filter(|lens| lens.inline).collect();
     let rows = segments.iter().enumerate().map(|(place, segment)| {
         let absolute = line.start + segment.start..line.start + segment.end;
         let standing: Vec<&Hint> = hints
@@ -481,6 +483,11 @@ pub(crate) fn file_line(
             return held;
         }
         held.children(document.is_folded_at(index).then(|| fold_chip(index)))
+            .children(
+                notes
+                    .iter()
+                    .map(|lens| lens_chip(lens, font).styles([ml(3)])),
+            )
             .children(blamed.clone().map(|said| {
                 node()
                     .styles([flex_1(), ml(8), min_w_px(0), overflow_hidden()])
@@ -550,7 +557,7 @@ pub(crate) fn file_line(
                 overflow_hidden(),
                 px(2),
             ])
-            .children((lens_rows > 0).then(|| lens_row(lenses, font, height)))
+            .children((lens_rows > 0).then(|| lens_row(&lenses, font, height)))
             .children(rows),
     )
 }

@@ -21,6 +21,10 @@ pairs = ["()", "[]", "{}", "\"\"", "''", "``"]
 # element, comments are written {/* */} and there are no line comments, and
 # Emmet abbreviations expand. Inside a tag's attributes and the braces of an
 # expression the language's own rules hold.
+word_characters = "$"
+
+block_openers = ":"
+
 [scope.jsx]
 nodes = ["jsx_element"]
 line_comment = ""

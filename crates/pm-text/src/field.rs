@@ -85,6 +85,8 @@ pub enum Edit {
 pub struct Field {
     /// The text being edited, which holds no control characters but line breaks and tabs, and those only in a multiline field.
     text: String,
+    /// The characters besides letters, digits and the underscore that a word is made of, where the text is in a language that says so.
+    word_extra: String,
     /// Counts changes to text without scanning or copying it to detect edits.
     revision: u64,
     /// The caret, as a byte offset on a character boundary.
@@ -755,13 +757,18 @@ impl Field {
             .map(|character| from + character.len_utf8())
     }
 
+    /// Says which characters besides letters, digits and the underscore a word is made of in this text.
+    pub fn set_word_characters(&mut self, extra: &str) {
+        self.word_extra = extra.to_owned();
+    }
+
     /// The start of the word before `from`: past any space, then past the
     /// run of characters of one class.
     fn word_before(&self, from: usize) -> usize {
         let mut at = from;
         let mut class = None;
         for (start, character) in self.text[..from].char_indices().rev() {
-            let this = Class::of(character);
+            let this = Class::of(character, &self.word_extra);
             match class {
                 None if this == Class::Space => {}
                 None => class = Some(this),
@@ -779,7 +786,7 @@ impl Field {
         let mut at = from;
         let mut class = None;
         for (start, character) in self.text[from..].char_indices() {
-            let this = Class::of(character);
+            let this = Class::of(character, &self.word_extra);
             match class {
                 None if this == Class::Space => {}
                 None => class = Some(this),

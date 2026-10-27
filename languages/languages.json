@@ -69,7 +69,7 @@
       "server": "clangd",
       "files": {
         "brackets.scm": "7b7a54bd5e81a35953566c1a3d48fcd88e79f321e95eec371f20883da77de757",
-        "config.toml": "fd698b11b374e7cd6b7c1bb1335e285e421e325d257737a044528533e027fbf9",
+        "config.toml": "6555bffbf3665ae4fb75bdc47bfc5eb67ab6113fcee4f312e40ff1776196b5c1",
         "highlights.scm": "4612a6ff7e61385b23e2f7fb58e292fa55ee1740142730f67bd449bb5370a85c",
         "icon.svg": "12b1be7fac56e11259756eb541ee9d6d26958cf17b7b92b47c1ec9d95be50ed7",
         "indents.scm": "5146f3f64470fa916b504663cc7e9704d274bafabac3acd141510b064ca19188",
@@ -94,7 +94,7 @@
       "server": "taplo",
       "files": {
         "brackets.scm": "a0d7d33c46c561c820e4b4b5e83a2c358eb5831a06b538338a0d3c950aa7e48e",
-        "config.toml": "7bbe130e5ddef4e80584519393e5f5cdfadb28cdb7a8f7638d5cab4316682de6",
+        "config.toml": "918aaf5011422f4f4cb09f8d2416c6c838d813e597a3bb94839d192d93b0f5ed",
         "dependencies.scm": "5e1120c614698e2027330b9c7d00097c9743b45d43f28e8608a00187f2b703a6",
         "highlights.scm": "25a36ce579bff0ac2d3ca0233d2b81fc05e4c4092c4b172bd7be32297fd78aec",
         "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d",
@@ -156,7 +156,7 @@
       "server": "docker-compose-langserver",
       "files": {
         "brackets.scm": "8961d89bbb61e3890c556510daecc24cd4002ebac72010cafa46171e4d0b4df0",
-        "config.toml": "1444e8e440ac28445b3cae395354ceb0ba1192a1f349e2f5603f161b141ca37e",
+        "config.toml": "bd40e818be4df111d609bb274ec2e58593a909e5a920356e0462e879654e3133",
         "highlights.scm": "0077c042836f8ffed7d13505316f4d3c9ce0f107c4078fb37b937ffc339f8c49",
         "icon.svg": "410ce23bdffce1cd383cb5112e0c7e0c43127c926ab3dfbd185482a3e64ce790",
         "indents.scm": "b49dab22c3ef077815fb0907550da600cdb760b4ac400765d31bec5659f36658",
@@ -196,7 +196,7 @@
       "server": "clangd",
       "files": {
         "brackets.scm": "270e1ba449ced4fe104dc1e3e31ed7ed0c71b40ba34b2a13bf313311ec1359d1",
-        "config.toml": "3e5debce9ef537f28267b7a72d73f950acc39ff9b71d523b353c3a2b6ff58984",
+        "config.toml": "d3e83ecdf1cd73a5ed78f85b3101b202762f6810475be76cf79ccc24e29f1244",
         "highlights.scm": "447b5c39fa88bf4e1bf13173c8a92ccee44baa679e40396cd296bb8fac9363c9",
         "icon.svg": "8522c55044bb581068daac309c85a2e51d579023e0f538a9bbbe78db736d1d13",
         "indents.scm": "e29c41a339ada86a5f9b4df2e30c8e18425d4a054b062d39cbdf69b25d4b33ae",
@@ -222,7 +222,7 @@
       "server": "csharp-ls",
       "files": {
         "brackets.scm": "c0eda163cc24f7a3cf17c8fe4878b06ce74226c6a752c486d24dfb8a39016cb4",
-        "config.toml": "de70bb3347d2aef345a308940806914b3ddb9187a2b46e903af3f982dd42da53",
+        "config.toml": "55e14c1b4ab0c63033977598214f85fe3f10537f3dc2742db52078714afeaca4",
         "highlights.scm": "318f006570387526f43cce3e7d9ea8199a8c8bc34641c8ebba9525434d65e1e2",
         "icon.svg": "67212cc5e02d45cde18934170f6fe45517ac85bb23be6b7836a6b50f97e7cf75",
         "indents.scm": "73c49944a486f94d04e7d1bb43ebc9662aea8bcfca6e7041ad9e2901b70b8d22",
@@ -247,7 +247,7 @@
       "server": "vscode-css-language-server",
       "files": {
         "brackets.scm": "d10cdedd33cd9902cd04bed29257edc4b8cbbf26bf3b3086c163bee8a59fa832",
-        "config.toml": "2021f7ceeb15a6515df256b15b33841e37e41757ab09a82d7c9f05d43a7f1835",
+        "config.toml": "6357f6b043f0bc5f84a0ad89344f81cdf8e164e79900095675d005014a0f733f",
         "emmet.toml": "d2ddbd3331f0bf424d2ae7d99e5b8a276a9a07d6a78b786f1c13f0c0c1e52e76",
         "highlights.scm": "f7c74ce493683c6de23017bf9af506ea4d8a4f0205281b98d63f249d1fb9b0c5",
         "icon.svg": "176382bf3cd6f4065d064afecb1668702b8aa0412ba977cdf67eac2cbb29c8a9",
@@ -406,7 +406,7 @@
       "server": "gopls",
       "files": {
         "brackets.scm": "e98e812efd7ec6fa313ff2e47bd96eb5d07d0d2cfa3ecc1a0e845a5f838787a5",
-        "config.toml": "af5cd227c52c3d8afeabd7caf8936626e1fbbaccf9a18e6e6d43e8e19414a361",
+        "config.toml": "5c81adf04cd2b87436f96d479c45f31a626e13b5315ec8e22a717489f63a3ead",
         "dependencies.scm": "632d3a206b1433381fa757ef3ad9c0e1a9b206663802b843dcfcc5121848c95c",
         "grammar.wasm": "30eb00e1c4b4516ccfad39d0a8d79e5f98a823de45705ad3c6e232dfa7d5e36c",
         "highlights.scm": "4af8cc939548e0511af75e8ceecf9d484e18f163975793dcb3609ac1e9c5be9d",
@@ -568,7 +568,7 @@
       "server": "vscode-html-language-server",
       "files": {
         "brackets.scm": "44892505b21a08f4eb83cb646e6a150de6466c86e57505b4228f5f7a039f148c",
-        "config.toml": "5ce6778a675c49ccb19419b92dffe9cd382e7f6a744131593d1ecba34b21ab45",
+        "config.toml": "4a8ccc4119b59868964255384bc3cc9f849874271ec197b55ac8cce01313db85",
         "emmet.toml": "720de3c6448ee8f329e392295332dbc08dc7fe9c6eb0ec7f41f8eb5ccf01f382",
         "highlights.scm": "ee0c83f83af8129bc12d279aadc68c8b8b112871f238583b428633c8fe8e1895",
         "icon.svg": "e88c73d6a408483c6ea905180467f7ca141ed9d88b51e60fd34b190d429de0cf",
@@ -598,7 +598,7 @@
       "server": "jdtls",
       "files": {
         "brackets.scm": "38c5c582bb6c3d0d9c621f43463cbea7de4ae9b0c7bef9111020aaaa26007208",
-        "config.toml": "184efc742bb0ec25139b9f15358b17b527c0a2376fedd928bd898a1b890ffc30",
+        "config.toml": "9f017d152f69f8cf5cc4b7d49feed08e1c7b55b9721c655e26593f1127909c89",
         "highlights.scm": "19012606048c71619cdc5a93ea3d6c493ac41dc75980405b2f3ea72d0d81ab57",
         "icon.svg": "26f51cbdb259fbd3a6fc7cd49e8c24ca4717565ae40e1d67e0fedafda5802d69",
         "indents.scm": "fc4243dcac7477ef195f9abcd4b5850f02bbbab7a63a60b46a1eab7cc9393d71",
@@ -628,7 +628,7 @@
       "server": "typescript-language-server",
       "files": {
         "brackets.scm": "17d43133e8204321af678d982fc4952fecbda68995324a9be04b92677f17124a",
-        "config.toml": "59fb91f74104a40e7c598c1b5248fc17f1c8a3b28818970901e9e41d04a811c6",
+        "config.toml": "08939508cf3fc8624e345c4bdc13e1072db444f80109064472571bdf783333e7",
         "emmet.toml": "720de3c6448ee8f329e392295332dbc08dc7fe9c6eb0ec7f41f8eb5ccf01f382",
         "highlights.scm": "656af77ce62fe324c95d8b0b92acc7cdba9a78537964bb9770ab0223a5108922",
         "icon.svg": "12b4bbacd7fbf2b1a685b791ce8c5c0196a3f01f78aff3f75cc05929868e17c6",
@@ -750,7 +750,7 @@
       "server": null,
       "files": {
         "brackets.scm": "c54dac6541b82a63f109aa3c66e55c3e2074a6b17a450905ec008fd9e038633e",
-        "config.toml": "7aa75499a56284ce23443ab3599b37e544419e13d4ae0a1d8c1ab9be4b1cebb2",
+        "config.toml": "fa5082de7390dc7602e7caf1965813dcf479243cb403ca724a6dd9cda8be9f73",
         "highlights.scm": "5b4481cb03a2cef43789bec78bfb4e7741f31ee0888072623aaa9b8df52b855e",
         "icon.svg": "c08d36925b4afc2155c821e3ffe9412b24cc60c224be06a65d06a55cf311554d",
         "indents.scm": "00abeee62a9ac43016d26cd9fab371c1e9aef55fc39510792d97a814f1f50091",
@@ -920,7 +920,7 @@
       "server": "vscode-json-language-server",
       "files": {
         "brackets.scm": "d13aeee7b2b6ff238a68e2029bfa42543e624415911624e2fb88cd93abf47bc5",
-        "config.toml": "1251d70105c0ba3e55da818f496d2fbfb382ff2d379de01e9c97e3420ff3edfe",
+        "config.toml": "666e7d25f8a40fe804c33ee9da3ded99da82eb7d8c21299ef84fec511b0bac32",
         "dependencies.scm": "137c42971026fbe3cf42ec7e2dfe6621a71c82cdd7d62cebc4fe08fab19a3938",
         "highlights.scm": "86cb3d2ca3aada199a87998e2d948de975e92c47d5258bcedbe71f193fe8fa4d",
         "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d",
@@ -1004,7 +1004,7 @@
       "server": "pyright-langserver",
       "files": {
         "brackets.scm": "4d23538e4730c901b85c049aa4f18c246b7aff9b4dbce9f7edaafc616352a2a3",
-        "config.toml": "80920ba7bd057dd16480c59f81f86ddf39cf0046f069bbb98799944b43a4d2df",
+        "config.toml": "0fb400ba8f05b95cfed9c9dac84e4938e7f1c93fa6b0a3ea73c80a4a368f0c44",
         "highlights.scm": "5fbf61e4a31701ccbb46a41328cce553e0944648d9f450d24fdf14029919f8a8",
         "icon.svg": "87315ba89d065698044335641ca2dc26dda120866e508c58b7177d44dbe17c1c",
         "indents.scm": "b243ab33a226ec1f0bc5d7e1c16607903d393222561f582bcdf794ceb2a1fc35",
@@ -1059,7 +1059,7 @@
       "server": "vscode-css-language-server",
       "files": {
         "brackets.scm": "f913a23a7da353dfc04becf612ef28eaa93576d6337662836ee9d6bda27ed1fa",
-        "config.toml": "401886d4acf29926d0f1c34552665e58d983f32d67c4bb94fbc7cdf4e4b8998f",
+        "config.toml": "42212fd7470127c09690c1c25dcdf9fa09c31f4a4393c7b7f2abf07cc07f1e5c",
         "emmet.toml": "d2ddbd3331f0bf424d2ae7d99e5b8a276a9a07d6a78b786f1c13f0c0c1e52e76",
         "grammar.wasm": "54266012ebc1ec7cd38f908f6658dcaf72006b02b02ae117b3cac82cc2f60791",
         "highlights.scm": "41bd61df91237454d3a0ebad5372a30caded0be03234b78624113d39b86f4ce9",
@@ -1114,7 +1114,7 @@
       "server": "svelteserver",
       "files": {
         "brackets.scm": "2b990e69b11146dfc8dfbc0cb7461ab93fcedd03ce6154494efc3e31f296b702",
-        "config.toml": "51848f38577fc0085436a79e13b0b96b70e3ab54ca5199dab9852e4814a3a2ea",
+        "config.toml": "3ba4d2b58aa22a5fa438ea0e5350757f992f18cb5b4dd79fb3473217ea83f594",
         "emmet.toml": "720de3c6448ee8f329e392295332dbc08dc7fe9c6eb0ec7f41f8eb5ccf01f382",
         "grammar.wasm": "751461809861a9197a7f5ee0eceeb600e03121ce9f6bc6225d569a8c504454e0",
         "highlights.scm": "e4799b788338ab73f86ff9370ea1c3d8fa65b06c4a90d3782a89189bdd437467",
@@ -1199,7 +1199,7 @@
       "server": "taplo",
       "files": {
         "brackets.scm": "a0d7d33c46c561c820e4b4b5e83a2c358eb5831a06b538338a0d3c950aa7e48e",
-        "config.toml": "231ea83775ef64928f17e8838619d0b249b3893a5a95c42507ca522b12ff0f94",
+        "config.toml": "04aafe5dbc3d3e233d6bf7e5f96646abc60ad90d6c4b4560530d3503ae21220c",
         "highlights.scm": "25a36ce579bff0ac2d3ca0233d2b81fc05e4c4092c4b172bd7be32297fd78aec",
         "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d",
         "indents.scm": "9a3247ddd5fcc06a840724120ec90be62f8896f51801ae7504afedc7addbea97",
@@ -1224,7 +1224,7 @@
       "server": "typescript-language-server",
       "files": {
         "brackets.scm": "970b02fb5bf6b37f95ae18de20d95274ea3adfcde501744d0188dcc514acd55c",
-        "config.toml": "d177bcda620a564b12feeca0c4dac6a940ca8d75676ff3b586bec3af6ede9e30",
+        "config.toml": "0353e7656bb80fcd147f348d2a57f20cc40a730e9ad064929aa29b87426f4b49",
         "emmet.toml": "720de3c6448ee8f329e392295332dbc08dc7fe9c6eb0ec7f41f8eb5ccf01f382",
         "highlights.scm": "eda831a60ee976265446248da5f0691dd0ee289bd676cb3cdfc74a4dad05f8d7",
         "icon.svg": "dfe113def52fc72b2975392c6a5648883f8e4feb908a66f41f4092753cac1f1b",
@@ -1259,7 +1259,7 @@
       "server": "typescript-language-server",
       "files": {
         "brackets.scm": "e7319b052b3ac296c901ac7183841072b5a9fe57d8032944ead6f0ef431c5644",
-        "config.toml": "239bc47f1b2ac49dacbb34c05afe5e068687133b2ed9ffebf3f775e63b4f4fa7",
+        "config.toml": "79e16cb215dd4658429af07d356aed90fd26eee6f456fcaef63d9c108396e41b",
         "highlights.scm": "3ee958b8f7217a26f9e683a916a7872d8e79e81a57f2424a4d6ccd613f6017f4",
         "icon.svg": "0004d33f46b2175e90f8ea86aef139e29af5f7a3a3cf310e6dd6b8c084bab884",
         "indents.scm": "a95eaed00775b56c91e823fdbca801ff691db2e1fc9922309b4ded21b90c2784",
@@ -1357,7 +1357,7 @@
       "server": "lemminx",
       "files": {
         "brackets.scm": "d9d5505ec143503948b4feb03e401188b5001abb1c466e0b480a9f0962ece492",
-        "config.toml": "413be723031bba14b6c25f6237a45dedbd8d78cc024b71b44fd293e724c606a8",
+        "config.toml": "e946eba946f6be52e5d2f09cc93a2c85076c8c4f8f073015213e549f274d6b15",
         "emmet.toml": "720de3c6448ee8f329e392295332dbc08dc7fe9c6eb0ec7f41f8eb5ccf01f382",
         "highlights.scm": "407472079d4fe941a40279c3f4bc24d5300a655f529a67e2bbf775898569e85e",
         "icon.svg": "e27ab54c0bb4c3ae9af2c3aa674461db171ac241bfd5cf55d8431792fedd9c72",
@@ -1388,7 +1388,7 @@
       "server": "yaml-language-server",
       "files": {
         "brackets.scm": "8961d89bbb61e3890c556510daecc24cd4002ebac72010cafa46171e4d0b4df0",
-        "config.toml": "afcefd363a519e96b4df071978a9e905460cb1877cc824330a6a730d9d954db1",
+        "config.toml": "a78289f45ec46e9a6618776b425700dc3c79fa58635d2f44e42de669b5f6b964",
         "highlights.scm": "0077c042836f8ffed7d13505316f4d3c9ce0f107c4078fb37b937ffc339f8c49",
         "icon.svg": "b51bb293106d643a9a0510030f308bcc0ace3d4db39fe8324c110b4ed79e75a3",
         "indents.scm": "b49dab22c3ef077815fb0907550da600cdb760b4ac400765d31bec5659f36658",

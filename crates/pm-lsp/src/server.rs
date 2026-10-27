@@ -1184,6 +1184,7 @@ impl LanguageServer {
                 title: plain_title(title),
                 pressable: self.presses(&lens),
                 runs: false,
+                inline: false,
             });
             raw.push(lens);
         }

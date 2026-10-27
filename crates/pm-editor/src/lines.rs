@@ -320,7 +320,8 @@ impl Document {
         for part in lines.map(str::trim).filter(|part| !part.is_empty()) {
             if !joined.trim().is_empty()
                 && !joined.ends_with(['(', '['])
-                && !part.starts_with([')', ']', '}', ',', ';', '.'])
+                && !part.starts_with(|next| self.editing.closes_block(next))
+                && !part.starts_with([',', ';', '.'])
             {
                 joined.push(' ');
             }
@@ -355,7 +356,11 @@ impl Document {
             .chars()
             .take_while(|character| *character == ' ' || *character == '\t')
             .collect();
-        let opens = text[start..end].trim_end().ends_with(['{', '(', '[', ':']);
+        let opens = text[start..end]
+            .trim_end()
+            .chars()
+            .next_back()
+            .is_some_and(|last| self.editing.opens_block(last));
         if above {
             let at = start + indent.len();
             Edit::Replace(start..start, format!("{indent}\n"), (at, at))

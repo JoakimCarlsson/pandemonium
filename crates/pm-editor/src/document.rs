@@ -352,6 +352,7 @@ impl Document {
         if let Some(tabs) = tabs {
             editing.tabs = tabs;
         }
+        self.field.set_word_characters(&editing.word_characters);
         self.editing = editing;
     }
 
@@ -499,13 +500,20 @@ impl Document {
             .collect()
     }
 
+    /// Whether `character` is part of a word in the language of this text: a letter, a digit, the underscore or one the language adds.
+    pub(crate) fn is_word_character(&self, character: char) -> bool {
+        character.is_alphanumeric()
+            || character == '_'
+            || self.editing.word_characters.contains(character)
+    }
+
     /// The word of the text that ends at the byte `offset`: where it starts.
     pub fn word_start(&self, offset: usize) -> usize {
         let text = self.field.text();
         text[..offset.min(text.len())]
             .char_indices()
             .rev()
-            .take_while(|(_, character)| character.is_alphanumeric() || *character == '_')
+            .take_while(|(_, character)| self.is_word_character(*character))
             .last()
             .map_or(offset, |(at, _)| at)
     }

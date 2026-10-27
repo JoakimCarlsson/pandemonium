@@ -14,11 +14,11 @@ pub(crate) enum Class {
 }
 
 impl Class {
-    /// The class `character` belongs to.
-    pub(crate) fn of(character: char) -> Self {
+    /// The class `character` belongs to, `extra` holding the characters besides letters, digits and the underscore that a word may be made of.
+    pub(crate) fn of(character: char, extra: &str) -> Self {
         if character.is_whitespace() {
             Self::Space
-        } else if character.is_alphanumeric() || character == '_' {
+        } else if character.is_alphanumeric() || character == '_' || extra.contains(character) {
             Self::Word
         } else {
             Self::Other
@@ -38,16 +38,16 @@ pub fn word_at(text: &str, byte: usize) -> Range<usize> {
     else {
         return byte..byte;
     };
-    let class = Class::of(character);
+    let class = Class::of(character, "");
     let start = text[..byte]
         .char_indices()
         .rev()
-        .take_while(|(_, before)| Class::of(*before) == class)
+        .take_while(|(_, before)| Class::of(*before, "") == class)
         .last()
         .map_or(byte, |(at, _)| at);
     let end = text[byte..]
         .char_indices()
-        .find(|(_, after)| Class::of(*after) != class)
+        .find(|(_, after)| Class::of(*after, "") != class)
         .map_or(text.len(), |(at, _)| byte + at);
     start..end.max(start)
 }

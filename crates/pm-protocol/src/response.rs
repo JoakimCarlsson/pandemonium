@@ -348,7 +348,7 @@ pub enum Response {
         message: Option<String>,
     },
     /// An installed language's grammar and queries.
-    Grammar(crate::GrammarBundle),
+    Grammar(Box<crate::GrammarBundle>),
     /// A file was opened for its language server.
     Opened {
         /// The characters after which the server offers completions without being asked; empty when the language has no server.

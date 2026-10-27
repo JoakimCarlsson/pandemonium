@@ -15,6 +15,10 @@ line_comment = "#"
 indent = 2
 pairs = ["[]", "{}", "\"\"", "''"]
 
+word_characters = "-"
+
+block_openers = ":"
+
 [grammar_file]
 url = "https://github.com/tree-sitter-grammars/tree-sitter-yaml/releases/download/v0.7.2/tree-sitter-yaml.wasm"
 sha256 = "0a0e5ebcfeb0b2bf272d071396eeed107b2c4b2617b69d5959b13f78b357a4d6"

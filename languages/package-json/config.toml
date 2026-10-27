@@ -50,6 +50,8 @@ command = "npm run {name}"
 toolchain = "javascript"
 
 [dependencies]
+title = "Latest {version} · Upgrade"
+inline = true
 url = "https://registry.npmjs.org/{name}/latest"
 latest = ["version"]
 escape = [["/", "%2f"]]

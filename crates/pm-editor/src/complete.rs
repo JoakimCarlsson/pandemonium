@@ -5,11 +5,6 @@ use pm_text::Edit;
 
 use crate::document::Document;
 
-/// Whether `character` is part of a word a completion finishes.
-fn is_word(character: char) -> bool {
-    character.is_alphanumeric() || character == '_'
-}
-
 /// The positions in `items` of the completions that match `typed`, best first.
 fn matching(items: &[Completion], typed: &str) -> Vec<usize> {
     let mut scored: Vec<(u8, usize)> = items
@@ -25,6 +20,8 @@ impl Document {
     /// Narrows the completions open to the word typed before the caret, and closes the list when the caret left the word or nothing matches; says whether a fresh list should be asked for in place of none, as when the reader began a word, unless a trigger character asked already, `triggered`.
     pub(crate) fn refilter(&mut self, triggered: bool) -> bool {
         let caret = self.field.caret();
+        let extra = self.editing.word_characters.clone();
+        let is_word = |held: char| held.is_alphanumeric() || held == '_' || extra.contains(held);
         let text = self.field.text();
         let Some(completion) = &mut self.completion else {
             let typed_word = text[..caret].chars().next_back().is_some_and(is_word);

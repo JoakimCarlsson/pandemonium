@@ -196,6 +196,12 @@ pub struct GrammarBundle {
     /// What those abbreviations know, the text of the language's `emmet.toml`.
     #[serde(default)]
     pub emmet_tables: Option<String>,
+    /// The characters besides letters, digits and the underscore that a word of its files is made of.
+    #[serde(default)]
+    pub word_characters: String,
+    /// The characters besides the opening brackets of its pairs that a line may end with and the next be indented a level deeper.
+    #[serde(default)]
+    pub block_openers: String,
 }
 
 impl ExtensionInfo {

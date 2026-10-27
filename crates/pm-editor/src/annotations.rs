@@ -75,6 +75,8 @@ pub struct Lens {
     pub pressable: bool,
     /// Whether pressing it runs a command in a shell of the dock.
     pub runs: bool,
+    /// Whether it stands at the end of its line instead of in a row above it.
+    pub inline: bool,
     /// Its place in the list the server last gave, which names it when it is pressed.
     pub index: usize,
 }
@@ -293,6 +295,7 @@ impl Document {
                 title: lens.title,
                 pressable: lens.pressable,
                 runs: lens.runs,
+                inline: lens.inline,
                 index,
             })
             .collect();
@@ -353,9 +356,9 @@ impl Document {
         !self.annotations.lenses.items.is_empty()
     }
 
-    /// Whether the line at `index` has lenses, which stand in a row above it.
+    /// Whether the line at `index` has lenses that stand in a row above it; those that stand at its end take no row.
     pub fn has_lens_row(&self, index: usize) -> bool {
-        self.shows_lens_rows() && !self.lenses_on(index).is_empty()
+        self.shows_lens_rows() && self.lenses_on(index).iter().any(|lens| !lens.inline)
     }
 
     /// Whether pressing the lens at `index` of the list the server gave runs a command in a shell.

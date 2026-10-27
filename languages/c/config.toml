@@ -13,6 +13,8 @@ line_comment = "//"
 indent = 4
 pairs = ["()", "[]", "{}", "\"\"", "''"]
 
+block_openers = ":"
+
 [grammar_file]
 url = "https://github.com/tree-sitter/tree-sitter-c/releases/download/v0.24.2/tree-sitter-c.wasm"
 sha256 = "83e8d7902b9d7f8c7c5cd4bd9acb5c7eb5faf42c09f85546b183964d3b5f48f9"

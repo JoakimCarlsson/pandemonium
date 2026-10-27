@@ -16,6 +16,10 @@ indent = 2
 pairs = ["()", "[]", "{}", "\"\"", "''", "``"]
 requires = ["tsx", "package-json"]
 
+word_characters = "$"
+
+block_openers = ":"
+
 [grammar_file]
 url = "https://github.com/tree-sitter/tree-sitter-typescript/releases/download/v0.23.2/tree-sitter-typescript.wasm"
 sha256 = "778025db5a8be0e70f8ccc3671e486dfeddd048c25d9e8a70c26de2e1bf6f97d"

@@ -16,6 +16,8 @@ pairs = ["()", "[]", "\"\"", "''"]
 
 previews = { svg = "vector" }
 
+word_characters = "-"
+
 [grammar_file]
 url = "https://github.com/tree-sitter-grammars/tree-sitter-xml/releases/download/v0.7.0/tree-sitter-xml.wasm"
 sha256 = "9950327f8542a3d563fe4192aa05986a53e6fd6adca518cbb1a1699cbc8970ad"

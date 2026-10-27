@@ -333,6 +333,9 @@ pub struct CodeLens {
     /// Whether pressing it runs a command in a shell of the project rather than asking the language server.
     #[serde(default)]
     pub runs: bool,
+    /// Whether it is shown at the end of its line rather than in a row above it, for a short note about the line such as the latest version of a dependency.
+    #[serde(default)]
+    pub inline: bool,
 }
 
 /// A block of lines a language server says can be folded: the line it starts on and the line it ends on, counted from 0.

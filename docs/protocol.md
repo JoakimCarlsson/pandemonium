@@ -751,7 +751,8 @@ everything said of them, its submodules' paths written from `directory`.
   `lenses.scm` and `[[lens]]` entries, see [`docs/extensions.md`](extensions.md))
   and, unless `registry` is false, one for each dependency a manifest names
   whose version is behind the latest its registry has, saying `Latest <version>
-  · Upgrade`. A lens has `runs` set when pressing it runs a command in a shell
+  · Upgrade`. A lens has `inline` set when it is a note shown at the end of its line, such
+  as the latest version of a dependency, and not in a row above it. A lens has `runs` set when pressing it runs a command in a shell
   and must be sent with `run_code_lens`. The server keeps the list as given, and
   `press_code_lens` and `run_code_lens` take one by its place in it. Lookups in
   registries are kept for an hour (five minutes when they failed), spaced at
@@ -863,7 +864,7 @@ embedded context, and anything else as a link to the stored file.
 | `semantic_tokens` | `tokens`: `[{line, start, length, kind}]`, `start` and `length` in UTF-16 code units, `kind` one of `keyword`, `function`, `type`, `string`, `constant`, `comment`, `property`, `operator`, `variable` |
 | `inlay_hints` | `hints`: `[{position, label, kind, pad_left, pad_right}]`, `kind` one of `type`, `parameter`, `other`, `value` |
 | `inline_values` | `values`: `[{span, kind, text}]`, `kind` one of `text` (`text` is the text), `variable` (`text` the name, or none for the one the span spells), `expression` (`text` the expression, or none for the one the span spells) |
-| `code_lenses` | `lenses`: `[{span, title, pressable, runs}]` |
+| `code_lenses` | `lenses`: `[{span, title, pressable, runs, inline}]` |
 | `lens_pressed` | `places`: as `locations` of `definitions`; `files`: as of `edited` |
 | `definitions`| `locations`: `[{path, span, inside, text, language, name, line}]`; `name` names a calling or called function, `line` is the line the span starts on |
 | `code_actions` | `actions`: `[{title, kind, preferred, disabled}]` |

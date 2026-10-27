@@ -48,6 +48,10 @@ pub struct Editing {
     pub emmet: Option<String>,
     /// What those abbreviations know, the text of the language's `emmet.toml`.
     pub emmet_tables: Option<String>,
+    /// The characters besides letters, digits and the underscore that a word of its files is made of, such as `-` in a style sheet.
+    pub word_characters: String,
+    /// The characters besides the opening brackets of its pairs that a line may end with and the next be indented a level deeper, such as `:` in Python.
+    pub block_openers: String,
 }
 
 /// A named set of syntax nodes whose insides are edited differently from the rest of the file, such as the children of a JSX element.
@@ -90,6 +94,8 @@ impl Default for Editing {
             tags: None,
             emmet: None,
             emmet_tables: None,
+            word_characters: String::new(),
+            block_openers: String::new(),
         }
     }
 }
@@ -100,6 +106,22 @@ pub fn default_pairs() -> Vec<String> {
 }
 
 impl Editing {
+    /// Whether a line ending in `character` is followed by a deeper level of indentation: it opens a bracket of the pairs, or is one of the block openers.
+    pub fn opens_block(&self, character: char) -> bool {
+        self.block_openers.contains(character)
+            || self
+                .pairs
+                .iter()
+                .any(|(open, close)| open != close && *open == character)
+    }
+
+    /// Whether `character` closes a bracket of the pairs, which a line starting with it is taken back a level of indentation for.
+    pub fn closes_block(&self, character: char) -> bool {
+        self.pairs
+            .iter()
+            .any(|(open, close)| open != close && *close == character)
+    }
+
     /// The pairs `written`, each two characters, the one that opens it and the one that closes it; others are left out.
     pub fn pairs_of(written: &[String]) -> Vec<(char, char)> {
         written

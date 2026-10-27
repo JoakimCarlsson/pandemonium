@@ -211,6 +211,12 @@ pub struct LensSpec {
     /// Whether the lens is shown above the first place of its kind alone.
     #[serde(default)]
     pub once: bool,
+    /// Whether the lens is a note at the end of its line instead of a row above it.
+    #[serde(default)]
+    pub inline: bool,
+    /// The kind of task its command is, `build`, `test` or `run`; `run` when nothing.
+    #[serde(default)]
+    pub group: Option<String>,
 }
 
 impl LensSpec {
@@ -244,6 +250,24 @@ pub struct PrivateSpec {
 /// How the dependencies of the manifests a language reads are checked for newer versions: its `dependencies.scm` says where a manifest names them, and this where their registry says what the latest is.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DependencySpec {
+    /// What the lens of a dependency that is behind says, where `{version}` stands for the latest version and `{name}` for the dependency; the latest version alone when nothing.
+    #[serde(default)]
+    pub title: String,
+    /// Whether that lens is a note at the end of the dependency's line instead of a row above it.
+    #[serde(default)]
+    pub inline: bool,
+    /// The least time between two requests to the registry, in milliseconds, as its operator asks; 100 when nothing.
+    #[serde(default)]
+    pub spacing_ms: Option<u64>,
+    /// How long one request of dependencies may spend asking the registry, in seconds; 8 when nothing.
+    #[serde(default)]
+    pub budget_seconds: Option<u64>,
+    /// How many dependencies of one manifest are looked up; 80 when nothing.
+    #[serde(default)]
+    pub most: Option<usize>,
+    /// How long what the registry said is kept before it is asked again, in minutes; 60 when nothing.
+    #[serde(default)]
+    pub fresh_minutes: Option<u64>,
     /// Whether the language's extension module says what the latest version of a dependency is and whether a requirement is behind it, which `url`, `latest` and `requirement` then need not say.
     #[serde(default)]
     pub hook: bool,
@@ -438,6 +462,12 @@ pub struct Manifest {
     /// The parts of a file edited differently from the rest, by name.
     #[serde(default, rename = "scope")]
     pub scopes: BTreeMap<String, ScopeSpec>,
+    /// The characters besides letters, digits and the underscore that a word of its files is made of, such as `-` in a style sheet or `$` in a script, which double clicks, moving by word, completions and the next occurrence follow.
+    #[serde(default)]
+    pub word_characters: String,
+    /// The characters besides the opening brackets of its pairs that a line may end with and the next be indented a level deeper, such as `:` in Python.
+    #[serde(default)]
+    pub block_openers: String,
     /// The kind of Emmet abbreviation its files take, `markup` or `style`, when they take any.
     #[serde(default)]
     pub emmet: Option<String>,

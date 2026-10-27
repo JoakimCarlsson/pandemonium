@@ -1152,7 +1152,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             Err(reason) => failed(reason),
         },
         Request::Grammar { language } => match languages::grammar(&language) {
-            Ok(bundle) => Response::Grammar(bundle),
+            Ok(bundle) => Response::Grammar(Box::new(bundle)),
             Err(reason) => failed(reason),
         },
         Request::OpenDocument {

@@ -35,6 +35,8 @@ env = { GOBIN = "{folder}", GOSUMDB = "sum.golang.org", GOFLAGS = "-mod=readonly
 env_remove = ["GONOSUMDB", "GONOSUMCHECK", "GOPRIVATE", "GOINSECURE"]
 
 [dependencies]
+title = "Latest {version} · Upgrade"
+inline = true
 url = "https://proxy.golang.org/{name}/@latest"
 latest = ["Version"]
 capitals = "!"
