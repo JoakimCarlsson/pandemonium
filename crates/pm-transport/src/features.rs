@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use serde_json::Value;
+use sha2::Digest;
 
 use crate::bridge::Progress;
 use crate::provision::output_of;
@@ -61,8 +62,20 @@ fn locate(reference: &str) -> Result<(&str, &str, &str), String> {
                 .chars()
                 .all(|character| character.is_ascii_alphanumeric() || extra.contains(&character))
     };
-    if !plain(host, &['.', '-', ':'])
+    let named = plain(host, &['.', '-'])
+        && host.contains('.')
+        && !host.starts_with(['.', '-'])
+        && !host.ends_with(['.', '-'])
+        && host.rsplit('.').next().is_some_and(|label| {
+            label
+                .chars()
+                .all(|character| character.is_ascii_alphabetic())
+        });
+    if !named
         || !plain(repository, &['.', '-', '_', '/'])
+        || repository
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
         || !plain(tag, &['.', '-', '_'])
     {
         return Err(format!("{reference} is not a feature in a registry"));
@@ -73,7 +86,15 @@ fn locate(reference: &str) -> Result<(&str, &str, &str), String> {
 /// The text `url` serves, asking with `headers`.
 fn fetch(url: &str, headers: &[String], into: Option<&Path>) -> Result<Vec<u8>, String> {
     let mut command = Command::new("curl");
-    command.args(["-fsSL", "--max-time", "300"]);
+    command.args([
+        "-fsSL",
+        "--max-time",
+        "300",
+        "--proto",
+        "=https",
+        "--proto-redir",
+        "=https",
+    ]);
     for header in headers {
         command.args(["-H", header]);
     }
@@ -111,12 +132,25 @@ fn download(reference: &str, into: &Path) -> Result<(), String> {
     let digest = manifest["layers"][0]["digest"]
         .as_str()
         .ok_or_else(|| format!("{reference} holds no feature"))?;
+    let wanted = digest
+        .strip_prefix("sha256:")
+        .filter(|hash| hash.len() == 64 && hash.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f')))
+        .ok_or_else(|| format!("{reference} names a layer that is not a sha256 digest"))?;
     let archive = into.join("feature.tar");
     fetch(
         &format!("https://{host}/v2/{repository}/blobs/{digest}"),
         &headers,
         Some(&archive),
     )?;
+    let bytes =
+        std::fs::read(&archive).map_err(|error| format!("could not read {reference}: {error}"))?;
+    let actual: String = sha2::Sha256::digest(&bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    if actual != wanted {
+        return Err(format!("{reference} does not match its digest"));
+    }
     refuse_links(&archive)?;
     output_of(
         Command::new("tar")

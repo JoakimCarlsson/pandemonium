@@ -7,3 +7,4 @@ license.workspace = true
 [dependencies]
 pm-protocol.workspace = true
 serde_json = { version = "1.0.154", features = ["preserve_order"] }
+sha2 = "0.11.1"
