@@ -296,6 +296,25 @@ impl Document {
                 index,
             })
             .collect();
+        let lines: Vec<(usize, String, bool)> = kept
+            .iter()
+            .map(|lens| {
+                (
+                    self.line_of(lens.offset),
+                    lens.title.clone(),
+                    lens.pressable,
+                )
+            })
+            .collect();
+        let mut at = 0;
+        kept.retain(|_| {
+            let (line, title, pressable) = &lines[at];
+            at += 1;
+            *pressable
+                || !lines
+                    .iter()
+                    .any(|(other, said, press)| *press && other == line && said == title)
+        });
         kept.sort_by_key(|lens| lens.offset);
         self.annotations.lenses.take(version, self.version, kept);
     }

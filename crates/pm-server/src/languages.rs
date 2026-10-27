@@ -209,7 +209,10 @@ impl Core {
                 info.color = manifest.color.clone();
             }
             info.busy = busy.get(&info.id).cloned();
-            info.problem = problems.get(&info.id).filter(|_| !server_ready).cloned();
+            info.problem = problems
+                .get(&info.id)
+                .filter(|_| !server_ready || info.update.is_some())
+                .cloned();
         }
         infos.sort_by_key(|info| info.name.to_lowercase());
         infos

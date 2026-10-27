@@ -367,6 +367,18 @@ fn handler(
     })
 }
 
+/// `title` without the icon a server writes before it, such as `$(play) ` in `$(play) Run Service`.
+fn plain_title(title: &str) -> String {
+    let title = title.trim();
+    match title
+        .strip_prefix("$(")
+        .and_then(|rest| rest.split_once(')'))
+    {
+        Some((_, rest)) => rest.trim().to_owned(),
+        None => title.to_owned(),
+    }
+}
+
 impl LanguageServer {
     /// Starts the server of `spec` for the project at `root`, handing what it says is wrong with files to `sink`: the project's or the machine's own program first, and the one installed in the data folder when there is none or it does not start, installing that first when it is missing.
     pub(crate) fn start(
@@ -1147,7 +1159,7 @@ impl LanguageServer {
             };
             lenses.push(CodeLens {
                 span,
-                title: title.to_owned(),
+                title: plain_title(title),
                 pressable: self.presses(&lens),
                 runs: false,
             });

@@ -261,6 +261,8 @@ pub enum Shot {
     SettingsPage(Section, bool),
     /// The settings window showing what a search for fonts found, at its narrowest when the flag is set.
     SettingsSearch(bool),
+    /// The settings window searched for lenses, which lists the switches for code lenses and dependency versions, at its normal size or, `true`, at its smallest.
+    SettingsLens(bool),
     /// The settings window on Appearance with the list of code fonts open, at its narrowest when the flag is set.
     SettingsPicker(bool),
     /// The settings window on Servers with the form for adding one open, at its narrowest when the flag is set.
@@ -1949,6 +1951,7 @@ impl Shot {
             self,
             Self::SettingsPage(..)
                 | Self::SettingsSearch(_)
+                | Self::SettingsLens(_)
                 | Self::SettingsPicker(_)
                 | Self::SettingsMachine(_)
                 | Self::SettingsCompact(_)
@@ -1964,6 +1967,7 @@ impl Shot {
             self,
             Self::SettingsPage(_, true)
                 | Self::SettingsSearch(true)
+                | Self::SettingsLens(true)
                 | Self::SettingsPicker(true)
                 | Self::SettingsMachine(true)
                 | Self::SettingsCompact(true)
@@ -1982,6 +1986,7 @@ impl Shot {
         match rest {
             "" => Some(Self::SettingsPage(Section::General, narrow)),
             "search" => Some(Self::SettingsSearch(narrow)),
+            "lens" => Some(Self::SettingsLens(narrow)),
             "picker" => Some(Self::SettingsPicker(narrow)),
             "machine" => Some(Self::SettingsMachine(narrow)),
             "compact" => Some(Self::SettingsCompact(narrow)),
@@ -2557,6 +2562,9 @@ impl Shot {
             }
             Self::SettingsSearch(_) => Screen::Workspace(
                 settings_sample().edited(SETTINGS_FIND, Edit::Paste("font".to_owned())),
+            ),
+            Self::SettingsLens(_) => Screen::Workspace(
+                settings_sample().edited(SETTINGS_FIND, Edit::Paste("lens".to_owned())),
             ),
             Self::SettingsPicker(narrow) => Screen::Workspace(
                 settings_sample()
