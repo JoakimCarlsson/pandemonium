@@ -264,8 +264,9 @@ pub fn session_container(folder: &str, progress: Progress) -> Result<Enclosed, S
     let _one_at_a_time = MAKING
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let identity = ready(SESSION_LABEL, folder, progress)?;
     let config = read(Path::new(folder))?;
+    crate::vet::vet(&config, folder)?;
+    let identity = ready(SESSION_LABEL, folder, progress)?;
     Ok(Enclosed {
         identity,
         workspace: config.workspace,

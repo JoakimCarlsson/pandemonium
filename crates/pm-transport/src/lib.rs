@@ -7,6 +7,7 @@ mod container;
 mod devcontainer;
 mod provision;
 mod tunnel;
+mod vet;
 mod wsl;
 
 pub use bridge::Progress;

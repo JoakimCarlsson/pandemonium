@@ -146,7 +146,7 @@ fn location_menu(state: &WorkspaceState) -> Node {
                 .styles([border_t(), border_color(Role::Border), mt(1)])
                 .child(row(
                     "Dev container",
-                    "Run the agent and terminal in a container",
+                    "Not a security boundary",
                     state.container,
                     FocusId(PLACE_BASE + 2),
                 )),
