@@ -65,25 +65,51 @@ fn shell_command() -> CommandBuilder {
     command
 }
 
+/// The shell started in a dev container, the best the container has since the reader's own shell is a program of this machine.
+fn container_shell(
+    enclosed: &pm_transport::Enclosed,
+    env: &BTreeMap<String, String>,
+) -> CommandBuilder {
+    let mut shell = std::process::Command::new("sh");
+    shell.args([
+        "-c",
+        "if command -v bash >/dev/null 2>&1; then exec bash -l; else exec sh -l; fi",
+    ]);
+    shell.env("TERM", "xterm-256color");
+    shell.env("COLORTERM", "truecolor");
+    shell.envs(env);
+    let wrapped = enclosed.wrap(&shell, true);
+    let mut command = CommandBuilder::new(wrapped.get_program());
+    command.args(wrapped.get_args());
+    command
+}
+
 impl Terminal {
-    /// Starts the reader's shell in `directory`, called `label` to clients, `columns` wide and `rows` tall, with `env` added to its environment.
+    /// Starts the reader's shell in `directory`, or in the dev container `enclosed` when there is one, called `label` to clients, `columns` wide and `rows` tall, with `env` added to its environment.
     fn start(
         directory: &Path,
         label: &str,
         columns: u16,
         rows: u16,
         env: &BTreeMap<String, String>,
+        enclosed: Option<&pm_transport::Enclosed>,
     ) -> Result<Self, String> {
         let pair = native_pty_system()
             .openpty(size_of(columns, rows))
             .map_err(|error| error.to_string())?;
-        let mut command = shell_command();
-        command.cwd(directory);
-        command.env("TERM", "xterm-256color");
-        command.env("COLORTERM", "truecolor");
-        for (name, value) in env {
-            command.env(name, value);
-        }
+        let command = match enclosed {
+            Some(enclosed) => container_shell(enclosed, env),
+            None => {
+                let mut command = shell_command();
+                command.cwd(directory);
+                command.env("TERM", "xterm-256color");
+                command.env("COLORTERM", "truecolor");
+                for (name, value) in env {
+                    command.env(name, value);
+                }
+                command
+            }
+        };
         let child = pair
             .slave
             .spawn_command(command)
@@ -187,6 +213,21 @@ impl Terminal {
 }
 
 impl Core {
+    /// The running dev container of the session that works in `directory`, when it has one, so that a shell opened there runs in it as the agent does.
+    fn container_of(&self, directory: &Path) -> Result<Option<pm_transport::Enclosed>, String> {
+        let folder = directory.to_string_lossy();
+        let enclosed = self.sessions.lock().is_ok_and(|sessions| {
+            sessions
+                .values()
+                .any(|session| session.meta.container && session.meta.directory == folder)
+        });
+        Ok(if enclosed {
+            pm_transport::running_session_container(&folder)
+        } else {
+            None
+        })
+    }
+
     /// Starts a shell in `directory`, which clients know by `label`, and returns its number.
     pub(crate) fn open_terminal(
         self: &Arc<Self>,
@@ -208,7 +249,15 @@ impl Core {
         env: &BTreeMap<String, String>,
         command: Option<&str>,
     ) -> Result<u64, String> {
-        let terminal = Arc::new(Terminal::start(directory, label, columns, rows, env)?);
+        let enclosed = self.container_of(directory)?;
+        let terminal = Arc::new(Terminal::start(
+            directory,
+            label,
+            columns,
+            rows,
+            env,
+            enclosed.as_ref(),
+        )?);
         let mut reader = terminal
             .master
             .lock()

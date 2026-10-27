@@ -968,6 +968,17 @@ pub enum Outgoing {
         settings: Vec<(String, String)>,
         /// The branch to make the session's worktree from, when it works in one of its own.
         base: Option<String>,
+        /// Whether its agent and terminals run in a dev container.
+        container: bool,
+    },
+    /// Asks whether the folder of a project holds a `devcontainer.json`.
+    DevContainer {
+        /// The project, by position.
+        project: usize,
+        /// The machine it is on, when not this one.
+        host: Option<String>,
+        /// Its folder.
+        directory: String,
     },
     /// Saves the named logins and the one in use for each agent, and points the agents at them.
     Accounts {
@@ -1611,6 +1622,8 @@ pub struct WorkspaceState {
     pub choices: Vec<(String, String, String)>,
     /// Where new work is done.
     pub location: Location,
+    /// Whether new work runs in a dev container, which only a project with a `devcontainer.json` offers.
+    pub container: bool,
     /// The branch new work is made from, when the reader picked one; otherwise the one checked out.
     pub base: Option<String>,
     /// The branches of the project being started in, the one checked out first; none when it is not a repository.
@@ -1805,6 +1818,7 @@ impl WorkspaceState {
             touched: Vec::new(),
             choices: Vec::new(),
             location: Location::Local,
+            container: false,
             base: None,
             branches: Vec::new(),
             branches_of: None,
@@ -2108,7 +2122,6 @@ impl WorkspaceState {
             }
         }
         self.sync_context();
-        self.fill_terminal_dock();
         self.refresh_files();
         self.ask_log_once();
         self.debug_revealed().problem_revealed()
@@ -2812,6 +2825,7 @@ impl WorkspaceState {
                     .to_string_lossy()
                     .into_owned();
                 session.base = self.base_for_new_work();
+                session.in_container = self.container_for_new_work();
                 session.submodule = self.new_in.take();
                 session.directory = session.folder_in(&session.directory);
                 session.branch = if session.base.is_some() {
@@ -2840,6 +2854,7 @@ impl WorkspaceState {
                 files,
                 settings: self.settings_changed(),
                 base: self.sessions[session].base.clone(),
+                container: self.sessions[session].in_container,
             }
         } else {
             Outgoing::Prompt {
@@ -3270,13 +3285,28 @@ impl WorkspaceState {
         self
     }
 
+    /// The state after the project at `project` was seen to have, or lack, a `devcontainer.json`.
+    pub fn with_devcontainer(mut self, project: usize, configured: bool) -> Self {
+        if let Some(held) = self.projects.get_mut(project) {
+            held.devcontainer = configured;
+        }
+        self
+    }
+
     /// Asks the machine of the project at `project` for its submodules.
     pub(crate) fn ask_submodules(&mut self, project: usize) {
         if let Some(held) = self.projects.get(project) {
+            let host = held.host();
+            let directory = held.directory().to_string_lossy().into_owned();
+            self.outbox.push(Outgoing::DevContainer {
+                project,
+                host: host.clone(),
+                directory: directory.clone(),
+            });
             self.outbox.push(Outgoing::Submodules {
                 project,
-                host: held.host(),
-                directory: held.directory().to_string_lossy().into_owned(),
+                host,
+                directory,
             });
         }
     }

@@ -116,12 +116,23 @@ impl Session {
     pub(crate) fn start_agent(&mut self, settings: &[(String, String)]) {
         let (tools, launch) = crate::library::given(self.agent, &self.directory);
         let home = crate::handler::login_folder(&self.meta.agent, self.meta.login.as_deref());
+        let enclosure = self.meta.container.then(|| {
+            let folder = self.directory.to_string_lossy().into_owned();
+            Box::new(move |progress: &dyn Fn(&str)| {
+                let enclosed = pm_transport::session_container(&folder, progress)?;
+                let workspace = std::path::PathBuf::from(&enclosed.workspace);
+                let enclose: pm_acp::Enclose =
+                    Arc::new(move |command| enclosed.wrap(&command, false));
+                Ok((workspace, enclose))
+            }) as pm_acp::Enclosure
+        });
         let chat = Chat::start(
             self.agent,
             self.directory.clone(),
             home,
             tools,
             launch,
+            enclosure,
             Arc::new(|| BELL.ring()),
         );
         self.running_as = self.meta.login.clone();

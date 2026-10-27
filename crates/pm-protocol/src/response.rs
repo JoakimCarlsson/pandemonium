@@ -95,6 +95,11 @@ pub enum Response {
         /// Where each is, nested ones included, from the root of the repository.
         paths: Vec<String>,
     },
+    /// Whether a folder holds a `devcontainer.json`.
+    DevContainer {
+        /// Whether it does.
+        configured: bool,
+    },
     /// What the checked out submodules of a repository have checked out.
     SubmoduleHeads {
         /// Each submodule's path from the root and its branch, or `@` and the commit on a detached head.

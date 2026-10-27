@@ -25,6 +25,7 @@ is the same in each: only the way to the server's port differs.
 | ssh    | Reads the remote `server.json` with `ssh <host> cat …`, opens a local port, and for each connection runs `ssh -W 127.0.0.1:<port> <host>` and pipes the bytes through. The server must already be running.      |
 | WSL    | On Windows, runs `wsl.exe -d <distro> --exec sh -c …` to read the distribution's `server.json`. When no server answers there, installs `pandemonium-server` with the installer if it is missing, starts it as a `wsl.exe` process of its own with `--listen 127.0.0.1:0`, so that it and the distribution outlive the client, and connects to `ws://127.0.0.1:<port>/` through WSL's localhost forwarding. |
 | Dev container | Reads the folder's `devcontainer.json` (`image`, `build`, `workspaceFolder`, `containerEnv`, `mounts`, `runArgs`, `postCreateCommand`), builds or pulls the image, and runs one container per folder, found again by its `pandemonium.folder` label, with the folder mounted at the workspace folder and port 6868 published on `127.0.0.1`. Installs and starts the server in it with `docker exec -d … --listen 0.0.0.0:6868`, reads its `server.json` with `docker exec`, and connects to the published port. Progress is reported step by step while this happens. |
+| Session container | A session started with `container` runs its agent and terminals through `docker exec` in the container of its worktree, made as above. The `devcontainer.json` is refused unless `runArgs` holds only `--init`, `--hostname` and `--env`, the workspace folder is an absolute path without `,`, `=`, quotes or control characters, a Dockerfile build reads only paths inside the worktree, and every entry of `mounts` is a volume, a tmpfs or a bind of a path inside the worktree after links are resolved, with no key besides `type`, `source`, `src`, `target`, `dst`, `destination` and `readonly`. The container is not a security boundary. |
 | Tunnel | Opens a local port and, for each connection, runs `cloudflared access tcp --hostname <hostname>` and pipes the bytes through it. The server's machine runs a named tunnel that points at the port the server listens on, so it only connects outward and opens no port. The token is the one the server was started with, kept by the client. |
 
 A project on another machine is addressed `ssh://<destination>/<folder>` for
@@ -108,13 +109,14 @@ request with exactly one `response` carrying the same `id`.
 | `files`        | `directory`, `limit`, `expanded` (optional)                                                      | `files`         |
 | `branches`     | `directory`                                                                                      | `branches`      |
 | `submodules`   | `directory`                                                                                      | `submodules`    |
+| `dev_container` | `directory`                                                                                    | `dev_container` |
 | `submodule_heads` | `directory`                                                                                   | `submodule_heads` |
 | `identity`     | `agent`, `login` (optional): a login id whose folder answers `selected`, instead of the one in use | `identity`      |
 | `set_accounts` | `logins`: `[{agent, id, name}]`, `in_use`: `[[agent, id]]`                                       | `done`          |
 | `set_session_account` | `session`, `login` (a login id, or `null` for the agent's own)                            | `done`          |
 | `sign_in`      | `agent`, `login` (optional): a login id, signed in under its own folder and never the agent's default one | `done`          |
 | `sign_in_session` | `session` | `done` |
-| `start_session`| `agent`, `repository`, `directory`, `title`, `base`, `settings`, `text`, `attachments`, `submodule` | `started`       |
+| `start_session`| `agent`, `repository`, `directory`, `title`, `base`, `settings`, `text`, `attachments`, `submodule`, `container` | `started`       |
 | `prompt`       | `session`, `text`, `attachments`, `now` (optional, `false` by default)                           | `done`          |
 | `remove_queued` | `session`, `queued`                                                                            | `done`          |
 | `hurry`        | `session`, `queued`                                                                              | `done`          |
@@ -291,6 +293,16 @@ everything said of them, its submodules' paths written from `directory`.
   of the worktree (or of `directory`). When the worktree has a branch, every
   submodule it checked out is put on a branch of the same name; one that cannot
   be is named in `skipped` too.
+  With `container`, set only for a folder that holds a `devcontainer.json`
+  (`dev_container` answers `configured`), the agent and the session's
+  terminals run in a dev container of their own for that session, started
+  before the agent: the same container path as a dev container machine, but
+  owned by the session's folder instead of the project folder, so two such
+  sessions of one project have two containers. The session's worktree gets a
+  copy of the git-ignored `.devcontainer` configuration, is mounted at the
+  workspace folder, and the container is removed with the session. Build and
+  start steps arrive as `Container` events; the agent keeps running when the
+  client disconnects. A folder without a `devcontainer.json` fails the request.
   For a folder of repositories the worktree is a folder holding one worktree
   per child, laid out under the child's name (`<worktree>/api`,
   `<worktree>/web`), all checked out from `base` and, when the settings give a
@@ -909,6 +921,7 @@ Events use serde's default form, one key naming the type.
 | `{"SignedOut": {"reason", "account"}}` | The turn ended because the session account needs signing in again. Send `sign_in_session`; do not append the reason as an assistant reply. |
 | `"SignedIn"` | The session account was signed in again. Clear its sign-in notice. |
 | `{"Failed": "reason"}`        | The agent could not be started or stopped. The next `prompt` starts it again.                             |
+| `{"Container": "step"}`       | The dev container of the session is coming up: what it is doing now. Cleared when the agent starts.      |
 | `{"Titled": "text"}`          | The agent named the session, or named it again. The server keeps it as the session's `title`.            |
 | `{"Hooks": [Hook]}`           | The hooks the session's Codex holds back until the reader trusts them, all of them as they stand now. Replaces the earlier list; empty when none is held back. Told when a Codex session starts and again when a file the hooks are read from changes. Trust them with `trust_hooks`. |
 | `{"Prompted": {text, files, checkpoint}}` | A client handed the agent a turn. Sent to every client watching the session, the one that sent it included. `files` are names. `checkpoint` (absent means `false`) says the files were kept before the turn, so `restore` can put them back. |

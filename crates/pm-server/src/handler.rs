@@ -236,6 +236,7 @@ fn start_session(
     text: &str,
     attachments: &[Attachment],
     submodule: Option<&str>,
+    container: bool,
 ) -> Response {
     let Some(agent) = agent_named(agent) else {
         return failed(format!("no agent is called {agent}"));
@@ -251,7 +252,7 @@ fn start_session(
             &place(repository),
             title,
             base,
-            &crate::machine::placement(),
+            &crate::machine::placement_for(container),
         ) {
             Ok(made) => {
                 skipped = made.skipped;
@@ -267,6 +268,12 @@ fn start_session(
             (folder, None)
         }
     };
+    if container && !pm_transport::configured(&folder) {
+        return failed(format!(
+            "{} has no devcontainer.json to run the agent in",
+            folder.display()
+        ));
+    }
     let (head, branch) = head.map_or((None, None), |(head, branch)| (Some(head), branch));
     let meta = Meta {
         agent: agent.id.to_owned(),
@@ -280,6 +287,7 @@ fn start_session(
         updated: now(),
         login: login_for_new_work(agent.id),
         submodule: submodule.map(str::to_owned),
+        container,
     };
     let mut session = Session::new(agent, meta.agent_folder(), Vec::new(), meta);
     session.start_agent(&crate::machine::with_mode(settings));
@@ -300,7 +308,7 @@ fn start_session(
 ///
 /// A worktree with changes that are not committed is kept and the request answered with `Uncommitted`, unless `discard` is set.
 fn close_session(core: &Core, number: u64, discard: bool) -> Response {
-    let (chat, removal) = {
+    let (chat, removal, enclosed) = {
         let Ok(mut sessions) = core.sessions.lock() else {
             return failed("the server is shutting down");
         };
@@ -314,6 +322,7 @@ fn close_session(core: &Core, number: u64, discard: bool) -> Response {
                 && session.meta.directory == held.meta.directory
         });
         let worktree = held.meta.head.is_some() && !shared;
+        let container = held.meta.container && !shared;
         if worktree && !discard && !pm_git::changes(&folder).is_empty() {
             return Response::Uncommitted;
         }
@@ -329,10 +338,19 @@ fn close_session(core: &Core, number: u64, discard: bool) -> Response {
                 held.meta.base.clone(),
             )
         });
-        (held.chat.take(), removal)
+        (
+            held.chat.take(),
+            removal,
+            container.then(|| held.meta.directory.clone()),
+        )
     };
     if let Some(chat) = chat {
         chat.stop();
+    }
+    if let Some(folder) = enclosed
+        && let Err(reason) = pm_transport::remove_session_container(&folder)
+    {
+        return failed(format!("could not remove the dev container: {reason}"));
     }
     if let Some((repository, folder, branch, base)) = removal {
         if !discard && !pm_git::changes(&folder).is_empty() {
@@ -552,6 +570,9 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
         Request::Submodules { directory } => Response::Submodules {
             paths: pm_git::submodules(&place(&directory)),
         },
+        Request::DevContainer { directory } => Response::DevContainer {
+            configured: pm_transport::configured(&place(&directory)),
+        },
         Request::SubmoduleHeads { directory } => Response::SubmoduleHeads {
             heads: pm_git::submodule_heads(&place(&directory)),
         },
@@ -730,6 +751,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             text,
             attachments,
             submodule,
+            container,
         } => start_session(
             core,
             connection,
@@ -742,6 +764,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             &text,
             &attachments,
             submodule.as_deref(),
+            container,
         ),
         Request::CloseSession { session, discard } => {
             let closed = close_session(core, session, discard);

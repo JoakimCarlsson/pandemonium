@@ -572,36 +572,6 @@ impl WorkspaceState {
             .map(|(position, _)| position)
     }
 
-    /// Starts a shell in the session the dock is about when it is on the machine `host` and the dock shows none, as when the shells it showed ended with an earlier server.
-    pub fn revive_terminal(&mut self, host: &Option<String>) {
-        let Some(session) = self.docked() else {
-            return;
-        };
-        if self.debug_docked() {
-            return;
-        }
-        let on_host = self
-            .projects
-            .get(session.project)
-            .is_some_and(|project| project.host() == *host);
-        if self.terminal && on_host && session.terminals.is_empty() {
-            self.open_terminal();
-        }
-    }
-
-    /// Starts a shell in the session the dock is about when the dock is open on the shells and that session has none, as after moving to another session or project.
-    pub(crate) fn fill_terminal_dock(&mut self) {
-        if !self.terminal || self.bottom_tab() != BottomTab::Terminal || self.debug_docked() {
-            return;
-        }
-        if self
-            .docked()
-            .is_some_and(|session| session.terminals.is_empty())
-        {
-            self.open_terminal();
-        }
-    }
-
     /// Whether the dock shows a shell, and what its window holds: columns, lines and how far it is scrolled back.
     pub fn terminal_window(&self) -> Option<(usize, usize, usize)> {
         if self.bottom_tab() != BottomTab::Terminal {

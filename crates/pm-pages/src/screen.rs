@@ -1051,6 +1051,13 @@ impl Screen {
         }
     }
 
+    /// The screen after the project at `project` was seen to have, or lack, a `devcontainer.json`.
+    pub fn with_devcontainer(self, project: usize, configured: bool) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_devcontainer(project, configured)),
+        }
+    }
+
     /// The screen after the folder of the session at `session` was seen to have `branch` checked out, or a detached `head`.
     pub fn checked_out(self, session: usize, branch: Option<&str>, head: Option<&str>) -> Self {
         match self {
@@ -1157,12 +1164,6 @@ impl Screen {
         match self {
             Self::Workspace(state) => state.adopt_terminal(session, columns, rows),
         }
-    }
-
-    /// Starts a shell in the open session when it is on the machine `host` and the dock shows none.
-    pub fn revive_terminal(&mut self, host: &Option<String>) {
-        let Self::Workspace(state) = self;
-        state.revive_terminal(host);
     }
 
     /// The position of the session on the machine `host` whose folder holds `directory`, the innermost when several do.

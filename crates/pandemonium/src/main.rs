@@ -184,6 +184,7 @@ fn main() {
             Some("attached") => Shot::Attached,
             Some("unfolded") => Shot::Unfolded,
             Some("composing") => Shot::Composing,
+            Some("devcontainer") => Shot::DevContainer,
             Some("terminalcomposing") => Shot::TerminalComposing,
             Some("selecting") => Shot::Selecting,
             Some("sessionaccount") => Shot::SessionAccount,

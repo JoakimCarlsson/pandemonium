@@ -64,6 +64,13 @@ impl Work {
                 if !previous.contains(&directory) {
                     self.ask(
                         &host,
+                        Request::DevContainer {
+                            directory: directory.clone(),
+                        },
+                        Pending::DevContainer(project),
+                    );
+                    self.ask(
+                        &host,
                         Request::Submodules { directory },
                         Pending::Submodules(project),
                     );
@@ -76,6 +83,13 @@ impl Work {
     pub(super) fn folder_changed(&mut self, model: &State<Screen>, host: &Host, directory: &str) {
         for (project, root) in Self::project_folders(model, host) {
             if root == directory {
+                self.ask(
+                    host,
+                    Request::DevContainer {
+                        directory: root.clone(),
+                    },
+                    Pending::DevContainer(project),
+                );
                 self.ask(
                     host,
                     Request::Submodules { directory: root },
@@ -126,7 +140,7 @@ mod tests {
         assert_eq!(work.links[&remote].backlog.len(), count);
         work.watched.remove(&remote);
         work.watch_shown(&model);
-        assert_eq!(work.links[&remote].backlog.len(), count + 2);
+        assert_eq!(work.links[&remote].backlog.len(), count + 3);
         work.folder_changed(&model, &remote, "/work/two");
         assert!(matches!(work.links[&remote].backlog.last(),
             Some((Request::Submodules { directory }, Pending::Submodules(1))) if directory == "/work/two"));

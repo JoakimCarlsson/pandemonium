@@ -34,8 +34,19 @@ pub(crate) fn save(settings: &MachineSettings) -> Response {
     }
 }
 
+/// Where new worktrees are made and the branch they are on, as the settings say, and, for a session that runs in a dev container, with the git-ignored dev container configuration the reader runs locally carried along.
+pub(crate) fn placement_for(container: bool) -> pm_git::Placement {
+    let mut placement = placement();
+    if container {
+        placement
+            .include
+            .extend([".devcontainer/", ".devcontainer.json"].map(str::to_owned));
+    }
+    placement
+}
+
 /// Where new worktrees are made and the branch they are on, as the settings say.
-pub(crate) fn placement() -> pm_git::Placement {
+fn placement() -> pm_git::Placement {
     let git = settings().git;
     let root = git.worktree_root.trim();
     pm_git::Placement {

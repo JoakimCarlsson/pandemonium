@@ -690,6 +690,22 @@ impl WorkspaceState {
         !self.branches.is_empty()
     }
 
+    /// Whether the project being started in offers a dev container.
+    pub fn offers_container(&self) -> bool {
+        match self.page {
+            Page::New(project) => self
+                .projects
+                .get(project)
+                .is_some_and(|held| held.devcontainer),
+            _ => false,
+        }
+    }
+
+    /// Whether new work is to run in a dev container: the reader asked for one and the project offers it.
+    pub fn container_for_new_work(&self) -> bool {
+        self.container && self.offers_container()
+    }
+
     /// The branch the worktree of new work is made from, when the work is to be done in one.
     pub fn base_for_new_work(&self) -> Option<String> {
         (self.location == Location::Worktree && self.is_repository())
@@ -750,13 +766,15 @@ impl WorkspaceState {
             self.toggle_agent();
         } else if let Some(index) = within(EFFORT_BASE, 50) {
             self.pick_effort(index);
+        } else if id == PLACE_BASE + 2 {
+            self.container = !self.container;
         } else if let Some(index) = within(PLACE_BASE, 2) {
             self.location = if index == 0 {
                 Location::Worktree
             } else {
                 Location::Local
             };
-            if self.location == Location::Local {
+            if self.location == Location::Local && !self.offers_container() {
                 self.picker = None;
             }
         } else if let Some(index) = within(BRANCH_BASE, self.branches.len()) {
