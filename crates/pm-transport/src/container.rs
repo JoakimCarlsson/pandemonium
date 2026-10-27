@@ -50,6 +50,30 @@ fn image_name(folder: &str) -> String {
     format!("pandemonium-devcontainer-{:016x}", hasher.finish())
 }
 
+/// The name the container of `folder` goes by: the folder's own name, which a person can tell apart in a list, and a short hash, which keeps two folders with one name apart.
+fn container_name(folder: &str) -> String {
+    let mut hasher = DefaultHasher::new();
+    folder.hash(&mut hasher);
+    let readable: String = Path::new(folder)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default()
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '-' {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    format!(
+        "pandemonium-{}-{:08x}",
+        readable.trim_matches('-'),
+        hasher.finish() as u32
+    )
+}
+
 /// Where the features of the container of `folder` are fetched to and built from.
 fn features_scratch(folder: &str) -> std::path::PathBuf {
     let home = std::env::var_os("XDG_CACHE_HOME")
@@ -112,6 +136,7 @@ fn prepare_image(config: &Config, tag: &str, progress: Progress) -> Result<Strin
 fn create(label: &str, folder: &str, image: &str, config: &Config) -> Result<String, String> {
     let mut command = engine(["run", "-d", "--init"]);
     command
+        .args(["--name", &container_name(folder)])
         .args(["--label", &format!("{label}={folder}")])
         .args(["-p", &format!("127.0.0.1::{SERVER_PORT}")])
         .args(["-w", &config.workspace])
@@ -256,6 +281,22 @@ pub struct Enclosed {
     pub workspace: String,
 }
 
+/// Whether the variable `name` may be handed to a command in the container: a plain name that is not `PATH`, which names places on this machine, and not one the dynamic loader or the engine's own client reads, because the value is also set on the `docker` process that runs on this machine.
+fn forwarded(name: &std::ffi::OsStr) -> bool {
+    let Some(name) = name.to_str() else {
+        return false;
+    };
+    let plain = name
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || character == '_')
+        && !name.starts_with(|character: char| character.is_ascii_digit());
+    let reserved = name == "PATH"
+        || ["LD_", "DYLD_", "DOCKER_", "CONTAINER_", "BUILDKIT_"]
+            .iter()
+            .any(|prefix| name.starts_with(prefix));
+    plain && !name.is_empty() && !reserved
+}
+
 impl Enclosed {
     /// `command` as `docker exec` runs it in the container, in the workspace and in the folder `command` is set to run in, or else the workspace, with the environment `command` was given except `PATH`, which names places on this machine; the program is found by its name on the container's own path. `terminal` gives the process one.
     pub fn wrap(&self, command: &Command, terminal: bool) -> Command {
@@ -265,7 +306,7 @@ impl Enclosed {
             None => wrapped.arg("-w").arg(&self.workspace),
         };
         for (name, value) in command.get_envs() {
-            if let Some(value) = value.filter(|_| name != "PATH") {
+            if let Some(value) = value.filter(|_| forwarded(name)) {
                 wrapped.arg("-e").arg(name);
                 wrapped.env(name, value);
             }
