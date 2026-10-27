@@ -12,6 +12,7 @@ mod attachment;
 mod background;
 mod chat;
 mod client;
+mod contained;
 mod hooks;
 mod inquiry;
 mod install;

@@ -257,17 +257,23 @@ pub struct Enclosed {
 }
 
 impl Enclosed {
-    /// `command` as `docker exec` runs it in the container, in the workspace and with the environment `command` was given; `terminal` gives the process one.
+    /// `command` as `docker exec` runs it in the container, in the workspace and in the folder `command` is set to run in, or else the workspace, with the environment `command` was given except `PATH`, which names places on this machine; the program is found by its name on the container's own path. `terminal` gives the process one.
     pub fn wrap(&self, command: &Command, terminal: bool) -> Command {
         let mut wrapped = engine(["exec", if terminal { "-it" } else { "-i" }]);
-        wrapped.args(["-w", &self.workspace]);
+        match command.get_current_dir() {
+            Some(folder) => wrapped.arg("-w").arg(folder),
+            None => wrapped.arg("-w").arg(&self.workspace),
+        };
         for (name, value) in command.get_envs() {
-            if let Some(value) = value {
+            if let Some(value) = value.filter(|_| name != "PATH") {
                 wrapped.arg("-e").arg(name);
                 wrapped.env(name, value);
             }
         }
-        wrapped.arg(&self.identity).arg(command.get_program());
+        let program = Path::new(command.get_program());
+        wrapped
+            .arg(&self.identity)
+            .arg(program.file_name().unwrap_or(program.as_os_str()));
         wrapped.args(command.get_args());
         wrapped
     }

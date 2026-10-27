@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 use crate::agent::Agent;
 use crate::background::{self, Shells};
 use crate::client::{self, Answer, Client, Heard, LOGIN_REQUIRED, answer};
+use crate::contained::{Containment, Terminals};
 use crate::inquiry::{self, Inquiry, Question, Reply};
 use crate::subagent::Subagents;
 
@@ -392,7 +393,7 @@ pub struct Chat {
 }
 
 impl Chat {
-    /// Starts `agent` in the folder `directory`, keeping its config and login in the folder `home` or in its own when there is none, and opens a conversation with it that has the tool servers `tools`, leaving out what `launch` says to; `notify` is called whenever the agent has something for [`Chat::events`]. With an `enclosure` the agent runs in the dev container it brings up instead of on this machine.
+    /// Starts `agent` in the folder `directory`, keeping its config and login in the folder `home` or in its own when there is none, and opens a conversation with it that has the tool servers `tools`, leaving out what `launch` says to; `notify` is called whenever the agent has something for [`Chat::events`]. With an `enclosure` the commands the agent runs go to the dev container it brings up, while the agent itself stays on this machine with its login.
     #[allow(clippy::too_many_arguments)]
     pub fn start(
         agent: Agent,
@@ -652,16 +653,17 @@ fn drive(
         })?),
         None => None,
     };
-    let home = home.filter(|_| enclosed.is_none());
     if let Some(home) = &home {
         crate::profile::share_setup(agent, home);
     }
     let mut command = agent.command_in(&[], home);
     command.envs(launch.env.iter().map(|(name, value)| (name, value)));
-    let (working, command) = match enclosed {
-        Some((workspace, enclose)) => (workspace, enclose(command)),
-        None => (directory.to_path_buf(), command),
-    };
+    let containment = enclosed.map(|(workspace, enclose)| Containment {
+        host: directory.to_path_buf(),
+        workspace,
+        enclose,
+    });
+    let working = directory.to_path_buf();
     let mut client = Client::start_in(command, directory)?;
     {
         let mut ending = ending.lock().map_err(|_| "the chat was dropped")?;
@@ -701,6 +703,7 @@ fn drive(
         &prompts,
         commands,
         events,
+        containment,
     )
 }
 
@@ -784,6 +787,8 @@ struct Waiting {
     subagents: Subagents,
     /// Whether the reader stopped the turn that is running.
     cancelled: bool,
+    /// The commands the agent has the app run in the container of its session.
+    terminals: Terminals,
 }
 
 /// Passes commands to the agent and what it says back, until the chat is
@@ -795,8 +800,10 @@ fn converse(
     prompts: &Value,
     commands: &Receiver<Command>,
     events: &Events,
+    containment: Option<Containment>,
 ) -> Result<(), String> {
     let mut waiting = Waiting {
+        terminals: Terminals::new(containment),
         images: prompts["image"] == json!(true),
         embeds: prompts["embeddedContext"] == json!(true),
         turn: None,
@@ -819,6 +826,7 @@ fn converse(
                 Err(TryRecvError::Disconnected) => return Ok(()),
             }
         }
+        waiting.terminals.poll(client)?;
         let message = match client.receive(LISTEN) {
             Heard::Message(message) => message,
             Heard::Silence => continue,
@@ -922,6 +930,13 @@ fn hear_agent(
             }
             None => client.respond(id, &json!({ "action": "decline" }))?,
         },
+        (Some(method), Some(id))
+            if method.starts_with("terminal/") && waiting.terminals.serves() =>
+        {
+            waiting
+                .terminals
+                .serve(client, id, method, &message["params"])?
+        }
         (Some(_), Some(id)) => client.refuse(id, NO_SUCH_METHOD, "not supported")?,
         (Some("session/update"), None) => {
             for event in updated(session, waiting, &message["params"]) {
