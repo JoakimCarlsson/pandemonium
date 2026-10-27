@@ -36,6 +36,12 @@ pub struct ExtensionInfo {
     /// File names written in it, where `*` stands for any run of characters, such as `.env.*`.
     #[serde(default)]
     pub patterns: Vec<String>,
+    /// How files with an ending are shown rendered, by the ending: `markdown` or `vector`.
+    #[serde(default)]
+    pub previews: std::collections::BTreeMap<String, String>,
+    /// What it draws, by the names a fence or a piece of syntax gives it, such as `mermaid`.
+    #[serde(default)]
+    pub renders: Vec<String>,
     /// Whether it is installed.
     pub installed: bool,
     /// What installing it is doing now, while it is being installed.
@@ -184,6 +190,12 @@ pub struct GrammarBundle {
     /// How the language's tags are closed as they are opened, when it has tags.
     #[serde(default)]
     pub tags: Option<pm_lsp::TagSpec>,
+    /// The kind of Emmet abbreviation its files take, `markup` or `style`, when they take any.
+    #[serde(default)]
+    pub emmet: Option<String>,
+    /// What those abbreviations know, the text of the language's `emmet.toml`.
+    #[serde(default)]
+    pub emmet_tables: Option<String>,
 }
 
 impl ExtensionInfo {

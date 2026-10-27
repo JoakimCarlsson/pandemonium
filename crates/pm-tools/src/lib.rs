@@ -2,4 +2,4 @@
 
 mod find;
 
-pub use find::{installed, path_beside};
+pub use find::{generated, installed, path_beside, set_directories, set_generated};

@@ -7,11 +7,14 @@ version = "0.1.0"
 description = "XML with LemMinX."
 icon = "icon.svg"
 color = "#9fb0bd"
+emmet = "markup"
 grammar = "xml"
 suffixes = ["xml", "xsd", "xsl", "xslt", "svg", "plist", "rss", "atom", "xaml", "csproj", "fsproj", "vbproj", "props", "targets", "nuspec", "resx", "wsdl", "pom", "xib", "storyboard"]
 aliases = ["xsd", "xsl", "xslt", "svg", "plist"]
 indent = 2
 pairs = ["()", "[]", "\"\"", "''"]
+
+previews = { svg = "vector" }
 
 [grammar_file]
 url = "https://github.com/tree-sitter-grammars/tree-sitter-xml/releases/download/v0.7.0/tree-sitter-xml.wasm"

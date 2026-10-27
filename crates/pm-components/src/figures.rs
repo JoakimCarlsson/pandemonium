@@ -1,4 +1,4 @@
-//! The pictures a markdown source shows: diagrams written as fenced mermaid code, formulas written in TeX and images it names, each drawn or fetched into pixels and kept under a key.
+//! The pictures a markdown source shows: figures written in a language an installed language draws, such as diagrams or formulas, and images it names, each drawn or fetched into pixels and kept under a key.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -41,19 +41,38 @@ pub type Figures = HashMap<u64, Result<Drawing, String>>;
 /// What has to be done for a figure to be shown.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Wanted {
-    /// A diagram drawn from what it is written as.
-    Diagram(String),
-    /// A formula set from the TeX it is written in.
-    Formula(String),
+    /// A figure drawn by the language it is written in, from what it is written as.
+    Render {
+        /// What it is written in, as a fence names it.
+        language: String,
+        /// What is written.
+        source: String,
+    },
     /// A file of the repository read, by its path from the root.
     File(String),
     /// A picture fetched from the web, by its address.
     Address(String),
 }
 
-/// Whether a fence naming `language` holds a diagram.
-pub fn is_diagram(language: &str) -> bool {
-    language.eq_ignore_ascii_case("mermaid")
+/// The names of what the installed languages draw, in lower case.
+static RENDERS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Learns what the installed `extensions` draw.
+pub fn learn_renders(extensions: &[pm_protocol::ExtensionInfo]) {
+    let names = extensions
+        .iter()
+        .filter(|extension| extension.installed)
+        .flat_map(|extension| extension.renders.iter().map(|name| name.to_lowercase()))
+        .collect();
+    if let Ok(mut held) = RENDERS.lock() {
+        *held = names;
+    }
+}
+
+/// Whether an installed language draws what a fence naming `language` holds.
+pub fn has_renderer(language: &str) -> bool {
+    let language = language.to_lowercase();
+    RENDERS.lock().is_ok_and(|held| held.contains(&language))
 }
 
 /// `value` hashed into the key a figure is kept under.
@@ -63,14 +82,9 @@ fn key_of(value: impl Hash) -> u64 {
     hasher.finish()
 }
 
-/// The key a diagram written as `source` is kept under.
-pub fn diagram_key(source: &str) -> u64 {
-    key_of(("diagram", source))
-}
-
-/// The key a formula written in TeX as `source` is kept under.
-pub fn formula_key(source: &str) -> u64 {
-    key_of(("formula", source))
+/// The key a figure written in `language` as `source` is kept under.
+pub fn render_key(language: &str, source: &str) -> u64 {
+    key_of(("render", language.to_lowercase(), source))
 }
 
 /// The key the image at `source`, named by a markdown file at `place` or by text in no file, is kept under.
@@ -153,10 +167,22 @@ pub fn figures_of(source: &str, place: Option<&str>) -> Vec<(u64, Wanted)> {
 fn collect(blocks: &[Block], place: Option<&str>, found: &mut Vec<(u64, Wanted)>) {
     for block in blocks {
         match block {
-            Block::Code { language, text } if is_diagram(language) => {
-                found.push((diagram_key(text), Wanted::Diagram(text.clone())));
+            Block::Code { language, text } if has_renderer(language) => {
+                found.push((
+                    render_key(language, text),
+                    Wanted::Render {
+                        language: language.to_lowercase(),
+                        source: text.clone(),
+                    },
+                ));
             }
-            Block::Math(text) => found.push((formula_key(text), Wanted::Formula(text.clone()))),
+            Block::Math(text) if has_renderer("math") => found.push((
+                render_key("math", text),
+                Wanted::Render {
+                    language: "math".to_owned(),
+                    source: text.clone(),
+                },
+            )),
             Block::Images { images, .. } => found.extend(images.iter().filter_map(|image| {
                 wanted_image(place, &image.source)
                     .map(|wanted| (image_key(place, &image.source), wanted))
@@ -254,8 +280,11 @@ impl WorkspaceState {
                 continue;
             }
             let asked = match (wanted, session) {
-                (Wanted::Diagram(source), _) => Outgoing::DrawDiagram { key, source },
-                (Wanted::Formula(source), _) => Outgoing::DrawFormula { key, source },
+                (Wanted::Render { language, source }, _) => Outgoing::RenderFigure {
+                    key,
+                    language,
+                    source,
+                },
                 (Wanted::Address(address), _) => Outgoing::FetchFigure { key, address },
                 (Wanted::File(path), Some(session)) => Outgoing::ReadFigure { key, session, path },
                 (Wanted::File(_), None) => continue,

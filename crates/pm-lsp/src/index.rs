@@ -16,7 +16,7 @@ const REPOSITORY: &str = "https://raw.githubusercontent.com/JoakimCarlsson/pande
 const OVERRIDE: &str = "PANDEMONIUM_LANGUAGES";
 
 /// The files a language folder holds, listed first when they are there; a folder may hold more, such as the lockfile that pins an npm install or, in a folder of your own, the grammar itself.
-const FILES: [&str; 9] = [
+const FILES: [&str; 10] = [
     "config.toml",
     "highlights.scm",
     "indents.scm",
@@ -26,6 +26,7 @@ const FILES: [&str; 9] = [
     "runnables.scm",
     "lenses.scm",
     "dependencies.scm",
+    "emmet.toml",
 ];
 
 /// The names of the files in `folder`, the usual ones of a language folder first, those starting with a dot left out.
@@ -45,6 +46,16 @@ fn folder_files(folder: &Path) -> Result<Vec<String>, String> {
     more.sort();
     names.extend(more);
     Ok(names)
+}
+
+/// A language has a grammar unless its listing says it has not.
+fn yes() -> bool {
+    true
+}
+
+/// Whether `held` is true, so that a listing does not write down what is so for most.
+fn is_true(held: &bool) -> bool {
+    *held
 }
 
 /// One language the index lists.
@@ -81,6 +92,9 @@ pub struct Listing {
     /// The program of its language server, when it has one.
     #[serde(default)]
     pub server: Option<String>,
+    /// Whether it has a grammar, which a language with no files to read does not.
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub grammar: bool,
     /// The SHA-256 of each file of its folder, by file name.
     pub files: BTreeMap<String, String>,
     /// Whether it is a folder of your own in the local languages folder rather than one the list offers.
@@ -208,6 +222,7 @@ fn listing_of(folder: &Path) -> Result<Listing, String> {
         names: manifest.names,
         patterns: manifest.patterns,
         server: manifest.server.map(|server| server.command),
+        grammar: !manifest.grammar.is_empty(),
         files,
         local: false,
     })

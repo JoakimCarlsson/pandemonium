@@ -13,6 +13,9 @@ pub struct ToolchainInfo {
     pub name: String,
     /// Which version it is, or where it is.
     pub detail: String,
+    /// What the language, by family, is called in a list of toolchains, as its language folder says; the family itself when it says nothing.
+    #[serde(default)]
+    pub title: String,
     /// Whether the project's language is set to use it; the system's counts as chosen when the project chose none.
     pub selected: bool,
 }

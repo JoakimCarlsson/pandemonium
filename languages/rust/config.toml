@@ -13,6 +13,10 @@ requires = ["cargo"]
 line_comment = "//"
 indent = 4
 
+tool_directories = ["~/.cargo/bin"]
+
+generated = ["target"]
+
 [grammar_file]
 url = "https://github.com/tree-sitter/tree-sitter-rust/releases/download/v0.24.2/tree-sitter-rust.wasm"
 sha256 = "24c89bd9252255e4aebbcbd7d2d308bd92c86dd95a130fdc80efa49577b8d738"
@@ -22,6 +26,9 @@ id = "rust-analyzer"
 language_id = "rust"
 command = "rust-analyzer"
 check = ["--version"]
+
+[server.capabilities.experimental.commands]
+commands = ["rust-analyzer.showReferences"]
 
 [server.install]
 kind = "download"
@@ -78,6 +85,23 @@ command = "cargo test {name}::"
 marker = "Cargo.toml"
 
 [[toolchain]]
+title = "Rust"
 list = ["rustup", "toolchain", "list"]
 system = [["rustc", "--version"]]
 env = { RUSTUP_TOOLCHAIN = "{id}" }
+
+[[debug_adapter]]
+id = "lldb-dap"
+name = "LLDB"
+programs = ["lldb-dap", "lldb-vscode"]
+connect = "stdio"
+types = ["lldb", "lldb-dap", "codelldb"]
+attach = ["*"]
+
+[debug_adapter.build]
+key = "cargo"
+program = "cargo"
+append = ["--message-format=json-render-diagnostics"]
+match = { reason = "compiler-artifact" }
+take = "executable"
+compare = { name = "target.name", kind = "target.kind" }

@@ -67,11 +67,11 @@ impl Choosing {
             Self::Fork => "No replies of the agent's in this conversation",
             Self::Branch => "No branches",
             Self::DebugScenario => {
-                "Nothing to debug: write a launch.json, or open a Python or Go file"
+                "Nothing to debug: write a launch.json, or open a file a debug scenario is offered for"
             }
             Self::DebugProcess => "No programs to attach to, or no debug adapter installed",
             Self::Task => {
-                "No tasks: add a Cargo.toml, package.json or Makefile, or write .pandemonium.tasks.json"
+                "No tasks: install a language that detects them for this project, or write .pandemonium.tasks.json"
             }
             Self::Toolchain => "No toolchains found on this machine",
         }
@@ -288,7 +288,7 @@ impl WorkspaceState {
                 .map(|toolchain| {
                     let label = format!(
                         "{}: {}",
-                        Self::toolchain_language(&toolchain.language),
+                        Self::toolchain_language(&toolchain.language, &toolchain.title),
                         toolchain.name
                     );
                     let chosen = (toolchain.id != "system").then(|| toolchain.id.clone());

@@ -48,14 +48,43 @@ pub enum Rendering {
     Picture,
 }
 
+/// How each ending is rendered, as the installed languages say.
+static LEARNED: std::sync::Mutex<Vec<(String, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// Learns how the installed `extensions` say endings are rendered.
+pub fn learn_previews(extensions: &[pm_protocol::ExtensionInfo]) {
+    let learned = extensions
+        .iter()
+        .filter(|extension| extension.installed)
+        .flat_map(|extension| {
+            extension
+                .previews
+                .iter()
+                .map(|(ending, how)| (ending.to_ascii_lowercase(), how.clone()))
+        })
+        .collect();
+    if let Ok(mut held) = LEARNED.lock() {
+        *held = learned;
+    }
+}
+
 impl Rendering {
-    /// How the file at `path` is rendered, as the end of its name says, or nothing for a file only shown as source.
+    /// How the file at `path` is rendered, as the end of its name says, or nothing for a file only shown as source. A language says how the files it reads are rendered; a picture of pixels is shown as a picture whatever reads it.
     pub fn of(path: &str) -> Option<Self> {
         let name = path.rsplit('/').next().unwrap_or(path);
         let (_, extension) = name.rsplit_once('.')?;
-        match extension.to_ascii_lowercase().as_str() {
-            "md" | "markdown" | "mdown" | "mkd" => Some(Self::Markdown),
-            "svg" => Some(Self::Vector),
+        let extension = extension.to_ascii_lowercase();
+        let learned = LEARNED.lock().ok().and_then(|held| {
+            held.iter()
+                .find(|(ending, _)| *ending == extension)
+                .map(|(_, how)| how.clone())
+        });
+        match learned.as_deref() {
+            Some("markdown") => return Some(Self::Markdown),
+            Some("vector") => return Some(Self::Vector),
+            _ => {}
+        }
+        match extension.as_str() {
             "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico" => Some(Self::Picture),
             _ => None,
         }

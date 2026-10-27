@@ -60,6 +60,9 @@ pub struct TaskSpec {
 /// How the toolchains of a language are found on a machine.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ToolchainSpec {
+    /// What the language is called in a list of toolchains, such as `Node.js` for the family `javascript`; the family's own name when none.
+    #[serde(default)]
+    pub title: Option<String>,
     /// Programs, each with the argument that makes it print its version, of which the first that runs is the machine's own toolchain; left out when `list` worked.
     #[serde(default)]
     pub system: Vec<Vec<String>>,

@@ -79,6 +79,53 @@ pub(crate) fn toolchain_specs() -> Vec<(String, pm_task::ToolchainSpec)> {
         .collect()
 }
 
+/// The figure written in `language` as `source`, drawn as an SVG picture by the module of the installed language that draws `language`, which is given no more than the text to draw.
+pub(crate) fn render_figure(
+    language: &str,
+    source: &str,
+    dark: bool,
+    colors: std::collections::BTreeMap<String, String>,
+) -> Result<String, String> {
+    let (id, _) = pm_lsp::installed()
+        .into_iter()
+        .find(|(_, manifest)| {
+            manifest
+                .renders
+                .iter()
+                .any(|name| name.eq_ignore_ascii_case(language))
+        })
+        .ok_or_else(|| format!("no installed language draws {language}"))?;
+    render_with_module(
+        &pm_lsp::language_folder(&id)?.join("module.wasm"),
+        language,
+        source,
+        dark,
+        colors,
+    )
+}
+
+/// The figure written in `language` as `source`, drawn as an SVG picture by the module in the file `file`, which is given no more than the text to draw.
+pub fn render_with_module(
+    file: &std::path::Path,
+    language: &str,
+    source: &str,
+    dark: bool,
+    colors: std::collections::BTreeMap<String, String>,
+) -> Result<String, String> {
+    let grants = pm_policy::Grants::new("figures", std::iter::empty::<&str>());
+    let call = pm_plugin_api::LanguageCall::Render {
+        language: language.to_owned(),
+        source: source.to_owned(),
+        dark,
+        colors,
+    };
+    match pm_plugin::run_module(file, &call, None, &grants)? {
+        pm_plugin_api::LanguageReply::Svg(svg) => Ok(svg),
+        pm_plugin_api::LanguageReply::Error(reason) => Err(reason),
+        _ => Err(format!("{} does not draw {language}", file.display())),
+    }
+}
+
 /// The grammar and queries of the installed language `name`, found by folder name or another name.
 pub(crate) fn grammar(name: &str) -> Result<GrammarBundle, String> {
     let (id, manifest) =
@@ -102,6 +149,11 @@ pub(crate) fn grammar(name: &str) -> Result<GrammarBundle, String> {
         pairs: Some(manifest.pairs),
         scopes: manifest.scopes,
         tags: manifest.tags,
+        emmet_tables: manifest
+            .emmet
+            .as_ref()
+            .and_then(|_| std::fs::read_to_string(folder.join("emmet.toml")).ok()),
+        emmet: manifest.emmet,
         id,
     })
 }
@@ -206,6 +258,8 @@ impl Core {
                 info.server = manifest.server.as_ref().map(pm_lsp::server_state);
                 server_ready = manifest.server.as_ref().is_none_or(pm_lsp::server_ready);
                 info.icon = icon_of(&info.id, manifest);
+                info.previews = manifest.previews.clone();
+                info.renders = manifest.renders.clone();
                 info.color = manifest.color.clone();
             }
             info.busy = busy.get(&info.id).cloned();
@@ -220,6 +274,7 @@ impl Core {
 
     /// Tells every client how the extensions stand now.
     pub(crate) fn tell_extensions(&self) {
+        crate::extensions::refresh_adapters();
         let extensions = self.extension_infos(false);
         self.broadcast(&ServerMessage::ExtensionsChanged { extensions }, None);
     }

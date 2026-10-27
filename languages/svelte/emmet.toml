@@ -1,0 +1,61 @@
+# Emmet: what markup abbreviations know about tags.
+
+[markup]
+# What `!` stands for, where {indent} stands for one level of indentation.
+document = "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n{indent}<meta charset=\"UTF-8\">\n{indent}<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n{indent}<title>${1:Document}</title>\n</head>\n<body>\n{indent}$0\n</body>\n</html>"
+# The tag of an element written without a name, and of one inside an inline parent.
+default_tag = "div"
+inline_tag = "span"
+# Tags written without a closing tag.
+void = ["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"]
+# Tags that sit in a line of text instead of standing on a line of their own.
+inline = ["a", "abbr", "acronym", "b", "bdo", "big", "br", "button", "cite", "code", "del", "dfn", "em", "font", "i", "img", "input", "ins", "kbd", "label", "map", "mark", "object", "q", "s", "samp", "select", "small", "span", "strike", "strong", "sub", "sup", "textarea", "time", "tt", "u", "var"]
+# Parents whose children are inline when no name is written.
+inline_parents = ["a", "abbr", "b", "button", "cite", "code", "em", "h1", "h2", "h3", "h4", "h5", "h6", "i", "label", "p", "q", "small", "span", "strong", "u"]
+# What a plain word before the caret is taken to be an abbreviation for.
+words = ["a", "abbr", "article", "aside", "audio", "b", "blockquote", "body", "br", "button", "canvas", "code", "dd", "details", "div", "dl", "dt", "em", "fieldset", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "head", "header", "hr", "html", "i", "iframe", "img", "input", "label", "legend", "li", "link", "main", "meta", "nav", "ol", "option", "p", "pre", "section", "select", "small", "span", "strong", "style", "script", "table", "td", "textarea", "th", "tr", "ul", "video", "title"]
+
+# Short names and the tags they stand for.
+[markup.aliases]
+"adr" = "address"
+"art" = "article"
+"bq" = "blockquote"
+"btn" = "button"
+"dlg" = "dialog"
+"fig" = "figure"
+"figc" = "figcaption"
+"ftr" = "footer"
+"hdr" = "header"
+"opt" = "option"
+"optg" = "optgroup"
+"sect" = "section"
+"str" = "strong"
+"tarea" = "textarea"
+
+# Tags whose children are named after them when no name is written.
+[markup.implicit_children]
+"ul" = "li"
+"ol" = "li"
+"menu" = "li"
+"table" = "tr"
+"thead" = "tr"
+"tbody" = "tr"
+"tfoot" = "tr"
+"tr" = "td"
+"colgroup" = "col"
+"select" = "option"
+"optgroup" = "option"
+"datalist" = "option"
+
+# Attributes a tag is written with: [name] leaves a tab stop to fill it in, [name, value] gives a value.
+[markup.defaults]
+"a" = [["href"]]
+"base" = [["href"]]
+"form" = [["action"]]
+"html" = [["lang", "en"]]
+"iframe" = [["src"]]
+"img" = [["src"], ["alt"]]
+"input" = [["type", "text"]]
+"link" = [["rel", "stylesheet"], ["href"]]
+"meta" = [["name"], ["content"]]
+"script" = [["src"]]

@@ -46,6 +46,19 @@ pub enum LanguageCall {
         #[serde(default)]
         project: Option<String>,
     },
+    /// A figure the language draws from the text `source`, written in it, such as a diagram or a formula; answered with [`LanguageReply::Svg`]. The colours are named as the language names them, each `#rrggbb`, and `dark` says whether the theme is a dark one.
+    Render {
+        /// What the figure is written in, as a fence names it.
+        language: String,
+        /// What is written.
+        source: String,
+        /// Whether the theme the figure is drawn for is a dark one.
+        #[serde(default)]
+        dark: bool,
+        /// The colours of the theme, by name.
+        #[serde(default)]
+        colors: BTreeMap<String, String>,
+    },
     /// The toolchains the machine and the project have; answered with [`LanguageReply::Toolchains`].
     Toolchains {
         /// The language, by its folder's name.
@@ -121,6 +134,8 @@ pub enum LanguageReply {
     Tasks(Vec<TaskItem>),
     /// The toolchains.
     Toolchains(Vec<ToolchainItem>),
+    /// The figure, as the text of an SVG picture.
+    Svg(String),
     /// It failed, with the reason.
     Error(String),
 }

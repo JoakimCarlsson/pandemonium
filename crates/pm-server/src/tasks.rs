@@ -142,6 +142,12 @@ pub(crate) fn toolchains(root: &Path, project: Option<&str>) -> Response {
     let chosen = choices()
         .remove(&project_key(root, project))
         .unwrap_or_default();
+    let mut titles: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for (family, spec) in crate::languages::toolchain_specs() {
+        if let Some(title) = spec.title {
+            titles.entry(family).or_insert(title);
+        }
+    }
     let toolchains = all_toolchains(root)
         .into_iter()
         .map(|toolchain| {
@@ -150,6 +156,7 @@ pub(crate) fn toolchains(root: &Path, project: Option<&str>) -> Response {
                 None => toolchain.id == "system",
             };
             ToolchainInfo {
+                title: titles.get(&toolchain.language).cloned().unwrap_or_default(),
                 language: toolchain.language,
                 id: toolchain.id,
                 name: toolchain.name,

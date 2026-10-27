@@ -100,7 +100,6 @@ fn works(program: &Path, arguments: &[String]) -> bool {
 /// Where the program of `spec` is inside the folder `folder` it was installed in the way `install` says.
 fn installed_program(spec: &ServerSpec, install: &Install, folder: &Path) -> Option<PathBuf> {
     match install.kind {
-        InstallKind::Npm => in_folder(&folder.join("node_modules").join(".bin"), &spec.command),
         InstallKind::Command => in_folder(
             &install
                 .bin
@@ -108,7 +107,7 @@ fn installed_program(spec: &ServerSpec, install: &Install, folder: &Path) -> Opt
                 .map_or_else(|| folder.to_path_buf(), |bin| folder.join(bin)),
             &spec.command,
         ),
-        InstallKind::Download | InstallKind::Go => in_folder(folder, &spec.command),
+        InstallKind::Download => in_folder(folder, &spec.command),
     }
 }
 
@@ -160,23 +159,6 @@ fn install_into(spec: &ServerSpec, install: &Install, folder: &Path) -> Result<(
             let program = unpack(bytes, download.archive, download.member.as_deref())?;
             write_program(&folder.join(program_name(&spec.command)), &program)
         }
-        InstallKind::Go => {
-            let package = install
-                .package
-                .as_deref()
-                .ok_or("the manifest names no package for go to install")?;
-            run("go", "Go", &["install", package], |command| {
-                command
-                    .env("GOBIN", folder)
-                    .env("GOSUMDB", "sum.golang.org")
-                    .env("GOFLAGS", "-mod=readonly")
-                    .env_remove("GONOSUMDB")
-                    .env_remove("GONOSUMCHECK")
-                    .env_remove("GOPRIVATE")
-                    .env_remove("GOINSECURE")
-                    .current_dir(folder);
-            })
-        }
         InstallKind::Command => {
             if let Some(gate) = COMMAND_GATE.get() {
                 gate(spec)?;
@@ -185,44 +167,38 @@ fn install_into(spec: &ServerSpec, install: &Install, folder: &Path) -> Result<(
                 .command
                 .first()
                 .ok_or("the manifest names no command to install with")?;
+            let origin = spec.origin.as_deref();
+            for file in &install.files {
+                let (from, to) = file.split_once(':').unwrap_or((file, file));
+                let plain = |name: &str| !name.contains(['/', '\\']) && !name.starts_with('.');
+                if !plain(from) || !plain(to) {
+                    return Err(format!("{file} is not a file of the language's folder"));
+                }
+                let origin =
+                    origin.ok_or("this install needs the language folder it is pinned by")?;
+                std::fs::copy(origin.join(from), folder.join(to)).map_err(|error| {
+                    format!("the language has no {from} to install with: {error}")
+                })?;
+            }
             let version = install.version.as_str();
             let folder_text = folder.to_string_lossy();
+            let filled = |text: &str| {
+                text.replace("{folder}", &folder_text)
+                    .replace("{version}", version)
+            };
             let arguments: Vec<String> = install.command[1..]
                 .iter()
-                .map(|argument| {
-                    argument
-                        .replace("{folder}", &folder_text)
-                        .replace("{version}", version)
-                })
+                .map(|held| filled(held))
                 .collect();
             let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
             let needs = install.needs.as_deref().unwrap_or(program);
             run(program, needs, &arguments, |command| {
-                command.current_dir(folder);
-            })
-        }
-        InstallKind::Npm => {
-            let origin = spec
-                .origin
-                .as_deref()
-                .ok_or("an npm install needs the language folder that pins it")?;
-            for pin in ["package.json", "package-lock.json"] {
-                let held = match &install.pin {
-                    Some(prefix) => format!("{prefix}.{pin}"),
-                    None => pin.to_owned(),
-                };
-                std::fs::copy(origin.join(&held), folder.join(pin)).map_err(|error| {
-                    format!("the language has no {held} pinning its server: {error}")
-                })?;
-            }
-            let arguments = [
-                "ci",
-                "--ignore-scripts",
-                "--no-audit",
-                "--no-fund",
-                "--loglevel=error",
-            ];
-            run("npm", "Node.js and npm", &arguments, |command| {
+                for name in &install.env_remove {
+                    command.env_remove(name);
+                }
+                for (name, value) in &install.env {
+                    command.env(name, filled(value));
+                }
                 command.current_dir(folder);
             })
         }

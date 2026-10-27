@@ -15,6 +15,8 @@ indent = 4
 tabs = true
 pairs = ["()", "[]", "{}", "\"\"", "''", "``"]
 
+tool_directories = ["~/go/bin", "~/sdk/go/bin", "/usr/local/go/bin"]
+
 [grammar_file]
 url = "https://github.com/tree-sitter/tree-sitter-go/releases/download/v0.25.0/tree-sitter-go.wasm"
 sha256 = "9504573f352b20be7f2f1911754d710622aedc15afff16d5ed8fb5645681aee7"
@@ -26,13 +28,33 @@ command = "gopls"
 check = ["version"]
 
 [server.install]
-kind = "go"
+kind = "command"
 version = "v0.24.0"
-package = "golang.org/x/tools/gopls@v0.24.0"
+command = ["go", "install", "golang.org/x/tools/gopls@v0.24.0"]
+needs = "Go"
+env = { GOBIN = "{folder}", GOSUMDB = "sum.golang.org", GOFLAGS = "-mod=readonly" }
+env_remove = ["GONOSUMDB", "GONOSUMCHECK", "GOPRIVATE", "GOINSECURE"]
 
 [[toolchain]]
+title = "Go"
 system = [["go", "version"]]
 fixed = ["/usr/local/go"]
 children = ["~/sdk"]
 bin = ["bin"]
 program = "go"
+
+[[debug_adapter]]
+id = "delve"
+name = "Delve"
+programs = ["dlv"]
+arguments = ["dap", "--listen", "127.0.0.1:{port}"]
+connect = "tcp"
+types = ["go", "delve"]
+attach = ["dlv"]
+default = { mode = "debug" }
+
+[[debug_scenario]]
+label = "Go: Current Package"
+adapter = "go"
+suffixes = ["go"]
+config = { mode = "debug", program = "${fileDirname}", cwd = "${workspaceFolder}" }

@@ -55,15 +55,13 @@ static FONTS: LazyLock<Arc<resvg::usvg::fontdb::Database>> = LazyLock::new(|| {
     Arc::new(fonts)
 });
 
-/// The colours diagrams and formulas are drawn in, taken from the theme the window is drawn in.
+/// The colours figures are drawn in, taken from the theme the window is drawn in.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Palette {
     /// Whether the theme is a dark one.
     dark: bool,
     /// The colours, as the theme variables of a diagram name them, in `#rrggbb`.
     variables: BTreeMap<String, String>,
-    /// The colour of running text, red, green and blue, which formulas are set in.
-    ink: [u8; 3],
 }
 
 impl Palette {
@@ -101,12 +99,17 @@ impl Palette {
         .into_iter()
         .map(|(name, role)| (name.to_owned(), hex(role)))
         .collect();
-        let [red, green, blue, _] = pm_color::Roles::role(theme, Role::Text).to_bytes();
-        Self {
-            dark,
-            variables,
-            ink: [red, green, blue],
-        }
+        Self { dark, variables }
+    }
+
+    /// Whether the theme is a dark one.
+    pub(crate) fn dark(&self) -> bool {
+        self.dark
+    }
+
+    /// The colours, by the names a figure's language knows them by, each `#rrggbb`.
+    pub(crate) fn variables(&self) -> &BTreeMap<String, String> {
+        &self.variables
     }
 }
 
@@ -200,41 +203,5 @@ pub(crate) fn figure(bytes: &[u8], truncated: bool) -> Result<Drawing, String> {
     decode("figure", bytes, truncated).map(|picture| Drawing {
         picture,
         density: 1.0,
-    })
-}
-
-/// The diagram written in mermaid as `source`, drawn in the colours of `palette`, or why it could not be drawn.
-pub(crate) fn diagram(source: &str, palette: &Palette) -> Result<Drawing, String> {
-    let mut theme = if palette.dark {
-        mermaid_svg::Theme::dark()
-    } else {
-        mermaid_svg::Theme::default_theme()
-    };
-    theme.apply_theme_variables(&palette.variables);
-    theme.responsive = false;
-    let svg = mermaid_svg::render_with(source, &theme)
-        .map_err(|error| format!("This diagram could not be drawn: {error}"))?;
-    draw_sized("diagram", &svg, 1.0).map(|picture| Drawing {
-        picture,
-        density: VECTOR_DENSITY,
-    })
-}
-
-/// How tall the type of a formula is, in points, as the type of running text beside it is.
-const FORMULA_POINTS: (i64, i64) = (27, 2);
-
-/// The formula written in TeX as `source`, set on lines of its own in the ink of `palette`, or why it could not be set.
-pub(crate) fn formula(source: &str, palette: &Palette) -> Result<Drawing, String> {
-    let font = latex_rust::MathFont::stix_two_math().map_err(|error| error.to_string())?;
-    let [red, green, blue] = palette.ink;
-    let mut options = latex_rust::SvgOptions::new();
-    options.font_size_pt = latex_rust::Dim::ratio(FORMULA_POINTS.0, FORMULA_POINTS.1);
-    options.color = latex_rust::Color::rgb(red, green, blue);
-    options.display = true;
-    let svg = latex_rust::latex_to_svg(source, &font, &options)
-        .map_err(|error| format!("This formula could not be set: {error}"))?;
-    draw_sized("formula", &svg, 1.0).map(|picture| Drawing {
-        picture,
-        density: VECTOR_DENSITY,
     })
 }

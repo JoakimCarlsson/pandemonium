@@ -412,6 +412,8 @@ fn load_installed_grammar(id: &str) {
         pairs: pm_treesitter::Editing::pairs_of(&manifest.pairs),
         scopes: crate::work::code::scopes_of(&manifest.scopes),
         tags: crate::work::code::tags_of(manifest.tags.as_ref()),
+        emmet: manifest.emmet.clone(),
+        emmet_tables: std::fs::read_to_string(folder.join("emmet.toml")).ok(),
     };
     if let Ok(loaded) =
         pm_treesitter::Grammar::load(id, &manifest.grammar, &wasm, &queries, editing)
@@ -884,6 +886,10 @@ fn sample_toolchains() -> Vec<pm_protocol::ToolchainInfo> {
             id: id.to_owned(),
             name: id.to_owned(),
             detail: detail.to_owned(),
+            title: match language {
+                "javascript" => "Node.js".to_owned(),
+                other => other.to_owned(),
+            },
             selected,
         };
     vec![
@@ -3367,6 +3373,23 @@ const PREVIEW_VECTOR: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="
 /// The workspace with the file at `path` open and shown rendered, as what it ends in says it is.
 fn previewed(path: &str) -> WorkspaceState {
     load_installed_grammar("markdown");
+    let previews = |ending: &str, how: &str| pm_protocol::ExtensionInfo {
+        id: how.to_owned(),
+        installed: true,
+        previews: std::iter::once((ending.to_owned(), how.to_owned())).collect(),
+        ..Default::default()
+    };
+    pm_components::preview::learn_previews(&[
+        previews("md", "markdown"),
+        previews("svg", "vector"),
+    ]);
+    let renders = |name: &str| pm_protocol::ExtensionInfo {
+        id: name.to_owned(),
+        installed: true,
+        renders: vec![name.to_owned()],
+        ..Default::default()
+    };
+    pm_components::figures::learn_renders(&[renders("mermaid"), renders("math")]);
     let mut state = workspace_sample().after(TAB_DIFF);
     state.open_viewer(path.to_owned(), false);
     match pm_components::preview::Rendering::of(path) {
@@ -3405,11 +3428,24 @@ fn previewed(path: &str) -> WorkspaceState {
                         )),
                     ),
                     |state, (key, wanted)| match wanted {
-                        pm_components::figures::Wanted::Diagram(source) => {
-                            state.with_figure(*key, crate::work::picture::diagram(source, &palette))
-                        }
-                        pm_components::figures::Wanted::Formula(source) => {
-                            state.with_figure(*key, crate::work::picture::formula(source, &palette))
+                        pm_components::figures::Wanted::Render { language, source } => {
+                            let module = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                                .join("../../languages")
+                                .join(language)
+                                .join("module.wasm");
+                            state.with_figure(
+                                *key,
+                                pm_server::render_with_module(
+                                    &module,
+                                    language,
+                                    source,
+                                    palette.dark(),
+                                    palette.variables().clone(),
+                                )
+                                .and_then(|svg| {
+                                    crate::work::picture::figure(svg.as_bytes(), false)
+                                }),
+                            )
                         }
                         pm_components::figures::Wanted::Address(_) => state.with_figure(
                             *key,

@@ -218,6 +218,7 @@ request with exactly one `response` carrying the same `id`.
 | `semantic_tokens` | `directory`, `path`, `version`                                                                | `semantic_tokens` |
 | `inlay_hints`  | `directory`, `path`, `version`, `span`                                                           | `inlay_hints`   |
 | `inline_values` | `directory`, `path`, `version`, `span`, `frame`, `stopped`                                      | `inline_values` |
+| `render_figure`| `language`, `source`, `dark` (optional), `colors` (optional, name to `#rrggbb`)                  | `bytes`         |
 | `code_lenses`  | `directory`, `path`, `version`, `registry` (optional, on when absent)                            | `code_lenses`   |
 | `run_code_lens`| `directory`, `project` (optional), `path`, `index`, `columns`, `rows`                            | `terminal`      |
 | `press_code_lens` | `directory`, `path`, `index`                                                                  | `lens_pressed`  |
@@ -247,8 +248,9 @@ tree can dim them. The optional `expanded` array is accepted for older clients
 and has no effect. Clients list again when notified of changes.
 
 A `directory` that is no repository but has repositories as direct children
-(each with a `.git` entry, hidden and bulky folders such as `node_modules`,
-`target`, `build` and `dist` not looked into) is a **folder of repositories**,
+(each with a `.git` entry, hidden and bulky folders such as `build` and `dist`,
+and those the installed languages say their tools generate, such as
+`node_modules` or `target`, not looked into) is a **folder of repositories**,
 and every request that works on a repository works across them. Paths stay
 relative to `directory`, so `api/src/main.rs` is `src/main.rs` of the child
 `api`. A path is acted on by the child that holds it: `stage`, `discard`,
@@ -281,7 +283,8 @@ everything said of them, its submodules' paths written from `directory`.
   it), numbered on when that branch is taken; `started` then gives the branch.
   `git.worktree_include` lists ignored files and folders of the repository, as
   paths from its root separated by commas or lines (`*` stands for part of one
-  name; `.env, .env.*, target/, node_modules/, .build/, build/, dist/, .venv/` by
+  name; `.env, .env.*, build/, dist/` by default, with the folders the
+  installed languages say their tools generate added to it while it is the
   default), that are copied into the new worktree, sharing blocks where the
   filesystem allows; one that could not be copied is named in `skipped` with
   why, and does not fail the request.
@@ -460,8 +463,8 @@ everything said of them, its submodules' paths written from `directory`.
   (the index, `HEAD`, the references, also where a worktree keeps them outside
   its folder). It replaces the folders the connection watched before; an empty
   list watches nothing, and the watches end with the connection. Changes inside
-  `.pandemonium`, `node_modules`, `target`, `.git/objects` and `.git/logs` are
-  left out, and changes coming close together are told once, at most every
+  `.pandemonium`, `.git/objects`, `.git/logs` and the folders the installed
+  languages say their tools generate are left out, and changes coming close together are told once, at most every
   1.5 seconds while the folder keeps changing.
 - **`machine_settings`, `save_machine_settings`:** what the reader set up for
   the work the server does on its machine, kept by the server, replaced whole by
@@ -628,11 +631,12 @@ everything said of them, its submodules' paths written from `directory`.
   language server against the checksums the language's `config.toml` gives
   them. A language server is looked for in the project's own folders and on the
   machine's path first; one that is missing is installed into the data folder
-  under its version, by download, `go install`, `npm ci` or a command the
-  manifest names as the manifest says, and a version installed before is used when that fails. `npm ci` runs
-  from the `package-lock.json` in the language's folder, which pins the
-  checksum of every package, and `go install` runs with Go's checksum database
-  enforced. Every client is
+  under its version, by download or by a command the language's manifest names,
+  as the manifest says, and a version installed before is used when that fails.
+  The languages shipped install `npm` servers with `npm ci` from the lockfile
+  in the language's folder, which pins the checksum of every package, and Go
+  servers with `go install` with Go's checksum database enforced; both are
+  written in their manifests, not known to the server. Every client is
   told how it goes with `extensions_changed`. An installed language whose
   folder or pinned language server differs from what `languages.json` lists now
   is listed with `update` set to the version offered; installing it again is how
@@ -762,6 +766,11 @@ everything said of them, its submodules' paths written from `directory`.
   changes the language server made carrying out its command, as for
   `take_code_action`. The lens of a dependency's upgrade answers with the one
   change to the file that writes the latest version in place of the old one.
+- **`render_figure`:** draws a figure written in `language`, such as a diagram
+  or a formula, with the module of the installed language whose `renders` names
+  it, which is given nothing but `source` and the theme's colours, and answers
+  with `bytes`, the text of an SVG picture; it fails when no installed language
+  draws `language`. `extensions` lists what each language `renders`.
 - **`run_code_lens`:** runs the command of a lens with `runs` set, in a shell
   as `run_task` does and in the project's choice of toolchain, and answers with
   the shell's `terminal`. The folder is the one of the file, or the nearest

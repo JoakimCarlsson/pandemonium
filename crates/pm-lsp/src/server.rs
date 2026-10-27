@@ -229,11 +229,33 @@ fn completion_of(item: &Value, default_span: Option<Span>) -> Option<Completion>
     })
 }
 
+/// `base` with `extra` put into it: objects are merged key by key, and anything else in `extra` takes the place of what `base` has.
+fn with_capabilities(mut base: Value, extra: &Value) -> Value {
+    fn merge(into: &mut Value, from: &Value) {
+        match (into.as_object_mut(), from.as_object()) {
+            (Some(held), Some(more)) => {
+                for (key, value) in more {
+                    match held.get_mut(key) {
+                        Some(slot) => merge(slot, value),
+                        None => {
+                            held.insert(key.clone(), value.clone());
+                        }
+                    }
+                }
+            }
+            _ => *into = from.clone(),
+        }
+    }
+    if !extra.is_null() {
+        merge(&mut base, extra);
+    }
+    base
+}
+
 /// What this client can do, as it tells a server it starts.
 fn capabilities() -> Value {
     json!({
         "general": {"positionEncodings": ["utf-16"]},
-        "experimental": {"commands": {"commands": ["rust-analyzer.showReferences"]}},
         "workspace": {
             "configuration": true,
             "workspaceFolders": true,
@@ -450,7 +472,7 @@ impl LanguageServer {
                 "uri": file_uri(root),
                 "name": root.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default(),
             }],
-            "capabilities": capabilities(),
+            "capabilities": with_capabilities(capabilities(), &spec.capabilities),
         });
         if !spec.init.is_null() {
             params["initializationOptions"] = spec.init.clone();

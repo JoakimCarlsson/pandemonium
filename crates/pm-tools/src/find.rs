@@ -4,38 +4,61 @@ use std::env;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-/// The folders under the home folder where programs are usually installed without being on the path.
+/// The folders under the home folder where programs are usually installed without being on the path, whatever language they are for: the folder a user's own scripts go in, and where agents install themselves.
 ///
 /// A window started from a desktop session inherits the path that session was
-/// given, which is not the one a shell has: npm, bun, cargo and go each put
-/// their programs somewhere only a shell profile hears about.
-const TOOL_DIRECTORIES: [&str; 10] = [
-    ".local/bin",
-    ".grok/bin",
-    ".bun/bin",
-    ".deno/bin",
-    ".npm-global/bin",
-    "AppData/Roaming/npm",
-    ".volta/bin",
-    ".cargo/bin",
-    "go/bin",
-    "sdk/go/bin",
-];
+/// given, which is not the one a shell has. The places a language's own tools
+/// go, such as cargo's or go's, are that language's to say: see [`set_directories`].
+const TOOL_DIRECTORIES: [&str; 2] = [".local/bin", ".grok/bin"];
 
 /// The folders outside the home folder where programs are usually installed without being on the path.
-const SYSTEM_DIRECTORIES: [&str; 3] = ["/usr/local/bin", "/usr/local/go/bin", "/opt/homebrew/bin"];
+const SYSTEM_DIRECTORIES: [&str; 2] = ["/usr/local/bin", "/opt/homebrew/bin"];
 
-/// The `bin` folder of every node version nvm has installed, newest name first.
-fn nvm_directories(home: &Path) -> Vec<PathBuf> {
-    let mut directories: Vec<PathBuf> = std::fs::read_dir(home.join(".nvm/versions/node"))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|version| version.path().join("bin"))
-        .collect();
-    directories.sort();
-    directories.reverse();
-    directories
+/// The places the installed languages say their tools go.
+static LANGUAGE_DIRECTORIES: std::sync::RwLock<Vec<String>> = std::sync::RwLock::new(Vec::new());
+
+/// Replaces the places the installed languages say their tools go with `places`: each may start with `~/` for the home folder, and any folder name in it may be `*` for every folder there.
+pub fn set_directories(places: Vec<String>) {
+    if let Ok(mut held) = LANGUAGE_DIRECTORIES.write() {
+        *held = places;
+    }
+}
+
+/// The folders `places` name, `~/` taken as the home folder and `*` as every folder at its place, in order.
+fn expanded(places: &[String], home: Option<&Path>) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    for place in places {
+        let (start, rest) = match place.strip_prefix("~/") {
+            Some(rest) => match home {
+                Some(home) => (home.to_path_buf(), rest),
+                None => continue,
+            },
+            None => (PathBuf::from("/"), place.trim_start_matches('/')),
+        };
+        let mut current = vec![start];
+        for part in rest.split('/').filter(|part| !part.is_empty()) {
+            current = current
+                .into_iter()
+                .flat_map(|folder| {
+                    if part == "*" {
+                        let mut children: Vec<PathBuf> = std::fs::read_dir(&folder)
+                            .into_iter()
+                            .flatten()
+                            .flatten()
+                            .map(|entry| entry.path())
+                            .collect();
+                        children.sort();
+                        children.reverse();
+                        children
+                    } else {
+                        vec![folder.join(part)]
+                    }
+                })
+                .collect();
+        }
+        found.extend(current);
+    }
+    found
 }
 
 /// The names a program called `name` may have on disk on this platform.
@@ -91,7 +114,12 @@ fn search_directories() -> Vec<PathBuf> {
                 .iter()
                 .filter_map(|directory| Some(home.as_ref()?.join(directory))),
         )
-        .chain(home.as_deref().map(nvm_directories).unwrap_or_default())
+        .chain(
+            LANGUAGE_DIRECTORIES
+                .read()
+                .map(|places| expanded(&places, home.as_deref()))
+                .unwrap_or_default(),
+        )
         .chain(SYSTEM_DIRECTORIES.iter().map(PathBuf::from))
         .collect()
 }
@@ -124,4 +152,22 @@ pub fn path_beside(program: &Path) -> OsString {
         }
     }
     env::join_paths(directories).unwrap_or_default()
+}
+
+/// The folders the installed languages say their tools generate, such as a build output or installed packages.
+static GENERATED: std::sync::RwLock<Vec<String>> = std::sync::RwLock::new(Vec::new());
+
+/// Replaces the folders the installed languages say their tools generate with `names`, each a folder's name.
+pub fn set_generated(names: Vec<String>) {
+    if let Ok(mut held) = GENERATED.write() {
+        *held = names;
+    }
+}
+
+/// The names of the folders the installed languages say their tools generate, which walks of a project leave out.
+pub fn generated() -> Vec<String> {
+    GENERATED
+        .read()
+        .map(|held| held.clone())
+        .unwrap_or_default()
 }

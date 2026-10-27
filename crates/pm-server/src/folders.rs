@@ -22,16 +22,10 @@ const LONGEST: Duration = Duration::from_millis(1500);
 const TICK: Duration = Duration::from_millis(100);
 
 /// The folders, from the root of a watched one, whose changes never matter to what git shows.
-const IGNORED: [&str; 5] = [
-    ".pandemonium",
-    "node_modules",
-    "target",
-    ".git/objects",
-    ".git/logs",
-];
+const IGNORED: [&str; 3] = [".pandemonium", ".git/objects", ".git/logs"];
 
 /// The names of the folders a watched folder's walk does not go into, wherever they are.
-const UNWALKED: [&str; 3] = [".pandemonium", "node_modules", "target"];
+const UNWALKED: [&str; 1] = [".pandemonium"];
 
 /// The most folders one watched folder has watched, so a huge tree does not use up what the system allows.
 const MOST_FOLDERS: usize = 20_000;
@@ -107,7 +101,10 @@ impl Folder {
             return false;
         }
         if let Ok(inside) = path.strip_prefix(&self.root) {
-            return !IGNORED.iter().any(|ignored| inside.starts_with(ignored));
+            return !IGNORED.iter().any(|ignored| inside.starts_with(ignored))
+                && !pm_tools::generated()
+                    .iter()
+                    .any(|ignored| inside.starts_with(ignored.as_str()));
         }
         self.git.iter().any(|(folder, _)| {
             path.strip_prefix(folder).is_ok_and(|inside| {
@@ -132,7 +129,10 @@ fn walk(folder: &Path, found: &mut Vec<PathBuf>) {
         let is_folder = entry.file_type().is_ok_and(|kind| kind.is_dir());
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if !is_folder || UNWALKED.contains(&name.as_ref()) {
+        if !is_folder
+            || UNWALKED.contains(&name.as_ref())
+            || pm_tools::generated().iter().any(|held| *held == name)
+        {
             continue;
         }
         if name == ".git" {

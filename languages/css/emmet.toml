@@ -1,0 +1,249 @@
+# Emmet: what style abbreviations know about properties, units and keywords.
+
+[style]
+# The unit a bare number is written with when its property takes one.
+default_unit = "px"
+# What a property must start with to take durations.
+timed = ["transition", "animation"]
+# Properties whose bare numbers are written without a unit.
+unitless = ["flex", "flex-grow", "flex-shrink", "font-weight", "line-height", "opacity", "order", "z-index"]
+
+# Short names and the properties they stand for.
+[style.properties]
+"ac" = "align-content"
+"ai" = "align-items"
+"anim" = "animation"
+"ap" = "appearance"
+"as" = "align-self"
+"asp" = "aspect-ratio"
+"b" = "bottom"
+"bd" = "border"
+"bdb" = "border-bottom"
+"bdc" = "border-color"
+"bdcl" = "border-collapse"
+"bdl" = "border-left"
+"bdr" = "border-radius"
+"bdrs" = "border-radius"
+"bds" = "border-style"
+"bdt" = "border-top"
+"bdw" = "border-width"
+"bg" = "background"
+"bgc" = "background-color"
+"bgi" = "background-image"
+"bgp" = "background-position"
+"bgr" = "background-repeat"
+"bgs" = "background-size"
+"bxsh" = "box-shadow"
+"bxz" = "box-sizing"
+"c" = "color"
+"cl" = "clear"
+"con" = "content"
+"cur" = "cursor"
+"d" = "display"
+"fil" = "filter"
+"fl" = "float"
+"ff" = "font-family"
+"fs" = "font-style"
+"fw" = "font-weight"
+"fx" = "flex"
+"fxd" = "flex-direction"
+"fxg" = "flex-grow"
+"fxs" = "flex-shrink"
+"fxw" = "flex-wrap"
+"fz" = "font-size"
+"g" = "gap"
+"gap" = "gap"
+"gtc" = "grid-template-columns"
+"gtr" = "grid-template-rows"
+"h" = "height"
+"jc" = "justify-content"
+"l" = "left"
+"lh" = "line-height"
+"lis" = "list-style"
+"ls" = "letter-spacing"
+"m" = "margin"
+"mb" = "margin-bottom"
+"mh" = "max-height"
+"mih" = "min-height"
+"miw" = "min-width"
+"ml" = "margin-left"
+"mr" = "margin-right"
+"mt" = "margin-top"
+"mw" = "max-width"
+"objf" = "object-fit"
+"op" = "opacity"
+"ord" = "order"
+"out" = "outline"
+"ov" = "overflow"
+"ovx" = "overflow-x"
+"ovy" = "overflow-y"
+"p" = "padding"
+"pb" = "padding-bottom"
+"pe" = "pointer-events"
+"pl" = "padding-left"
+"pos" = "position"
+"pr" = "padding-right"
+"pt" = "padding-top"
+"r" = "right"
+"res" = "resize"
+"t" = "top"
+"ta" = "text-align"
+"td" = "text-decoration"
+"ti" = "text-indent"
+"tov" = "text-overflow"
+"trf" = "transform"
+"trs" = "transition"
+"tsh" = "text-shadow"
+"tt" = "text-transform"
+"us" = "user-select"
+"v" = "visibility"
+"va" = "vertical-align"
+"w" = "width"
+"wb" = "word-break"
+"ws" = "white-space"
+"z" = "z-index"
+
+# Units a number may be followed by, with the long form of the short ones.
+[style.units]
+"p" = "%"
+"e" = "em"
+"r" = "rem"
+"x" = "ex"
+"%" = "%"
+"px" = "px"
+"em" = "em"
+"rem" = "rem"
+"ex" = "ex"
+"ch" = "ch"
+"vw" = "vw"
+"vh" = "vh"
+"vmin" = "vmin"
+"vmax" = "vmax"
+"pt" = "pt"
+"pc" = "pc"
+"cm" = "cm"
+"mm" = "mm"
+"in" = "in"
+"deg" = "deg"
+"rad" = "rad"
+"turn" = "turn"
+"fr" = "fr"
+
+# Units that only mean something for a duration.
+[style.durations]
+"s" = "s"
+"ms" = "ms"
+
+# The short keywords of each group of properties.
+[[style.keywords]]
+properties = ["display"]
+words = { "f" = "flex", "if" = "inline-flex", "g" = "grid", "ig" = "inline-grid", "b" = "block", "i" = "inline", "ib" = "inline-block", "n" = "none", "t" = "table", "tc" = "table-cell" }
+
+[[style.keywords]]
+properties = ["position"]
+words = { "a" = "absolute", "r" = "relative", "f" = "fixed", "s" = "sticky", "st" = "static" }
+
+[[style.keywords]]
+properties = ["text-align"]
+words = { "l" = "left", "c" = "center", "r" = "right", "j" = "justify" }
+
+[[style.keywords]]
+properties = ["font-weight"]
+words = { "b" = "bold", "n" = "normal", "l" = "lighter", "br" = "bolder" }
+
+[[style.keywords]]
+properties = ["font-style"]
+words = { "i" = "italic", "n" = "normal", "o" = "oblique" }
+
+[[style.keywords]]
+properties = ["text-decoration"]
+words = { "n" = "none", "u" = "underline", "o" = "overline", "l" = "line-through" }
+
+[[style.keywords]]
+properties = ["text-transform"]
+words = { "u" = "uppercase", "l" = "lowercase", "c" = "capitalize", "n" = "none" }
+
+[[style.keywords]]
+properties = ["float"]
+words = { "l" = "left", "r" = "right", "n" = "none" }
+
+[[style.keywords]]
+properties = ["clear"]
+words = { "b" = "both", "l" = "left", "r" = "right", "n" = "none" }
+
+[[style.keywords]]
+properties = ["overflow", "overflow-x", "overflow-y"]
+words = { "h" = "hidden", "s" = "scroll", "a" = "auto", "v" = "visible" }
+
+[[style.keywords]]
+properties = ["cursor"]
+words = { "p" = "pointer", "d" = "default", "t" = "text", "m" = "move", "g" = "grab", "na" = "not-allowed" }
+
+[[style.keywords]]
+properties = ["visibility"]
+words = { "v" = "visible", "h" = "hidden" }
+
+[[style.keywords]]
+properties = ["white-space"]
+words = { "n" = "normal", "nw" = "nowrap", "p" = "pre", "pw" = "pre-wrap", "pl" = "pre-line" }
+
+[[style.keywords]]
+properties = ["vertical-align"]
+words = { "t" = "top", "m" = "middle", "b" = "bottom", "bl" = "baseline" }
+
+[[style.keywords]]
+properties = ["border", "border-top", "border-bottom", "border-left", "border-right", "border-style", "outline"]
+words = { "s" = "solid", "d" = "dashed", "dt" = "dotted", "n" = "none" }
+
+[[style.keywords]]
+properties = ["flex-direction"]
+words = { "r" = "row", "rr" = "row-reverse", "c" = "column", "cr" = "column-reverse" }
+
+[[style.keywords]]
+properties = ["flex-wrap"]
+words = { "w" = "wrap", "n" = "nowrap", "wr" = "wrap-reverse" }
+
+[[style.keywords]]
+properties = ["justify-content"]
+words = { "c" = "center", "s" = "flex-start", "e" = "flex-end", "sb" = "space-between", "sa" = "space-around", "se" = "space-evenly" }
+
+[[style.keywords]]
+properties = ["align-items", "align-content", "align-self"]
+words = { "c" = "center", "s" = "flex-start", "e" = "flex-end", "st" = "stretch", "b" = "baseline" }
+
+[[style.keywords]]
+properties = ["box-sizing"]
+words = { "b" = "border-box", "c" = "content-box" }
+
+[[style.keywords]]
+properties = ["pointer-events"]
+words = { "n" = "none", "a" = "auto" }
+
+[[style.keywords]]
+properties = ["user-select"]
+words = { "n" = "none", "a" = "auto", "t" = "text" }
+
+[[style.keywords]]
+properties = ["text-overflow"]
+words = { "e" = "ellipsis", "c" = "clip" }
+
+[[style.keywords]]
+properties = ["background-repeat"]
+words = { "n" = "no-repeat", "x" = "repeat-x", "y" = "repeat-y", "r" = "repeat" }
+
+[[style.keywords]]
+properties = ["background-size", "object-fit"]
+words = { "c" = "cover", "ct" = "contain", "f" = "fill" }
+
+[[style.keywords]]
+properties = ["word-break"]
+words = { "ba" = "break-all", "k" = "keep-all" }
+
+[[style.keywords]]
+properties = ["resize"]
+words = { "n" = "none", "b" = "both", "h" = "horizontal", "v" = "vertical" }
+
+[[style.keywords]]
+properties = ["flex", "list-style"]
+words = { "n" = "none", "a" = "auto" }
+

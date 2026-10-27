@@ -89,6 +89,8 @@ fn evaluator_of(language: &str) -> Option<Arc<Evaluator>> {
             pairs: Vec::new(),
             scopes: Vec::new(),
             tags: None,
+            emmet: None,
+            emmet_tables: None,
         },
     )
     .ok()?;

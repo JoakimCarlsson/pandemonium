@@ -22,3 +22,19 @@ id = "clangd"
 language_id = "c"
 command = "clangd"
 check = ["--version"]
+
+[[debug_adapter]]
+id = "gdb"
+name = "GDB"
+programs = ["gdb"]
+arguments = ["--interpreter=dap", "--quiet"]
+connect = "stdio"
+types = ["gdb", "cppdbg"]
+
+[[debug_adapter]]
+id = "lldb-dap"
+name = "LLDB"
+programs = ["lldb-dap", "lldb-vscode"]
+connect = "stdio"
+types = ["lldb", "lldb-dap", "codelldb"]
+attach = ["*"]

@@ -17,7 +17,7 @@ const DEPTH: usize = 4;
 const FOLDERS: usize = 2000;
 
 /// Folders inside a project that hold what was fetched or built rather than written, which are not looked through for instructions.
-const SKIPPED: [&str; 6] = ["node_modules", "target", "build", "dist", "vendor", "out"];
+const SKIPPED: [&str; 4] = ["build", "dist", "vendor", "out"];
 
 /// Every customization `product` is given in the project at `project`, with `own` as the folder the product keeps its config in, kind by kind in the order its places are listed.
 pub fn discover(product: Option<Product>, project: &Path, own: Option<&Path>) -> Vec<Item> {
@@ -167,6 +167,7 @@ fn nested(project: &Path, name: &str) -> Vec<PathBuf> {
             if entry.path().is_dir()
                 && !named.starts_with('.')
                 && !SKIPPED.contains(&named.as_str())
+                && !pm_tools::generated().contains(&named)
             {
                 waiting.push((entry.path(), depth + 1));
             }

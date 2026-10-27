@@ -9,6 +9,7 @@ description = "TSX, React and Next.js components with typescript-language-server
 icon = "icon.svg"
 color = "#5aa9e6"
 family = "javascript"
+emmet = "markup"
 grammar = "tsx"
 suffixes = ["tsx"]
 aliases = ["typescriptreact"]
@@ -52,9 +53,13 @@ args = ["--stdio"]
 project = ["node_modules/.bin"]
 
 [server.install]
-kind = "npm"
+kind = "command"
 version = "6.0.2"
-packages = ["typescript-language-server@6.0.2", "typescript@6.0.3"]
+command = ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"]
+needs = "Node.js and npm"
+bin = "node_modules/.bin"
+files = ["package.json", "package-lock.json"]
+# Pinned by the lockfile: typescript-language-server@6.0.2, typescript@6.0.3
 
 # Tailwind CSS class names, read alongside the main server in projects that use
 # Tailwind. Completions are offered only inside strings and template strings, where class names are written.
@@ -62,7 +67,7 @@ packages = ["typescript-language-server@6.0.2", "typescript@6.0.3"]
 scopes = ["string"]
 
 [companion.detect]
-dependencies = ["tailwindcss"]
+text = [["package.json", '"tailwindcss"\s*:']]
 files = ["tailwind.config.*"]
 
 [companion.server]
@@ -76,7 +81,10 @@ project = ["node_modules/.bin"]
 classAttributes = ["class", "className", "ngClass", "class:list"]
 
 [companion.server.install]
-kind = "npm"
+kind = "command"
 version = "0.16.0"
-packages = ["@tailwindcss/language-server@0.16.0"]
-pin = "tailwindcss"
+command = ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"]
+needs = "Node.js and npm"
+bin = "node_modules/.bin"
+files = ["tailwindcss.package.json:package.json", "tailwindcss.package-lock.json:package-lock.json"]
+# Pinned by the lockfile: @tailwindcss/language-server@0.16.0

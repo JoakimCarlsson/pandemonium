@@ -26,7 +26,7 @@ pub use language::{LanguageCall, LanguageReply, Launch, TaskItem, ToolchainItem}
 pub use pack::{pack, unpack};
 
 /// The version of this contract that this build speaks.
-pub const API_VERSION: u32 = 2;
+pub const API_VERSION: u32 = 3;
 
 /// The module the host's import lives in.
 pub const HOST_MODULE: &str = "pandemonium";

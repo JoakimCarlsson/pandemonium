@@ -44,6 +44,10 @@ pub struct Editing {
     pub scopes: Vec<Scope>,
     /// The nodes that make up a tag, for a language whose files have tags the editor closes as they are opened.
     pub tags: Option<Tags>,
+    /// The kind of Emmet abbreviation its files take, `markup` or `style`, when they take any.
+    pub emmet: Option<String>,
+    /// What those abbreviations know, the text of the language's `emmet.toml`.
+    pub emmet_tables: Option<String>,
 }
 
 /// A named set of syntax nodes whose insides are edited differently from the rest of the file, such as the children of a JSX element.
@@ -84,6 +88,8 @@ impl Default for Editing {
             pairs: Editing::pairs_of(&default_pairs()),
             scopes: Vec::new(),
             tags: None,
+            emmet: None,
+            emmet_tables: None,
         }
     }
 }

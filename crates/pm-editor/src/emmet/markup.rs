@@ -4,6 +4,7 @@ mod numbering;
 mod parse;
 mod tables;
 
+use super::data::Markup;
 use super::snippet::escape;
 use parse::{Element, Node};
 
@@ -28,12 +29,12 @@ struct Fragment {
 }
 
 /// The markup `abbreviation` expands to, its nested lines indented with `indent`, or nothing when it is not an abbreviation.
-pub(super) fn expand(abbreviation: &str, indent: &str) -> Option<String> {
-    if abbreviation == "!" {
-        return Some(document(indent));
+pub(super) fn expand(abbreviation: &str, indent: &str, tables: &Markup) -> Option<String> {
+    if abbreviation == "!" && !tables.document.is_empty() {
+        return Some(tables.document.replace("{indent}", indent));
     }
     let nodes = parse::parse(abbreviation)?;
-    let writer = Writer { indent };
+    let writer = Writer { indent, tables };
     let fragments = writer.fragments(&nodes, "", Context { index: 0, count: 1 });
     let lines = if fragments.iter().all(|fragment| !fragment.block) {
         vec![join_inline(&fragments)]
@@ -44,13 +45,6 @@ pub(super) fn expand(abbreviation: &str, indent: &str) -> Option<String> {
             .collect()
     };
     Some(number_stops(&lines.join("\n")))
-}
-
-/// The page skeleton `!` stands for.
-fn document(indent: &str) -> String {
-    format!(
-        "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n{indent}<meta charset=\"UTF-8\">\n{indent}<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n{indent}<title>${{1:Document}}</title>\n</head>\n<body>\n{indent}$0\n</body>\n</html>"
-    )
 }
 
 /// The first line of every fragment run together.
@@ -85,6 +79,8 @@ fn number_stops(text: &str) -> String {
 struct Writer<'a> {
     /// What one level of nesting is indented with.
     indent: &'a str,
+    /// What the language knows about tags.
+    tables: &'a Markup,
 }
 
 impl Writer<'_> {
@@ -133,17 +129,17 @@ impl Writer<'_> {
         let written = element
             .name
             .as_deref()
-            .unwrap_or_else(|| tables::implicit_name(parent));
+            .unwrap_or_else(|| self.tables.implicit_name(parent));
         let (written, input_type) = match written.strip_prefix("input:") {
             Some(kind) => ("input", Some(kind)),
             None => (written, None),
         };
-        let tag = tables::resolve(written);
-        let open = open_tag(tag, element, input_type, &number);
-        if tables::is_void(tag) {
+        let tag = self.tables.resolve(written);
+        let open = open_tag(self.tables, tag, element, input_type, &number);
+        if self.tables.is_void(tag) {
             return Fragment {
                 lines: vec![open],
-                block: !tables::is_inline(tag),
+                block: !self.tables.is_inline(tag),
             };
         }
         let mut children = Vec::new();
@@ -170,7 +166,7 @@ impl Writer<'_> {
             lines
         };
         Fragment {
-            block: !tables::is_inline(tag) || lines.len() > 1,
+            block: !self.tables.is_inline(tag) || lines.len() > 1,
             lines,
         }
     }
@@ -187,6 +183,7 @@ fn repetition(repeat: Option<usize>, index: usize, count: usize, inherited: Cont
 
 /// The opening tag of `tag` with its id, classes, default attributes and written attributes.
 fn open_tag(
+    tables: &Markup,
     tag: &str,
     element: &Element,
     input_type: Option<&str>,
@@ -212,12 +209,12 @@ fn open_tag(
     for attribute in &element.attributes {
         written.push((attribute.name.clone(), attribute.value.clone()));
     }
-    for (name, value) in tables::defaults(tag) {
+    for (name, value) in tables.defaults(tag) {
         if written.iter().any(|(given, _)| given == name) {
             continue;
         }
         let value = value.map_or_else(|| stop.clone(), escape);
-        attributes.push(((*name).to_string(), value));
+        attributes.push((name.to_string(), value));
     }
     for (name, value) in written {
         let value = value.map_or_else(|| stop.clone(), |value| escape(&number(&value)));

@@ -12,10 +12,11 @@ use crate::resolve::ensure_server;
 /// The manifest of the installed language `id`, or nothing when it is not installed.
 pub fn installed_manifest(id: &str) -> Option<Manifest> {
     let folder = language_folder(id).ok()?;
-    if !grammar_file(id).ok()?.is_file() {
+    let manifest = Manifest::read(&folder).ok()?;
+    if !manifest.grammar.is_empty() && !grammar_file(id).ok()?.is_file() {
         return None;
     }
-    Manifest::read(&folder).ok()
+    Some(manifest)
 }
 
 /// The installed language a file at `path` is written in, by folder name; a language that names the file or a pattern its name matches is chosen before one that reads it by its ending, so that `docker-compose.yml` is Compose and not YAML.
@@ -110,7 +111,7 @@ fn fetch_folder(index: &Index, id: &str, staging: &Path) -> Result<Manifest, Str
         &std::fs::read_to_string(staging.join("config.toml"))
             .map_err(|error| format!("{id} has no config.toml: {error}"))?,
     )?;
-    if staging.join("grammar.wasm").is_file() {
+    if manifest.grammar.is_empty() || staging.join("grammar.wasm").is_file() {
         return Ok(manifest);
     }
     if manifest.grammar_file.url.is_empty() {
@@ -128,7 +129,7 @@ fn holds(listing: &Listing, id: &str) -> bool {
     let Ok(folder) = language_folder(id) else {
         return false;
     };
-    folder.join("grammar.wasm").is_file()
+    (!listing.grammar || folder.join("grammar.wasm").is_file())
         && listing.files.iter().all(|(name, checksum)| {
             std::fs::read(folder.join(name)).is_ok_and(|bytes| sha256(&bytes) == *checksum)
         })

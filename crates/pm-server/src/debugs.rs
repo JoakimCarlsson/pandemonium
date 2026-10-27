@@ -104,6 +104,7 @@ pub(crate) fn processes() -> (Vec<DebugAdapter>, Vec<DebugProcess>) {
         .map(|adapter| DebugAdapter {
             id: adapter.id,
             name: adapter.name,
+            attach: adapter.attach,
         })
         .collect();
     let processes = pm_dap::processes()

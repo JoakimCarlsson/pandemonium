@@ -1,10 +1,9 @@
-//! The debug adapters the editor knows how to run, and which one a scenario
-//! means.
+//! The debug adapters the editor can run, and which one a scenario means.
 //!
-//! An adapter is named by the scenario that wants it, in whatever words the
-//! editor that wrote the scenario used: VS Code's `cppdbg` and `lldb`, Zed's
-//! `CodeLLDB` and `GDB`. Each adapter here answers to every name it can stand
-//! in for, so a `launch.json` written for another editor debugs here too.
+//! The editor knows no adapter itself: the installed languages and extensions
+//! bring them, each answering to the names a scenario may call it by, so that a
+//! `launch.json` written for another editor debugs here too when a language
+//! brings an adapter that answers to its `type`.
 
 use std::path::PathBuf;
 use std::sync::RwLock;
@@ -42,93 +41,35 @@ pub struct Adapter {
     pub types: Vec<String>,
     /// Why it may not be run, for an adapter an extension brings that the reader has not allowed to run programs.
     pub denied: Option<String>,
+    /// Settings every scenario run with it gets, whatever it says.
+    pub set: Map<String, Value>,
+    /// Settings a scenario gets only when it names none or says `auto`.
+    pub default: Map<String, Value>,
+    /// The beginnings of the names of programs it attaches to, in lower case; `*` for any other program.
+    pub attach: Vec<String>,
+    /// How a build a scenario names in place of a program is run, for an adapter that knows only a program.
+    pub build: Option<crate::build::Build>,
 }
 
-/// The adapters extensions bring, which are looked for after the ones the editor knows.
-static EXTENSION_ADAPTERS: RwLock<Vec<Adapter>> = RwLock::new(Vec::new());
+/// The adapters the installed languages and extensions bring.
+static ADAPTERS: RwLock<Vec<Adapter>> = RwLock::new(Vec::new());
 
-/// Puts together an adapter the editor knows from its parts.
-fn known(
-    id: &str,
-    name: &str,
-    programs: &[&str],
-    arguments: &[&str],
-    connect: Connect,
-    types: &[&str],
-) -> Adapter {
-    let owned = |words: &[&str]| words.iter().map(|word| (*word).to_owned()).collect();
-    Adapter {
-        id: id.to_owned(),
-        name: name.to_owned(),
-        programs: owned(programs),
-        arguments: owned(arguments),
-        connect,
-        types: owned(types),
-        denied: None,
-    }
-}
-
-/// Every adapter the editor can run, in the order they are offered: those it knows, then those extensions brought.
+/// Every adapter the editor can run, in the order they are offered.
 pub fn adapters() -> Vec<Adapter> {
-    let mut every = vec![
-        known(
-            "gdb",
-            "GDB",
-            &["gdb"],
-            &["--interpreter=dap", "--quiet"],
-            Connect::Stdio,
-            &["gdb", "cppdbg"],
-        ),
-        known(
-            "lldb-dap",
-            "LLDB",
-            &["lldb-dap", "lldb-vscode"],
-            &[],
-            Connect::Stdio,
-            &["lldb", "lldb-dap", "codelldb"],
-        ),
-        known(
-            "debugpy",
-            "Debugpy",
-            &["python3", "python"],
-            &["-m", "debugpy.adapter"],
-            Connect::Stdio,
-            &["debugpy", "python"],
-        ),
-        known(
-            "delve",
-            "Delve",
-            &["dlv"],
-            &["dap", "--listen", "127.0.0.1:{port}"],
-            Connect::Tcp,
-            &["go", "delve"],
-        ),
-    ];
-    if let Ok(held) = EXTENSION_ADAPTERS.read() {
-        every.extend(held.iter().cloned());
-    }
-    every
+    ADAPTERS.read().map(|held| held.clone()).unwrap_or_default()
 }
 
-/// Replaces the adapters extensions bring with `adapters`, an adapter whose id or names one the editor knows being left out so that an extension adds adapters and never takes one over.
-pub fn set_extension_adapters(adapters: Vec<Adapter>) {
-    let own = self::adapters_known();
-    let kept = adapters
-        .into_iter()
-        .filter(|adapter| {
-            !own.iter().any(|held| {
-                held.id == adapter.id || held.types.iter().any(|name| adapter.types.contains(name))
-            })
-        })
-        .collect();
-    if let Ok(mut held) = EXTENSION_ADAPTERS.write() {
+/// Replaces the adapters the editor can run with `adapters`, an adapter whose id an earlier one has being left out.
+pub fn set_adapters(adapters: Vec<Adapter>) {
+    let mut kept: Vec<Adapter> = Vec::new();
+    for adapter in adapters {
+        if !kept.iter().any(|held| held.id == adapter.id) {
+            kept.push(adapter);
+        }
+    }
+    if let Ok(mut held) = ADAPTERS.write() {
         *held = kept;
     }
-}
-
-/// The adapters the editor knows, without those extensions bring.
-fn adapters_known() -> Vec<Adapter> {
-    adapters().into_iter().take(4).collect()
 }
 
 impl Adapter {
@@ -166,25 +107,15 @@ impl Adapter {
             .collect()
     }
 
-    /// Settles what a scenario asks for into what this adapter takes.
-    ///
-    /// A scenario is written for the editor that wrote it, and a few of its
-    /// words mean something this editor does not do: a Python program run in
-    /// a terminal the editor would have to open, a Go program whose mode the
-    /// other editor's extension guessed before delve ever heard of it. Those
-    /// are turned into what this adapter does on its own.
+    /// Settles what a scenario asks for into what this adapter takes: what the adapter says every scenario gets is put in, and what it says a scenario gets when it names none, or says `auto`, is put in where there is none.
     pub(crate) fn prepare(&self, config: &mut Map<String, Value>) {
-        match self.id.as_str() {
-            "debugpy" => {
-                config.insert("console".into(), "internalConsole".into());
+        for (key, value) in &self.set {
+            config.insert(key.clone(), value.clone());
+        }
+        for (key, value) in &self.default {
+            if config.get(key).is_none_or(|held| held == "auto") {
+                config.insert(key.clone(), value.clone());
             }
-            "delve" => {
-                let guessed = config.get("mode").is_none_or(|mode| mode == "auto");
-                if guessed {
-                    config.insert("mode".into(), "debug".into());
-                }
-            }
-            _ => {}
         }
     }
 }

@@ -92,8 +92,86 @@ pub(crate) fn describe(package: &Package, installed: bool) -> ExtensionInfo {
     }
 }
 
+/// The debug adapters the installed languages bring, and what their files can be debugged as, each refused unless the extension that carries its language, if one does, may run programs.
+fn language_adapters() -> (Vec<pm_dap::Adapter>, Vec<pm_dap::Template>) {
+    let object = |value: serde_json::Value| value.as_object().cloned().unwrap_or_default();
+    let mut adapters = Vec::new();
+    let mut templates = Vec::new();
+    for (id, manifest) in pm_lsp::installed() {
+        let denied = (!may_run_programs(&id))
+            .then(|| format!("{id} is carried by an extension that may not run programs"));
+        adapters.extend(
+            manifest
+                .debug_adapters
+                .into_iter()
+                .map(|entry| pm_dap::Adapter {
+                    id: entry.id,
+                    name: entry.name,
+                    programs: entry.programs,
+                    arguments: entry.arguments,
+                    connect: if entry.connect == "tcp" {
+                        pm_dap::Connect::Tcp
+                    } else {
+                        pm_dap::Connect::Stdio
+                    },
+                    types: entry.types.iter().map(|name| name.to_lowercase()).collect(),
+                    denied: denied.clone(),
+                    set: object(entry.set),
+                    default: object(entry.default),
+                    attach: entry.attach,
+                    build: entry.build.map(|spec| pm_dap::Build {
+                        key: spec.key,
+                        program: spec.program,
+                        args: spec.args,
+                        append: spec.append,
+                        cwd: spec.cwd,
+                        env: spec.env,
+                        filter: spec.filter,
+                        matching: spec.matching.as_object().cloned().unwrap_or_default(),
+                        take: spec.take,
+                        compare: spec.compare,
+                    }),
+                }),
+        );
+        templates.extend(manifest.debug_scenarios.into_iter().map(|entry| {
+            pm_dap::Template {
+                label: entry.label,
+                adapter: entry.adapter,
+                suffixes: entry
+                    .suffixes
+                    .iter()
+                    .map(|ending| ending.to_lowercase())
+                    .collect(),
+                config: entry.config,
+            }
+        }));
+    }
+    (adapters, templates)
+}
+
+/// Has the editor run the debug adapters the installed languages and extensions bring, offer what their files can be debugged as, and look for programs in the folders the languages say their tools are in; the folders of a language an extension carries are used only when the extension may run programs.
+pub(crate) fn refresh_adapters() {
+    pm_tools::set_generated(
+        pm_lsp::installed()
+            .into_iter()
+            .flat_map(|(_, manifest)| manifest.generated)
+            .collect(),
+    );
+    pm_tools::set_directories(
+        pm_lsp::installed()
+            .into_iter()
+            .filter(|(id, _)| may_run_programs(id))
+            .flat_map(|(_, manifest)| manifest.tool_directories)
+            .collect(),
+    );
+    let (mut adapters, templates) = language_adapters();
+    adapters.extend(adapters_of_extensions());
+    pm_dap::set_adapters(adapters);
+    pm_dap::set_templates(templates);
+}
+
 /// The debug adapters the installed extensions bring, each refused unless its extension may run programs.
-fn adapters() -> Vec<pm_dap::Adapter> {
+fn adapters_of_extensions() -> Vec<pm_dap::Adapter> {
     pm_plugin::installed()
         .into_iter()
         .flat_map(|package| {
@@ -117,6 +195,10 @@ fn adapters() -> Vec<pm_dap::Adapter> {
                     },
                     types: entry.types.iter().map(|name| name.to_lowercase()).collect(),
                     denied: denied.clone(),
+                    set: Default::default(),
+                    default: Default::default(),
+                    attach: Vec::new(),
+                    build: None,
                 })
         })
         .collect()
@@ -263,7 +345,7 @@ pub(crate) fn refused_servers() -> HashMap<String, pm_lsp::ServerChoice> {
 impl Core {
     /// Takes in what changed about extensions: the adapters and language servers they bring are refused or allowed as the grants say, and every client is told how the extensions stand.
     pub(crate) fn extensions_changed(&self) {
-        pm_dap::set_extension_adapters(adapters());
+        refresh_adapters();
         self.documents.settings_changed(&crate::machine::settings());
         self.tell_extensions();
     }

@@ -202,30 +202,17 @@ fn reads(companion: &Companion, path: &str) -> bool {
         })
 }
 
-/// Whether the project at `root` holds what `detect` asks for: a dependency in its `package.json` or a file at its root; true when it asks for nothing.
+/// Whether the project at `root` holds what `detect` asks for: a file at its root, or a file at its root whose text a pattern matches; true when it asks for nothing.
 fn needed(root: &Path, detect: &Detect) -> bool {
-    if detect.dependencies.is_empty() && detect.files.is_empty() {
+    if detect.text.is_empty() && detect.files.is_empty() {
         return true;
     }
-    let depends = std::fs::read_to_string(root.join("package.json"))
-        .ok()
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-        .is_some_and(|package| {
-            [
-                "dependencies",
-                "devDependencies",
-                "peerDependencies",
-                "optionalDependencies",
-            ]
-            .iter()
-            .filter_map(|section| package.get(section)?.as_object())
-            .any(|held| {
-                detect
-                    .dependencies
-                    .iter()
-                    .any(|name| held.contains_key(name))
-            })
-        });
+    let depends = detect.text.iter().any(|[file, pattern]| {
+        std::fs::read_to_string(root.join(file))
+            .ok()
+            .zip(regex::Regex::new(pattern).ok())
+            .is_some_and(|(text, pattern)| pattern.is_match(&text))
+    });
     depends
         || std::fs::read_dir(root).is_ok_and(|entries| {
             entries.filter_map(Result::ok).any(|entry| {

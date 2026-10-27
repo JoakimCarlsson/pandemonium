@@ -26,9 +26,13 @@ command = "docker-compose-langserver"
 args = ["--stdio"]
 
 [server.install]
-kind = "npm"
+kind = "command"
 version = "1.0.0"
-packages = ["@microsoft/compose-language-service@1.0.0"]
+command = ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"]
+needs = "Node.js and npm"
+bin = "node_modules/.bin"
+files = ["package.json", "package-lock.json"]
+# Pinned by the lockfile: @microsoft/compose-language-service@1.0.0
 
 [[lens]]
 kind = "all"

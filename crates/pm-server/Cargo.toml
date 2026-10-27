@@ -25,6 +25,7 @@ pm-policy.workspace = true
 pm-protocol.workspace = true
 pm-store.workspace = true
 pm-task.workspace = true
+pm-tools.workspace = true
 pm-transport.workspace = true
 pm-treesitter.workspace = true
 pm-update.workspace = true

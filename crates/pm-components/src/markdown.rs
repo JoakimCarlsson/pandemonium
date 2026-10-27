@@ -16,8 +16,7 @@ use pm_ui::{Node, node, retained, text};
 
 use crate::CodeBox;
 use crate::figures::{
-    Figures, diagram_key, diagram_node, figure_marks, formula_key, image_key, images_node,
-    is_diagram,
+    Figures, diagram_node, figure_marks, has_renderer, image_key, images_node, render_key,
 };
 use crate::parts::{glyph, line};
 
@@ -230,10 +229,10 @@ impl Layout<'_> {
                 self.text(spans, pixels, true, tone, width)
             }
             Block::List { start, items } => self.list(*start, items, tone, width),
-            Block::Code { language, text } if is_diagram(language) => self.figure(
+            Block::Code { language, text } if has_renderer(language) => self.figure(
                 text,
-                diagram_key(text),
-                "This diagram could not be drawn.",
+                render_key(language, text),
+                "This figure could not be drawn.",
                 width,
             ),
             Block::Code { text, .. } => self.code(text, width),
@@ -248,12 +247,13 @@ impl Layout<'_> {
             Block::Details { summary, blocks } => self.fold_out(summary, blocks, tone, width),
             Block::Rule => node().styles([h_px(1), w_full(), my(1), bg(Role::Border)]),
             Block::Table { head, rows } => self.table(head, rows, tone, width),
-            Block::Math(text) => self.figure(
+            Block::Math(text) if has_renderer("math") => self.figure(
                 text,
-                formula_key(text),
+                render_key("math", text),
                 "This formula could not be set.",
                 width,
             ),
+            Block::Math(text) => self.code(text, width),
             Block::Images { images, centered } => images_node(
                 images,
                 *centered,

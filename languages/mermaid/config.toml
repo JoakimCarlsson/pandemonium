@@ -1,0 +1,9 @@
+# Mermaid: draws the diagrams written as ```mermaid fences in markdown. It has no
+# files of its own to read, so no grammar: its `module.wasm`, built from
+# `module/`, answers `render` calls with an SVG picture.
+
+name = "Mermaid"
+version = "0.1.0"
+description = "Draws mermaid diagrams written in markdown."
+hidden = true
+renders = ["mermaid"]

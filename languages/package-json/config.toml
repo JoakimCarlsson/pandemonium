@@ -17,6 +17,10 @@ line_comment = "//"
 indent = 2
 pairs = ["[]", "{}", "\"\""]
 
+tool_directories = ["~/.bun/bin", "~/.deno/bin", "~/.npm-global/bin", "~/AppData/Roaming/npm", "~/.volta/bin", "~/.nvm/versions/node/*/bin"]
+
+generated = ["node_modules"]
+
 [grammar_file]
 url = "https://github.com/tree-sitter/tree-sitter-json/releases/download/v0.24.8/tree-sitter-json.wasm"
 sha256 = "d2119fb98d5912719b13f9458574f8608d2d29dfbe45f6be1f860ea1fe2a2405"
@@ -31,9 +35,13 @@ args = ["--stdio"]
 provideFormatter = true
 
 [server.install]
-kind = "npm"
+kind = "command"
 version = "4.10.0"
-packages = ["vscode-langservers-extracted@4.10.0"]
+command = ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"]
+needs = "Node.js and npm"
+bin = "node_modules/.bin"
+files = ["package.json", "package-lock.json"]
+# Pinned by the lockfile: vscode-langservers-extracted@4.10.0
 
 [[lens]]
 kind = "script"
@@ -106,6 +114,7 @@ groups = { build = ["build", "compile"], test = ["test", "check"], run = ["start
 json = "scripts"
 
 [[toolchain]]
+title = "Node.js"
 system = [["node", "--version"]]
 
 [[toolchain]]

@@ -24,7 +24,7 @@ mod style;
 
 pub use command::run_command;
 pub use install::{Installed, inspect, install, remove};
-pub use language::run_language;
+pub use language::{run_language, run_module};
 pub use manifest::{
     AdapterEntry, CommandEntry, FileEntry, IconEntry, LanguageEntry, Manifest, ServerEntry,
 };

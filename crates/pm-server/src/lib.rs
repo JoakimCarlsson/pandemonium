@@ -32,4 +32,5 @@ mod uploads;
 
 pub use cli::run_with_arguments;
 pub use credential::FILE as CREDENTIAL_FILE;
+pub use languages::render_with_module;
 pub use listener::{Settings, run};

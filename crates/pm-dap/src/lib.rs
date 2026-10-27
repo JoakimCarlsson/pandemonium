@@ -1,6 +1,6 @@
 //! Debugging, over the Debug Adapter Protocol.
 //!
-//! A debug adapter is another program: gdb, lldb-dap, debugpy, delve. It is
+//! A debug adapter is another program that a language brings, such as gdb or debugpy. It is
 //! started beside a worktree, told which program to run and where to stop,
 //! and it answers with where that program is paused and what its variables
 //! hold. This crate is that seam: the process, the protocol on its pipe or
@@ -15,7 +15,7 @@
 
 mod adapter;
 mod attach;
-mod cargo;
+mod build;
 mod program;
 mod scenario;
 mod session;
@@ -23,9 +23,10 @@ mod state;
 mod view;
 mod wire;
 
-pub use adapter::{Adapter, Connect, adapters, set_extension_adapters};
+pub use adapter::{Adapter, Connect, adapters, set_adapters};
 pub use attach::{Process, processes};
-pub use scenario::{Request, Scenario, scenarios};
+pub use build::Build;
+pub use scenario::{Request, Scenario, Template, scenarios, set_templates};
 pub use session::{Notify, Session};
 pub use state::{
     Breakpoint, Category, Event, Frame, Line, Placed, Scope, Standing, Thread, Variable, Watched,

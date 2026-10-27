@@ -1,4 +1,4 @@
-.PHONY: fmt lint run install install-server release languages extension-sample
+.PHONY: fmt lint run install install-server release languages language-modules extension-sample
 
 fmt:
 	cargo fmt --all
@@ -20,6 +20,13 @@ release:
 
 languages:
 	cargo run -p pm-server --bin pandemonium-server -- --index-languages languages
+
+# Builds the modules some language folders carry (`module.wasm`, from `module/`) and puts them in place.
+language-modules:
+	for module in mermaid math; do \
+		cargo build --release --target wasm32-unknown-unknown --manifest-path languages/$$module/module/Cargo.toml --target-dir build/module-$$module && \
+		cp build/module-$$module/wasm32-unknown-unknown/release/$${module}_module.wasm languages/$$module/module.wasm; \
+	done
 
 extension-sample:
 	cargo build --release --target wasm32-unknown-unknown --manifest-path extensions/hello-guest/Cargo.toml --target-dir build/hello-guest

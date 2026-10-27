@@ -18,6 +18,8 @@ indent = 4
 tabs = true
 pairs = ["()", "[]", "\"\"", "``"]
 
+generated = ["vendor"]
+
 [server]
 id = "gopls"
 language_id = "go.mod"
@@ -25,9 +27,12 @@ command = "gopls"
 check = ["version"]
 
 [server.install]
-kind = "go"
+kind = "command"
 version = "v0.24.0"
-package = "golang.org/x/tools/gopls@v0.24.0"
+command = ["go", "install", "golang.org/x/tools/gopls@v0.24.0"]
+needs = "Go"
+env = { GOBIN = "{folder}", GOSUMDB = "sum.golang.org", GOFLAGS = "-mod=readonly" }
+env_remove = ["GONOSUMDB", "GONOSUMCHECK", "GOPRIVATE", "GOINSECURE"]
 
 [dependencies]
 url = "https://proxy.golang.org/{name}/@latest"

@@ -28,6 +28,10 @@ args = ["--stdio"]
 project = ["node_modules/.bin"]
 
 [server.install]
-kind = "npm"
+kind = "command"
 version = "6.0.2"
-packages = ["typescript-language-server@6.0.2", "typescript@6.0.3"]
+command = ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"]
+needs = "Node.js and npm"
+bin = "node_modules/.bin"
+files = ["package.json", "package-lock.json"]
+# Pinned by the lockfile: typescript-language-server@6.0.2, typescript@6.0.3

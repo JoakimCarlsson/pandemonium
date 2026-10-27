@@ -1180,20 +1180,20 @@ impl Work {
                     let drawn = picture::draw(&path, &text);
                     let _ = reporter.send(Job::Drawn(session, path, head, drawn));
                 }),
-                Outgoing::DrawDiagram { key, source } => {
-                    let palette = self.palette.clone();
-                    self.spawn(move |reporter| {
-                        let drawn = picture::diagram(&source, &palette);
-                        let _ = reporter.send(Job::Figure(key, drawn));
-                    });
-                }
-                Outgoing::DrawFormula { key, source } => {
-                    let palette = self.palette.clone();
-                    self.spawn(move |reporter| {
-                        let drawn = picture::formula(&source, &palette);
-                        let _ = reporter.send(Job::Figure(key, drawn));
-                    });
-                }
+                Outgoing::RenderFigure {
+                    key,
+                    language,
+                    source,
+                } => self.ask(
+                    &None,
+                    Request::RenderFigure {
+                        language,
+                        source,
+                        dark: self.palette.dark(),
+                        colors: self.palette.variables().clone(),
+                    },
+                    Pending::Figure(key),
+                ),
                 Outgoing::ReadFigure { key, session, path } => self.ask_in_folder(
                     model,
                     session,

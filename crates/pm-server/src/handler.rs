@@ -1139,6 +1139,18 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             argument,
             directory,
         } => core.run_extension_command(&extension, &command, &argument, directory.as_deref()),
+        Request::RenderFigure {
+            language,
+            source,
+            dark,
+            colors,
+        } => match languages::render_figure(&language, &source, dark, colors) {
+            Ok(svg) => Response::Bytes {
+                bytes: svg.into_bytes(),
+                truncated: false,
+            },
+            Err(reason) => failed(reason),
+        },
         Request::Grammar { language } => match languages::grammar(&language) {
             Ok(bundle) => Response::Grammar(bundle),
             Err(reason) => failed(reason),

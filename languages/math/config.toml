@@ -1,0 +1,9 @@
+# Math: sets the formulas written in TeX between $$ in markdown, or as a ```math
+# fence. It has no files of its own to read, so no grammar: its `module.wasm`,
+# built from `module/`, answers `render` calls with an SVG picture.
+
+name = "Math"
+version = "0.1.0"
+description = "Sets formulas written in TeX in markdown."
+hidden = true
+renders = ["math"]

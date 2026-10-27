@@ -1243,18 +1243,13 @@ pub enum Outgoing {
         /// Whether to read it from the last commit.
         head: bool,
     },
-    /// Draws a diagram written in markdown into pixels.
-    DrawDiagram {
+    /// Has the language that draws what a figure of markdown is written in draw it, to be set into pixels.
+    RenderFigure {
         /// The key it is kept under.
         key: u64,
-        /// What it is written as.
-        source: String,
-    },
-    /// Sets a formula written in TeX in markdown into pixels.
-    DrawFormula {
-        /// The key it is kept under.
-        key: u64,
-        /// The TeX it is written in.
+        /// What it is written in, as a fence names it.
+        language: String,
+        /// What is written.
         source: String,
     },
     /// Reads a picture a markdown file of the folder of a session shows, to be decoded.

@@ -48,12 +48,8 @@ pub enum InstallKind {
     /// Fetched as a program built for the platform.
     #[default]
     Download,
-    /// Built with `go install`, which needs Go on the machine.
-    Go,
-    /// Installed by a command the language folder names, run with the program it names found on the machine.
+    /// Installed by a command the language folder names, run with the program it names found on the machine and without a shell: `go install`, `npm ci`, `gem install` or any other.
     Command,
-    /// Installed with `npm`, which needs Node.js on the machine.
-    Npm,
 }
 
 /// How a language server is installed into the data folder.
@@ -66,9 +62,6 @@ pub struct Install {
     /// The program for each platform, as `os-arch`: `linux-x86_64`, `macos-aarch64`, `windows-x86_64`.
     #[serde(default)]
     pub downloads: BTreeMap<String, Download>,
-    /// What `go install` builds, with its version.
-    #[serde(default)]
-    pub package: Option<String>,
     /// The program, with its arguments, a `command` install runs, where `{folder}` stands for the folder the server is installed in and `{version}` for `version`; the program is found on the machine and run without a shell.
     #[serde(default)]
     pub command: Vec<String>,
@@ -78,12 +71,15 @@ pub struct Install {
     /// The folder inside the install folder that a `command` install puts the server's program in; the install folder itself when nothing.
     #[serde(default)]
     pub bin: Option<String>,
-    /// What `npm` installs, each with its version; the language folder's `package.json` and `package-lock.json` pin them and the checksum of every package.
+    /// What the environment of the command holds besides, where `{folder}` and `{version}` stand as they do in the command.
     #[serde(default)]
-    pub packages: Vec<String>,
-    /// What the pin files of the language folder are named before `package.json` and `package-lock.json`, when the folder pins more than one install through `npm`; none when it pins one.
+    pub env: BTreeMap<String, String>,
+    /// Variables taken out of the command's environment, so that what the machine has set does not change what is installed.
     #[serde(default)]
-    pub pin: Option<String>,
+    pub env_remove: Vec<String>,
+    /// Files of the language's folder copied into the install folder before the command runs, such as the lockfile that pins what it installs; `name:other` copies `name` as `other`.
+    #[serde(default)]
+    pub files: Vec<String>,
 }
 
 /// The language server that reads a language's files.
@@ -107,6 +103,9 @@ pub struct ServerSpec {
     /// Folders of the project, such as `.venv/bin`, looked in for the program before the machine's, and put first on the path it runs with.
     #[serde(default)]
     pub project: Vec<String>,
+    /// What this client tells the server it can do besides what it always does, merged into the client capabilities of the `initialize` request, such as an extension of the protocol the server defines.
+    #[serde(default)]
+    pub capabilities: serde_json::Value,
     /// What it is told when it asks for its settings.
     #[serde(default)]
     pub settings: serde_json::Value,
@@ -150,12 +149,12 @@ pub struct TagSpec {
     pub names: Vec<String>,
 }
 
-/// What a project has to hold for a companion server to be started for it: any one of the dependencies in its `package.json`, or any one of the files.
+/// What a project has to hold for a companion server to be started for it: any one of the files, or a file whose text a pattern matches.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Detect {
-    /// Dependencies a `package.json` at the root of the project names.
+    /// Pairs of a file at the root of the project and a pattern: the project holds what is asked for when the pattern matches the text of the file.
     #[serde(default)]
-    pub dependencies: Vec<String>,
+    pub text: Vec<[String; 2]>,
     /// File names at the root of the project, where `*` stands for any run of characters.
     #[serde(default)]
     pub files: Vec<String>,
@@ -271,6 +270,103 @@ pub struct DependencySpec {
     pub private: PrivateSpec,
 }
 
+/// A debug adapter a language brings, which is run to debug its programs.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct DebugAdapterSpec {
+    /// The name it is known by in the protocol's handshake.
+    pub id: String,
+    /// What the reader calls it.
+    pub name: String,
+    /// The programs it may be installed as, the one to prefer first.
+    pub programs: Vec<String>,
+    /// What each of them is started with; `{port}` stands for the port it listens on.
+    #[serde(default)]
+    pub arguments: Vec<String>,
+    /// `stdio`, or `tcp` for an adapter that listens on a port the editor picks.
+    #[serde(default)]
+    pub connect: String,
+    /// The names a scenario may call it by.
+    pub types: Vec<String>,
+    /// Settings every scenario run with it gets, whatever it says.
+    #[serde(default)]
+    pub set: serde_json::Value,
+    /// Settings a scenario gets only when it names none or says `auto`.
+    #[serde(default)]
+    pub default: serde_json::Value,
+    /// The beginnings of the names of programs it attaches to, in lower case; `*` for any program no other adapter takes.
+    #[serde(default)]
+    pub attach: Vec<String>,
+    /// How a build a scenario names in place of a program is run, for an adapter that knows only a program.
+    #[serde(default)]
+    pub build: Option<BuildSpec>,
+}
+
+/// How a build a scenario names in place of a program is run and read, for an adapter that knows only a program.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct BuildSpec {
+    /// The key of a scenario's configuration that holds the build, an object.
+    pub key: String,
+    /// The program that builds.
+    pub program: String,
+    /// The key of the build that holds its arguments.
+    #[serde(default = "args_key")]
+    pub args: String,
+    /// What is put after the arguments.
+    #[serde(default)]
+    pub append: Vec<String>,
+    /// The key of the build that holds the folder it runs in.
+    #[serde(default = "cwd_key")]
+    pub cwd: String,
+    /// The key of the build that holds the variables it runs with.
+    #[serde(default = "env_key")]
+    pub env: String,
+    /// The key of the build that holds what narrows down the executables it made.
+    #[serde(default = "filter_key")]
+    pub filter: String,
+    /// What a line of its output, a JSON object, must have to say that an executable was made: each key with the value it holds.
+    #[serde(default, rename = "match")]
+    pub matching: serde_json::Value,
+    /// The key of such a line that holds the executable.
+    pub take: String,
+    /// For each key of the filter, where in such a line the value it is compared to stands, as keys joined by dots.
+    #[serde(default)]
+    pub compare: BTreeMap<String, String>,
+}
+
+/// The key of a build that holds its arguments unless the language says another.
+fn args_key() -> String {
+    "args".to_owned()
+}
+
+/// The key of a build that holds its folder unless the language says another.
+fn cwd_key() -> String {
+    "cwd".to_owned()
+}
+
+/// The key of a build that holds its variables unless the language says another.
+fn env_key() -> String {
+    "env".to_owned()
+}
+
+/// The key of a build that holds its filter unless the language says another.
+fn filter_key() -> String {
+    "filter".to_owned()
+}
+
+/// What a file of the language can be debugged as without a word written down.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct DebugScenarioSpec {
+    /// What the scenario is called.
+    pub label: String,
+    /// The name of the adapter it runs with, as a scenario calls it.
+    pub adapter: String,
+    /// The endings of the files it is offered for, without the dot.
+    pub suffixes: Vec<String>,
+    /// What it is configured with, where `${file}`, `${fileDirname}` and `${workspaceFolder}` stand for what they say.
+    #[serde(default)]
+    pub config: serde_json::Value,
+}
+
 /// A language: how its files are told apart, how they are edited, its grammar and its language server.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Manifest {
@@ -291,8 +387,12 @@ pub struct Manifest {
     /// The colour its icon is tinted, as `#rrggbb`.
     #[serde(default)]
     pub color: Option<String>,
-    /// The name the grammar was built under.
+    /// The name the grammar was built under; none for a language with no files to read, such as one that only draws figures.
+    #[serde(default)]
     pub grammar: String,
+    /// What it draws, by the names a fence or a piece of syntax gives it, such as `mermaid`: its folder's `module.wasm` answers `render` calls for them with an SVG picture.
+    #[serde(default)]
+    pub renders: Vec<String>,
     /// The endings of the file names that are written in it, without the dot.
     #[serde(default)]
     pub suffixes: Vec<String>,
@@ -338,6 +438,9 @@ pub struct Manifest {
     /// The parts of a file edited differently from the rest, by name.
     #[serde(default, rename = "scope")]
     pub scopes: BTreeMap<String, ScopeSpec>,
+    /// The kind of Emmet abbreviation its files take, `markup` or `style`, when they take any.
+    #[serde(default)]
+    pub emmet: Option<String>,
     /// How its tags are closed as they are opened, for a language that has them.
     #[serde(default)]
     pub tags: Option<TagSpec>,
@@ -350,6 +453,21 @@ pub struct Manifest {
     /// How the dependencies its manifests name are checked for newer versions, for a language that reads manifests.
     #[serde(default)]
     pub dependencies: Option<DependencySpec>,
+    /// How files with an ending are shown rendered rather than as source, by the ending: `markdown` lays the text out as a page and `vector` draws it as a picture.
+    #[serde(default)]
+    pub previews: BTreeMap<String, String>,
+    /// The names of folders its tools generate, such as installed packages or build output, which walks of a project leave out and a new worktree is given a copy of by default.
+    #[serde(default)]
+    pub generated: Vec<String>,
+    /// Folders its tools are installed in without being on the path, which may start with `~/` and may have `*` for any folder name: where a program of its toolchain is looked for after the path.
+    #[serde(default)]
+    pub tool_directories: Vec<String>,
+    /// The debug adapters it brings.
+    #[serde(default, rename = "debug_adapter")]
+    pub debug_adapters: Vec<DebugAdapterSpec>,
+    /// What its files can be debugged as without a word written down.
+    #[serde(default, rename = "debug_scenario")]
+    pub debug_scenarios: Vec<DebugScenarioSpec>,
     /// The family of toolchains its files are built and run with, shared by the languages that use the same ones, such as `javascript` for TypeScript; its own folder name when nothing.
     #[serde(default)]
     pub family: Option<String>,

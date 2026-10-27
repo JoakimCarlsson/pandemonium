@@ -8,7 +8,7 @@
 
 use std::path::{Path, PathBuf};
 
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 
 use crate::adapter::Adapter;
 
@@ -181,18 +181,41 @@ fn offered(file: Option<&Path>, words: &Words) -> Vec<Scenario> {
         config: words.fill_map(config.as_object().cloned().unwrap_or_default()),
         source: None,
     };
-    match file.extension().and_then(|extension| extension.to_str()) {
-        Some("py") => vec![named(
-            "Python: Current File",
-            "debugpy",
-            json!({ "program": "${file}", "cwd": "${workspaceFolder}" }),
-        )],
-        Some("go") => vec![named(
-            "Go: Current Package",
-            "go",
-            json!({ "mode": "debug", "program": "${fileDirname}", "cwd": "${workspaceFolder}" }),
-        )],
-        _ => Vec::new(),
+    let ending = file
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_lowercase();
+    TEMPLATES
+        .read()
+        .map(|held| held.clone())
+        .unwrap_or_default()
+        .iter()
+        .filter(|template| template.suffixes.contains(&ending))
+        .map(|template| named(&template.label, &template.adapter, template.config.clone()))
+        .collect()
+}
+
+/// What a file can be debugged as without a word written down, as a language says.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Template {
+    /// What the scenario is called.
+    pub label: String,
+    /// The name of the adapter it runs with.
+    pub adapter: String,
+    /// The endings of the files it is offered for, in lower case, without the dot.
+    pub suffixes: Vec<String>,
+    /// What it is configured with.
+    pub config: Value,
+}
+
+/// The templates the installed languages bring.
+static TEMPLATES: std::sync::RwLock<Vec<Template>> = std::sync::RwLock::new(Vec::new());
+
+/// Replaces the templates the installed languages bring with `templates`.
+pub fn set_templates(templates: Vec<Template>) {
+    if let Ok(mut held) = TEMPLATES.write() {
+        *held = templates;
     }
 }
 

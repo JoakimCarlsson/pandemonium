@@ -249,6 +249,7 @@ pub(crate) struct Core {
 impl Core {
     /// A server with no sessions and no clients.
     pub(crate) fn new() -> Arc<Self> {
+        crate::extensions::refresh_adapters();
         Arc::new(Self {
             sessions: Mutex::new(HashMap::new()),
             next: AtomicU64::new(1),

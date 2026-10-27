@@ -230,13 +230,14 @@ pub fn is_repository(directory: &Path) -> bool {
 }
 
 /// The folders a plain folder's listing does not go into.
-const SKIPPED: [&str; 4] = ["node_modules", "target", "build", "dist"];
+const SKIPPED: [&str; 2] = ["build", "dist"];
 
 /// The files under `directory`, as paths from `root`, at most `limit` of them, leaving out hidden and bulky folders.
 fn walk(root: &Path, directory: &Path, limit: usize, found: &mut Vec<String>) {
     let Ok(entries) = fs::read_dir(directory) else {
         return;
     };
+    let generated = pm_tools::generated();
     let mut entries: Vec<_> = entries.flatten().collect();
     entries.sort_by_key(|entry| entry.file_name());
     for entry in entries {
@@ -249,7 +250,10 @@ fn walk(root: &Path, directory: &Path, limit: usize, found: &mut Vec<String>) {
             continue;
         };
         if kind.is_dir() {
-            if !name.starts_with('.') && !SKIPPED.contains(&name.as_str()) {
+            if !name.starts_with('.')
+                && !SKIPPED.contains(&name.as_str())
+                && !generated.contains(&name)
+            {
                 walk(root, &path, limit, found);
             }
         } else if kind.is_file()

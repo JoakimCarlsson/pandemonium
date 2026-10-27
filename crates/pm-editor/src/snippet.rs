@@ -284,81 +284,6 @@ fn is_prefix_character(character: char) -> bool {
     character.is_alphanumeric() || matches!(character, '_' | '-' | '.' | '!' | '#' | '@')
 }
 
-/// The HTML tags a plain word before the caret is taken to be an abbreviation for.
-const TAGS: [&str; 62] = [
-    "a",
-    "abbr",
-    "article",
-    "aside",
-    "audio",
-    "b",
-    "blockquote",
-    "body",
-    "br",
-    "button",
-    "canvas",
-    "code",
-    "dd",
-    "details",
-    "div",
-    "dl",
-    "dt",
-    "em",
-    "fieldset",
-    "figure",
-    "footer",
-    "form",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "head",
-    "header",
-    "hr",
-    "html",
-    "i",
-    "iframe",
-    "img",
-    "input",
-    "label",
-    "legend",
-    "li",
-    "link",
-    "main",
-    "meta",
-    "nav",
-    "ol",
-    "option",
-    "p",
-    "pre",
-    "section",
-    "select",
-    "small",
-    "span",
-    "strong",
-    "style",
-    "script",
-    "table",
-    "td",
-    "textarea",
-    "th",
-    "tr",
-    "ul",
-    "video",
-    "title",
-];
-
-/// What the language `language` an Emmet abbreviation is written in, when it takes them.
-fn dialect_of(language: &str) -> Option<Dialect> {
-    match language {
-        "html" | "javascript" | "svelte" | "tsx" | "xml" => Some(Dialect::Markup),
-        "css" | "scss" => Some(Dialect::Style),
-        _ => None,
-    }
-}
-
 impl Document {
     /// The snippets the reader wrote that apply to this document, the language's own ahead of those for every language.
     fn own_snippets<'a>(&self, settings: &'a EditorSettings) -> Vec<&'a UserSnippet> {
@@ -448,7 +373,12 @@ impl Document {
 
     /// The bytes of `before`, the text of a line from its start at `line_start` to the caret, that an Emmet abbreviation is written as, and what it writes out.
     fn abbreviation(&self, line_start: usize, before: &str) -> Option<(Range<usize>, String)> {
-        let dialect = dialect_of(self.language.as_deref()?)?;
+        let dialect = match self.editing.emmet.as_deref()? {
+            "markup" => Dialect::Markup,
+            "style" => Dialect::Style,
+            _ => return None,
+        };
+        let tables = emmet::Tables::parse(self.editing.emmet_tables.as_deref()?)?;
         let unit = self.editing.unit(1);
         let trimmed = before.trim_start();
         let begin = before.len() - trimmed.len();
@@ -463,11 +393,13 @@ impl Document {
             let plain = candidate
                 .chars()
                 .all(|character| character.is_alphanumeric());
-            let tag = dialect != Dialect::Markup || !plain || TAGS.contains(&candidate);
+            let tag = dialect != Dialect::Markup
+                || !plain
+                || tables.markup.words.iter().any(|word| word == candidate);
             if candidate.is_empty() || candidate.contains('<') || !tag {
                 return None;
             }
-            let expanded = emmet::expand(candidate, dialect, &unit)?;
+            let expanded = emmet::expand(candidate, dialect, &unit, &tables)?;
             let start = line_start + begin + skip;
             Some((start..line_start + before.len(), expanded))
         })

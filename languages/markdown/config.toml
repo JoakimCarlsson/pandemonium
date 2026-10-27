@@ -10,9 +10,11 @@ color = "#7fb7e8"
 grammar = "markdown"
 suffixes = ["md", "markdown"]
 aliases = ["md"]
-requires = ["markdown-inline"]
+requires = ["markdown-inline", "mermaid", "math"]
 indent = 2
 pairs = ["()", "[]", "``"]
+
+previews = { md = "markdown", markdown = "markdown", mdown = "markdown", mkd = "markdown" }
 
 [grammar_file]
 url = "https://github.com/tree-sitter-grammars/tree-sitter-markdown/releases/download/v0.5.3/tree-sitter-markdown.wasm"

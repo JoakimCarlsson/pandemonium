@@ -58,6 +58,16 @@ fn placement() -> pm_git::Placement {
             .map(str::trim)
             .filter(|path| !path.is_empty())
             .map(str::to_owned)
+            .chain(
+                (git.worktree_include == pm_protocol::GitPreferences::default().worktree_include)
+                    .then(|| {
+                        pm_tools::generated()
+                            .into_iter()
+                            .map(|name| format!("{name}/"))
+                    })
+                    .into_iter()
+                    .flatten(),
+            )
             .collect(),
     }
 }

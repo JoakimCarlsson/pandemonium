@@ -23,6 +23,10 @@ command = "graphql-lsp"
 args = ["server", "-m", "stream"]
 
 [server.install]
-kind = "npm"
+kind = "command"
 version = "3.5.0"
-packages = ["graphql-language-service-cli@3.5.0"]
+command = ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"]
+needs = "Node.js and npm"
+bin = "node_modules/.bin"
+files = ["package.json", "package-lock.json"]
+# Pinned by the lockfile: graphql-language-service-cli@3.5.0

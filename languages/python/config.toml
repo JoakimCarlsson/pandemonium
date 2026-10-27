@@ -14,6 +14,8 @@ line_comment = "#"
 indent = 4
 pairs = ["()", "[]", "{}", "\"\"", "''"]
 
+generated = [".venv", "venv", "__pycache__"]
+
 [grammar_file]
 url = "https://github.com/tree-sitter/tree-sitter-python/releases/download/v0.25.0/tree-sitter-python.wasm"
 sha256 = "16108b50df4ee9a30168794252ab55e7c93bfc5765d7fa0aa3e335752c515f47"
@@ -31,9 +33,13 @@ useLibraryCodeForTypes = true
 diagnosticMode = "openFilesOnly"
 
 [server.install]
-kind = "npm"
+kind = "command"
 version = "1.1.414"
-packages = ["pyright@1.1.414"]
+command = ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"]
+needs = "Node.js and npm"
+bin = "node_modules/.bin"
+files = ["package.json", "package-lock.json"]
+# Pinned by the lockfile: pyright@1.1.414
 
 [[task]]
 name = "pip install"
@@ -76,6 +82,7 @@ group = "run"
 files = ["main.py"]
 
 [[toolchain]]
+title = "Python"
 system = [["python3", "--version"], ["python", "--version"]]
 
 [[toolchain]]
@@ -93,3 +100,19 @@ children = ["~/.pyenv/versions"]
 bin = ["bin"]
 program = "python"
 name = "pyenv {name}"
+
+[[debug_adapter]]
+id = "debugpy"
+name = "Debugpy"
+programs = ["python3", "python"]
+arguments = ["-m", "debugpy.adapter"]
+connect = "stdio"
+types = ["debugpy", "python"]
+attach = ["python"]
+set = { console = "internalConsole" }
+
+[[debug_scenario]]
+label = "Python: Current File"
+adapter = "debugpy"
+suffixes = ["py"]
+config = { program = "${file}", cwd = "${workspaceFolder}" }

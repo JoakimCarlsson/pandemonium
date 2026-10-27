@@ -37,8 +37,9 @@ pub use install::{
     language_of_text, remove, remove_folder, update_available,
 };
 pub use manifest::{
-    Archive, Companion, DependencySpec, Detect, Download, Install, InstallKind, LensSpec, Manifest,
-    Pinned, PrivateSpec, RunnableSpec, ScopeSpec, ServerSpec, TagSpec, glob,
+    Archive, BuildSpec, Companion, DebugAdapterSpec, DebugScenarioSpec, DependencySpec, Detect,
+    Download, Install, InstallKind, LensSpec, Manifest, Pinned, PrivateSpec, RunnableSpec,
+    ScopeSpec, ServerSpec, TagSpec, glob,
 };
 pub use paths::{grammar_file, language_folder, local_root};
 pub use resolve::{

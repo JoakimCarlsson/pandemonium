@@ -819,6 +819,19 @@ pub enum Request {
         /// The extension, by folder name.
         id: String,
     },
+    /// Draws a figure written in `language`, such as a diagram or a formula, with the module of the installed language that draws it; answered with `bytes`, the text of an SVG picture.
+    RenderFigure {
+        /// What it is written in, as a fence names it.
+        language: String,
+        /// What is written.
+        source: String,
+        /// Whether the theme it is drawn for is a dark one.
+        #[serde(default)]
+        dark: bool,
+        /// The colours of the theme, by name, each `#rrggbb`.
+        #[serde(default)]
+        colors: std::collections::BTreeMap<String, String>,
+    },
     /// The grammar and queries of an installed language, found by its folder name or by a name a code fence calls it.
     Grammar {
         /// The language.

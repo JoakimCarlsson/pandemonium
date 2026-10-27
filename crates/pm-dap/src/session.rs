@@ -25,7 +25,6 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 
 use crate::adapter::Connect;
-use crate::cargo;
 use crate::program;
 use crate::scenario::{Request, Scenario};
 use crate::state::{
@@ -125,6 +124,7 @@ impl Session {
             request: scenario.request,
             arguments: scenario.arguments(),
             root: root.to_path_buf(),
+            build: adapter.build.clone(),
         };
 
         if let Some(stderr) = stderr {
@@ -469,6 +469,8 @@ struct Reader {
     request: Request,
     /// What it is launched or attached with.
     arguments: Value,
+    /// How a build the scenario names is run, when the adapter needs one.
+    build: Option<crate::build::Build>,
     /// The worktree it is being debugged in.
     root: PathBuf,
 }
@@ -640,14 +642,15 @@ impl Reader {
     }
 
     /// Sends the launch or attach request, having first built the program
-    /// where the scenario asks cargo to.
+    /// where the scenario names a build.
     ///
     /// A build that fails ends the session the way a refused launch does, with
-    /// cargo's complaint in the console.
+    /// the build's complaint in the console.
     fn begin(&self) {
         let mut arguments = self.arguments.clone();
         if let Some(config) = arguments.as_object_mut()
-            && let Err(complaint) = cargo::resolve(config, &self.root)
+            && let Some(build) = &self.build
+            && let Err(complaint) = build.resolve(config, &self.root)
         {
             let mut state = lock(&self.state);
             state.say(Category::Error, &complaint);

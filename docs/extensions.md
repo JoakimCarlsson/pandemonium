@@ -93,6 +93,7 @@ for a call it does not know, and the host falls back to the language's data.
 | `behind` | whether a requirement is behind a version | `replacement`: what to write instead, or nothing |
 | `tasks` | the tasks of the project | `tasks` |
 | `toolchains` | the toolchains of the machine and project | `toolchains` |
+| `render` | a figure written in the language, such as a diagram or a formula, with the theme's `dark` and its `colors` by name | `svg`: the text of an SVG picture |
 
 `latest-version` and `behind` are used when `[dependencies]` says `hook = true`,
 with `dependencies.scm` still saying where a manifest names its dependencies,
@@ -112,6 +113,16 @@ what to write instead, is accepted only as a version (letters, digits and
 `._+~^=<>-`, at most 64 characters), and a task's folder may not leave the
 project. A lens or task a language declares is a command the reader presses to
 run, as a runnable is, and is not gated.
+
+A language folder may carry a module of its own: a `module.wasm` beside its
+`config.toml`, listed in `languages.json` and checked like the other files, which
+answers the same calls with no capability at all, so it can only compute. A
+language with no files to read leaves out `grammar`, and says what it draws in
+`renders = ["mermaid"]`: a fence of markdown naming it, or the syntax that stands
+for it, is drawn by sending the text to the module and setting the SVG it answers
+into pixels. `languages/mermaid` and `languages/math` are the examples, with
+their source in `module/`; `make language-modules` builds them. Markdown brings
+them with it, so a machine that does not have Markdown has neither.
 
 A script that has no ending is told by its first line: `first_line_pattern` in
 the language's `config.toml` is a pattern matched against it, such as
@@ -241,24 +252,77 @@ listed once, the first in the order the languages are read. `languages/cargo`,
 ## Installing a language server
 
 A language server that is not on the machine is installed into the server's
-data folder by the way `[server.install]` says. `kind` is `download`, `go`, `npm`
-or `command`, which runs a program the manifest names, found on the machine and
-run without a shell, so that a language can use `gem`, `cpan` or any other tool
-without a change to Pandemonium:
+data folder by the way `[server.install]` says. `kind` is `download`, a program
+built for each platform and checked against a checksum, or `command`, which runs
+a program the manifest names, found on the machine and run without a shell, so
+that a language can use `go`, `npm`, `gem`, `cpan` or any other tool without a
+change to Pandemonium. The Go and npm installs the languages use are written
+this way:
 
 ```toml
 [server.install]
 kind = "command"
-version = "0.58.0"
-command = ["gem", "install", "--no-document", "--install-dir", "{folder}", "--bindir", "{folder}", "solargraph", "-v", "{version}"]
-needs = "Ruby and RubyGems"      # said when the program is not on the machine
-bin = "."                        # where the server's program ends up in {folder}
+version = "0.24.0"               # names the folder it goes in
+command = ["go", "install", "golang.org/x/tools/gopls@v0.24.0"]
+needs = "Go"                     # said when the program is not on the machine
+bin = "."                        # where the server's program ends up in the install folder
+env = { GOBIN = "{folder}", GOSUMDB = "sum.golang.org" }    # {folder} and {version} stand in it
+env_remove = ["GOPRIVATE", "GOINSECURE"]                    # taken out of the environment
+files = ["package.json", "package-lock.json"]               # copied from the language's folder first; "a:b" copies a as b
 ```
 
+An install that is pinned by a lockfile, such as `npm ci`, names the lockfile and
+the manifest in `files` and puts the server's program in `node_modules/.bin`.
 The command runs in the staging folder of the version and is moved into place
 only when it succeeds, so a failed install leaves a working one in place. It is
 as trusted as the manifest's `command`, which is run as well: a language of the
-list is checked against `languages.json`, and a folder of your own is yours.
+list is checked against `languages.json`, a folder of your own is yours, and for
+a language an extension carries it is refused unless the extension may run
+programs.
+
+## Debugging, Emmet and toolchain names
+
+A language brings its debug adapters and what its files can be debugged as:
+
+```toml
+[[debug_adapter]]
+id = "delve"
+name = "Delve"
+programs = ["dlv"]
+arguments = ["dap", "--listen", "127.0.0.1:{port}"]
+connect = "tcp"                  # or stdio
+types = ["go", "delve"]          # what a launch.json may call it
+attach = ["dlv"]                 # names of programs it attaches to; "*" for any other
+set = { console = "internalConsole" }   # put in every scenario run with it
+default = { mode = "debug" }     # put in a scenario that names none or says auto
+
+[[debug_scenario]]
+label = "Go: Current Package"
+adapter = "go"
+suffixes = ["go"]
+config = { mode = "debug", program = "${fileDirname}", cwd = "${workspaceFolder}" }
+```
+
+`[debug_adapter.build]` says how a build a scenario names in place of a
+`program` is run, for an adapter that knows only a program (CodeLLDB's `cargo`
+key): the program and its arguments, how a line of its JSON output says an
+executable was made (`match`), which key holds it (`take`) and where in the line
+each key of the scenario's `filter` is compared (`compare`).
+
+`[server.capabilities]` is merged into the client capabilities a language
+server is told it can do, for an extension of the protocol it defines. `generated = ["target"]` names folders a language's tools generate, which walks
+of a project leave out and new worktrees are given a copy of by default, and a
+companion server's `[companion.detect]` is `files` and `text = [["package.json",
+'"tailwindcss"\\s*:']]`, pairs of a file and a pattern its text must match.
+
+`emmet = "markup"` or `"style"` at the top of a language's `config.toml` says
+its files take that kind of Emmet abbreviation, and its `emmet.toml` holds what
+they know: the tags, aliases and default attributes of markup, or the
+properties, units and keywords of style rules. `title = "Node.js"` in a
+`[[toolchain]]` is what the language's toolchains are listed under,
+`previews = { md = "markdown", svg = "vector" }` says which of its files are
+shown rendered, and `tool_directories = ["~/.cargo/bin"]` the folders its
+tools are installed in without being on the path (`*` is any folder name).
 
 A language lists the languages it needs in `requires`, which are installed with
 it and left out of the list when `hidden`.

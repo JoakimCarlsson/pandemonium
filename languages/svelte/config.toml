@@ -10,6 +10,7 @@ description = "Svelte components with the Svelte language server."
 icon = "icon.svg"
 color = "#ff4a1c"
 family = "javascript"
+emmet = "markup"
 grammar = "svelte"
 suffixes = ["svelte"]
 indent = 2
@@ -22,6 +23,10 @@ command = "svelteserver"
 args = ["--stdio"]
 
 [server.install]
-kind = "npm"
+kind = "command"
 version = "0.18.5"
-packages = ["svelte-language-server@0.18.5"]
+command = ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"]
+needs = "Node.js and npm"
+bin = "node_modules/.bin"
+files = ["package.json", "package-lock.json"]
+# Pinned by the lockfile: svelte-language-server@0.18.5

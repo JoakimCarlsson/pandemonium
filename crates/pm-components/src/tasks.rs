@@ -68,19 +68,16 @@ pub struct TaskState {
     pub last: Option<Rerun>,
 }
 
-/// The language `family` as a reader knows it.
-fn language_name(family: &str) -> String {
-    match family {
-        "javascript" => "Node.js".to_owned(),
-        "go" => "Go".to_owned(),
-        other => {
-            let mut letters = other.chars();
-            letters
-                .next()
-                .map(|first| first.to_uppercase().chain(letters).collect())
-                .unwrap_or_default()
-        }
+/// The language `family` as a reader knows it: what its language folder calls it, or the family's own name with a capital.
+fn language_name(family: &str, title: &str) -> String {
+    if !title.is_empty() {
+        return title.to_owned();
     }
+    let mut letters = family.chars();
+    letters
+        .next()
+        .map(|first| first.to_uppercase().chain(letters).collect())
+        .unwrap_or_default()
 }
 
 impl WorkspaceState {
@@ -306,7 +303,7 @@ impl WorkspaceState {
     }
 
     /// The name `language`, by family, is shown under in the list of toolchains.
-    pub(crate) fn toolchain_language(language: &str) -> String {
-        language_name(language)
+    pub(crate) fn toolchain_language(language: &str, title: &str) -> String {
+        language_name(language, title)
     }
 }
