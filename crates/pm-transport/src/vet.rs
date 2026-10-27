@@ -2,10 +2,10 @@
 
 use std::path::Path;
 
-use crate::devcontainer::Config;
+use crate::devcontainer::{Config, Source};
 
 /// The `docker run` flags a session container accepts, each written as `--flag=value` or alone.
-const ALLOWED_FLAGS: [&str; 4] = ["--init", "--label", "--hostname", "--env"];
+const ALLOWED_FLAGS: [&str; 3] = ["--init", "--hostname", "--env"];
 
 /// The keys of a `--mount` a session container accepts.
 const ALLOWED_MOUNT_KEYS: [&str; 7] = [
@@ -20,6 +20,20 @@ const ALLOWED_MOUNT_KEYS: [&str; 7] = [
 
 /// Checks that the container `config` asks for stays inside the worktree `folder`, and names the first setting that does not.
 pub(crate) fn vet(config: &Config, folder: &str) -> Result<(), String> {
+    refuse_workspace(&config.workspace)?;
+    if let Source::Build {
+        dockerfile,
+        context,
+        ..
+    } = &config.source
+    {
+        for path in [dockerfile, context] {
+            let path = path.to_string_lossy();
+            if !inside(&path, folder) {
+                return Err(refusal(&path));
+            }
+        }
+    }
     for argument in &config.run_arguments {
         let flag = argument.split('=').next().unwrap_or(argument);
         if !ALLOWED_FLAGS.contains(&flag) {
@@ -30,6 +44,19 @@ pub(crate) fn vet(config: &Config, folder: &str) -> Result<(), String> {
         refuse_mount(mount, folder)?;
     }
     Ok(())
+}
+
+/// Refuses a `workspace` that is not an absolute path or that holds a character `--mount` reads as syntax.
+fn refuse_workspace(workspace: &str) -> Result<(), String> {
+    let plain = workspace.starts_with('/')
+        && !workspace
+            .chars()
+            .any(|character| character.is_control() || matches!(character, ',' | '=' | '"' | '\''));
+    if plain {
+        Ok(())
+    } else {
+        Err(refusal(workspace))
+    }
 }
 
 /// The message for a setting that was refused.
