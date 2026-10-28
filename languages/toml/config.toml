@@ -58,3 +58,4 @@ archive = "gz"
 files = ["Cargo.toml"]
 registry = "https://crates.io/api/v1/crates/{name}"
 pointer = "/crate/max_stable_version"
+private_markers = ["registry =", "git =", "path ="]

@@ -382,7 +382,7 @@
       "server": null,
       "files": {
         "brackets.scm": "e98e812efd7ec6fa313ff2e47bd96eb5d07d0d2cfa3ecc1a0e845a5f838787a5",
-        "config.toml": "8f88dce450bc616c8dbb9c07309611e6a776b7d4ce1034cca67644c207285326",
+        "config.toml": "be21be737afd707e971b07fbe0a4ac66910706e9741818c578e903a06f12f8c1",
         "dependencies.scm": "34288271043627e0d89d7615e54f04483daf5959b099531d02f073e13695b2e5",
         "grammar.wasm": "30eb00e1c4b4516ccfad39d0a8d79e5f98a823de45705ad3c6e232dfa7d5e36c",
         "highlights.scm": "4af8cc939548e0511af75e8ceecf9d484e18f163975793dcb3609ac1e9c5be9d",
@@ -1123,7 +1123,7 @@
       "server": "taplo",
       "files": {
         "brackets.scm": "a0d7d33c46c561c820e4b4b5e83a2c358eb5831a06b538338a0d3c950aa7e48e",
-        "config.toml": "b30c962ed4bef8969fd6c6147e9f350ab987eec7194fa84808134892bc92af80",
+        "config.toml": "e3772b9f86f5323b55b6f4dbe9e114ef4760838419b9aaede4b4f401c7d949cc",
         "dependencies.scm": "7abbb0ded3a39a4d017233ce7f463f084bcdd631056067a4ceb3ef9fb5b1a22c",
         "highlights.scm": "25a36ce579bff0ac2d3ca0233d2b81fc05e4c4092c4b172bd7be32297fd78aec",
         "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d",

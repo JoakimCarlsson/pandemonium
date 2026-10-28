@@ -32,6 +32,8 @@ pub(crate) struct Listed {
     current: String,
     /// Where that version is written.
     span: Span,
+    /// The line of the file the dependency is written on.
+    line: String,
 }
 
 /// A newer version of one dependency that a lens offers to write in its place.
@@ -89,14 +91,41 @@ pub(crate) fn listed(language: &str, path: &str, buffer: &Buffer) -> Vec<Listed>
             syntax
                 .dependencies(text)
                 .into_iter()
-                .map(|found| Listed {
-                    name: found.name,
-                    current: found.version,
-                    span: buffer.span_of(found.range),
+                .map(|found| {
+                    let span = buffer.span_of(found.range);
+                    Listed {
+                        name: found.name,
+                        current: found.version,
+                        line: text
+                            .lines()
+                            .nth(span.start.line as usize)
+                            .unwrap_or_default()
+                            .to_owned(),
+                        span,
+                    }
                 })
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Whether `name` is one of the private names the environment variables `variables` list, each a pattern with `*` for any run of characters that names a module or the folder of modules it is inside.
+fn is_private(name: &str, variables: &[String]) -> bool {
+    variables
+        .iter()
+        .filter_map(|variable| std::env::var(variable).ok())
+        .flat_map(|value| {
+            value
+                .split(',')
+                .map(|pattern| pattern.trim().to_owned())
+                .filter(|pattern| !pattern.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .any(|pattern| {
+            let parts = pattern.split('/').count();
+            let head = name.split('/').take(parts).collect::<Vec<_>>().join("/");
+            pm_lsp::glob(&pattern, &head)
+        })
 }
 
 /// `name` written for use inside an address: letters, digits and `-._~@` stay and everything else is percent-encoded.
@@ -210,6 +239,16 @@ pub(crate) fn lenses(
     let Some(spec) = spec_of(language, path) else {
         return Vec::new();
     };
+    let found: Vec<Listed> = found
+        .into_iter()
+        .filter(|listed| !is_private(&listed.name, &spec.private_env))
+        .filter(|listed| {
+            !spec
+                .private_markers
+                .iter()
+                .any(|marker| listed.line.contains(marker.as_str()))
+        })
+        .collect();
     let mut names: Vec<&str> = found.iter().map(|listed| listed.name.as_str()).collect();
     names.sort_unstable();
     names.dedup();

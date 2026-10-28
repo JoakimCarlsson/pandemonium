@@ -395,6 +395,12 @@ pub struct DependencySpec {
     pub registry: String,
     /// Where in the JSON the address answers the newest version is, as a JSON pointer.
     pub pointer: String,
+    /// The environment variables that list the names of private dependencies, as patterns separated by commas, whose names are never looked up on a public registry.
+    #[serde(default)]
+    pub private_env: Vec<String>,
+    /// Text which, written on the line of a dependency, says it comes from somewhere other than the registry, such as `git =`; such a dependency is never looked up.
+    #[serde(default)]
+    pub private_markers: Vec<String>,
     /// What the link that updates a dependency says, where `{latest}` and `{current}` stand for the two versions; `Update to {latest}` when nothing.
     #[serde(default)]
     pub title: Option<String>,

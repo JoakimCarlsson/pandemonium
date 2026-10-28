@@ -340,6 +340,8 @@ files = ["package.json"]                          # file names it applies to; ev
 registry = "https://registry.npmjs.org/{name}"    # {name} is the dependency's name, {escaped} the name as the Go module proxy writes it
 pointer = "/dist-tags/latest"                     # where in the JSON the address answers the version is, as a JSON pointer
 title = "Update to {latest}"                      # what the link says; {latest} and {current} are the two versions
+private_env = ["GOPRIVATE"]                       # variables listing private dependency names, as comma separated patterns; those are never looked up
+private_markers = ["git =", "path ="]             # text on a dependency's line that says it does not come from the registry; such a dependency is never looked up
 ```
 
 The server looks each dependency up, keeps what it found for an hour and what

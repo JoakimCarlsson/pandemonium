@@ -24,3 +24,4 @@ pairs = ["()", "[]", "\"\"", "``"]
 files = ["go.mod"]
 registry = "https://proxy.golang.org/{escaped}/@latest"
 pointer = "/Version"
+private_env = ["GOPRIVATE", "GONOPROXY", "GONOSUMDB"]
