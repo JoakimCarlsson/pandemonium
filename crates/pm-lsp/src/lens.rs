@@ -13,20 +13,26 @@ pub struct RunLens {
     pub label: String,
 }
 
-/// The lenses of the installed language `language`: the templates of its `tasks.json` that are lenses, each shown on the places carrying any of their tags.
+/// The lenses of the installed language `language`: the templates of its `tasks.json` that are lenses, those with the same tags and label, which a condition tells apart when they run, being one, each shown on the places carrying any of their tags.
 pub fn run_lenses_of(language: &str) -> Vec<RunLens> {
     let Some(text) =
         language_file(language, "tasks.json").and_then(|file| std::fs::read_to_string(file).ok())
     else {
         return Vec::new();
     };
-    pm_task::parse_templates(&text)
+    let mut lenses: Vec<RunLens> = Vec::new();
+    for template in pm_task::parse_templates(&text)
         .unwrap_or_default()
         .into_iter()
         .filter(|template| template.lens)
-        .map(|template| RunLens {
+    {
+        let lens = RunLens {
             tags: template.tags,
             label: template.label,
-        })
-        .collect()
+        };
+        if !lenses.contains(&lens) {
+            lenses.push(lens);
+        }
+    }
+    lenses
 }

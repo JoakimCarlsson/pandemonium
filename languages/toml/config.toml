@@ -52,3 +52,9 @@ archive = "gz"
 url = "https://github.com/tamasfe/taplo/releases/download/0.10.0/taplo-windows-x86_64.gz"
 sha256 = "550fdc955343f8a196447a05346ecf8827e391726e4ded577bb00a0a36cf220c"
 archive = "gz"
+
+# Where the newest version of each dependency a Cargo.toml lists is looked up.
+[dependencies]
+files = ["Cargo.toml"]
+registry = "https://crates.io/api/v1/crates/{name}"
+pointer = "/crate/max_stable_version"

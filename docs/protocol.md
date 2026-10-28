@@ -619,7 +619,10 @@ everything said of them, its submodules' paths written from `directory`.
   installed only as part of another and left out of what a reader picks from;
   `busy` says what installing it is doing now, `problem` why installing it or
   its language server last failed, and `server` what the machine has of its
-  language server, in words. An extension package's `status` is what its
+  language server, in words. `update` says what is newer than what is
+  installed, the language as the list now has it or its language server, and
+  installing the language again, which a failed download leaves as it was,
+  brings it up to date. An extension package's `status` is what its
   module last said it was doing, such as the release of a language server it
   fetched, and its `problem` includes why its module was refused something. The
   list is `languages.json` read from
@@ -760,7 +763,11 @@ everything said of them, its submodules' paths written from `directory`.
 - **`code_lenses`:** what to show with stretches of the open file at
   `version`, as the language server says, each already filled in by the
   server. The server keeps the list as given, and `press_code_lens` takes one
-  by its place in it.
+  by its place in it. With `dependencies` set, the lenses of the language
+  server are followed by one for each dependency the file lists, when its
+  language says how and the registry names a newer release; pressing one
+  answers with the change that writes the version, and the lookups are
+  cached on the server. A client that does not send it gets none of these.
 - **`press_code_lens`:** presses one of the lenses last given for the open
   file: the places it points to when it counts uses, and otherwise the
   changes the language server made carrying out its command, as for

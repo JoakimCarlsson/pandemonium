@@ -32,6 +32,8 @@ pub struct Queries {
     pub textobjects: String,
     /// Which nodes are variables to show the value of while debugging, and the scopes they are looked for in: `debugger.scm`.
     pub debugger: String,
+    /// Which nodes are the names and versions of the dependencies a manifest lists: `dependencies.scm`.
+    pub dependencies: String,
 }
 
 /// How a language's files are edited.
@@ -164,6 +166,8 @@ pub struct Grammar {
     pub(crate) textobjects: Option<Query>,
     /// The debugger query, when the language has one.
     pub(crate) debugger: Option<Query>,
+    /// The dependencies query, when the language has one.
+    pub(crate) dependencies: Option<Query>,
     /// How its files are edited.
     editing: Editing,
 }
@@ -224,6 +228,7 @@ impl Grammar {
             redactions: compile(&language, &queries.redactions, "redactions.scm")?,
             textobjects: compile(&language, &queries.textobjects, "textobjects.scm")?,
             debugger: compile(&language, &queries.debugger, "debugger.scm")?,
+            dependencies: compile(&language, &queries.dependencies, "dependencies.scm")?,
             indents: compile(&language, &queries.indents, "indents.scm")?,
             outline: compile(&language, &queries.outline, "outline.scm")?,
             injections: compile(&language, &queries.injections, "injections.scm")?,

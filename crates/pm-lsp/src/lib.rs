@@ -45,12 +45,12 @@ pub use index::{Index, Listing, build_index};
 pub use inherit::language_file;
 pub use install::{
     add_extension, add_folder, install, installed, installed_manifest, language_of,
-    language_of_text, remove, remove_folder,
+    language_of_text, remove, remove_folder, update_for,
 };
 pub use lens::{RunLens, run_lenses_of};
 pub use manifest::{
-    AdapterSpec, Archive, BracketSpec, Companion, DecreaseRule, Detect, Download, Install,
-    InstallKind, Manifest, Pinned, ScopeSpec, ServerSpec, TagSpec, glob,
+    AdapterSpec, Archive, BracketSpec, Companion, DecreaseRule, DependencySpec, Detect, Download,
+    Install, InstallKind, Manifest, Pinned, ScopeSpec, ServerSpec, TagSpec, glob,
 };
 pub use paths::{grammar_file, language_folder, local_root, platform};
 pub use preferences::ServerOverride;

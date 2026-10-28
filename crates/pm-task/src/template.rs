@@ -71,9 +71,9 @@ pub struct Template {
 }
 
 impl Template {
-    /// Whether the task is listed for a project: it names a manifest to read or a condition to meet.
+    /// Whether the task is listed for a project: it names a manifest to read or a condition to meet, and is not a link that only runs a place.
     pub fn is_listed(&self) -> bool {
-        self.when.is_some() || !self.from.is_empty()
+        !self.lens && (self.when.is_some() || !self.from.is_empty())
     }
 
     /// Where it comes among those listed.

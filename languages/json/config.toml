@@ -36,3 +36,9 @@ copy = ["package.json", "package-lock.json"]
 bin = "node_modules/.bin"
 version = "4.10.0"
 packages = ["vscode-langservers-extracted@4.10.0"]
+
+# Where the newest version of each dependency a package.json lists is looked up.
+[dependencies]
+files = ["package.json"]
+registry = "https://registry.npmjs.org/{name}"
+pointer = "/dist-tags/latest"

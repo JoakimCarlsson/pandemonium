@@ -65,6 +65,7 @@ fn main() {
             Some("runcompose") => Shot::RunCompose,
             Some("rundockerfile") => Shot::RunDockerfile,
             Some("rungomod") => Shot::RunGoMod,
+            Some("runpackage") => Shot::RunPackageJson,
             Some("codesample") => Shot::CodeSample,
             Some("redacted") => Shot::Redacted,
             Some("languageoffer") => Shot::LanguageOffer,

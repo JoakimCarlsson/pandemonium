@@ -141,6 +141,33 @@ fn is_current(index: &Index, id: &str) -> bool {
         })
 }
 
+/// What is newer for the installed language `id` than what the machine has, in words for the reader: its files as `index` now lists them, or the language server its manifest now asks for when only an older one is installed; nothing when nothing is.
+pub fn update_for(index: &Index, id: &str) -> Option<String> {
+    let listing = index.find(id)?;
+    let manifest = installed_manifest(id)?;
+    if !is_current(index, id) {
+        return Some(if listing.version != manifest.version {
+            format!(
+                "Version {} of the language is available, {} is installed",
+                listing.version, manifest.version
+            )
+        } else {
+            "A newer build of the language is available".to_owned()
+        });
+    }
+    let server = manifest.server.as_ref()?;
+    let install = server.install.as_ref().filter(|_| !server.provided)?;
+    if pm_tools::installed(&server.command).is_some() || crate::resolve::server_ready(server) {
+        return None;
+    }
+    crate::resolve::has_earlier_install(server, install).then(|| {
+        format!(
+            "Version {} of the language server {} is available",
+            install.version, server.command
+        )
+    })
+}
+
 /// Installs the language `id` and the languages it needs, as the index lists them, then their language servers, telling `progress` what it is doing; returns why a language server could not be installed, if one could not, while the languages themselves are.
 pub fn install(id: &str, progress: &dyn Fn(&str, &str)) -> Result<Vec<String>, String> {
     progress(id, "Reading the list of languages");
@@ -163,8 +190,17 @@ pub fn install(id: &str, progress: &dyn Fn(&str, &str)) -> Result<Vec<String>, S
             return Err(reason);
         }
         let folder = language_folder(id)?;
-        let _ = std::fs::remove_dir_all(&folder);
-        std::fs::rename(&staging, &folder).map_err(|error| error.to_string())?;
+        let kept = root.join(format!(".{id}.previous"));
+        let _ = std::fs::remove_dir_all(&kept);
+        let had_one = std::fs::rename(&folder, &kept).is_ok();
+        if let Err(error) = std::fs::rename(&staging, &folder) {
+            if had_one {
+                let _ = std::fs::rename(&kept, &folder);
+            }
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(error.to_string());
+        }
+        let _ = std::fs::remove_dir_all(&kept);
         manifests.push((id.clone(), Manifest::read(&folder)?));
     }
     let mut problems = Vec::new();

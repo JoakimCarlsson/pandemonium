@@ -48,6 +48,7 @@ fn compile(bundle: &GrammarBundle) -> Result<Arc<Grammar>, String> {
             redactions: bundle.more.redactions.clone(),
             textobjects: bundle.more.textobjects.clone(),
             debugger: bundle.more.debugger.clone(),
+            dependencies: String::new(),
         },
         Editing {
             run_lenses: bundle
@@ -541,6 +542,7 @@ impl Work {
                 session,
                 path,
                 version,
+                dependencies,
             } => {
                 let asked = path.clone();
                 self.ask_in_folder(
@@ -550,6 +552,7 @@ impl Work {
                         directory,
                         path,
                         version,
+                        dependencies,
                     },
                     Pending::CodeLenses(session, asked, version),
                 );

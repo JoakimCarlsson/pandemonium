@@ -299,6 +299,8 @@ pub enum Shot {
     RunDockerfile,
     /// A go.mod with the run button of the module line, the requires and each module in the gutter.
     RunGoMod,
+    /// A package.json with a link for each script and a link that updates a dependency.
+    RunPackageJson,
     /// A file of the sample extension's language, with its private values showing.
     CodeSample,
     /// The same file with the values its language marks as private hidden behind blocks.
@@ -414,6 +416,7 @@ fn load_installed_grammar(id: &str) {
         redactions: read("redactions.scm"),
         textobjects: read("textobjects.scm"),
         debugger: read("debugger.scm"),
+        dependencies: String::new(),
     };
     let editing = pm_treesitter::Editing {
         run_lenses: pm_lsp::run_lenses_of(id)
@@ -556,6 +559,9 @@ const CODE_DOCKERFILE: &str = "FROM node:24-bookworm-slim AS web-build\nWORKDIR 
 
 /// The go.mod the go.mod snapshot shows.
 const CODE_GOMOD: &str = "module github.com/JoakimCarlsson/vault\n\ngo 1.27.0\n\nrequire (\n\tgithub.com/PuerkitoBio/goquery v1.13.0\n\tgithub.com/andybalholm/cascadia v1.3.5\n\tgolang.org/x/net v0.52.0 // indirect\n)\n\nreplace github.com/andybalholm/cascadia => ../cascadia\n";
+
+/// The package.json the package snapshot shows.
+const CODE_PACKAGE: &str = "{\n  \"name\": \"vault-web\",\n  \"scripts\": {\n    \"dev\": \"vite\",\n    \"build\": \"vite build\",\n    \"test\": \"vitest run\"\n  },\n  \"dependencies\": {\n    \"react\": \"^18.2.0\",\n    \"zod\": \"3.23.8\"\n  }\n}\n";
 
 /// The shell script the shell snapshot shows.
 const CODE_SHELL: &str = "#!/usr/bin/env bash\nset -euo pipefail\n\nroot=\"$(git rev-parse --show-toplevel)\"\n\nbuild() {\n  cargo build --workspace \"$@\"\n}\n\nfor crate in \"$root\"/crates/*; do\n  echo \"building ${crate##*/}\"\ndone\n\nbuild\n";
@@ -2036,6 +2042,41 @@ impl Shot {
                 &["gomod"],
                 CODE_GOMOD,
             )),
+            Self::RunPackageJson => {
+                let state = written("package.json", "json", &["json"], CODE_PACKAGE);
+                let version = state
+                    .shown_document()
+                    .map(|document| document.version)
+                    .unwrap_or_default();
+                let at = |row: u32, word: &str| {
+                    let column = CODE_PACKAGE
+                        .lines()
+                        .nth(row as usize)
+                        .and_then(|held| held.find(word))
+                        .unwrap_or(0) as u32;
+                    pm_protocol::Span::new(
+                        pm_protocol::Position::new(row, column),
+                        pm_protocol::Position::new(row, column + word.len() as u32),
+                    )
+                };
+                Screen::Workspace(state.with_code_lenses(
+                    0,
+                    "package.json",
+                    version,
+                    vec![
+                        pm_protocol::CodeLens {
+                            span: at(8, "^18.2.0"),
+                            title: "Update to 19.3.1".to_owned(),
+                            pressable: true,
+                        },
+                        pm_protocol::CodeLens {
+                            span: at(9, "3.23.8"),
+                            title: "Update to 4.1.0".to_owned(),
+                            pressable: true,
+                        },
+                    ],
+                ))
+            }
             Self::LanguageOffer => Screen::Workspace(language_offer()),
             Self::MarkdownPreview => Screen::Workspace(previewed("README.md")),
             Self::VectorPreview => Screen::Workspace(previewed("assets/logo.svg")),

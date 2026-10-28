@@ -133,6 +133,7 @@ impl Setting {
             Self::Occurrences => Control::Switch(editor.occurrence_highlights),
             Self::BracketColors => Control::Switch(editor.bracket_colors),
             Self::RedactPrivateValues => Control::Switch(editor.redact_private_values),
+            Self::DependencyHints => Control::Switch(editor.dependency_hints),
             Self::SemanticHighlighting => Control::Switch(editor.semantic_highlighting),
             Self::InlayHints => Control::Switch(editor.inlay_hints),
             Self::CodeLens => Control::Switch(editor.code_lens),
@@ -372,6 +373,7 @@ impl Setting {
             Self::Occurrences => editor.occurrence_highlights ^= true,
             Self::BracketColors => editor.bracket_colors ^= true,
             Self::RedactPrivateValues => editor.redact_private_values ^= true,
+            Self::DependencyHints => editor.dependency_hints ^= true,
             Self::SemanticHighlighting => editor.semantic_highlighting ^= true,
             Self::InlayHints => editor.inlay_hints ^= true,
             Self::CodeLens => editor.code_lens ^= true,
@@ -781,6 +783,7 @@ impl Setting {
             Self::RedactPrivateValues => {
                 editor.redact_private_values = source.redact_private_values
             }
+            Self::DependencyHints => editor.dependency_hints = source.dependency_hints,
             Self::SemanticHighlighting => {
                 editor.semantic_highlighting = source.semantic_highlighting
             }

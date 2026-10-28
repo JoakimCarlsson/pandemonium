@@ -204,6 +204,11 @@ fn earlier_install(spec: &ServerSpec, install: &Install) -> Option<PathBuf> {
         .find_map(|folder| installed_program(spec, install, folder))
 }
 
+/// Whether a version of the program of `spec` other than the one `install` asks for is installed.
+pub(crate) fn has_earlier_install(spec: &ServerSpec, install: &Install) -> bool {
+    earlier_install(spec, install).is_some()
+}
+
 /// The program of `spec` found in the project at `root` or on the machine, without installing anything.
 pub(crate) fn found(spec: &ServerSpec, root: Option<&Path>) -> Option<PathBuf> {
     let in_project = root.and_then(|root| {

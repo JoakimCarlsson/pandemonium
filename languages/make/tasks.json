@@ -1,17 +1,46 @@
 [
   {
+    "label": "Run Target",
+    "command": "make $PM_CUSTOM_target",
+    "folder": "$PM_DIRNAME",
+    "group": "run",
+    "source": "$PM_FILENAME",
+    "lens": true,
+    "tags": [
+      "make-target"
+    ]
+  },
+  {
     "label": "make: $PM_CUSTOM_target",
     "command": "make $PM_CUSTOM_target",
     "folder": "$PM_DIRNAME",
     "groups": {
       "capture": "target",
-      "build": ["all", "build", "release"],
-      "test": ["test", "check", "lint"],
-      "run": ["run", "start", "dev"]
+      "build": [
+        "all",
+        "build",
+        "release"
+      ],
+      "test": [
+        "test",
+        "check",
+        "lint"
+      ],
+      "run": [
+        "run",
+        "start",
+        "dev"
+      ]
     },
     "source": "$PM_FILENAME",
-    "tags": ["make-target"],
-    "from": ["GNUmakefile", "makefile", "Makefile"],
+    "tags": [
+      "make-target"
+    ],
+    "from": [
+      "GNUmakefile",
+      "makefile",
+      "Makefile"
+    ],
     "order": 30
   }
 ]

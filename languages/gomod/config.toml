@@ -18,3 +18,9 @@ line_comment = "//"
 indent = 4
 tabs = true
 pairs = ["()", "[]", "\"\"", "``"]
+
+# Where the newest version of each module a go.mod requires is looked up.
+[dependencies]
+files = ["go.mod"]
+registry = "https://proxy.golang.org/{escaped}/@latest"
+pointer = "/Version"

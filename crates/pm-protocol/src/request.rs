@@ -1091,6 +1091,9 @@ pub enum Request {
         path: String,
         /// The version of the text the lenses are about.
         version: i32,
+        /// Whether the newest versions of the dependencies the file lists are looked up in their registry, and offered as lenses.
+        #[serde(default)]
+        dependencies: bool,
     },
     /// Presses one of the lenses last offered for an open file.
     PressCodeLens {

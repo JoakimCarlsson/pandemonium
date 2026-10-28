@@ -65,6 +65,9 @@ pub struct ExtensionInfo {
     /// What its code last said it was doing, such as which release of a language server it fetched.
     #[serde(default)]
     pub status: Option<String>,
+    /// What is newer than what is installed, in words for the reader: the language itself as the list now has it, or its language server; nothing when what is installed is the newest.
+    #[serde(default)]
+    pub update: Option<String>,
 }
 
 /// The ids of the capabilities an extension may ask for, with what each lets it do.
@@ -162,6 +165,9 @@ pub struct GrammarMore {
     /// The debugger query: which names are variables to show the value of, and the scopes they are looked for in.
     #[serde(default)]
     pub debugger: String,
+    /// The dependencies query: which nodes are the names and versions of the dependencies a manifest lists.
+    #[serde(default)]
+    pub dependencies: String,
     /// The characters besides letters, digits and the underscore that are part of a word.
     #[serde(default)]
     pub word_characters: Vec<String>,

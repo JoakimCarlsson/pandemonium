@@ -225,8 +225,8 @@
       "files": {
         "config.toml": "a3b9b94b11d5b91f909a70c3f1c32cb3053af3daedef5291640099a4c304ac43",
         "icon.svg": "913c2fe78bb9ee358b422b378fb6ca9acd8779927ab88b161caf468e67e33ead",
-        "runnables.scm": "f025458f26de1c8abdad025a4b429785ef98fba6818650f489b39a5091ad70af",
-        "tasks.json": "5ea0097a3c7dd9140c25ee11ad3d711cd6614bdd07ec7247d30b87948104aae8"
+        "runnables.scm": "4cbd4d870083987601e6ccbc8975e8b636f8e773f3f797993ab3be05d3914a38",
+        "tasks.json": "0b1bbb4de77685e7df1896198105020b4333210cee2c5174e4ef8d7f2af5ea08"
       },
       "local": false
     },
@@ -382,7 +382,8 @@
       "server": null,
       "files": {
         "brackets.scm": "e98e812efd7ec6fa313ff2e47bd96eb5d07d0d2cfa3ecc1a0e845a5f838787a5",
-        "config.toml": "824bc0ed49c5ec0ca32c477249660c670b0ac4c3a191ebed3cadd3799ef45ec5",
+        "config.toml": "8f88dce450bc616c8dbb9c07309611e6a776b7d4ce1034cca67644c207285326",
+        "dependencies.scm": "34288271043627e0d89d7615e54f04483daf5959b099531d02f073e13695b2e5",
         "grammar.wasm": "30eb00e1c4b4516ccfad39d0a8d79e5f98a823de45705ad3c6e232dfa7d5e36c",
         "highlights.scm": "4af8cc939548e0511af75e8ceecf9d484e18f163975793dcb3609ac1e9c5be9d",
         "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d",
@@ -644,7 +645,8 @@
       "server": "vscode-json-language-server",
       "files": {
         "brackets.scm": "d13aeee7b2b6ff238a68e2029bfa42543e624415911624e2fb88cd93abf47bc5",
-        "config.toml": "1adfa70dde038d8ccca871890e41a04c79951aed7eda186e80dbececf686d13e",
+        "config.toml": "001108ef16247ad00f42bbcc866e9fb77e2c5673d1945d772496bfcc97802502",
+        "dependencies.scm": "107ca1202e6f79ce0e3a1f2f0b9f767513f4d8500f24f8e012d526bb1364efbb",
         "highlights.scm": "86cb3d2ca3aada199a87998e2d948de975e92c47d5258bcedbe71f193fe8fa4d",
         "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d",
         "indents.scm": "8d640f47854fdfb20e09a5ed3aec2c427b168ed62b2026350adc0b83dea69a2d",
@@ -654,7 +656,7 @@
         "package.json": "2a4446da171df7890c82ecbdfe1de27a922991023178205d6c2ef0b57fe0d329",
         "redactions.scm": "1fe66bc07d46b5eb73c15d6ab82e128231a5e0f366e68aaa89e69242f857ebd3",
         "runnables.scm": "b07be858c5ea9b952d944e6992114e83c0331d21f04d815ff37a6958c3ebe12c",
-        "tasks.json": "7d0ee895c116bd25b9128621f9a4267295fce4ef82a86452e5efbd2f8645cdba"
+        "tasks.json": "d645bab9d9191428c621f9cb9edb8e2f1e5f37b17e396f02e585387b191c8bb3"
       },
       "local": false
     },
@@ -740,7 +742,7 @@
         "injections.scm": "ca80e7c5d0577b1fb46091aa62d46512ddc35cddbd03478591e8718038de846a",
         "outline.scm": "f3a121e2c7e56da7a9f7d92ced02c00dbf55b44333278cf2949736ef2879b27d",
         "runnables.scm": "317e9c009f4142466898b62c157d514d8f774e2f974a48c22980e66990bee9f7",
-        "tasks.json": "21c9fb8fd08dea8df167777b2fd478820a78f76da7de7d0475bff4a3d441f601"
+        "tasks.json": "7539ba8089fdf6f8ad2e0f75b9c67c3131a2a08688f506b6cab862b31c1758a8"
       },
       "local": false
     },
@@ -1121,7 +1123,8 @@
       "server": "taplo",
       "files": {
         "brackets.scm": "a0d7d33c46c561c820e4b4b5e83a2c358eb5831a06b538338a0d3c950aa7e48e",
-        "config.toml": "231ea83775ef64928f17e8838619d0b249b3893a5a95c42507ca522b12ff0f94",
+        "config.toml": "b30c962ed4bef8969fd6c6147e9f350ab987eec7194fa84808134892bc92af80",
+        "dependencies.scm": "7abbb0ded3a39a4d017233ce7f463f084bcdd631056067a4ceb3ef9fb5b1a22c",
         "highlights.scm": "25a36ce579bff0ac2d3ca0233d2b81fc05e4c4092c4b172bd7be32297fd78aec",
         "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d",
         "indents.scm": "9a3247ddd5fcc06a840724120ec90be62f8896f51801ae7504afedc7addbea97",

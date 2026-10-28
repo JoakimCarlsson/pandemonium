@@ -1168,7 +1168,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                     links: triggers.links,
                     semantic_tokens: triggers.semantic_tokens,
                     inlay_hints: triggers.inlay_hints,
-                    code_lens: triggers.code_lens,
+                    code_lens: triggers.code_lens || crate::dependencies::applies(&language, &path),
                     inline_values: triggers.inline_values,
                 },
                 Err(reason) => failed(reason),
@@ -1430,26 +1430,64 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             directory,
             path,
             version,
-        } => match core
-            .documents
-            .hub
-            .code_lenses(&place(&directory), &path, version)
-        {
-            Ok(lenses) => Response::CodeLenses { lenses },
-            Err(reason) => failed(reason),
-        },
+            dependencies,
+        } => {
+            let root = place(&directory);
+            match core.documents.hub.code_lenses(&root, &path, version) {
+                Ok(mut lenses) => {
+                    let after = lenses.len();
+                    crate::dependencies::forget(&root, &path);
+                    let listed = dependencies
+                        .then(|| {
+                            core.documents
+                                .hub
+                                .read_open(&root, &path, version, |language, buffer| {
+                                    (
+                                        language.to_owned(),
+                                        crate::dependencies::listed(language, &path, buffer),
+                                    )
+                                })
+                                .ok()
+                        })
+                        .flatten();
+                    if let Some((language, found)) = listed {
+                        lenses.extend(crate::dependencies::lenses(
+                            &root, &path, &language, found, after,
+                        ));
+                    }
+                    Response::CodeLenses { lenses }
+                }
+                Err(reason) => failed(reason),
+            }
+        }
         Request::PressCodeLens {
             directory,
             path,
             index,
-        } => match core
-            .documents
-            .hub
-            .press_lens(&place(&directory), &path, index)
-        {
-            Ok((places, files)) => Response::LensPressed { places, files },
-            Err(reason) => failed(reason),
-        },
+        } => {
+            let root = place(&directory);
+            let own = crate::dependencies::press(&root, &path, index, |span| {
+                core.documents
+                    .hub
+                    .read_open(&root, &path, 0, |_, buffer| {
+                        let range = buffer.offset_of(span.start)..buffer.offset_of(span.end);
+                        buffer.text().get(range).map(str::to_owned)
+                    })
+                    .ok()
+                    .flatten()
+            });
+            match own {
+                Some(Ok(edit)) => Response::LensPressed {
+                    places: Vec::new(),
+                    files: vec![edit],
+                },
+                Some(Err(reason)) => failed(reason),
+                None => match core.documents.hub.press_lens(&root, &path, index) {
+                    Ok((places, files)) => Response::LensPressed { places, files },
+                    Err(reason) => failed(reason),
+                },
+            }
+        }
         Request::TakeCodeAction {
             directory,
             path,

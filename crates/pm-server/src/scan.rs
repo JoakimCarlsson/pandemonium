@@ -8,7 +8,7 @@ use pm_task::Template;
 use pm_treesitter::{Editing, Grammar, Queries, Syntax, registry};
 
 /// The grammar of the installed language `id`, loaded into this process's registry the first time it is asked for.
-fn grammar_of(id: &str) -> Option<Arc<Grammar>> {
+pub(crate) fn grammar_of(id: &str) -> Option<Arc<Grammar>> {
     if let Some(loaded) = registry::called(id) {
         return Some(loaded);
     }
@@ -20,6 +20,7 @@ fn grammar_of(id: &str) -> Option<Arc<Grammar>> {
         injections: bundle.injections,
         brackets: bundle.brackets,
         runnables: bundle.runnables,
+        dependencies: bundle.more.dependencies,
         ..Queries::default()
     };
     let grammar = Grammar::load(

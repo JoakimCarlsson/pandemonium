@@ -1,5 +1,38 @@
 [
   {
+    "label": "Run Service",
+    "command": "docker compose -f $PM_FILE up $PM_CUSTOM_service",
+    "folder": "$PM_DIRNAME",
+    "group": "run",
+    "source": "$PM_RELATIVE_FILE",
+    "lens": true,
+    "tags": [
+      "docker-compose-service"
+    ]
+  },
+  {
+    "label": "Run All Services",
+    "command": "docker compose -f $PM_FILE up",
+    "folder": "$PM_DIRNAME",
+    "group": "run",
+    "source": "$PM_RELATIVE_FILE",
+    "lens": true,
+    "tags": [
+      "docker-compose-services"
+    ]
+  },
+  {
+    "label": "Stop All Services",
+    "command": "docker compose -f $PM_FILE down",
+    "folder": "$PM_DIRNAME",
+    "group": "run",
+    "source": "$PM_RELATIVE_FILE",
+    "lens": true,
+    "tags": [
+      "docker-compose-services"
+    ]
+  },
+  {
     "label": "docker compose up $PM_CUSTOM_service",
     "command": "docker compose -f $PM_FILE up $PM_CUSTOM_service",
     "group": "run",

@@ -95,6 +95,7 @@ that pins an npm install and a language's own grammar travel with it.
 | `tasks.json`                | The tasks it ships: what the run buttons run, and what a project lists      |
 | `overrides.scm`             | The scopes whose settings differ, such as strings and comments              |
 | `redactions.scm`            | The values to hide when the reader asks for private values to be covered    |
+| `dependencies.scm`          | The names and versions of the dependencies a manifest lists                 |
 | `textobjects.scm`           | The functions, classes and comments to select whole                         |
 | `debugger.scm`              | The names whose value is shown beside the lines while a program is paused   |
 | `semantic_token_rules.json` | What the types of tokens its language server names look like                |
@@ -287,6 +288,7 @@ rightmost capture the editor has a colour for; a capture whose first word is non
 | `brackets.scm` | `@open`, `@close` | A bracket and the one it pairs with, in one match |
 | `runnables.scm` | `@run`, other captures, `(#set! tag …)` | See Runnables |
 | `overrides.scm` | `@<scope>`, `@<scope>.inclusive` | The nodes of the scope named `<scope>`; a node holds the caret strictly inside it, and the `.inclusive` capture also at its start and end, as a line comment up to the line break |
+| `dependencies.scm` | `@name`, `@version` | A dependency a manifest lists and the version it asks for, the quotes around the version left out; see Dependencies |
 | `redactions.scm` | `@redact` | A value hidden behind a block when Settings → Editor → Appearance → Hide private values is on |
 | `textobjects.scm` | `@function.around`, `@function.inside`, `@class.around`, `@class.inside`, `@comment.around`, `@comment.inside` | A whole function, class or comment and what is inside it; Select Function, Select Function Body, Select Class, Select Class Body and Select Comment select the smallest around the caret, and `.around` stands for a missing `.inside` |
 | `debugger.scm` | `@debug-variable`, `@debug-scope` | A name whose value is shown at the end of its line while the program is paused, looked up among the variables of the frame, and the nodes from whose start to the paused line the names are taken; used when the file's language server does not give inline values |
@@ -319,9 +321,34 @@ The tags the built-in languages use are `rust-main`, `rust-test`, `rust-module`,
 
 When more than one task is tied to a place, pressing its run button lists them
 for the reader to pick from; when there is one it runs at once. A task with
-`"lens": true` is not behind a run button: it is a link at the end of the
-line of each place that carries its tag, saying its label, and pressing it runs
-that task. A place whose tasks are all links gets no run button.
+`"lens": true` is not behind a run button: it is a link on a row of its own
+above the line of each place that carries its tag, saying its label, and
+pressing it runs that task. Tasks of one language with the same tags and label
+make one link, and the one whose `when` holds runs. A place whose tasks are all
+links gets no run button. A task that is a link is never listed.
+
+### Dependencies
+
+A language whose files list dependencies can offer to update them. Its
+`dependencies.scm` captures the name of each as `@name` and the version it asks
+for as `@version`, and a `[dependencies]` table of its `config.toml` says which
+files it applies to and where the newest version is looked up:
+
+```toml
+[dependencies]
+files = ["package.json"]                          # file names it applies to; every file of the language when empty
+registry = "https://registry.npmjs.org/{name}"    # {name} is the dependency's name, {escaped} the name as the Go module proxy writes it
+pointer = "/dist-tags/latest"                     # where in the JSON the address answers the version is, as a JSON pointer
+title = "Update to {latest}"                      # what the link says; {latest} and {current} are the two versions
+```
+
+The server looks each dependency up, keeps what it found for an hour and what
+failed for five minutes, runs a handful of lookups at once, and shows a link
+above each dependency that has a newer release; pressing it writes that version
+in place of the old one, keeping a leading `^`, `~` or `=`. Only `https`
+addresses are used, ranges, tags and pre-releases are left alone, and a failed
+lookup shows nothing. Settings → Editor → Appearance → Dependency updates turns
+the lookups off.
 
 ### `tasks.json`
 
@@ -360,7 +387,7 @@ its `tags`, and listed for a project when it names `from` or `when`.
 | `groups` | `{"capture": "<name>", "<group>": ["text", …]}`: the group by what a capture matched, in place of `group` |
 | `language` | The language whose toolchain it runs with, by family, as the language that owns the family names it |
 | `source` | Where the task is said to come from, with variables |
-| `lens` | Shows the task as a link at the end of the line of its places, in place of a run button; its `label` is what the link says and has no variables |
+| `lens` | Shows the task as a link above the line of its places, in place of a run button; its `label` is what the link says and has no variables |
 | `tags` | The tags of the places that run it |
 | `files` | The file names it is run from; any when empty |
 | `when` | A condition on the root of the project (below); with `from`, also what the manifest is looked for under |

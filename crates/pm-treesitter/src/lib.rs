@@ -13,6 +13,7 @@
 
 mod brackets;
 mod debug;
+mod dependencies;
 mod engine;
 mod grammar;
 mod highlight;
@@ -29,6 +30,7 @@ mod select;
 mod syntax;
 mod tags;
 
+pub use dependencies::Dependency;
 pub use grammar::{
     Aligned, Editing, Grammar, IndentRules, Pattern, Queries, Scope, Tags, default_pairs,
 };

@@ -116,6 +116,8 @@ pub enum Setting {
     BracketColors,
     /// Whether the values a language marks as private are hidden behind blocks.
     RedactPrivateValues,
+    /// Whether the newest versions of the dependencies a manifest lists are looked up and offered.
+    DependencyHints,
     /// Whether names are coloured by what the language server says they are.
     SemanticHighlighting,
     /// Whether the language server's hints are written inside the lines.
@@ -250,7 +252,7 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting, in the order the pages show them.
-    pub const ALL: [Self; 90] = [
+    pub const ALL: [Self; 91] = [
         Self::Launch,
         Self::ConfirmClose,
         Self::CheckUpdates,
@@ -276,6 +278,7 @@ impl Setting {
         Self::Occurrences,
         Self::BracketColors,
         Self::RedactPrivateValues,
+        Self::DependencyHints,
         Self::SemanticHighlighting,
         Self::InlayHints,
         Self::CodeLens,
@@ -371,6 +374,7 @@ impl Setting {
             | Self::Occurrences
             | Self::BracketColors
             | Self::RedactPrivateValues
+            | Self::DependencyHints
             | Self::SemanticHighlighting
             | Self::InlayHints
             | Self::CodeLens
@@ -550,6 +554,10 @@ impl Setting {
             Self::RedactPrivateValues => (
                 "Hide private values",
                 "Cover the values a language marks as private, such as the secrets of an environment file, with blocks, so sharing the screen does not give them away.",
+            ),
+            Self::DependencyHints => (
+                "Dependency updates",
+                "Look up the newest version of each dependency a manifest lists, such as in package.json, Cargo.toml or go.mod, and offer a link that updates it. Turn it off to stop looking versions up on the web.",
             ),
             Self::SemanticHighlighting => (
                 "Semantic highlighting",

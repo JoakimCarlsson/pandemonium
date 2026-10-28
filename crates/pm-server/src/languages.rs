@@ -59,6 +59,7 @@ pub(crate) fn grammar(name: &str) -> Result<GrammarBundle, String> {
             redactions: query("redactions.scm"),
             textobjects: query("textobjects.scm"),
             debugger: query("debugger.scm"),
+            dependencies: query("dependencies.scm"),
             word_characters: manifest.word_characters,
             bracket_pairs: manifest.brackets,
             increase_indent_pattern: manifest.increase_indent_pattern,
@@ -165,6 +166,12 @@ impl Core {
             infos.retain(|info| info.id != package.id);
             infos.push(crate::extensions::describe(&package, true));
         }
+        let index_now = installs
+            .index
+            .lock()
+            .ok()
+            .and_then(|held| held.clone())
+            .unwrap_or_default();
         let statuses = installs
             .statuses
             .lock()
@@ -178,6 +185,7 @@ impl Core {
                 info.installed = true;
                 info.server = manifest.server.as_ref().map(pm_lsp::server_state);
                 server_ready = manifest.server.as_ref().is_none_or(pm_lsp::server_ready);
+                info.update = pm_lsp::update_for(&index_now, &info.id);
                 info.icon = icon_of(&info.id, manifest);
                 info.color = manifest.color.clone();
             }

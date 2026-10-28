@@ -13,6 +13,7 @@ getrandom = "0.4.3"
 notify = "8.2.0"
 pm-acp.workspace = true
 pm-agent-library.workspace = true
+pm-buffer.workspace = true
 pm-dap.workspace = true
 pm-git.workspace = true
 pm-lsp.workspace = true

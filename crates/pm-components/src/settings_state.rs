@@ -161,6 +161,13 @@ impl WorkspaceState {
         )
     }
 
+    /// Whether an installed language or language server has a newer version than the machine has.
+    pub fn language_update_available(&self) -> bool {
+        self.extensions
+            .iter()
+            .any(|extension| extension.installed && extension.update.is_some())
+    }
+
     /// The language whose settings the languages page shows, by id, when any is installed.
     pub(crate) fn settings_language(&self) -> Option<String> {
         let installed = || self.installed_languages().into_iter().map(|(id, _)| id);

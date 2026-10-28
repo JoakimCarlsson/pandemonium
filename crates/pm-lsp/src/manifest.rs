@@ -380,6 +380,24 @@ pub struct Manifest {
     /// How its tags are closed as they are opened, for a language that has them.
     #[serde(default)]
     pub tags: Option<TagSpec>,
+    /// Where the newest versions of the dependencies its files list are looked up, which `dependencies.scm` finds in them.
+    #[serde(default)]
+    pub dependencies: Option<DependencySpec>,
+}
+
+/// Where the newest version of what a manifest depends on is looked up, for a language whose files list dependencies.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DependencySpec {
+    /// The names of the files it applies to; every file of the language when none.
+    #[serde(default)]
+    pub files: Vec<String>,
+    /// The address that says the newest version of a dependency, where `{name}` stands for its name and `{escaped}` for the name written as a Go module proxy writes it.
+    pub registry: String,
+    /// Where in the JSON the address answers the newest version is, as a JSON pointer.
+    pub pointer: String,
+    /// What the link that updates a dependency says, where `{latest}` and `{current}` stand for the two versions; `Update to {latest}` when nothing.
+    #[serde(default)]
+    pub title: Option<String>,
 }
 
 /// An extension is a language unless its manifest says otherwise.

@@ -156,6 +156,8 @@ pub struct EditorSettings {
     pub vertical_scroll_margin: usize,
     /// Whether the values a language marks as private are hidden behind blocks, so that sharing the screen does not give them away.
     pub redact_private_values: bool,
+    /// Whether the newest versions of the dependencies a manifest lists are looked up in their registry and offered as links that update them.
+    pub dependency_hints: bool,
     /// The reader's own rules for what the types of tokens a language server names look like, which come before the language's.
     pub semantic_token_rules: Vec<pm_lsp::TokenRule>,
     /// The bindings of keys the keymap starts from.
@@ -216,6 +218,7 @@ impl Default for EditorSettings {
             scroll_beyond_last_line: true,
             vertical_scroll_margin: 3,
             redact_private_values: false,
+            dependency_hints: true,
             semantic_token_rules: Vec::new(),
             keymap: crate::keymap::Preset::default(),
             keys: std::collections::BTreeMap::new(),

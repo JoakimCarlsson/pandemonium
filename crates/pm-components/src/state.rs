@@ -515,6 +515,8 @@ pub enum Outgoing {
         path: String,
         /// The version of the text the lenses are about.
         version: i32,
+        /// Whether the newest versions of the dependencies the file lists are looked up.
+        dependencies: bool,
     },
     /// Presses one of the lenses the language server last gave for a file of the session at this position.
     PressCodeLens {
@@ -2113,6 +2115,7 @@ impl WorkspaceState {
             ADD_PROJECT => return self.with_adder(),
             SETTINGS => return self.with_settings(),
             crate::title_bar::UPDATE => self.open_release(),
+            crate::title_bar::LANGUAGE_UPDATE => return self.with_extensions_page(),
             update if self.press_update(update) => {}
             action if crate::settings::is_settings(action) => {
                 return self.settings_pressed(action);

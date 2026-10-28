@@ -2700,6 +2700,7 @@ dependencies = [
  "notify",
  "pm-acp",
  "pm-agent-library",
+ "pm-buffer",
  "pm-dap",
  "pm-git",
  "pm-lsp",

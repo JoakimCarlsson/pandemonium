@@ -320,6 +320,11 @@ impl Document {
             .map(|lens| lens.title.as_str())
     }
 
+    /// Whether any code lens is held for the file.
+    pub fn has_code_lenses(&self) -> bool {
+        !self.annotations.lenses.items.is_empty()
+    }
+
     /// The lenses whose stretch starts in line `row`, in order.
     pub fn lenses_on(&self, row: usize) -> &[Lens] {
         let line = self.line(row);

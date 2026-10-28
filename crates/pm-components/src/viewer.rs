@@ -436,6 +436,7 @@ pub(crate) fn file_line(
     } else {
         &[]
     };
+    let lens_row = lens_row && (!run_lenses.is_empty() || !lenses.is_empty());
     let rows = text_segments.iter().enumerate().map(|(place, segment)| {
         let absolute = line.start + segment.start..line.start + segment.end;
         let standing: Vec<&Hint> = hints
@@ -506,7 +507,6 @@ pub(crate) fn file_line(
             return held;
         }
         held.children(document.is_folded_at(index).then(|| fold_chip(index)))
-            .children(lenses.iter().map(|lens| lens_chip(lens, font)))
             .children(blamed.clone().map(|said| {
                 node()
                     .styles([flex_1(), ml(8), min_w_px(0), overflow_hidden()])
@@ -566,13 +566,18 @@ pub(crate) fn file_line(
                 overflow_hidden(),
                 px(2),
             ])
-            .children(lens_row.then(|| run_lens_row(&run_lenses, height, font)))
+            .children(lens_row.then(|| run_lens_row(&run_lenses, lenses, height, font)))
             .children(rows),
     )
 }
 
 /// The row above a line that holds the links which run the line's place, each the `index`th of the links of the file.
-fn run_lens_row(lenses: &[(usize, String)], height: f32, font: u32) -> Node {
+fn run_lens_row(
+    lenses: &[(usize, String)],
+    given: &[pm_editor::Lens],
+    height: f32,
+    font: u32,
+) -> Node {
     node()
         .styles([
             flex(),
@@ -586,6 +591,12 @@ fn run_lens_row(lenses: &[(usize, String)], height: f32, font: u32) -> Node {
                 .iter()
                 .enumerate()
                 .map(|(place, (index, label))| run_lens_chip(*index, label, font, place == 0)),
+        )
+        .children(
+            given
+                .iter()
+                .enumerate()
+                .map(|(place, lens)| lens_chip(lens, font, lenses.is_empty() && place == 0)),
         )
 }
 
@@ -627,14 +638,14 @@ fn run_lens_chip(index: usize, label: &str, font: u32, first: bool) -> Node {
         .child(line(label, (font - 1).max(8), 1.2, Role::Muted).styles([flex_none()]))
 }
 
-/// The text of `lens` at the end of its line, pressed to do what the server says when it can be.
-fn lens_chip(lens: &Lens, font: u32) -> Node {
+/// The text of `lens` on the row above its line, pressed to do what the server says when it can be.
+fn lens_chip(lens: &Lens, font: u32, first: bool) -> Node {
     let chip = node().styles([
         flex(),
         items_center(),
         flex_none(),
-        ml(4),
-        px(1.5),
+        pl(if first { 0.0 } else { 1.5 }),
+        pr(1.5),
         h(4),
         rounded(Radius::Sm),
     ]);
