@@ -23,28 +23,32 @@ pub(crate) struct Candidate {
     pub detect: Detect,
     /// Whether the language's own folder names it as the language's server, which runs unless the reader turned it off.
     pub primary: bool,
+    /// The language whose folder declares it, which a refusal of that language's programs applies to.
+    pub origin: String,
 }
 
 impl Candidate {
     /// A server that reads every file of its language in every project.
-    fn plain(spec: ServerSpec, primary: bool) -> Self {
+    fn plain(spec: ServerSpec, primary: bool, origin: &str) -> Self {
         Self {
             spec,
             scopes: Vec::new(),
             suffixes: Vec::new(),
             detect: Detect::default(),
             primary,
+            origin: origin.to_owned(),
         }
     }
 
     /// The companion `companion` of a language.
-    fn of_companion(companion: Companion) -> Self {
+    fn of_companion(companion: Companion, origin: &str) -> Self {
         Self {
             spec: companion.server,
             scopes: companion.scopes,
             suffixes: companion.suffixes,
             detect: companion.detect,
             primary: false,
+            origin: origin.to_owned(),
         }
     }
 
@@ -97,10 +101,15 @@ pub(crate) fn needed(root: &Path, detect: &Detect) -> bool {
 pub(crate) fn candidates_of(language: &str, own: Option<ServerSpec>) -> Vec<Candidate> {
     let mut found: Vec<Candidate> = own
         .into_iter()
-        .map(|spec| Candidate::plain(spec, true))
+        .map(|spec| Candidate::plain(spec, true, language))
         .collect();
     if let Some(manifest) = installed_manifest(language) {
-        found.extend(manifest.companions.into_iter().map(Candidate::of_companion));
+        found.extend(
+            manifest
+                .companions
+                .into_iter()
+                .map(|companion| Candidate::of_companion(companion, language)),
+        );
     }
     for (id, manifest) in installed() {
         if id == language {
@@ -110,8 +119,13 @@ pub(crate) fn candidates_of(language: &str, own: Option<ServerSpec>) -> Vec<Cand
         let others = manifest
             .server
             .into_iter()
-            .map(|spec| Candidate::plain(spec, false))
-            .chain(manifest.companions.into_iter().map(Candidate::of_companion))
+            .map(|spec| Candidate::plain(spec, false, &id))
+            .chain(
+                manifest
+                    .companions
+                    .into_iter()
+                    .map(|companion| Candidate::of_companion(companion, &id)),
+            )
             .filter(|offer| claims(&offer.spec));
         for offer in others {
             if !found.iter().any(|held| held.spec.id == offer.spec.id) {

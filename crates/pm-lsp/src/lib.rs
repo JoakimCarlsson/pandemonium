@@ -23,6 +23,7 @@ mod hub;
 mod index;
 mod inherit;
 mod install;
+mod lens;
 mod manifest;
 mod paths;
 mod preferences;
@@ -45,6 +46,7 @@ pub use install::{
     add_extension, add_folder, install, installed, installed_manifest, language_of,
     language_of_text, remove, remove_folder,
 };
+pub use lens::{RunLens, run_lenses_of};
 pub use manifest::{
     AdapterSpec, Archive, BracketSpec, Companion, DecreaseRule, Detect, Download, Install,
     InstallKind, Manifest, Pinned, ScopeSpec, ServerSpec, TagSpec, glob,

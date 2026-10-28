@@ -51,6 +51,8 @@ pub struct Editing {
     pub tags: Option<Tags>,
     /// How Emmet abbreviations are written in its files, `markup` or `style`, when it takes them.
     pub emmet_dialect: Option<String>,
+    /// The links shown at the end of the runnable lines instead of a run button, each with the tags of the places it is shown on.
+    pub run_lenses: Vec<(Vec<String>, String)>,
     /// The characters besides letters, digits and the underscore that are part of a word.
     pub word_characters: String,
     /// For each opening character of a pair, the names of the scopes it is not closed in.
@@ -98,6 +100,7 @@ impl Default for Editing {
             scopes: Vec::new(),
             tags: None,
             emmet_dialect: None,
+            run_lenses: Vec::new(),
             word_characters: String::new(),
             not_in: Vec::new(),
             indent_rules: IndentRules::default(),

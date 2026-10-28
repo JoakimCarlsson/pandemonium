@@ -267,6 +267,8 @@ enum Pending {
     DebugStarted(usize),
     /// What the folder of the session at this position can be built, tested and run with.
     Tasks(usize),
+    /// The tasks that can run the place of a file whose button was pressed in the session at this position.
+    RunnableTasks(usize),
     /// The toolchains installed on the machine of the session at this position.
     Toolchains(usize),
     /// The programs the server of this machine debugs.
@@ -1424,6 +1426,7 @@ impl Work {
                 tasking @ (Outgoing::Tasks { .. }
                 | Outgoing::RunTask { .. }
                 | Outgoing::RunRunnable { .. }
+                | Outgoing::RunnableTasks { .. }
                 | Outgoing::Toolchains { .. }
                 | Outgoing::SelectToolchain { .. }) => self.deliver_tasks(model, tasking),
                 code => self.deliver_code(model, code),
@@ -2307,7 +2310,7 @@ impl Work {
             | Pending::Debugs(_)
             | Pending::DebugWatched(_)
             | Pending::DebugRewatched(_) => self.answered_debug(model, pending, response),
-            Pending::Tasks(_) | Pending::Toolchains(_) => {
+            Pending::Tasks(_) | Pending::RunnableTasks(_) | Pending::Toolchains(_) => {
                 self.answered_tasks(model, pending, response)
             }
             Pending::MachineSettings | Pending::LatestRelease | Pending::Update => {

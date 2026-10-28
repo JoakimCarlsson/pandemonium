@@ -56,6 +56,7 @@ pub fn editing_of(manifest: &Manifest) -> Editing {
         scopes: scopes_of(&manifest.scopes),
         tags: tags_of(manifest.tags.as_ref()),
         emmet_dialect: manifest.emmet_dialect.clone(),
+        run_lenses: Vec::new(),
         word_characters: manifest.word_characters.concat(),
         not_in,
         indent_rules: IndentRules {

@@ -144,6 +144,9 @@ pub struct ExtensionAssets {
 /// The queries and editing rules a language folder gained after the first ones, kept apart so that a bundle stays small.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GrammarMore {
+    /// The links shown at the end of the runnable lines instead of a run button.
+    #[serde(default)]
+    pub lenses: Vec<pm_lsp::RunLens>,
     /// How Emmet abbreviations are written in its files, `markup` or `style`, when it takes them.
     #[serde(default)]
     pub emmet_dialect: Option<String>,

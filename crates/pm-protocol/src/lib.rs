@@ -47,7 +47,7 @@ pub use pm_task::Task;
 pub use release::ReleaseAsset;
 pub use request::{AgentServer, Attachment, Login, McpServer, RegistryAgent, Request, ToolListing};
 pub use response::{Response, SessionInfo, TerminalInfo};
-pub use task::ToolchainInfo;
+pub use task::{RunnableTask, ToolchainInfo};
 
 /// The version of the protocol this build speaks; clients and servers refuse each other when they differ.
 pub const VERSION: u32 = 1;

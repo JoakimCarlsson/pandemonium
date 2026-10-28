@@ -34,6 +34,8 @@ pub enum Choosing {
     DebugProcess,
     /// A task of the project to run.
     Task,
+    /// Which of the tasks tied to a place of a file to run.
+    RunnableTask,
     /// A toolchain to run a language of the project with.
     Toolchain,
 }
@@ -54,6 +56,7 @@ impl Choosing {
             Self::DebugScenario => "Select what to debug",
             Self::DebugProcess => "Select a program to attach to",
             Self::Task => "Select a task to run",
+            Self::RunnableTask => "Select what to run",
             Self::Toolchain => "Select a toolchain for its language",
         }
     }
@@ -73,6 +76,7 @@ impl Choosing {
             Self::Task => {
                 "No tasks: add a Cargo.toml, package.json or Makefile, or write .pandemonium.tasks.json"
             }
+            Self::RunnableTask => "No task is tied to this place",
             Self::Toolchain => "No toolchains found on this machine",
         }
     }
@@ -103,6 +107,8 @@ pub enum Then {
     DebugAttach(u32),
     /// Runs the task at this place in the list the server gave.
     RunTask(usize),
+    /// Runs the place whose button was pressed with the task at this place in the list the server gave.
+    RunPlace(usize),
     /// Runs this language with this toolchain from now on, or with the machine's own path when there is none.
     Toolchain(String, Option<String>),
 }
@@ -281,6 +287,19 @@ impl WorkspaceState {
                     )
                 })
                 .collect(),
+            Choosing::RunnableTask => self
+                .tasks
+                .options
+                .iter()
+                .enumerate()
+                .map(|(index, task)| {
+                    Choice::new(
+                        task.name.clone(),
+                        task.command.clone(),
+                        Then::RunPlace(index),
+                    )
+                })
+                .collect(),
             Choosing::Toolchain => self
                 .tasks
                 .toolchains
@@ -436,6 +455,10 @@ impl WorkspaceState {
             }
             Then::RunTask(index) => {
                 self.task_taken(index);
+                self
+            }
+            Then::RunPlace(index) => {
+                self.runnable_taken(index);
                 self
             }
             Then::Toolchain(language, id) => {

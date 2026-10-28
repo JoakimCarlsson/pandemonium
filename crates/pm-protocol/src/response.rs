@@ -306,6 +306,11 @@ pub enum Response {
         #[serde(default)]
         problem: Option<String>,
     },
+    /// The tasks that can run a place of a file.
+    RunnableTasks {
+        /// Each one, the one that runs by default first.
+        tasks: Vec<crate::RunnableTask>,
+    },
     /// The toolchains a project can start its tasks and tools with.
     Toolchains {
         /// Each one, grouped by language.

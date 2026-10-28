@@ -9,6 +9,7 @@ color = "#6fc7d9"
 grammar = "go"
 suffixes = ["go"]
 aliases = ["golang"]
+requires = ["gomod", "gosum", "gowork"]
 line_comment = "//"
 toolchain_name = "Go"
 indent = 4
@@ -47,8 +48,14 @@ sha256 = "9504573f352b20be7f2f1911754d710622aedc15afff16d5ed8fb5645681aee7"
 [server]
 id = "gopls"
 language_id = "go"
+languages = ["gomod", "gosum", "gowork"]
 command = "gopls"
 check = ["version"]
+
+[server.language_ids]
+gomod = "go.mod"
+gosum = "go.sum"
+gowork = "go.work"
 
 [server.install]
 kind = "go"

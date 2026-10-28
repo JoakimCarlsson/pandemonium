@@ -8,6 +8,7 @@ license.workspace = true
 flate2 = "1.1.10"
 pm-buffer.workspace = true
 pm-store.workspace = true
+pm-task.workspace = true
 pm-tools.workspace = true
 pm-treesitter.workspace = true
 regex = "1.13.1"

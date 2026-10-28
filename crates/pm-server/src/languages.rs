@@ -53,6 +53,7 @@ pub(crate) fn grammar(name: &str) -> Result<GrammarBundle, String> {
         brackets: query("brackets.scm"),
         runnables: query("runnables.scm"),
         more: Box::new(pm_protocol::GrammarMore {
+            lenses: pm_lsp::run_lenses_of(&id),
             emmet_dialect: manifest.emmet_dialect,
             overrides: query("overrides.scm"),
             redactions: query("redactions.scm"),

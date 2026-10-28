@@ -310,7 +310,21 @@ impl Hub {
         if matches!(choice, Some(ServerChoice::Refused(_))) {
             return Plan::default();
         }
-        let offers = candidates::candidates_of(language, own.clone());
+        let refused: Vec<String> = self
+            .choices
+            .lock()
+            .map(|choices| {
+                choices
+                    .iter()
+                    .filter(|(_, choice)| matches!(choice, ServerChoice::Refused(_)))
+                    .map(|(name, _)| name.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let offers: Vec<Candidate> = candidates::candidates_of(language, own.clone())
+            .into_iter()
+            .filter(|offer| !refused.contains(&offer.origin))
+            .collect();
         let (primary, beside): (Option<ServerSpec>, Vec<Candidate>) = match &choice {
             Some(ServerChoice::Servers(names)) => {
                 let mut list = candidates::named(&offers, names, language, root, path);
@@ -321,13 +335,19 @@ impl Hub {
                     (Some(first.spec), list)
                 }
             }
-            _ => (
-                self.chosen(language, own),
-                candidates::by_default(&offers, language, root, path)
-                    .into_iter()
-                    .filter(|offer| !offer.primary)
-                    .collect(),
-            ),
+            _ => {
+                let mut primary = self.chosen(language, own);
+                let mut beside: Vec<Candidate> =
+                    candidates::by_default(&offers, language, root, path)
+                        .into_iter()
+                        .filter(|offer| !offer.primary)
+                        .collect();
+                let off = matches!(choice, Some(ServerChoice::Off));
+                if primary.is_none() && !off && !beside.is_empty() {
+                    primary = Some(beside.remove(0).spec);
+                }
+                (primary, beside)
+            }
         };
         Plan {
             primary: primary.map(|spec| self.overridden(spec)),

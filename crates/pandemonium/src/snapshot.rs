@@ -297,6 +297,8 @@ pub enum Shot {
     RunCompose,
     /// A Dockerfile with the run button of each build stage in the gutter.
     RunDockerfile,
+    /// A go.mod with the run button of the module line, the requires and each module in the gutter.
+    RunGoMod,
     /// A file of the sample extension's language, with its private values showing.
     CodeSample,
     /// The same file with the values its language marks as private hidden behind blocks.
@@ -413,7 +415,13 @@ fn load_installed_grammar(id: &str) {
         textobjects: read("textobjects.scm"),
         debugger: read("debugger.scm"),
     };
-    let editing = pm_lsp::editing_of(&manifest);
+    let editing = pm_treesitter::Editing {
+        run_lenses: pm_lsp::run_lenses_of(id)
+            .into_iter()
+            .map(|lens| (lens.tags, lens.label))
+            .collect(),
+        ..pm_lsp::editing_of(&manifest)
+    };
     if let Ok(loaded) =
         pm_treesitter::Grammar::load(id, &manifest.grammar, &wasm, &queries, editing)
     {
@@ -545,6 +553,9 @@ const CODE_SAMPLE: &str = "# Sample program\nSECRET_TOKEN = \"hunter2\"\napi_key
 
 /// The Dockerfile the Dockerfile snapshot shows.
 const CODE_DOCKERFILE: &str = "FROM node:24-bookworm-slim AS web-build\nWORKDIR /app/web\nCOPY web/package.json ./\nRUN npm ci\n\nFROM golang:1.27.1 AS api-build\nWORKDIR /app\nRUN go build -o /app/api ./cmd/api\n\nFROM gcr.io/distroless/static-debian13:nonroot\nCOPY --from=api-build /app/api /api\nENTRYPOINT [\"/api\"]\n";
+
+/// The go.mod the go.mod snapshot shows.
+const CODE_GOMOD: &str = "module github.com/JoakimCarlsson/vault\n\ngo 1.27.0\n\nrequire (\n\tgithub.com/PuerkitoBio/goquery v1.13.0\n\tgithub.com/andybalholm/cascadia v1.3.5\n\tgolang.org/x/net v0.52.0 // indirect\n)\n\nreplace github.com/andybalholm/cascadia => ../cascadia\n";
 
 /// The shell script the shell snapshot shows.
 const CODE_SHELL: &str = "#!/usr/bin/env bash\nset -euo pipefail\n\nroot=\"$(git rev-parse --show-toplevel)\"\n\nbuild() {\n  cargo build --workspace \"$@\"\n}\n\nfor crate in \"$root\"/crates/*; do\n  echo \"building ${crate##*/}\"\ndone\n\nbuild\n";
@@ -2018,6 +2029,12 @@ impl Shot {
                 "dockerfile",
                 &["dockerfile"],
                 CODE_DOCKERFILE,
+            )),
+            Self::RunGoMod => Screen::Workspace(written(
+                "go.mod",
+                "gomod",
+                &["gomod"],
+                CODE_GOMOD,
             )),
             Self::LanguageOffer => Screen::Workspace(language_offer()),
             Self::MarkdownPreview => Screen::Workspace(previewed("README.md")),

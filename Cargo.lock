@@ -2577,6 +2577,7 @@ dependencies = [
  "flate2",
  "pm-buffer",
  "pm-store",
+ "pm-task",
  "pm-tools",
  "pm-treesitter",
  "regex",

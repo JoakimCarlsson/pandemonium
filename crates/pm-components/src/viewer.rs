@@ -413,7 +413,9 @@ pub(crate) fn file_line(
     } else {
         index + 1
     };
-    let last = segments.len().saturating_sub(1);
+    let lens_row = document.lens_row_at(index);
+    let text_segments = &segments[usize::from(lens_row)..];
+    let last = text_segments.len().saturating_sub(1);
     let hints: Vec<&Hint> = if settings.inlay_hints {
         document.hints_on(index).iter().collect()
     } else {
@@ -422,12 +424,19 @@ pub(crate) fn file_line(
     .into_iter()
     .chain(document.values_on(index))
     .collect();
+    let run_lenses: Vec<(usize, String)> = document
+        .run_lens_items()
+        .into_iter()
+        .enumerate()
+        .filter(|(_, item)| item.line == index)
+        .map(|(place, item)| (place, item.label))
+        .collect();
     let lenses = if settings.code_lens {
         document.lenses_on(index)
     } else {
         &[]
     };
-    let rows = segments.iter().enumerate().map(|(place, segment)| {
+    let rows = text_segments.iter().enumerate().map(|(place, segment)| {
         let absolute = line.start + segment.start..line.start + segment.end;
         let standing: Vec<&Hint> = hints
             .iter()
@@ -533,6 +542,7 @@ pub(crate) fn file_line(
         node()
             .styles([flex(), flex_col(), flex_none(), pr(3)])
             .styles([if settings.line_numbers { w(13) } else { w(2) }])
+            .children(lens_row.then(|| node().styles([h_px(height), flex_none()])))
             .child(
                 node()
                     .styles([flex(), items_center(), justify_end(), h_px(height)])
@@ -556,8 +566,27 @@ pub(crate) fn file_line(
                 overflow_hidden(),
                 px(2),
             ])
+            .children(lens_row.then(|| run_lens_row(&run_lenses, height, font)))
             .children(rows),
     )
+}
+
+/// The row above a line that holds the links which run the line's place, each the `index`th of the links of the file.
+fn run_lens_row(lenses: &[(usize, String)], height: f32, font: u32) -> Node {
+    node()
+        .styles([
+            flex(),
+            items_center(),
+            h_px(height),
+            flex_none(),
+            min_w_px(0),
+        ])
+        .children(
+            lenses
+                .iter()
+                .enumerate()
+                .map(|(place, (index, label))| run_lens_chip(*index, label, font, place == 0)),
+        )
 }
 
 /// The text of `hint` written inside a line in a smaller, quieter hand than the code around it.
@@ -578,6 +607,24 @@ fn hint_chip(hint: &Hint, font: u32) -> Node {
         chip = chip.styles([ml(1)]);
     }
     chip.child(line(&hint.label, (font - 1).max(8), 1.2, tone).styles([font_mono(), flex_none()]))
+}
+
+/// The link at the end of its line that runs a place with the task `label`, the `index`th of the links of the file.
+fn run_lens_chip(index: usize, label: &str, font: u32, first: bool) -> Node {
+    node()
+        .styles([
+            flex(),
+            items_center(),
+            flex_none(),
+            ml(if first { 0 } else { 4 }),
+            px(1.5),
+            h(4),
+            rounded(Radius::Sm),
+            cursor_pointer(),
+            bg(Role::SurfaceHover).hover(),
+        ])
+        .focusable(crate::tasks::run_lens_mark(index))
+        .child(line(label, (font - 1).max(8), 1.2, Role::Muted).styles([flex_none()]))
 }
 
 /// The text of `lens` at the end of its line, pressed to do what the server says when it can be.

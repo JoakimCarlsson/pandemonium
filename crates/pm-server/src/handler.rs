@@ -1565,6 +1565,29 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                 Err(reason) => failed(reason),
             }
         }
+        Request::RunnableTasks {
+            directory,
+            path,
+            tags,
+            variables,
+            position,
+            ..
+        } => {
+            let found = tasks::Place {
+                tags,
+                variables,
+                position,
+            };
+            Response::RunnableTasks {
+                tasks: tasks::runnable_tasks(&place(&directory), &path, &found)
+                    .into_iter()
+                    .map(|task| pm_protocol::RunnableTask {
+                        name: task.name,
+                        command: task.command,
+                    })
+                    .collect(),
+            }
+        }
         Request::Toolchains { directory, project } => {
             tasks::toolchains(&place(&directory), project.as_deref())
         }

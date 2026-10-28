@@ -268,30 +268,44 @@ pub(crate) struct Installed;
 
 impl pm_dap::Catalog for Installed {
     fn adapters(&self) -> Vec<Adapter> {
-        let mut found: Vec<Adapter> = pm_lsp::installed()
-            .into_iter()
-            .flat_map(|(_, manifest)| manifest.debug_adapters)
-            .map(|spec| Adapter {
-                id: spec.id,
-                name: spec.name,
-                programs: spec.programs,
-                arguments: spec.arguments,
-                connect: if spec.connect == "tcp" {
-                    pm_dap::Connect::Tcp
-                } else {
-                    pm_dap::Connect::Stdio
-                },
-                types: spec.types.iter().map(|name| name.to_lowercase()).collect(),
-                denied: None,
-                provided: false,
-                attach_names: spec.attach_names,
-                set: spec.set,
-                default: spec.default,
-            })
-            .collect();
-        found.dedup_by(|later, earlier| later.id == earlier.id);
-        let mut seen = std::collections::HashSet::new();
-        found.retain(|adapter| seen.insert(adapter.id.clone()));
+        let owners = crate::extensions::language_owners();
+        let mut languages = pm_lsp::installed();
+        languages.sort_by_key(|(id, _)| owners.contains_key(id));
+        let mut found: Vec<Adapter> = Vec::new();
+        for (id, manifest) in languages {
+            let denied = owners.get(&id).and_then(|package| {
+                crate::extensions::grants_of(&package.id)
+                    .check(pm_policy::Capability::Process)
+                    .err()
+                    .map(|denied| denied.to_string())
+            });
+            for spec in manifest.debug_adapters {
+                let types: Vec<String> =
+                    spec.types.iter().map(|name| name.to_lowercase()).collect();
+                if found.iter().any(|held| {
+                    held.id == spec.id || held.types.iter().any(|name| types.contains(name))
+                }) {
+                    continue;
+                }
+                found.push(Adapter {
+                    id: spec.id,
+                    name: spec.name,
+                    programs: spec.programs,
+                    arguments: spec.arguments,
+                    connect: if spec.connect == "tcp" {
+                        pm_dap::Connect::Tcp
+                    } else {
+                        pm_dap::Connect::Stdio
+                    },
+                    types,
+                    denied: denied.clone(),
+                    provided: false,
+                    attach_names: spec.attach_names,
+                    set: spec.set,
+                    default: spec.default,
+                });
+            }
+        }
         for adapter in crate::extensions::adapters() {
             if !found.iter().any(|held| {
                 held.id == adapter.id || held.types.iter().any(|name| adapter.types.contains(name))

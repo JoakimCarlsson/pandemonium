@@ -867,6 +867,19 @@ pub enum Outgoing {
         /// The session, by position.
         session: usize,
     },
+    /// Asks the machine of the session at this position which tasks can run a place of a file that its language marks as runnable.
+    RunnableTasks {
+        /// The session, by position.
+        session: usize,
+        /// The file, from the root of the session's folder.
+        path: String,
+        /// What its language tagged it with.
+        tags: Vec<String>,
+        /// What each of its captures matched, by the capture's name.
+        variables: std::collections::BTreeMap<String, String>,
+        /// Its line and its column, from zero.
+        position: (usize, usize),
+    },
     /// Runs a task in the shell of a tab, in the folder of the session at this position.
     RunTask {
         /// The session, by position.
@@ -2008,6 +2021,10 @@ impl WorkspaceState {
         }
         if let Some((file, line)) = crate::debug::breakpoint_of(action) {
             self.toggle_breakpoint(file, line);
+            return self;
+        }
+        if let Some(index) = crate::tasks::run_lens_of(action) {
+            self.run_lens_pressed(index);
             return self;
         }
         if let Some((file, line)) = crate::tasks::run_of(action) {

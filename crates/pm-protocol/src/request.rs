@@ -752,6 +752,24 @@ pub enum Request {
         /// How many lines tall the window of the shell is.
         rows: u16,
     },
+    /// The tasks that can run a place of a file that a language marks as runnable, the one `run_runnable` runs by default first.
+    RunnableTasks {
+        /// The folder.
+        directory: String,
+        /// The project the folder is part of, as for `run_task`.
+        #[serde(default)]
+        project: Option<String>,
+        /// The file, from the root of the folder.
+        path: String,
+        /// Every tag its language marked the place with.
+        tags: Vec<String>,
+        /// What each capture of its place matched, by the capture's name.
+        #[serde(default)]
+        variables: std::collections::BTreeMap<String, String>,
+        /// The line of the place, from zero, and the column of its start.
+        #[serde(default)]
+        position: Option<(usize, usize)>,
+    },
     /// The toolchains installed on the server's machine and those the project keeps, and which each language of the project is set to use.
     Toolchains {
         /// The folder.

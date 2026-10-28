@@ -5,7 +5,7 @@ use std::sync::Arc;
 use pm_pages::{Outgoing, Screen};
 use pm_protocol::{GrammarBundle, Request, Response};
 use pm_state::State;
-use pm_treesitter::{Grammar, Queries};
+use pm_treesitter::{Editing, Grammar, Queries};
 
 use super::{Host, Job, Pending, Work};
 
@@ -49,7 +49,15 @@ fn compile(bundle: &GrammarBundle) -> Result<Arc<Grammar>, String> {
             textobjects: bundle.more.textobjects.clone(),
             debugger: bundle.more.debugger.clone(),
         },
-        pm_lsp::editing_of(&manifest_of(bundle)),
+        Editing {
+            run_lenses: bundle
+                .more
+                .lenses
+                .iter()
+                .map(|lens| (lens.tags.clone(), lens.label.clone()))
+                .collect(),
+            ..pm_lsp::editing_of(&manifest_of(bundle))
+        },
     )
 }
 

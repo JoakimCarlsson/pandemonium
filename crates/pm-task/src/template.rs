@@ -50,6 +50,9 @@ pub struct Template {
     /// Where the task is said to come from, with variables.
     #[serde(default)]
     pub source: String,
+    /// Whether it is shown as a link at the end of the line of a place it is run from, in place of a run button; its label is what the link says, and has no variables.
+    #[serde(default)]
+    pub lens: bool,
     /// The tags of the places it is run from; a place tagged with any of them runs it.
     #[serde(default)]
     pub tags: Vec<String>,

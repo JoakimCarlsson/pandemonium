@@ -19,3 +19,12 @@ pub struct ToolchainInfo {
     #[serde(default)]
     pub language_name: String,
 }
+
+/// One task that can run a place of a file, as a client lists them for the reader to pick from.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RunnableTask {
+    /// What it is called; `run_runnable` names it by this.
+    pub name: String,
+    /// What it types into the shell.
+    pub command: String,
+}

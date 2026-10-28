@@ -64,6 +64,7 @@ fn main() {
             Some("codeshell") => Shot::CodeShell,
             Some("runcompose") => Shot::RunCompose,
             Some("rundockerfile") => Shot::RunDockerfile,
+            Some("rungomod") => Shot::RunGoMod,
             Some("codesample") => Shot::CodeSample,
             Some("redacted") => Shot::Redacted,
             Some("languageoffer") => Shot::LanguageOffer,

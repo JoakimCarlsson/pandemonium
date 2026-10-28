@@ -150,13 +150,8 @@ pub(crate) struct Place {
     pub position: Option<(usize, usize)>,
 }
 
-/// The task that runs `place` of the file `path` of the project at `root`: the first task tied to any of the place's tags, or the one called `chosen` among them.
-pub(crate) fn runnable(
-    root: &Path,
-    path: &str,
-    place: &Place,
-    chosen: Option<&str>,
-) -> Result<Task, String> {
+/// The tasks that can run `place` of the file `path` of the project at `root`, the one that runs by default first.
+pub(crate) fn runnable_tasks(root: &Path, path: &str, place: &Place) -> Vec<Task> {
     let language = pm_lsp::language_of(path).unwrap_or_default();
     let variables = pm_task::Variables::of_file(
         root,
@@ -165,8 +160,17 @@ pub(crate) fn runnable(
         &place.variables,
         place.position.map(|(row, column)| (row + 1, column + 1)),
     );
-    let mut candidates =
-        pm_task::candidates(root, &crate::scan::templates(), &place.tags, &variables);
+    pm_task::candidates(root, &crate::scan::templates(), &place.tags, &variables)
+}
+
+/// The task that runs `place` of the file `path` of the project at `root`: the first task tied to any of the place's tags, or the one called `chosen` among them.
+pub(crate) fn runnable(
+    root: &Path,
+    path: &str,
+    place: &Place,
+    chosen: Option<&str>,
+) -> Result<Task, String> {
+    let mut candidates = runnable_tasks(root, path, place);
     if let Some(chosen) = chosen {
         candidates.retain(|task| task.name == chosen);
     }

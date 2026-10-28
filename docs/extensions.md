@@ -296,8 +296,15 @@ run button in the gutter on the line each starts on.
 ```
 
 The tags the built-in languages use are `rust-main`, `rust-test`, `rust-module`,
-`make-target`, `package-json-script`, `pyproject-script` and
-`docker-compose-service`.
+`make-target`, `package-json-script`, `pyproject-script`,
+`docker-compose-service`, `dockerfile-stage`, `dockerfile-image`,
+`go-mod-module`, `go-mod-require` and `go-work-file`.
+
+When more than one task is tied to a place, pressing its run button lists them
+for the reader to pick from; when there is one it runs at once. A task with
+`"lens": true` is not behind a run button: it is a link at the end of the
+line of each place that carries its tag, saying its label, and pressing it runs
+that task. A place whose tasks are all links gets no run button.
 
 ### `tasks.json`
 
@@ -336,6 +343,7 @@ its `tags`, and listed for a project when it names `from` or `when`.
 | `groups` | `{"capture": "<name>", "<group>": ["text", …]}`: the group by what a capture matched, in place of `group` |
 | `language` | The language whose toolchain it runs with, by family: `rust`, `javascript`, `python`, `go` |
 | `source` | Where the task is said to come from, with variables |
+| `lens` | Shows the task as a link at the end of the line of its places, in place of a run button; its `label` is what the link says and has no variables |
 | `tags` | The tags of the places that run it |
 | `files` | The file names it is run from; any when empty |
 | `when` | A condition on the root of the project (below); with `from`, also what the manifest is looked for under |

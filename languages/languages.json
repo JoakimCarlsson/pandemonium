@@ -340,7 +340,11 @@
       "version": "0.1.0",
       "description": "Go with gopls.",
       "hidden": false,
-      "requires": [],
+      "requires": [
+        "gomod",
+        "gosum",
+        "gowork"
+      ],
       "suffixes": [
         "go"
       ],
@@ -349,7 +353,7 @@
       "server": "gopls",
       "files": {
         "brackets.scm": "f0353a09140622170b89963be336b7bf1dfb4d3630516204a0d9a71de0244dde",
-        "config.toml": "9b41bf75e902cf443484c6bac6ef38467aaf6a4e835a76de21d1e7d53d41fc92",
+        "config.toml": "924e3171f1f6be3e9ad17d2ca6dd82244dfc03f514be35721406952b605606f7",
         "debugger.scm": "e87a7ea2de7a07c9ae7bd3aabd673695b573e2a643a747ce31ea1bad3bc71b5b",
         "highlights.scm": "b845477ebabd708f06ff69438b4e309b1eadc8c014f9de78f2fa865652679528",
         "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d",
@@ -359,6 +363,79 @@
         "overrides.scm": "3d504b51ff01fb89dbe451313d16496d96d744306da74af0fd3c357df9c49736",
         "tasks.json": "ac4b714891cf5f8e2448cbff37cadb09018a0ea2b11e3430eeb8ac72a7d2a3ae",
         "textobjects.scm": "f558b1b895062f6fbe9d98d8da08d8d09a8b26bedec6e1a9bce5bff7703762ce"
+      },
+      "local": false
+    },
+    {
+      "id": "gomod",
+      "name": "Go Module",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "go.mod files, with links on the module line and the requires to tidy, vendor, check vulnerabilities and upgrade.",
+      "hidden": true,
+      "requires": [],
+      "suffixes": [],
+      "names": [
+        "go.mod"
+      ],
+      "patterns": [],
+      "server": null,
+      "files": {
+        "brackets.scm": "e98e812efd7ec6fa313ff2e47bd96eb5d07d0d2cfa3ecc1a0e845a5f838787a5",
+        "config.toml": "824bc0ed49c5ec0ca32c477249660c670b0ac4c3a191ebed3cadd3799ef45ec5",
+        "grammar.wasm": "30eb00e1c4b4516ccfad39d0a8d79e5f98a823de45705ad3c6e232dfa7d5e36c",
+        "highlights.scm": "4af8cc939548e0511af75e8ceecf9d484e18f163975793dcb3609ac1e9c5be9d",
+        "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d",
+        "runnables.scm": "bf48b451bb8867e71a4c73fe9c2cb27999367302c146a43b78e74ab301b988bc",
+        "tasks.json": "b9e174037409b1ee3b6ee9d30da9066c371c66f4bc9f4b044ee61e6708233e5b"
+      },
+      "local": false
+    },
+    {
+      "id": "gosum",
+      "name": "Go Checksums",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "go.sum files.",
+      "hidden": true,
+      "requires": [],
+      "suffixes": [],
+      "names": [
+        "go.sum"
+      ],
+      "patterns": [],
+      "server": null,
+      "files": {
+        "config.toml": "75f807678f1a90c8fdc459a2e93b3b9b606141a04703ae92675829bb38e338fa",
+        "grammar.js": "d0a1c96d93f7e5c5fa6bf0ec647516aea5eb859f5c570ce70b2a0dfc9b187b71",
+        "grammar.wasm": "b8c0f85c2a92c39349647e5b061d9a5f37c6abd8360d73bb673b0aef691f6727",
+        "highlights.scm": "d8f478b21d49ecb2fbb667b7958425a3d7e38dce13466a785863ef1772ac64a6",
+        "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d"
+      },
+      "local": false
+    },
+    {
+      "id": "gowork",
+      "name": "Go Workspace",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "go.work files, with links on the go line to sync and vendor.",
+      "hidden": true,
+      "requires": [],
+      "suffixes": [],
+      "names": [
+        "go.work"
+      ],
+      "patterns": [],
+      "server": null,
+      "files": {
+        "brackets.scm": "5f1c960e39d9443aa045f88aaa53f5dec478b307bdf7bd67ed4ed8c038794f12",
+        "config.toml": "3b54139b40e5d10a9d2e667e98d3889ad5a684096588fd268926151766b89cb1",
+        "grammar.wasm": "87c89914ca750eab04edf69541de2a14a2e94c72fef41af57f0ff14fd2f03b7d",
+        "highlights.scm": "7339839e41777ab1736d976f60fe266e15ea99d1b780476e19f668af867347d5",
+        "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d",
+        "runnables.scm": "a694df80ffb04d6f3f4c451ec710b8398f11001dbbef6779936acb4f70b0ac6e",
+        "tasks.json": "c93f247ce2f35a90420245f6de8604b18998cf03cb53a7a6e62adc3e012d4a50"
       },
       "local": false
     },

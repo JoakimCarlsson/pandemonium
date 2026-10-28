@@ -183,6 +183,7 @@ request with exactly one `response` carrying the same `id`.
 | `terminals`    | none                                                                                             | `terminals`     |
 | `tasks`        | `directory`                                                                                      | `tasks`         |
 | `run_task`     | `directory`, `project` (optional), `task`: a [task](#tasks), `columns`, `rows`                   | `terminal`      |
+| `runnable_tasks` | `directory`, `project` (optional), `path`, `tags`, `variables`, `position` (optional)       | `runnable_tasks` |
 | `run_runnable` | `directory`, `project` (optional), `path`, `kind` and `name` (optional, for clients that predate tags), `tags`, `variables`, `position` (optional), `task` (optional), `columns`, `rows` | `terminal`      |
 | `toolchains`   | `directory`, `project` (optional)                                                                | `toolchains`    |
 | `select_toolchain`| `project`, `language`, `toolchain` (optional)                                                 | `done`          |
@@ -829,6 +830,7 @@ embedded context, and anything else as a link to the stored file.
 | `terminal`   | `terminal`: the number of the shell that was started      |
 | `terminals`  | `terminals`: `[{terminal, directory, columns, rows}]`, oldest first; `directory` is the address `open_terminal` was given |
 | `tasks`      | `tasks`: `[Task]`, those the project writes first; `problem`: why its own file could not be read, when it could not |
+| `runnable_tasks` | `tasks`: `[{name, command}]` that can run the place, the one `run_runnable` runs by default first |
 | `toolchains` | `toolchains`: `[{language, id, name, detail, selected, language_name}]`, grouped by language; `language_name` is what the manifest of a language of the family calls it, such as `Node.js` |
 | `debug_scenarios` | `scenarios`: `[{label, adapter, installed, attach, source, task}]`, the order `debug_start` chooses by; `task` is the task the scenario names to run first |
 | `debug_processes` | `adapters`: `[{id, name, attach_names}]` installed, where `attach_names` are the starts of the names of the programs an adapter attaches to, an empty one standing for any, `processes`: `[{pid, name, command}]`, newest first |
@@ -1066,6 +1068,7 @@ one.
   `PM_CUSTOM_<name>` and the `PM_` variables of the extensions document. The
   nearest folder above the file that holds a template's `marker` file is the
   folder the command runs in.
+- `runnable_tasks` lists the tasks that can run a place, as `run_runnable` would pick them, so that a client can let the reader choose one; the name of the chosen one is `run_runnable`'s `task`.
 - `toolchains` lists what is installed on the server's machine, and the virtual
   environments the project keeps, for each language: the toolchains of rustup,
   the Node.js versions nvm and fnm keep, Python found on the path, in the

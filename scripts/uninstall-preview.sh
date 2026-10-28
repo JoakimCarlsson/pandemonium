@@ -2,7 +2,7 @@
 #
 # Removes pandemonium-preview and everything it keeps, so that the next
 # `make install` starts from a clean slate. The stable pandemonium, its data and
-# its icons are left alone.
+# its icons are left alone. A running preview and its server are stopped first.
 #
 #   scripts/uninstall-preview.sh
 
@@ -28,11 +28,25 @@ remove() {
     fi
 }
 
-# Refuses while the preview is running, since what it keeps would be taken from under it.
-check_not_running() {
-    if command -v pgrep >/dev/null 2>&1 && pgrep -f "$BIN_DIR/$NAME" >/dev/null 2>&1; then
-        fail "$NAME is running; quit it, and its server, first"
-    fi
+# Prints the numbers of the processes started from the installed preview: its window and its server, and not the stable app, which is another program.
+running() {
+    command -v pgrep >/dev/null 2>&1 || return 0
+    pgrep -f "^$BIN_DIR/$NAME( |\$)" 2>/dev/null | grep -vx "$$" || true
+}
+
+# Stops the preview and its server, asking them to quit first and ending what is left after a few seconds, so that what it keeps can be removed.
+stop_running() {
+    pids="$(running)"
+    [ -n "$pids" ] || return 0
+    echo "stopping $NAME: $(echo $pids | tr '\n' ' ')"
+    kill $pids 2>/dev/null || true
+    waited=0
+    while [ "$waited" -lt 10 ] && [ -n "$(running)" ]; do
+        sleep 0.5
+        waited=$((waited + 1))
+    done
+    left="$(running)"
+    [ -z "$left" ] || kill -9 $left 2>/dev/null || true
 }
 
 # Removes the files of the preview on Linux.
@@ -52,9 +66,9 @@ uninstall_macos() {
     remove "$HOME/Library/Caches/$NAME"
 }
 
-# Removes the preview.
+# Stops the preview and removes it.
 main() {
-    check_not_running
+    stop_running
     case "$(uname -s)" in
         Linux) uninstall_linux ;;
         Darwin) uninstall_macos ;;
