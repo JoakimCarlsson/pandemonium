@@ -58,6 +58,33 @@ useLibraryCodeForTypes = true
 diagnosticMode = "openFilesOnly"
 
 [server.install]
-kind = "npm"
+kind = "command"
+tool = "npm"
+needs = "Node.js and npm"
+steps = [["ci", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"]]
+copy = ["package.json", "package-lock.json"]
+bin = "node_modules/.bin"
 version = "1.1.414"
 packages = ["pyright@1.1.414"]
+
+# Where Python toolchains are kept: the system's, the project's own virtual environments and those pyenv holds.
+[[toolchain_source]]
+kind = "system"
+programs = ["python3", "python"]
+
+[[toolchain_source]]
+kind = "project"
+names = [".venv", "venv", "env"]
+label = "venv {name}"
+bin_windows = "Scripts"
+programs = ["python"]
+env = { VIRTUAL_ENV = "{path}" }
+version_file = "pyvenv.cfg"
+version_keys = ["version", "version_info"]
+version_label = "Python {version}"
+
+[[toolchain_source]]
+kind = "children"
+folder = "~/.pyenv/versions"
+label = "pyenv {name}"
+programs = ["python"]

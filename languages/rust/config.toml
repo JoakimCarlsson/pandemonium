@@ -72,3 +72,14 @@ url = "https://github.com/rust-lang/rust-analyzer/releases/download/2026-10-12/r
 sha256 = "b053585692c2848acfa8e9ddf5f85bdc3741f3b23c51b72717ba0b391910b5fe"
 archive = "zip"
 member = "rust-analyzer.exe"
+
+# Where Rust toolchains are kept: those rustup lists, or the system's without rustup.
+[[toolchain_source]]
+kind = "listed"
+command = ["rustup", "toolchain", "list"]
+env = { RUSTUP_TOOLCHAIN = "{id}" }
+
+[[toolchain_source]]
+kind = "system"
+programs = ["rustc"]
+unless_found = true

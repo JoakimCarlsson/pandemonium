@@ -22,6 +22,10 @@ command = "sqls"
 check = ["--version"]
 
 [server.install]
-kind = "go"
+kind = "command"
+tool = "go"
+needs = "Go"
+steps = [["install", "github.com/sqls-server/sqls@v0.2.48"]]
+env = { GOBIN = "{folder}", GOSUMDB = "sum.golang.org", GOFLAGS = "-mod=readonly" }
+env_remove = ["GONOSUMDB", "GONOSUMCHECK", "GOPRIVATE", "GOINSECURE"]
 version = "v0.2.48"
-package = "github.com/sqls-server/sqls@v0.2.48"

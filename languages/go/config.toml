@@ -58,6 +58,27 @@ gosum = "go.sum"
 gowork = "go.work"
 
 [server.install]
-kind = "go"
+kind = "command"
+tool = "go"
+needs = "Go"
+steps = [["install", "golang.org/x/tools/gopls@v0.24.0"]]
+env = { GOBIN = "{folder}", GOSUMDB = "sum.golang.org", GOFLAGS = "-mod=readonly" }
+env_remove = ["GONOSUMDB", "GONOSUMCHECK", "GOPRIVATE", "GOINSECURE"]
 version = "v0.24.0"
-package = "golang.org/x/tools/gopls@v0.24.0"
+
+# Where Go toolchains are kept: the system's, /usr/local/go and those ~/sdk holds.
+[[toolchain_source]]
+kind = "system"
+programs = ["go"]
+argument = "version"
+
+[[toolchain_source]]
+kind = "folder"
+folder = "/usr/local/go"
+label = "usr/local/go"
+programs = ["go"]
+
+[[toolchain_source]]
+kind = "children"
+folder = "~/sdk"
+programs = ["go"]

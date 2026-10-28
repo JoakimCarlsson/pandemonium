@@ -52,6 +52,8 @@ pub enum InstallKind {
     Go,
     /// Installed with `npm`, which needs Node.js on the machine.
     Npm,
+    /// Installed by running a program the language names, with the arguments, environment and files it names.
+    Command,
 }
 
 /// How a language server is installed into the data folder.
@@ -73,6 +75,27 @@ pub struct Install {
     /// What the pin files of the language folder are named before `package.json` and `package-lock.json`, when the folder pins more than one install through `npm`; none when it pins one.
     #[serde(default)]
     pub pin: Option<String>,
+    /// The program a `command` install runs, found on the machine: `cpanm`, `cargo`, `pip`.
+    #[serde(default)]
+    pub tool: Option<String>,
+    /// What a reader calls that program, for saying it is missing; the program's name when nothing.
+    #[serde(default)]
+    pub needs: Option<String>,
+    /// The arguments the program is run with, one run for each entry, in the install folder. `{folder}` and `{version}` stand for the folder and the version installed.
+    #[serde(default)]
+    pub steps: Vec<Vec<String>>,
+    /// What the environment holds besides, where `{folder}` and `{version}` stand as in the steps.
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    /// What the environment of the machine holds that the install must not see.
+    #[serde(default)]
+    pub env_remove: Vec<String>,
+    /// The files of the language folder copied into the install folder before the steps run, named after `pin` when it is set.
+    #[serde(default)]
+    pub copy: Vec<String>,
+    /// The folder inside the install folder the program ends up in; the install folder itself when nothing.
+    #[serde(default)]
+    pub bin: Option<String>,
 }
 
 /// The language server that reads a language's files.
@@ -339,6 +362,9 @@ pub struct Manifest {
     /// What a reader calls that family of toolchains, such as `Node.js`; the family capitalised when nothing.
     #[serde(default)]
     pub toolchain_name: Option<String>,
+    /// Where the toolchains of that family are kept on a machine, for the language that owns the family.
+    #[serde(default, rename = "toolchain_source")]
+    pub toolchain_sources: Vec<pm_task::ToolchainSource>,
     /// How Emmet abbreviations are written in its files: `markup` or `style`; none when it takes none.
     #[serde(default)]
     pub emmet_dialect: Option<String>,

@@ -8,7 +8,7 @@ use pm_protocol::{HintKind, Severity};
 use pm_style::{
     Radius, Role, bg, border_b, border_color, code_px, cursor_pointer, cursor_text, flex, flex_1,
     flex_col, flex_none, font_mono, gap, h, h_px, items_center, justify_center, justify_end,
-    leading_ratio, min_h, min_w_px, ml, overflow_hidden, pr, px, py, relative, rounded,
+    leading_ratio, min_h, min_w_px, ml, overflow_hidden, pl, pr, px, py, relative, rounded,
     rounded_full, text_color, w, w_px,
 };
 use pm_text::Shaper;
@@ -616,8 +616,8 @@ fn run_lens_chip(index: usize, label: &str, font: u32, first: bool) -> Node {
             flex(),
             items_center(),
             flex_none(),
-            ml(if first { 0 } else { 4 }),
-            px(1.5),
+            pl(if first { 0.0 } else { 1.5 }),
+            pr(1.5),
             h(4),
             rounded(Radius::Sm),
             cursor_pointer(),

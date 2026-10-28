@@ -23,6 +23,7 @@ mod hub;
 mod index;
 mod inherit;
 mod install;
+mod legacy;
 mod lens;
 mod manifest;
 mod paths;

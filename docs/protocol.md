@@ -1070,10 +1070,8 @@ one.
   folder the command runs in.
 - `runnable_tasks` lists the tasks that can run a place, as `run_runnable` would pick them, so that a client can let the reader choose one; the name of the chosen one is `run_runnable`'s `task`.
 - `toolchains` lists what is installed on the server's machine, and the virtual
-  environments the project keeps, for each language: the toolchains of rustup,
-  the Node.js versions nvm and fnm keep, Python found on the path, in the
-  project's `.venv` and in pyenv, and Go found on the path, in `/usr/local/go`
-  and in `~/sdk`. `system` is the one the machine's own path finds. `selected`
+  environments the project keeps, for each language, in the places the
+  `toolchain_source` tables of its installed language folders name. `system` is the one the machine's own path finds. `selected`
   marks the one the project's language is set to, which is `system` until one is
   chosen. `select_toolchain` chooses `toolchain` for `language` in `project`, or
   clears the choice when it is missing. The choice is kept by the server and used

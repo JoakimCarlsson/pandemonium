@@ -24,6 +24,11 @@ command = "svelteserver"
 args = ["--stdio"]
 
 [server.install]
-kind = "npm"
+kind = "command"
+tool = "npm"
+needs = "Node.js and npm"
+steps = [["ci", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"]]
+copy = ["package.json", "package-lock.json"]
+bin = "node_modules/.bin"
 version = "0.18.5"
 packages = ["svelte-language-server@0.18.5"]

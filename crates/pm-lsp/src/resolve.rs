@@ -60,10 +60,12 @@ fn works(program: &Path, arguments: &[String]) -> bool {
 
 /// Where the program of `spec` is inside the folder `folder` it was installed in the way `install` says.
 fn installed_program(spec: &ServerSpec, install: &Install, folder: &Path) -> Option<PathBuf> {
-    match install.kind {
-        InstallKind::Npm => in_folder(&folder.join("node_modules").join(".bin"), &spec.command),
-        InstallKind::Download | InstallKind::Go => in_folder(folder, &spec.command),
-    }
+    let install = crate::legacy::command_form(install);
+    let place = match install.bin.as_deref() {
+        Some(bin) => folder.join(bin),
+        None => folder.to_path_buf(),
+    };
+    in_folder(&place, &spec.command)
 }
 
 /// Runs `command`, saying what it needed, `needs`, when it cannot be started, and what it printed when it fails.
@@ -114,49 +116,54 @@ fn install_into(spec: &ServerSpec, install: &Install, folder: &Path) -> Result<(
             let program = unpack(bytes, download.archive, download.member.as_deref())?;
             write_program(&folder.join(program_name(&spec.command)), &program)
         }
-        InstallKind::Go => {
-            let package = install
-                .package
-                .as_deref()
-                .ok_or("the manifest names no package for go to install")?;
-            run("go", "Go", &["install", package], |command| {
-                command
-                    .env("GOBIN", folder)
-                    .env("GOSUMDB", "sum.golang.org")
-                    .env("GOFLAGS", "-mod=readonly")
-                    .env_remove("GONOSUMDB")
-                    .env_remove("GONOSUMCHECK")
-                    .env_remove("GOPRIVATE")
-                    .env_remove("GOINSECURE")
-                    .current_dir(folder);
-            })
-        }
-        InstallKind::Npm => {
-            let origin = spec
-                .origin
-                .as_deref()
-                .ok_or("an npm install needs the language folder that pins it")?;
-            for pin in ["package.json", "package-lock.json"] {
-                let held = match &install.pin {
-                    Some(prefix) => format!("{prefix}.{pin}"),
-                    None => pin.to_owned(),
-                };
-                std::fs::copy(origin.join(&held), folder.join(pin)).map_err(|error| {
-                    format!("the language has no {held} pinning its server: {error}")
-                })?;
-            }
-            let arguments = [
-                "ci",
-                "--ignore-scripts",
-                "--no-audit",
-                "--no-fund",
-                "--loglevel=error",
-            ];
-            run("npm", "Node.js and npm", &arguments, |command| {
-                command.current_dir(folder);
-            })
+        InstallKind::Command | InstallKind::Go | InstallKind::Npm => {
+            run_steps(spec, &crate::legacy::command_form(install), folder)
         }
     }
+}
+
+/// Runs the steps of the `command` install `install` of `spec` in `folder`, after copying the pin files its language folder holds.
+fn run_steps(spec: &ServerSpec, install: &Install, folder: &Path) -> Result<(), String> {
+    let tool = install
+        .tool
+        .as_deref()
+        .ok_or("the manifest names no program to install it with")?;
+    for name in &install.copy {
+        let held = match &install.pin {
+            Some(prefix) => format!("{prefix}.{name}"),
+            None => name.clone(),
+        };
+        let origin = spec
+            .origin
+            .as_deref()
+            .ok_or("an install that copies files needs the language folder that holds them")?;
+        std::fs::copy(origin.join(&held), folder.join(name))
+            .map_err(|error| format!("the language has no {held} for its install: {error}"))?;
+    }
+    let fill = |text: &str| {
+        text.replace("{folder}", &folder.to_string_lossy())
+            .replace("{version}", &install.version)
+    };
+    for step in &install.steps {
+        let arguments: Vec<String> = step.iter().map(|argument| fill(argument)).collect();
+        let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
+        run(
+            tool,
+            install.needs.as_deref().unwrap_or(tool),
+            &arguments,
+            |command| {
+                let env = pm_task::safe_env(install.env.clone());
+                for (name, value) in &env {
+                    command.env(name, fill(value));
+                }
+                for name in &install.env_remove {
+                    command.env_remove(name);
+                }
+                command.current_dir(folder);
+            },
+        )?;
+    }
+    Ok(())
 }
 
 /// The program of `spec` in a version installed before, the newest by name first, for when the wanted version cannot be installed.

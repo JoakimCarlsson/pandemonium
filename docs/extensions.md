@@ -99,7 +99,7 @@ that pins an npm install and a language's own grammar travel with it.
 | `debugger.scm`              | The names whose value is shown beside the lines while a program is paused   |
 | `semantic_token_rules.json` | What the types of tokens its language server names look like                |
 | `grammar.wasm`, `icon.svg`  | A grammar of its own, when `config.toml` pins none, and the icon of its files |
-| `package.json`, `package-lock.json` | The pin of an npm install of its server, `<pin>.package.json` for more than one |
+| `package.json`, `package-lock.json` | Files a command install of its server copies in, such as the pin of an npm install, `<pin>.package.json` for more than one |
 
 ### `config.toml`
 
@@ -218,12 +218,29 @@ docker-compose = "dockercompose"
 jsx = "javascriptreact"
 
 [server.install]                # how it is installed when the machine does not have it
-kind = "download"               # or "npm", or "go"
+kind = "download"               # or "command"
 version = "2026-10-12"
 # download: [server.install.downloads.<os>-<arch>] with url, sha256, archive = "gz" | "zip", member
-# npm: packages = ["name@version"], pinned by the folder's package.json and package-lock.json
-# go: package = "example.com/tool@version"
-# npm with more than one install in a folder: pin = "<name>" names <name>.package.json and its lockfile
+# command: runs a program of the machine, which the language names, so any installer works
+#   tool = "cpanm"                      # the program, found on the machine
+#   needs = "Perl and cpanm"            # what the reader is told is missing
+#   steps = [["Perl::LanguageServer"]]  # one run per entry, in the install folder
+#   env = { GOBIN = "{folder}" }        # {folder} and {version} stand for the install folder and version
+#   env_remove = ["GOPRIVATE"]          # what the machine's environment holds that the install must not see
+#   copy = ["package.json"]             # files of the language folder copied in first, <pin>.<name> when pin is set
+#   bin = "node_modules/.bin"           # where the program ends up inside the install folder
+# "npm" and "go" are the older spellings of a command install and are still read
+
+[[toolchain_source]]            # where a machine keeps the toolchains of the family the language owns
+kind = "children"               # "system", "folder", "children", "project" or "listed"
+folder = "~/.nvm/versions/node" # a leading ~/ is the reader's home
+label = "nvm {name}"            # what a toolchain is called, {name} being its folder's name
+programs = ["node"]             # asked for a version, and what a folder must hold to count
+bin = "bin"                     # the folder inside a toolchain that holds them; bin_windows when it differs
+# system: argument = "--version", the first of programs that runs
+# project: names = [".venv"] inside the project, never run; version_file, version_keys, version_label read the version
+# listed: command = ["rustup", "toolchain", "list"], one toolchain a line, with env = { RUSTUP_TOOLCHAIN = "{id}" }
+# unless_found = true: counts only when no earlier source of the family found anything
 
 [[companion]]                   # another server for the same files
 suffixes = ["jsx"]              # the endings it reads; every file when none
@@ -341,7 +358,7 @@ its `tags`, and listed for a project when it names `from` or `when`.
 | `env` | Variables added to the environment, with variables |
 | `group` | `build`, `test`, `run` or nothing |
 | `groups` | `{"capture": "<name>", "<group>": ["text", …]}`: the group by what a capture matched, in place of `group` |
-| `language` | The language whose toolchain it runs with, by family: `rust`, `javascript`, `python`, `go` |
+| `language` | The language whose toolchain it runs with, by family, as the language that owns the family names it |
 | `source` | Where the task is said to come from, with variables |
 | `lens` | Shows the task as a link at the end of the line of its places, in place of a run button; its `label` is what the link says and has no variables |
 | `tags` | The tags of the places that run it |

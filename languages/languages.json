@@ -41,7 +41,7 @@
       "server": "bash-language-server",
       "files": {
         "brackets.scm": "a258c9e63984a0409969aed98317c1483645d0876951e6958c1e692e69400835",
-        "config.toml": "97fd3a4077f8a7f0e068ab290225bfdbe8a283152c01d67a2fdf744e8c6912da",
+        "config.toml": "808668a016a9dbf500bcfec08d88228818c639db085c1e91353aec5871705f25",
         "highlights.scm": "1e8cf94003d3d9b253eabd8881299fb32db9f78cdedf2d11d8a48d9693cf5995",
         "icon.svg": "8a0dde64ea454970cf35f63669fe6a762351f543099a91215c5614c371c4122f",
         "indents.scm": "678d3eecefa89b4b3262f0565cdb5e3b713cbeb5bfd07ebb2f8698b04c15c71e",
@@ -185,7 +185,7 @@
       "server": "vscode-css-language-server",
       "files": {
         "brackets.scm": "d10cdedd33cd9902cd04bed29257edc4b8cbbf26bf3b3086c163bee8a59fa832",
-        "config.toml": "81724ca81cc07e2dd9f298f36302cbe9360055c3dd83a90d51c08b2b49b32868",
+        "config.toml": "d69f205b2cff04b6da19660f68791da741c05a206b765f9e1ac70ca369b948ff",
         "highlights.scm": "f7c74ce493683c6de23017bf9af506ea4d8a4f0205281b98d63f249d1fb9b0c5",
         "icon.svg": "176382bf3cd6f4065d064afecb1668702b8aa0412ba977cdf67eac2cbb29c8a9",
         "indents.scm": "424fbba80dcbef6d52b0db9331cfb8c04512e2bd35c5ad4b02b6b8597ff46207",
@@ -253,7 +253,7 @@
       "server": "docker-langserver",
       "files": {
         "brackets.scm": "36d8696012a74b1994a84a481fd10e76ca030cc7b164fe5cac6de3cceb3e218f",
-        "config.toml": "426eb92be157fd7fd4d2d78145156b54eb52103ab0210914c1db6cc05994f69d",
+        "config.toml": "c30f20135e3ae010bcc831677739784274b6b2c30436e37916807a4149c6e0e8",
         "grammar.wasm": "295dbbe840e80ad2582d07d9266cf6b7210d702cd9c6878a1fb8650e8c1385a0",
         "highlights.scm": "b0f8d65584dc1e65b7c9dff288de83ee9702478f84d953da3e684b5e34cb0338",
         "icon.svg": "913c2fe78bb9ee358b422b378fb6ca9acd8779927ab88b161caf468e67e33ead",
@@ -353,7 +353,7 @@
       "server": "gopls",
       "files": {
         "brackets.scm": "f0353a09140622170b89963be336b7bf1dfb4d3630516204a0d9a71de0244dde",
-        "config.toml": "924e3171f1f6be3e9ad17d2ca6dd82244dfc03f514be35721406952b605606f7",
+        "config.toml": "03d76d09eb86fa1311441871abbecac34a417e4ec0aa2adf5cc8bfbfb1e52e86",
         "debugger.scm": "e87a7ea2de7a07c9ae7bd3aabd673695b573e2a643a747ce31ea1bad3bc71b5b",
         "highlights.scm": "b845477ebabd708f06ff69438b4e309b1eadc8c014f9de78f2fa865652679528",
         "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d",
@@ -457,7 +457,7 @@
       "server": "graphql-lsp",
       "files": {
         "brackets.scm": "0e3ce5ff1db5b65199040d96b389af72bdf59357f392b31b95616fb7380e3ece",
-        "config.toml": "875076e28caa79e1b31357de8eac0db1a769fa2bacf885c06ea986268b0f0434",
+        "config.toml": "1b9e2856cf68b2b01ccb647d5fae345f8abd4badf7f275b6934e6384c15c982f",
         "grammar.wasm": "bf35af571832782393b576da71d06081f5b807e26bd2d3daf87b06109183c004",
         "highlights.scm": "0237fed60ff22cd8e79fe99ea5d29ecb2457413b81f08c90cae17badfe1f8fbb",
         "icon.svg": "21ff8f3092926918ebcbca126aec433b04684c0d8a4724faa5cf28ef3423c0bb",
@@ -547,7 +547,7 @@
       "server": "vscode-html-language-server",
       "files": {
         "brackets.scm": "44892505b21a08f4eb83cb646e6a150de6466c86e57505b4228f5f7a039f148c",
-        "config.toml": "88db91234f21912b1cf156a0ed25fb1c3f3da855a892c01e53778b4c3cca728a",
+        "config.toml": "11bc9f5865656f51d451d6fbebe535d2afda57e78bfc3c1548cd7ed3c85db547",
         "highlights.scm": "ee0c83f83af8129bc12d279aadc68c8b8b112871f238583b428633c8fe8e1895",
         "icon.svg": "e88c73d6a408483c6ea905180467f7ca141ed9d88b51e60fd34b190d429de0cf",
         "indents.scm": "d25b65145936d25d8c55ff67c84ff0b3093f61eb59118f9776896e80afd68923",
@@ -606,7 +606,7 @@
       "server": "typescript-language-server",
       "files": {
         "brackets.scm": "17d43133e8204321af678d982fc4952fecbda68995324a9be04b92677f17124a",
-        "config.toml": "0fc94e0e19f1c3a334052a1562c5fe5fe1ba1f7e3b9289e45877141dc91748c0",
+        "config.toml": "58ad3ccd02ab4a437ba314599b9ec46358d7a96da9157337fa51dbcd63aedc17",
         "debugger.scm": "45b86ad9f7eea50837589e2a8d86547159648ece0ed8ea31e27d47a597afdc72",
         "highlights.scm": "656af77ce62fe324c95d8b0b92acc7cdba9a78537964bb9770ab0223a5108922",
         "icon.svg": "12b4bbacd7fbf2b1a685b791ce8c5c0196a3f01f78aff3f75cc05929868e17c6",
@@ -644,7 +644,7 @@
       "server": "vscode-json-language-server",
       "files": {
         "brackets.scm": "d13aeee7b2b6ff238a68e2029bfa42543e624415911624e2fb88cd93abf47bc5",
-        "config.toml": "e26f0eb9ef164de062671b5ed9d7f3633f2fe9d210c9ae9611f284a63017a9ce",
+        "config.toml": "1adfa70dde038d8ccca871890e41a04c79951aed7eda186e80dbececf686d13e",
         "highlights.scm": "86cb3d2ca3aada199a87998e2d948de975e92c47d5258bcedbe71f193fe8fa4d",
         "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d",
         "indents.scm": "8d640f47854fdfb20e09a5ed3aec2c427b168ed62b2026350adc0b83dea69a2d",
@@ -921,7 +921,7 @@
       "server": "pyright-langserver",
       "files": {
         "brackets.scm": "4d23538e4730c901b85c049aa4f18c246b7aff9b4dbce9f7edaafc616352a2a3",
-        "config.toml": "cd43142c494b3d26f905a7df9b061b5b37d862be60b4ec65de0a7ba7d4efef3b",
+        "config.toml": "87c7619ea75e3eb3093a868411bd97e7870e47d13e78c1d280d757d47721062e",
         "debugger.scm": "60a75a56ca07a04549c2dba893b27976eea839637fb36d07e385a9c55afce65c",
         "highlights.scm": "5fbf61e4a31701ccbb46a41328cce553e0944648d9f450d24fdf14029919f8a8",
         "icon.svg": "87315ba89d065698044335641ca2dc26dda120866e508c58b7177d44dbe17c1c",
@@ -952,7 +952,7 @@
       "server": "rust-analyzer",
       "files": {
         "brackets.scm": "914f67dd435081dc1e4744104acda3ddc62c8dce73706f1117223c488b9de5e7",
-        "config.toml": "941bf19a28ed08de34cfb3bdd39db59c6ee4866ef1e05a19a86f09bdc1a4a430",
+        "config.toml": "b11e264e429db2049b64ec46224858ee03ec49f84c72a31ab6629de872899c2f",
         "debugger.scm": "7276ffc02697743eeaa7d82929adf3a3964144d03f166c4514e7ed605c61a8c9",
         "highlights.scm": "48a60820fe574a37494db0f7decb2fbf586235be9d5110557b7c37c710256277",
         "icon.svg": "641040fc553ae4db835a47b49fd2690dcc9fadc84da024e3fc63c4322e3d11be",
@@ -983,7 +983,7 @@
       "server": "vscode-css-language-server",
       "files": {
         "brackets.scm": "f913a23a7da353dfc04becf612ef28eaa93576d6337662836ee9d6bda27ed1fa",
-        "config.toml": "95c78952414783b223ca954b8d8e0ff26c7ad6594fd9139e74d99eeda27feed2",
+        "config.toml": "7b6108a5d516552e70de3f8874af993305653bb481e54934f645b7b318f41bf7",
         "grammar.wasm": "54266012ebc1ec7cd38f908f6658dcaf72006b02b02ae117b3cac82cc2f60791",
         "highlights.scm": "41bd61df91237454d3a0ebad5372a30caded0be03234b78624113d39b86f4ce9",
         "icon.svg": "4889d866e0d88c9b157233a589acfc7e8c658481de2d6e610edf20338d770223",
@@ -1011,7 +1011,7 @@
       "server": "sqls",
       "files": {
         "brackets.scm": "9528eba98e7be0b61d8e573afd30e2c64bc09866dea8afc55c6b8020bb590d5a",
-        "config.toml": "5125e8bfa85e0f4acac17c1b98528e4d2f9eaea474e9f1b05ec3635aa2e78d15",
+        "config.toml": "14b91ff4ea086638e3508f5ec4c1170c4097f9e508972b2ad1f9312a251d7b0d",
         "grammar.wasm": "836e4d429bbb35a4153535cf101b2bb69f72b9454a6cc7262d3818fbf532d64c",
         "highlights.scm": "2accacc534273af4c8a5368c39aa4e18c1249e12941af229360087a1c9548e36",
         "icon.svg": "faccb1f75e924012fe94e5f78d4c7c89bd6f3ea1a57bd9688805b2f630b889ca",
@@ -1037,7 +1037,7 @@
       "server": "svelteserver",
       "files": {
         "brackets.scm": "2b990e69b11146dfc8dfbc0cb7461ab93fcedd03ce6154494efc3e31f296b702",
-        "config.toml": "78290b1560975474ead98e00dc22e0ba12ab4fe45db4e2d574ebf5f0d4e0296f",
+        "config.toml": "957900820a5a74a8fad966a07646ab1be2e30863139fd400782b944471b496a5",
         "grammar.wasm": "751461809861a9197a7f5ee0eceeb600e03121ce9f6bc6225d569a8c504454e0",
         "highlights.scm": "e4799b788338ab73f86ff9370ea1c3d8fa65b06c4a90d3782a89189bdd437467",
         "icon.svg": "f73a1d7267fe0338d6f8bc033ebb4c5e22d16d89511ad50c9c10d73e75f88344",
@@ -1149,7 +1149,7 @@
       "server": "typescript-language-server",
       "files": {
         "brackets.scm": "970b02fb5bf6b37f95ae18de20d95274ea3adfcde501744d0188dcc514acd55c",
-        "config.toml": "11c2370cee7c92b2b93775b54514e5bbf184706c24a1444a0515aeb7d9fbb6f5",
+        "config.toml": "b5b504aa2c3086bb6c1b189bf746a7befe1476323beb9f7980c1b043ebbe2d05",
         "debugger.scm": "77731e0993217a63747398ce6f5244c540e08ce73dee5787352b8b5fefe6b3bd",
         "highlights.scm": "eda831a60ee976265446248da5f0691dd0ee289bd676cb3cdfc74a4dad05f8d7",
         "icon.svg": "dfe113def52fc72b2975392c6a5648883f8e4feb908a66f41f4092753cac1f1b",
@@ -1186,7 +1186,7 @@
       "server": "typescript-language-server",
       "files": {
         "brackets.scm": "e7319b052b3ac296c901ac7183841072b5a9fe57d8032944ead6f0ef431c5644",
-        "config.toml": "c8d14241271bdb1b0a272740495f46dbaf5a29073163894f630d6b61de250329",
+        "config.toml": "65a67b45c6f0b0cade9726951861582d2b7b003054e4d09c5e46f3a7c04ef435",
         "debugger.scm": "0b4fc8940575f26e64a98253cb1420655780fbc5bf73c52cbdbb3ddbd998cb63",
         "highlights.scm": "3ee958b8f7217a26f9e683a916a7872d8e79e81a57f2424a4d6ccd613f6017f4",
         "icon.svg": "0004d33f46b2175e90f8ea86aef139e29af5f7a3a3cf310e6dd6b8c084bab884",
@@ -1317,7 +1317,7 @@
       "server": "yaml-language-server",
       "files": {
         "brackets.scm": "8961d89bbb61e3890c556510daecc24cd4002ebac72010cafa46171e4d0b4df0",
-        "config.toml": "abdb8d5185411f87af2137a572d52bd65f705c3b6198452debc1708dc998d253",
+        "config.toml": "3c63840f15d6a47188df3fe6f2c35d0605d1408a8b13d2ed8562c2aaf7361bbe",
         "highlights.scm": "0077c042836f8ffed7d13505316f4d3c9ce0f107c4078fb37b937ffc339f8c49",
         "icon.svg": "b51bb293106d643a9a0510030f308bcc0ace3d4db39fe8324c110b4ed79e75a3",
         "indents.scm": "b49dab22c3ef077815fb0907550da600cdb760b4ac400765d31bec5659f36658",

@@ -41,10 +41,29 @@ pub(crate) fn project_key(directory: &Path, project: Option<&str>) -> String {
 /// The toolchain of `language`, by family, chosen for the project `project` whose root is `root`, when it is installed and not the machine's own.
 fn toolchain_of(root: &Path, project: &str, language: &str) -> Option<Toolchain> {
     let id = choices().get(project)?.get(language)?.clone();
-    pm_task::toolchains(root)
+    pm_task::toolchains(root, &sources())
         .into_iter()
         .find(|toolchain| toolchain.language == language && toolchain.id == id)
         .filter(|toolchain| !toolchain.path.is_empty() || !toolchain.env.is_empty())
+}
+
+/// Where each family of toolchains is kept, as the installed languages that own the family write it, each place once; a language whose extension may not run programs is left out, as its sources would run some.
+fn sources() -> Vec<(String, pm_task::ToolchainSource)> {
+    let mut found: Vec<(String, pm_task::ToolchainSource)> = Vec::new();
+    let refused = crate::extensions::refused_servers();
+    for (id, manifest) in pm_lsp::installed() {
+        if refused.contains_key(&id) {
+            continue;
+        }
+        let family = manifest.toolchain.clone().unwrap_or(id);
+        for source in manifest.toolchain_sources {
+            let entry = (family.clone(), source);
+            if !found.contains(&entry) {
+                found.push(entry);
+            }
+        }
+    }
+    found
 }
 
 /// The family of toolchains the files of the installed language `language` are built and run with: what its manifest says, or its own name.
@@ -86,7 +105,7 @@ pub(crate) fn toolchains(root: &Path, project: Option<&str>) -> Response {
     let chosen = choices()
         .remove(&project_key(root, project))
         .unwrap_or_default();
-    let toolchains = pm_task::toolchains(root)
+    let toolchains = pm_task::toolchains(root, &sources())
         .into_iter()
         .map(|toolchain| {
             let selected = match chosen.get(&toolchain.language) {

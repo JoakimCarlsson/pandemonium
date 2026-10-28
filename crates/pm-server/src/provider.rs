@@ -1,6 +1,5 @@
 //! Asking the code of the extensions that brought languages and debug adapters: which program starts a language server or a debug adapter, what the server is told, and what its completions and symbols are called in a list.
 
-use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, Weak};
 
@@ -72,26 +71,6 @@ impl Extensions {
     }
 }
 
-/// The variables an extension may add to the environment of a program it names: those that make a program load code or run a script of the extension's choosing are left out.
-fn safe_env(env: BTreeMap<String, String>) -> BTreeMap<String, String> {
-    const REFUSED: [&str; 6] = [
-        "NODE_OPTIONS",
-        "BASH_ENV",
-        "ENV",
-        "PYTHONSTARTUP",
-        "PYTHONPATH",
-        "PERL5OPT",
-    ];
-    env.into_iter()
-        .filter(|(name, _)| {
-            let upper = name.to_ascii_uppercase();
-            !upper.starts_with("LD_")
-                && !upper.starts_with("DYLD_")
-                && !REFUSED.contains(&upper.as_str())
-        })
-        .collect()
-}
-
 /// The word a completion's kind is told to an extension as.
 fn kind_word(kind: pm_lsp::CompletionKind) -> &'static str {
     match kind {
@@ -133,7 +112,7 @@ impl Provider for Extensions {
                 provided.command = Some(ProvidedCommand {
                     command: held.command,
                     args: held.args,
-                    env: safe_env(held.env),
+                    env: pm_task::safe_env(held.env),
                 });
             }
         }
@@ -234,7 +213,7 @@ impl pm_dap::BinaryProvider for Extensions {
             HookReply::Command(held) => Ok(Some(pm_dap::Binary {
                 program: held.command.into(),
                 arguments: held.args,
-                env: safe_env(held.env),
+                env: pm_task::safe_env(held.env),
             })),
             _ => Ok(None),
         }
