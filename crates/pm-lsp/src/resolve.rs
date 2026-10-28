@@ -62,7 +62,14 @@ fn works(program: &Path, arguments: &[String]) -> bool {
 fn installed_program(spec: &ServerSpec, install: &Install, folder: &Path) -> Option<PathBuf> {
     let install = crate::legacy::command_form(install);
     let place = match install.bin.as_deref() {
-        Some(bin) => folder.join(bin),
+        Some(bin)
+            if Path::new(bin)
+                .components()
+                .all(|part| matches!(part, std::path::Component::Normal(_))) =>
+        {
+            folder.join(bin)
+        }
+        Some(_) => return None,
         None => folder.to_path_buf(),
     };
     in_folder(&place, &spec.command)
@@ -122,6 +129,11 @@ fn install_into(spec: &ServerSpec, install: &Install, folder: &Path) -> Result<(
     }
 }
 
+/// Whether `name` names one file: no folders, no way up and no hidden file.
+fn plain_name(name: &str) -> bool {
+    !name.is_empty() && !name.starts_with('.') && !name.contains(['/', '\\', ':'])
+}
+
 /// Runs the steps of the `command` install `install` of `spec` in `folder`, after copying the pin files its language folder holds.
 fn run_steps(spec: &ServerSpec, install: &Install, folder: &Path) -> Result<(), String> {
     let tool = install
@@ -133,6 +145,11 @@ fn run_steps(spec: &ServerSpec, install: &Install, folder: &Path) -> Result<(), 
             Some(prefix) => format!("{prefix}.{name}"),
             None => name.clone(),
         };
+        if !plain_name(name) || !plain_name(&held) {
+            return Err(format!(
+                "{name} is not a file name inside the language folder"
+            ));
+        }
         let origin = spec
             .origin
             .as_deref()
