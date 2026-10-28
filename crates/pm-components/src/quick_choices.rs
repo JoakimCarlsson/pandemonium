@@ -288,7 +288,7 @@ impl WorkspaceState {
                 .map(|toolchain| {
                     let label = format!(
                         "{}: {}",
-                        Self::toolchain_language(&toolchain.language),
+                        Self::toolchain_language(&toolchain.language, &toolchain.language_name),
                         toolchain.name
                     );
                     let chosen = (toolchain.id != "system").then(|| toolchain.id.clone());

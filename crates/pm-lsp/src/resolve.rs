@@ -241,10 +241,13 @@ fn server_found(spec: &ServerSpec) -> Option<String> {
 
 /// What the machine has of the language server of `spec`, in words for the reader, without installing anything.
 pub fn server_state(spec: &ServerSpec) -> String {
+    if spec.provided {
+        return "Provided by its extension".to_owned();
+    }
     server_found(spec).unwrap_or_else(|| format!("{} is not installed", spec.command))
 }
 
 /// Whether the machine has the language server of `spec`.
 pub fn server_ready(spec: &ServerSpec) -> bool {
-    server_found(spec).is_some()
+    spec.provided || server_found(spec).is_some()
 }

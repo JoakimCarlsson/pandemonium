@@ -11,9 +11,20 @@ color = "#5aa9e6"
 grammar = "tsx"
 suffixes = ["tsx"]
 aliases = ["typescriptreact"]
+requires = ["json"]
 line_comment = "//"
 indent = 2
+toolchain = "javascript"
+toolchain_name = "Node.js"
+emmet_dialect = "markup"
 pairs = ["()", "[]", "{}", "\"\"", "''", "``"]
+
+# Quotes are not closed inside strings and comments, which overrides.scm names.
+brackets = [
+  { start = "\"", end = "\"", close = true, not_in = ["string", "comment"] },
+  { start = "'", end = "'", close = true, not_in = ["string", "comment"] },
+  { start = "`", end = "`", close = true, not_in = ["string", "comment"] },
+]
 
 # Parts of a file that are edited differently. Inside the children of a JSX
 # element, comments are written {/* */} and there are no line comments, and

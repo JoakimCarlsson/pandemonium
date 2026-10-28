@@ -1,5 +1,6 @@
 //! Carrying out what a client asks.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -988,9 +989,9 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             revision.as_deref().or(head.then_some("HEAD")),
         ) {
             Ok(pm_git::Contents::Text { text, truncated }) => Response::File {
+                language: pm_lsp::language_of_text(&path, &text),
                 text: Some(text),
                 truncated,
-                language: pm_lsp::language_of(&path),
             },
             Ok(pm_git::Contents::Binary) => Response::File {
                 text: None,
@@ -1042,9 +1043,9 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             version,
         } => match crate::local_history::read(&place(&directory), &path, version) {
             Ok(text) => Response::File {
+                language: pm_lsp::language_of_text(&path, &text),
                 text: Some(text),
                 truncated: false,
-                language: pm_lsp::language_of(&path),
             },
             Err(reason) => failed(reason),
         },
@@ -1385,10 +1386,11 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             directory,
             path,
             version,
+            rules,
         } => match core
             .documents
             .hub
-            .semantic_tokens(&place(&directory), &path, version)
+            .semantic_tokens(&place(&directory), &path, version, &rules)
         {
             Ok(tokens) => Response::SemanticTokens { tokens },
             Err(reason) => failed(reason),
@@ -1531,11 +1533,24 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             path,
             kind,
             name,
+            tags,
+            variables,
+            position,
+            task,
             columns,
             rows,
         } => {
             let root = place(&directory);
-            match tasks::runnable(&root, &path, &kind, &name) {
+            let found = tasks::Place {
+                tags: if tags.is_empty() { vec![kind] } else { tags },
+                variables: if variables.is_empty() && !name.is_empty() {
+                    BTreeMap::from([("name".to_owned(), name)])
+                } else {
+                    variables
+                },
+                position,
+            };
+            match tasks::runnable(&root, &path, &found, task.as_deref()) {
                 Ok(task) => run_started(
                     core.run_task(
                         &root,

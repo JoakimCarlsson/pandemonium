@@ -104,6 +104,7 @@ pub(crate) fn processes() -> (Vec<DebugAdapter>, Vec<DebugProcess>) {
         .map(|adapter| DebugAdapter {
             id: adapter.id,
             name: adapter.name,
+            attach_names: adapter.attach_names,
         })
         .collect();
     let processes = pm_dap::processes()
@@ -259,5 +260,65 @@ impl Core {
             .collect();
         infos.sort_by_key(|info| info.debug);
         infos
+    }
+}
+
+/// The debug adapters and the offers of what is installed on this machine: those the installed languages declare, then those the extensions bring.
+pub(crate) struct Installed;
+
+impl pm_dap::Catalog for Installed {
+    fn adapters(&self) -> Vec<Adapter> {
+        let mut found: Vec<Adapter> = pm_lsp::installed()
+            .into_iter()
+            .flat_map(|(_, manifest)| manifest.debug_adapters)
+            .map(|spec| Adapter {
+                id: spec.id,
+                name: spec.name,
+                programs: spec.programs,
+                arguments: spec.arguments,
+                connect: if spec.connect == "tcp" {
+                    pm_dap::Connect::Tcp
+                } else {
+                    pm_dap::Connect::Stdio
+                },
+                types: spec.types.iter().map(|name| name.to_lowercase()).collect(),
+                denied: None,
+                provided: false,
+                attach_names: spec.attach_names,
+                set: spec.set,
+                default: spec.default,
+            })
+            .collect();
+        found.dedup_by(|later, earlier| later.id == earlier.id);
+        let mut seen = std::collections::HashSet::new();
+        found.retain(|adapter| seen.insert(adapter.id.clone()));
+        for adapter in crate::extensions::adapters() {
+            if !found.iter().any(|held| {
+                held.id == adapter.id || held.types.iter().any(|name| adapter.types.contains(name))
+            }) {
+                found.push(adapter);
+            }
+        }
+        found
+    }
+
+    fn offers(&self, name: &str) -> Vec<pm_dap::Offer> {
+        pm_lsp::installed()
+            .into_iter()
+            .filter(|(_, manifest)| manifest.matches(name))
+            .flat_map(|(_, manifest)| manifest.debug_scenarios)
+            .filter(|spec| {
+                name.rsplit_once('.').is_some_and(|(_, suffix)| {
+                    spec.suffixes
+                        .iter()
+                        .any(|held| held.eq_ignore_ascii_case(suffix))
+                })
+            })
+            .map(|spec| pm_dap::Offer {
+                label: spec.label,
+                kind: spec.adapter,
+                config: spec.config,
+            })
+            .collect()
     }
 }

@@ -180,6 +180,18 @@ pub(crate) fn line_marks(
             recolor(&mut marks, range, bracket_role(depth));
         }
     }
+    if settings.redact_private_values {
+        for stretch in document.redactions().iter() {
+            if let Some(range) = clipped(&Some(stretch.clone()), &line) {
+                recolor(&mut marks, range.clone(), Role::Muted);
+                marks.push(Mark {
+                    range,
+                    color: Role::Muted.into(),
+                    paint: Paint::Fill,
+                });
+            }
+        }
+    }
     marks.extend(pair.iter().filter_map(|bracket| {
         clipped(&Some(bracket.clone()), &line).map(|range| Mark {
             range,

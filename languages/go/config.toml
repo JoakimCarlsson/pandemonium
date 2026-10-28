@@ -10,9 +10,35 @@ grammar = "go"
 suffixes = ["go"]
 aliases = ["golang"]
 line_comment = "//"
+toolchain_name = "Go"
 indent = 4
 tabs = true
 pairs = ["()", "[]", "{}", "\"\"", "''", "``"]
+
+# Quotes are not closed inside strings and comments, which overrides.scm names.
+brackets = [
+  { start = "\"", end = "\"", close = true, not_in = ["string", "comment"] },
+  { start = "`", end = "`", close = true, not_in = ["string", "comment"] },
+]
+
+# Debug adapter, and what a Go file offers to be debugged as.
+[[debug_adapter]]
+id = "delve"
+name = "Delve"
+programs = ["dlv"]
+arguments = ["dap", "--listen", "127.0.0.1:{port}"]
+connect = "tcp"
+types = ["go", "delve"]
+attach_names = ["dlv"]
+
+[debug_adapter.default]
+mode = "debug"
+
+[[debug_scenario]]
+suffixes = ["go"]
+label = "Go: Current Package"
+adapter = "go"
+config = { mode = "debug", program = "${fileDirname}", cwd = "${workspaceFolder}" }
 
 [grammar_file]
 url = "https://github.com/tree-sitter/tree-sitter-go/releases/download/v0.25.0/tree-sitter-go.wasm"

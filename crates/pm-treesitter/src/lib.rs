@@ -12,23 +12,30 @@
 //! that a stretch written in another language can be highlighted in it.
 
 mod brackets;
+mod debug;
 mod engine;
 mod grammar;
 mod highlight;
 mod indent;
 mod kind;
+mod objects;
 mod outline;
+mod redact;
 pub mod registry;
+mod rules;
 mod runnables;
 mod scope;
 mod select;
 mod syntax;
 mod tags;
 
-pub use grammar::{Editing, Grammar, Queries, Scope, Tags, default_pairs};
+pub use grammar::{
+    Aligned, Editing, Grammar, IndentRules, Pattern, Queries, Scope, Tags, default_pairs,
+};
 pub use highlight::Highlight;
 pub use indent::Indent;
 pub use kind::Kind;
+pub use objects::TextObject;
 pub use outline::Item;
 pub use runnables::Runnable;
 pub use syntax::Syntax;

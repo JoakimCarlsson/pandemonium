@@ -39,11 +39,32 @@ pub enum Rerun {
     Runnable {
         /// The file, from the root of the session's folder.
         path: String,
-        /// What kind of place it is.
-        kind: String,
-        /// What it is called.
-        name: String,
+        /// What its language tagged it with.
+        tags: Vec<String>,
+        /// What each of its captures matched, by the capture's name.
+        variables: std::collections::BTreeMap<String, String>,
+        /// Its line and its column, from zero.
+        position: (usize, usize),
+        /// The name of the task tied to it that is run in place of the first, when one was chosen.
+        task: Option<String>,
     },
+}
+
+impl Rerun {
+    /// What the tab that runs it is titled: the first thing its place captured, or its first tag.
+    fn title(&self) -> String {
+        match self {
+            Self::Task(task) => task.name.clone(),
+            Self::Runnable {
+                tags, variables, ..
+            } => variables
+                .values()
+                .next()
+                .or(tags.first())
+                .cloned()
+                .unwrap_or_default(),
+        }
+    }
 }
 
 /// What the workspace holds of tasks and toolchains.
@@ -59,19 +80,9 @@ pub struct TaskState {
     pub last: Option<Rerun>,
 }
 
-/// The language `family` as a reader knows it.
-fn language_name(family: &str) -> String {
-    match family {
-        "javascript" => "Node.js".to_owned(),
-        "go" => "Go".to_owned(),
-        other => {
-            let mut letters = other.chars();
-            letters
-                .next()
-                .map(|first| first.to_uppercase().chain(letters).collect())
-                .unwrap_or_default()
-        }
-    }
+/// The language `family` as a reader knows it: what its manifest calls it, or the family as it is written.
+fn language_name(family: &str, named: &str) -> String {
+    if named.is_empty() { family } else { named }.to_owned()
 }
 
 impl WorkspaceState {
@@ -116,10 +127,7 @@ impl WorkspaceState {
         let Some(tab) = self.add_terminal(session, columns, rows) else {
             return;
         };
-        let title = match &how {
-            Rerun::Task(task) => task.name.clone(),
-            Rerun::Runnable { name, .. } => name.clone(),
-        };
+        let title = how.title();
         if let Some(held) = self
             .sessions
             .get_mut(session)
@@ -137,11 +145,19 @@ impl WorkspaceState {
                 columns,
                 rows,
             },
-            Rerun::Runnable { path, kind, name } => Outgoing::RunRunnable {
+            Rerun::Runnable {
+                path,
+                tags,
+                variables,
+                position,
+                task,
+            } => Outgoing::RunRunnable {
                 session,
                 path,
-                kind,
-                name,
+                tags,
+                variables,
+                position,
+                task,
                 tab,
                 columns,
                 rows,
@@ -181,8 +197,10 @@ impl WorkspaceState {
         };
         self.run_in_terminal(Rerun::Runnable {
             path,
-            kind: place.kind,
-            name: place.name,
+            tags: place.tags,
+            variables: place.variables,
+            position: (line, 0),
+            task: None,
         });
     }
 
@@ -283,7 +301,7 @@ impl WorkspaceState {
     }
 
     /// The name `language`, by family, is shown under in the list of toolchains.
-    pub(crate) fn toolchain_language(language: &str) -> String {
-        language_name(language)
+    pub(crate) fn toolchain_language(language: &str, named: &str) -> String {
+        language_name(language, named)
     }
 }

@@ -47,6 +47,9 @@ pub struct AdapterEntry {
     pub connect: String,
     /// The names a scenario may call it by.
     pub types: Vec<String>,
+    /// Whether the extension's own code says which program it is, and fetches it when the machine does not have it, in place of `programs`.
+    #[serde(default)]
+    pub provided: bool,
 }
 
 /// An adapter talks over its standard input and output unless its entry says otherwise.

@@ -10,9 +10,36 @@ color = "#6fb0e0"
 grammar = "python"
 suffixes = ["py", "pyi"]
 aliases = ["py", "python3"]
+requires = ["toml"]
 line_comment = "#"
+toolchain_name = "Python"
 indent = 4
 pairs = ["()", "[]", "{}", "\"\"", "''"]
+
+# Quotes are not closed inside strings and comments, which overrides.scm names.
+brackets = [
+  { start = "\"", end = "\"", close = true, not_in = ["string", "comment"] },
+  { start = "'", end = "'", close = true, not_in = ["string", "comment"] },
+]
+
+# Debug adapter, and what a Python file offers to be debugged as.
+[[debug_adapter]]
+id = "debugpy"
+name = "Debugpy"
+programs = ["python3", "python"]
+arguments = ["-m", "debugpy.adapter"]
+connect = "stdio"
+types = ["debugpy", "python"]
+attach_names = ["python"]
+
+[debug_adapter.set]
+console = "internalConsole"
+
+[[debug_scenario]]
+suffixes = ["py"]
+label = "Python: Current File"
+adapter = "debugpy"
+config = { program = "${file}", cwd = "${workspaceFolder}" }
 
 [grammar_file]
 url = "https://github.com/tree-sitter/tree-sitter-python/releases/download/v0.25.0/tree-sitter-python.wasm"

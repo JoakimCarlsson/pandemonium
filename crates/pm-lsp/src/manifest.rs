@@ -82,7 +82,7 @@ pub struct ServerSpec {
     pub id: String,
     /// What the server calls the language.
     pub language_id: String,
-    /// What the server calls the language for the files with an ending, by the ending, where it is not the same for them all, such as `jsx` for `javascriptreact`.
+    /// What the server calls the language, by the language's folder name or, for the files with an ending, by the ending, where it is not the same for them all, such as `jsx` for `javascriptreact`; the language's folder name is looked for first.
     #[serde(default)]
     pub language_ids: BTreeMap<String, String>,
     /// The program.
@@ -96,6 +96,18 @@ pub struct ServerSpec {
     /// Folders of the project, such as `.venv/bin`, looked in for the program before the machine's, and put first on the path it runs with.
     #[serde(default)]
     pub project: Vec<String>,
+    /// Whether the extension that brought the language says which program starts it, and what it is told, in place of `command` and the options here; the options and the program a reader sets still come first.
+    #[serde(default)]
+    pub provided: bool,
+    /// The environment it is started with besides the machine's, by variable.
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    /// The other languages it reads besides the one whose folder declares it, by folder name; a language does not have to name a server that serves it.
+    #[serde(default)]
+    pub languages: Vec<String>,
+    /// The languages, by folder name, whose files it does not read until the reader names it among the servers of the language.
+    #[serde(default)]
+    pub opt_in_languages: Vec<String>,
     /// What it is told when it asks for its settings.
     #[serde(default)]
     pub settings: serde_json::Value,
@@ -113,7 +125,8 @@ pub struct ServerSpec {
 /// A named set of syntax nodes whose insides are edited differently from the rest of the file, such as the children of a JSX element or a string.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ScopeSpec {
-    /// The grammar's nodes the scope is made of, by kind; the caret is in the scope of the innermost of these around it.
+    /// The grammar's nodes the scope is made of, by kind; the caret is in the scope of the innermost of these around it. A scope may instead, or as well, be made of what the language's `overrides.scm` captures under the scope's name.
+    #[serde(default)]
     pub nodes: Vec<String>,
     /// What starts a comment that runs to the end of the line inside the scope in place of the language's, none written when the language's is kept and an empty one when there are no line comments inside it.
     #[serde(default)]
@@ -124,6 +137,36 @@ pub struct ScopeSpec {
     /// Whether Emmet abbreviations are expanded inside the scope; a language that sets it for any scope expands them only where it is set.
     #[serde(default)]
     pub emmet: Option<bool>,
+}
+
+/// A pair of characters the editor writes together as the opening one is typed, and where it does not.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct BracketSpec {
+    /// The character that opens the pair.
+    pub start: String,
+    /// The character that closes it.
+    pub end: String,
+    /// Whether the closing character is written as the opening one is typed.
+    #[serde(default = "yes")]
+    pub close: bool,
+    /// The scopes, by name, inside which the closing character is not written: the language's `[scope.<name>]` tables and the names its `overrides.scm` captures.
+    #[serde(default)]
+    pub not_in: Vec<String>,
+}
+
+/// A line pattern that takes the line back a level of indentation, and what it lines up with.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DecreaseRule {
+    /// The regular expression a line starts matching when it is typed.
+    pub pattern: String,
+    /// The names, as `@start.<name>` captures of `indents.scm`, of the constructs the line lines up with; the line goes back one level when there are none.
+    #[serde(default)]
+    pub valid_after: Vec<String>,
+}
+
+/// `true`, for the keys that are on unless a manifest turns them off.
+fn yes() -> bool {
+    true
 }
 
 /// The grammar nodes that make up a tag, which let the editor close the tags it opens; an opening tag with no name, such as `<>`, is closed with `</>`.
@@ -166,18 +209,46 @@ pub struct Companion {
     pub server: ServerSpec,
 }
 
-/// What running one kind of runnable place of a language's files comes to.
+/// A debug adapter a language declares for the programs written in it.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-pub struct RunnableSpec {
-    /// The kind of place the language's `runnables.scm` marks, such as `main` or `test`.
-    pub kind: String,
-    /// What running it is called, with `{name}` standing for the place's name.
-    pub label: String,
-    /// The command that runs it, with `{name}` standing for the place's name.
-    pub command: String,
-    /// The file that marks the folder the command runs in, such as `Cargo.toml`: the nearest folder above the file that holds it; the root of the project when nothing.
+pub struct AdapterSpec {
+    /// The name it is known by in the protocol's handshake.
+    pub id: String,
+    /// What the reader calls it.
+    pub name: String,
+    /// The programs it may be installed as, the one to prefer first.
+    pub programs: Vec<String>,
+    /// What each of them is started with; `{port}` stands for the port it listens on.
     #[serde(default)]
-    pub marker: Option<String>,
+    pub arguments: Vec<String>,
+    /// `stdio`, or `tcp` for an adapter that listens on a port the editor picks.
+    #[serde(default)]
+    pub connect: String,
+    /// The names a scenario may call it by.
+    pub types: Vec<String>,
+    /// The starts of the names of the programs it attaches to, where an empty one stands for any program.
+    #[serde(default)]
+    pub attach_names: Vec<String>,
+    /// What it is always told besides what a scenario says.
+    #[serde(default)]
+    pub set: serde_json::Map<String, serde_json::Value>,
+    /// What it is told when a scenario says nothing, or `auto`, for the key.
+    #[serde(default)]
+    pub default: serde_json::Map<String, serde_json::Value>,
+}
+
+/// What a file of a language can be debugged as with nothing written down.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ScenarioSpec {
+    /// The endings of the files it is offered for, without the dot.
+    pub suffixes: Vec<String>,
+    /// What the reader calls it.
+    pub label: String,
+    /// The adapter that runs it, as a scenario names an adapter.
+    pub adapter: String,
+    /// What the adapter is told; `${file}`, `${fileDirname}` and `${workspaceFolder}` are filled in.
+    #[serde(default)]
+    pub config: serde_json::Value,
 }
 
 /// A language: how its files are told apart, how they are edited, its grammar and its language server.
@@ -226,12 +297,33 @@ pub struct Manifest {
     /// The pairs the editor closes as the opening character is typed, each the opening and the closing character, such as `"()"`.
     #[serde(default = "default_pairs")]
     pub pairs: Vec<String>,
+    /// Pairs with more to say than `pairs` can: whether they close, and the scopes they are not written in. A pair named here replaces the same pair of `pairs`.
+    #[serde(default)]
+    pub brackets: Vec<BracketSpec>,
+    /// The characters besides letters, digits and the underscore that are part of a word, for a double click and for moving by words.
+    #[serde(default)]
+    pub word_characters: Vec<String>,
+    /// A regular expression matched against the first line of a file whose name no suffix, name or pattern of any language reads, so that a shebang tells the language.
+    #[serde(default)]
+    pub first_line_pattern: Option<String>,
+    /// A regular expression: a line that matches indents the line after it by one level.
+    #[serde(default)]
+    pub increase_indent_pattern: Option<String>,
+    /// A regular expression: a line that starts matching goes back one level, whatever the syntax around it.
+    #[serde(default)]
+    pub decrease_indent_pattern: Option<String>,
+    /// Line patterns that line up with an earlier construct, the first that matches deciding.
+    #[serde(default)]
+    pub decrease_indent_patterns: Vec<DecreaseRule>,
     /// The languages installed with it.
     #[serde(default)]
     pub requires: Vec<String>,
     /// Whether it is installed only as part of another, and so left out of the list the reader picks from.
     #[serde(default)]
     pub hidden: bool,
+    /// The language it builds on: the grammar, queries, editing rules and language servers its own folder does not give are that language's.
+    #[serde(default)]
+    pub inherits: Option<String>,
     /// The grammar, which a folder of your own may hold as `grammar.wasm` instead.
     #[serde(default)]
     pub grammar_file: Pinned,
@@ -241,15 +333,27 @@ pub struct Manifest {
     /// The language servers that read its files besides that one, each for the projects that need it.
     #[serde(default, rename = "companion")]
     pub companions: Vec<Companion>,
+    /// The family of toolchains its files are built and run with, such as `javascript` for TypeScript; its own folder's name when nothing.
+    #[serde(default)]
+    pub toolchain: Option<String>,
+    /// What a reader calls that family of toolchains, such as `Node.js`; the family capitalised when nothing.
+    #[serde(default)]
+    pub toolchain_name: Option<String>,
+    /// How Emmet abbreviations are written in its files: `markup` or `style`; none when it takes none.
+    #[serde(default)]
+    pub emmet_dialect: Option<String>,
+    /// The debug adapters that run programs written in it.
+    #[serde(default, rename = "debug_adapter")]
+    pub debug_adapters: Vec<AdapterSpec>,
+    /// What its files can be debugged as with nothing written down.
+    #[serde(default, rename = "debug_scenario")]
+    pub debug_scenarios: Vec<ScenarioSpec>,
     /// The parts of a file edited differently from the rest, by name.
     #[serde(default, rename = "scope")]
     pub scopes: BTreeMap<String, ScopeSpec>,
     /// How its tags are closed as they are opened, for a language that has them.
     #[serde(default)]
     pub tags: Option<TagSpec>,
-    /// What running each kind of place its `runnables.scm` marks comes to.
-    #[serde(default, rename = "runnable")]
-    pub runnables: Vec<RunnableSpec>,
 }
 
 /// An extension is a language unless its manifest says otherwise.
@@ -273,19 +377,28 @@ impl Manifest {
         toml::from_str(text).map_err(|error| format!("config.toml: {error}"))
     }
 
-    /// The manifest read from the language folder `folder`, its language server knowing the folder it came from.
+    /// The manifest read from the language folder `folder`, with what it builds on laid under it, its language servers knowing the folder they came from.
     pub fn read(folder: &std::path::Path) -> Result<Self, String> {
-        let text = std::fs::read_to_string(folder.join("config.toml"))
-            .map_err(|error| format!("{} has no config.toml: {error}", folder.display()))?;
-        let mut manifest = Self::parse(&text)?;
+        let (table, servers_from) = crate::inherit::read_table(folder, 0)?;
+        let mut manifest: Self = toml::Value::Table(table)
+            .try_into()
+            .map_err(|error| format!("config.toml: {error}"))?;
+        let origin = servers_from.unwrap_or_else(|| folder.to_path_buf());
         for server in manifest
             .server
             .iter_mut()
             .chain(manifest.companions.iter_mut().map(|held| &mut held.server))
         {
-            server.origin = Some(folder.to_path_buf());
+            server.origin = Some(origin.clone());
         }
         Ok(manifest)
+    }
+
+    /// Whether a file at `path` is written in the language by its whole name or a pattern, which is more than its ending says.
+    pub fn matches_by_name(&self, path: &str) -> bool {
+        let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+        self.names.iter().any(|whole| whole == name)
+            || self.patterns.iter().any(|pattern| glob(pattern, name))
     }
 
     /// Whether a file at `path` is written in the language, by its name or the ending of its name.
@@ -324,6 +437,14 @@ pub fn glob(pattern: &str, name: &str) -> bool {
 }
 
 impl ServerSpec {
+    /// What the server calls the language of the file at `path`, written in the installed language `language`: by the language's folder name, then by the ending of the file's name when the spec names one for it, or else `language_id`.
+    pub fn language_id_for(&self, language: &str, path: &str) -> &str {
+        if let Some(id) = self.language_ids.get(language) {
+            return id;
+        }
+        self.language_id_of(path)
+    }
+
     /// What the server calls the language of the file at `path`: by its ending when the spec names one for it, or the language's name.
     pub fn language_id_of(&self, path: &str) -> &str {
         let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
@@ -334,5 +455,10 @@ impl ServerSpec {
                     .find(|(held, _)| held.eq_ignore_ascii_case(suffix))
             })
             .map_or(self.language_id.as_str(), |(_, id)| id.as_str())
+    }
+
+    /// Whether it does not read the files of `language` until the reader names it.
+    pub fn is_opt_in_for(&self, language: &str) -> bool {
+        self.opt_in_languages.iter().any(|held| held == language)
     }
 }

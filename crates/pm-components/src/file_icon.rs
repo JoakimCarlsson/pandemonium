@@ -11,6 +11,7 @@ use pm_ui::{Node, node};
 use crate::parts::glyph;
 
 /// What an installed language says of the files whose names end as it reads.
+#[derive(Clone)]
 struct Known {
     /// The language, by its folder's name.
     language: String,
@@ -18,8 +19,17 @@ struct Known {
     icon: Option<(Svg, Color)>,
 }
 
-/// What the installed languages of each machine say of their files: by machine, then by the ending of a file name.
-type Learned = HashMap<Option<String>, HashMap<String, Known>>;
+/// What the installed languages of one machine say of their files: by the ending of a file name, and by the whole names and name patterns that are read before an ending is.
+#[derive(Default)]
+struct Machine {
+    /// By the ending of a file name, in lower case.
+    endings: HashMap<String, Known>,
+    /// Each language that reads files by their whole name or a pattern of it, as the listing describes it with its endings left out.
+    named: Vec<(ExtensionInfo, Known)>,
+}
+
+/// What the installed languages of each machine say of their files, by machine.
+type Learned = HashMap<Option<String>, Machine>;
 
 /// What was learned from the languages installed on the machines reached.
 static LEARNED: LazyLock<Mutex<Learned>> = LazyLock::new(Default::default);
@@ -45,7 +55,7 @@ fn colour_of(hex: &str) -> Option<Color> {
 
 /// Takes in the languages installed on `host` and their icons, as `extensions` lists them, in place of those it had before.
 pub fn learn_languages(host: &Option<String>, extensions: &[ExtensionInfo]) {
-    let mut endings = HashMap::new();
+    let mut machine = Machine::default();
     for extension in extensions.iter().filter(|extension| extension.installed) {
         let icon = extension.icon.as_ref().map(|source| {
             let svg = Svg::arrived(&format!("extension-{}", extension.id), source);
@@ -56,18 +66,25 @@ pub fn learn_languages(host: &Option<String>, extensions: &[ExtensionInfo]) {
                 .unwrap_or_else(|| Color::from(Role::Muted));
             (svg, tone)
         });
+        let known = Known {
+            language: extension.id.clone(),
+            icon,
+        };
         for suffix in &extension.suffixes {
-            endings.insert(
-                suffix.to_lowercase(),
-                Known {
-                    language: extension.id.clone(),
-                    icon,
+            machine.endings.insert(suffix.to_lowercase(), known.clone());
+        }
+        if !extension.names.is_empty() || !extension.patterns.is_empty() {
+            machine.named.push((
+                ExtensionInfo {
+                    suffixes: Vec::new(),
+                    ..extension.clone()
                 },
-            );
+                known,
+            ));
         }
     }
     if let Ok(mut learned) = LEARNED.lock() {
-        learned.insert(host.clone(), endings);
+        learned.insert(host.clone(), machine);
     }
 }
 
@@ -109,9 +126,14 @@ fn suffix_of(path: &str) -> String {
 fn learned_of<T>(path: &str, read: impl Fn(&Known) -> Option<T>) -> Option<T> {
     let suffix = suffix_of(path);
     LEARNED.lock().ok().and_then(|learned| {
-        learned
-            .values()
-            .find_map(|endings| endings.get(&suffix).and_then(&read))
+        learned.values().find_map(|machine| {
+            let named = machine
+                .named
+                .iter()
+                .find(|(info, _)| info.reads(path))
+                .and_then(|(_, known)| read(known));
+            named.or_else(|| machine.endings.get(&suffix).and_then(&read))
+        })
     })
 }
 

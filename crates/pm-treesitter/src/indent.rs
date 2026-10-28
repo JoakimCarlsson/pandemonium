@@ -48,6 +48,40 @@ impl Syntax {
         found
     }
 
+    /// Where the constructs the indents query names `@start.<name>` begin, for the `names` given, before the byte `before` of `text`: each as the line it starts on and the byte, in order.
+    pub fn construct_starts(
+        &self,
+        text: &str,
+        before: usize,
+        names: &[String],
+    ) -> Vec<(usize, usize)> {
+        let Some(query) = &self.grammar().indents else {
+            return Vec::new();
+        };
+        let wanted: Vec<u32> = names
+            .iter()
+            .filter_map(|name| query.capture_index_for_name(&format!("start.{name}")))
+            .collect();
+        if wanted.is_empty() {
+            return Vec::new();
+        }
+        let mut cursor = QueryCursor::new();
+        cursor.set_byte_range(0..before.min(text.len()));
+        let mut found: Vec<(usize, usize)> = Vec::new();
+        let mut captures = cursor.captures(query, self.tree.root_node(), text.as_bytes());
+        while let Some((held, index)) = captures.next() {
+            let capture = held.captures()[*index];
+            if wanted.contains(&capture.index) && capture.node.start_byte() < before {
+                let start = (capture.node.start_position().row, capture.node.start_byte());
+                if !found.contains(&start) {
+                    found.push(start);
+                }
+            }
+        }
+        found.sort_by_key(|(_, byte)| *byte);
+        found
+    }
+
     /// Whether the token of `text` that starts at byte `offset` closes a block, as the indents query captures it `@outdent`.
     pub fn closes_at(&self, text: &str, offset: usize) -> bool {
         let Some(query) = &self.grammar().indents else {

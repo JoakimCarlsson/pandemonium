@@ -154,6 +154,10 @@ pub struct EditorSettings {
     pub scroll_beyond_last_line: bool,
     /// How many lines are kept between the caret and the top and bottom of the view.
     pub vertical_scroll_margin: usize,
+    /// Whether the values a language marks as private are hidden behind blocks, so that sharing the screen does not give them away.
+    pub redact_private_values: bool,
+    /// The reader's own rules for what the types of tokens a language server names look like, which come before the language's.
+    pub semantic_token_rules: Vec<pm_lsp::TokenRule>,
     /// The bindings of keys the keymap starts from.
     pub keymap: crate::keymap::Preset,
     /// The reader's own bindings over the preset, by the name each action is kept under; an empty list leaves the action without keys.
@@ -211,6 +215,8 @@ impl Default for EditorSettings {
             smartcase: false,
             scroll_beyond_last_line: true,
             vertical_scroll_margin: 3,
+            redact_private_values: false,
+            semantic_token_rules: Vec::new(),
             keymap: crate::keymap::Preset::default(),
             keys: std::collections::BTreeMap::new(),
         }

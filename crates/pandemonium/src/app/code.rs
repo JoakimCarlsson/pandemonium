@@ -35,6 +35,7 @@ use pm_pages::Screen;
 use pm_protocol::{DebugAction, Seek};
 use pm_text::Edit;
 use pm_theme::Appearance;
+use pm_treesitter::TextObject;
 
 use super::App;
 use crate::keys;
@@ -610,6 +611,11 @@ impl App {
             Action::DeleteLine => Some(LineEdit::Delete),
             Action::ExpandSelection => Some(LineEdit::Grow),
             Action::ShrinkSelection => Some(LineEdit::Shrink),
+            Action::SelectFunction => Some(LineEdit::SelectObject(TextObject::Function, false)),
+            Action::SelectFunctionBody => Some(LineEdit::SelectObject(TextObject::Function, true)),
+            Action::SelectClass => Some(LineEdit::SelectObject(TextObject::Class, false)),
+            Action::SelectClassBody => Some(LineEdit::SelectObject(TextObject::Class, true)),
+            Action::SelectComment => Some(LineEdit::SelectObject(TextObject::Comment, false)),
             Action::NextProblem => Some(LineEdit::NextProblem),
             Action::PreviousProblem => Some(LineEdit::PreviousProblem),
             Action::AddNextOccurrence => Some(LineEdit::AddNextOccurrence),
@@ -1189,8 +1195,9 @@ impl App {
             .then(|| self.editor_byte_at(x, y))
             .flatten()?;
         self.model.read(|screen| {
-            let text = screen.field(EDITOR_FIELD)?.text();
-            let word = pm_text::word_at(text, byte);
+            let field = screen.field(EDITOR_FIELD)?;
+            let text = field.text();
+            let word = field.word_range_at(byte);
             text[word.clone()]
                 .chars()
                 .any(|character| character.is_alphanumeric() || character == '_')

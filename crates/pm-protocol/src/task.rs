@@ -15,4 +15,7 @@ pub struct ToolchainInfo {
     pub detail: String,
     /// Whether the project's language is set to use it; the system's counts as chosen when the project chose none.
     pub selected: bool,
+    /// What a reader calls the language, as its manifest says; empty when it says none.
+    #[serde(default)]
+    pub language_name: String,
 }

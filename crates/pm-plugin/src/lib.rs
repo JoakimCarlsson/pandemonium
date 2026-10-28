@@ -16,12 +16,15 @@
 
 mod command;
 mod gate;
+mod hook;
 mod install;
 mod manifest;
 mod package;
 mod style;
 
 pub use command::run_command;
+pub use gate::Status;
+pub use hook::{answers_hooks, run_hook};
 pub use install::{Installed, inspect, install, remove};
 pub use manifest::{
     AdapterEntry, CommandEntry, FileEntry, IconEntry, LanguageEntry, Manifest, ServerEntry,

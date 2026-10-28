@@ -62,6 +62,9 @@ pub struct ExtensionInfo {
     /// What the reader allowed it, by the names of capabilities.
     #[serde(default)]
     pub granted: Vec<String>,
+    /// What its code last said it was doing, such as which release of a language server it fetched.
+    #[serde(default)]
+    pub status: Option<String>,
 }
 
 /// The ids of the capabilities an extension may ask for, with what each lets it do.
@@ -138,6 +141,41 @@ pub struct ExtensionAssets {
     pub commands: Vec<ExtensionCommand>,
 }
 
+/// The queries and editing rules a language folder gained after the first ones, kept apart so that a bundle stays small.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct GrammarMore {
+    /// How Emmet abbreviations are written in its files, `markup` or `style`, when it takes them.
+    #[serde(default)]
+    pub emmet_dialect: Option<String>,
+    /// The overrides query: which nodes make up the scopes whose settings differ.
+    #[serde(default)]
+    pub overrides: String,
+    /// The redactions query: which nodes are private values.
+    #[serde(default)]
+    pub redactions: String,
+    /// The text objects query: which nodes are functions, classes and comments.
+    #[serde(default)]
+    pub textobjects: String,
+    /// The debugger query: which names are variables to show the value of, and the scopes they are looked for in.
+    #[serde(default)]
+    pub debugger: String,
+    /// The characters besides letters, digits and the underscore that are part of a word.
+    #[serde(default)]
+    pub word_characters: Vec<String>,
+    /// The pairs with more to say than `pairs` can.
+    #[serde(default)]
+    pub bracket_pairs: Vec<pm_lsp::BracketSpec>,
+    /// A line that matches indents the line after it.
+    #[serde(default)]
+    pub increase_indent_pattern: Option<String>,
+    /// A line that starts matching goes back one level.
+    #[serde(default)]
+    pub decrease_indent_pattern: Option<String>,
+    /// Lines that line up with an earlier construct, the first that matches deciding.
+    #[serde(default)]
+    pub decrease_indent_patterns: Vec<pm_lsp::DecreaseRule>,
+}
+
 /// An installed language's grammar and queries, which a client highlights its files with.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GrammarBundle {
@@ -164,6 +202,10 @@ pub struct GrammarBundle {
     /// The runnables query.
     #[serde(default)]
     pub runnables: String,
+    /// What the language's folder says besides the queries above and the rules of editing below, which a client that does not know a newer key leaves alone.
+    #[serde(flatten)]
+    pub more: Box<GrammarMore>,
+
     /// How many columns one level of indentation is.
     pub indent: usize,
     /// Whether a level of indentation is a tab.

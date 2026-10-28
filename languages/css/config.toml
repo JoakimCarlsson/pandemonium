@@ -9,6 +9,7 @@ color = "#a98be0"
 grammar = "css"
 suffixes = ["css"]
 indent = 2
+emmet_dialect = "style"
 pairs = ["()", "[]", "{}", "\"\"", "''"]
 
 [grammar_file]

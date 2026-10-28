@@ -38,6 +38,8 @@ pub enum LineEdit {
     Grow,
     /// Shrinks the selection back to what it was before it grew.
     Shrink,
+    /// Selects the function, class or comment around the caret as the language's text objects say, what is inside it when the flag is set.
+    SelectObject(pm_treesitter::TextObject, bool),
     /// Goes to the next stretch the language server finds wrong.
     NextProblem,
     /// Goes to the stretch before that the language server finds wrong.
@@ -133,6 +135,7 @@ impl WorkspaceState {
             what,
             LineEdit::Grow
                 | LineEdit::Shrink
+                | LineEdit::SelectObject(..)
                 | LineEdit::NextProblem
                 | LineEdit::PreviousProblem
                 | LineEdit::AddNextOccurrence
@@ -165,6 +168,7 @@ impl WorkspaceState {
             LineEdit::Delete => document.delete_lines_edit(),
             LineEdit::Grow => document.grow_selection_edit(),
             LineEdit::Shrink => document.shrink_selection_edit(),
+            LineEdit::SelectObject(object, inside) => document.select_object_edit(object, inside),
             LineEdit::NextProblem => document.next_diagnostic_edit(false),
             LineEdit::PreviousProblem => document.next_diagnostic_edit(true),
             LineEdit::Backspace => Some(document.backspace_edit().unwrap_or(Edit::Backspace)),

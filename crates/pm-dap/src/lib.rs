@@ -15,7 +15,6 @@
 
 mod adapter;
 mod attach;
-mod cargo;
 mod program;
 mod scenario;
 mod session;
@@ -23,7 +22,10 @@ mod state;
 mod view;
 mod wire;
 
-pub use adapter::{Adapter, Connect, adapters, set_extension_adapters};
+pub use adapter::{
+    Adapter, Binary, BinaryProvider, Catalog, Connect, Offer, adapters, set_binary_provider,
+    set_catalog,
+};
 pub use attach::{Process, processes};
 pub use scenario::{Request, Scenario, scenarios};
 pub use session::{Notify, Session};

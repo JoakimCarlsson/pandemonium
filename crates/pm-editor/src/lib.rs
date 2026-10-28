@@ -12,6 +12,7 @@
 mod annotations;
 mod complete;
 mod cursors;
+mod debug_values;
 mod depth;
 mod document;
 mod edit;
@@ -27,6 +28,7 @@ mod lines;
 mod link;
 mod marks;
 mod pairs;
+mod redact;
 mod runs;
 mod scope;
 mod settings;

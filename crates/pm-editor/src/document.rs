@@ -160,6 +160,8 @@ pub struct Document {
     pub(crate) depths: crate::depth::DepthCache,
     /// The runnable places worked out last.
     pub(crate) runs: crate::runs::RunCache,
+    /// The private values worked out last.
+    pub(crate) redacts: crate::redact::RedactCache,
     /// The highlights worked out last.
     painted: HighlightCache,
     /// The highlights worked out last for the minimap.
@@ -243,6 +245,7 @@ impl Document {
             annotations: crate::annotations::Annotations::default(),
             depths: crate::depth::DepthCache::default(),
             runs: crate::runs::RunCache::default(),
+            redacts: crate::redact::RedactCache::default(),
             painted: HighlightCache::default(),
             mapped: HighlightCache::default(),
         }
@@ -352,6 +355,7 @@ impl Document {
         if let Some(tabs) = tabs {
             editing.tabs = tabs;
         }
+        self.field.set_word_characters(&editing.word_characters);
         self.editing = editing;
     }
 

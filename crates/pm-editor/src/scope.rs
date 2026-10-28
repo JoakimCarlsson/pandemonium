@@ -10,7 +10,7 @@ use crate::document::Document;
 impl Document {
     /// The scope of the language the byte `offset` of the text is in, when it is in one.
     fn scope_at(&self, offset: usize) -> Option<&Scope> {
-        self.syntax.as_ref()?.scope_at(offset)
+        self.syntax.as_ref()?.scope_at(self.field.text(), offset)
     }
 
     /// The name of the scope of the language the caret is in, when it is in one.
@@ -53,9 +53,11 @@ impl Document {
             "x".repeat(range.len()),
             &text[range.end..]
         );
-        Syntax::parse(syntax.grammar().clone(), &masked)
-            .and_then(|parsed| parsed.scope_at(range.start).map(|scope| scope.emmet))
-            == Some(Some(true))
+        Syntax::parse(syntax.grammar().clone(), &masked).and_then(|parsed| {
+            parsed
+                .scope_at(&masked, range.start)
+                .map(|scope| scope.emmet)
+        }) == Some(Some(true))
     }
 
     /// The edit that types `>` at the caret and writes the closing tag after it, when the `>` ends an opening tag that nothing closes yet; the caret is left between the two.

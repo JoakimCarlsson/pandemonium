@@ -1,0 +1,191 @@
+[
+  {
+    "label": "pnpm: $PM_CUSTOM_script",
+    "command": "pnpm run $PM_CUSTOM_script",
+    "folder": "$PM_DIRNAME",
+    "groups": {
+      "capture": "script",
+      "build": [
+        "build",
+        "compile"
+      ],
+      "test": [
+        "test",
+        "check"
+      ],
+      "run": [
+        "start",
+        "dev",
+        "serve"
+      ]
+    },
+    "language": "javascript",
+    "source": "$PM_FILENAME",
+    "tags": [
+      "package-json-script"
+    ],
+    "files": [
+      "package.json"
+    ],
+    "from": [
+      "package.json"
+    ],
+    "when": {
+      "exists": "pnpm-lock.yaml"
+    },
+    "order": 20
+  },
+  {
+    "label": "yarn: $PM_CUSTOM_script",
+    "command": "yarn run $PM_CUSTOM_script",
+    "folder": "$PM_DIRNAME",
+    "groups": {
+      "capture": "script",
+      "build": [
+        "build",
+        "compile"
+      ],
+      "test": [
+        "test",
+        "check"
+      ],
+      "run": [
+        "start",
+        "dev",
+        "serve"
+      ]
+    },
+    "language": "javascript",
+    "source": "$PM_FILENAME",
+    "tags": [
+      "package-json-script"
+    ],
+    "files": [
+      "package.json"
+    ],
+    "from": [
+      "package.json"
+    ],
+    "when": {
+      "all": [
+        {
+          "exists": "yarn.lock"
+        },
+        {
+          "not": {
+            "exists": "pnpm-lock.yaml"
+          }
+        }
+      ]
+    },
+    "order": 20
+  },
+  {
+    "label": "bun: $PM_CUSTOM_script",
+    "command": "bun run $PM_CUSTOM_script",
+    "folder": "$PM_DIRNAME",
+    "groups": {
+      "capture": "script",
+      "build": [
+        "build",
+        "compile"
+      ],
+      "test": [
+        "test",
+        "check"
+      ],
+      "run": [
+        "start",
+        "dev",
+        "serve"
+      ]
+    },
+    "language": "javascript",
+    "source": "$PM_FILENAME",
+    "tags": [
+      "package-json-script"
+    ],
+    "files": [
+      "package.json"
+    ],
+    "from": [
+      "package.json"
+    ],
+    "when": {
+      "all": [
+        {
+          "any": [
+            {
+              "exists": "bun.lock"
+            },
+            {
+              "exists": "bun.lockb"
+            }
+          ]
+        },
+        {
+          "not": {
+            "exists": "pnpm-lock.yaml"
+          }
+        },
+        {
+          "not": {
+            "exists": "yarn.lock"
+          }
+        }
+      ]
+    },
+    "order": 20
+  },
+  {
+    "label": "npm: $PM_CUSTOM_script",
+    "command": "npm run $PM_CUSTOM_script",
+    "folder": "$PM_DIRNAME",
+    "groups": {
+      "capture": "script",
+      "build": [
+        "build",
+        "compile"
+      ],
+      "test": [
+        "test",
+        "check"
+      ],
+      "run": [
+        "start",
+        "dev",
+        "serve"
+      ]
+    },
+    "language": "javascript",
+    "source": "$PM_FILENAME",
+    "tags": [
+      "package-json-script"
+    ],
+    "files": [
+      "package.json"
+    ],
+    "from": [
+      "package.json"
+    ],
+    "when": {
+      "not": {
+        "any": [
+          {
+            "exists": "pnpm-lock.yaml"
+          },
+          {
+            "exists": "yarn.lock"
+          },
+          {
+            "exists": "bun.lock"
+          },
+          {
+            "exists": "bun.lockb"
+          }
+        ]
+      }
+    },
+    "order": 20
+  }
+]

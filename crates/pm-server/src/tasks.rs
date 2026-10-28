@@ -1,7 +1,7 @@
 //! The tasks of a project run on the server's machine: found from its manifests, run in a shell the client watches, or run to their end before a program is debugged, each with the toolchains the reader chose.
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use pm_protocol::{Response, Task, ToolchainInfo};
@@ -47,20 +47,34 @@ fn toolchain_of(root: &Path, project: &str, language: &str) -> Option<Toolchain>
         .filter(|toolchain| !toolchain.path.is_empty() || !toolchain.env.is_empty())
 }
 
-/// What a language server of `spec` is started with for the project at `root`: the environment of the toolchain chosen for its language.
-pub(crate) fn server_environment(
-    root: &Path,
-    spec: &pm_lsp::ServerSpec,
-) -> BTreeMap<String, String> {
-    let family = pm_task::family(&spec.language_id);
-    toolchain_of(root, &project_key(root, None), family)
+/// The family of toolchains the files of the installed language `language` are built and run with: what its manifest says, or its own name.
+fn family_of(language: &str) -> String {
+    pm_lsp::installed_manifest(language)
+        .and_then(|manifest| manifest.toolchain)
+        .unwrap_or_else(|| language.to_owned())
+}
+
+/// What a reader calls the family of toolchains `family`, as the manifest of a language of it says; nothing when none does.
+fn family_name(family: &str) -> String {
+    pm_lsp::installed()
+        .into_iter()
+        .filter(|(id, manifest)| manifest.toolchain.as_deref().unwrap_or(id) == family)
+        .find_map(|(_, manifest)| manifest.toolchain_name)
+        .unwrap_or_default()
+}
+
+/// What a language server of the installed language `language` is started with for the project at `root`: the environment of the toolchain chosen for its family.
+pub(crate) fn server_environment(root: &Path, language: &str) -> BTreeMap<String, String> {
+    toolchain_of(root, &project_key(root, None), &family_of(language))
         .map(|toolchain| toolchain.environment(std::env::var_os("PATH")))
         .unwrap_or_default()
 }
 
 /// The answer to asking what the folder `root` can be built, tested and run with.
 pub(crate) fn listed(root: &Path) -> Response {
-    let found = pm_task::tasks(root);
+    let found = pm_task::tasks(root, &crate::scan::templates(), &|path, tags| {
+        crate::scan::places(path, tags)
+    });
     Response::Tasks {
         tasks: found.tasks,
         problem: found.problem,
@@ -80,6 +94,7 @@ pub(crate) fn toolchains(root: &Path, project: Option<&str>) -> Response {
                 None => toolchain.id == "system",
             };
             ToolchainInfo {
+                language_name: family_name(&toolchain.language),
                 language: toolchain.language,
                 id: toolchain.id,
                 name: toolchain.name,
@@ -109,13 +124,15 @@ pub(crate) fn select(project: &str, language: &str, toolchain: Option<&str>) -> 
 
 /// Runs the task of the project at `root` that is called `name` to its end, with the toolchains chosen for `project`, and says why it did not succeed when it did not.
 pub(crate) fn finish_named(root: &Path, project: Option<&str>, name: &str) -> Result<(), String> {
-    let task = pm_task::tasks(root)
-        .tasks
-        .into_iter()
-        .find(|task| task.is_named(name))
-        .ok_or_else(|| {
-            format!("the scenario needs the task {name}, which this project does not have")
-        })?;
+    let task = pm_task::tasks(root, &crate::scan::templates(), &|path, tags| {
+        crate::scan::places(path, tags)
+    })
+    .tasks
+    .into_iter()
+    .find(|task| task.is_named(name))
+    .ok_or_else(|| {
+        format!("the scenario needs the task {name}, which this project does not have")
+    })?;
     let toolchain = toolchain_of(root, &project_key(root, project), &task.language);
     let launch = pm_task::Launch::new(root, &task, toolchain.as_ref())?;
     launch
@@ -123,50 +140,43 @@ pub(crate) fn finish_named(root: &Path, project: Option<&str>, name: &str) -> Re
         .map_err(|reason| format!("the task {name} failed: {reason}"))
 }
 
-/// The folder, from `root`, a runnable place in the file `path` runs in: the nearest one above the file that holds `marker`, or the root when nothing is marked or no folder holds it.
-fn folder_of(root: &Path, path: &str, marker: Option<&str>) -> String {
-    let Some(marker) = marker else {
-        return String::new();
-    };
-    let mut folder = PathBuf::from(path);
-    while folder.pop() {
-        if root.join(&folder).join(marker).is_file() {
-            return folder.to_string_lossy().replace('\\', "/");
-        }
-    }
-    String::new()
+/// What a place of a file that its language marks as runnable was sent as: its tags and what its captures matched, and where it is.
+pub(crate) struct Place {
+    /// What the language tagged it with.
+    pub tags: Vec<String>,
+    /// What each of its captures matched, by the capture's name.
+    pub variables: BTreeMap<String, String>,
+    /// Its line and column, from zero.
+    pub position: Option<(usize, usize)>,
 }
 
-/// Whether `name` is made of the characters a function or a module is named with, so that it is safe to put in a command.
-fn is_plain(name: &str) -> bool {
-    !name.is_empty()
-        && name
-            .chars()
-            .all(|character| character.is_alphanumeric() || character == '_')
-}
-
-/// The task that runs the place called `name` of kind `kind` in the file `path` of the project at `root`, as the language of the file says.
-pub(crate) fn runnable(root: &Path, path: &str, kind: &str, name: &str) -> Result<Task, String> {
-    if !is_plain(name) {
-        return Err(format!("{name} is not a name that can be run"));
+/// The task that runs `place` of the file `path` of the project at `root`: the first task tied to any of the place's tags, or the one called `chosen` among them.
+pub(crate) fn runnable(
+    root: &Path,
+    path: &str,
+    place: &Place,
+    chosen: Option<&str>,
+) -> Result<Task, String> {
+    let language = pm_lsp::language_of(path).unwrap_or_default();
+    let variables = pm_task::Variables::of_file(
+        root,
+        path,
+        &language,
+        &place.variables,
+        place.position.map(|(row, column)| (row + 1, column + 1)),
+    );
+    let mut candidates =
+        pm_task::candidates(root, &crate::scan::templates(), &place.tags, &variables);
+    if let Some(chosen) = chosen {
+        candidates.retain(|task| task.name == chosen);
     }
-    let (language, manifest) = pm_lsp::language_of(path)
-        .and_then(|id| crate::languages::installed_named(&id))
-        .ok_or_else(|| format!("no installed language runs {path}"))?;
-    let spec = manifest
-        .runnables
-        .iter()
-        .find(|spec| spec.kind == kind)
-        .ok_or_else(|| format!("{} has no way to run a {kind}", manifest.name))?;
-    Ok(Task {
-        name: spec.label.replace("{name}", name),
-        command: spec.command.replace("{name}", name),
-        folder: folder_of(root, path, spec.marker.as_deref()),
-        env: BTreeMap::new(),
-        group: if kind == "main" { "run" } else { "test" }.to_owned(),
-        language: pm_task::family(&language).to_owned(),
-        source: path.to_owned(),
-    })
+    if candidates.is_empty() {
+        return Err(format!(
+            "no task is tied to {} in {path}",
+            place.tags.join(", ")
+        ));
+    }
+    Ok(candidates.remove(0))
 }
 
 impl Core {

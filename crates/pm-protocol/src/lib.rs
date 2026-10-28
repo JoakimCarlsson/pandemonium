@@ -23,7 +23,7 @@ pub use credential::{Build, Credential, Target};
 pub use debug::{DebugAction, DebugAdapter, DebugFile, DebugInfo, DebugProcess, DebugScenario};
 pub use extensions::{
     CAPABILITIES, ExtensionAssets, ExtensionCommand, ExtensionIcon, ExtensionIconTheme,
-    ExtensionInfo, ExtensionTheme, GrammarBundle,
+    ExtensionInfo, ExtensionTheme, GrammarBundle, GrammarMore,
 };
 pub use history::{ConflictFiles, LocalVersion};
 pub use machine::{
@@ -41,7 +41,7 @@ pub use pm_dap::{
 pub use pm_lsp::{
     CodeAction, CodeLens, Completion, CompletionKind, Diagnostic, FileEdit, FoldRange, HintKind,
     Hover, InlayHint, InlineValue, InlineValueKind, Location, Problem, Seek, SemanticToken,
-    Severity, Signature, TextChange, TokenKind, Triggers,
+    Severity, Signature, TextChange, TokenKind, TokenRule, Triggers,
 };
 pub use pm_task::Task;
 pub use release::ReleaseAsset;

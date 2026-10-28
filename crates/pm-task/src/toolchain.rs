@@ -25,16 +25,6 @@ pub struct Toolchain {
 /// The id of the toolchain the machine's own path finds.
 const SYSTEM: &str = "system";
 
-/// The family of toolchains a file of the language `language`, by its folder name, is built and run with.
-pub fn family(language: &str) -> &str {
-    match language {
-        "typescript" | "tsx" | "typescriptreact" | "javascript" | "javascriptreact" | "svelte" => {
-            "javascript"
-        }
-        other => other,
-    }
-}
-
 impl Toolchain {
     /// The environment a program is started with when this toolchain is chosen: its own variables, and the path with its folders in front of `path`.
     pub fn environment(&self, path: Option<OsString>) -> BTreeMap<String, String> {

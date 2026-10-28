@@ -1,0 +1,42 @@
+[
+  {
+    "label": "docker build $PM_CUSTOM_stage",
+    "command": "docker build -f $PM_FILE --target $PM_CUSTOM_stage -t $PM_CUSTOM_stage .",
+    "folder": "$PM_DIRNAME",
+    "group": "build",
+    "source": "$PM_RELATIVE_FILE",
+    "tags": ["dockerfile-stage"]
+  },
+  {
+    "label": "docker run $PM_CUSTOM_stage",
+    "command": "docker run --rm -it $PM_CUSTOM_stage",
+    "folder": "$PM_DIRNAME",
+    "group": "run",
+    "source": "$PM_RELATIVE_FILE",
+    "tags": ["dockerfile-stage"]
+  },
+  {
+    "label": "podman build $PM_CUSTOM_stage",
+    "command": "podman build -f $PM_FILE --target $PM_CUSTOM_stage -t $PM_CUSTOM_stage .",
+    "folder": "$PM_DIRNAME",
+    "group": "build",
+    "source": "$PM_RELATIVE_FILE",
+    "tags": ["dockerfile-stage"]
+  },
+  {
+    "label": "docker build",
+    "command": "docker build -f $PM_FILE .",
+    "folder": "$PM_DIRNAME",
+    "group": "build",
+    "source": "$PM_RELATIVE_FILE",
+    "tags": ["dockerfile-image"]
+  },
+  {
+    "label": "podman build",
+    "command": "podman build -f $PM_FILE .",
+    "folder": "$PM_DIRNAME",
+    "group": "build",
+    "source": "$PM_RELATIVE_FILE",
+    "tags": ["dockerfile-image"]
+  }
+]

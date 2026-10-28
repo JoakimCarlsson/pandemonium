@@ -11,6 +11,7 @@ grammar = "html"
 suffixes = ["html", "htm", "xhtml"]
 aliases = ["htm", "xhtml"]
 indent = 2
+emmet_dialect = "markup"
 pairs = ["()", "[]", "{}", "\"\"", "''"]
 
 [grammar_file]

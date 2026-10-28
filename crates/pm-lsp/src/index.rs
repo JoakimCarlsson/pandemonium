@@ -16,7 +16,7 @@ const REPOSITORY: &str = "https://raw.githubusercontent.com/JoakimCarlsson/pande
 const OVERRIDE: &str = "PANDEMONIUM_LANGUAGES";
 
 /// The files a language folder holds, listed first when they are there; a folder may hold more, such as the lockfile that pins an npm install or, in a folder of your own, the grammar itself.
-const FILES: [&str; 7] = [
+const FILES: [&str; 8] = [
     "config.toml",
     "highlights.scm",
     "indents.scm",
@@ -24,6 +24,7 @@ const FILES: [&str; 7] = [
     "injections.scm",
     "brackets.scm",
     "runnables.scm",
+    "tasks.json",
 ];
 
 /// The names of the files in `folder`, the usual ones of a language folder first, those starting with a dot left out.
@@ -100,9 +101,14 @@ fn tag() -> String {
     format!("v{}", env!("CARGO_PKG_VERSION"))
 }
 
-/// The `languages` folder of the checkout a debug build was built from, which it reads the languages from so that changes to them are seen before they are tagged.
+/// Whether this build reads the languages from the checkout it was built from: a debug build, and the preview channel, which is made from a checkout to be tried before it is released.
+fn built_from_checkout() -> bool {
+    cfg!(debug_assertions) || option_env!("PANDEMONIUM_CHANNEL") == Some("preview")
+}
+
+/// The `languages` folder of the checkout a debug or preview build was built from, which it reads the languages from so that changes to them are seen before they are tagged.
 fn checkout() -> Option<String> {
-    if !cfg!(debug_assertions) {
+    if !built_from_checkout() {
         return None;
     }
     let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../languages");
@@ -112,7 +118,7 @@ fn checkout() -> Option<String> {
         .then(|| folder.to_string_lossy().into_owned())
 }
 
-/// Where the languages are read from: the folder or address `PANDEMONIUM_LANGUAGES` names, the checkout a debug build was built from, or the repository at this build's tag.
+/// Where the languages are read from: the folder or address `PANDEMONIUM_LANGUAGES` names, the checkout a debug or preview build was built from, or the repository at this build's tag.
 pub(crate) fn source() -> String {
     match std::env::var(OVERRIDE) {
         Ok(place) if !place.trim().is_empty() => place.trim().trim_end_matches('/').to_owned(),

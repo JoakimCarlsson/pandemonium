@@ -114,6 +114,8 @@ pub enum Setting {
     Occurrences,
     /// Whether brackets that pair are coloured by their depth.
     BracketColors,
+    /// Whether the values a language marks as private are hidden behind blocks.
+    RedactPrivateValues,
     /// Whether names are coloured by what the language server says they are.
     SemanticHighlighting,
     /// Whether the language server's hints are written inside the lines.
@@ -194,6 +196,8 @@ pub enum Setting {
     LanguageServer,
     /// The command started as the language's server.
     LanguageServerCommand,
+    /// Which language servers read the language, by id and in order.
+    LanguageServers,
     /// The bindings the keymap starts from.
     BaseKeymap,
     /// The program the terminal starts.
@@ -246,7 +250,7 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting, in the order the pages show them.
-    pub const ALL: [Self; 88] = [
+    pub const ALL: [Self; 90] = [
         Self::Launch,
         Self::ConfirmClose,
         Self::CheckUpdates,
@@ -271,6 +275,7 @@ impl Setting {
         Self::InlineBlame,
         Self::Occurrences,
         Self::BracketColors,
+        Self::RedactPrivateValues,
         Self::SemanticHighlighting,
         Self::InlayHints,
         Self::CodeLens,
@@ -311,6 +316,7 @@ impl Setting {
         Self::LanguageFormat,
         Self::LanguageServer,
         Self::LanguageServerCommand,
+        Self::LanguageServers,
         Self::BaseKeymap,
         Self::Shell,
         Self::ShellArguments,
@@ -364,6 +370,7 @@ impl Setting {
             | Self::InlineBlame
             | Self::Occurrences
             | Self::BracketColors
+            | Self::RedactPrivateValues
             | Self::SemanticHighlighting
             | Self::InlayHints
             | Self::CodeLens
@@ -402,7 +409,8 @@ impl Setting {
             | Self::LanguageIndent
             | Self::LanguageFormat
             | Self::LanguageServer
-            | Self::LanguageServerCommand => Section::Languages,
+            | Self::LanguageServerCommand
+            | Self::LanguageServers => Section::Languages,
             Self::BaseKeymap => Section::Keymap,
             Self::Shell
             | Self::ShellArguments
@@ -437,6 +445,7 @@ impl Setting {
             | Self::LanguageFormat
             | Self::LanguageServer
             | Self::LanguageServerCommand
+            | Self::LanguageServers
             | Self::Shell
             | Self::ShellArguments
             | Self::AutoFetch
@@ -537,6 +546,10 @@ impl Setting {
             Self::BracketColors => (
                 "Colour brackets by depth",
                 "Colour each pair of brackets by how many pairs enclose it, so matching ones are easy to see.",
+            ),
+            Self::RedactPrivateValues => (
+                "Hide private values",
+                "Cover the values a language marks as private, such as the secrets of an environment file, with blocks, so sharing the screen does not give them away.",
             ),
             Self::SemanticHighlighting => (
                 "Semantic highlighting",
@@ -688,6 +701,10 @@ impl Setting {
             Self::LanguageServerCommand => (
                 "Language server command",
                 "Started in place of the server the language comes with; empty keeps that one.",
+            ),
+            Self::LanguageServers => (
+                "Language servers",
+                "The servers that read its files, by id and in order; `...` stands for the ones that start by themselves, and a server that waits to be named starts only when it is listed.",
             ),
             Self::BaseKeymap => (
                 "Base keymap",

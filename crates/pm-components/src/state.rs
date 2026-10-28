@@ -886,10 +886,14 @@ pub enum Outgoing {
         session: usize,
         /// The file, from the root of the session's folder.
         path: String,
-        /// What kind of place it is.
-        kind: String,
-        /// What it is called.
-        name: String,
+        /// What its language tagged it with.
+        tags: Vec<String>,
+        /// What each of its captures matched, by the capture's name.
+        variables: std::collections::BTreeMap<String, String>,
+        /// Its line and its column, from zero.
+        position: (usize, usize),
+        /// The name of the task tied to it that is run in place of the first, when one was chosen.
+        task: Option<String>,
         /// The tab, by the name this window knows it by.
         tab: u64,
         /// How many columns wide its window is.

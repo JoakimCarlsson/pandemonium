@@ -12,6 +12,9 @@ color = "#ff4a1c"
 grammar = "svelte"
 suffixes = ["svelte"]
 indent = 2
+toolchain = "javascript"
+toolchain_name = "Node.js"
+emmet_dialect = "markup"
 pairs = ["()", "[]", "{}", "\"\"", "''", "``"]
 
 [server]

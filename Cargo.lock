@@ -2578,6 +2578,8 @@ dependencies = [
  "pm-buffer",
  "pm-store",
  "pm-tools",
+ "pm-treesitter",
+ "regex",
  "serde",
  "serde_json",
  "sha2 0.11.1",
@@ -2628,9 +2630,11 @@ dependencies = [
  "pm-plugin-api",
  "pm-policy",
  "pm-store",
+ "pm-tools",
  "pm-wasm",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
  "toml",
  "ureq",
 ]
@@ -2700,11 +2704,13 @@ dependencies = [
  "pm-lsp",
  "pm-mcp",
  "pm-plugin",
+ "pm-plugin-api",
  "pm-policy",
  "pm-protocol",
  "pm-store",
  "pm-task",
  "pm-transport",
+ "pm-treesitter",
  "pm-update",
  "portable-pty",
  "serde",
@@ -2803,6 +2809,7 @@ name = "pm-treesitter"
 version = "0.14.0-rc.1"
 dependencies = [
  "pm-buffer",
+ "regex",
  "tree-sitter",
 ]
 

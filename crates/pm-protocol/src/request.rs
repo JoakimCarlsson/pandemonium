@@ -729,10 +729,24 @@ pub enum Request {
         project: Option<String>,
         /// The file, from the root of the folder.
         path: String,
-        /// What the language calls it: `main`, `test` or `module`.
+        /// What the language calls it: `main`, `test` or `module`. A client that sends `tags` may leave it empty; one that does not is taken to mean this tag.
+        #[serde(default)]
         kind: String,
-        /// Its name in the file.
+        /// Its name in the file. A client that sends `variables` may leave it empty; one that does not is taken to mean the variable `name`.
+        #[serde(default)]
         name: String,
+        /// Every tag its language marked the place with; the tasks tied to any of them can run it.
+        #[serde(default)]
+        tags: Vec<String>,
+        /// What each capture of its place matched, by the capture's name, which a task reads as `$PM_CUSTOM_<name>`.
+        #[serde(default)]
+        variables: std::collections::BTreeMap<String, String>,
+        /// The line of the place, from zero, and the column of its start.
+        #[serde(default)]
+        position: Option<(usize, usize)>,
+        /// The name of the one task tied to the place that is run, when it is not the first.
+        #[serde(default)]
+        task: Option<String>,
         /// How many characters wide the window of the shell is.
         columns: u16,
         /// How many lines tall the window of the shell is.
@@ -1021,6 +1035,9 @@ pub enum Request {
         path: String,
         /// The version of the text the names are in.
         version: i32,
+        /// The reader's own rules for what the types of tokens look like, which come before the language's.
+        #[serde(default)]
+        rules: Vec<pm_lsp::TokenRule>,
     },
     /// What to show inside the lines of an open file within a stretch, once the file reaches `version`.
     InlayHints {

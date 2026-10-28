@@ -8,9 +8,12 @@ use std::time::{Duration, Instant};
 use pm_buffer::{Buffer, Lines, Position, Span};
 use serde_json::Value;
 
+use crate::candidates::{self, Candidate};
 use crate::choice::ServerChoice;
 use crate::install::{installed_manifest, language_of};
-use crate::manifest::{Companion, Detect, ServerSpec, glob};
+use crate::manifest::ServerSpec;
+use crate::preferences::ServerOverride;
+use crate::provider::{Provider, SymbolLabel};
 use crate::server::{DiagnosticsSink, Found, LanguageServer, Pressed, action_of, file_changes};
 use crate::types::{
     CodeAction, CodeLens, Completion, Diagnostic, FileEdit, FoldRange, Hover, InlayHint,
@@ -49,8 +52,9 @@ pub struct Published {
 /// What is done with what servers say is wrong with open files.
 pub type Sink = Arc<dyn Fn(Published) + Send + Sync>;
 
-/// What a server is started with besides the machine's own environment, for the project at a folder and the server of a spec: the variables to set, among them the `PATH` to run it with.
-pub type Environment = Arc<dyn Fn(&Path, &ServerSpec) -> BTreeMap<String, String> + Send + Sync>;
+/// What a server is started with besides the machine's own environment, for the project at a folder, the language whose file asked for it and the server of a spec: the variables to set, among them the `PATH` to run it with.
+pub type Environment =
+    Arc<dyn Fn(&Path, &str, &ServerSpec) -> BTreeMap<String, String> + Send + Sync>;
 
 /// Edits by the version they make.
 type Edits = BTreeMap<i32, Vec<TextChange>>;
@@ -72,6 +76,15 @@ struct Attached {
     scopes: Vec<String>,
     /// The server, running.
     server: Arc<LanguageServer>,
+}
+
+/// The servers that read one file: the one that is its language's and the others that run beside it.
+#[derive(Default)]
+struct Plan {
+    /// The language's server, when one reads the file.
+    primary: Option<ServerSpec>,
+    /// The others, each with the scopes of the language its completions are offered in; everywhere when none.
+    beside: Vec<(ServerSpec, Vec<String>)>,
 }
 
 /// A file open in a project.
@@ -110,6 +123,10 @@ pub struct Hub {
     lenses: Mutex<HashMap<(PathBuf, String), Offered>>,
     /// The language servers the reader chose other than the ones languages come with, by language.
     choices: Mutex<HashMap<String, ServerChoice>>,
+    /// What the reader set for each language server, by the server's id.
+    overrides: Mutex<HashMap<String, ServerOverride>>,
+    /// Whoever asks the extensions that brought languages about their language servers.
+    provider: Mutex<Option<Arc<dyn Provider>>>,
     /// Where diagnostics of open files go.
     sink: Sink,
     /// What servers are started with.
@@ -190,51 +207,6 @@ fn catch_up(document: &mut Document, uri: &str) -> Option<ServerSpec> {
     lost
 }
 
-/// Whether the companion server `companion` reads the file at `path`, by the ending of its name.
-fn reads(companion: &Companion, path: &str) -> bool {
-    let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
-    companion.suffixes.is_empty()
-        || name.rsplit_once('.').is_some_and(|(_, suffix)| {
-            companion
-                .suffixes
-                .iter()
-                .any(|held| held.eq_ignore_ascii_case(suffix))
-        })
-}
-
-/// Whether the project at `root` holds what `detect` asks for: a dependency in its `package.json` or a file at its root; true when it asks for nothing.
-fn needed(root: &Path, detect: &Detect) -> bool {
-    if detect.dependencies.is_empty() && detect.files.is_empty() {
-        return true;
-    }
-    let depends = std::fs::read_to_string(root.join("package.json"))
-        .ok()
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-        .is_some_and(|package| {
-            [
-                "dependencies",
-                "devDependencies",
-                "peerDependencies",
-                "optionalDependencies",
-            ]
-            .iter()
-            .filter_map(|section| package.get(section)?.as_object())
-            .any(|held| {
-                detect
-                    .dependencies
-                    .iter()
-                    .any(|name| held.contains_key(name))
-            })
-        });
-    depends
-        || std::fs::read_dir(root).is_ok_and(|entries| {
-            entries.filter_map(Result::ok).any(|entry| {
-                let name = entry.file_name().to_string_lossy().into_owned();
-                detect.files.iter().any(|pattern| glob(pattern, &name))
-            })
-        })
-}
-
 impl Hub {
     /// A hub with no files open, handing what servers say is wrong with open files to `sink`.
     pub fn new(sink: Sink, environment: Environment) -> Arc<Self> {
@@ -248,6 +220,8 @@ impl Hub {
             actions: Mutex::new(HashMap::new()),
             lenses: Mutex::new(HashMap::new()),
             choices: Mutex::new(HashMap::new()),
+            overrides: Mutex::new(HashMap::new()),
+            provider: Mutex::new(None),
             sink,
             environment,
         })
@@ -263,6 +237,104 @@ impl Hub {
         match choice {
             Some(choice) => choice.applied(language, own),
             None => own,
+        }
+    }
+
+    /// Has `provider` say what the language servers of the languages extensions brought are started with and told, and what their completions and symbols are called.
+    pub fn set_provider(&self, provider: Arc<dyn Provider>) {
+        if let Ok(mut held) = self.provider.lock() {
+            *held = Some(provider);
+        }
+    }
+
+    /// The provider, when there is one.
+    fn provider(&self) -> Option<Arc<dyn Provider>> {
+        self.provider.lock().ok().and_then(|held| held.clone())
+    }
+
+    /// `spec`, a server of `language` that an extension provides, with what the extension says put under what the reader set, ready to start for the project at `root`; `spec` itself when it is not provided.
+    fn provided(
+        &self,
+        language: &str,
+        spec: &ServerSpec,
+        root: &Path,
+    ) -> Result<ServerSpec, String> {
+        let Some(provider) = self.provider().filter(|_| spec.provided) else {
+            return Ok(spec.clone());
+        };
+        let set = self
+            .overrides
+            .lock()
+            .ok()
+            .and_then(|held| held.get(&spec.id).cloned())
+            .unwrap_or_default();
+        let said = provider.provide(language, spec, root, set.binary.trim().is_empty())?;
+        let mut merged = spec.clone();
+        if let Some(command) = said.command {
+            merged.command = command.command;
+            merged.args = command.args;
+            merged.env.extend(command.env);
+            merged.install = None;
+            merged.check = Vec::new();
+        }
+        if let Some(init) = said.init {
+            merged.init = init;
+        }
+        if let Some(settings) = said.settings {
+            merged.settings = settings;
+        }
+        Ok(set.applied(&merged))
+    }
+
+    /// `spec` with what the reader set for the server it is put over it.
+    fn overridden(&self, spec: ServerSpec) -> ServerSpec {
+        match self
+            .overrides
+            .lock()
+            .ok()
+            .and_then(|held| held.get(&spec.id).cloned())
+        {
+            Some(set) => set.applied(&spec),
+            None => spec,
+        }
+    }
+
+    /// The servers that read the file at `path` of the project at `root`, written in `language`: the one that is the language's server and the others that run beside it, as the reader chose, each with what the reader set for it.
+    fn plan(&self, language: &str, root: &Path, path: &str) -> Plan {
+        let own = installed_manifest(language).and_then(|manifest| manifest.server);
+        let choice = self
+            .choices
+            .lock()
+            .ok()
+            .and_then(|choices| choices.get(language).cloned());
+        if matches!(choice, Some(ServerChoice::Refused(_))) {
+            return Plan::default();
+        }
+        let offers = candidates::candidates_of(language, own.clone());
+        let (primary, beside): (Option<ServerSpec>, Vec<Candidate>) = match &choice {
+            Some(ServerChoice::Servers(names)) => {
+                let mut list = candidates::named(&offers, names, language, root, path);
+                if list.is_empty() {
+                    (None, Vec::new())
+                } else {
+                    let first = list.remove(0);
+                    (Some(first.spec), list)
+                }
+            }
+            _ => (
+                self.chosen(language, own),
+                candidates::by_default(&offers, language, root, path)
+                    .into_iter()
+                    .filter(|offer| !offer.primary)
+                    .collect(),
+            ),
+        };
+        Plan {
+            primary: primary.map(|spec| self.overridden(spec)),
+            beside: beside
+                .into_iter()
+                .map(|offer| (self.overridden(offer.spec), offer.scopes))
+                .collect(),
         }
     }
 
@@ -290,31 +362,111 @@ impl Hub {
         }
     }
 
-    /// Takes the open file `key` off the server it is on and onto the one its language is read by now.
+    /// Takes the open file `key` off the servers it is on and onto the ones its language is read by now.
     fn move_server(self: &Arc<Self>, key: (PathBuf, String)) {
         let uri = file_uri(&key.0.join(&key.1));
-        let (old, spec) = {
+        let (old, dropped, spec) = {
             let Ok(mut documents) = self.documents.lock() else {
                 return;
             };
             let Some(document) = documents.get_mut(&key) else {
                 return;
             };
-            let own = installed_manifest(&document.language).and_then(|manifest| manifest.server);
-            let spec = self.chosen(&document.language, own);
+            let plan = self.plan(&document.language, &key.0, &key.1);
             let old = document.server.take().zip(document.spec.take());
-            document.spec = spec.clone();
-            (old, spec)
+            document.spec = plan.primary.clone();
+            let (kept, dropped): (Vec<Attached>, Vec<Attached>) =
+                std::mem::take(&mut document.companions)
+                    .into_iter()
+                    .partition(|held| {
+                        plan.beside.iter().any(|(spec, _)| spec.id == held.spec.id)
+                            && plan
+                                .primary
+                                .as_ref()
+                                .is_none_or(|primary| primary.id != held.spec.id)
+                    });
+            document.companions = kept;
+            (old, dropped, plan.primary)
         };
         if let Some((server, old_spec)) = old {
             let _ = server.close(&uri);
             self.stop_unused(&key.0, &old_spec, server);
         }
-        if let Some(spec) = spec {
-            let hub = self.clone();
-            std::thread::spawn(move || {
-                let _ = hub.attach(&key, &spec);
-            });
+        for held in dropped {
+            let _ = held.server.close(&uri);
+            self.stop_unused(&key.0, &held.spec, held.server);
+        }
+        match spec {
+            Some(spec) => {
+                let hub = self.clone();
+                std::thread::spawn(move || {
+                    let _ = hub.attach(&key, &spec);
+                });
+            }
+            None => {
+                let hub = self.clone();
+                std::thread::spawn(move || hub.attach_companions(&key));
+            }
+        }
+    }
+
+    /// What the reader set for each language server, by the server's id; a server whose settings changed is stopped and started again with them, and the open files it reads move onto the new one at once.
+    pub fn set_overrides(self: &Arc<Self>, overrides: HashMap<String, ServerOverride>) {
+        let before = match self.overrides.lock() {
+            Ok(mut held) => std::mem::replace(&mut *held, overrides.clone()),
+            Err(_) => return,
+        };
+        let changed: Vec<String> = before
+            .keys()
+            .chain(overrides.keys())
+            .filter(|id| before.get(*id) != overrides.get(*id))
+            .cloned()
+            .collect();
+        if changed.is_empty() {
+            return;
+        }
+        let stopping: Vec<Arc<LanguageServer>> = match self.servers.lock() {
+            Ok(mut servers) => {
+                let keys: Vec<(PathBuf, String)> = servers
+                    .keys()
+                    .filter(|(_, id)| changed.contains(id))
+                    .cloned()
+                    .collect();
+                keys.iter()
+                    .filter_map(|key| servers.remove(key))
+                    .filter_map(|slot| slot.get().and_then(|started| started.clone().ok()))
+                    .collect()
+            }
+            Err(_) => return,
+        };
+        let moved: Vec<(PathBuf, String)> = self
+            .documents
+            .lock()
+            .map(|mut documents| {
+                documents
+                    .iter_mut()
+                    .filter(|(_, document)| {
+                        document
+                            .spec
+                            .iter()
+                            .chain(document.companions.iter().map(|held| &held.spec))
+                            .any(|spec| changed.contains(&spec.id))
+                    })
+                    .map(|(key, document)| {
+                        document.server = None;
+                        document
+                            .companions
+                            .retain(|held| !changed.contains(&held.spec.id));
+                        key.clone()
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        for server in stopping {
+            std::thread::spawn(move || server.stop());
+        }
+        for key in moved {
+            self.move_server(key);
         }
     }
 
@@ -366,6 +518,7 @@ impl Hub {
     fn server(
         self: &Arc<Self>,
         root: &Path,
+        language: &str,
         spec: &ServerSpec,
         sink: DiagnosticsSink,
     ) -> Result<Arc<LanguageServer>, String> {
@@ -380,8 +533,14 @@ impl Hub {
                 .clone();
             let started = slot
                 .get_or_init(|| {
-                    LanguageServer::start(spec, root, &(self.environment)(root, spec), sink.clone())
-                        .map(Arc::new)
+                    let ready = self.provided(language, spec, root)?;
+                    LanguageServer::start(
+                        &ready,
+                        root,
+                        &(self.environment)(root, language, &ready),
+                        sink.clone(),
+                    )
+                    .map(Arc::new)
                 })
                 .clone();
             match started {
@@ -410,8 +569,9 @@ impl Hub {
         version: i32,
         text: &str,
     ) -> Result<Triggers, String> {
-        let manifest = installed_manifest(language)
+        installed_manifest(language)
             .ok_or_else(|| format!("{language} is not installed on this machine"))?;
+        let plan = self.plan(language, root, path);
         let key = (root.to_path_buf(), path.to_owned());
         let uri = file_uri(&root.join(path));
         let replaced = {
@@ -429,7 +589,7 @@ impl Hub {
             let mut document = Document {
                 language: language.to_owned(),
                 buffer: Buffer::new(text, version),
-                spec: self.chosen(language, manifest.server.clone()),
+                spec: plan.primary.clone(),
                 early,
                 server: None,
                 companions: Vec::new(),
@@ -457,7 +617,7 @@ impl Hub {
         {
             return Err(reason);
         }
-        let Some(spec) = self.chosen(language, manifest.server) else {
+        let Some(spec) = plan.primary else {
             return Ok(Triggers::default());
         };
         self.attach(&key, &spec)
@@ -469,7 +629,13 @@ impl Hub {
         key: &(PathBuf, String),
         spec: &ServerSpec,
     ) -> Result<Triggers, String> {
-        let server = self.server(&key.0, spec, self.diagnostics_sink())?;
+        let language = self
+            .documents
+            .lock()
+            .ok()
+            .and_then(|documents| documents.get(key).map(|document| document.language.clone()))
+            .unwrap_or_default();
+        let server = self.server(&key.0, &language, spec, self.diagnostics_sink())?;
         let uri = file_uri(&key.0.join(&key.1));
         {
             let mut documents = self
@@ -482,7 +648,7 @@ impl Hub {
             if document.server.is_none() {
                 server.open(
                     &uri,
-                    spec.language_id_of(&key.1),
+                    spec.language_id_for(&document.language, &key.1),
                     document.buffer.version(),
                     document.buffer.text(),
                 )?;
@@ -522,7 +688,7 @@ impl Hub {
         })
     }
 
-    /// Opens the open file `key` on each companion server its language has that reads it and that the project needs, starting those first; a server that cannot be started is left out, for the language's own server still reads the file.
+    /// Opens the open file `key` on each server that runs beside its language's own, starting those first; a server that cannot be started is left out, for the language's own server still reads the file.
     fn attach_companions(self: &Arc<Self>, key: &(PathBuf, String)) {
         let Some(language) = self
             .documents
@@ -532,16 +698,10 @@ impl Hub {
         else {
             return;
         };
-        let Some(manifest) = installed_manifest(&language) else {
-            return;
-        };
         let uri = file_uri(&key.0.join(&key.1));
-        for companion in manifest.companions {
-            if !reads(&companion, &key.1) || !needed(&key.0, &companion.detect) {
-                continue;
-            }
+        for (spec, scopes) in self.plan(&language, &key.0, &key.1).beside {
             let quiet: DiagnosticsSink = Arc::new(|_, _, _| {});
-            let Ok(server) = self.server(&key.0, &companion.server, quiet) else {
+            let Ok(server) = self.server(&key.0, &language, &spec, quiet) else {
                 continue;
             };
             let Ok(mut documents) = self.documents.lock() else {
@@ -553,28 +713,57 @@ impl Hub {
             if document
                 .companions
                 .iter()
-                .any(|held| held.spec.id == companion.server.id)
+                .any(|held| held.spec.id == spec.id)
             {
                 continue;
             }
             let opened = server.open(
                 &uri,
-                companion.server.language_id_of(&key.1),
+                spec.language_id_for(&language, &key.1),
                 document.buffer.version(),
                 document.buffer.text(),
             );
             if opened.is_ok() {
                 document.companions.push(Attached {
-                    spec: companion.server,
-                    scopes: companion.scopes,
+                    spec,
+                    scopes,
                     server,
                 });
             }
         }
     }
 
+    /// The language of the open file `key` and the spec of the server it is on, when it is on one.
+    fn language_and_spec(&self, key: &(PathBuf, String)) -> (String, Option<ServerSpec>) {
+        self.documents
+            .lock()
+            .ok()
+            .and_then(|documents| {
+                documents
+                    .get(key)
+                    .map(|document| (document.language.clone(), document.spec.clone()))
+            })
+            .unwrap_or_default()
+    }
+
+    /// Renames `items`, completions of the server `spec` for files of `language`, as the extension that provides the server says.
+    fn label_completions(&self, language: &str, spec: &ServerSpec, items: &mut [Completion]) {
+        let Some(provider) = self.provider().filter(|_| spec.provided) else {
+            return;
+        };
+        let labels = provider.label_completions(language, spec, items);
+        for (item, label) in items.iter_mut().zip(labels) {
+            if let Some(label) = label {
+                item.label = label;
+            }
+        }
+    }
+
     /// The companion servers the open file `key` is on, each with the scopes of its language their completions are offered in, which are none when they are offered everywhere.
-    fn companions_of(&self, key: &(PathBuf, String)) -> Vec<(Vec<String>, Arc<LanguageServer>)> {
+    fn companions_of(
+        &self,
+        key: &(PathBuf, String),
+    ) -> Vec<(Vec<String>, Arc<LanguageServer>, ServerSpec)> {
         let Ok(documents) = self.documents.lock() else {
             return Vec::new();
         };
@@ -582,7 +771,7 @@ impl Hub {
             document
                 .companions
                 .iter()
-                .map(|held| (held.scopes.clone(), held.server.clone()))
+                .map(|held| (held.scopes.clone(), held.server.clone(), held.spec.clone()))
                 .collect()
         })
     }
@@ -720,11 +909,16 @@ impl Hub {
             return Ok(Vec::new());
         };
         let address = file_uri(&root.join(path));
+        let (language, own) = self.language_and_spec(&key);
         let mut items = server.completion(&address, position, trigger)?;
-        for (scopes, companion) in self.companions_of(&key) {
+        if let Some(own) = &own {
+            self.label_completions(&language, own, &mut items);
+        }
+        for (scopes, companion, spec) in self.companions_of(&key) {
             let here = scopes.is_empty()
                 || scope.is_some_and(|scope| scopes.iter().any(|name| name == scope));
-            if here && let Ok(more) = companion.completion(&address, position, trigger) {
+            if here && let Ok(mut more) = companion.completion(&address, position, trigger) {
+                self.label_completions(&language, &spec, &mut more);
                 items.extend(more);
             }
         }
@@ -745,7 +939,7 @@ impl Hub {
         };
         let address = file_uri(&root.join(path));
         let mut hover = server.hover(&address, position)?;
-        for (_, companion) in self.companions_of(&key) {
+        for (_, companion, _) in self.companions_of(&key) {
             let Ok(Some(more)) = companion.hover(&address, position) else {
                 continue;
             };
@@ -949,6 +1143,7 @@ impl Hub {
         query: &str,
     ) -> Result<Vec<Location>, String> {
         let key = (root.to_path_buf(), path.to_owned());
+        let (language, spec) = self.language_and_spec(&key);
         let server = self
             .documents
             .lock()
@@ -958,7 +1153,18 @@ impl Hub {
         let Some(server) = server else {
             return Ok(Vec::new());
         };
-        let found = server.workspace_symbols(query)?;
+        let (mut found, symbols): (Vec<_>, Vec<SymbolLabel>) =
+            server.workspace_symbols(query)?.into_iter().unzip();
+        if let (Some(provider), Some(spec)) = (self.provider(), spec.filter(|spec| spec.provided)) {
+            for (place, label) in found
+                .iter_mut()
+                .zip(provider.label_symbols(&language, &spec, &symbols))
+            {
+                if label.is_some() {
+                    place.2 = label;
+                }
+            }
+        }
         let mut texts: HashMap<PathBuf, Option<String>> = HashMap::new();
         Ok(found
             .into_iter()
@@ -989,12 +1195,24 @@ impl Hub {
         root: &Path,
         path: &str,
         version: i32,
+        user: &[crate::semantic::TokenRule],
     ) -> Result<Vec<SemanticToken>, String> {
         let key = (root.to_path_buf(), path.to_owned());
         let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
             return Ok(Vec::new());
         };
-        server.semantic_tokens(&file_uri(&root.join(path)))
+        let language = self
+            .documents
+            .lock()
+            .ok()
+            .and_then(|documents| {
+                documents
+                    .get(&key)
+                    .map(|document| document.language.clone())
+            })
+            .unwrap_or_default();
+        let rules = crate::semantic::rules_for(&language, user);
+        server.semantic_tokens(&file_uri(&root.join(path)), &rules)
     }
 
     /// Which stretches of the open file at `path` of the project at `root` within `range` to show the values of while the program is paused at `stopped` in the debugger's frame `frame`, once the file reaches `version`; none when its language server does not say.

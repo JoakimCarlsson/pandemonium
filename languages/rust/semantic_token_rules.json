@@ -1,0 +1,14 @@
+[
+  { "token_type": "lifetime", "style": ["type"] },
+  { "token_type": "builtinType", "style": ["type"] },
+  { "token_type": "typeAlias", "style": ["type"] },
+  { "token_type": "union", "style": ["type"] },
+  { "token_type": "derive", "style": ["function"] },
+  { "token_type": "selfKeyword", "style": ["keyword"] },
+  { "token_type": "selfTypeKeyword", "style": ["keyword"] },
+  { "token_type": "controlFlow", "style": ["keyword"] },
+  { "token_type": "formatSpecifier", "style": ["string"] },
+  { "token_type": "escapeSequence", "style": ["string"] },
+  { "token_type": "character", "style": ["string"] },
+  { "token_type": "boolean", "style": ["constant"] }
+]

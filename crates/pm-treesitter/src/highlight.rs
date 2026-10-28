@@ -1,6 +1,6 @@
 //! What colour each stretch of a window of a text is, the stretches written in another language included.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, hash_map::Entry};
 use std::ops::Range;
 use tree_sitter::{QueryCursor, StreamingIterator, Tree};
 
@@ -63,17 +63,27 @@ impl Canvas {
         }
     }
 
-    /// Paints what the highlights query of `grammar` captures in `tree`, a tree of `text`: wider captures first so narrower ones show over them, and of two captures of one stretch the one whose pattern comes first in the query last, so it shows.
+    /// Paints what the highlights query of `grammar` captures in `tree`, a tree of `text`: wider captures first so narrower ones show over them, and of two captures of one stretch the one whose pattern comes first in the query last, so it shows. A node one pattern captures more than once takes the kind of the rightmost capture the editor has a colour for, so a capture written for a theme that has none falls back to the one on its left.
     fn paint_tree(&mut self, grammar: &Grammar, tree: &Tree, text: &str, depth: usize) {
         if let Some(query) = &grammar.highlights {
             let mut cursor = QueryCursor::new();
             cursor.set_byte_range(self.window());
             let mut found: Vec<(Range<usize>, Kind, usize)> = Vec::new();
+            let mut taken: HashMap<(u32, Range<usize>), usize> = HashMap::new();
             let mut captures = cursor.captures(query, tree.root_node(), text.as_bytes());
             while let Some((found_match, index)) = captures.next() {
                 let capture = found_match.captures()[*index];
-                if let Some(kind) = grammar.kinds.get(capture.index as usize).copied().flatten() {
-                    found.push((capture.node.byte_range(), kind, found_match.pattern_index));
+                let Some(kind) = grammar.kinds.get(capture.index as usize).copied().flatten()
+                else {
+                    continue;
+                };
+                let range = capture.node.byte_range();
+                match taken.entry((found_match.id(), range.clone())) {
+                    Entry::Occupied(held) => found[*held.get()].1 = kind,
+                    Entry::Vacant(room) => {
+                        room.insert(found.len());
+                        found.push((range, kind, found_match.pattern_index));
+                    }
                 }
             }
             found

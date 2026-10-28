@@ -38,6 +38,9 @@ pub struct DebugAdapter {
     pub id: String,
     /// The name a reader knows it by.
     pub name: String,
+    /// The starts of the names of the programs it attaches to; an empty one stands for any program.
+    #[serde(default)]
+    pub attach_names: Vec<String>,
 }
 
 /// The breakpoints of one file.

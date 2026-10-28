@@ -75,7 +75,8 @@ One crate per layer, each depending only on the layers below it.
   returns the edits it calls for and `pm-components` draws it). A language is a
   folder in `languages/`: a `config.toml` manifest and its tree-sitter queries,
   among them `runnables.scm`, which marks the places the gutter puts a run
-  button beside.
+  button beside, and `tasks.json`, which says what running each place and
+  listing a project comes to; docs/extensions.md describes every file.
   `make languages` writes `languages/languages.json` with every file's checksum
   after a folder changes; a release build reads the folders from the repository
   at its own release tag, a debug build from its checkout, and either from
@@ -87,8 +88,10 @@ One crate per layer, each depending only on the layers below it.
   of tool servers, which lists the tools they offer), `pm-dap`
   (programs debugged through debug adapters over the Debug Adapter Protocol:
   the adapters, what a folder can be debugged as, and a running session),
-  `pm-task` (what a project can be built, tested and run with: tasks read from
-  its manifests and its own file, and the toolchains installed on the machine),
+  `pm-task` (what a project can be built, tested and run with: the task
+  templates the languages ship in `tasks.json` made of its manifests and of the
+  places of its files, its own file, and the toolchains installed on the
+  machine),
   `pm-git`,
   `pm-store` (persistence under the data directory). The server uses them; the
   window does not.

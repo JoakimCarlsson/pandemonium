@@ -12,6 +12,7 @@ grammar = "scss"
 suffixes = ["scss"]
 line_comment = "//"
 indent = 2
+emmet_dialect = "style"
 pairs = ["()", "[]", "{}", "\"\"", "''"]
 
 [server]
