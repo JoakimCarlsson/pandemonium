@@ -1,8 +1,8 @@
 //! The keys that work on whole lines and on the selection of the file shown: commenting, indenting, moving, duplicating and deleting lines, growing and shrinking the selection along the syntax tree, going to the next problem and to a line by its number.
 
-use pm_editor::Document;
+use pm_editor::{Case, Document, LineOrder};
 use pm_input::FocusId;
-use pm_text::{Edit, Field};
+use pm_text::{Edit, Field, Motion};
 
 use crate::state::WorkspaceState;
 
@@ -74,6 +74,26 @@ pub enum LineEdit {
     LineAbove,
     /// Goes to where the text of the line starts, or to its very start; the selection grows when the flag is set.
     Home(bool),
+    /// Writes the selections, or the word at the caret, in a case.
+    Case(Case),
+    /// Puts the selected lines, or every line, in another order.
+    OrderLines(LineOrder),
+    /// Swaps the characters around the caret.
+    Transpose,
+    /// Takes the spaces and tabs off the ends of the lines.
+    TrimTrailing,
+    /// Deletes from the caret to the end of its line.
+    DeleteToLineEnd,
+    /// Deletes from the caret to the start of its line.
+    DeleteToLineStart,
+    /// Wraps the lines in a block comment, or takes it away.
+    ToggleBlockComment,
+    /// Puts a caret at the end of each selected line.
+    SplitIntoLines,
+    /// Grows the rectangular selection by this many lines down and columns right, which may be negative.
+    Column(isize, isize),
+    /// Selects the rectangle with corners at these two bytes of the text, as dragging the pointer over it does.
+    ColumnDrag(usize, usize),
 }
 
 /// The box for going to a line by its number.
@@ -126,6 +146,30 @@ impl WorkspaceState {
             LineEdit::Home(extend) if several => {
                 vec![Edit::Move(pm_text::Motion::LineStart, extend)]
             }
+            LineEdit::Case(case) => self
+                .shown_document()
+                .map(|document| document.case_edits(case))
+                .unwrap_or_default(),
+            LineEdit::OrderLines(order) => self
+                .shown_document()
+                .map(|document| document.order_lines_edits(order))
+                .unwrap_or_default(),
+            LineEdit::SplitIntoLines => self
+                .shown_document()
+                .map(Document::split_into_lines_edits)
+                .unwrap_or_default(),
+            LineEdit::Column(down, right) => self
+                .shown_text()
+                .map(|document| document.column_select_edits(down, right))
+                .unwrap_or_default(),
+            LineEdit::ColumnDrag(from, to) => self
+                .shown_document()
+                .map(|document| document.column_drag_edits(from, to))
+                .unwrap_or_default(),
+            LineEdit::DeleteToLineEnd => vec![Edit::Move(Motion::LineEnd, true), Edit::Delete],
+            LineEdit::DeleteToLineStart => {
+                vec![Edit::Move(Motion::LineStart, true), Edit::Backspace]
+            }
             _ => self.line_edit(what).into_iter().collect(),
         };
         let read_only = self
@@ -146,6 +190,9 @@ impl WorkspaceState {
                 | LineEdit::SelectLine
                 | LineEdit::MatchingBracket
                 | LineEdit::Home(_)
+                | LineEdit::SplitIntoLines
+                | LineEdit::Column(..)
+                | LineEdit::ColumnDrag(..)
         );
         if moves_only || !read_only {
             for edit in edits {
@@ -182,11 +229,42 @@ impl WorkspaceState {
             LineEdit::LineBelow => Some(document.open_line_edit(false)),
             LineEdit::LineAbove => Some(document.open_line_edit(true)),
             LineEdit::Home(extend) => Some(document.home_edit(extend)),
-            LineEdit::SelectAllOccurrences
+            LineEdit::Transpose => document.transpose_edit(),
+            LineEdit::TrimTrailing => document.tidy_edit(true, false),
+            LineEdit::ToggleBlockComment => document.toggle_block_comment_lines_edit(),
+            LineEdit::Case(_)
+            | LineEdit::OrderLines(_)
+            | LineEdit::DeleteToLineEnd
+            | LineEdit::DeleteToLineStart
+            | LineEdit::SplitIntoLines
+            | LineEdit::Column(..)
+            | LineEdit::ColumnDrag(..)
+            | LineEdit::SelectAllOccurrences
             | LineEdit::Fold
             | LineEdit::Unfold
             | LineEdit::UnfoldAll => None,
         })
+    }
+
+    /// What copying in the file shown puts on the clipboard when the selection holds nothing: the lines the carets are on, the indentation the text was copied at, and whether it is whole lines; or the indentation of the selection when it holds something.
+    pub fn editor_copied(&self) -> Option<(Option<String>, String)> {
+        let document = self.shown_document()?;
+        Some((document.copied_lines(), document.copied_indentation()))
+    }
+
+    /// The edit that pastes `text` into the file shown, when it was copied from the file at `lines` whole lines or at `indentation`, and the paste is better made at the place it goes to than as it is.
+    pub fn editor_paste_edit(
+        &self,
+        text: &str,
+        whole_lines: bool,
+        indentation: &str,
+    ) -> Option<Edit> {
+        let document = self.shown_document()?;
+        if whole_lines {
+            document.paste_lines_edit(text)
+        } else {
+            document.paste_reindented_edit(text, indentation)
+        }
     }
 
     /// Whether the selection of the file shown runs over more than one line.

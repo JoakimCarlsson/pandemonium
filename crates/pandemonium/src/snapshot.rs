@@ -359,6 +359,8 @@ pub enum Shot {
     Outline,
     /// The same file with every use of a name selected, a caret at each.
     Cursors,
+    /// The same file with a rectangle of text selected over three lines, dragged from the first to the third.
+    ColumnSelection,
     /// The same file with the body of a function folded away.
     Folded,
     /// The same file scrolled into a method, the lines that open its blocks kept at the top.
@@ -800,6 +802,8 @@ fn completing() -> WorkspaceState {
             span: None,
             filter: label.to_owned(),
             sort: label.to_owned(),
+            additional_edits: Vec::new(),
+            resolve: None,
             documentation: (label == "insert").then(|| {
                 "Inserts a key-value pair into the map.\n\nIf the map did not have this key present, `None` is returned.\n\n```rust\nlet mut map = HashMap::new();\nassert_eq!(map.insert(37, \"a\"), None);\n```".to_owned()
             }),
@@ -2199,6 +2203,18 @@ impl Shot {
                         .edited(EDITOR_FIELD, Edit::Place(at + 2, false))
                         .lines_edited(pm_components::line_edits::LineEdit::SelectAllOccurrences),
                 )
+            }
+            Self::ColumnSelection => {
+                let state = code();
+                let text = state
+                    .shown_document()
+                    .map(|document| document.field.text().to_owned())
+                    .unwrap_or_default();
+                let first = text.find("    pub id").unwrap_or_default() + 8;
+                let last = text.find("    names:").unwrap_or_default() + 13;
+                Screen::Workspace(state.lines_edited(
+                    pm_components::line_edits::LineEdit::ColumnDrag(first, last),
+                ))
             }
             Self::Outline => Screen::Workspace(
                 code()

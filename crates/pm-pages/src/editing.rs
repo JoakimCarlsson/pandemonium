@@ -65,6 +65,11 @@ impl Screen {
         self.in_workspace(|state| state.with_completions(session, path, version, items))
     }
 
+    /// The screen after the language server said what it adds to a completion of the file at `path` of the session at `session`.
+    pub fn with_completion_resolved(self, session: usize, path: &str, item: Completion) -> Self {
+        self.in_workspace(|state| state.with_completion_resolved(session, path, item))
+    }
+
     /// The screen after the language server said what it knows about `position` of the file at `path` of the session at `session`.
     pub fn with_hover(
         self,
@@ -646,6 +651,25 @@ impl Screen {
     /// The screen with `what` done to the lines or the selection of the file shown.
     pub fn lines_edited(self, what: pm_components::line_edits::LineEdit) -> Self {
         self.in_workspace(|state| state.lines_edited(what))
+    }
+
+    /// What copying in the file shown copies when nothing is selected, and the indentation of what it copies otherwise.
+    pub fn editor_copied(&self) -> Option<(Option<String>, String)> {
+        match self {
+            Self::Workspace(state) => state.editor_copied(),
+        }
+    }
+
+    /// The edit that pastes `text` into the file shown at the place it goes to, when that is better than pasting it as it is.
+    pub fn editor_paste_edit(
+        &self,
+        text: &str,
+        whole_lines: bool,
+        indentation: &str,
+    ) -> Option<pm_text::Edit> {
+        match self {
+            Self::Workspace(state) => state.editor_paste_edit(text, whole_lines, indentation),
+        }
     }
 
     /// Whether the selection of the file shown runs over more than one line.

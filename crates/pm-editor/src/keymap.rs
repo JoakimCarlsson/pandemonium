@@ -283,6 +283,54 @@ pub enum Action {
     SelectLine,
     /// Joins the line with the next.
     JoinLines,
+    /// Writes the selection, or the word at the caret, in capitals.
+    UppercaseSelection,
+    /// Writes the selection, or the word at the caret, in small letters.
+    LowercaseSelection,
+    /// Starts each word of the selection, or the word at the caret, with a capital.
+    TitleCaseSelection,
+    /// Turns capitals of the selection, or the word at the caret, into small letters and the other way round.
+    SwapCaseSelection,
+    /// Writes the selection, or the word at the caret, as snake_case.
+    SnakeCaseSelection,
+    /// Writes the selection, or the word at the caret, as kebab-case.
+    KebabCaseSelection,
+    /// Writes the selection, or the word at the caret, as camelCase.
+    CamelCaseSelection,
+    /// Writes the selection, or the word at the caret, as PascalCase.
+    PascalCaseSelection,
+    /// Writes the selection, or the word at the caret, as CONSTANT_CASE.
+    ConstantCaseSelection,
+    /// Sorts the selected lines, or every line when nothing is selected, from first to last.
+    SortLinesAscending,
+    /// Sorts the selected lines, or every line when nothing is selected, from last to first.
+    SortLinesDescending,
+    /// Sorts the selected lines, or every line when nothing is selected, without telling capitals from small letters.
+    SortLinesIgnoringCase,
+    /// Turns the order of the selected lines round, or of every line when nothing is selected.
+    ReverseLines,
+    /// Deletes the selected lines that come again, or those of the whole file when nothing is selected, keeping the first of each.
+    UniqueLines,
+    /// Swaps the characters on both sides of the caret.
+    TransposeCharacters,
+    /// Takes the spaces and tabs off the ends of the lines.
+    TrimTrailingWhitespace,
+    /// Deletes from the caret to the end of its line.
+    DeleteToLineEnd,
+    /// Deletes from the caret to the start of its line.
+    DeleteToLineStart,
+    /// Wraps the selection in a block comment, or takes the comment away.
+    ToggleBlockComment,
+    /// Puts a caret at the end of each line the selection covers.
+    SplitSelectionIntoLines,
+    /// Grows a rectangular selection a line up.
+    ColumnSelectUp,
+    /// Grows a rectangular selection a line down.
+    ColumnSelectDown,
+    /// Grows a rectangular selection a column left.
+    ColumnSelectLeft,
+    /// Grows a rectangular selection a column right.
+    ColumnSelectRight,
     /// Goes to the matching bracket.
     MatchingBracket,
     /// Starts a new line below.
@@ -333,7 +381,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, in the order the keymap lists them.
-    pub const ALL: [Self; 158] = [
+    pub const ALL: [Self; 182] = [
         Self::CommandPalette,
         Self::OpenSettings,
         Self::GoToSession,
@@ -455,6 +503,30 @@ impl Action {
         Self::DuplicateLineDown,
         Self::DeleteLine,
         Self::JoinLines,
+        Self::UppercaseSelection,
+        Self::LowercaseSelection,
+        Self::TitleCaseSelection,
+        Self::SwapCaseSelection,
+        Self::SnakeCaseSelection,
+        Self::KebabCaseSelection,
+        Self::CamelCaseSelection,
+        Self::PascalCaseSelection,
+        Self::ConstantCaseSelection,
+        Self::SortLinesAscending,
+        Self::SortLinesDescending,
+        Self::SortLinesIgnoringCase,
+        Self::ReverseLines,
+        Self::UniqueLines,
+        Self::TransposeCharacters,
+        Self::TrimTrailingWhitespace,
+        Self::DeleteToLineEnd,
+        Self::DeleteToLineStart,
+        Self::ToggleBlockComment,
+        Self::SplitSelectionIntoLines,
+        Self::ColumnSelectUp,
+        Self::ColumnSelectDown,
+        Self::ColumnSelectLeft,
+        Self::ColumnSelectRight,
         Self::NewlineBelow,
         Self::NewlineAbove,
         Self::ExpandSelection,
@@ -632,6 +704,30 @@ impl Action {
             Self::AddCaretBelow => "add_caret_below",
             Self::SelectLine => "select_line",
             Self::JoinLines => "join_lines",
+            Self::UppercaseSelection => "uppercase",
+            Self::LowercaseSelection => "lowercase",
+            Self::TitleCaseSelection => "title_case",
+            Self::SwapCaseSelection => "swap_case",
+            Self::SnakeCaseSelection => "snake_case",
+            Self::KebabCaseSelection => "kebab_case",
+            Self::CamelCaseSelection => "camel_case",
+            Self::PascalCaseSelection => "pascal_case",
+            Self::ConstantCaseSelection => "constant_case",
+            Self::SortLinesAscending => "sort_lines_ascending",
+            Self::SortLinesDescending => "sort_lines_descending",
+            Self::SortLinesIgnoringCase => "sort_lines_ignoring_case",
+            Self::ReverseLines => "reverse_lines",
+            Self::UniqueLines => "unique_lines",
+            Self::TransposeCharacters => "transpose_characters",
+            Self::TrimTrailingWhitespace => "trim_trailing_whitespace",
+            Self::DeleteToLineEnd => "delete_to_line_end",
+            Self::DeleteToLineStart => "delete_to_line_start",
+            Self::ToggleBlockComment => "toggle_block_comment",
+            Self::SplitSelectionIntoLines => "split_selection_into_lines",
+            Self::ColumnSelectUp => "column_select_up",
+            Self::ColumnSelectDown => "column_select_down",
+            Self::ColumnSelectLeft => "column_select_left",
+            Self::ColumnSelectRight => "column_select_right",
             Self::MatchingBracket => "matching_bracket",
             Self::NewlineBelow => "newline_below",
             Self::NewlineAbove => "newline_above",
@@ -796,6 +892,30 @@ impl Action {
             Self::AddCaretBelow => "Add Caret Below",
             Self::SelectLine => "Select Line",
             Self::JoinLines => "Join Lines",
+            Self::UppercaseSelection => "Transform to Uppercase",
+            Self::LowercaseSelection => "Transform to Lowercase",
+            Self::TitleCaseSelection => "Transform to Title Case",
+            Self::SwapCaseSelection => "Swap Case",
+            Self::SnakeCaseSelection => "Transform to Snake Case",
+            Self::KebabCaseSelection => "Transform to Kebab Case",
+            Self::CamelCaseSelection => "Transform to Camel Case",
+            Self::PascalCaseSelection => "Transform to Pascal Case",
+            Self::ConstantCaseSelection => "Transform to Constant Case",
+            Self::SortLinesAscending => "Sort Lines Ascending",
+            Self::SortLinesDescending => "Sort Lines Descending",
+            Self::SortLinesIgnoringCase => "Sort Lines Ascending, Ignoring Case",
+            Self::ReverseLines => "Reverse Lines",
+            Self::UniqueLines => "Delete Duplicate Lines",
+            Self::TransposeCharacters => "Transpose Characters",
+            Self::TrimTrailingWhitespace => "Trim Trailing Whitespace",
+            Self::DeleteToLineEnd => "Delete to End of Line",
+            Self::DeleteToLineStart => "Delete to Start of Line",
+            Self::ToggleBlockComment => "Toggle Block Comment",
+            Self::SplitSelectionIntoLines => "Add Carets to Line Ends",
+            Self::ColumnSelectUp => "Column Select Up",
+            Self::ColumnSelectDown => "Column Select Down",
+            Self::ColumnSelectLeft => "Column Select Left",
+            Self::ColumnSelectRight => "Column Select Right",
             Self::MatchingBracket => "Go to Matching Bracket",
             Self::NewlineBelow => "New Line Below",
             Self::NewlineAbove => "New Line Above",
@@ -964,6 +1084,11 @@ impl Action {
             | Self::AddCaretAbove
             | Self::AddCaretBelow
             | Self::SelectLine
+            | Self::SplitSelectionIntoLines
+            | Self::ColumnSelectUp
+            | Self::ColumnSelectDown
+            | Self::ColumnSelectLeft
+            | Self::ColumnSelectRight
             | Self::ExpandSelection
             | Self::ShrinkSelection
             | Self::SelectFunction
@@ -1149,6 +1274,10 @@ impl Preset {
                 (AddCaretAbove, &["alt+shift+up"]),
                 (AddCaretBelow, &["alt+shift+down"]),
                 (JoinLines, &[]),
+                (ColumnSelectUp, &[]),
+                (ColumnSelectDown, &[]),
+                (ColumnSelectLeft, &[]),
+                (ColumnSelectRight, &[]),
                 (MatchingBracket, &["ctrl+shift+\\"]),
             ],
             Self::JetBrains => &[
@@ -1344,6 +1473,30 @@ fn own() -> &'static [(Action, &'static [&'static str])] {
         (AddCaretBelow, &["ctrl+alt+down"]),
         (SelectLine, &["ctrl+l"]),
         (JoinLines, &["ctrl+j"]),
+        (UppercaseSelection, &["ctrl+k ctrl+u"]),
+        (LowercaseSelection, &["ctrl+k ctrl+l"]),
+        (TitleCaseSelection, &[]),
+        (SwapCaseSelection, &[]),
+        (SnakeCaseSelection, &[]),
+        (KebabCaseSelection, &[]),
+        (CamelCaseSelection, &[]),
+        (PascalCaseSelection, &[]),
+        (ConstantCaseSelection, &[]),
+        (SortLinesAscending, &[]),
+        (SortLinesDescending, &[]),
+        (SortLinesIgnoringCase, &[]),
+        (ReverseLines, &[]),
+        (UniqueLines, &[]),
+        (TransposeCharacters, &[]),
+        (TrimTrailingWhitespace, &["ctrl+k ctrl+x"]),
+        (DeleteToLineEnd, &["ctrl+k ctrl+k"]),
+        (DeleteToLineStart, &[]),
+        (ToggleBlockComment, &["alt+shift+a"]),
+        (SplitSelectionIntoLines, &["alt+shift+i"]),
+        (ColumnSelectUp, &["ctrl+alt+shift+up"]),
+        (ColumnSelectDown, &["ctrl+alt+shift+down"]),
+        (ColumnSelectLeft, &["ctrl+alt+shift+left"]),
+        (ColumnSelectRight, &["ctrl+alt+shift+right"]),
         (MatchingBracket, &["ctrl+m", "ctrl+shift+\\"]),
         (NewlineBelow, &["ctrl+enter"]),
         (NewlineAbove, &["ctrl+shift+enter"]),

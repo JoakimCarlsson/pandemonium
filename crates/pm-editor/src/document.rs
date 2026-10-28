@@ -31,6 +31,8 @@ pub struct Completions {
     pub asked: i32,
     /// Whether the language server has yet to answer.
     pub loading: bool,
+    /// The item the language server was last asked to resolve, as it wrote it, so that it is asked once.
+    pub resolving: Option<String>,
 }
 
 /// What is said about the place the pointer rests on or the caret is at.
@@ -152,6 +154,8 @@ pub struct Document {
     pub(crate) server_folds: (i32, Vec<pm_protocol::FoldRange>),
     /// The stretches that are edited together with the one the caret is in, as bytes of the text, while the caret is in one.
     pub(crate) linked: Option<Vec<Range<usize>>>,
+    /// The rectangle being selected with the keys, while one is.
+    pub(crate) column: Option<crate::column::ColumnBox>,
     /// The snippet whose blanks are being filled in, while one is.
     pub(crate) snippet: Option<crate::snippet::Session>,
     /// What the language server said to show in and beside the text.
@@ -241,6 +245,7 @@ impl Document {
             folds: Vec::new(),
             server_folds: (0, Vec::new()),
             linked: None,
+            column: None,
             snippet: None,
             annotations: crate::annotations::Annotations::default(),
             depths: crate::depth::DepthCache::default(),

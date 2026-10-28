@@ -1206,6 +1206,18 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             Ok(items) => Response::Completions { items },
             Err(reason) => failed(reason),
         },
+        Request::ResolveCompletion {
+            directory,
+            path,
+            item,
+        } => match core
+            .documents
+            .hub
+            .resolve_completion(&place(&directory), &path, &item)
+        {
+            Ok(item) => Response::CompletionResolved { item },
+            Err(reason) => failed(reason),
+        },
         Request::Format {
             directory,
             path,

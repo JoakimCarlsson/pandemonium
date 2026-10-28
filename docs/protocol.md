@@ -211,6 +211,7 @@ request with exactly one `response` carrying the same `id`.
 | `change_document` | `directory`, `path`, `version`, `changes`: `[{span, text}]`                                   | `done`          |
 | `close_document` | `directory`, `path`                                                                            | `done`          |
 | `completion`   | `directory`, `path`, `version`, `position`, `trigger` (optional), `scope` (optional)             | `completions`   |
+| `resolve_completion` | `directory`, `path`, `item`: a completion's `resolve`                                      | `completion_resolved` |
 | `hover`        | `directory`, `path`, `version`, `position`                                                       | `hovered`       |
 | `format`       | `directory`, `path`, `version`, `range` (optional)                                               | `formatted`     |
 | `format_on_type` | `directory`, `path`, `version`, `position`, `character`                                        | `formatted`     |
@@ -736,7 +737,14 @@ everything said of them, its submodules' paths written from `directory`.
   span, filter, sort, documentation}]`, the best match for the word before
   `position` first, with snippets made plain text; `span`, when given, is what
   choosing it replaces, and `documentation` is markdown when the server sent
-  it with the list. `hovered` holds `{text, span}` in markdown, or null.
+  it with the list. Each item also holds `additional_edits`, `[{span, text}]`
+  that choosing it makes besides writing its text, such as the line that
+  imports it, and `resolve`, the item as its own server wrote it, set while
+  that server has more to say about it and never on a companion's items.
+  `resolve_completion` hands `resolve` back to the server that listed the item
+  and answers `completion_resolved` with the item completed: its
+  documentation, detail and `additional_edits`. `hovered` holds `{text, span}`
+  in markdown, or null.
 - **`format`:** the edits that format the open file at `version`, as its
   language server gives them; only the stretch `range` of it when that is
   given, and none when the server formats whole files only.
@@ -853,7 +861,8 @@ embedded context, and anything else as a link to the stored file.
 | `extension_command` | `prompt`: the text to put in the prompt box, `message`: a line to tell the reader; each is optional |
 | `grammar`    | `{id, symbol, aliases, wasm, highlights, indents, outline, injections, brackets, runnables, overrides, redactions, textobjects, debugger, indent, tabs, line_comment, pairs, scopes, tags, word_characters, bracket_pairs, increase_indent_pattern, decrease_indent_pattern, decrease_indent_patterns}` |
 | `opened`     | `triggers`: the characters after which the server offers completions; `signature`: those after which it tells what the call the caret is in looks like; `format`: those after which it formats what was typed; `formats_ranges`, `folds`, `links`, `semantic_tokens`, `inlay_hints`, `code_lens`, `inline_values`: whether it formats a stretch, says what can be folded, says what is edited together, says what each name is, says what to show inside lines, says what to show with stretches and says which names to show the values of while a program is paused |
-| `completions`| `items`: `[{label, detail, kind, text, span, filter, sort, documentation}]`, `kind` one of `function`, `variable`, `type`, `module`, `keyword`, `constant`, `snippet`, `other` |
+| `completion_resolved` | `item`: a completion, as in `completions`, with what its server added when asked |
+| `completions`| `items`: `[{label, detail, kind, text, span, filter, sort, documentation, additional_edits, resolve}]`, `kind` one of `function`, `variable`, `type`, `module`, `keyword`, `constant`, `snippet`, `other` |
 | `hovered`    | `hover`: `{text, span}` or null |
 | `formatted`  | `edits`: `[{span, text}]` |
 | `folding_ranges` | `ranges`: `[{start, end}]`, the first and last line of each block, counted from 0 |

@@ -357,6 +357,15 @@ pub enum Outgoing {
         /// The file.
         path: String,
     },
+    /// Asks the language server of a file of the session at this position what it adds to one of the completions it listed.
+    ResolveCompletion {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The item as its server wrote it.
+        item: String,
+    },
     /// Asks the language server what could be written at a place of a file of the session at this position.
     Completion {
         /// The session, by position.

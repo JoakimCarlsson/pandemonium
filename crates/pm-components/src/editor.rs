@@ -507,8 +507,29 @@ impl WorkspaceState {
         version: i32,
         items: Vec<Completion>,
     ) -> Self {
-        if let Some(document) = self.file_mut(session, path) {
+        let asked = self.file_mut(session, path).and_then(|document| {
             document.take_completions(version, items);
+            document.completion_to_resolve()
+        });
+        if let Some(item) = asked {
+            self.outbox.push(Outgoing::ResolveCompletion {
+                session,
+                path: path.to_owned(),
+                item,
+            });
+        }
+        self
+    }
+
+    /// The state after the language server said what it adds to a completion of the file at `path` of the session at `session`.
+    pub fn with_completion_resolved(
+        mut self,
+        session: usize,
+        path: &str,
+        item: Completion,
+    ) -> Self {
+        if let Some(document) = self.file_mut(session, path) {
+            document.take_resolved(item);
         }
         self
     }
@@ -521,11 +542,21 @@ impl WorkspaceState {
 
     /// Moves the pick of the open list of completions `delta` rows down, upwards when negative, wrapping around.
     pub fn completion_moved(mut self, delta: isize) -> Self {
-        if let Some((_, viewer)) = self.shown_mut()
-            && let Some(document) = document_of(viewer)
-        {
-            document.move_completion(delta);
+        let mut asked = None;
+        if let Some((session, viewer)) = self.shown_mut() {
+            let path = viewer.path.clone();
+            if let Some(document) = document_of(viewer) {
+                document.move_completion(delta);
+                asked = document
+                    .completion_to_resolve()
+                    .map(|item| Outgoing::ResolveCompletion {
+                        session,
+                        path,
+                        item,
+                    });
+            }
         }
+        self.outbox.extend(asked);
         self
     }
 
@@ -850,6 +881,13 @@ fn edit_viewer(
             path: path.clone(),
             version,
             position,
+        });
+    }
+    if let Some(item) = document.completion_to_resolve() {
+        told.push(Outgoing::ResolveCompletion {
+            session,
+            path: path.clone(),
+            item,
         });
     }
     if let Some(trigger) = edited.ask.filter(|_| settings.completions_on_input) {

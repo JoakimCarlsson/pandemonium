@@ -178,7 +178,7 @@ fn markup_of(value: &Value) -> String {
 }
 
 /// The completion a server writes as `item`, the stretch it replaces being `default_span` when it names none.
-fn completion_of(item: &Value, default_span: Option<Span>) -> Option<Completion> {
+fn completion_of(item: &Value, default_span: Option<Span>, resolvable: bool) -> Option<Completion> {
     let label = item.get("label")?.as_str()?.to_owned();
     let edit = item.get("textEdit");
     let raw = edit
@@ -222,6 +222,23 @@ fn completion_of(item: &Value, default_span: Option<Span>) -> Option<Completion>
             .get("documentation")
             .map(markup_of)
             .filter(|said| !said.trim().is_empty()),
+        additional_edits: item
+            .get("additionalTextEdits")
+            .and_then(Value::as_array)
+            .map(|edits| {
+                edits
+                    .iter()
+                    .filter_map(|edit| {
+                        Some(TextChange {
+                            span: Some(span_of(edit.get("range")?)?),
+                            text: edit.get("newText")?.as_str()?.to_owned(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        resolve: (resolvable && item.get("additionalTextEdits").is_none())
+            .then(|| item.to_string()),
         label,
         detail,
         text,
@@ -291,7 +308,8 @@ fn capabilities() -> Value {
                 "completionItem": {
                     "snippetSupport": true,
                     "documentationFormat": ["markdown", "plaintext"],
-                    "labelDetailsSupport": true
+                    "labelDetailsSupport": true,
+                    "resolveSupport": {"properties": ["documentation", "detail"]}
                 },
                 "contextSupport": true
             },
@@ -567,10 +585,29 @@ impl LanguageServer {
                 .cloned()
                 .unwrap_or_default(),
         };
+        let resolvable = self
+            .abilities
+            .get("completionProvider")
+            .and_then(|provider| provider.get("resolveProvider"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         Ok(items
             .iter()
-            .filter_map(|item| completion_of(item, default_span))
+            .filter_map(|item| completion_of(item, default_span, resolvable))
             .collect())
+    }
+
+    /// The completion `raw`, an item as this server wrote it, with what the server adds to it when asked: its documentation and detail, and the edits choosing it makes besides writing it.
+    pub(crate) fn resolve_completion(&self, raw: &str) -> Result<Completion, String> {
+        let item: Value = serde_json::from_str(raw).map_err(|error| error.to_string())?;
+        let answer = self
+            .rpc
+            .request("completionItem/resolve", item.clone(), ANSWERING)?;
+        let mut resolved = completion_of(&answer, None, false)
+            .or_else(|| completion_of(&item, None, false))
+            .ok_or_else(|| "the server resolved the item to nothing".to_owned())?;
+        resolved.resolve = Some(raw.to_owned());
+        Ok(resolved)
     }
 
     /// What the server says about the thing at `position` of the file at `uri`.

@@ -969,10 +969,29 @@ impl Hub {
                 || scope.is_some_and(|scope| scopes.iter().any(|name| name == scope));
             if here && let Ok(mut more) = companion.completion(&address, position, trigger) {
                 self.label_completions(&language, &spec, &mut more);
+                more.iter_mut().for_each(|item| item.resolve = None);
                 items.extend(more);
             }
         }
         Ok(rank(items, &typed, MOST_COMPLETIONS))
+    }
+
+    /// The completion `raw`, as the language server of the open file at `path` of the project at `root` wrote it in its list, with what that server adds when asked: its documentation and detail, and the edits choosing it makes besides writing it.
+    pub fn resolve_completion(
+        &self,
+        root: &Path,
+        path: &str,
+        raw: &str,
+    ) -> Result<Completion, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let server = self
+            .documents
+            .lock()
+            .map_err(|_| "the server is shutting down".to_owned())?
+            .get(&key)
+            .and_then(|document| document.server.clone())
+            .ok_or_else(|| format!("{path} has no language server"))?;
+        server.resolve_completion(raw)
     }
 
     /// What the server says about the thing at `position` of the open file at `path` of the project at `root`, once it reaches `version`.

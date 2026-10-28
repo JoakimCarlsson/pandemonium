@@ -98,6 +98,7 @@ fn main() {
             Some("find-reopened") => Shot::FindReopened,
             Some("outline") => Shot::Outline,
             Some("cursors") => Shot::Cursors,
+            Some("column-selection") => Shot::ColumnSelection,
             Some("folded") => Shot::Folded,
             Some("sticky") => Shot::Sticky,
             Some("finder") => Shot::Finder,

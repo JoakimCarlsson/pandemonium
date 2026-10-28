@@ -100,6 +100,7 @@ impl Document {
             at,
             asked: self.version,
             loading: true,
+            resolving: None,
         });
         (self.version, self.position_of(caret))
     }

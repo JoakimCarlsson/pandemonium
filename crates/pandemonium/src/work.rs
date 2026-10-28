@@ -201,6 +201,8 @@ enum Pending {
     Opened(usize, String),
     /// What could be written in the file of the session at this position, at this path, as asked at this version.
     Completions(usize, String, i32),
+    /// What the language server adds to a completion of a file of a session, by position and path.
+    CompletionResolved(usize, String),
     /// What the language server says about this place of the file of the session at this position, at this path.
     Hovered(usize, String, pm_protocol::Position),
     /// The extensions the server on this machine can install.
@@ -2273,6 +2275,7 @@ impl Work {
             Pending::Grammar(_)
             | Pending::Opened(..)
             | Pending::Completions(..)
+            | Pending::CompletionResolved(..)
             | Pending::Hovered(..)
             | Pending::Definitions(..)
             | Pending::Base(..)

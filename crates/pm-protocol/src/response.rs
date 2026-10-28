@@ -391,6 +391,11 @@ pub enum Response {
         /// The best match for the word typed there first.
         items: Vec<pm_lsp::Completion>,
     },
+    /// A completion with what its language server adds when asked, its `resolve` unchanged.
+    CompletionResolved {
+        /// The item.
+        item: pm_lsp::Completion,
+    },
     /// The edits that format a file, each a stretch of its text at the version asked for and what replaces it; none when its language server cannot format.
     Formatted {
         /// The edits, in any order; they do not overlap.

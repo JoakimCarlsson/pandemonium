@@ -16,6 +16,7 @@ use pm_components::folder_picker::{
 };
 use pm_components::git_controls::{GRAPH_SCROLL, Pick, REVIEW_DISMISS, VIEWER_SCROLL};
 use pm_components::git_menus::{CHANGE_MENU_HEIGHT, MenuKind};
+use pm_components::line_edits::LineEdit;
 use pm_components::message_menu::is_message_menu_item;
 use pm_components::minimap::MINIMAP;
 use pm_components::open_files::{EDITOR_FIELD, STRIP};
@@ -162,6 +163,10 @@ pub struct App {
     dragging: Option<FocusId>,
     /// What the press held in a field took, so dragging extends by the same amount.
     field_gesture: Gesture<usize>,
+    /// What was last copied in the file shown: its text, the indentation of the lines it came from and whether it is whole lines copied with nothing selected.
+    copied: Option<(String, String, bool)>,
+    /// The byte of the file a press with Alt and Shift held began at, while the button is held, so dragging selects a rectangle of text.
+    column_press: Option<usize>,
     /// The last press that landed in a field, selectable text or the shell, for counting double and triple clicks.
     clicks: Clicks<FocusId>,
     /// The field or shell showing what an input method is composing, while it composes something.
@@ -362,6 +367,8 @@ impl App {
             clipboard: None,
             dragging: None,
             field_gesture: Gesture::default(),
+            column_press: None,
+            copied: None,
             clicks: Clicks::default(),
             composing_in: None,
             saved,
@@ -1336,6 +1343,7 @@ impl App {
                 self.sash_drag = None;
                 self.end_comment_drag();
                 self.dragging = None;
+                self.column_press = None;
                 self.field_gesture.release();
                 if self.terminal_gesture.release() {
                     self.copy_terminal_selection();
@@ -1605,6 +1613,17 @@ impl App {
             return;
         };
         self.focus.focus(id);
+        if id == EDITOR_FIELD && self.modifiers.alt && self.modifiers.shift {
+            let byte = self
+                .model
+                .read(|screen| screen.field(id).map(|field| field.to_text(offset)));
+            if let Some(byte) = byte {
+                self.column_press = Some(byte);
+                self.dragging = Some(id);
+                self.edit_field(id, Edit::Select(byte, byte));
+            }
+            return;
+        }
         if id == EDITOR_FIELD && self.modifiers.alt {
             self.edit_field(id, Edit::AddSelection(offset, offset));
             return;
@@ -1640,6 +1659,13 @@ impl App {
         else {
             return;
         };
+        if let Some(from) = self.column_press {
+            self.model.update(|screen| {
+                *screen = std::mem::take(screen).lines_edited(LineEdit::ColumnDrag(from, byte))
+            });
+            self.show_editor_caret();
+            return;
+        }
         let gesture = std::mem::take(&mut self.field_gesture);
         gesture.drag(&mut FieldText { app: self, id }, byte);
         self.field_gesture = gesture;
@@ -1784,14 +1810,38 @@ impl App {
                         })
                         .unwrap_or_default()
                 });
+                let mut whole_lines = false;
+                let mut indentation = String::new();
+                let mut selected = selected;
+                if id == EDITOR_FIELD
+                    && let Some((lines, indent)) = self.model.read(Screen::editor_copied)
+                {
+                    indentation = indent;
+                    if selected.is_empty()
+                        && let Some(lines) = lines
+                    {
+                        selected = lines;
+                        whole_lines = true;
+                    }
+                }
                 if selected.is_empty() {
                     return;
+                }
+                if id == EDITOR_FIELD {
+                    self.copied = Some((selected.clone(), indentation, whole_lines));
                 }
                 if let Some(clipboard) = self.clipboard() {
                     let _ = clipboard.set_text(selected);
                 }
                 if action == Clip::Cut {
-                    self.edit_field(id, Edit::Backspace);
+                    if whole_lines {
+                        self.model.update(|screen| {
+                            *screen = std::mem::take(screen).lines_edited(LineEdit::Delete)
+                        });
+                        self.show_editor_caret();
+                    } else {
+                        self.edit_field(id, Edit::Backspace);
+                    }
                 }
             }
             Clip::Paste => {
@@ -1802,7 +1852,15 @@ impl App {
                     .clipboard()
                     .and_then(|clipboard| clipboard.get_text().ok());
                 if let Some(text) = pasted {
-                    self.edit_field(id, Edit::Paste(text));
+                    let adjusted = (id == EDITOR_FIELD)
+                        .then_some(self.copied.as_ref())
+                        .flatten()
+                        .filter(|(copied, ..)| *copied == text)
+                        .and_then(|(_, indentation, whole)| {
+                            self.model
+                                .read(|screen| screen.editor_paste_edit(&text, *whole, indentation))
+                        });
+                    self.edit_field(id, adjusted.unwrap_or(Edit::Paste(text)));
                 }
             }
         }

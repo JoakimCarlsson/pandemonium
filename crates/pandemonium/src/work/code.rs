@@ -176,6 +176,23 @@ impl Work {
                 |directory| Request::CloseDocument { directory, path },
                 Pending::Nothing,
             ),
+            Outgoing::ResolveCompletion {
+                session,
+                path,
+                item,
+            } => {
+                let asked = path.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::ResolveCompletion {
+                        directory,
+                        path,
+                        item,
+                    },
+                    Pending::CompletionResolved(session, asked),
+                );
+            }
             Outgoing::Completion {
                 session,
                 path,
@@ -846,6 +863,12 @@ impl Work {
                         std::mem::take(screen).with_completions(session, &path, version, items);
                 });
             }
+            (Pending::CompletionResolved(session, path), Response::CompletionResolved { item }) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_completion_resolved(session, &path, item);
+                });
+            }
+            (Pending::CompletionResolved(..), _) => {}
             (Pending::Completions(session, path, version), _) => {
                 model.update(|screen| {
                     *screen = std::mem::take(screen).with_completions(

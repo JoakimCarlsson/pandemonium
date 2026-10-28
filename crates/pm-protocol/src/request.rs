@@ -887,6 +887,15 @@ pub enum Request {
         /// The file, from the root of the folder.
         path: String,
     },
+    /// What the language server of an open file adds to one of the completions it offered: the item as it was listed in `resolve`, answered with the same item with its documentation, detail and the edits choosing it makes.
+    ResolveCompletion {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// What the item's `resolve` held.
+        item: String,
+    },
     /// What could be written at a place of an open file, once the file reaches `version`.
     Completion {
         /// The folder.

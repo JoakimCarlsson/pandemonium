@@ -29,7 +29,7 @@ use pm_components::state::{
 use pm_components::tab_menu::TabCommand;
 use pm_components::title_bar::{COMMAND_CENTER, TITLE_BAR_HEIGHT};
 use pm_config::ThemeMode;
-use pm_editor::{Action, Chord, Keymap, Pressed};
+use pm_editor::{Action, Case, Chord, Keymap, LineOrder, Pressed};
 use pm_input::{FocusId, Key, KeyEvent};
 use pm_pages::Screen;
 use pm_protocol::{DebugAction, Seek};
@@ -624,6 +624,30 @@ impl App {
             Action::AddCaretBelow => Some(LineEdit::AddCaretBelow),
             Action::SelectLine => Some(LineEdit::SelectLine),
             Action::JoinLines => Some(LineEdit::JoinLines),
+            Action::UppercaseSelection => Some(LineEdit::Case(Case::Upper)),
+            Action::LowercaseSelection => Some(LineEdit::Case(Case::Lower)),
+            Action::TitleCaseSelection => Some(LineEdit::Case(Case::Title)),
+            Action::SwapCaseSelection => Some(LineEdit::Case(Case::Swap)),
+            Action::SnakeCaseSelection => Some(LineEdit::Case(Case::Snake)),
+            Action::KebabCaseSelection => Some(LineEdit::Case(Case::Kebab)),
+            Action::CamelCaseSelection => Some(LineEdit::Case(Case::Camel)),
+            Action::PascalCaseSelection => Some(LineEdit::Case(Case::Pascal)),
+            Action::ConstantCaseSelection => Some(LineEdit::Case(Case::Constant)),
+            Action::SortLinesAscending => Some(LineEdit::OrderLines(LineOrder::Ascending)),
+            Action::SortLinesDescending => Some(LineEdit::OrderLines(LineOrder::Descending)),
+            Action::SortLinesIgnoringCase => Some(LineEdit::OrderLines(LineOrder::IgnoringCase)),
+            Action::ReverseLines => Some(LineEdit::OrderLines(LineOrder::Reversed)),
+            Action::UniqueLines => Some(LineEdit::OrderLines(LineOrder::Unique)),
+            Action::TransposeCharacters => Some(LineEdit::Transpose),
+            Action::TrimTrailingWhitespace => Some(LineEdit::TrimTrailing),
+            Action::DeleteToLineEnd => Some(LineEdit::DeleteToLineEnd),
+            Action::DeleteToLineStart => Some(LineEdit::DeleteToLineStart),
+            Action::ToggleBlockComment => Some(LineEdit::ToggleBlockComment),
+            Action::SplitSelectionIntoLines => Some(LineEdit::SplitIntoLines),
+            Action::ColumnSelectUp => Some(LineEdit::Column(-1, 0)),
+            Action::ColumnSelectDown => Some(LineEdit::Column(1, 0)),
+            Action::ColumnSelectLeft => Some(LineEdit::Column(0, -1)),
+            Action::ColumnSelectRight => Some(LineEdit::Column(0, 1)),
             Action::MatchingBracket => Some(LineEdit::MatchingBracket),
             Action::NewlineBelow => Some(LineEdit::LineBelow),
             Action::NewlineAbove => Some(LineEdit::LineAbove),

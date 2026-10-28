@@ -108,6 +108,12 @@ pub struct Completion {
     /// What its documentation says, in markdown, when the server sent it with the list.
     #[serde(default)]
     pub documentation: Option<String>,
+    /// The edits choosing it makes besides writing its text, such as the line that imports it, as the server sent them with the list or when it resolved the item.
+    #[serde(default)]
+    pub additional_edits: Vec<TextChange>,
+    /// The item as its server wrote it, to hand back to resolve what the list left out, while the server has more to say about it.
+    #[serde(default)]
+    pub resolve: Option<String>,
 }
 
 /// What a language server says about the thing at a place.
