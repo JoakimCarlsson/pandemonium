@@ -257,6 +257,16 @@ pub enum Action {
     ExpandSelection,
     /// Shrinks it back.
     ShrinkSelection,
+    /// Selects the whole function around the caret, as the language's text objects say.
+    SelectFunction,
+    /// Selects the body of the function around the caret.
+    SelectFunctionBody,
+    /// Selects the whole class around the caret.
+    SelectClass,
+    /// Selects the contents of the class around the caret.
+    SelectClassBody,
+    /// Selects the comment around the caret.
+    SelectComment,
     /// Goes to the next problem.
     NextProblem,
     /// Goes to the problem before.
@@ -323,7 +333,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, in the order the keymap lists them.
-    pub const ALL: [Self; 153] = [
+    pub const ALL: [Self; 158] = [
         Self::CommandPalette,
         Self::OpenSettings,
         Self::GoToSession,
@@ -449,6 +459,11 @@ impl Action {
         Self::NewlineAbove,
         Self::ExpandSelection,
         Self::ShrinkSelection,
+        Self::SelectFunction,
+        Self::SelectFunctionBody,
+        Self::SelectClass,
+        Self::SelectClassBody,
+        Self::SelectComment,
         Self::SelectLine,
         Self::AddNextOccurrence,
         Self::SelectAllOccurrences,
@@ -604,6 +619,11 @@ impl Action {
             Self::DeleteLine => "delete_line",
             Self::ExpandSelection => "expand_selection",
             Self::ShrinkSelection => "shrink_selection",
+            Self::SelectFunction => "select_function",
+            Self::SelectFunctionBody => "select_function_body",
+            Self::SelectClass => "select_class",
+            Self::SelectClassBody => "select_class_body",
+            Self::SelectComment => "select_comment",
             Self::NextProblem => "next_problem",
             Self::PreviousProblem => "previous_problem",
             Self::AddNextOccurrence => "add_next_occurrence",
@@ -763,6 +783,11 @@ impl Action {
             Self::DeleteLine => "Delete Line",
             Self::ExpandSelection => "Expand Selection",
             Self::ShrinkSelection => "Shrink Selection",
+            Self::SelectFunction => "Select Function",
+            Self::SelectFunctionBody => "Select Function Body",
+            Self::SelectClass => "Select Class",
+            Self::SelectClassBody => "Select Class Body",
+            Self::SelectComment => "Select Comment",
             Self::NextProblem => "Next Problem",
             Self::PreviousProblem => "Previous Problem",
             Self::AddNextOccurrence => "Add Next Occurrence",
@@ -940,7 +965,12 @@ impl Action {
             | Self::AddCaretBelow
             | Self::SelectLine
             | Self::ExpandSelection
-            | Self::ShrinkSelection => "Selection",
+            | Self::ShrinkSelection
+            | Self::SelectFunction
+            | Self::SelectFunctionBody
+            | Self::SelectClass
+            | Self::SelectClassBody
+            | Self::SelectComment => "Selection",
             Self::Find
             | Self::Replace
             | Self::FindNext

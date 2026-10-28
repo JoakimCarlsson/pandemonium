@@ -43,9 +43,11 @@ impl Documents {
                     let _ = connection.outbox.send(message.clone());
                 }
             }),
-            Arc::new(|root: &std::path::Path, spec: &pm_lsp::ServerSpec| {
-                crate::tasks::server_environment(root, spec)
-            }),
+            Arc::new(
+                |root: &std::path::Path, language: &str, _: &pm_lsp::ServerSpec| {
+                    crate::tasks::server_environment(root, language)
+                },
+            ),
         );
         let documents = Self { hub, openers };
         documents.settings_changed(&crate::machine::settings());
@@ -63,6 +65,8 @@ impl Documents {
                     pm_lsp::ServerChoice::Off
                 } else if !command.is_empty() {
                     pm_lsp::ServerChoice::Command(command.to_owned())
+                } else if !preferences.servers.is_empty() {
+                    pm_lsp::ServerChoice::Servers(preferences.servers.clone())
                 } else {
                     return None;
                 };
@@ -71,6 +75,8 @@ impl Documents {
             .collect();
         let mut choices: HashMap<String, pm_lsp::ServerChoice> = choices;
         choices.extend(crate::extensions::refused_servers());
+        self.hub
+            .set_overrides(settings.servers.clone().into_iter().collect());
         self.hub.choose_servers(choices);
     }
 

@@ -132,6 +132,8 @@ impl Setting {
             Self::InlineBlame => Control::Switch(editor.inline_blame),
             Self::Occurrences => Control::Switch(editor.occurrence_highlights),
             Self::BracketColors => Control::Switch(editor.bracket_colors),
+            Self::RedactPrivateValues => Control::Switch(editor.redact_private_values),
+            Self::DependencyHints => Control::Switch(editor.dependency_hints),
             Self::SemanticHighlighting => Control::Switch(editor.semantic_highlighting),
             Self::InlayHints => Control::Switch(editor.inlay_hints),
             Self::CodeLens => Control::Switch(editor.code_lens),
@@ -243,6 +245,7 @@ impl Setting {
             ),
             Self::LanguageServer => Control::Switch(!language.server_off),
             Self::LanguageServerCommand => Control::Text("The one it comes with"),
+            Self::LanguageServers => Control::Text("The ones it comes with"),
             Self::BaseKeymap => Control::Choice(PRESETS, place_of(&Preset::ALL, &editor.keymap)),
             Self::Shell => Control::Text("Your login shell"),
             Self::ShellArguments => Control::Text("None"),
@@ -369,6 +372,8 @@ impl Setting {
             Self::InlineBlame => editor.inline_blame ^= true,
             Self::Occurrences => editor.occurrence_highlights ^= true,
             Self::BracketColors => editor.bracket_colors ^= true,
+            Self::RedactPrivateValues => editor.redact_private_values ^= true,
+            Self::DependencyHints => editor.dependency_hints ^= true,
             Self::SemanticHighlighting => editor.semantic_highlighting ^= true,
             Self::InlayHints => editor.inlay_hints ^= true,
             Self::CodeLens => editor.code_lens ^= true,
@@ -508,6 +513,7 @@ impl Setting {
             | Self::CodeFont
             | Self::Language
             | Self::LanguageServerCommand
+            | Self::LanguageServers
             | Self::Shell
             | Self::ShellArguments
             | Self::BranchTemplate
@@ -616,6 +622,7 @@ impl Setting {
                     .settings_page
                     .fields
                     .remove(&Self::LanguageServerCommand);
+                state.settings_page.fields.remove(&Self::LanguageServers);
                 state.fill_fields();
             }
             Self::DefaultAgent => {
@@ -646,6 +653,7 @@ impl Setting {
         matches!(
             self,
             Self::LanguageServerCommand
+                | Self::LanguageServers
                 | Self::Shell
                 | Self::ShellArguments
                 | Self::BranchTemplate
@@ -682,6 +690,7 @@ impl Setting {
         let machine = &state.machine;
         match self {
             Self::LanguageServerCommand => self.language_preferences(state).server_command,
+            Self::LanguageServers => self.language_preferences(state).servers.join(", "),
             Self::Shell => machine.shell.program.clone(),
             Self::ShellArguments => machine.shell.arguments.clone(),
             Self::BranchTemplate => machine.git.branch_template.clone(),
@@ -700,6 +709,17 @@ impl Setting {
                 if let Some(id) = language {
                     let mut held = machine.language(&id);
                     held.server_command = text;
+                    machine.set_language(&id, held);
+                }
+            }
+            Self::LanguageServers => {
+                if let Some(id) = language {
+                    let mut held = machine.language(&id);
+                    held.servers = text
+                        .split([',', '\n'])
+                        .map(|name| name.trim().to_owned())
+                        .filter(|name| !name.is_empty())
+                        .collect();
                     machine.set_language(&id, held);
                 }
             }
@@ -760,6 +780,10 @@ impl Setting {
             Self::InlineBlame => editor.inline_blame = source.inline_blame,
             Self::Occurrences => editor.occurrence_highlights = source.occurrence_highlights,
             Self::BracketColors => editor.bracket_colors = source.bracket_colors,
+            Self::RedactPrivateValues => {
+                editor.redact_private_values = source.redact_private_values
+            }
+            Self::DependencyHints => editor.dependency_hints = source.dependency_hints,
             Self::SemanticHighlighting => {
                 editor.semantic_highlighting = source.semantic_highlighting
             }
@@ -812,7 +836,8 @@ impl Setting {
             | Self::LanguageIndent
             | Self::LanguageFormat
             | Self::LanguageServer
-            | Self::LanguageServerCommand => {
+            | Self::LanguageServerCommand
+            | Self::LanguageServers => {
                 let Some(id) = language else {
                     return;
                 };
@@ -822,6 +847,7 @@ impl Setting {
                     Self::LanguageIndent => held.hard_tabs = given.hard_tabs,
                     Self::LanguageFormat => held.format_on_save = given.format_on_save,
                     Self::LanguageServer => held.server_off = given.server_off,
+                    Self::LanguageServers => held.servers = given.servers,
                     _ => held.server_command = given.server_command,
                 }
                 machine.set_language(id, held);

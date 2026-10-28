@@ -75,6 +75,7 @@ impl WorkspaceState {
                 session,
                 path,
                 version,
+                dependencies: self.editor.dependency_hints,
             });
         }
         self.outbox.extend(asking);

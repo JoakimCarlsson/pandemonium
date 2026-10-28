@@ -1,0 +1,17 @@
+# Sample Server language: Python files with another name, read by a language
+# server whose program the extension's module names.
+
+name = "Sample Server Language"
+version = "0.1.0"
+description = "A language whose language server comes from the Sample Server extension."
+grammar = "python"
+inherits = "python"
+requires = ["python"]
+suffixes = ["ssrv"]
+line_comment = "# "
+
+[server]
+id = "sample-lsp"
+language_id = "samplelang"
+command = "sample-lsp"
+provided = true

@@ -9,6 +9,8 @@ pub enum ServerChoice {
     Off,
     /// This command, written as on a command line, is started in place of the one it comes with.
     Command(String),
+    /// Exactly these servers read its files, by id and in this order, the first being the language's server and the rest running beside it; `...` stands for those that run when nothing is chosen, and a server that waits to be named is started only when it is among them.
+    Servers(Vec<String>),
     /// No language server is started, for this reason: the extension that brought the language is not allowed to run programs.
     Refused(String),
 }
@@ -18,6 +20,7 @@ impl ServerChoice {
     pub fn applied(&self, language: &str, own: Option<ServerSpec>) -> Option<ServerSpec> {
         match self {
             Self::Off | Self::Refused(_) => None,
+            Self::Servers(_) => own,
             Self::Command(line) => {
                 let mut words = line.split_whitespace().map(str::to_owned);
                 let command = words.next()?;

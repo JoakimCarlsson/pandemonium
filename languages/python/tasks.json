@@ -1,0 +1,124 @@
+[
+  {
+    "label": "pip install",
+    "command": "python -m pip install -r requirements.txt",
+    "group": "",
+    "language": "python",
+    "source": "requirements.txt",
+    "order": 50,
+    "when": {
+      "exists": "requirements.txt"
+    }
+  },
+  {
+    "label": "pip install",
+    "command": "python -m pip install -e .",
+    "group": "",
+    "language": "python",
+    "source": "pyproject.toml",
+    "order": 50,
+    "when": {
+      "all": [
+        {
+          "not": {
+            "exists": "requirements.txt"
+          }
+        },
+        {
+          "exists": "pyproject.toml"
+        }
+      ]
+    }
+  },
+  {
+    "label": "pytest",
+    "command": "python -m pytest",
+    "group": "test",
+    "language": "python",
+    "source": "pyproject.toml",
+    "order": 50,
+    "when": {
+      "all": [
+        {
+          "any": [
+            {
+              "exists": "pyproject.toml"
+            },
+            {
+              "exists": "requirements.txt"
+            },
+            {
+              "exists": "setup.py"
+            },
+            {
+              "exists": "main.py"
+            }
+          ]
+        },
+        {
+          "any": [
+            {
+              "contains": {
+                "file": "pyproject.toml",
+                "text": "pytest"
+              }
+            },
+            {
+              "exists": "pytest.ini"
+            },
+            {
+              "exists": "conftest.py"
+            },
+            {
+              "exists": "tests"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "label": "python: $PM_CUSTOM_script",
+    "command": "$PM_CUSTOM_script",
+    "group": "run",
+    "language": "python",
+    "source": "pyproject.toml",
+    "order": 50,
+    "when": {
+      "any": [
+        {
+          "exists": "pyproject.toml"
+        },
+        {
+          "exists": "requirements.txt"
+        },
+        {
+          "exists": "setup.py"
+        },
+        {
+          "exists": "main.py"
+        }
+      ]
+    },
+    "tags": [
+      "pyproject-script"
+    ],
+    "files": [
+      "pyproject.toml"
+    ],
+    "from": [
+      "pyproject.toml"
+    ]
+  },
+  {
+    "label": "python main.py",
+    "command": "python main.py",
+    "group": "run",
+    "language": "python",
+    "source": "main.py",
+    "order": 50,
+    "when": {
+      "exists": "main.py"
+    }
+  }
+]

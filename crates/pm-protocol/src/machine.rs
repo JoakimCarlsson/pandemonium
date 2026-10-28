@@ -124,6 +124,8 @@ pub struct LanguagePreferences {
     pub server_off: bool,
     /// The command started as its language server in place of the one it comes with, written as on a command line; empty for the one it comes with.
     pub server_command: String,
+    /// Exactly the language servers that read its files, by id and in this order: the first is the language's server and the rest run beside it. `...` stands for the servers that run when nothing is chosen, and a server the language does not start by itself runs only when it is named. Empty leaves the language as it comes.
+    pub servers: Vec<String>,
 }
 
 impl LanguagePreferences {
@@ -157,6 +159,8 @@ pub struct MachineSettings {
     pub languages: BTreeMap<String, LanguagePreferences>,
     /// What each extension is allowed to do, by the extension's folder name; an extension not named is allowed nothing.
     pub extensions: BTreeMap<String, ExtensionPreferences>,
+    /// What is set for each language server, by the server's id, whichever language it reads; a server not named is as its language starts it.
+    pub servers: BTreeMap<String, pm_lsp::ServerOverride>,
 }
 
 impl MachineSettings {

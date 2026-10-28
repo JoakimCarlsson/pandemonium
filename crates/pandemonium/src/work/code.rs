@@ -1,40 +1,34 @@
 //! The work behind writing code: grammars fetched from the server that holds a file and compiled away from the window, open files kept in step with their language servers, and the extensions installed on this machine.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use pm_pages::{Outgoing, Screen};
 use pm_protocol::{GrammarBundle, Request, Response};
 use pm_state::State;
-use pm_treesitter::{Editing, Grammar, Queries, Scope, Tags};
+use pm_treesitter::{Editing, Grammar, Queries};
 
 use super::{Host, Job, Pending, Work};
 
-/// The scopes a language's manifest declares, as the editor reads them.
-pub(crate) fn scopes_of(declared: &BTreeMap<String, pm_lsp::ScopeSpec>) -> Vec<Scope> {
-    declared
-        .iter()
-        .map(|(name, scope)| Scope {
-            name: name.clone(),
-            nodes: scope.nodes.clone(),
-            line_comment: scope.line_comment.clone(),
-            block_comment: scope
-                .block_comment
-                .clone()
-                .map(|[open, close]| (open, close)),
-            emmet: scope.emmet,
-        })
-        .collect()
-}
-
-/// The tag nodes a language's manifest declares, as the editor reads them.
-pub(crate) fn tags_of(declared: Option<&pm_lsp::TagSpec>) -> Option<Tags> {
-    declared.map(|tags| Tags {
-        element: tags.element.clone(),
-        open: tags.open.clone(),
-        close: tags.close.clone(),
-        names: tags.names.clone(),
-    })
+/// The manifest of the language `bundle` was made from, as far as it says how the language is edited.
+fn manifest_of(bundle: &GrammarBundle) -> pm_lsp::Manifest {
+    pm_lsp::Manifest {
+        indent: bundle.indent,
+        tabs: bundle.tabs,
+        line_comment: bundle.line_comment.clone(),
+        pairs: bundle
+            .pairs
+            .clone()
+            .unwrap_or_else(pm_treesitter::default_pairs),
+        scopes: bundle.scopes.clone(),
+        tags: bundle.tags.clone(),
+        emmet_dialect: bundle.more.emmet_dialect.clone(),
+        word_characters: bundle.more.word_characters.clone(),
+        brackets: bundle.more.bracket_pairs.clone(),
+        increase_indent_pattern: bundle.more.increase_indent_pattern.clone(),
+        decrease_indent_pattern: bundle.more.decrease_indent_pattern.clone(),
+        decrease_indent_patterns: bundle.more.decrease_indent_patterns.clone(),
+        ..pm_lsp::Manifest::default()
+    }
 }
 
 /// The grammar of `bundle`, compiled.
@@ -50,19 +44,20 @@ fn compile(bundle: &GrammarBundle) -> Result<Arc<Grammar>, String> {
             injections: bundle.injections.clone(),
             brackets: bundle.brackets.clone(),
             runnables: bundle.runnables.clone(),
+            overrides: bundle.more.overrides.clone(),
+            redactions: bundle.more.redactions.clone(),
+            textobjects: bundle.more.textobjects.clone(),
+            debugger: bundle.more.debugger.clone(),
+            dependencies: String::new(),
         },
         Editing {
-            indent: bundle.indent,
-            tabs: bundle.tabs,
-            line_comment: bundle.line_comment.clone(),
-            pairs: Editing::pairs_of(
-                &bundle
-                    .pairs
-                    .clone()
-                    .unwrap_or_else(pm_treesitter::default_pairs),
-            ),
-            scopes: scopes_of(&bundle.scopes),
-            tags: tags_of(bundle.tags.as_ref()),
+            run_lenses: bundle
+                .more
+                .lenses
+                .iter()
+                .map(|lens| (lens.tags.clone(), lens.label.clone()))
+                .collect(),
+            ..pm_lsp::editing_of(&manifest_of(bundle))
         },
     )
 }
@@ -486,6 +481,9 @@ impl Work {
                 version,
             } => {
                 let asked = path.clone();
+                let rules = model.read(|screen| match screen {
+                    Screen::Workspace(state) => state.editor.semantic_token_rules.clone(),
+                });
                 self.ask_in_folder(
                     model,
                     session,
@@ -493,6 +491,7 @@ impl Work {
                         directory,
                         path,
                         version,
+                        rules,
                     },
                     Pending::SemanticTokens(session, asked, version),
                 );
@@ -543,6 +542,7 @@ impl Work {
                 session,
                 path,
                 version,
+                dependencies,
             } => {
                 let asked = path.clone();
                 self.ask_in_folder(
@@ -552,6 +552,7 @@ impl Work {
                         directory,
                         path,
                         version,
+                        dependencies,
                     },
                     Pending::CodeLenses(session, asked, version),
                 );

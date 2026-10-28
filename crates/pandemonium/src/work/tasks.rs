@@ -46,6 +46,28 @@ impl Work {
                     );
                 }
             }
+            Outgoing::RunnableTasks {
+                session,
+                path,
+                tags,
+                variables,
+                position,
+            } => {
+                if let Some(place) = Self::task_place(model, session) {
+                    self.ask(
+                        &place.host,
+                        Request::RunnableTasks {
+                            directory: place.directory,
+                            project: Some(place.project),
+                            path,
+                            tags,
+                            variables,
+                            position: Some(position),
+                        },
+                        Pending::RunnableTasks(session),
+                    );
+                }
+            }
             Outgoing::RunTask {
                 session,
                 task,
@@ -71,8 +93,10 @@ impl Work {
             Outgoing::RunRunnable {
                 session,
                 path,
-                kind,
-                name,
+                tags,
+                variables,
+                position,
+                task,
                 tab,
                 columns,
                 rows,
@@ -85,8 +109,12 @@ impl Work {
                             directory: place.directory,
                             project: Some(place.project),
                             path,
-                            kind,
-                            name,
+                            kind: String::new(),
+                            name: String::new(),
+                            tags,
+                            variables,
+                            position: Some(position),
+                            task,
                             columns,
                             rows,
                         },
@@ -138,6 +166,16 @@ impl Work {
             (Pending::Tasks(session), Response::Tasks { tasks, problem }) => {
                 model.update(|screen| {
                     *screen = std::mem::take(screen).with_tasks(session, tasks, problem);
+                });
+            }
+            (Pending::RunnableTasks(session), Response::RunnableTasks { tasks }) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_runnable_tasks(session, tasks);
+                });
+            }
+            (Pending::RunnableTasks(session), _) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_runnable_tasks(session, Vec::new());
                 });
             }
             (Pending::Toolchains(session), Response::Toolchains { toolchains }) => {

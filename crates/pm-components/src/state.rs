@@ -515,6 +515,8 @@ pub enum Outgoing {
         path: String,
         /// The version of the text the lenses are about.
         version: i32,
+        /// Whether the newest versions of the dependencies the file lists are looked up.
+        dependencies: bool,
     },
     /// Presses one of the lenses the language server last gave for a file of the session at this position.
     PressCodeLens {
@@ -867,6 +869,19 @@ pub enum Outgoing {
         /// The session, by position.
         session: usize,
     },
+    /// Asks the machine of the session at this position which tasks can run a place of a file that its language marks as runnable.
+    RunnableTasks {
+        /// The session, by position.
+        session: usize,
+        /// The file, from the root of the session's folder.
+        path: String,
+        /// What its language tagged it with.
+        tags: Vec<String>,
+        /// What each of its captures matched, by the capture's name.
+        variables: std::collections::BTreeMap<String, String>,
+        /// Its line and its column, from zero.
+        position: (usize, usize),
+    },
     /// Runs a task in the shell of a tab, in the folder of the session at this position.
     RunTask {
         /// The session, by position.
@@ -886,10 +901,14 @@ pub enum Outgoing {
         session: usize,
         /// The file, from the root of the session's folder.
         path: String,
-        /// What kind of place it is.
-        kind: String,
-        /// What it is called.
-        name: String,
+        /// What its language tagged it with.
+        tags: Vec<String>,
+        /// What each of its captures matched, by the capture's name.
+        variables: std::collections::BTreeMap<String, String>,
+        /// Its line and its column, from zero.
+        position: (usize, usize),
+        /// The name of the task tied to it that is run in place of the first, when one was chosen.
+        task: Option<String>,
         /// The tab, by the name this window knows it by.
         tab: u64,
         /// How many columns wide its window is.
@@ -2006,6 +2025,10 @@ impl WorkspaceState {
             self.toggle_breakpoint(file, line);
             return self;
         }
+        if let Some(index) = crate::tasks::run_lens_of(action) {
+            self.run_lens_pressed(index);
+            return self;
+        }
         if let Some((file, line)) = crate::tasks::run_of(action) {
             self.runnable_run(file, line);
             return self;
@@ -2092,6 +2115,7 @@ impl WorkspaceState {
             ADD_PROJECT => return self.with_adder(),
             SETTINGS => return self.with_settings(),
             crate::title_bar::UPDATE => self.open_release(),
+            crate::title_bar::LANGUAGE_UPDATE => return self.with_extensions_page(),
             update if self.press_update(update) => {}
             action if crate::settings::is_settings(action) => {
                 return self.settings_pressed(action);

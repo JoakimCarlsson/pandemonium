@@ -1,14 +1,14 @@
 //! What a worktree says to debug, read from where editors already write it.
 //!
-//! A reader who debugs in VS Code has a `.vscode/launch.json`, and one who
-//! debugs in Zed has a `.zed/debug.json`; both are read as they are, so a
-//! worktree that debugs somewhere else debugs here without being told twice.
-//! Beside what the files say, a file that can be run as it stands — a Python
-//! script, a Go package — offers to be debugged with nothing written at all.
+//! A reader who debugs in VS Code has a `.vscode/launch.json`, which is read
+//! as it is, so a worktree that debugs there debugs here without being told
+//! twice.
+//! Beside what the files say, a file that can be run as it stands, as its
+//! language says, offers to be debugged with nothing written at all.
 
 use std::path::{Path, PathBuf};
 
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 
 use crate::adapter::Adapter;
 
@@ -18,16 +18,9 @@ const VS_CODE: &str = ".vscode/launch.json";
 /// Where a worktree writes its own, in the same form as VS Code's.
 const OWN: &str = ".pandemonium.launch.json";
 
-/// Where Zed writes them.
-const ZED: &str = ".zed/debug.json";
-
 /// The keys of a VS Code configuration that are about the configuration
 /// rather than a word to the adapter.
 const VS_CODE_OWN: [&str; 4] = ["name", "preLaunchTask", "postDebugTask", "presentation"];
-
-/// The keys of a Zed scenario that are about the scenario rather than a word
-/// to the adapter.
-const ZED_OWN: [&str; 4] = ["label", "adapter", "build", "tcp_connection"];
 
 /// Whether a scenario starts the program or joins one already running.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -101,11 +94,6 @@ pub fn scenarios(root: &Path, file: Option<&Path>) -> Vec<Scenario> {
             .map(|file| vs_code(&file, VS_CODE, &words))
             .unwrap_or_default(),
     );
-    found.extend(
-        read(root, ZED)
-            .map(|file| zed(&file, &words))
-            .unwrap_or_default(),
-    );
     found.extend(offered(file, &words));
     found
 }
@@ -142,58 +130,27 @@ fn vs_code(file: &Value, path: &str, words: &Words) -> Vec<Scenario> {
         .collect()
 }
 
-/// The scenarios a Zed `debug.json` holds.
-fn zed(file: &Value, words: &Words) -> Vec<Scenario> {
-    let source = PathBuf::from(ZED);
-    file.as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_object)
-        .map(|scenario| {
-            let kind = text(scenario, "adapter");
-            Scenario {
-                label: words.fill_text(&text(scenario, "label")),
-                adapter: Adapter::find(&kind),
-                kind,
-                request: Request::named(scenario.get("request").and_then(Value::as_str)),
-                before: scenario
-                    .get("build")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned),
-                config: words.fill_map(without(scenario, &ZED_OWN)),
-                source: Some(source.clone()),
-            }
-        })
-        .collect()
-}
-
 /// What the file in front can be debugged as without a word written down.
 fn offered(file: Option<&Path>, words: &Words) -> Vec<Scenario> {
     let Some(file) = file else {
         return Vec::new();
     };
-    let named = |label: &str, kind: &str, config: Value| Scenario {
-        label: label.to_owned(),
-        kind: kind.to_owned(),
-        adapter: Adapter::find(kind),
-        request: Request::Launch,
-        before: None,
-        config: words.fill_map(config.as_object().cloned().unwrap_or_default()),
-        source: None,
-    };
-    match file.extension().and_then(|extension| extension.to_str()) {
-        Some("py") => vec![named(
-            "Python: Current File",
-            "debugpy",
-            json!({ "program": "${file}", "cwd": "${workspaceFolder}" }),
-        )],
-        Some("go") => vec![named(
-            "Go: Current Package",
-            "go",
-            json!({ "mode": "debug", "program": "${fileDirname}", "cwd": "${workspaceFolder}" }),
-        )],
-        _ => Vec::new(),
-    }
+    let name = file
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    crate::adapter::offers(&name)
+        .into_iter()
+        .map(|offer| Scenario {
+            adapter: Adapter::find(&offer.kind),
+            label: offer.label,
+            kind: offer.kind,
+            request: Request::Launch,
+            before: None,
+            config: words.fill_map(offer.config.as_object().cloned().unwrap_or_default()),
+            source: None,
+        })
+        .collect()
 }
 
 /// The string `key` of `object` holds, or nothing.
@@ -224,8 +181,7 @@ struct Words {
 impl Words {
     /// The words for a worktree at `root` with `file` in front.
     ///
-    /// VS Code's `${...}` and Zed's `$ZED_...` say the same few things, and
-    /// both are understood whichever file they were written in.
+    /// VS Code's `${...}` words say a few things, understood in every file.
     fn new(root: &Path, file: Option<&Path>) -> Self {
         let shown = |path: &Path| path.to_string_lossy().into_owned();
         let root_text = shown(root);
@@ -261,12 +217,6 @@ impl Words {
             ("${fileBasenameNoExtension}", stem.clone()),
             ("${userHome}", home),
             ("${pathSeparator}", std::path::MAIN_SEPARATOR.to_string()),
-            ("$ZED_WORKTREE_ROOT", root_text),
-            ("$ZED_RELATIVE_FILE", relative),
-            ("$ZED_FILENAME", base),
-            ("$ZED_DIRNAME", directory),
-            ("$ZED_STEM", stem),
-            ("$ZED_FILE", file_text),
         ];
         Self {
             known: pairs

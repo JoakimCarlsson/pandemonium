@@ -289,6 +289,22 @@ pub enum Shot {
     CodeMdx,
     /// A dotenv file highlighted.
     CodeEnv,
+    /// A JavaScript file highlighted, with the run buttons its language marks.
+    CodeJs,
+    /// A shell script highlighted, with the run buttons its language marks.
+    CodeShell,
+    /// A Docker Compose file with the run button of each service in the gutter.
+    RunCompose,
+    /// A Dockerfile with the run button of each build stage in the gutter.
+    RunDockerfile,
+    /// A go.mod with the run button of the module line, the requires and each module in the gutter.
+    RunGoMod,
+    /// A package.json with a link for each script and a link that updates a dependency.
+    RunPackageJson,
+    /// A file of the sample extension's language, with its private values showing.
+    CodeSample,
+    /// The same file with the values its language marks as private hidden behind blocks.
+    Redacted,
     /// A file written in a language that is not installed, with the offer to install it above its lines.
     LanguageOffer,
     /// A markdown file shown rendered as a page, with the switch to its source.
@@ -378,10 +394,14 @@ fn load_installed_grammar(id: &str) {
     let Some(manifest) = pm_lsp::installed_manifest(id) else {
         return;
     };
-    let (Ok(folder), Ok(grammar)) = (pm_lsp::language_folder(id), pm_lsp::grammar_file(id)) else {
+    let Ok(grammar) = pm_lsp::grammar_file(id) else {
         return;
     };
-    let read = |file: &str| std::fs::read_to_string(folder.join(file)).unwrap_or_default();
+    let read = |file: &str| {
+        pm_lsp::language_file(id, file)
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .unwrap_or_default()
+    };
     let Ok(wasm) = std::fs::read(grammar) else {
         return;
     };
@@ -392,14 +412,18 @@ fn load_installed_grammar(id: &str) {
         injections: read("injections.scm"),
         brackets: read("brackets.scm"),
         runnables: read("runnables.scm"),
+        overrides: read("overrides.scm"),
+        redactions: read("redactions.scm"),
+        textobjects: read("textobjects.scm"),
+        debugger: read("debugger.scm"),
+        dependencies: String::new(),
     };
     let editing = pm_treesitter::Editing {
-        indent: manifest.indent,
-        tabs: manifest.tabs,
-        line_comment: manifest.line_comment.clone(),
-        pairs: pm_treesitter::Editing::pairs_of(&manifest.pairs),
-        scopes: crate::work::code::scopes_of(&manifest.scopes),
-        tags: crate::work::code::tags_of(manifest.tags.as_ref()),
+        run_lenses: pm_lsp::run_lenses_of(id)
+            .into_iter()
+            .map(|lens| (lens.tags, lens.label))
+            .collect(),
+        ..pm_lsp::editing_of(&manifest)
     };
     if let Ok(loaded) =
         pm_treesitter::Grammar::load(id, &manifest.grammar, &wasm, &queries, editing)
@@ -412,6 +436,14 @@ fn load_installed_grammar(id: &str) {
             &[pm_protocol::ExtensionInfo {
                 id: id.to_owned(),
                 suffixes: manifest.suffixes.clone(),
+                names: manifest.names.clone(),
+                patterns: manifest.patterns.clone(),
+                icon: manifest
+                    .icon
+                    .as_deref()
+                    .and_then(|file| pm_lsp::language_file(id, file))
+                    .and_then(|path| std::fs::read_to_string(path).ok()),
+                color: manifest.color.clone(),
                 installed: true,
                 ..Default::default()
             }],
@@ -512,6 +544,27 @@ const CODE_MDX: &str = "---\ntitle: Release notes\n---\n\nimport { Chart } from 
 
 /// The dotenv file the dotenv snapshot shows.
 const CODE_ENV: &str = "# Database\nDATABASE_URL=\"postgres://user:secret@localhost:5432/app\"\nexport PORT=3000\nDEBUG=true\nSITE_URL='https://example.com'\nAPI_BASE=${SITE_URL}/api\nNEXT_PUBLIC_NAME=My app\n";
+
+/// The JavaScript file the JavaScript snapshot shows.
+const CODE_JS: &str = "import { readFile } from \"node:fs/promises\";\n\n/** Reads the settings of a project. */\nexport async function load(path) {\n  const text = await readFile(path, \"utf8\");\n  return JSON.parse(text);\n}\n\nconst main = async () => {\n  const settings = await load(\"settings.json\");\n  console.log(settings.name ?? `unnamed`);\n};\n\nmain();\n";
+
+/// The compose file the compose snapshot shows.
+const CODE_COMPOSE: &str = "name: demo\n\nservices:\n  web:\n    image: nginx:1.27\n    ports:\n      - \"8080:80\"\n    depends_on:\n      - api\n\n  api:\n    build: ./api\n    environment:\n      DATABASE_URL: postgres://db/app\n\n  db:\n    image: postgres:17\n    volumes:\n      - data:/var/lib/postgresql/data\n\nvolumes:\n  data: {}\n";
+
+/// The file the sample language snapshots show.
+const CODE_SAMPLE: &str = "# Sample program\nSECRET_TOKEN = \"hunter2\"\napi_key = 'abc-123-def'\ncount = 0\n\ndef bump(step):\n    total = count + step\n    return total\n";
+
+/// The Dockerfile the Dockerfile snapshot shows.
+const CODE_DOCKERFILE: &str = "FROM node:24-bookworm-slim AS web-build\nWORKDIR /app/web\nCOPY web/package.json ./\nRUN npm ci\n\nFROM golang:1.27.1 AS api-build\nWORKDIR /app\nRUN go build -o /app/api ./cmd/api\n\nFROM gcr.io/distroless/static-debian13:nonroot\nCOPY --from=api-build /app/api /api\nENTRYPOINT [\"/api\"]\n";
+
+/// The go.mod the go.mod snapshot shows.
+const CODE_GOMOD: &str = "module github.com/JoakimCarlsson/vault\n\ngo 1.27.0\n\nrequire (\n\tgithub.com/PuerkitoBio/goquery v1.13.0\n\tgithub.com/andybalholm/cascadia v1.3.5\n\tgolang.org/x/net v0.52.0 // indirect\n)\n\nreplace github.com/andybalholm/cascadia => ../cascadia\n";
+
+/// The package.json the package snapshot shows.
+const CODE_PACKAGE: &str = "{\n  \"name\": \"vault-web\",\n  \"scripts\": {\n    \"dev\": \"vite\",\n    \"build\": \"vite build\",\n    \"test\": \"vitest run\"\n  },\n  \"dependencies\": {\n    \"react\": \"^18.2.0\",\n    \"zod\": \"3.23.8\"\n  }\n}\n";
+
+/// The shell script the shell snapshot shows.
+const CODE_SHELL: &str = "#!/usr/bin/env bash\nset -euo pipefail\n\nroot=\"$(git rev-parse --show-toplevel)\"\n\nbuild() {\n  cargo build --workspace \"$@\"\n}\n\nfor crate in \"$root\"/crates/*; do\n  echo \"building ${crate##*/}\"\ndone\n\nbuild\n";
 
 /// A workspace with the file `path`, written in the installed language `language` and holding `text`, open for writing, the grammars of the languages `grammars` loaded.
 fn written(path: &str, language: &str, grammars: &[&str], text: &str) -> WorkspaceState {
@@ -816,6 +869,10 @@ fn sample_toolchains() -> Vec<pm_protocol::ToolchainInfo> {
             name: id.to_owned(),
             detail: detail.to_owned(),
             selected,
+            language_name: match language {
+                "javascript" => "Node.js".to_owned(),
+                _ => String::new(),
+            },
         };
     vec![
         toolchain("rust", "stable-x86_64-unknown-linux-gnu", "default", true),
@@ -1937,6 +1994,89 @@ impl Shot {
                 &["dotenv"],
                 CODE_ENV,
             )),
+            Self::CodeJs => Screen::Workspace(written(
+                "scripts/settings.js",
+                "javascript",
+                &["javascript"],
+                CODE_JS,
+            )),
+            Self::CodeShell => Screen::Workspace(written(
+                "scripts/build.sh",
+                "bash",
+                &["bash"],
+                CODE_SHELL,
+            )),
+            Self::RunCompose => Screen::Workspace(written(
+                "docker-compose.yml",
+                "docker-compose",
+                &["yaml", "docker-compose"],
+                CODE_COMPOSE,
+            )),
+            Self::CodeSample => Screen::Workspace(written(
+                "settings.smpl",
+                "sample-sample",
+                &["python", "sample-sample"],
+                CODE_SAMPLE,
+            )),
+            Self::Redacted => Screen::Workspace(
+                written(
+                    "settings.smpl",
+                    "sample-sample",
+                    &["python", "sample-sample"],
+                    CODE_SAMPLE,
+                )
+                .with_editor_settings(pm_editor::EditorSettings {
+                    redact_private_values: true,
+                    ..pm_editor::EditorSettings::default()
+                }),
+            ),
+            Self::RunDockerfile => Screen::Workspace(written(
+                "Dockerfile",
+                "dockerfile",
+                &["dockerfile"],
+                CODE_DOCKERFILE,
+            )),
+            Self::RunGoMod => Screen::Workspace(written(
+                "go.mod",
+                "gomod",
+                &["gomod"],
+                CODE_GOMOD,
+            )),
+            Self::RunPackageJson => {
+                let state = written("package.json", "json", &["json"], CODE_PACKAGE);
+                let version = state
+                    .shown_document()
+                    .map(|document| document.version)
+                    .unwrap_or_default();
+                let at = |row: u32, word: &str| {
+                    let column = CODE_PACKAGE
+                        .lines()
+                        .nth(row as usize)
+                        .and_then(|held| held.find(word))
+                        .unwrap_or(0) as u32;
+                    pm_protocol::Span::new(
+                        pm_protocol::Position::new(row, column),
+                        pm_protocol::Position::new(row, column + word.len() as u32),
+                    )
+                };
+                Screen::Workspace(state.with_code_lenses(
+                    0,
+                    "package.json",
+                    version,
+                    vec![
+                        pm_protocol::CodeLens {
+                            span: at(8, "^18.2.0"),
+                            title: "Update to 19.3.1".to_owned(),
+                            pressable: true,
+                        },
+                        pm_protocol::CodeLens {
+                            span: at(9, "3.23.8"),
+                            title: "Update to 4.1.0".to_owned(),
+                            pressable: true,
+                        },
+                    ],
+                ))
+            }
             Self::LanguageOffer => Screen::Workspace(language_offer()),
             Self::MarkdownPreview => Screen::Workspace(previewed("README.md")),
             Self::VectorPreview => Screen::Workspace(previewed("assets/logo.svg")),

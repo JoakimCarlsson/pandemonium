@@ -1,0 +1,14 @@
+# Docker Compose: the files that describe a stack of containers. The folder
+# holds no grammar, queries or language server of its own: it builds on YAML
+# and adds a run button on each service.
+
+name = "Docker Compose"
+version = "0.1.0"
+description = "Compose files, with a run button on each service."
+grammar = "yaml"
+inherits = "yaml"
+requires = ["yaml"]
+icon = "icon.svg"
+color = "#4fa3e0"
+names = ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"]
+patterns = ["docker-compose.*.yml", "docker-compose.*.yaml", "compose.*.yml", "compose.*.yaml"]

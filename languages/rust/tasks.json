@@ -1,0 +1,115 @@
+[
+  {
+    "label": "cargo build",
+    "command": "cargo build --workspace",
+    "group": "build",
+    "language": "rust",
+    "source": "Cargo.toml",
+    "order": 10,
+    "when": { "all": [{ "exists": "Cargo.toml" }, { "not": { "contains": { "file": "Cargo.toml", "text": "[package]" } } }] }
+  },
+  {
+    "label": "cargo check",
+    "command": "cargo check --workspace",
+    "group": "build",
+    "language": "rust",
+    "source": "Cargo.toml",
+    "order": 10,
+    "when": { "all": [{ "exists": "Cargo.toml" }, { "not": { "contains": { "file": "Cargo.toml", "text": "[package]" } } }] }
+  },
+  {
+    "label": "cargo test",
+    "command": "cargo test --workspace",
+    "group": "test",
+    "language": "rust",
+    "source": "Cargo.toml",
+    "order": 10,
+    "when": { "all": [{ "exists": "Cargo.toml" }, { "not": { "contains": { "file": "Cargo.toml", "text": "[package]" } } }] }
+  },
+  {
+    "label": "cargo clippy",
+    "command": "cargo clippy --workspace --all-targets",
+    "group": "build",
+    "language": "rust",
+    "source": "Cargo.toml",
+    "order": 10,
+    "when": { "all": [{ "exists": "Cargo.toml" }, { "not": { "contains": { "file": "Cargo.toml", "text": "[package]" } } }] }
+  },
+  {
+    "label": "cargo build",
+    "command": "cargo build",
+    "group": "build",
+    "language": "rust",
+    "source": "Cargo.toml",
+    "order": 10,
+    "when": { "contains": { "file": "Cargo.toml", "text": "[package]" } }
+  },
+  {
+    "label": "cargo check",
+    "command": "cargo check",
+    "group": "build",
+    "language": "rust",
+    "source": "Cargo.toml",
+    "order": 10,
+    "when": { "contains": { "file": "Cargo.toml", "text": "[package]" } }
+  },
+  {
+    "label": "cargo test",
+    "command": "cargo test",
+    "group": "test",
+    "language": "rust",
+    "source": "Cargo.toml",
+    "order": 10,
+    "when": { "contains": { "file": "Cargo.toml", "text": "[package]" } }
+  },
+  {
+    "label": "cargo clippy",
+    "command": "cargo clippy --all-targets",
+    "group": "build",
+    "language": "rust",
+    "source": "Cargo.toml",
+    "order": 10,
+    "when": { "contains": { "file": "Cargo.toml", "text": "[package]" } }
+  },
+  {
+    "label": "cargo run",
+    "command": "cargo run",
+    "group": "run",
+    "language": "rust",
+    "source": "Cargo.toml",
+    "order": 10,
+    "when": {
+      "all": [
+        { "contains": { "file": "Cargo.toml", "text": "[package]" } },
+        { "any": [{ "contains": { "file": "Cargo.toml", "text": "[[bin]]" } }, { "exists": "src/main.rs" }] }
+      ]
+    }
+  },
+  {
+    "label": "Run $PM_CUSTOM_name",
+    "command": "cargo run",
+    "marker": "Cargo.toml",
+    "group": "run",
+    "language": "rust",
+    "source": "$PM_RELATIVE_FILE",
+    "tags": ["rust-main"]
+  },
+  {
+    "label": "Test $PM_CUSTOM_name",
+    "command": "cargo test $PM_CUSTOM_name -- --nocapture",
+    "marker": "Cargo.toml",
+    "group": "test",
+    "language": "rust",
+    "source": "$PM_RELATIVE_FILE",
+    "tags": ["rust-test"]
+  },
+  {
+    "label": "Test module $PM_CUSTOM_name",
+    "command": "cargo test $PM_CUSTOM_name::",
+    "marker": "Cargo.toml",
+    "group": "test",
+    "language": "rust",
+    "source": "$PM_RELATIVE_FILE",
+    "tags": ["rust-module"]
+  }
+]

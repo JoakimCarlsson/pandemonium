@@ -41,7 +41,7 @@
       "server": "bash-language-server",
       "files": {
         "brackets.scm": "a258c9e63984a0409969aed98317c1483645d0876951e6958c1e692e69400835",
-        "config.toml": "97fd3a4077f8a7f0e068ab290225bfdbe8a283152c01d67a2fdf744e8c6912da",
+        "config.toml": "808668a016a9dbf500bcfec08d88228818c639db085c1e91353aec5871705f25",
         "highlights.scm": "1e8cf94003d3d9b253eabd8881299fb32db9f78cdedf2d11d8a48d9693cf5995",
         "icon.svg": "8a0dde64ea454970cf35f63669fe6a762351f543099a91215c5614c371c4122f",
         "indents.scm": "678d3eecefa89b4b3262f0565cdb5e3b713cbeb5bfd07ebb2f8698b04c15c71e",
@@ -69,7 +69,7 @@
       "server": "clangd",
       "files": {
         "brackets.scm": "7b7a54bd5e81a35953566c1a3d48fcd88e79f321e95eec371f20883da77de757",
-        "config.toml": "54f1d919b730e0807efd0733d35ac8e2f4f9cfe7a3daacc296a4aeb06a2e797f",
+        "config.toml": "e519ce13fcbfa3be54d20bce447a2dc755d819903d22b9a8c246ee6f0a948582",
         "highlights.scm": "4612a6ff7e61385b23e2f7fb58e292fa55ee1740142730f67bd449bb5370a85c",
         "icon.svg": "12b1be7fac56e11259756eb541ee9d6d26958cf17b7b92b47c1ec9d95be50ed7",
         "indents.scm": "5146f3f64470fa916b504663cc7e9704d274bafabac3acd141510b064ca19188",
@@ -134,7 +134,7 @@
       "server": "clangd",
       "files": {
         "brackets.scm": "270e1ba449ced4fe104dc1e3e31ed7ed0c71b40ba34b2a13bf313311ec1359d1",
-        "config.toml": "0df4d0639b84cf0312bd3365b604a3eab262cc7a1006280fcd82e157688f27ba",
+        "config.toml": "c8d1f7bbc6b455681dca7b8700e13c6a7c98765e024b78017510d5c415c01c27",
         "highlights.scm": "447b5c39fa88bf4e1bf13173c8a92ccee44baa679e40396cd296bb8fac9363c9",
         "icon.svg": "8522c55044bb581068daac309c85a2e51d579023e0f538a9bbbe78db736d1d13",
         "indents.scm": "e29c41a339ada86a5f9b4df2e30c8e18425d4a054b062d39cbdf69b25d4b33ae",
@@ -185,7 +185,7 @@
       "server": "vscode-css-language-server",
       "files": {
         "brackets.scm": "d10cdedd33cd9902cd04bed29257edc4b8cbbf26bf3b3086c163bee8a59fa832",
-        "config.toml": "ecbbe61e0524a7fe8bd2cb88690c477fc81a9701afd3ef831682354d5a82a314",
+        "config.toml": "d69f205b2cff04b6da19660f68791da741c05a206b765f9e1ac70ca369b948ff",
         "highlights.scm": "f7c74ce493683c6de23017bf9af506ea4d8a4f0205281b98d63f249d1fb9b0c5",
         "icon.svg": "176382bf3cd6f4065d064afecb1668702b8aa0412ba977cdf67eac2cbb29c8a9",
         "indents.scm": "424fbba80dcbef6d52b0db9331cfb8c04512e2bd35c5ad4b02b6b8597ff46207",
@@ -195,6 +195,38 @@
         "package.json": "6f361a86fcae3a6917884ebda9eb4ed15119b78d90d4b171a56da20ecfe0785b",
         "tailwindcss.package-lock.json": "5dae08a96f79e954db31829abdb6778641ee2d29fc38af2d837be3f55fe3e6d1",
         "tailwindcss.package.json": "2a834de339e3cd8c0f2e2b7418f471432ff1f73f2903c5d640239fbcc06b31ab"
+      },
+      "local": false
+    },
+    {
+      "id": "docker-compose",
+      "name": "Docker Compose",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "Compose files, with a run button on each service.",
+      "hidden": false,
+      "requires": [
+        "yaml"
+      ],
+      "suffixes": [],
+      "names": [
+        "docker-compose.yml",
+        "docker-compose.yaml",
+        "compose.yml",
+        "compose.yaml"
+      ],
+      "patterns": [
+        "docker-compose.*.yml",
+        "docker-compose.*.yaml",
+        "compose.*.yml",
+        "compose.*.yaml"
+      ],
+      "server": null,
+      "files": {
+        "config.toml": "a3b9b94b11d5b91f909a70c3f1c32cb3053af3daedef5291640099a4c304ac43",
+        "icon.svg": "913c2fe78bb9ee358b422b378fb6ca9acd8779927ab88b161caf468e67e33ead",
+        "runnables.scm": "4cbd4d870083987601e6ccbc8975e8b636f8e773f3f797993ab3be05d3914a38",
+        "tasks.json": "0b1bbb4de77685e7df1896198105020b4333210cee2c5174e4ef8d7f2af5ea08"
       },
       "local": false
     },
@@ -214,19 +246,24 @@
         "Dockerfile",
         "Containerfile"
       ],
-      "patterns": [],
+      "patterns": [
+        "Dockerfile.*",
+        "Containerfile.*"
+      ],
       "server": "docker-langserver",
       "files": {
         "brackets.scm": "36d8696012a74b1994a84a481fd10e76ca030cc7b164fe5cac6de3cceb3e218f",
-        "config.toml": "834ba23c7237f9dc97452425f9c09b0a019ca9a7637a4f01d1c3bf41ee6d3c8e",
+        "config.toml": "c30f20135e3ae010bcc831677739784274b6b2c30436e37916807a4149c6e0e8",
         "grammar.wasm": "295dbbe840e80ad2582d07d9266cf6b7210d702cd9c6878a1fb8650e8c1385a0",
         "highlights.scm": "b0f8d65584dc1e65b7c9dff288de83ee9702478f84d953da3e684b5e34cb0338",
-        "icon.svg": "410ce23bdffce1cd383cb5112e0c7e0c43127c926ab3dfbd185482a3e64ce790",
+        "icon.svg": "913c2fe78bb9ee358b422b378fb6ca9acd8779927ab88b161caf468e67e33ead",
         "indents.scm": "8fd4c3431980bbf7a6b4de42fb7ea9256bf03b82cd3b44660bcf4e8b46a3f301",
         "injections.scm": "a77ef474f544f54780f12846e090b015983aa2eaf1d602f1570c52d8caaa7ee9",
         "outline.scm": "dc19152c22191440ac66802fcff6697ff8dc6782e12d1c5305e9cd617f1f6d01",
         "package-lock.json": "7c3d1bee93d00edb34f009f56ad718908ed4df977358221bf2a3098ed15c5995",
-        "package.json": "897db1fccc5288d8b0f1946c8256e1ee7465da63d03da84195710fe7cfab35b6"
+        "package.json": "897db1fccc5288d8b0f1946c8256e1ee7465da63d03da84195710fe7cfab35b6",
+        "runnables.scm": "2847b27a95430c1881b166045870e871399788b0684dd9773bfc6a9731d0c163",
+        "tasks.json": "ca8f4795035fca89786d2585961c49d584509886f5a8149559b2d941f3c94e0a"
       },
       "local": false
     },
@@ -251,7 +288,8 @@
       "files": {
         "config.toml": "17877eaf2983c11ceed76e34bb0df55d784d30836730fda21b43800f15da34da",
         "highlights.scm": "8d1c42fb1c84177d4010080e525dda3a31b8bb9d6a71a4cc22ecd7411edf6aeb",
-        "icon.svg": "6c6a16c771036899e3fc748daafd102b109c72562afa61ba5666b5fffa28d85e"
+        "icon.svg": "6c6a16c771036899e3fc748daafd102b109c72562afa61ba5666b5fffa28d85e",
+        "redactions.scm": "c54284d56e132517ae36336e60b0095ce26106d274825d0e500a5459fe1c50f5"
       },
       "local": false
     },
@@ -302,7 +340,11 @@
       "version": "0.1.0",
       "description": "Go with gopls.",
       "hidden": false,
-      "requires": [],
+      "requires": [
+        "gomod",
+        "gosum",
+        "gowork"
+      ],
       "suffixes": [
         "go"
       ],
@@ -311,12 +353,90 @@
       "server": "gopls",
       "files": {
         "brackets.scm": "f0353a09140622170b89963be336b7bf1dfb4d3630516204a0d9a71de0244dde",
-        "config.toml": "aa01b358529d696e9cd4071f0458582d20811bab6339b3691a4b637833e7181b",
+        "config.toml": "03d76d09eb86fa1311441871abbecac34a417e4ec0aa2adf5cc8bfbfb1e52e86",
+        "debugger.scm": "e87a7ea2de7a07c9ae7bd3aabd673695b573e2a643a747ce31ea1bad3bc71b5b",
         "highlights.scm": "b845477ebabd708f06ff69438b4e309b1eadc8c014f9de78f2fa865652679528",
         "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d",
         "indents.scm": "a748e02c783a8758db59509a5d80db5c3ca3ea664699436444b7280b60ae8f18",
         "injections.scm": "84aafde3ba3b8da8c13e67e149aa41faa3938b46b09ec96394040492bf711325",
-        "outline.scm": "ccfac5aaf8a1d295a958424274a9baa5d0eed9d64fe7a10f16788c5ac908377a"
+        "outline.scm": "ccfac5aaf8a1d295a958424274a9baa5d0eed9d64fe7a10f16788c5ac908377a",
+        "overrides.scm": "3d504b51ff01fb89dbe451313d16496d96d744306da74af0fd3c357df9c49736",
+        "tasks.json": "ac4b714891cf5f8e2448cbff37cadb09018a0ea2b11e3430eeb8ac72a7d2a3ae",
+        "textobjects.scm": "f558b1b895062f6fbe9d98d8da08d8d09a8b26bedec6e1a9bce5bff7703762ce"
+      },
+      "local": false
+    },
+    {
+      "id": "gomod",
+      "name": "Go Module",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "go.mod files, with links on the module line and the requires to tidy, vendor, check vulnerabilities and upgrade.",
+      "hidden": true,
+      "requires": [],
+      "suffixes": [],
+      "names": [
+        "go.mod"
+      ],
+      "patterns": [],
+      "server": null,
+      "files": {
+        "brackets.scm": "e98e812efd7ec6fa313ff2e47bd96eb5d07d0d2cfa3ecc1a0e845a5f838787a5",
+        "config.toml": "be21be737afd707e971b07fbe0a4ac66910706e9741818c578e903a06f12f8c1",
+        "dependencies.scm": "34288271043627e0d89d7615e54f04483daf5959b099531d02f073e13695b2e5",
+        "grammar.wasm": "30eb00e1c4b4516ccfad39d0a8d79e5f98a823de45705ad3c6e232dfa7d5e36c",
+        "highlights.scm": "4af8cc939548e0511af75e8ceecf9d484e18f163975793dcb3609ac1e9c5be9d",
+        "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d",
+        "runnables.scm": "bf48b451bb8867e71a4c73fe9c2cb27999367302c146a43b78e74ab301b988bc",
+        "tasks.json": "b9e174037409b1ee3b6ee9d30da9066c371c66f4bc9f4b044ee61e6708233e5b"
+      },
+      "local": false
+    },
+    {
+      "id": "gosum",
+      "name": "Go Checksums",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "go.sum files.",
+      "hidden": true,
+      "requires": [],
+      "suffixes": [],
+      "names": [
+        "go.sum"
+      ],
+      "patterns": [],
+      "server": null,
+      "files": {
+        "config.toml": "75f807678f1a90c8fdc459a2e93b3b9b606141a04703ae92675829bb38e338fa",
+        "grammar.js": "d0a1c96d93f7e5c5fa6bf0ec647516aea5eb859f5c570ce70b2a0dfc9b187b71",
+        "grammar.wasm": "b8c0f85c2a92c39349647e5b061d9a5f37c6abd8360d73bb673b0aef691f6727",
+        "highlights.scm": "d8f478b21d49ecb2fbb667b7958425a3d7e38dce13466a785863ef1772ac64a6",
+        "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d"
+      },
+      "local": false
+    },
+    {
+      "id": "gowork",
+      "name": "Go Workspace",
+      "kind": "language",
+      "version": "0.1.0",
+      "description": "go.work files, with links on the go line to sync and vendor.",
+      "hidden": true,
+      "requires": [],
+      "suffixes": [],
+      "names": [
+        "go.work"
+      ],
+      "patterns": [],
+      "server": null,
+      "files": {
+        "brackets.scm": "5f1c960e39d9443aa045f88aaa53f5dec478b307bdf7bd67ed4ed8c038794f12",
+        "config.toml": "3b54139b40e5d10a9d2e667e98d3889ad5a684096588fd268926151766b89cb1",
+        "grammar.wasm": "87c89914ca750eab04edf69541de2a14a2e94c72fef41af57f0ff14fd2f03b7d",
+        "highlights.scm": "7339839e41777ab1736d976f60fe266e15ea99d1b780476e19f668af867347d5",
+        "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d",
+        "runnables.scm": "a694df80ffb04d6f3f4c451ec710b8398f11001dbbef6779936acb4f70b0ac6e",
+        "tasks.json": "c93f247ce2f35a90420245f6de8604b18998cf03cb53a7a6e62adc3e012d4a50"
       },
       "local": false
     },
@@ -338,7 +458,7 @@
       "server": "graphql-lsp",
       "files": {
         "brackets.scm": "0e3ce5ff1db5b65199040d96b389af72bdf59357f392b31b95616fb7380e3ece",
-        "config.toml": "875076e28caa79e1b31357de8eac0db1a769fa2bacf885c06ea986268b0f0434",
+        "config.toml": "1b9e2856cf68b2b01ccb647d5fae345f8abd4badf7f275b6934e6384c15c982f",
         "grammar.wasm": "bf35af571832782393b576da71d06081f5b807e26bd2d3daf87b06109183c004",
         "highlights.scm": "0237fed60ff22cd8e79fe99ea5d29ecb2457413b81f08c90cae17badfe1f8fbb",
         "icon.svg": "21ff8f3092926918ebcbca126aec433b04684c0d8a4724faa5cf28ef3423c0bb",
@@ -428,7 +548,7 @@
       "server": "vscode-html-language-server",
       "files": {
         "brackets.scm": "44892505b21a08f4eb83cb646e6a150de6466c86e57505b4228f5f7a039f148c",
-        "config.toml": "8dc6c0f51b8031b61d0c3f6ab87a302f4b3b153cca2b9ae17b22e0eb13bdc1c4",
+        "config.toml": "11bc9f5865656f51d451d6fbebe535d2afda57e78bfc3c1548cd7ed3c85db547",
         "highlights.scm": "ee0c83f83af8129bc12d279aadc68c8b8b112871f238583b428633c8fe8e1895",
         "icon.svg": "e88c73d6a408483c6ea905180467f7ca141ed9d88b51e60fd34b190d429de0cf",
         "indents.scm": "d25b65145936d25d8c55ff67c84ff0b3093f61eb59118f9776896e80afd68923",
@@ -473,7 +593,9 @@
       "version": "0.1.0",
       "description": "JavaScript and JSX, React and Next.js components with typescript-language-server.",
       "hidden": false,
-      "requires": [],
+      "requires": [
+        "json"
+      ],
       "suffixes": [
         "js",
         "mjs",
@@ -485,16 +607,19 @@
       "server": "typescript-language-server",
       "files": {
         "brackets.scm": "17d43133e8204321af678d982fc4952fecbda68995324a9be04b92677f17124a",
-        "config.toml": "5f2a1d0f8d4e982182e46e11ce21584b1cb5ac781680b0540a12407c3f5e6653",
+        "config.toml": "58ad3ccd02ab4a437ba314599b9ec46358d7a96da9157337fa51dbcd63aedc17",
+        "debugger.scm": "45b86ad9f7eea50837589e2a8d86547159648ece0ed8ea31e27d47a597afdc72",
         "highlights.scm": "656af77ce62fe324c95d8b0b92acc7cdba9a78537964bb9770ab0223a5108922",
         "icon.svg": "12b4bbacd7fbf2b1a685b791ce8c5c0196a3f01f78aff3f75cc05929868e17c6",
         "indents.scm": "8c6500f9272158bf36044cf0bce758b81f71910ff87d4840b8c612ecc4d92501",
         "injections.scm": "e9768a51e3a095f2770f5e910d2377d4f076dfc2c7faf7ded8865421422b34d8",
         "outline.scm": "36680a2012f2f4478c54f77f7b36282ce9cff3f7ad3466c47263e108c0e61757",
+        "overrides.scm": "ec7ea8b120c0e010e51b96f0d0cb6b4236b46352e621a7aea9f980e070b305f7",
         "package-lock.json": "c189d4f360f0e680a42b980556c9c40cc5eae5a28f5dc5ddeb4b57764cabf209",
         "package.json": "3788f0a00bcb75e7dc63603a9b1af6ede654cc00a6976aea8eaca317a07e5185",
         "tailwindcss.package-lock.json": "5dae08a96f79e954db31829abdb6778641ee2d29fc38af2d837be3f55fe3e6d1",
-        "tailwindcss.package.json": "2a834de339e3cd8c0f2e2b7418f471432ff1f73f2903c5d640239fbcc06b31ab"
+        "tailwindcss.package.json": "2a834de339e3cd8c0f2e2b7418f471432ff1f73f2903c5d640239fbcc06b31ab",
+        "textobjects.scm": "ada67f15621a84bba20e09e90d09c31695c4452648ce59069f99459cb12c46b3"
       },
       "local": false
     },
@@ -520,14 +645,18 @@
       "server": "vscode-json-language-server",
       "files": {
         "brackets.scm": "d13aeee7b2b6ff238a68e2029bfa42543e624415911624e2fb88cd93abf47bc5",
-        "config.toml": "e26f0eb9ef164de062671b5ed9d7f3633f2fe9d210c9ae9611f284a63017a9ce",
+        "config.toml": "001108ef16247ad00f42bbcc866e9fb77e2c5673d1945d772496bfcc97802502",
+        "dependencies.scm": "107ca1202e6f79ce0e3a1f2f0b9f767513f4d8500f24f8e012d526bb1364efbb",
         "highlights.scm": "86cb3d2ca3aada199a87998e2d948de975e92c47d5258bcedbe71f193fe8fa4d",
         "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d",
         "indents.scm": "8d640f47854fdfb20e09a5ed3aec2c427b168ed62b2026350adc0b83dea69a2d",
         "injections.scm": "bf5e206d7ce8cf219cb98657904930f236cbeb830c186a6c62fa82500f9f08c3",
         "outline.scm": "0dddd12b8c6b67923ce700ff0c65adef827a7ae40a6aec1d855f9aa88c9c4783",
         "package-lock.json": "114277b435719d7f6c5410f85076b2eed8b7dc8190663a085651f0b99aa1d1fe",
-        "package.json": "2a4446da171df7890c82ecbdfe1de27a922991023178205d6c2ef0b57fe0d329"
+        "package.json": "2a4446da171df7890c82ecbdfe1de27a922991023178205d6c2ef0b57fe0d329",
+        "redactions.scm": "1fe66bc07d46b5eb73c15d6ab82e128231a5e0f366e68aaa89e69242f857ebd3",
+        "runnables.scm": "b07be858c5ea9b952d944e6992114e83c0331d21f04d815ff37a6958c3ebe12c",
+        "tasks.json": "d645bab9d9191428c621f9cb9edb8e2f1e5f37b17e396f02e585387b191c8bb3"
       },
       "local": false
     },
@@ -611,7 +740,9 @@
         "icon.svg": "c08d36925b4afc2155c821e3ffe9412b24cc60c224be06a65d06a55cf311554d",
         "indents.scm": "00abeee62a9ac43016d26cd9fab371c1e9aef55fc39510792d97a814f1f50091",
         "injections.scm": "ca80e7c5d0577b1fb46091aa62d46512ddc35cddbd03478591e8718038de846a",
-        "outline.scm": "f3a121e2c7e56da7a9f7d92ced02c00dbf55b44333278cf2949736ef2879b27d"
+        "outline.scm": "f3a121e2c7e56da7a9f7d92ced02c00dbf55b44333278cf2949736ef2879b27d",
+        "runnables.scm": "317e9c009f4142466898b62c157d514d8f774e2f974a48c22980e66990bee9f7",
+        "tasks.json": "7539ba8089fdf6f8ad2e0f75b9c67c3131a2a08688f506b6cab862b31c1758a8"
       },
       "local": false
     },
@@ -780,7 +911,9 @@
       "version": "0.1.0",
       "description": "Python with pyright, using the project's virtual environment.",
       "hidden": false,
-      "requires": [],
+      "requires": [
+        "toml"
+      ],
       "suffixes": [
         "py",
         "pyi"
@@ -790,14 +923,18 @@
       "server": "pyright-langserver",
       "files": {
         "brackets.scm": "4d23538e4730c901b85c049aa4f18c246b7aff9b4dbce9f7edaafc616352a2a3",
-        "config.toml": "69bd5e1f03b46227cf22595007a521b96dfb623f6667d5b63021bec473fc59ed",
+        "config.toml": "87c7619ea75e3eb3093a868411bd97e7870e47d13e78c1d280d757d47721062e",
+        "debugger.scm": "60a75a56ca07a04549c2dba893b27976eea839637fb36d07e385a9c55afce65c",
         "highlights.scm": "5fbf61e4a31701ccbb46a41328cce553e0944648d9f450d24fdf14029919f8a8",
         "icon.svg": "87315ba89d065698044335641ca2dc26dda120866e508c58b7177d44dbe17c1c",
         "indents.scm": "b243ab33a226ec1f0bc5d7e1c16607903d393222561f582bcdf794ceb2a1fc35",
         "injections.scm": "cfc127a77efb07444f8962ed4d36116e743a7493090d35f3cfcbd338d39289e0",
         "outline.scm": "37eb4d26ddba6e2ae8a1490a88220ea9c64381e0c71ef6863717434a3f79ff6b",
+        "overrides.scm": "ba1b8f2455a8c0d23cf528367548f6e40f16b318d6375b34de14d09f41c5dea3",
         "package-lock.json": "61b7c8aa29b3bde2f467a01f9c7e22696f8d0342bea05a78ef52b4abf280db53",
-        "package.json": "681387c1adeb3bb6e72d2e5144eb9efe09261fce91218abe5520131f1ce823f7"
+        "package.json": "681387c1adeb3bb6e72d2e5144eb9efe09261fce91218abe5520131f1ce823f7",
+        "tasks.json": "e0abee90761bb568922fbf4ccbac012cf86f2bb8847001ae829b26e61609da19",
+        "textobjects.scm": "99cb6522d636a31119c8acc422eddcb823d1ecf34fc7d0a36b2437f9174e86f3"
       },
       "local": false
     },
@@ -817,13 +954,18 @@
       "server": "rust-analyzer",
       "files": {
         "brackets.scm": "914f67dd435081dc1e4744104acda3ddc62c8dce73706f1117223c488b9de5e7",
-        "config.toml": "17e1ffcb937a32363e849c9af3bdb93c6730b21cb4db4c4989e84ac99503405b",
+        "config.toml": "b11e264e429db2049b64ec46224858ee03ec49f84c72a31ab6629de872899c2f",
+        "debugger.scm": "7276ffc02697743eeaa7d82929adf3a3964144d03f166c4514e7ed605c61a8c9",
         "highlights.scm": "48a60820fe574a37494db0f7decb2fbf586235be9d5110557b7c37c710256277",
         "icon.svg": "641040fc553ae4db835a47b49fd2690dcc9fadc84da024e3fc63c4322e3d11be",
         "indents.scm": "75b96136a0eda604b13de69a37c9329ad2ef79e715b6d458f393fed854caf95a",
         "injections.scm": "24e830e374ec2d6ba3c77a51b0924bf331e4b3ad29403ece0ddce138d03e3684",
         "outline.scm": "0a7c5d8454d6ba5eba16711a4d7fe0bfb772c6c35bff23c84449437efdab9546",
-        "runnables.scm": "3237ca119b236793689f517db5c09b11bba6014eb7af077f9adb3ba9922c95d6"
+        "overrides.scm": "ac0d37768972d1403012e8d1d892f5c51587acf3e0f54f2aa1b92f19c122d26f",
+        "runnables.scm": "2c168ff573b2915c6d07a7ddc9400fb1f9bcc4e761f7d72b807835e4c2934a5e",
+        "semantic_token_rules.json": "7908e5b64a108da2ada2169960a5680155611cc1467000d6ed0cc69d10d28c44",
+        "tasks.json": "c32b6c8204d78e6809ab4e4bd0ac56c86d271300f67bf44cdf67901b573b4df0",
+        "textobjects.scm": "16733e2d8d0a717f4558b2ed4d10bca2e59ab46e11d077b74f9f65168212f32e"
       },
       "local": false
     },
@@ -843,7 +985,7 @@
       "server": "vscode-css-language-server",
       "files": {
         "brackets.scm": "f913a23a7da353dfc04becf612ef28eaa93576d6337662836ee9d6bda27ed1fa",
-        "config.toml": "2c7be8784fbe36fc8e64df651063f15281da39aaac6e096c4b6be251a42d2206",
+        "config.toml": "7b6108a5d516552e70de3f8874af993305653bb481e54934f645b7b318f41bf7",
         "grammar.wasm": "54266012ebc1ec7cd38f908f6658dcaf72006b02b02ae117b3cac82cc2f60791",
         "highlights.scm": "41bd61df91237454d3a0ebad5372a30caded0be03234b78624113d39b86f4ce9",
         "icon.svg": "4889d866e0d88c9b157233a589acfc7e8c658481de2d6e610edf20338d770223",
@@ -871,7 +1013,7 @@
       "server": "sqls",
       "files": {
         "brackets.scm": "9528eba98e7be0b61d8e573afd30e2c64bc09866dea8afc55c6b8020bb590d5a",
-        "config.toml": "5125e8bfa85e0f4acac17c1b98528e4d2f9eaea474e9f1b05ec3635aa2e78d15",
+        "config.toml": "14b91ff4ea086638e3508f5ec4c1170c4097f9e508972b2ad1f9312a251d7b0d",
         "grammar.wasm": "836e4d429bbb35a4153535cf101b2bb69f72b9454a6cc7262d3818fbf532d64c",
         "highlights.scm": "2accacc534273af4c8a5368c39aa4e18c1249e12941af229360087a1c9548e36",
         "icon.svg": "faccb1f75e924012fe94e5f78d4c7c89bd6f3ea1a57bd9688805b2f630b889ca",
@@ -897,7 +1039,7 @@
       "server": "svelteserver",
       "files": {
         "brackets.scm": "2b990e69b11146dfc8dfbc0cb7461ab93fcedd03ce6154494efc3e31f296b702",
-        "config.toml": "54f3fc1a1b577536e4fe3e5dabe5672e77ddcd042bb7f2ac458ff71e18163c0f",
+        "config.toml": "957900820a5a74a8fad966a07646ab1be2e30863139fd400782b944471b496a5",
         "grammar.wasm": "751461809861a9197a7f5ee0eceeb600e03121ce9f6bc6225d569a8c504454e0",
         "highlights.scm": "e4799b788338ab73f86ff9370ea1c3d8fa65b06c4a90d3782a89189bdd437467",
         "icon.svg": "f73a1d7267fe0338d6f8bc033ebb4c5e22d16d89511ad50c9c10d73e75f88344",
@@ -981,12 +1123,14 @@
       "server": "taplo",
       "files": {
         "brackets.scm": "a0d7d33c46c561c820e4b4b5e83a2c358eb5831a06b538338a0d3c950aa7e48e",
-        "config.toml": "231ea83775ef64928f17e8838619d0b249b3893a5a95c42507ca522b12ff0f94",
+        "config.toml": "e3772b9f86f5323b55b6f4dbe9e114ef4760838419b9aaede4b4f401c7d949cc",
+        "dependencies.scm": "7abbb0ded3a39a4d017233ce7f463f084bcdd631056067a4ceb3ef9fb5b1a22c",
         "highlights.scm": "25a36ce579bff0ac2d3ca0233d2b81fc05e4c4092c4b172bd7be32297fd78aec",
         "icon.svg": "792e82cc1c2e2ff2013deba0f6791e055b3ca52c6a276c13308dac65a50ac82d",
         "indents.scm": "9a3247ddd5fcc06a840724120ec90be62f8896f51801ae7504afedc7addbea97",
         "injections.scm": "ab9da020af6105fee23299dc79805483f1143a8f40313af6cef147a93e5748c5",
-        "outline.scm": "9b4802a88954ac160f59aa3f505406615f35fb21ba59f1bc5ddf5a4c810885d0"
+        "outline.scm": "9b4802a88954ac160f59aa3f505406615f35fb21ba59f1bc5ddf5a4c810885d0",
+        "runnables.scm": "941b0828a737ac8a351e9b2e60be435ec9241538c70d7657d996b7e1bf0f8bbc"
       },
       "local": false
     },
@@ -997,7 +1141,9 @@
       "version": "0.1.0",
       "description": "TSX, React and Next.js components with typescript-language-server.",
       "hidden": false,
-      "requires": [],
+      "requires": [
+        "json"
+      ],
       "suffixes": [
         "tsx"
       ],
@@ -1006,16 +1152,19 @@
       "server": "typescript-language-server",
       "files": {
         "brackets.scm": "970b02fb5bf6b37f95ae18de20d95274ea3adfcde501744d0188dcc514acd55c",
-        "config.toml": "b943c5b3dd65a5cd7571d5233b4cdc17554f80badeba532754cce692a31a0d49",
+        "config.toml": "b5b504aa2c3086bb6c1b189bf746a7befe1476323beb9f7980c1b043ebbe2d05",
+        "debugger.scm": "77731e0993217a63747398ce6f5244c540e08ce73dee5787352b8b5fefe6b3bd",
         "highlights.scm": "eda831a60ee976265446248da5f0691dd0ee289bd676cb3cdfc74a4dad05f8d7",
         "icon.svg": "dfe113def52fc72b2975392c6a5648883f8e4feb908a66f41f4092753cac1f1b",
         "indents.scm": "540da706c65dc1b5f126673895334cdb5ac386a606d05d9ef8f4e36e96f57888",
         "injections.scm": "22688b1a7fbbf190807013992d55290dc3edf994b98f4c6579306cd5b6c0d234",
         "outline.scm": "516b6a18de1bb65e277e2f0a862c0182158e2cd3f8df99bf97300071f28cef9d",
+        "overrides.scm": "6edecda1614a311d794fb0df1f0f8bd686e7291a3a30dff264d560f55e206ab9",
         "package-lock.json": "c189d4f360f0e680a42b980556c9c40cc5eae5a28f5dc5ddeb4b57764cabf209",
         "package.json": "3788f0a00bcb75e7dc63603a9b1af6ede654cc00a6976aea8eaca317a07e5185",
         "tailwindcss.package-lock.json": "5dae08a96f79e954db31829abdb6778641ee2d29fc38af2d837be3f55fe3e6d1",
-        "tailwindcss.package.json": "2a834de339e3cd8c0f2e2b7418f471432ff1f73f2903c5d640239fbcc06b31ab"
+        "tailwindcss.package.json": "2a834de339e3cd8c0f2e2b7418f471432ff1f73f2903c5d640239fbcc06b31ab",
+        "textobjects.scm": "b0b910933db150996e34faa53e87ce66de063a3d5a00393761a0bac38c018d1d"
       },
       "local": false
     },
@@ -1027,7 +1176,8 @@
       "description": "TypeScript with typescript-language-server.",
       "hidden": false,
       "requires": [
-        "tsx"
+        "tsx",
+        "json"
       ],
       "suffixes": [
         "ts",
@@ -1039,14 +1189,17 @@
       "server": "typescript-language-server",
       "files": {
         "brackets.scm": "e7319b052b3ac296c901ac7183841072b5a9fe57d8032944ead6f0ef431c5644",
-        "config.toml": "504df80446b59646f3cd6470db166e91a9d66f2a34bac53ffc2a0028ea34715a",
+        "config.toml": "65a67b45c6f0b0cade9726951861582d2b7b003054e4d09c5e46f3a7c04ef435",
+        "debugger.scm": "0b4fc8940575f26e64a98253cb1420655780fbc5bf73c52cbdbb3ddbd998cb63",
         "highlights.scm": "3ee958b8f7217a26f9e683a916a7872d8e79e81a57f2424a4d6ccd613f6017f4",
         "icon.svg": "0004d33f46b2175e90f8ea86aef139e29af5f7a3a3cf310e6dd6b8c084bab884",
         "indents.scm": "a95eaed00775b56c91e823fdbca801ff691db2e1fc9922309b4ded21b90c2784",
         "injections.scm": "712bdbc75ea8ece21bcc76118b5ec070a926784369ec448ae24dc36ba31dafd0",
         "outline.scm": "77ac576398b2b5170d7fa02e8d8b1bf30c365a00a6a536c05c8e5a2206895d52",
+        "overrides.scm": "1aed7237677ab3136894bfbc2ec18833cf1119d1ff666f55d6e94ced1113fae8",
         "package-lock.json": "c189d4f360f0e680a42b980556c9c40cc5eae5a28f5dc5ddeb4b57764cabf209",
-        "package.json": "3788f0a00bcb75e7dc63603a9b1af6ede654cc00a6976aea8eaca317a07e5185"
+        "package.json": "3788f0a00bcb75e7dc63603a9b1af6ede654cc00a6976aea8eaca317a07e5185",
+        "textobjects.scm": "a2dd53f5b2829aa84d0fa8d45e865e7e7dd2992351e69d6df9f61d971bfe3ed7"
       },
       "local": false
     },
@@ -1137,7 +1290,7 @@
       "server": "lemminx",
       "files": {
         "brackets.scm": "d9d5505ec143503948b4feb03e401188b5001abb1c466e0b480a9f0962ece492",
-        "config.toml": "8747022d178d8ffe3c3f668b179ecf7d7fc10a1543fd1ee5a09c43c347f744e1",
+        "config.toml": "dcc8efd06b3f63a830a39271fae628edaf5655c77de8f2e71e5e386826290cfb",
         "highlights.scm": "407472079d4fe941a40279c3f4bc24d5300a655f529a67e2bbf775898569e85e",
         "icon.svg": "e27ab54c0bb4c3ae9af2c3aa674461db171ac241bfd5cf55d8431792fedd9c72",
         "indents.scm": "4d05e161a85e8216af37f702556c6790e87157c3a10258ae0fed640e088cb4ff",
@@ -1167,7 +1320,7 @@
       "server": "yaml-language-server",
       "files": {
         "brackets.scm": "8961d89bbb61e3890c556510daecc24cd4002ebac72010cafa46171e4d0b4df0",
-        "config.toml": "abdb8d5185411f87af2137a572d52bd65f705c3b6198452debc1708dc998d253",
+        "config.toml": "3c63840f15d6a47188df3fe6f2c35d0605d1408a8b13d2ed8562c2aaf7361bbe",
         "highlights.scm": "0077c042836f8ffed7d13505316f4d3c9ce0f107c4078fb37b937ffc339f8c49",
         "icon.svg": "b51bb293106d643a9a0510030f308bcc0ace3d4db39fe8324c110b4ed79e75a3",
         "indents.scm": "b49dab22c3ef077815fb0907550da600cdb760b4ac400765d31bec5659f36658",

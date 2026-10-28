@@ -8,7 +8,7 @@ use pm_protocol::{HintKind, Severity};
 use pm_style::{
     Radius, Role, bg, border_b, border_color, code_px, cursor_pointer, cursor_text, flex, flex_1,
     flex_col, flex_none, font_mono, gap, h, h_px, items_center, justify_center, justify_end,
-    leading_ratio, min_h, min_w_px, ml, overflow_hidden, pr, px, py, relative, rounded,
+    leading_ratio, min_h, min_w_px, ml, overflow_hidden, pl, pr, px, py, relative, rounded,
     rounded_full, text_color, w, w_px,
 };
 use pm_text::Shaper;
@@ -178,6 +178,18 @@ pub(crate) fn line_marks(
     if settings.bracket_colors {
         for (range, depth) in document.brackets_on(index) {
             recolor(&mut marks, range, bracket_role(depth));
+        }
+    }
+    if settings.redact_private_values {
+        for stretch in document.redactions().iter() {
+            if let Some(range) = clipped(&Some(stretch.clone()), &line) {
+                recolor(&mut marks, range.clone(), Role::Muted);
+                marks.push(Mark {
+                    range,
+                    color: Role::Muted.into(),
+                    paint: Paint::Fill,
+                });
+            }
         }
     }
     marks.extend(pair.iter().filter_map(|bracket| {
@@ -401,7 +413,9 @@ pub(crate) fn file_line(
     } else {
         index + 1
     };
-    let last = segments.len().saturating_sub(1);
+    let lens_row = document.lens_row_at(index);
+    let text_segments = &segments[usize::from(lens_row)..];
+    let last = text_segments.len().saturating_sub(1);
     let hints: Vec<&Hint> = if settings.inlay_hints {
         document.hints_on(index).iter().collect()
     } else {
@@ -410,12 +424,20 @@ pub(crate) fn file_line(
     .into_iter()
     .chain(document.values_on(index))
     .collect();
+    let run_lenses: Vec<(usize, String)> = document
+        .run_lens_items()
+        .into_iter()
+        .enumerate()
+        .filter(|(_, item)| item.line == index)
+        .map(|(place, item)| (place, item.label))
+        .collect();
     let lenses = if settings.code_lens {
         document.lenses_on(index)
     } else {
         &[]
     };
-    let rows = segments.iter().enumerate().map(|(place, segment)| {
+    let lens_row = lens_row && (!run_lenses.is_empty() || !lenses.is_empty());
+    let rows = text_segments.iter().enumerate().map(|(place, segment)| {
         let absolute = line.start + segment.start..line.start + segment.end;
         let standing: Vec<&Hint> = hints
             .iter()
@@ -485,7 +507,6 @@ pub(crate) fn file_line(
             return held;
         }
         held.children(document.is_folded_at(index).then(|| fold_chip(index)))
-            .children(lenses.iter().map(|lens| lens_chip(lens, font)))
             .children(blamed.clone().map(|said| {
                 node()
                     .styles([flex_1(), ml(8), min_w_px(0), overflow_hidden()])
@@ -521,6 +542,7 @@ pub(crate) fn file_line(
         node()
             .styles([flex(), flex_col(), flex_none(), pr(3)])
             .styles([if settings.line_numbers { w(13) } else { w(2) }])
+            .children(lens_row.then(|| node().styles([h_px(height), flex_none()])))
             .child(
                 node()
                     .styles([flex(), items_center(), justify_end(), h_px(height)])
@@ -544,8 +566,38 @@ pub(crate) fn file_line(
                 overflow_hidden(),
                 px(2),
             ])
+            .children(lens_row.then(|| run_lens_row(&run_lenses, lenses, height, font)))
             .children(rows),
     )
+}
+
+/// The row above a line that holds the links which run the line's place, each the `index`th of the links of the file.
+fn run_lens_row(
+    lenses: &[(usize, String)],
+    given: &[pm_editor::Lens],
+    height: f32,
+    font: u32,
+) -> Node {
+    node()
+        .styles([
+            flex(),
+            items_center(),
+            h_px(height),
+            flex_none(),
+            min_w_px(0),
+        ])
+        .children(
+            lenses
+                .iter()
+                .enumerate()
+                .map(|(place, (index, label))| run_lens_chip(*index, label, font, place == 0)),
+        )
+        .children(
+            given
+                .iter()
+                .enumerate()
+                .map(|(place, lens)| lens_chip(lens, font, lenses.is_empty() && place == 0)),
+        )
 }
 
 /// The text of `hint` written inside a line in a smaller, quieter hand than the code around it.
@@ -568,14 +620,32 @@ fn hint_chip(hint: &Hint, font: u32) -> Node {
     chip.child(line(&hint.label, (font - 1).max(8), 1.2, tone).styles([font_mono(), flex_none()]))
 }
 
-/// The text of `lens` at the end of its line, pressed to do what the server says when it can be.
-fn lens_chip(lens: &Lens, font: u32) -> Node {
+/// The link at the end of its line that runs a place with the task `label`, the `index`th of the links of the file.
+fn run_lens_chip(index: usize, label: &str, font: u32, first: bool) -> Node {
+    node()
+        .styles([
+            flex(),
+            items_center(),
+            flex_none(),
+            pl(if first { 0.0 } else { 1.5 }),
+            pr(1.5),
+            h(4),
+            rounded(Radius::Sm),
+            cursor_pointer(),
+            bg(Role::SurfaceHover).hover(),
+        ])
+        .focusable(crate::tasks::run_lens_mark(index))
+        .child(line(label, (font - 1).max(8), 1.2, Role::Muted).styles([flex_none()]))
+}
+
+/// The text of `lens` on the row above its line, pressed to do what the server says when it can be.
+fn lens_chip(lens: &Lens, font: u32, first: bool) -> Node {
     let chip = node().styles([
         flex(),
         items_center(),
         flex_none(),
-        ml(4),
-        px(1.5),
+        pl(if first { 0.0 } else { 1.5 }),
+        pr(1.5),
         h(4),
         rounded(Radius::Sm),
     ]);

@@ -26,28 +26,12 @@ pub struct Task {
     /// Where it was found: the manifest it was read from.
     #[serde(default)]
     pub source: String,
+    /// The tags of the places it is run from: a place of a file that a language tags the same is run by it, and a task of the project with the tag is run in place of a language's.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
 }
 
 impl Task {
-    /// A task called `name` that runs `command` in the root of the project, in `group`, for `language`, found in `source`.
-    pub(crate) fn new(
-        name: impl Into<String>,
-        command: impl Into<String>,
-        group: &str,
-        language: &str,
-        source: &str,
-    ) -> Self {
-        Self {
-            name: name.into(),
-            command: command.into(),
-            folder: String::new(),
-            env: BTreeMap::new(),
-            group: group.to_owned(),
-            language: language.to_owned(),
-            source: source.to_owned(),
-        }
-    }
-
     /// Whether `name` is what the task is called, or the command it runs, ignoring case.
     pub fn is_named(&self, name: &str) -> bool {
         self.name.eq_ignore_ascii_case(name.trim())

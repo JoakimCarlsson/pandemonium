@@ -1,0 +1,27 @@
+# go.mod: how files are told to be Go module files and how they are edited. The
+# folder holds its own grammar, built with tree-sitter CLI 0.27.1 from
+# camdencheek/tree-sitter-go-mod v1.1.0. gopls, which the Go language starts,
+# reads these files too, as go.mod.
+
+name = "Go Module"
+version = "0.1.0"
+description = "go.mod files, with links on the module line and the requires to tidy, vendor, check vulnerabilities and upgrade."
+icon = "icon.svg"
+color = "#6fc7d9"
+grammar = "gomod"
+hidden = true
+toolchain = "go"
+toolchain_name = "Go"
+names = ["go.mod"]
+aliases = ["go.mod", "gomod"]
+line_comment = "//"
+indent = 4
+tabs = true
+pairs = ["()", "[]", "\"\"", "``"]
+
+# Where the newest version of each module a go.mod requires is looked up.
+[dependencies]
+files = ["go.mod"]
+registry = "https://proxy.golang.org/{escaped}/@latest"
+pointer = "/Version"
+private_env = ["GOPRIVATE", "GONOPROXY", "GONOSUMDB"]

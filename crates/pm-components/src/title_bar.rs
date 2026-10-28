@@ -42,6 +42,9 @@ pub const WINDOW_CLOSE: FocusId = FocusId(7_405_006);
 /// Opens the page of the newer release that is out.
 pub const UPDATE: FocusId = FocusId(7_405_007);
 
+/// Opens the extensions page, where a newer language or language server is installed.
+pub const LANGUAGE_UPDATE: FocusId = FocusId(7_405_008);
+
 /// How wide the command center is while the bar has room, in logical pixels: as wide as the field of the quick input that opens over it.
 const COMMAND_CENTER_WIDTH: f32 = LISTING_WIDTH - 2.0 * QUICK_INSET;
 
@@ -72,6 +75,8 @@ pub struct TitleBar {
     review_open: bool,
     /// Whether a newer release is out, which the bar holds a button for.
     update: bool,
+    /// Whether an installed language or language server has a newer version.
+    language_update: bool,
 }
 
 impl TitleBar {
@@ -96,6 +101,7 @@ impl TitleBar {
             sidebar_open: state.sidebar_open,
             review_open: state.review && state.review_session().is_some(),
             update: state.update_available(),
+            language_update: state.language_update_available(),
             ..Self::default()
         }
     }
@@ -125,6 +131,15 @@ impl TitleBar {
                 gap(0.5),
                 pm_style::h_full(),
             ])
+            .children(self.language_update.then(|| {
+                Button::new("Update languages", LANGUAGE_UPDATE)
+                    .variant(Variant::Ghost)
+                    .tone(Role::Accent)
+                    .size(Size::Sm)
+                    .build()
+                    .tooltip("A newer language or language server is available")
+                    .styles([pm_style::mr(1)])
+            }))
             .children(self.update.then(|| {
                 Button::new("Update", UPDATE)
                     .variant(Variant::Ghost)

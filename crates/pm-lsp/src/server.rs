@@ -405,12 +405,14 @@ impl LanguageServer {
             .collect();
         let raw = Raw::default();
         let applied = Applied::default();
+        let mut environment = env.clone();
+        environment.extend(spec.env.clone());
         let rpc = Rpc::start(
             program,
             &spec.args,
             root,
             &first,
-            env,
+            &environment,
             handler(
                 root,
                 spec.settings.clone(),
@@ -983,7 +985,10 @@ impl LanguageServer {
     }
 
     /// The symbols of the project whose names match `query`, as the server finds them, each with the place it is defined and its name.
-    pub(crate) fn workspace_symbols(&self, query: &str) -> Result<Vec<Found>, String> {
+    pub(crate) fn workspace_symbols(
+        &self,
+        query: &str,
+    ) -> Result<Vec<(Found, crate::provider::SymbolLabel)>, String> {
         let answer = self
             .rpc
             .request("workspace/symbol", json!({"query": query}), ANSWERING)?;
@@ -999,12 +1004,27 @@ impl LanguageServer {
                 let container = symbol
                     .get("containerName")
                     .and_then(Value::as_str)
-                    .filter(|container| !container.is_empty());
-                let shown = match container {
+                    .filter(|container| !container.is_empty())
+                    .map(str::to_owned);
+                let shown = match &container {
                     Some(container) => format!("{name}  {container}"),
-                    None => name,
+                    None => name.clone(),
                 };
-                Some((address, span, Some(shown)))
+                let kind = match symbol.get("kind").and_then(Value::as_u64) {
+                    Some(6 | 12) => "function",
+                    Some(5 | 10 | 11 | 23) => "type",
+                    Some(2..=4) => "module",
+                    Some(7 | 8 | 13) => "variable",
+                    _ => "other",
+                };
+                Some((
+                    (address, span, Some(shown)),
+                    crate::provider::SymbolLabel {
+                        name,
+                        kind: kind.to_owned(),
+                        container,
+                    },
+                ))
             })
             .collect())
     }
@@ -1024,8 +1044,12 @@ impl LanguageServer {
             .collect())
     }
 
-    /// What each name of the file at `uri` is, as the server says, one token to a stretch of a line.
-    pub(crate) fn semantic_tokens(&self, uri: &str) -> Result<Vec<SemanticToken>, String> {
+    /// What each name of the file at `uri` is, as the server says and `rules` read it, one token to a stretch of a line.
+    pub(crate) fn semantic_tokens(
+        &self,
+        uri: &str,
+        rules: &[crate::semantic::TokenRule],
+    ) -> Result<Vec<SemanticToken>, String> {
         if !self.has_semantic_tokens() {
             return Ok(Vec::new());
         }
@@ -1072,11 +1096,18 @@ impl LanguageServer {
                     .position(|held| held == wanted)
                     .is_some_and(|bit| group[4] >> bit & 1 == 1)
             };
+            let held: Vec<&str> = modifiers
+                .iter()
+                .enumerate()
+                .filter(|(bit, _)| group[4] >> bit & 1 == 1)
+                .map(|(_, held)| held.as_str())
+                .collect();
             tokens.push(SemanticToken {
                 line,
                 start,
                 length: group[2] as u32,
-                kind: token_kind(name, has("readonly") || has("static")),
+                kind: crate::semantic::kind_by_rules(rules, name, &held)
+                    .unwrap_or_else(|| token_kind(name, has("readonly") || has("static"))),
             });
         }
         Ok(tokens)
@@ -1358,21 +1389,17 @@ impl LanguageServer {
     }
 }
 
-/// What a name a server calls `name` is, as it is coloured, a variable that `fixed` is a constant.
+/// What a name of the standard types of tokens a server calls `name` is, as it is coloured, a variable that `fixed` is a constant; what a language's own server calls things beyond them is the language's `semantic_token_rules.json` to say.
 fn token_kind(name: &str, fixed: bool) -> TokenKind {
     match name {
         "namespace" | "type" | "class" | "enum" | "interface" | "struct" | "typeParameter"
-        | "builtinType" | "typeAlias" | "trait" | "lifetime" | "union" => TokenKind::Type,
-        "function" | "method" | "macro" | "decorator" | "derive" | "attribute" | "event" => {
+        | "trait" => TokenKind::Type,
+        "function" | "method" | "macro" | "decorator" | "attribute" | "event" => {
             TokenKind::Function
         }
-        "keyword" | "modifier" | "selfKeyword" | "selfTypeKeyword" | "controlFlow" => {
-            TokenKind::Keyword
-        }
-        "string" | "regexp" | "escapeSequence" | "formatSpecifier" | "character" => {
-            TokenKind::String
-        }
-        "number" | "enumMember" | "boolean" | "constant" | "const" => TokenKind::Constant,
+        "keyword" | "modifier" => TokenKind::Keyword,
+        "string" | "regexp" => TokenKind::String,
+        "number" | "enumMember" | "constant" | "const" => TokenKind::Constant,
         "comment" => TokenKind::Comment,
         "property" | "field" => TokenKind::Property,
         "operator" | "punctuation" => TokenKind::Operator,

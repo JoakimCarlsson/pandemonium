@@ -11,6 +11,7 @@ color = "#4fa3e0"
 grammar = "dockerfile"
 suffixes = ["dockerfile", "containerfile"]
 names = ["Dockerfile", "Containerfile"]
+patterns = ["Dockerfile.*", "Containerfile.*"]
 aliases = ["docker", "containerfile"]
 line_comment = "#"
 indent = 4
@@ -23,6 +24,55 @@ command = "docker-langserver"
 args = ["--stdio"]
 
 [server.install]
-kind = "npm"
+kind = "command"
+tool = "npm"
+needs = "Node.js and npm"
+steps = [["ci", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"]]
+copy = ["package.json", "package-lock.json"]
+bin = "node_modules/.bin"
 version = "0.15.0"
 packages = ["dockerfile-language-server-nodejs@0.15.0"]
+
+# A second server for the same files, from Docker, which runs beside the first.
+# It also reads Compose files, as `languages` says, and tells itself apart from
+# Dockerfiles by the name `dockercompose`, but it does not start for them until
+# the reader names it among the servers of Docker Compose.
+[[companion]]
+
+[companion.server]
+id = "docker-language-server"
+language_id = "dockerfile"
+languages = ["docker-compose"]
+command = "docker-language-server"
+args = ["start", "--stdio"]
+
+[companion.server.language_ids]
+docker-compose = "dockercompose"
+
+[companion.server.install]
+kind = "download"
+version = "0.20.1"
+
+[companion.server.install.downloads.linux-x86_64]
+url = "https://github.com/docker/docker-language-server/releases/download/v0.20.1/docker-language-server-linux-amd64-v0.20.1"
+sha256 = "01907aa5b0eae11e44cffea0a993d08aa155542a9af570295dd1dff39e67692a"
+
+[companion.server.install.downloads.linux-aarch64]
+url = "https://github.com/docker/docker-language-server/releases/download/v0.20.1/docker-language-server-linux-arm64-v0.20.1"
+sha256 = "bd56c7815e0a22cfb708669f3d5e817de91d9b54039ff7e52867142a132ad8d7"
+
+[companion.server.install.downloads.macos-x86_64]
+url = "https://github.com/docker/docker-language-server/releases/download/v0.20.1/docker-language-server-darwin-amd64-v0.20.1"
+sha256 = "2dbaec15645e940d1e02092f5b5e10148531a6206225e71faab7bfe71130b457"
+
+[companion.server.install.downloads.macos-aarch64]
+url = "https://github.com/docker/docker-language-server/releases/download/v0.20.1/docker-language-server-darwin-arm64-v0.20.1"
+sha256 = "5a9d48fd2b1334d7d20a62faf542e611cca32dc79a478553ad65c27437467fac"
+
+[companion.server.install.downloads.windows-x86_64]
+url = "https://github.com/docker/docker-language-server/releases/download/v0.20.1/docker-language-server-windows-amd64-v0.20.1.exe"
+sha256 = "3c1e5019cbd9779341d39c94589d058434ef295b3a1a0c0e89bdfb7ae4d59e2e"
+
+[companion.server.install.downloads.windows-aarch64]
+url = "https://github.com/docker/docker-language-server/releases/download/v0.20.1/docker-language-server-windows-arm64-v0.20.1.exe"
+sha256 = "ac1c1190deb7b605829a11702222eb5fe8a68968c287c8af34615f4f92c0712d"

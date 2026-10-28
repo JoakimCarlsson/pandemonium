@@ -24,9 +24,14 @@ pub fn language_folder(id: &str) -> Result<PathBuf, String> {
     Ok(languages_root()?.join(id))
 }
 
-/// The grammar of the installed language `id`.
+/// The grammar of the installed language `id`: the one in its folder, or the one of the language it builds on.
 pub fn grammar_file(id: &str) -> Result<PathBuf, String> {
-    Ok(language_folder(id)?.join("grammar.wasm"))
+    Ok(
+        crate::inherit::language_file(id, "grammar.wasm").unwrap_or_else(|| {
+            language_folder(id)
+                .map_or_else(|_| PathBuf::new(), |folder| folder.join("grammar.wasm"))
+        }),
+    )
 }
 
 /// The folder the versions of the language server `id` are installed in.
@@ -40,7 +45,7 @@ pub(crate) fn server_root(id: &str) -> Result<PathBuf, String> {
 }
 
 /// The platform this build runs on, as manifests name it: `linux-x86_64`, `macos-aarch64`, `windows-x86_64`.
-pub(crate) fn platform() -> String {
+pub fn platform() -> String {
     format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
 }
 

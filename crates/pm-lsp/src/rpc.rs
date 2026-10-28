@@ -70,13 +70,15 @@ fn receive(output: &mut impl BufRead) -> Option<Value> {
     serde_json::from_slice(&body).ok()
 }
 
-/// The path a server runs with: the folders `first` that exist, then `base`, or the machine's own path when there is none.
-fn path_with(first: &[PathBuf], base: Option<std::ffi::OsString>) -> Option<std::ffi::OsString> {
+/// The path the server `program` runs with: the folders `first` that exist, then `base`, or when there is none the machine's own path with the usual places programs install themselves added, so that a server started from a desktop session finds the tools it runs, such as `go` for a Go server.
+fn path_with(
+    program: &Path,
+    first: &[PathBuf],
+    base: Option<std::ffi::OsString>,
+) -> Option<std::ffi::OsString> {
     let existing = first.iter().filter(|folder| folder.is_dir()).cloned();
-    let machine = base
-        .or_else(|| std::env::var_os("PATH"))
-        .map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
-        .unwrap_or_default();
+    let machine: Vec<PathBuf> =
+        std::env::split_paths(&base.unwrap_or_else(|| pm_tools::path_beside(program))).collect();
     std::env::join_paths(existing.chain(machine)).ok()
 }
 
@@ -100,7 +102,11 @@ impl Rpc {
         for (name, value) in env.iter().filter(|(name, _)| *name != "PATH") {
             command.env(name, value);
         }
-        if let Some(path) = path_with(first, env.get("PATH").map(std::ffi::OsString::from)) {
+        if let Some(path) = path_with(
+            program,
+            first,
+            env.get("PATH").map(std::ffi::OsString::from),
+        ) {
             command.env("PATH", path);
         }
         let mut child = command

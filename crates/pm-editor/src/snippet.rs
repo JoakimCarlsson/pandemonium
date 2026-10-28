@@ -350,11 +350,11 @@ const TAGS: [&str; 62] = [
     "title",
 ];
 
-/// What the language `language` an Emmet abbreviation is written in, when it takes them.
-fn dialect_of(language: &str) -> Option<Dialect> {
-    match language {
-        "html" | "javascript" | "svelte" | "tsx" | "xml" => Some(Dialect::Markup),
-        "css" | "scss" => Some(Dialect::Style),
+/// The dialect an Emmet abbreviation is written in when a language says `word`.
+fn dialect_of(word: &str) -> Option<Dialect> {
+    match word {
+        "markup" => Some(Dialect::Markup),
+        "style" => Some(Dialect::Style),
         _ => None,
     }
 }
@@ -448,7 +448,7 @@ impl Document {
 
     /// The bytes of `before`, the text of a line from its start at `line_start` to the caret, that an Emmet abbreviation is written as, and what it writes out.
     fn abbreviation(&self, line_start: usize, before: &str) -> Option<(Range<usize>, String)> {
-        let dialect = dialect_of(self.language.as_deref()?)?;
+        let dialect = dialect_of(self.editing.emmet_dialect.as_deref()?)?;
         let unit = self.editing.unit(1);
         let trimmed = before.trim_start();
         let begin = before.len() - trimmed.len();

@@ -1,0 +1,46 @@
+# Sample: a Python-like language that exists to show the files and keys of a
+# language folder. It builds on Python for its grammar, outline, injections and
+# brackets, and writes the rest itself.
+
+name = "Sample"
+version = "0.1.0"
+description = "A sample language that uses every editing query and key."
+grammar = "python"
+inherits = "python"
+requires = ["python"]
+suffixes = ["smpl"]
+names = ["Samplefile"]
+aliases = ["sample"]
+line_comment = "# "
+indent = 2
+
+# A file with no suffix of its own is read as Sample when its first line says so.
+first_line_pattern = '^#!.*\bsample\b'
+
+# A line ending in `then` or `do` opens a block, whatever the syntax says.
+increase_indent_pattern = '\b(then|do)\s*$'
+
+# A line that starts with `end` closes one level, wherever it stands.
+decrease_indent_pattern = '^\s*end\b'
+
+# `else` and `elif` line up with the `if` they belong to, as indents.scm marks it.
+decrease_indent_patterns = [
+  { pattern = '^\s*(else|elif)\b', valid_after = ["if"] },
+]
+
+# `-` and `?` are part of a name, so a double click takes `is-ready?` whole.
+word_characters = ["-", "?"]
+
+# Quotes are not closed inside strings or comments, and brackets not inside comments.
+brackets = [
+  { start = "'", end = "'", close = true, not_in = ["string", "comment"] },
+  { start = "\"", end = "\"", close = true, not_in = ["string", "comment"] },
+  { start = "(", end = ")", close = true, not_in = ["comment"] },
+]
+
+# What overrides.scm names, and what differs inside it.
+[scope.string]
+line_comment = ""
+
+[scope.comment]
+line_comment = "# "

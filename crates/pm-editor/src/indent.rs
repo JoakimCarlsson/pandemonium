@@ -45,7 +45,9 @@ impl Document {
             .map(|syntax| syntax.indent_at(text, self.line_index(), caret))
             .unwrap_or_default();
         let before = text[self.line(self.line_of(caret)).start..caret].trim_end();
-        let deeper = indent.deeper || before.ends_with(['{', '(', '[', ':']);
+        let deeper = indent.deeper
+            || before.ends_with(['{', '(', '[', ':'])
+            || self.editing.indent_rules.increases(before);
         let closing = deeper
             && text[caret..]
                 .trim_start_matches([' ', '\t'])
@@ -64,8 +66,64 @@ impl Document {
         edits
     }
 
-    /// The edits that take a closing bracket `character`, just typed where its line held nothing else, back one level of indentation; none when it is not one or does not close a block.
+    /// The edits that take the line the caret is on back as the language's line patterns say, once `character` has just been typed and made the line start matching; none when no pattern does.
+    fn pattern_outdent_edits(&self, character: char) -> Vec<Edit> {
+        let rules = &self.editing.indent_rules;
+        if rules.is_empty() {
+            return Vec::new();
+        }
+        let text = self.field.text();
+        let caret = self.field.caret();
+        let row = self.line_of(caret);
+        let line = self.line(row);
+        let upto = &text[line.start..caret];
+        let before = &text[line.start..caret.saturating_sub(character.len_utf8())];
+        let leading_end = upto.len() - upto.trim_start_matches([' ', '\t']).len();
+        let leading = &upto[..leading_end];
+        let matched = |held: &str| rules.decreases(held) || rules.aligning(held).is_some();
+        if !matched(upto.trim_start()) || matched(before.trim_start()) {
+            return Vec::new();
+        }
+        let unit = self.editing.unit(1);
+        let indentation = match rules.aligning(upto.trim_start()) {
+            Some(rule) if !rule.valid_after.is_empty() => self
+                .syntax
+                .as_ref()
+                .map(|syntax| syntax.construct_starts(text, line.start, &rule.valid_after))
+                .unwrap_or_default()
+                .into_iter()
+                .rev()
+                .map(|(start_row, _)| {
+                    let held = self.line(start_row);
+                    let words = &text[held.clone()];
+                    words[..words.len() - words.trim_start_matches([' ', '\t']).len()].to_owned()
+                })
+                .find(|candidate| candidate.len() <= leading.len()),
+            _ => leading.strip_suffix(&unit).map(str::to_owned),
+        };
+        let Some(indentation) = indentation.filter(|held| held != leading) else {
+            return Vec::new();
+        };
+        let after = caret - leading.len() + indentation.len();
+        vec![Edit::Replace(
+            line.start..line.start + leading.len(),
+            indentation,
+            (after, after),
+        )]
+    }
+
+    /// The edits that take a closing bracket `character`, just typed where its line held nothing else, back one level of indentation, or the line back as the language's line patterns say; none when it is neither.
     pub fn outdent_edits(&self, character: char) -> Vec<Edit> {
+        let bracket = self.bracket_outdent_edits(character);
+        if bracket.is_empty() {
+            self.pattern_outdent_edits(character)
+        } else {
+            bracket
+        }
+    }
+
+    /// The edits that take a closing bracket `character`, just typed where its line held nothing else, back one level of indentation; none when it is not one or does not close a block.
+    fn bracket_outdent_edits(&self, character: char) -> Vec<Edit> {
         if !matches!(character, '}' | ')' | ']') {
             return Vec::new();
         }

@@ -10,9 +10,20 @@ color = "#e6c84f"
 grammar = "javascript"
 suffixes = ["js", "mjs", "cjs", "jsx"]
 aliases = ["js", "jsx"]
+requires = ["json"]
 line_comment = "//"
 indent = 2
+toolchain = "javascript"
+toolchain_name = "Node.js"
+emmet_dialect = "markup"
 pairs = ["()", "[]", "{}", "\"\"", "''", "``"]
+
+# Quotes are not closed inside strings and comments, which overrides.scm names.
+brackets = [
+  { start = "\"", end = "\"", close = true, not_in = ["string", "comment"] },
+  { start = "'", end = "'", close = true, not_in = ["string", "comment"] },
+  { start = "`", end = "`", close = true, not_in = ["string", "comment"] },
+]
 
 # Parts of a file that are edited differently. Inside the children of a JSX
 # element, comments are written {/* */} and there are no line comments, and
@@ -55,7 +66,12 @@ project = ["node_modules/.bin"]
 jsx = "javascriptreact"
 
 [server.install]
-kind = "npm"
+kind = "command"
+tool = "npm"
+needs = "Node.js and npm"
+steps = [["ci", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"]]
+copy = ["package.json", "package-lock.json"]
+bin = "node_modules/.bin"
 version = "6.0.2"
 packages = ["typescript-language-server@6.0.2", "typescript@6.0.3"]
 
@@ -80,7 +96,30 @@ project = ["node_modules/.bin"]
 classAttributes = ["class", "className", "ngClass", "class:list"]
 
 [companion.server.install]
-kind = "npm"
+kind = "command"
+tool = "npm"
+needs = "Node.js and npm"
+steps = [["ci", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"]]
+copy = ["package.json", "package-lock.json"]
+bin = "node_modules/.bin"
 version = "0.16.0"
 packages = ["@tailwindcss/language-server@0.16.0"]
 pin = "tailwindcss"
+
+# Where Node.js toolchains are kept: the system's, and those nvm and fnm hold.
+[[toolchain_source]]
+kind = "system"
+programs = ["node"]
+
+[[toolchain_source]]
+kind = "children"
+folder = "~/.nvm/versions/node"
+label = "nvm {name}"
+programs = ["node"]
+
+[[toolchain_source]]
+kind = "children"
+folder = "~/.local/share/fnm/node-versions"
+label = "fnm {name}"
+bin = "installation/bin"
+programs = ["node"]

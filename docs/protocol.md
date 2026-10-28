@@ -147,7 +147,7 @@ request with exactly one `response` carrying the same `id`.
 | `save_withheld`| `keys`: `[string]`                                                                               | `done`          |
 | `watch_folders`| `directories`: `[string]`                                                                       | `done`          |
 | `machine_settings`| none                                                                                          | `machine_settings` |
-| `save_machine_settings`| `settings`: `{git, history, agents, shell, languages, extensions}`                       | `done`          |
+| `save_machine_settings`| `settings`: `{git, history, agents, shell, languages, extensions, servers}`              | `done`          |
 | `latest_release`| `channel`: `stable` or `preview`                                                                 | `latest_release` |
 | `download_update`| `channel`, `version`                                                                            | `update_staged` |
 | `cancel_update`| none                                                                                              | `done`          |
@@ -183,7 +183,8 @@ request with exactly one `response` carrying the same `id`.
 | `terminals`    | none                                                                                             | `terminals`     |
 | `tasks`        | `directory`                                                                                      | `tasks`         |
 | `run_task`     | `directory`, `project` (optional), `task`: a [task](#tasks), `columns`, `rows`                   | `terminal`      |
-| `run_runnable` | `directory`, `project` (optional), `path`, `kind`, `name`, `columns`, `rows`                     | `terminal`      |
+| `runnable_tasks` | `directory`, `project` (optional), `path`, `tags`, `variables`, `position` (optional)       | `runnable_tasks` |
+| `run_runnable` | `directory`, `project` (optional), `path`, `kind` and `name` (optional, for clients that predate tags), `tags`, `variables`, `position` (optional), `task` (optional), `columns`, `rows` | `terminal`      |
 | `toolchains`   | `directory`, `project` (optional)                                                                | `toolchains`    |
 | `select_toolchain`| `project`, `language`, `toolchain` (optional)                                                 | `done`          |
 | `debug_scenarios`| `directory`, `file` (optional)                                                                 | `debug_scenarios` |
@@ -215,7 +216,7 @@ request with exactly one `response` carrying the same `id`.
 | `format_on_type` | `directory`, `path`, `version`, `position`, `character`                                        | `formatted`     |
 | `folding_ranges` | `directory`, `path`, `version`                                                                 | `folding_ranges` |
 | `linked_ranges` | `directory`, `path`, `version`, `position`                                                      | `linked_ranges` |
-| `semantic_tokens` | `directory`, `path`, `version`                                                                | `semantic_tokens` |
+| `semantic_tokens` | `directory`, `path`, `version`, `rules` (optional)                                            | `semantic_tokens` |
 | `inlay_hints`  | `directory`, `path`, `version`, `span`                                                           | `inlay_hints`   |
 | `inline_values` | `directory`, `path`, `version`, `span`, `frame`, `stopped`                                      | `inline_values` |
 | `code_lenses`  | `directory`, `path`, `version`                                                                   | `code_lenses`   |
@@ -481,10 +482,18 @@ everything said of them, its submodules' paths written from `directory`.
   empty. `extensions` maps an extension's folder name to `{granted}`, the
   capabilities it was allowed; `save_machine_settings` does not change it, only
   `install_extension` and `grant_extension` do. `languages` maps a language's id to `{tab_size, hard_tabs,
-  format_on_save, server_off, server_command}`: the first three are for clients
-  to edit with and are optional; `server_off` keeps the language server from
-  reading the language, and a `server_command` is started in place of the one
-  the language comes with. Files already open move to the new server at once.
+  format_on_save, server_off, server_command, servers}`: the first three are for
+  clients to edit with and are optional; `server_off` keeps the language server
+  from reading the language, and a `server_command` is started in place of the
+  one the language comes with. `servers` lists the language servers that read
+  the language, by id and in order: the first is the language's server and the
+  rest run beside it, `...` stands for the servers that run when nothing is
+  chosen, and a server that is opt-in for the language is started only when it
+  is named. `servers` at the top maps a server's id to what is set for it,
+  whichever language it reads: `{binary, arguments, env, initialization_options,
+  workspace_configuration}`, each over what the language says. Files already
+  open move to the new servers at once, and a server whose settings changed is
+  stopped and started again.
   The window sends the settings the server on its own machine keeps to every
   other server it reaches, as it reaches it and whenever they change, so a
   project on another machine works by the same settings.
@@ -610,10 +619,16 @@ everything said of them, its submodules' paths written from `directory`.
   installed only as part of another and left out of what a reader picks from;
   `busy` says what installing it is doing now, `problem` why installing it or
   its language server last failed, and `server` what the machine has of its
-  language server, in words. The list is `languages.json` read from
+  language server, in words. `update` says what is newer than what is
+  installed, the language as the list now has it or its language server, and
+  installing the language again, which a failed download leaves as it was,
+  brings it up to date. An extension package's `status` is what its
+  module last said it was doing, such as the release of a language server it
+  fetched, and its `problem` includes why its module was refused something. The
+  list is `languages.json` read from
   `https://raw.githubusercontent.com/JoakimCarlsson/pandemonium/<tag>/languages`,
   where the tag is the server's own release (`v<version>`); a debug
-  build reads the `languages` folder of its checkout instead, and
+  build, and the preview channel, read the `languages` folder of their checkout instead, and
   `PANDEMONIUM_LANGUAGES` names another folder or address for either. It is fetched again only
   when it changed, and the copy kept is used when it cannot be fetched. The
   language folders in `local-languages` in the server's data folder are listed
@@ -672,8 +687,12 @@ everything said of them, its submodules' paths written from `directory`.
   other languages that use it.
 - **`grammar`:** the grammar and queries of an installed language, found by its
   folder name or a name a code fence calls it, as `{id, symbol, aliases, wasm,
-  highlights, indents, outline, injections, brackets, indent, tabs,
-  line_comment, pairs}`. `wasm` is the tree-sitter grammar compiled to
+  highlights, indents, outline, injections, brackets, runnables, overrides,
+  redactions, textobjects, debugger, indent, tabs, line_comment, pairs,
+  scopes, tags, word_characters, bracket_pairs, increase_indent_pattern,
+  decrease_indent_pattern, decrease_indent_patterns}`. A language that builds on
+  another (`inherits`) is sent with the queries and grammar it takes from it.
+  `wasm` is the tree-sitter grammar compiled to
   WebAssembly, in base64; a client parses and highlights with it itself.
   `pairs` lists what the editor closes as it is opened, each the opening and
   the closing character, such as `"()"`. `scopes` names parts of a file that are
@@ -683,7 +702,12 @@ everything said of them, its submodules' paths written from `directory`.
   the language's (an empty one means there are none inside), `block_comment` is
   the `[open, close]` marks used when there is no line comment, and `emmet`
   says whether abbreviations expand there; a language that sets `emmet` in any
-  scope expands them only in those that set it true. `tags` names the node kinds
+  scope expands them only in those that set it true; a scope the language's
+  `overrides` query captures is one without `nodes`. `word_characters` are the
+  characters besides letters, digits and the underscore that are part of a
+  word, `bracket_pairs` are `{start, end, close, not_in}` for the pairs that
+  are not closed in some scopes, and the three `*_indent_pattern*` keys are the
+  language's line patterns for indentation. `tags` names the node kinds
   of `element`, `open`, `close` and tag `names`, with which the editor writes
   the closing tag when the `>` of an opening tag is typed.
 - **`open_document`:** opens `path` of the folder `directory` for the language
@@ -726,7 +750,9 @@ everything said of them, its submodules' paths written from `directory`.
   them, as the language server gives them; none when it knows of none.
 - **`semantic_tokens`:** what each name of the open file at `version` is, as
   the language server says, one token to a stretch of a line; none when it
-  does not say.
+  does not say. `rules` are the reader's own rules for what the types of tokens
+  look like, `{token_type, token_modifiers, style}`, which come before those of
+  the language's `semantic_token_rules.json`.
 - **`inlay_hints`:** what to show inside the lines of the open file at
   `version` within `span`, as the language server says; none when it does not
   say.
@@ -737,7 +763,11 @@ everything said of them, its submodules' paths written from `directory`.
 - **`code_lenses`:** what to show with stretches of the open file at
   `version`, as the language server says, each already filled in by the
   server. The server keeps the list as given, and `press_code_lens` takes one
-  by its place in it.
+  by its place in it. With `dependencies` set, the lenses of the language
+  server are followed by one for each dependency the file lists, when its
+  language says how and the registry names a newer release; pressing one
+  answers with the change that writes the version, and the lookups are
+  cached on the server. A client that does not send it gets none of these.
 - **`press_code_lens`:** presses one of the lenses last given for the open
   file: the places it points to when it counts uses, and otherwise the
   changes the language server made carrying out its command, as for
@@ -797,7 +827,7 @@ embedded context, and anything else as a link to the stored file.
 | `mcp_servers` | `servers`: `[{name, target, env, description, website, enabled, extension}]`          |
 | `library`    | `product`, `items`, `withheld`, as described under `library` above |
 | `tool_sets`  | `product`, `sets`, `withheld`, as described under `library` above |
-| `machine_settings` | `settings`: `{git, history, agents, shell, languages, extensions}`, as `save_machine_settings` takes them |
+| `machine_settings` | `settings`: `{git, history, agents, shell, languages, extensions, servers}`, as `save_machine_settings` takes them |
 | `latest_release` | `version`: the version, or null when none was found; `url`: its page; `name`, `published`, `body` (markdown notes): each null when absent; `assets`: `[{name, url, size}]` |
 | `update_staged` | `path`: where the checked and unpacked update is, to install from |
 | `registry_agents` | `agents`: `[{id, name, version, description, website, command, env}]` |
@@ -807,20 +837,21 @@ embedded context, and anything else as a link to the stored file.
 | `terminal`   | `terminal`: the number of the shell that was started      |
 | `terminals`  | `terminals`: `[{terminal, directory, columns, rows}]`, oldest first; `directory` is the address `open_terminal` was given |
 | `tasks`      | `tasks`: `[Task]`, those the project writes first; `problem`: why its own file could not be read, when it could not |
-| `toolchains` | `toolchains`: `[{language, id, name, detail, selected}]`, grouped by language |
+| `runnable_tasks` | `tasks`: `[{name, command}]` that can run the place, the one `run_runnable` runs by default first |
+| `toolchains` | `toolchains`: `[{language, id, name, detail, selected, language_name}]`, grouped by language; `language_name` is what the manifest of a language of the family calls it, such as `Node.js` |
 | `debug_scenarios` | `scenarios`: `[{label, adapter, installed, attach, source, task}]`, the order `debug_start` chooses by; `task` is the task the scenario names to run first |
-| `debug_processes` | `adapters`: `[{id, name}]` installed, `processes`: `[{pid, name, command}]`, newest first |
+| `debug_processes` | `adapters`: `[{id, name, attach_names}]` installed, where `attach_names` are the starts of the names of the programs an adapter attaches to, an empty one standing for any, `processes`: `[{pid, name, command}]`, newest first |
 | `debug`      | `debug`: the number of the session, `view`: the [view](#debugging) of it now |
 | `debugs`     | `debugs`: `[{debug, directory, label}]`, oldest first      |
 | `owners`     | `owners`: `[{login, organization}]`                       |
 | `repositories` | `repositories`: `[{name, description, private, url}]`   |
 | `folders`    | `path`: absolute, `names`: the folders inside it           |
 | `directory`  | `path`: a `clone` made   |
-| `extensions` | `extensions`: `[{id, name, kind, version, description, icon, color, hidden, suffixes, names, patterns, installed, busy, problem, server, local, owner, provides, requests, granted}]` |
+| `extensions` | `extensions`: `[{id, name, kind, version, description, icon, color, hidden, suffixes, names, patterns, installed, busy, problem, server, local, owner, provides, requests, granted, status}]` |
 | `extension_preview` | `extension`: one entry as `extensions` lists them, not installed, with what it `provides` and `requests` |
 | `extension_assets` | `themes`: `[{extension, name, dark, light}]`, `icon_themes`: `[{extension, name, icons: [{suffix, svg, color}]}]`, `commands`: `[{extension, id, title, description}]` |
 | `extension_command` | `prompt`: the text to put in the prompt box, `message`: a line to tell the reader; each is optional |
-| `grammar`    | `{id, symbol, aliases, wasm, highlights, indents, outline, injections, brackets, indent, tabs, line_comment, pairs, scopes, tags}` |
+| `grammar`    | `{id, symbol, aliases, wasm, highlights, indents, outline, injections, brackets, runnables, overrides, redactions, textobjects, debugger, indent, tabs, line_comment, pairs, scopes, tags, word_characters, bracket_pairs, increase_indent_pattern, decrease_indent_pattern, decrease_indent_patterns}` |
 | `opened`     | `triggers`: the characters after which the server offers completions; `signature`: those after which it tells what the call the caret is in looks like; `format`: those after which it formats what was typed; `formats_ranges`, `folds`, `links`, `semantic_tokens`, `inlay_hints`, `code_lens`, `inline_values`: whether it formats a stretch, says what can be folded, says what is edited together, says what each name is, says what to show inside lines, says what to show with stretches and says which names to show the values of while a program is paused |
 | `completions`| `items`: `[{label, detail, kind, text, span, filter, sort, documentation}]`, `kind` one of `function`, `variable`, `type`, `module`, `keyword`, `constant`, `snippet`, `other` |
 | `hovered`    | `hover`: `{text, span}` or null |
@@ -1011,14 +1042,18 @@ one.
   shell's environment. `group` is `build`, `test`, `run` or empty. `language` is
   the family of the toolchain it runs with (`rust`, `javascript`, `python`,
   `go`) or empty. `source` is where it was found. Only `name` and `command` are
-  required when a client sends one.
+  required when a client sends one. `tags` are the tags of the places of a file
+  the task is run from; a task of the project with a tag is run from a place
+  with it in place of the tasks the languages ship for the tag.
 - `tasks` lists them: those written in `.pandemonium.tasks.json` in the root of
   the folder, `{"tasks": [{"name", "command", …}]}`, then those its manifests
-  imply: Cargo (`build`, `check`, `test`, `clippy`, `run`), the scripts of a
+  imply, which the `tasks.json` of each installed language makes of them:
+  Cargo (`build`, `check`, `test`, `clippy`, `run`), the scripts of a
   `package.json` run with the package manager its lockfile names (a Next.js
   app lists its `dev`, `build`, `start` and `lint` scripts), the targets of
   a Makefile, Go modules and Python projects. A detected task a written one has
-  the name of is left out.
+  the name of is left out, and so is a written task that reads a variable of a
+  place in a file.
 - `run_task` starts the user's shell in the task's folder with the task's
   environment and the toolchain chosen for its language, types the command into
   it, and answers `terminal` as `open_terminal` does: the connection is attached
@@ -1027,23 +1062,29 @@ one.
   choice is kept for; the repository the folder is a worktree of when it is
   missing, and the folder itself when it is not in one.
 - `run_runnable` does the same for a place a language marks as runnable in the
-  file `path`, such as a `main` or a test function. The language's
-  `config.toml` says what running each `kind` is, with `{name}` standing for
-  `name`, and the nearest folder above the file that holds the `marker` file it
-  names is the folder the command runs in. A language marks places with its
-  `runnables.scm`, whose captures `@run.<kind>` and `@name` clients read.
+  file `path`, such as a `main`, a test function or a service of a compose
+  file. The client sends what its copy of the language's `runnables.scm` found:
+  the place's `tags` (`kind` is the one tag of a client that sends none, as it was when kinds were fixed),
+  what each of its captures matched as `variables` (`name` is the one
+  `name` variable of a client that sends none) and its `position`, a line and a
+  column from zero. The server runs the first task tied to any of the tags: the
+  project's own task with a tag, when it has one, or else a template of an
+  installed language's `tasks.json`; `task` names another of those tied to the
+  place. The command has the variables of the file, the place and its captures
+  put in, and its shell is started with them in its environment as
+  `PM_CUSTOM_<name>` and the `PM_` variables of the extensions document. The
+  nearest folder above the file that holds a template's `marker` file is the
+  folder the command runs in.
+- `runnable_tasks` lists the tasks that can run a place, as `run_runnable` would pick them, so that a client can let the reader choose one; the name of the chosen one is `run_runnable`'s `task`.
 - `toolchains` lists what is installed on the server's machine, and the virtual
-  environments the project keeps, for each language: the toolchains of rustup,
-  the Node.js versions nvm and fnm keep, Python found on the path, in the
-  project's `.venv` and in pyenv, and Go found on the path, in `/usr/local/go`
-  and in `~/sdk`. `system` is the one the machine's own path finds. `selected`
+  environments the project keeps, for each language, in the places the
+  `toolchain_source` tables of its installed language folders name. `system` is the one the machine's own path finds. `selected`
   marks the one the project's language is set to, which is `system` until one is
   chosen. `select_toolchain` chooses `toolchain` for `language` in `project`, or
   clears the choice when it is missing. The choice is kept by the server and used
   for the tasks it runs, including the one a debug scenario names, and for the
   language servers it starts for the project.
-- A debug scenario that names a task, `preLaunchTask` in a `launch.json` or
-  `build` in `.zed/debug.json`, shows it as `task` in `debug_scenarios`. `debug_start`
+- A debug scenario that names a task, `preLaunchTask` in a `launch.json`, shows it as `task` in `debug_scenarios`. `debug_start`
   runs that task to its end first and fails, with what the task printed last,
   without starting the adapter when the task is not one of the project's or does
   not succeed.
@@ -1053,14 +1094,17 @@ one.
 A program is debugged by a debug adapter the server runs beside the folder, over
 the Debug Adapter Protocol. The server keeps the session going when no client is
 attached, and tells the connections watching it what it looks like after it
-moves on.
+moves on. Which adapters there are, and what a file can be debugged as with
+nothing written, is the `debug_adapter` and `debug_scenario` tables of the
+installed languages' `config.toml` and the `debug_adapters` of the installed
+extensions, described in [`docs/extensions.md`](extensions.md).
 
 ```json
 { "type": "debug", "debug": 1, "view": { "label": "Python: Current File", "standing": "stopped", "reason": "breakpoint", "threads": [], "thread": 1, "frames": [], "frame": 7, "scopes": [], "variables": [], "watches": [], "watched": [], "lines": [], "line_count": 0, "placed": [] }, "events": [{ "paused": { "id": 7, "name": "main", "path": "/home/me/app/main.py", "line": 11, "column": 0 } }] }
 ```
 
 - `debug_scenarios` lists what a folder can be debugged as: the configurations
-  of `.pandemonium.launch.json`, `.vscode/launch.json` and `.zed/debug.json`, and what the file in front can
+  of `.pandemonium.launch.json`, and `.vscode/launch.json`, and what the file in front can
   be run as without any written. `debug_start` chooses one by its place in that
   list, with `file` the same as it was asked for, and sets `files` as the
   breakpoints, lines counted from zero, before the program runs.

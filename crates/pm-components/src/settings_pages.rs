@@ -131,7 +131,8 @@ fn shown(setting: Setting, state: &WorkspaceState) -> bool {
         | Setting::LanguageIndent
         | Setting::LanguageFormat
         | Setting::LanguageServer
-        | Setting::LanguageServerCommand => state.settings_language().is_some(),
+        | Setting::LanguageServerCommand
+        | Setting::LanguageServers => state.settings_language().is_some(),
         _ => true,
     }
 }

@@ -145,6 +145,9 @@ pub fn standing(extension: &ExtensionInfo) -> (String, Role) {
     if extension.kind == "extension" {
         return (String::new(), Role::Subtle);
     }
+    if let Some(update) = &extension.update {
+        return (update.clone(), Role::Accent);
+    }
     match (&extension.server, extension.installed) {
         (Some(server), true) => (server.clone(), Role::Muted),
         (None, true) => ("No language server".to_owned(), Role::Subtle),
@@ -382,7 +385,11 @@ impl WorkspaceState {
     pub(crate) fn install_or_remove(&mut self, extension: &ExtensionInfo) {
         if extension.busy.is_none() {
             self.outbox
-                .push(if extension.installed && extension.kind == "extension" {
+                .push(if extension.installed && extension.update.is_some() {
+                    Outgoing::InstallExtensions {
+                        ids: vec![extension.id.clone()],
+                    }
+                } else if extension.installed && extension.kind == "extension" {
                     Outgoing::RemovePackage {
                         id: extension.id.clone(),
                     }
@@ -460,6 +467,10 @@ pub(crate) fn row(extension: &ExtensionInfo, action: FocusId) -> Node {
             .variant(Variant::Ghost)
             .size(Size::Sm)
             .disabled(true)
+            .build(),
+        (false, true) if extension.update.is_some() => Button::new("Update", action)
+            .variant(Variant::Outline)
+            .size(Size::Sm)
             .build(),
         (false, true) => Button::new("Uninstall", action)
             .variant(Variant::Ghost)
