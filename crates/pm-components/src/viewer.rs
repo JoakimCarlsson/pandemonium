@@ -6,10 +6,10 @@ use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_protocol::{HintKind, Severity};
 use pm_style::{
-    Radius, Role, bg, border_b, border_color, code_px, cursor_pointer, cursor_text, flex, flex_1,
-    flex_col, flex_none, font_mono, gap, h, h_px, items_center, justify_center, justify_end,
-    leading_ratio, min_h, min_w_px, ml, overflow_hidden, pl, pr, px, py, relative, rounded,
-    rounded_full, text_color, w, w_px,
+    Color, Radius, Role, bg, border_b, border_color, code_px, cursor_pointer, cursor_text, flex,
+    flex_1, flex_col, flex_none, font_mono, gap, h, h_px, items_center, justify_center,
+    justify_end, leading_ratio, min_h, min_w_px, ml, overflow_hidden, pl, pr, px, py, relative,
+    rounded, rounded_full, text_color, w, w_px,
 };
 use pm_text::Shaper;
 use pm_treesitter::{Highlight, Kind};
@@ -18,6 +18,7 @@ use pm_ui::{Mark, Node, Paint, node, text};
 use crate::Button;
 use crate::annotations::lens_mark;
 use crate::button::Variant;
+use crate::color_picker::COLOR_SWATCH_BASE;
 use crate::debug::{Dot, Gutter, breakpoint_mark};
 use crate::file_icon::file_icon;
 use crate::git_controls::VIEWER_SCROLL;
@@ -27,7 +28,7 @@ use crate::parts::{glyph, line, spacer};
 use crate::size::Size;
 use crate::state::WorkspaceState;
 use crate::tasks::run_mark;
-use pm_editor::{Document, EditorSettings, Hint, Lens, LineChange};
+use pm_editor::{Document, EditorSettings, Hint, Lens, LineChange, Swatch};
 
 /// How wide a view of a file must be, in logical pixels, for a minimap to be drawn beside it.
 const MINIMAP_ROOM: f32 = 420.0;
@@ -416,14 +417,17 @@ pub(crate) fn file_line(
     let lens_row = document.lens_row_at(index);
     let text_segments = &segments[usize::from(lens_row)..];
     let last = text_segments.len().saturating_sub(1);
-    let hints: Vec<&Hint> = if settings.inlay_hints {
+    let swatches = document.colors_on(index);
+    let mut hints: Vec<&Hint> = if settings.inlay_hints {
         document.hints_on(index).iter().collect()
     } else {
         Vec::new()
     }
     .into_iter()
     .chain(document.values_on(index))
+    .chain(swatches.iter())
     .collect();
+    hints.sort_by_key(|hint| hint.offset);
     let run_lenses: Vec<(usize, String)> = document
         .run_lens_items()
         .into_iter()
@@ -602,6 +606,29 @@ fn run_lens_row(
 
 /// The text of `hint` written inside a line in a smaller, quieter hand than the code around it.
 fn hint_chip(hint: &Hint, font: u32) -> Node {
+    if let Some(Swatch {
+        color: [red, green, blue, alpha],
+        index,
+    }) = hint.swatch
+    {
+        let side = (font as f32 * 0.8).max(8.0);
+        return node()
+            .styles([
+                flex(),
+                items_center(),
+                flex_none(),
+                pr(1.0),
+                cursor_pointer(),
+            ])
+            .focusable(FocusId(COLOR_SWATCH_BASE + index as u64))
+            .child(node().styles([
+                w_px(side),
+                h_px(side),
+                flex_none(),
+                rounded(Radius::Sm),
+                bg(Color::rgb(red, green, blue).alpha(f32::from(alpha) / 255.0)),
+            ]));
+    }
     let tone = match hint.kind {
         HintKind::Type | HintKind::Value => Role::Subtle,
         HintKind::Parameter | HintKind::Other => Role::Muted,

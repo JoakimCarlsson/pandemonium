@@ -347,6 +347,10 @@ pub enum Shot {
     Signing,
     /// The same file with brackets coloured by depth, names coloured by what the language server says they are, hints inside lines and lenses at the ends of lines.
     Annotated,
+    /// The Rust file with small squares of colour before the stretches its language server says spell a colour.
+    ColorSwatches,
+    /// The same file with the box for changing the first colour open, and the ways its language server offers to write it listed.
+    ColorPicker,
     /// The review panel on its search tab, with the hits of a search for a word, grouped by file.
     ProjectSearch,
     /// The hits of a search as excerpts of three files, one under another, edited in place.
@@ -774,6 +778,76 @@ fn annotated() -> WorkspaceState {
                 lens("pub struct Session", "Session", "3 implementations", true),
                 lens("pub fn count", "count", "2 references", true),
                 lens("pub fn new", "new", "Run", false),
+            ],
+        )
+}
+
+/// The Rust file with swatches before three stretches its language server says spell a colour.
+fn color_swatches() -> WorkspaceState {
+    let state = code();
+    let (text, version) = state
+        .shown_document()
+        .map(|document| (document.field.text().to_owned(), document.version))
+        .unwrap_or_default();
+    let swatch = |line: &str, word: &str, [red, green, blue, alpha]: [u8; 4]| {
+        let row = text
+            .lines()
+            .position(|held| held.contains(line))
+            .unwrap_or(0);
+        let column = text
+            .lines()
+            .nth(row)
+            .and_then(|held| held.find(word))
+            .unwrap_or(0) as u32;
+        pm_protocol::ColorSwatch {
+            span: pm_protocol::Span::new(
+                pm_protocol::Position::new(row as u32, column),
+                pm_protocol::Position::new(row as u32, column + word.len() as u32),
+            ),
+            red,
+            green,
+            blue,
+            alpha,
+        }
+    };
+    state
+        .with_opened(
+            0,
+            CODE_PATH,
+            Ok(pm_protocol::Triggers {
+                colors: true,
+                ..Default::default()
+            }),
+        )
+        .with_colors(
+            0,
+            CODE_PATH,
+            version,
+            vec![
+                swatch("pub struct Session", "Session", [0xe0, 0x4f, 0x5f, 0xff]),
+                swatch("pub fn count", "count", [0x3d, 0xa5, 0x6c, 0xff]),
+                swatch("pub fn new", "new", [0x4f, 0x8c, 0xe0, 0x80]),
+            ],
+        )
+}
+
+/// The Rust file with the box for changing its first colour open, over the ways its language server offers to write it.
+fn color_picker() -> WorkspaceState {
+    let format = |label: &str| pm_protocol::ColorPresentation {
+        label: label.to_owned(),
+        text: label.to_owned(),
+        ..Default::default()
+    };
+    color_swatches()
+        .color_picker_requested(0, (430.0, 262.0))
+        .with_color_presentations(
+            0,
+            CODE_PATH,
+            [0xe0, 0x4f, 0x5f, 0xff],
+            vec![
+                format("#e04f5f"),
+                format("rgb(224, 79, 95)"),
+                format("hsl(354, 70%, 60%)"),
             ],
         )
 }
@@ -2128,6 +2202,8 @@ impl Shot {
             Self::BranchesSubmodule(inside) => Screen::Workspace(branches_submodule(inside)),
             Self::Signing => Screen::Workspace(signing()),
             Self::Annotated => Screen::Workspace(annotated()),
+            Self::ColorSwatches => Screen::Workspace(color_swatches()),
+            Self::ColorPicker => Screen::Workspace(color_picker()),
             Self::ProjectSearch => Screen::Workspace(project_search()),
             Self::Excerpts => Screen::Workspace(excerpts()),
             Self::TabMenu => Screen::Workspace(code().with_tab_menu(0, (500.0, 52.0))),

@@ -60,6 +60,22 @@ impl WorkspaceState {
                 version,
             });
         }
+        if document.wants_document_links() {
+            document.document_links_asked(version);
+            asking.push(Outgoing::DocumentLinks {
+                session,
+                path: path.clone(),
+                version,
+            });
+        }
+        if document.wants_colors() {
+            document.colors_asked(version);
+            asking.push(Outgoing::Colors {
+                session,
+                path: path.clone(),
+                version,
+            });
+        }
         if hints && document.wants_inlay_hints() {
             document.inlay_hints_asked(version);
             asking.push(Outgoing::InlayHints {
@@ -92,6 +108,34 @@ impl WorkspaceState {
     ) -> Self {
         if let Some(document) = self.file_mut(session, path) {
             document.take_semantic_tokens(version, tokens);
+        }
+        self
+    }
+
+    /// The state after the language server said which stretches of the file at `path` of the session at `session` lead somewhere when pressed, as the text was at `version`.
+    pub fn with_document_links(
+        mut self,
+        session: usize,
+        path: &str,
+        version: i32,
+        links: Vec<pm_protocol::DocumentLink>,
+    ) -> Self {
+        if let Some(document) = self.file_mut(session, path) {
+            document.take_document_links(version, links);
+        }
+        self
+    }
+
+    /// The state after the language server said which stretches of the file at `path` of the session at `session` spell a colour, as the text was at `version`.
+    pub fn with_colors(
+        mut self,
+        session: usize,
+        path: &str,
+        version: i32,
+        colors: Vec<pm_protocol::ColorSwatch>,
+    ) -> Self {
+        if let Some(document) = self.file_mut(session, path) {
+            document.take_colors(version, colors);
         }
         self
     }

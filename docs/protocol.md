@@ -219,6 +219,10 @@ request with exactly one `response` carrying the same `id`.
 | `linked_ranges` | `directory`, `path`, `version`, `position`                                                      | `linked_ranges` |
 | `semantic_tokens` | `directory`, `path`, `version`, `rules` (optional)                                            | `semantic_tokens` |
 | `inlay_hints`  | `directory`, `path`, `version`, `span`                                                           | `inlay_hints`   |
+| `document_links` | `directory`, `path`, `version`                                                                 | `document_links` |
+| `colors`       | `directory`, `path`, `version`                                                                   | `colors`        |
+| `resolve_link` | `directory`, `path`, `link`: a link's `unresolved` target                                       | `link_resolved` |
+| `color_presentations` | `directory`, `path`, `version`, `span`, `color`: `[red, green, blue, alpha]`, each 0 to 255 | `color_presentations` |
 | `inline_values` | `directory`, `path`, `version`, `span`, `frame`, `stopped`                                      | `inline_values` |
 | `code_lenses`  | `directory`, `path`, `version`                                                                   | `code_lenses`   |
 | `press_code_lens` | `directory`, `path`, `index`                                                                  | `lens_pressed`  |
@@ -229,6 +233,7 @@ request with exactly one `response` carrying the same `id`.
 | `blame`        | `directory`, `path`, `line`                                                                      | `blamed`        |
 | `highlights`   | `directory`, `path`, `version`, `position`                                                       | `highlights`    |
 | `signature`    | `directory`, `path`, `version`, `position`                                                       | `signature`     |
+| `prepare_rename` | `directory`, `path`, `version`, `position`                                                     | `rename_target` |
 | `rename`       | `directory`, `path`, `version`, `position`, `name`                                               | `edited`        |
 | `code_actions` | `directory`, `path`, `version`, `span`                                                           | `code_actions`  |
 | `take_code_action` | `directory`, `path`, `index`                                                                 | `edited`        |
@@ -761,6 +766,18 @@ everything said of them, its submodules' paths written from `directory`.
   does not say. `rules` are the reader's own rules for what the types of tokens
   look like, `{token_type, token_modifiers, style}`, which come before those of
   the language's `semantic_token_rules.json`.
+- **`document_links`:** which stretches of the open file at `version` lead
+  somewhere when pressed, as the language server says: web addresses, and
+  files inside the folder with the place they name. Links to anywhere else are
+  left out, and so are links the server gives no address for.
+- **`resolve_link`:** where a link the server gave without an address leads,
+  asked of the server that listed it when the link is pressed. `link_resolved`
+  holds `target`, a link target as in `document_links`, or null.
+- **`color_presentations`:** the ways the language server offers to write
+  `color` in place of `span`, such as `#rrggbb` or `rgb(…)`; `span` is the
+  stretch the colour is written in.
+- **`colors`:** which stretches of the open file at `version` spell a colour, as
+  the language server says; none when it does not say.
 - **`inlay_hints`:** what to show inside the lines of the open file at
   `version` within `span`, as the language server says; none when it does not
   say.
@@ -785,6 +802,10 @@ everything said of them, its submodules' paths written from `directory`.
   `references`, `incoming_calls`, `outgoing_calls`, `supertypes` or `subtypes`. A file inside the folder
   is named by its path from the root; one outside it by its absolute path, with
   the whole text it holds for the first four, to be shown read only.
+- **`prepare_rename`:** asks the language server what can be renamed at
+  `position`. `rename_target` holds `target`: `{span, placeholder}`, each null
+  when the server leaves it to the word at the place, or null when nothing
+  there can be renamed.
 - **`rename`, `take_code_action`:** carry out an edit across the folder. Files
   no connection has open are changed on disk by the server; the changes to the
   open ones come back in `edited` for the client to make, each a stretch of
@@ -860,7 +881,7 @@ embedded context, and anything else as a link to the stored file.
 | `extension_assets` | `themes`: `[{extension, name, dark, light}]`, `icon_themes`: `[{extension, name, icons: [{suffix, svg, color}]}]`, `commands`: `[{extension, id, title, description}]` |
 | `extension_command` | `prompt`: the text to put in the prompt box, `message`: a line to tell the reader; each is optional |
 | `grammar`    | `{id, symbol, aliases, wasm, highlights, indents, outline, injections, brackets, runnables, overrides, redactions, textobjects, debugger, indent, tabs, line_comment, pairs, scopes, tags, word_characters, bracket_pairs, increase_indent_pattern, decrease_indent_pattern, decrease_indent_patterns}` |
-| `opened`     | `triggers`: the characters after which the server offers completions; `signature`: those after which it tells what the call the caret is in looks like; `format`: those after which it formats what was typed; `formats_ranges`, `folds`, `links`, `semantic_tokens`, `inlay_hints`, `code_lens`, `inline_values`: whether it formats a stretch, says what can be folded, says what is edited together, says what each name is, says what to show inside lines, says what to show with stretches and says which names to show the values of while a program is paused |
+| `opened`     | `triggers`: the characters after which the server offers completions; `signature`: those after which it tells what the call the caret is in looks like; `format`: those after which it formats what was typed; `formats_ranges`, `folds`, `links`, `semantic_tokens`, `inlay_hints`, `code_lens`, `inline_values`, `document_links`, `colors`: whether it formats a stretch, says what can be folded, says what is edited together, says what each name is, says what to show inside lines, says what to show with stretches and says which names to show the values of while a program is paused, says which stretches lead somewhere when pressed and says which stretches spell a colour |
 | `completion_resolved` | `item`: a completion, as in `completions`, with what its server added when asked |
 | `completions`| `items`: `[{label, detail, kind, text, span, filter, sort, documentation, additional_edits, resolve}]`, `kind` one of `function`, `variable`, `type`, `module`, `keyword`, `constant`, `snippet`, `other` |
 | `hovered`    | `hover`: `{text, span}` or null |
@@ -868,6 +889,10 @@ embedded context, and anything else as a link to the stored file.
 | `folding_ranges` | `ranges`: `[{start, end}]`, the first and last line of each block, counted from 0 |
 | `linked_ranges` | `spans`: the stretches edited together |
 | `semantic_tokens` | `tokens`: `[{line, start, length, kind}]`, `start` and `length` in UTF-16 code units, `kind` one of `keyword`, `function`, `type`, `string`, `constant`, `comment`, `property`, `operator`, `variable` |
+| `document_links` | `links`: `[{span, target}]`, `target` one of `{kind: "url", address}`, `{kind: "file", path, position}` with `position` null when the link names none, or `{kind: "unresolved", link}` for a link the server says where it leads only when asked |
+| `link_resolved` | `target`: a link target as in `document_links`, or null |
+| `color_presentations` | `presentations`: `[{label, span, text, additional_edits}]`, `additional_edits` as in `completions` |
+| `colors` | `colors`: `[{span, red, green, blue, alpha}]`, each channel from 0 to 255 |
 | `inlay_hints` | `hints`: `[{position, label, kind, pad_left, pad_right}]`, `kind` one of `type`, `parameter`, `other`, `value` |
 | `inline_values` | `values`: `[{span, kind, text}]`, `kind` one of `text` (`text` is the text), `variable` (`text` the name, or none for the one the span spells), `expression` (`text` the expression, or none for the one the span spells) |
 | `code_lenses` | `lenses`: `[{span, title, pressable}]` |

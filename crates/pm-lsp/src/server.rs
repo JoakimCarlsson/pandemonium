@@ -13,9 +13,9 @@ use crate::resolve::{found, managed};
 use crate::rpc::{Handler, Rpc};
 use crate::snippet;
 use crate::types::{
-    CodeAction, CodeLens, Completion, CompletionKind, Diagnostic, FoldRange, HintKind, Hover,
-    InlayHint, InlineValue, InlineValueKind, Seek, SemanticToken, Severity, Signature, TextChange,
-    TokenKind,
+    CodeAction, CodeLens, ColorPresentation, ColorSwatch, Completion, CompletionKind, Diagnostic,
+    FoldRange, HintKind, Hover, InlayHint, InlineValue, InlineValueKind, RenameTarget, Seek,
+    SemanticToken, Severity, Signature, TextChange, TokenKind,
 };
 use crate::uri::file_uri;
 
@@ -84,6 +84,17 @@ const MOST_HINTS: usize = 4000;
 /// The most lenses a client is given for one file, and the most a server is asked to fill in.
 const MOST_LENSES: usize = 300;
 
+/// What a language server says of where a link leads.
+pub(crate) enum LinkAnswer {
+    /// The address it leads to.
+    Address(String),
+    /// Nothing yet: the link as the server wrote it, to hand back for it to say.
+    Raw(String),
+}
+
+/// The most links, and the most colours, a client is given for one file.
+const MOST_LINKS: usize = 2000;
+
 /// A running language server.
 pub(crate) struct LanguageServer {
     /// The conversation with it.
@@ -102,6 +113,8 @@ pub(crate) struct LanguageServer {
     sink: DiagnosticsSink,
     /// For each file it is asked diagnostics of, by address: how many times it was asked for, to leave all but the last of a burst of changes unasked, and the result it last answered with.
     pulled: Mutex<HashMap<String, (u64, Option<String>)>>,
+    /// For each file it is asked semantic tokens of, by address: the result id it answered with and the numbers it described the tokens in, to ask for only what changed next time.
+    token_data: Mutex<HashMap<String, (String, Vec<u64>)>>,
 }
 
 /// The value at the dotted path `section` of `settings`, or nothing.
@@ -280,7 +293,7 @@ fn capabilities() -> Value {
             "callHierarchy": {},
             "typeHierarchy": {},
             "semanticTokens": {
-                "requests": {"range": false, "full": true},
+                "requests": {"range": false, "full": {"delta": true}},
                 "tokenTypes": TOKEN_TYPES,
                 "tokenModifiers": ["declaration", "definition", "readonly", "static", "deprecated", "abstract", "async", "modification", "documentation", "defaultLibrary"],
                 "formats": ["relative"],
@@ -290,7 +303,9 @@ fn capabilities() -> Value {
             "inlayHint": {"dynamicRegistration": false},
             "inlineValue": {"dynamicRegistration": false},
             "codeLens": {"dynamicRegistration": false},
-            "rename": {"prepareSupport": false},
+            "documentLink": {"dynamicRegistration": false, "tooltipSupport": false},
+            "colorProvider": {"dynamicRegistration": false},
+            "rename": {"prepareSupport": true},
             "codeAction": {
                 "codeActionLiteralSupport": {
                     "codeActionKind": {"valueSet": [
@@ -497,6 +512,7 @@ impl LanguageServer {
             triggers,
             sink,
             pulled: Mutex::new(HashMap::new()),
+            token_data: Mutex::new(HashMap::new()),
         })
     }
 
@@ -551,6 +567,9 @@ impl LanguageServer {
 
     /// Tells the server the file at `uri` was closed.
     pub(crate) fn close(&self, uri: &str) -> Result<(), String> {
+        if let Ok(mut held) = self.token_data.lock() {
+            held.remove(uri);
+        }
         self.rpc.notify(
             "textDocument/didClose",
             json!({"textDocument": {"uri": uri}}),
@@ -802,6 +821,16 @@ impl LanguageServer {
             .flatten()
             .filter_map(inline_value_of)
             .collect())
+    }
+
+    /// Whether the server says which stretches of a file lead somewhere when pressed.
+    pub(crate) fn has_document_links(&self) -> bool {
+        self.can("documentLinkProvider")
+    }
+
+    /// Whether the server says which stretches of a file spell a colour.
+    pub(crate) fn has_colors(&self) -> bool {
+        self.can("colorProvider")
     }
 
     /// Whether the server says what to show above a line.
@@ -1081,6 +1110,90 @@ impl LanguageServer {
             .collect())
     }
 
+    /// The numbers the server describes the tokens of the file at `uri` in, five to a token: all of them, or, when the server can say what changed since it last answered, only the changes asked for and made to the numbers it answered with then.
+    fn token_numbers(&self, uri: &str) -> Result<Vec<u64>, String> {
+        let numbers = |value: &Value| -> Vec<u64> {
+            value
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_u64)
+                .collect()
+        };
+        let delta = self
+            .abilities
+            .get("semanticTokensProvider")
+            .and_then(|provider| provider.get("full"))
+            .and_then(|full| full.get("delta"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let known = self
+            .token_data
+            .lock()
+            .ok()
+            .and_then(|held| held.get(uri).cloned());
+        if let (true, Some((id, mut held))) = (delta, known) {
+            let answer = self.rpc.request(
+                "textDocument/semanticTokens/full/delta",
+                json!({"textDocument": {"uri": uri}, "previousResultId": id}),
+                ANSWERING,
+            )?;
+            let result = answer
+                .get("resultId")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            if let Some(edits) = answer.get("edits").and_then(Value::as_array) {
+                let mut edits: Vec<(usize, usize, Vec<u64>)> = edits
+                    .iter()
+                    .filter_map(|edit| {
+                        Some((
+                            edit.get("start")?.as_u64()? as usize,
+                            edit.get("deleteCount")?.as_u64()? as usize,
+                            edit.get("data").map(numbers).unwrap_or_default(),
+                        ))
+                    })
+                    .collect();
+                edits.sort_by_key(|(start, ..)| std::cmp::Reverse(*start));
+                for (start, count, data) in edits {
+                    let start = start.min(held.len());
+                    let end = (start + count).min(held.len());
+                    held.splice(start..end, data);
+                }
+                self.keep_tokens(uri, result, &held);
+                return Ok(held);
+            }
+            let data = answer.get("data").map(numbers).unwrap_or_default();
+            self.keep_tokens(uri, result, &data);
+            return Ok(data);
+        }
+        let answer = self.rpc.request(
+            "textDocument/semanticTokens/full",
+            json!({"textDocument": {"uri": uri}}),
+            ANSWERING,
+        )?;
+        let data = answer.get("data").map(numbers).unwrap_or_default();
+        let result = answer
+            .get("resultId")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        self.keep_tokens(uri, result, &data);
+        Ok(data)
+    }
+
+    /// Keeps the numbers the tokens of the file at `uri` were described in under the result id the server gave them, or forgets them when it gave none.
+    fn keep_tokens(&self, uri: &str, result: Option<String>, data: &[u64]) {
+        if let Ok(mut held) = self.token_data.lock() {
+            match result {
+                Some(id) => {
+                    held.insert(uri.to_owned(), (id, data.to_vec()));
+                }
+                None => {
+                    held.remove(uri);
+                }
+            }
+        }
+    }
+
     /// What each name of the file at `uri` is, as the server says and `rules` read it, one token to a stretch of a line.
     pub(crate) fn semantic_tokens(
         &self,
@@ -1104,18 +1217,7 @@ impl LanguageServer {
                 .collect()
         };
         let (types, modifiers) = (names("tokenTypes"), names("tokenModifiers"));
-        let answer = self.rpc.request(
-            "textDocument/semanticTokens/full",
-            json!({"textDocument": {"uri": uri}}),
-            ANSWERING,
-        )?;
-        let data: Vec<u64> = answer
-            .get("data")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_u64)
-            .collect();
+        let data = self.token_numbers(uri)?;
         let (mut line, mut start) = (0u32, 0u32);
         let mut tokens = Vec::with_capacity(data.len() / 5);
         for group in data.as_chunks::<5>().0 {
@@ -1148,6 +1250,136 @@ impl LanguageServer {
             });
         }
         Ok(tokens)
+    }
+
+    /// The stretches of the file at `uri` that lead somewhere when pressed, each with the address the server gives it, or, when it gives none and can say where the link leads when asked, the link as it wrote it; links it can say nothing of are left out.
+    pub(crate) fn document_links(&self, uri: &str) -> Result<Vec<(Span, LinkAnswer)>, String> {
+        if !self.has_document_links() {
+            return Ok(Vec::new());
+        }
+        let answer = self.rpc.request(
+            "textDocument/documentLink",
+            json!({"textDocument": {"uri": uri}}),
+            ANSWERING,
+        )?;
+        let resolves = self
+            .abilities
+            .get("documentLinkProvider")
+            .and_then(|provider| provider.get("resolveProvider"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        Ok(answer
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|link| {
+                let span = span_of(link.get("range")?)?;
+                match link.get("target").and_then(Value::as_str) {
+                    Some(address) => Some((span, LinkAnswer::Address(address.to_owned()))),
+                    None if resolves => Some((span, LinkAnswer::Raw(link.to_string()))),
+                    None => None,
+                }
+            })
+            .take(MOST_LINKS)
+            .collect())
+    }
+
+    /// The address the server says the link `raw`, as it wrote it, leads to.
+    pub(crate) fn resolve_link(&self, raw: &str) -> Result<Option<String>, String> {
+        let link: Value = serde_json::from_str(raw).map_err(|error| error.to_string())?;
+        let answer = self.rpc.request("documentLink/resolve", link, ANSWERING)?;
+        Ok(answer
+            .get("target")
+            .and_then(Value::as_str)
+            .map(str::to_owned))
+    }
+
+    /// The ways the server offers to write `color`, as red, green, blue and opacity from 0 to 255, in place of the stretch `span` of the file at `uri`.
+    pub(crate) fn color_presentations(
+        &self,
+        uri: &str,
+        color: [u8; 4],
+        span: Span,
+    ) -> Result<Vec<ColorPresentation>, String> {
+        let channel = |value: u8| f64::from(value) / 255.0;
+        let answer = self.rpc.request(
+            "textDocument/colorPresentation",
+            json!({
+                "textDocument": {"uri": uri},
+                "color": {
+                    "red": channel(color[0]),
+                    "green": channel(color[1]),
+                    "blue": channel(color[2]),
+                    "alpha": channel(color[3]),
+                },
+                "range": range_value(span),
+            }),
+            ANSWERING,
+        )?;
+        Ok(answer
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| {
+                let label = item.get("label")?.as_str()?.to_owned();
+                let edit = item.get("textEdit");
+                Some(ColorPresentation {
+                    span: edit
+                        .and_then(|edit| edit.get("range"))
+                        .and_then(span_of)
+                        .unwrap_or(span),
+                    text: edit
+                        .and_then(|edit| edit.get("newText"))
+                        .and_then(Value::as_str)
+                        .map_or_else(|| label.clone(), str::to_owned),
+                    additional_edits: item
+                        .get("additionalTextEdits")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|edit| {
+                            Some(TextChange {
+                                span: Some(span_of(edit.get("range")?)?),
+                                text: edit.get("newText")?.as_str()?.to_owned(),
+                            })
+                        })
+                        .collect(),
+                    label,
+                })
+            })
+            .collect())
+    }
+
+    /// The stretches of the file at `uri` that spell a colour, with the colour, as the server says.
+    pub(crate) fn colors(&self, uri: &str) -> Result<Vec<ColorSwatch>, String> {
+        if !self.has_colors() {
+            return Ok(Vec::new());
+        }
+        let answer = self.rpc.request(
+            "textDocument/documentColor",
+            json!({"textDocument": {"uri": uri}}),
+            ANSWERING,
+        )?;
+        let channel = |color: &Value, name: &str| {
+            let value = color.get(name).and_then(Value::as_f64).unwrap_or(0.0);
+            (value.clamp(0.0, 1.0) * 255.0).round() as u8
+        };
+        Ok(answer
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| {
+                let color = item.get("color")?;
+                Some(ColorSwatch {
+                    span: span_of(item.get("range")?)?,
+                    red: channel(color, "red"),
+                    green: channel(color, "green"),
+                    blue: channel(color, "blue"),
+                    alpha: channel(color, "alpha"),
+                })
+            })
+            .take(MOST_LINKS)
+            .collect())
     }
 
     /// What to show inside the lines of the file at `uri` within `span`, as the server says.
@@ -1338,6 +1570,39 @@ impl LanguageServer {
             active,
             documentation,
             others: signatures.len().saturating_sub(1),
+        }))
+    }
+
+    /// What can be renamed at `position` of the file at `uri`: the thing the server names there, the default of the word at the place when the server does not tell, or nothing when nothing there can be renamed.
+    pub(crate) fn prepare_rename(
+        &self,
+        uri: &str,
+        position: Position,
+    ) -> Result<Option<RenameTarget>, String> {
+        let prepares = self
+            .abilities
+            .get("renameProvider")
+            .and_then(|provider| provider.get("prepareProvider"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if !prepares {
+            return Ok(Some(RenameTarget::default()));
+        }
+        let answer = self.rpc.request(
+            "textDocument/prepareRename",
+            json!({"textDocument": {"uri": uri}, "position": position_value(position)}),
+            ANSWERING,
+        )?;
+        if answer.is_null() {
+            return Ok(None);
+        }
+        let range = answer.get("range").unwrap_or(&answer);
+        Ok(Some(RenameTarget {
+            span: span_of(range),
+            placeholder: answer
+                .get("placeholder")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
         }))
     }
 

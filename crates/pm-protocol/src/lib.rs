@@ -39,9 +39,10 @@ pub use pm_dap::{
     View as DebugView, Watched as DebugWatched,
 };
 pub use pm_lsp::{
-    CodeAction, CodeLens, Completion, CompletionKind, Diagnostic, FileEdit, FoldRange, HintKind,
-    Hover, InlayHint, InlineValue, InlineValueKind, Location, Problem, Seek, SemanticToken,
-    Severity, Signature, TextChange, TokenKind, TokenRule, Triggers,
+    CodeAction, CodeLens, ColorPresentation, ColorSwatch, Completion, CompletionKind, Diagnostic,
+    DocumentLink, FileEdit, FoldRange, HintKind, Hover, InlayHint, InlineValue, InlineValueKind,
+    LinkTarget, Location, Problem, RenameTarget, Seek, SemanticToken, Severity, Signature,
+    TextChange, TokenKind, TokenRule, Triggers,
 };
 pub use pm_task::Task;
 pub use release::ReleaseAsset;

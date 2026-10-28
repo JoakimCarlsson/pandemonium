@@ -126,6 +126,10 @@ pub struct Document {
     pub inlay_hints_supported: bool,
     /// Whether the language server says what to show above the lines of the file.
     pub code_lens_supported: bool,
+    /// Whether the language server says which stretches of the file lead somewhere when pressed.
+    pub document_links_supported: bool,
+    /// Whether the language server says which stretches of the file spell a colour.
+    pub colors_supported: bool,
     /// Whether the language server says which names of the file to show the values of while a program is paused.
     pub inline_values_supported: bool,
     /// Why the language server could not read the file, when it could not.
@@ -156,6 +160,10 @@ pub struct Document {
     pub(crate) linked: Option<Vec<Range<usize>>>,
     /// The rectangle being selected with the keys, while one is.
     pub(crate) column: Option<crate::column::ColumnBox>,
+    /// Where the carets were before each move that changed nothing else, the latest last, to take back.
+    pub(crate) cursor_past: Vec<crate::cursor_history::Carets>,
+    /// Where the carets were before each move that was taken back, the latest last, to make again.
+    pub(crate) cursor_future: Vec<crate::cursor_history::Carets>,
     /// The snippet whose blanks are being filled in, while one is.
     pub(crate) snippet: Option<crate::snippet::Session>,
     /// What the language server said to show in and beside the text.
@@ -231,6 +239,8 @@ impl Document {
             semantic_tokens_supported: false,
             inlay_hints_supported: false,
             code_lens_supported: false,
+            document_links_supported: false,
+            colors_supported: false,
             inline_values_supported: false,
             server_problem: None,
             diagnostics: Vec::new(),
@@ -246,6 +256,8 @@ impl Document {
             server_folds: (0, Vec::new()),
             linked: None,
             column: None,
+            cursor_past: Vec::new(),
+            cursor_future: Vec::new(),
             snippet: None,
             annotations: crate::annotations::Annotations::default(),
             depths: crate::depth::DepthCache::default(),

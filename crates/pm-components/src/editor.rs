@@ -239,6 +239,8 @@ impl WorkspaceState {
                     document.semantic_tokens_supported = triggers.semantic_tokens;
                     document.inlay_hints_supported = triggers.inlay_hints;
                     document.code_lens_supported = triggers.code_lens;
+                    document.document_links_supported = triggers.document_links;
+                    document.colors_supported = triggers.colors;
                     document.inline_values_supported = triggers.inline_values;
                     document.server_problem = None;
                 }
@@ -354,7 +356,7 @@ impl WorkspaceState {
     }
 
     /// Makes `edits` to the file shown, one after another.
-    fn file_edits(&mut self, edits: Vec<Edit>) {
+    pub(crate) fn file_edits(&mut self, edits: Vec<Edit>) {
         for edit in edits {
             self.file_edited(edit);
         }

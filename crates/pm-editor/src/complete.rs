@@ -121,9 +121,21 @@ impl Document {
             }
             None => (completion.start.min(caret), caret),
         };
+        Some(self.replacement_edits(start, end, &item.text, &item.additional_edits))
+    }
+
+    /// The edits that write `text` in place of the bytes `start` to `end`, the caret after it, and make the changes `extras` call for, such as the line that imports what is written, in an order that keeps every stretch right.
+    pub fn replacement_edits(
+        &self,
+        start: usize,
+        end: usize,
+        text: &str,
+        extras: &[pm_protocol::TextChange],
+    ) -> Vec<Edit> {
+        let caret = self.field.caret();
         let mut before: Vec<(std::ops::Range<usize>, &str)> = Vec::new();
         let mut after: Vec<(std::ops::Range<usize>, &str)> = Vec::new();
-        for change in &item.additional_edits {
+        for change in extras {
             let range = change
                 .span
                 .map_or(0..self.field.text().len(), |span| self.range_of(span));
@@ -142,13 +154,13 @@ impl Document {
         edits.extend([
             Edit::Place(start, false),
             Edit::Place(end, true),
-            Edit::Paste(item.text.clone()),
+            Edit::Paste(text.to_owned()),
         ]);
-        let mut at = start + item.text.len();
+        let mut at = start + text.len();
         for (range, text) in before {
             at = (at + text.len()).saturating_sub(range.len());
             edits.push(Edit::Replace(range, text.to_owned(), (at, at)));
         }
-        Some(edits)
+        edits
     }
 }

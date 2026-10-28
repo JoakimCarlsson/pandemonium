@@ -683,6 +683,9 @@ impl App {
         if self.take_command(id) || self.window_control(id) {
             return;
         }
+        if let Some(index) = pm_components::color_picker::color_swatch_of(id) {
+            return self.open_color_picker(index);
+        }
         match id {
             COMMAND_CENTER => return self.perform(Action::CommandPalette),
             GO_BACK => return self.navigate(-1),

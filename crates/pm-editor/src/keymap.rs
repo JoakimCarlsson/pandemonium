@@ -161,6 +161,10 @@ pub enum Action {
     Undo,
     /// Does again what was undone.
     Redo,
+    /// Takes back the last move of the carets or selections, leaving the text.
+    CursorUndo,
+    /// Makes again the last move of the carets that was taken back.
+    CursorRedo,
     /// Commits the staged changes.
     Commit,
     /// Commits the staged changes and pushes them.
@@ -341,6 +345,10 @@ pub enum Action {
     Fold,
     /// Unfolds it.
     Unfold,
+    /// Folds every block of the file that is not inside another.
+    FoldAll,
+    /// Unfolds every block of the file.
+    UnfoldAll,
     /// Finds in the file.
     Find,
     /// Finds and replaces in the file.
@@ -381,7 +389,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, in the order the keymap lists them.
-    pub const ALL: [Self; 182] = [
+    pub const ALL: [Self; 186] = [
         Self::CommandPalette,
         Self::OpenSettings,
         Self::GoToSession,
@@ -456,6 +464,8 @@ impl Action {
         Self::CopyWithoutIndentation,
         Self::Undo,
         Self::Redo,
+        Self::CursorUndo,
+        Self::CursorRedo,
         Self::Commit,
         Self::CommitAndPush,
         Self::Pull,
@@ -544,6 +554,8 @@ impl Action {
         Self::MatchingBracket,
         Self::Fold,
         Self::Unfold,
+        Self::FoldAll,
+        Self::UnfoldAll,
         Self::NextProblem,
         Self::PreviousProblem,
         Self::Find,
@@ -643,6 +655,8 @@ impl Action {
             Self::CopyWithoutIndentation => "copy_without_indentation",
             Self::Undo => "undo",
             Self::Redo => "redo",
+            Self::CursorUndo => "cursor_undo",
+            Self::CursorRedo => "cursor_redo",
             Self::Commit => "git_commit",
             Self::CommitAndPush => "git_commit_and_push",
             Self::Pull => "git_pull",
@@ -733,6 +747,8 @@ impl Action {
             Self::NewlineAbove => "newline_above",
             Self::Fold => "fold",
             Self::Unfold => "unfold",
+            Self::FoldAll => "fold_all",
+            Self::UnfoldAll => "unfold_all",
             Self::Find => "find",
             Self::Replace => "replace",
             Self::FindNext => "find_next",
@@ -831,6 +847,8 @@ impl Action {
             Self::CopyWithoutIndentation => "Copy Without Indentation",
             Self::Undo => "Undo",
             Self::Redo => "Redo",
+            Self::CursorUndo => "Cursor Undo",
+            Self::CursorRedo => "Cursor Redo",
             Self::Commit => "Commit",
             Self::CommitAndPush => "Commit and Push",
             Self::Pull => "Pull",
@@ -921,6 +939,8 @@ impl Action {
             Self::NewlineAbove => "New Line Above",
             Self::Fold => "Fold",
             Self::Unfold => "Unfold",
+            Self::FoldAll => "Fold All",
+            Self::UnfoldAll => "Unfold All",
             Self::Find => "Find",
             Self::Replace => "Replace",
             Self::FindNext => "Find Next",
@@ -1017,7 +1037,11 @@ impl Action {
             | Self::StepInto
             | Self::StepOut => "Debug",
             Self::RunTask | Self::RerunTask | Self::SelectToolchain => "Tasks",
-            Self::CopyWithoutIndentation | Self::Undo | Self::Redo => "Editing",
+            Self::CopyWithoutIndentation
+            | Self::Undo
+            | Self::Redo
+            | Self::CursorUndo
+            | Self::CursorRedo => "Editing",
             Self::CommandPalette | Self::OpenSettings => "Window",
             Self::GoToSession
             | Self::NewSession
@@ -1316,6 +1340,8 @@ impl Preset {
                 (NewlineAbove, &["ctrl+alt+enter"]),
                 (Fold, &["ctrl+-"]),
                 (Unfold, &["ctrl+="]),
+                (FoldAll, &[]),
+                (UnfoldAll, &[]),
                 (Replace, &["ctrl+r"]),
                 (Outline, &["ctrl+f12"]),
                 (ProjectSymbols, &["ctrl+alt+shift+n"]),
@@ -1440,6 +1466,8 @@ fn own() -> &'static [(Action, &'static [&'static str])] {
         (CopyWithoutIndentation, &[]),
         (Undo, &[]),
         (Redo, &[]),
+        (CursorUndo, &["ctrl+u"]),
+        (CursorRedo, &["ctrl+shift+u"]),
         (GoToDefinition, &["f12"]),
         (GoToDeclaration, &[]),
         (GoToTypeDefinition, &["ctrl+f12"]),
@@ -1502,6 +1530,8 @@ fn own() -> &'static [(Action, &'static [&'static str])] {
         (NewlineAbove, &["ctrl+shift+enter"]),
         (Fold, &["ctrl+shift+["]),
         (Unfold, &["ctrl+shift+]"]),
+        (FoldAll, &["ctrl+k ctrl+0"]),
+        (UnfoldAll, &["ctrl+k ctrl+j"]),
         (Find, &["ctrl+f"]),
         (Replace, &["ctrl+h"]),
         (FindNext, &["f3"]),

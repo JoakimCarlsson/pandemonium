@@ -121,16 +121,6 @@ impl Screen {
         self.in_workspace(|state| state.scrolled_hover(delta, room))
     }
 
-    /// The screen gone back to where the caret was before the last jump.
-    pub fn jumped_back(self) -> Self {
-        self.in_workspace(WorkspaceState::jumped_back)
-    }
-
-    /// The screen gone forward again to where the caret was before the last step back.
-    pub fn jumped_forward(self) -> Self {
-        self.in_workspace(WorkspaceState::jumped_forward)
-    }
-
     /// The screen with the file shown formatted as its language says, without writing it.
     pub fn formatted_by_hand(self) -> Self {
         self.in_workspace(WorkspaceState::formatted_by_hand)
@@ -362,6 +352,84 @@ impl Screen {
     /// The screen with the box for a new name closed.
     pub fn rename_closed(self) -> Self {
         self.in_workspace(WorkspaceState::rename_closed)
+    }
+
+    /// Where the link of the file shown at the byte `offset` leads, with the bytes it covers.
+    pub fn link_under(
+        &self,
+        offset: usize,
+    ) -> Option<(std::ops::Range<usize>, pm_protocol::LinkTarget)> {
+        match self {
+            Self::Workspace(state) => state.link_under(offset),
+        }
+    }
+
+    /// The screen after the language server said where a link leads.
+    pub fn with_link_resolved(
+        self,
+        session: usize,
+        target: Option<pm_protocol::LinkTarget>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_link_resolved(session, target))
+    }
+
+    /// Whether the box for changing a colour is open.
+    pub fn color_picker_open(&self) -> bool {
+        self.workspace_is(WorkspaceState::color_picker_open)
+    }
+
+    /// The screen with the box for changing a colour closed.
+    pub fn color_picker_closed(self) -> Self {
+        self.in_workspace(WorkspaceState::color_picker_closed)
+    }
+
+    /// The byte of the file shown the colour at `index` of its list starts at.
+    pub fn color_swatch_offset(&self, index: usize) -> Option<usize> {
+        match self {
+            Self::Workspace(state) => state.color_swatch_offset(index),
+        }
+    }
+
+    /// The screen with the box for changing the colour at `index` open at `at`.
+    pub fn color_picker_requested(self, index: usize, at: (f32, f32)) -> Self {
+        self.in_workspace(|state| state.color_picker_requested(index, at))
+    }
+
+    /// The screen after the language server said how a colour can be written.
+    pub fn with_color_presentations(
+        self,
+        session: usize,
+        path: &str,
+        color: [u8; 4],
+        presentations: Vec<pm_protocol::ColorPresentation>,
+    ) -> Self {
+        self.in_workspace(|state| {
+            state.with_color_presentations(session, path, color, presentations)
+        })
+    }
+
+    /// The screen after asking how a colour can be written failed for `problem`.
+    pub fn color_picker_failed(self, problem: String) -> Self {
+        self.in_workspace(|state| state.color_picker_failed(problem))
+    }
+
+    /// The screen after a link of the file shown was followed.
+    pub fn link_followed(self, target: pm_protocol::LinkTarget) -> Self {
+        self.in_workspace(|state| state.link_followed(target))
+    }
+
+    /// The screen after the language server said what can be renamed where the box for a new name was opened.
+    pub fn with_rename_target(
+        self,
+        session: usize,
+        target: Option<pm_protocol::RenameTarget>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_rename_target(session, target))
+    }
+
+    /// The screen after asking the language server what can be renamed failed for `problem`.
+    pub fn rename_unprepared(self, problem: String) -> Self {
+        self.in_workspace(|state| state.rename_unprepared(problem))
     }
 
     /// The screen after renaming failed for `problem`.
@@ -855,6 +923,28 @@ impl Screen {
         tokens: Vec<pm_protocol::SemanticToken>,
     ) -> Self {
         self.in_workspace(|state| state.with_semantic_tokens(session, path, version, tokens))
+    }
+
+    /// The screen after the language server said which stretches of a file lead somewhere when pressed.
+    pub fn with_document_links(
+        self,
+        session: usize,
+        path: &str,
+        version: i32,
+        links: Vec<pm_protocol::DocumentLink>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_document_links(session, path, version, links))
+    }
+
+    /// The screen after the language server said which stretches of a file spell a colour.
+    pub fn with_colors(
+        self,
+        session: usize,
+        path: &str,
+        version: i32,
+        colors: Vec<pm_protocol::ColorSwatch>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_colors(session, path, version, colors))
     }
 
     /// The screen after the language server said what to show inside the lines of a file.

@@ -92,6 +92,8 @@ fn main() {
             Some("branchessubmoduleinside") => Shot::BranchesSubmodule(true),
             Some("signing") => Shot::Signing,
             Some("annotated") => Shot::Annotated,
+            Some("color-swatches") => Shot::ColorSwatches,
+            Some("color-picker") => Shot::ColorPicker,
             Some("project-search") => Shot::ProjectSearch,
             Some("excerpts") => Shot::Excerpts,
             Some("finding") => Shot::Finding,

@@ -1,6 +1,6 @@
 //! What a language server says about a file, as clients are told it.
 
-use pm_buffer::Span;
+use pm_buffer::{Position, Span};
 use serde::{Deserialize, Serialize};
 
 /// How bad a diagnostic is.
@@ -232,6 +232,12 @@ pub struct Triggers {
     /// Whether it says which names of a file to show the values of while a program is paused.
     #[serde(default)]
     pub inline_values: bool,
+    /// Whether it says which stretches of a file lead somewhere when pressed, such as web addresses and paths.
+    #[serde(default)]
+    pub document_links: bool,
+    /// Whether it says which stretches of a file spell a colour.
+    #[serde(default)]
+    pub colors: bool,
 }
 
 /// What a language server says a stretch of a file shows while the program being debugged is paused.
@@ -326,6 +332,68 @@ pub struct InlayHint {
     pub pad_right: bool,
 }
 
+/// Where a link of a file leads.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum LinkTarget {
+    /// A web address, to open in the browser.
+    Url {
+        /// The address.
+        address: String,
+    },
+    /// A file of the project, to open.
+    File {
+        /// The file, from the root of the project.
+        path: String,
+        /// The place in it the link names, when it does.
+        #[serde(default)]
+        position: Option<Position>,
+    },
+    /// A link the server gave without saying where it leads, which it says when asked: the link as the server wrote it, to hand back.
+    Unresolved {
+        /// The link as its server wrote it.
+        link: String,
+    },
+}
+
+/// A stretch of a file a language server says leads somewhere when pressed.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DocumentLink {
+    /// The stretch.
+    pub span: Span,
+    /// Where it leads.
+    pub target: LinkTarget,
+}
+
+/// A stretch of a file a language server says spells a colour.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ColorSwatch {
+    /// The stretch.
+    pub span: Span,
+    /// How much red, from 0 to 255.
+    pub red: u8,
+    /// How much green, from 0 to 255.
+    pub green: u8,
+    /// How much blue, from 0 to 255.
+    pub blue: u8,
+    /// How opaque, from 0 to 255.
+    pub alpha: u8,
+}
+
+/// One way a colour can be written in a file, as a language server offers it.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct ColorPresentation {
+    /// What it is called, as the language writes the colour.
+    pub label: String,
+    /// The stretch it replaces.
+    pub span: Span,
+    /// What it writes there.
+    pub text: String,
+    /// The other edits that writing it makes, such as an import.
+    #[serde(default)]
+    pub additional_edits: Vec<TextChange>,
+}
+
 /// A line of text a language server says to show with a stretch of a file, such as how many times a function is used.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct CodeLens {
@@ -361,6 +429,17 @@ pub struct Signature {
     /// How many other signatures there are, as for an overloaded function.
     #[serde(default)]
     pub others: usize,
+}
+
+/// What a language server says can be renamed at a place: the stretch of text that holds the name, and the name it starts the new one from, each when the server says.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct RenameTarget {
+    /// The stretch that holds the name; nothing when the server leaves it to the word at the place.
+    #[serde(default)]
+    pub span: Option<Span>,
+    /// The name as the server writes it, when it is not the text of the stretch.
+    #[serde(default)]
+    pub placeholder: Option<String>,
 }
 
 /// The changes to one file that an edit across a project makes.

@@ -3,7 +3,9 @@
 use std::ops::Range;
 
 use pm_buffer::{Change, Position, Span};
-use pm_protocol::{CodeLens, HintKind, InlayHint, SemanticToken, TokenKind};
+use pm_protocol::{
+    CodeLens, ColorSwatch, DocumentLink, HintKind, InlayHint, LinkTarget, SemanticToken, TokenKind,
+};
 
 use crate::document::Document;
 
@@ -62,7 +64,24 @@ pub struct Hint {
     pub pad_left: bool,
     /// Whether a space stands after it.
     pub pad_right: bool,
+    /// The colour it shows as a small square instead of text, when it stands for one.
+    pub swatch: Option<Swatch>,
 }
+
+/// A colour shown as a small square before the stretch that spells it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Swatch {
+    /// How much red, green and blue, and how opaque, each from 0 to 255.
+    pub color: [u8; 4],
+    /// Its place in the list of colours of the file, which names it when it is pressed.
+    pub index: usize,
+}
+
+/// A stretch of the text a language server says spells a colour, and the colour.
+pub(crate) type Painted = (Range<usize>, [u8; 4]);
+
+/// A stretch of the text a language server says leads somewhere when pressed.
+pub(crate) type Linked = (Range<usize>, LinkTarget);
 
 /// A line of text a language server says to show with a stretch of a line, such as how many times a function is used.
 #[derive(Clone, Debug, PartialEq)]
@@ -88,6 +107,10 @@ pub(crate) struct Annotations {
     pub(crate) lenses: Said<Lens>,
     /// The values of names at the end of the lines, while a program is paused, in the order of the text.
     pub(crate) values: Vec<Hint>,
+    /// The stretches that lead somewhere when pressed, in the order of the text.
+    pub(crate) links: Said<Linked>,
+    /// The colours, in the order of the text.
+    pub(crate) colors: Said<Painted>,
 }
 
 /// The place the byte `offset` moves to when `change` is made, or nothing when `change` replaced the text it stood in.
@@ -125,6 +148,26 @@ impl Document {
             }
             None => false,
         });
+        self.annotations
+            .links
+            .items
+            .retain_mut(|(range, _)| match moved_range(range, change) {
+                Some(shifted) => {
+                    *range = shifted;
+                    true
+                }
+                None => false,
+            });
+        self.annotations
+            .colors
+            .items
+            .retain_mut(|(range, _)| match moved_range(range, change) {
+                Some(shifted) => {
+                    *range = shifted;
+                    true
+                }
+                None => false,
+            });
         self.annotations.hints.items.retain_mut(|hint| {
             moved(hint.offset, change).is_some_and(|offset| {
                 hint.offset = offset;
@@ -205,6 +248,7 @@ impl Document {
                 kind: hint.kind,
                 pad_left: hint.pad_left,
                 pad_right: hint.pad_right,
+                swatch: None,
             })
             .collect();
         kept.sort_by_key(|hint| hint.offset);
@@ -263,6 +307,7 @@ impl Document {
                 kind: HintKind::Value,
                 pad_left: true,
                 pad_right: false,
+                swatch: None,
             })
             .collect();
         if hints != self.annotations.values {
@@ -277,6 +322,91 @@ impl Document {
         let first = values.partition_point(|hint| hint.offset < line.start);
         let last = values.partition_point(|hint| hint.offset <= line.end);
         &values[first..last.max(first)]
+    }
+
+    /// Takes in `links`, the stretches that lead somewhere when pressed as the language server said for the text at `version`.
+    pub fn take_document_links(&mut self, version: i32, links: Vec<DocumentLink>) {
+        let mut kept: Vec<Linked> = links
+            .into_iter()
+            .map(|link| (self.range_of(link.span), link.target))
+            .filter(|(range, _)| !range.is_empty())
+            .collect();
+        kept.sort_by_key(|(range, _)| range.start);
+        self.annotations.links.take(version, self.version, kept);
+    }
+
+    /// Notes that the language server was asked which stretches of the text at `version` lead somewhere.
+    pub fn document_links_asked(&mut self, version: i32) {
+        self.annotations.links.asked = Some(version);
+    }
+
+    /// Whether the language server should be asked which stretches of the text as it is now lead somewhere.
+    pub fn wants_document_links(&self) -> bool {
+        self.synced
+            && self.document_links_supported
+            && self.annotations.links.wanted_at(self.version)
+    }
+
+    /// Where the link the byte `offset` is in leads, with the stretch the link covers.
+    pub fn link_at(&self, offset: usize) -> Option<(Range<usize>, &LinkTarget)> {
+        let links = &self.annotations.links.items;
+        let next = links.partition_point(|(range, _)| range.start <= offset);
+        let (range, target) = links.get(next.checked_sub(1)?)?;
+        (offset < range.end).then(|| (range.clone(), target))
+    }
+
+    /// Takes in `colors`, the stretches that spell a colour as the language server said for the text at `version`.
+    pub fn take_colors(&mut self, version: i32, colors: Vec<ColorSwatch>) {
+        let mut kept: Vec<Painted> = colors
+            .into_iter()
+            .map(|swatch| {
+                (
+                    self.range_of(swatch.span),
+                    [swatch.red, swatch.green, swatch.blue, swatch.alpha],
+                )
+            })
+            .filter(|(range, _)| !range.is_empty())
+            .collect();
+        kept.sort_by_key(|(range, _)| range.start);
+        self.annotations.colors.take(version, self.version, kept);
+    }
+
+    /// Notes that the language server was asked which stretches of the text at `version` spell a colour.
+    pub fn colors_asked(&mut self, version: i32) {
+        self.annotations.colors.asked = Some(version);
+    }
+
+    /// Whether the language server should be asked which stretches of the text as it is now spell a colour.
+    pub fn wants_colors(&self) -> bool {
+        self.synced && self.colors_supported && self.annotations.colors.wanted_at(self.version)
+    }
+
+    /// The colours that stand in line `row`, each as a hint before its stretch, in order.
+    pub fn colors_on(&self, row: usize) -> Vec<Hint> {
+        let line = self.line(row);
+        let colors = &self.annotations.colors.items;
+        let first = colors.partition_point(|(range, _)| range.start < line.start);
+        let last = colors.partition_point(|(range, _)| range.start <= line.end);
+        colors[first..last.max(first)]
+            .iter()
+            .enumerate()
+            .map(|(place, (range, color))| Hint {
+                offset: range.start,
+                label: String::new(),
+                kind: HintKind::Other,
+                pad_left: false,
+                pad_right: true,
+                swatch: Some(Swatch {
+                    color: *color,
+                    index: first + place,
+                }),
+            })
+            .collect()
+    }
+
+    /// The stretch of the colour at `index` of the list of colours of the file, and the colour.
+    pub fn color_at(&self, index: usize) -> Option<(Range<usize>, [u8; 4])> {
+        self.annotations.colors.items.get(index).cloned()
     }
 
     /// Takes in `lenses`, what to show with stretches of the text as the language server said for the text at `version`.

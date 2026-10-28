@@ -60,6 +60,12 @@ pub enum LineEdit {
     Fold,
     /// Unfolds the block the caret's line stands for.
     Unfold,
+    /// Folds every block that is not inside another.
+    FoldAll,
+    /// Takes back the last move of the carets.
+    CursorUndo,
+    /// Makes again the last move of the carets that was taken back.
+    CursorRedo,
     /// Unfolds every block.
     UnfoldAll,
     /// Selects the line, or the next one as well.
@@ -119,7 +125,12 @@ impl WorkspaceState {
     pub fn lines_edited(mut self, what: LineEdit) -> Self {
         if matches!(
             what,
-            LineEdit::Fold | LineEdit::Unfold | LineEdit::UnfoldAll
+            LineEdit::Fold
+                | LineEdit::Unfold
+                | LineEdit::FoldAll
+                | LineEdit::UnfoldAll
+                | LineEdit::CursorUndo
+                | LineEdit::CursorRedo
         ) {
             if let Some(document) = self.shown_text() {
                 match what {
@@ -128,6 +139,13 @@ impl WorkspaceState {
                     }
                     LineEdit::Unfold => {
                         document.unfold_at_caret();
+                    }
+                    LineEdit::FoldAll => document.fold_all(),
+                    LineEdit::CursorUndo => {
+                        document.cursor_undo();
+                    }
+                    LineEdit::CursorRedo => {
+                        document.cursor_redo();
                     }
                     _ => document.unfold_all(),
                 }
@@ -242,6 +260,9 @@ impl WorkspaceState {
             | LineEdit::SelectAllOccurrences
             | LineEdit::Fold
             | LineEdit::Unfold
+            | LineEdit::FoldAll
+            | LineEdit::CursorUndo
+            | LineEdit::CursorRedo
             | LineEdit::UnfoldAll => None,
         })
     }

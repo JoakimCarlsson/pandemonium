@@ -1030,6 +1030,17 @@ pub enum Request {
         /// The place.
         position: pm_buffer::Position,
     },
+    /// What can be renamed at a place of an open file, once the file reaches `version`.
+    PrepareRename {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The version of the text the place is in.
+        version: i32,
+        /// The place.
+        position: pm_buffer::Position,
+    },
     /// Renames the thing at a place of an open file across its project, once the file reaches `version`.
     Rename {
         /// The folder.
@@ -1076,6 +1087,46 @@ pub enum Request {
         version: i32,
         /// The stretch the hints are wanted for.
         span: pm_buffer::Span,
+    },
+    /// Which stretches of an open file lead somewhere when pressed, once the file reaches `version`.
+    DocumentLinks {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The version of the text the links are about.
+        version: i32,
+    },
+    /// Where a link of an open file that the language server gave without an address leads.
+    ResolveLink {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The link as the server wrote it, from the target `unresolved`.
+        link: String,
+    },
+    /// The ways the language server offers to write a colour in place of a stretch of an open file, once the file reaches `version`.
+    ColorPresentations {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The version of the text the stretch is in.
+        version: i32,
+        /// The stretch the colour is written in.
+        span: pm_buffer::Span,
+        /// The colour, as red, green, blue and opacity from 0 to 255.
+        color: [u8; 4],
+    },
+    /// Which stretches of an open file spell a colour, once the file reaches `version`.
+    Colors {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The version of the text the colours are about.
+        version: i32,
     },
     /// Which stretches of an open file to show the values of while a program is paused, once the file reaches `version`.
     InlineValues {

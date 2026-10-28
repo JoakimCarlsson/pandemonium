@@ -385,6 +385,12 @@ pub enum Response {
         /// Whether the server says which names to show the values of while a program is paused.
         #[serde(default)]
         inline_values: bool,
+        /// Whether the server says which stretches of a file lead somewhere when pressed.
+        #[serde(default)]
+        document_links: bool,
+        /// Whether the server says which stretches of a file spell a colour.
+        #[serde(default)]
+        colors: bool,
     },
     /// What could be written at a place.
     Completions {
@@ -415,6 +421,26 @@ pub enum Response {
     InlayHints {
         /// The hints, in the order of the file.
         hints: Vec<pm_lsp::InlayHint>,
+    },
+    /// Which stretches of a file lead somewhere when pressed; none when the language server does not say.
+    DocumentLinks {
+        /// The links, in the order the server gave them.
+        links: Vec<pm_lsp::DocumentLink>,
+    },
+    /// Where a link leads.
+    LinkResolved {
+        /// Where it leads, or nothing when the server does not say or it leads outside the folder and the web.
+        target: Option<pm_lsp::LinkTarget>,
+    },
+    /// The ways a colour can be written.
+    ColorPresentations {
+        /// The ways, in the order the server gave them.
+        presentations: Vec<pm_lsp::ColorPresentation>,
+    },
+    /// Which stretches of a file spell a colour; none when the language server does not say.
+    Colors {
+        /// The colours, in the order the server gave them.
+        colors: Vec<pm_lsp::ColorSwatch>,
     },
     /// Which stretches of a file to show the values of while a program is paused; none when the language server does not say.
     InlineValues {
@@ -487,6 +513,11 @@ pub enum Response {
     Signature {
         /// The signature, or nothing when the place is in no call.
         signature: Option<pm_lsp::Signature>,
+    },
+    /// What can be renamed at a place.
+    RenameTarget {
+        /// The thing that can be renamed, or nothing when nothing at the place can be.
+        target: Option<pm_lsp::RenameTarget>,
     },
     /// The changes the language server offers for a stretch.
     CodeActions {

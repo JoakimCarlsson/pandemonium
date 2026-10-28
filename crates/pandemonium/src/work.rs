@@ -233,12 +233,22 @@ enum Pending {
     SemanticTokens(usize, String, i32),
     /// What to show inside the lines of the file of the session at this position, at this path and version.
     InlayHints(usize, String, i32),
+    /// Which stretches of the file of the session at this position, at this path and version, lead somewhere when pressed.
+    DocumentLinks(usize, String, i32),
+    /// Where a link of the file of the session at this position leads.
+    LinkResolved(usize),
+    /// How the colour can be written in the file of the session at this position, at this path.
+    ColorPresentations(usize, String, [u8; 4]),
+    /// Which stretches of the file of the session at this position, at this path and version, spell a colour.
+    Colors(usize, String, i32),
     /// Which names of the file of the session at this position, at this path and version, to show the values of while a program is paused.
     InlineValues(usize, String, i32),
     /// What to show at the end of the lines of the file of the session at this position, at this path and version.
     CodeLenses(usize, String, i32),
     /// What pressing a lens of a file of the session at this position came to.
     LensPressed(usize),
+    /// What the language server says can be renamed at the place of the file of the session at this position.
+    RenameTarget(usize),
     /// The edits that rename something across the project of the session at this position.
     Renamed(usize),
     /// The changes the language server offers for the file of the session at this position, at this path.
@@ -2287,9 +2297,14 @@ impl Work {
             | Pending::ProjectSearch(..)
             | Pending::SemanticTokens(..)
             | Pending::InlayHints(..)
+            | Pending::DocumentLinks(..)
+            | Pending::LinkResolved(_)
+            | Pending::ColorPresentations(..)
+            | Pending::Colors(..)
             | Pending::InlineValues(..)
             | Pending::CodeLenses(..)
             | Pending::LensPressed(_)
+            | Pending::RenameTarget(_)
             | Pending::Renamed(_)
             | Pending::CodeActions(..)
             | Pending::TookAction(_)

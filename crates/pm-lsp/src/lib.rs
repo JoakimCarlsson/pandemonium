@@ -58,7 +58,8 @@ pub use provider::{Provided, ProvidedCommand, Provider, SymbolLabel};
 pub use resolve::{server_ready, server_state};
 pub use semantic::{TokenRule, kind_by_rules, parse_rules, rules_for};
 pub use types::{
-    CodeAction, CodeLens, Completion, CompletionKind, Diagnostic, FileEdit, FoldRange, HintKind,
-    Hover, InlayHint, InlineValue, InlineValueKind, Location, Problem, Seek, SemanticToken,
-    Severity, Signature, TextChange, TokenKind, Triggers,
+    CodeAction, CodeLens, ColorPresentation, ColorSwatch, Completion, CompletionKind, Diagnostic,
+    DocumentLink, FileEdit, FoldRange, HintKind, Hover, InlayHint, InlineValue, InlineValueKind,
+    LinkTarget, Location, Problem, RenameTarget, Seek, SemanticToken, Severity, Signature,
+    TextChange, TokenKind, Triggers,
 };

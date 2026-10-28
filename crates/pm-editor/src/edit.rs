@@ -29,8 +29,12 @@ impl Document {
         let before = self.field.text().to_owned();
         let before_lines: Lines = self.line_index().clone();
         let caret_line = self.line_of(self.field.caret());
+        let carets = self.field.selections();
         self.field.apply(edit);
         let Some(change) = self.refresh(&before, &before_lines) else {
+            if self.field.selections() != carets {
+                self.note_cursor_move(carets);
+            }
             self.carry_folds(None);
             self.refilter(false);
             if self.line_of(self.field.caret()) != caret_line {
@@ -40,6 +44,7 @@ impl Document {
         };
         self.hover = None;
         self.grown.clear();
+        self.forget_cursor_moves();
         self.carry_folds(Some(&change));
         let typed: Option<char> = (change.range.is_empty() && change.text.chars().count() == 1)
             .then(|| change.text.chars().next())

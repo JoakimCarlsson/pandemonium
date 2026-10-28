@@ -455,6 +455,22 @@ impl Work {
                     Pending::Signature(session, asked, version),
                 );
             }
+            Outgoing::PrepareRename {
+                session,
+                path,
+                version,
+                position,
+            } => self.ask_in_folder(
+                model,
+                session,
+                |directory| Request::PrepareRename {
+                    directory,
+                    path,
+                    version,
+                    position,
+                },
+                Pending::RenameTarget(session),
+            ),
             Outgoing::RenameSymbol {
                 session,
                 path,
@@ -511,6 +527,75 @@ impl Work {
                         rules,
                     },
                     Pending::SemanticTokens(session, asked, version),
+                );
+            }
+            Outgoing::ResolveLink {
+                session,
+                path,
+                link,
+            } => self.ask_in_folder(
+                model,
+                session,
+                |directory| Request::ResolveLink {
+                    directory,
+                    path,
+                    link,
+                },
+                Pending::LinkResolved(session),
+            ),
+            Outgoing::ColorPresentations {
+                session,
+                path,
+                version,
+                span,
+                color,
+            } => {
+                let asked = path.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::ColorPresentations {
+                        directory,
+                        path,
+                        version,
+                        span,
+                        color,
+                    },
+                    Pending::ColorPresentations(session, asked, color),
+                );
+            }
+            Outgoing::DocumentLinks {
+                session,
+                path,
+                version,
+            } => {
+                let asked = path.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::DocumentLinks {
+                        directory,
+                        path,
+                        version,
+                    },
+                    Pending::DocumentLinks(session, asked, version),
+                );
+            }
+            Outgoing::Colors {
+                session,
+                path,
+                version,
+            } => {
+                let asked = path.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::Colors {
+                        directory,
+                        path,
+                        version,
+                    },
+                    Pending::Colors(session, asked, version),
                 );
             }
             Outgoing::InlayHints {
@@ -839,6 +924,8 @@ impl Work {
                         inlay_hints,
                         code_lens,
                         inline_values,
+                        document_links,
+                        colors,
                     } => Ok(pm_protocol::Triggers {
                         completion: triggers,
                         signature,
@@ -850,6 +937,8 @@ impl Work {
                         inlay_hints,
                         code_lens,
                         inline_values,
+                        document_links,
+                        colors,
                     }),
                     other => Err(Self::trouble_of(other)),
                 };
@@ -930,6 +1019,15 @@ impl Work {
                     *screen = std::mem::take(screen).with_edited_files(session, files);
                 });
             }
+            (Pending::RenameTarget(session), Response::RenameTarget { target }) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_rename_target(session, target);
+                });
+            }
+            (Pending::RenameTarget(_), other) => {
+                let problem = Self::trouble_of(other);
+                model.update(|screen| *screen = std::mem::take(screen).rename_unprepared(problem));
+            }
             (Pending::Renamed(_), other) => {
                 let problem = Self::trouble_of(other);
                 model.update(|screen| *screen = std::mem::take(screen).rename_failed(problem));
@@ -1009,6 +1107,54 @@ impl Work {
                 model.update(|screen| {
                     *screen = std::mem::take(screen)
                         .with_semantic_tokens(session, &path, version, tokens);
+                });
+            }
+            (Pending::LinkResolved(session), Response::LinkResolved { target }) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_link_resolved(session, target);
+                });
+            }
+            (Pending::LinkResolved(session), other) => {
+                let problem = Self::trouble_of(other);
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).noted(session, &problem);
+                });
+            }
+            (
+                Pending::ColorPresentations(session, path, color),
+                Response::ColorPresentations { presentations },
+            ) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_color_presentations(
+                        session,
+                        &path,
+                        color,
+                        presentations,
+                    );
+                });
+            }
+            (Pending::ColorPresentations(..), other) => {
+                let problem = Self::trouble_of(other);
+                model
+                    .update(|screen| *screen = std::mem::take(screen).color_picker_failed(problem));
+            }
+            (Pending::DocumentLinks(session, path, version), response) => {
+                let links = match response {
+                    Response::DocumentLinks { links } => links,
+                    _ => Vec::new(),
+                };
+                model.update(|screen| {
+                    *screen =
+                        std::mem::take(screen).with_document_links(session, &path, version, links);
+                });
+            }
+            (Pending::Colors(session, path, version), response) => {
+                let colors = match response {
+                    Response::Colors { colors } => colors,
+                    _ => Vec::new(),
+                };
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_colors(session, &path, version, colors);
                 });
             }
             (Pending::InlayHints(session, path, version), response) => {

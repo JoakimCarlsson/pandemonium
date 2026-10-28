@@ -14,10 +14,13 @@ use crate::install::{installed_manifest, language_of};
 use crate::manifest::ServerSpec;
 use crate::preferences::ServerOverride;
 use crate::provider::{Provider, SymbolLabel};
-use crate::server::{DiagnosticsSink, Found, LanguageServer, Pressed, action_of, file_changes};
+use crate::server::{
+    DiagnosticsSink, Found, LanguageServer, LinkAnswer, Pressed, action_of, file_changes,
+};
 use crate::types::{
-    CodeAction, CodeLens, Completion, Diagnostic, FileEdit, FoldRange, Hover, InlayHint,
-    InlineValue, Location, Problem, Seek, SemanticToken, Signature, TextChange, Triggers,
+    CodeAction, CodeLens, ColorPresentation, ColorSwatch, Completion, Diagnostic, DocumentLink,
+    FileEdit, FoldRange, Hover, InlayHint, InlineValue, LinkTarget, Location, Problem,
+    RenameTarget, Seek, SemanticToken, Signature, TextChange, Triggers,
 };
 use crate::uri::{file_uri, path_of};
 
@@ -705,6 +708,8 @@ impl Hub {
             inlay_hints: server.has_inlay_hints(),
             code_lens: server.has_code_lens(),
             inline_values: server.has_inline_values(),
+            document_links: server.has_document_links(),
+            colors: server.has_colors(),
         })
     }
 
@@ -1334,6 +1339,80 @@ impl Hub {
         Ok(lenses)
     }
 
+    /// The stretches of the open file at `path` of the project at `root` that lead somewhere when pressed, once the file reaches `version`: web addresses, and files inside the project; links to anywhere else are left out.
+    pub fn document_links(
+        &self,
+        root: &Path,
+        path: &str,
+        version: i32,
+    ) -> Result<Vec<DocumentLink>, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
+            return Ok(Vec::new());
+        };
+        let found = server.document_links(&file_uri(&root.join(path)))?;
+        Ok(found
+            .into_iter()
+            .filter_map(|(span, address)| {
+                let target = match address {
+                    LinkAnswer::Address(address) => link_target(root, &address)?,
+                    LinkAnswer::Raw(link) => LinkTarget::Unresolved { link },
+                };
+                Some(DocumentLink { span, target })
+            })
+            .collect())
+    }
+
+    /// Where the link `raw`, as the language server of the open file at `path` of the project at `root` wrote it, leads; nothing when the server does not say or it leads outside the project and the web.
+    pub fn resolve_link(
+        &self,
+        root: &Path,
+        path: &str,
+        raw: &str,
+    ) -> Result<Option<LinkTarget>, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let server = self
+            .documents
+            .lock()
+            .map_err(|_| "the server is shutting down".to_owned())?
+            .get(&key)
+            .and_then(|document| document.server.clone())
+            .ok_or_else(|| format!("{path} has no language server"))?;
+        Ok(server
+            .resolve_link(raw)?
+            .and_then(|address| link_target(root, &address)))
+    }
+
+    /// The ways the language server of the open file at `path` of the project at `root` offers to write `color` in place of `span`, once the file reaches `version`.
+    pub fn color_presentations(
+        &self,
+        root: &Path,
+        path: &str,
+        version: i32,
+        span: Span,
+        color: [u8; 4],
+    ) -> Result<Vec<ColorPresentation>, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
+            return Ok(Vec::new());
+        };
+        server.color_presentations(&file_uri(&root.join(path)), color, span)
+    }
+
+    /// The stretches of the open file at `path` of the project at `root` that spell a colour, once the file reaches `version`; none when its language server does not say.
+    pub fn colors(
+        &self,
+        root: &Path,
+        path: &str,
+        version: i32,
+    ) -> Result<Vec<ColorSwatch>, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
+            return Ok(Vec::new());
+        };
+        server.colors(&file_uri(&root.join(path)))
+    }
+
     /// Presses the `index`-th lens last offered for the open file at `path` of the project at `root`: the places it points to, as to be shown, or the changes the press made to the open files, files no client has open being changed on disk here.
     pub fn press_lens(
         &self,
@@ -1377,6 +1456,21 @@ impl Hub {
             return Ok(None);
         };
         server.signature(&file_uri(&root.join(path)), position)
+    }
+
+    /// What can be renamed at `position` of the open file at `path` of the project at `root`, once the file reaches `version`; nothing when nothing there can be.
+    pub fn prepare_rename(
+        &self,
+        root: &Path,
+        path: &str,
+        version: i32,
+        position: Position,
+    ) -> Result<Option<RenameTarget>, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
+            return Err("no language server reads this file".to_owned());
+        };
+        server.prepare_rename(&file_uri(&root.join(path)), position)
     }
 
     /// Renames the thing at `position` of the open file at `path` of the project at `root` to `name`, once the file reaches `version`: files of the project no client has open are changed on disk here, and the changes to the open ones are returned for the clients to make.
@@ -1510,6 +1604,31 @@ impl Hub {
         }
         Ok(open)
     }
+}
+
+/// Where the address `address` a language server gave a link leads: a web address as it is, a file inside the project at `root` with the place its fragment names, `L12,5` or `12,5` counted from 1; nothing for any other address.
+fn link_target(root: &Path, address: &str) -> Option<LinkTarget> {
+    if ["http://", "https://", "mailto:"]
+        .iter()
+        .any(|scheme| address.starts_with(scheme))
+    {
+        return Some(LinkTarget::Url {
+            address: address.to_owned(),
+        });
+    }
+    let (file, fragment) = address.split_once('#').unwrap_or((address, ""));
+    let path = relative_to(root, &path_of(file)?)?;
+    let mut numbers = fragment
+        .trim_start_matches('L')
+        .split([',', ':', 'C'])
+        .filter_map(|number| number.trim_start_matches('L').parse::<u32>().ok());
+    let position = numbers.next().map(|line| {
+        pm_buffer::Position::new(
+            line.saturating_sub(1),
+            numbers.next().map_or(0, |column| column.saturating_sub(1)),
+        )
+    });
+    Some(LinkTarget::File { path, position })
 }
 
 /// The path of `file` from the root of the project at `root`, when it is inside it.
