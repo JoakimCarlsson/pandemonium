@@ -49,11 +49,32 @@ window with `terminal_serving`. It takes four agreeing signals:
 4. `GET /` on it answers with an HTML document that is not a redirect, a 404 or
    a browser debugger's discovery endpoint.
 
+A program that no shell shows the server, such as a dev server an agent starts
+with its own tools, is found by watching the ports: when one starts to listen,
+the server looks for the program that holds it, and when that program works in a
+session's folder and the port answers with a page, the
+window is told with `session_serving`.
+
 The window then opens the browser on the address, or sends an open browser to
 it, over the same SSH forward as any other page of that machine. It happens
-once for each address a command prints, only while the embedded browser is on
+once for each address a command prints. A browser that is open on another
+page is left there when a different server starts, since the reader or an agent
+is using it; it goes to a server's page when it shows nothing, an error or a page
+of that same server. It happens only while the embedded browser is on
 and installed, and Settings, under General, can turn it off. A shell in a dev
 container is not seen, since its ports are the container's.
+
+## When a page counts as loaded
+
+`browser_navigate`, `browser_back`, `browser_forward` and `browser_reload` end
+when the page has loaded and then settled: no request of the page is on its way
+and the network has been still for half a second, or five seconds have passed.
+A move inside one document, which single-page apps make, counts as arriving
+without a load. A page that fails to load ends the call with the engine's
+reason. The answer says the address, the title and the HTTP status of the
+document. `browser_screenshot` also waits, for up to two and a half seconds,
+for requests under way to finish. Sockets and event streams stay open for as
+long as the page does, so they are not waited for.
 
 ## Picking an element
 

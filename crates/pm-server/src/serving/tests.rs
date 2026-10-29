@@ -92,3 +92,13 @@ fn tells_pages_from_other_servers() {
         serve("HTTP/1.1 302 Found\r\nLocation: /login\r\nConnection: close\r\n\r\n<html></html>");
     assert!(!serves_page(moved));
 }
+
+/// Output that never ends a line is not kept without bound.
+#[test]
+fn bounds_a_line_that_never_ends() {
+    let mut pending = String::new();
+    for _ in 0..1000 {
+        assert_eq!(scan(&mut pending, &[b'x'; 1024]), None);
+    }
+    assert!(pending.len() <= PENDING);
+}

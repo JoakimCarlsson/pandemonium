@@ -1076,6 +1076,7 @@ keeps its own emulator for them.
 { "type": "terminal_output", "terminal": 1, "offset": 0, "data": "<base64>" }
 { "type": "terminal_exited", "terminal": 1 }
 { "type": "terminal_serving", "terminal": 1, "url": "http://localhost:5173/" }
+{ "type": "session_serving", "session": 3, "url": "http://localhost:5173/" }
 ```
 
 - `terminal_output`: bytes the shell printed. `offset` is how many bytes it had
@@ -1099,6 +1100,15 @@ keeps its own emulator for them.
   command prints. `url` is the address on the server's machine, so a client
   carries it to that machine's port as it does for any page. A shell in a dev
   container is not seen, since its ports are the container's.
+- `session_serving` is sent to every client when a program that works in the
+  folder of a session starts to listen on a port and the port answers with a web page as above. This finds what an agent
+  starts with its own tools, which no shell shows the server. The server looks
+  at the listening ports once a second and ignores what listened when it
+  started; a program that works elsewhere is not the session's, even when a
+  shell of the session started it. A port that stops listening is forgotten, so the page is announced
+  again when a program listens on it again. A page is announced once, whether a
+  shell or this found it first. The program is matched to a session on Linux
+  through the sockets of `/proc`, elsewhere through `lsof`.
 - `terminal_input` carries what a terminal sends the shell for a key or a paste
   (`"\r"` for Enter, `"\u001b[A"` for the up arrow), and the answers an
   emulator gives to the shell's queries.
@@ -1221,9 +1231,13 @@ server hosts on its loopback address; the server hands each call to a window.
   tools. Send it with `available: true` after connecting and again from time
   to time; the server uses the connection that said so most recently, and
   forgets it when the connection ends.
+- An agent is given the tools when it starts, once any connection has said it
+  can run them, and keeps them while no connection can: a call then fails with
+  a message saying so. An agent that was started before any window could run
+  them does not have them until it is started again.
 - `browser_call` is sent to that connection when an agent calls a tool. The
   tools are `browser_navigate`, `browser_snapshot`, `browser_screenshot`,
-  `browser_click`, `browser_type`, `browser_press_key`, `browser_scroll`,
+  `browser_click`, `browser_type`, `browser_select_option`, `browser_press_key`, `browser_scroll`,
   `browser_back`, `browser_forward`, `browser_reload`, `browser_evaluate`,
   `browser_console`, `browser_network` and `browser_wait`; `arguments` is the
   JSON the agent gave.

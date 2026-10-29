@@ -3,6 +3,7 @@
 use std::collections::BTreeSet;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
+use std::sync::Mutex;
 use std::time::Duration;
 
 /// How long a probe waits to connect to a port and for what it answers.
@@ -14,8 +15,27 @@ const PROBE_BYTES: usize = 8 * 1024;
 /// How many bytes of the page are looked at to tell whether it is a document.
 const SNIFF_BYTES: usize = 1024;
 
+/// The program that listens on `port`: its process number.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Process(pub(crate) u32);
+
 /// How many bytes of a line that has not ended are kept for the next output.
 const PENDING: usize = 4 * 1024;
+
+/// The ports whose page was announced and that still listen, so that a page is announced once however it was found.
+static ANNOUNCED: Mutex<BTreeSet<u16>> = Mutex::new(BTreeSet::new());
+
+/// Takes the right to announce the page on `port`; false when it was announced and the port has listened ever since.
+pub(crate) fn claim(port: u16) -> bool {
+    ANNOUNCED.lock().is_ok_and(|mut held| held.insert(port))
+}
+
+/// Forgets the announced ports that are not in `listening`, so a program started again on one is announced again.
+pub(crate) fn release_unlisted(listening: &BTreeSet<u16>) {
+    if let Ok(mut held) = ANNOUNCED.lock() {
+        held.retain(|port| listening.contains(port));
+    }
+}
 
 /// A web page a shell's program says it serves.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -107,9 +127,11 @@ pub(crate) fn found_in(line: &str) -> Option<Found> {
 /// Adds `data`, what a shell printed, to the text `pending` that has not ended its line yet, and returns the page the last line that ended says is served, if any.
 pub(crate) fn scan(pending: &mut String, data: &[u8]) -> Option<Found> {
     pending.push_str(&plain_text(data));
-    let end = pending.rfind('\n')?;
-    let found = pending[..end].lines().rev().find_map(found_in);
-    pending.drain(..=end);
+    let found = pending.rfind('\n').and_then(|end| {
+        let found = pending[..end].lines().rev().find_map(found_in);
+        pending.drain(..=end);
+        found
+    });
     if pending.len() > PENDING {
         let mut cut = pending.len() - PENDING;
         while !pending.is_char_boundary(cut) {
@@ -139,6 +161,94 @@ pub(crate) fn listening_ports() -> Option<BTreeSet<u16>> {
         .ok()
         .filter(|output| output.status.success())?;
     Some(lsof_ports(&String::from_utf8_lossy(&output.stdout)))
+}
+
+/// The processes that listen on `port`, which are looked for only when a port is new.
+pub(crate) fn listeners_of(port: u16) -> Vec<Process> {
+    if cfg!(target_os = "linux") {
+        let mut inodes = BTreeSet::new();
+        for table in ["/proc/net/tcp", "/proc/net/tcp6"] {
+            if let Ok(text) = std::fs::read_to_string(table) {
+                inodes.extend(proc_inodes(&text, port));
+            }
+        }
+        if inodes.is_empty() {
+            return Vec::new();
+        }
+        let Ok(processes) = std::fs::read_dir("/proc") else {
+            return Vec::new();
+        };
+        return processes
+            .flatten()
+            .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
+            .filter(|pid| holds_socket(*pid, &inodes))
+            .map(Process)
+            .collect();
+    }
+    command_text(
+        "lsof",
+        &["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-t"],
+    )
+    .lines()
+    .filter_map(|line| line.trim().parse().ok())
+    .map(Process)
+    .collect()
+}
+
+/// The inodes of the sockets a table of `/proc/net/tcp` lists as listening on `port`.
+fn proc_inodes(table: &str, port: u16) -> Vec<u64> {
+    table
+        .lines()
+        .skip(1)
+        .filter_map(|row| {
+            let columns: Vec<&str> = row.split_whitespace().collect();
+            if *columns.get(3)? != "0A" {
+                return None;
+            }
+            let local = u16::from_str_radix(columns.get(1)?.rsplit_once(':')?.1, 16).ok()?;
+            (local == port).then(|| columns.get(9)?.parse().ok())?
+        })
+        .collect()
+}
+
+/// Whether the process `pid` holds one of the sockets `inodes`.
+fn holds_socket(pid: u32, inodes: &BTreeSet<u64>) -> bool {
+    std::fs::read_dir(format!("/proc/{pid}/fd")).is_ok_and(|descriptors| {
+        descriptors.flatten().any(|descriptor| {
+            std::fs::read_link(descriptor.path())
+                .ok()
+                .and_then(|target| {
+                    let text = target.to_string_lossy().into_owned();
+                    text.strip_prefix("socket:[")?
+                        .strip_suffix(']')?
+                        .parse::<u64>()
+                        .ok()
+                })
+                .is_some_and(|inode| inodes.contains(&inode))
+        })
+    })
+}
+
+/// What the program `command` with `arguments` prints, or nothing when it cannot be run.
+fn command_text(command: &str, arguments: &[&str]) -> String {
+    std::process::Command::new(command)
+        .args(arguments)
+        .output()
+        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+        .unwrap_or_default()
+}
+
+/// The folder `process` works in.
+pub(crate) fn directory_of(process: Process) -> Option<std::path::PathBuf> {
+    if cfg!(target_os = "linux") {
+        return std::fs::read_link(format!("/proc/{}/cwd", process.0)).ok();
+    }
+    command_text(
+        "lsof",
+        &["-a", "-p", &process.0.to_string(), "-d", "cwd", "-Fn"],
+    )
+    .lines()
+    .find_map(|line| line.strip_prefix('n').map(std::path::PathBuf::from))
 }
 
 /// The ports a table of `/proc/net/tcp` lists as listening.

@@ -11,6 +11,9 @@
 /** The most lines the console and the network keep. */
 const KEPT = 200;
 
+/** The kinds of request that stay open for as long as the page does, which say nothing of whether it is still loading. */
+const OPEN_ENDED = new Set(['EventSource', 'WebSocket', 'Ping']);
+
 /**
  * What a protocol value says, as text.
  * @param {Json} value A remote object of the protocol.
@@ -37,6 +40,12 @@ class Recorder {
     this.network = [];
     /** @type {Map<string, [string, string]>} The method and address of each request, until it is answered. */
     this.requests = new Map();
+    /** @type {Set<string>} The requests that were sent and are not finished. */
+    this.pending = new Set();
+    /** @type {number} When the network last did something, in milliseconds. */
+    this.active = Date.now();
+    /** @type {{ url: string, status: number, at: number } | null} The page's own document as last answered, and when. */
+    this.document = null;
     cdp.listen((method, params) => this.hear(method, params));
     for (const method of ['Runtime.enable', 'Network.enable', 'Page.enable', 'Log.enable']) {
       cdp.call(method).catch(() => {});
@@ -61,6 +70,7 @@ class Recorder {
    * @returns {void}
    */
   hear(method, params) {
+    if (method.startsWith('Network.')) this.active = Date.now();
     switch (method) {
       case 'Runtime.consoleAPICalled':
         this.keep(this.console, `[${params.type || 'log'}] ${(params.args || []).map(said).join(' ')}`);
@@ -78,10 +88,17 @@ class Recorder {
       }
       case 'Network.requestWillBeSent':
         if (params.requestId && params.request) {
+          if (!OPEN_ENDED.has(params.type)) this.pending.add(params.requestId);
           this.requests.set(params.requestId, [params.request.method || 'GET', params.request.url]);
         }
         break;
+      case 'Network.loadingFinished':
+        this.pending.delete(params.requestId);
+        break;
       case 'Network.responseReceived': {
+        if (params.type === 'Document' && params.response) {
+          this.document = { url: params.response.url, status: params.response.status, at: Date.now() };
+        }
         const known = this.requests.get(params.requestId);
         if (known) {
           this.requests.delete(params.requestId);
@@ -90,6 +107,7 @@ class Recorder {
         break;
       }
       case 'Network.loadingFailed': {
+        this.pending.delete(params.requestId);
         const known = this.requests.get(params.requestId);
         if (known) {
           this.requests.delete(params.requestId);
@@ -100,6 +118,15 @@ class Recorder {
       default:
         break;
     }
+  }
+
+  /**
+   * Whether the network has been still: nothing is on its way, and nothing happened for `quiet` milliseconds.
+   * @param {number} quiet How long it must have been still.
+   * @returns {boolean} Whether it has.
+   */
+  still(quiet) {
+    return this.pending.size === 0 && Date.now() - this.active >= quiet;
   }
 
   /**

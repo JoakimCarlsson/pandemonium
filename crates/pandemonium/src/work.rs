@@ -82,6 +82,16 @@ const BOOTSTRAP_WAIT: std::time::Duration = std::time::Duration::from_secs(4);
 /// A machine the servers run on: nothing for this one, or how a project's address names another.
 type Host = Option<String>;
 
+/// Whether `url` is what a server may say a shell serves: the root of a port of `localhost` over plain HTTP, nothing a server could use to send the browser elsewhere.
+fn is_served_address(url: &str) -> bool {
+    url.strip_prefix("http://localhost:")
+        .and_then(|rest| rest.strip_suffix('/'))
+        .is_some_and(|port| {
+            port.bytes().all(|byte| byte.is_ascii_digit())
+                && port.parse::<u16>().is_ok_and(|port| port != 0)
+        })
+}
+
 /// What a thread that did some of the work reports back.
 enum Job {
     /// The picture at this path was decoded, when it is one.
@@ -1588,8 +1598,10 @@ impl Work {
                             model.update(|screen| screen.terminal_exited(tab));
                         }
                     }
-                    Incoming::TerminalServing { url, .. } => {
-                        self.served.push((host.clone(), url));
+                    Incoming::TerminalServing { url, .. } | Incoming::SessionServing { url } => {
+                        if is_served_address(&url) {
+                            self.served.push((host.clone(), url));
+                        }
                     }
                     Incoming::Debug {
                         debug,

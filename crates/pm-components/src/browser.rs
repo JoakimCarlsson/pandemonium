@@ -168,6 +168,18 @@ impl Browser {
     }
 }
 
+/// Whether a browser showing `current` may be sent to the page at `address`: it shows nothing or an error, or a page of the same server.
+fn browser_free_for(current: &str, address: &str) -> bool {
+    let current = current.trim();
+    if current.is_empty() || current == "about:blank" || current.starts_with("chrome-error:") {
+        return true;
+    }
+    let origin = address.trim_end_matches('/');
+    current
+        .strip_prefix(origin)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(['/', '?', '#']))
+}
+
 /// The address `typed` names: a web address as it is, a bare host with a scheme in front, and a local host over plain HTTP.
 pub fn address_of(typed: &str) -> String {
     let typed = typed.trim();
@@ -207,9 +219,11 @@ impl WorkspaceState {
         self.tab = Tab::Browser;
     }
 
-    /// Shows the page a program started in a shell serves at `address` on the machine `host`: the browser opens on it, or when it is open it goes to it.
+    /// Shows the page a program started in a shell serves at `address` on the machine `host`: the browser opens on it, or when it is open and is on nothing, on an error or on a page of the same server, it goes to it.
+    /// A browser on another page is left on it, since the reader or an agent is using it.
     pub fn open_served_page(&mut self, address: &str, host: Option<String>) {
         match self.browser.as_mut() {
+            Some(browser) if !browser_free_for(browser.address.text(), address) => {}
             Some(browser) => {
                 browser.host = host;
                 browser.address = Field::new(address);
@@ -496,3 +510,6 @@ pub fn browser_view(state: &WorkspaceState, width: f32, height: f32) -> Node {
         .child(toolbar)
         .child(row)
 }
+
+#[cfg(test)]
+mod tests;

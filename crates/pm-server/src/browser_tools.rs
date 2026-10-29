@@ -52,12 +52,9 @@ static TOOLS: LazyLock<Tools> = LazyLock::new(|| Tools {
     next: AtomicU64::new(1),
 });
 
-/// The address and token of the tools, when some window can run them, to be given to an agent when it starts.
+/// The address and token of the tools, to be given to an agent when it starts, once any window has said it can run them.
+/// An agent only learns of its tools when it starts, so they are kept on offer while no window is connected: an agent started as a window restarts or reconnects would otherwise never get them, and a call made then says that no window can run them.
 pub(crate) fn offered() -> Option<(String, String)> {
-    let runners = TOOLS.runners.lock().ok()?;
-    if runners.is_empty() {
-        return None;
-    }
     TOOLS.endpoint.get().cloned()
 }
 
@@ -329,7 +326,7 @@ fn definitions() -> Vec<Value> {
     vec![
         tool(
             "browser_navigate",
-            "Open an address in the browser pane and wait for it to load.",
+            "Open an address in the browser pane and wait for it to load and settle, then say where it ended up, its title and its HTTP status.",
             &json!({ "url": { "type": "string" } }),
             &["url"],
         ),
@@ -341,7 +338,7 @@ fn definitions() -> Vec<Value> {
         ),
         tool(
             "browser_screenshot",
-            "Take a picture of what the browser pane shows.",
+            "Take a picture of what the browser pane shows, once the requests the page has under way are done.",
             &json!({}),
             &[],
         ),
@@ -358,7 +355,7 @@ fn definitions() -> Vec<Value> {
         ),
         tool(
             "browser_type",
-            "Type text into an element, given by `ref` or `selector`; `submit` presses Enter afterwards.",
+            "Type text into a text field, given by `ref` or `selector`; `submit` presses Enter afterwards. Lists and boxes cannot be typed in.",
             &json!({
                 "ref": target["ref"],
                 "selector": target["selector"],
@@ -366,6 +363,16 @@ fn definitions() -> Vec<Value> {
                 "submit": { "type": "boolean" },
             }),
             &["text"],
+        ),
+        tool(
+            "browser_select_option",
+            "Choose an option of a list (a `select`), given by `ref` or `selector`, by its `value` or its text.",
+            &json!({
+                "ref": target["ref"],
+                "selector": target["selector"],
+                "value": { "type": "string" },
+            }),
+            &["value"],
         ),
         tool(
             "browser_press_key",
@@ -391,19 +398,19 @@ fn definitions() -> Vec<Value> {
         ),
         tool(
             "browser_back",
-            "Go back one page in the history and wait for it to load.",
+            "Go back one page in the history and wait for it to load and settle.",
             &json!({}),
             &[],
         ),
         tool(
             "browser_forward",
-            "Go forward one page in the history and wait for it to load.",
+            "Go forward one page in the history and wait for it to load and settle.",
             &json!({}),
             &[],
         ),
         tool(
             "browser_reload",
-            "Load the page again and wait for it to load.",
+            "Load the page again and wait for it to load and settle.",
             &json!({}),
             &[],
         ),

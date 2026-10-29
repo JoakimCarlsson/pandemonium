@@ -29,6 +29,7 @@ mod releases;
 mod rewind;
 mod scan;
 mod serving;
+mod session_servers;
 mod sessions;
 mod tasks;
 mod terminals;

@@ -95,6 +95,13 @@ pub enum ServerMessage {
         /// The address of the page, as the server's machine knows it.
         url: String,
     },
+    /// A program of a session serves a web page on a port of the server's machine, found by watching the ports and which processes listen on them.
+    SessionServing {
+        /// The session.
+        session: u64,
+        /// The address of the page, as the server's machine knows it.
+        url: String,
+    },
     /// What a language server finds wrong with a file the connection opened, replacing what it found before.
     Diagnostics {
         /// The folder the file was opened in.

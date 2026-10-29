@@ -47,6 +47,8 @@ struct Watch {
     pending: String,
     /// The address last found for this command.
     last: Option<String>,
+    /// The epoch a confirmation is under way for, so that output cannot start more than one at a time.
+    confirming: Option<u64>,
 }
 
 /// What a shell printed that is still kept, and how much was printed before it.
@@ -251,16 +253,26 @@ impl Terminal {
             let Ok(mut watch) = self.watch.lock() else {
                 return;
             };
-            let found = serving::scan(&mut watch.pending, data)
-                .filter(|found| watch.last.as_deref() != Some(found.url.as_str()));
+            let epoch = watch.epoch;
+            let found = serving::scan(&mut watch.pending, data).filter(|found| {
+                watch.confirming != Some(epoch) && watch.last.as_deref() != Some(found.url.as_str())
+            });
             if let Some(found) = &found {
                 watch.last = Some(found.url.clone());
+                watch.confirming = Some(epoch);
             }
-            (watch.epoch, found)
+            (epoch, found)
         };
         if let Some(found) = found {
             let terminal = self.clone();
-            std::thread::spawn(move || terminal.confirm(number, epoch, &found));
+            std::thread::spawn(move || {
+                terminal.confirm(number, epoch, &found);
+                if let Ok(mut watch) = terminal.watch.lock()
+                    && watch.confirming == Some(epoch)
+                {
+                    watch.confirming = None;
+                }
+            });
         }
     }
 
@@ -284,6 +296,7 @@ impl Terminal {
                     if serving::listening_ports().is_some_and(|now| now.contains(&found.port)) {
                         if serving::serves_page(found.port)
                             && self.watch.lock().is_ok_and(|watch| watch.epoch == epoch)
+                            && serving::claim(found.port)
                         {
                             self.announce(number, &found.url);
                         }

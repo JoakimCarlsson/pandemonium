@@ -55,6 +55,11 @@ pub enum Incoming {
         /// The address of the page.
         url: String,
     },
+    /// A program of the session with this number serves the web page at this address, on the server's machine.
+    SessionServing {
+        /// The address of the page.
+        url: String,
+    },
     /// How far the download of an update has got.
     UpdateProgress {
         /// How many bytes have arrived.
@@ -444,6 +449,9 @@ fn converse(
                     }
                     ServerMessage::TerminalServing { terminal, url } => {
                         let _ = reporter.send(Incoming::TerminalServing { terminal, url });
+                    }
+                    ServerMessage::SessionServing { url, .. } => {
+                        let _ = reporter.send(Incoming::SessionServing { url });
                     }
                     ServerMessage::UpdateProgress { received, total } => {
                         let _ = reporter.send(Incoming::UpdateProgress { received, total });

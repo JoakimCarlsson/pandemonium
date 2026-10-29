@@ -15,6 +15,24 @@ const MOST_TEXT = 20000;
 /** How long loading a page may take, in milliseconds. */
 const LOADING = 20000;
 
+/** How long the network must be still for a page to count as settled, in milliseconds. */
+const STILL = 500;
+
+/** The longest a page is waited for to settle after it loaded, in milliseconds. */
+const SETTLING = 5000;
+
+/** How often the network is looked at while waiting for a page to settle, in milliseconds. */
+const LOOK = 50;
+
+/** How long a click is given to start something, such as a request or a page, before the network is looked at, in milliseconds. */
+const CLICK_REACTS = 150;
+
+/** How long the network must be still after a click, in milliseconds. */
+const CLICK_STILL = 250;
+
+/** The longest a click waits for what it started, in milliseconds. */
+const CLICK_SETTLING = 3000;
+
 /** The name of the scripting world the tools read pages in. */
 const WORLD = 'pm-agent';
 
@@ -149,19 +167,30 @@ async function inWorld(page, script) {
   }
 }
 
+/** The script that says what is at a point of the page, as a tag, an id and the start of its text. */
+const DESCRIBE = `(x, y) => {
+    const el = document.elementFromPoint(x, y);
+    if (!el) return 'nothing';
+    const text = (el.innerText || el.value || el.getAttribute('aria-label') || '').trim().replace(/\\s+/g, ' ').slice(0, 50);
+    return el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (text ? ' "' + text + '"' : '');
+  }`;
+
 /**
- * Clicks at a place in the page, as the reader would.
+ * Clicks at a place in the page, as the reader would, and waits for what the click started: a page that loads, or requests that are under way.
  * @param {Page} page The page.
  * @param {number} x Across, in logical pixels.
  * @param {number} y Down, in logical pixels.
- * @returns {ToolOutcome} The answer.
+ * @returns {Promise<ToolOutcome>} The answer, saying what was hit and where the page is after.
  */
-function clickAt(page, x, y) {
+async function clickAt(page, x, y) {
   const at = { x: Math.round(x), y: Math.round(y) };
+  const hit = await evaluate(page, await world(page), `(${DESCRIBE})(${at.x}, ${at.y})`).catch(() => 'unknown');
   page.contents.sendInputEvent({ type: 'mouseMove', ...at, modifiers: [] });
   page.contents.sendInputEvent({ type: 'mouseDown', ...at, button: 'left', clickCount: 1, modifiers: [] });
   page.contents.sendInputEvent({ type: 'mouseUp', ...at, button: 'left', clickCount: 1, modifiers: [] });
-  return done(`Clicked at ${at.x}, ${at.y}.`);
+  await new Promise((resolve) => setTimeout(resolve, CLICK_REACTS));
+  await settled(page, CLICK_STILL, CLICK_SETTLING);
+  return done(`Clicked ${hit} at ${at.x}, ${at.y}. The page is at ${page.contents.getURL()}.`);
 }
 
 /**
@@ -214,7 +243,8 @@ function pressKey(page, key, held) {
 }
 
 /**
- * Runs `act`, which moves through the page's history or loads it again, and ends when the page has stopped loading or takes too long.
+ * Runs `act`, which moves through the page's history or loads it again, and ends when the page has loaded and settled, or a page of the same document took its place, or it fails or takes too long.
+ * A move between two states of the same document, which single-page apps make, never stops loading, so it counts as arriving.
  * @param {Page} page The page.
  * @param {() => void} act What to do.
  * @returns {Promise<ToolOutcome>} The answer.
@@ -222,12 +252,30 @@ function pressKey(page, key, held) {
 async function loading(page, act) {
   /** @type {Promise<ToolOutcome>} */
   const late = new Promise((resolve) => setTimeout(() => resolve(failed('The page took too long to load.')), LOADING));
+  const since = Date.now();
   /** @type {Promise<ToolOutcome>} */
-  const stopped = new Promise((resolve) => {
-    page.contents.once('did-stop-loading', () => resolve(done(`The page loaded: ${page.contents.getURL()}`)));
+  const arriving = new Promise((resolve) => {
+    /** @type {() => void} */
+    const arrive = () => {
+      page.contents.off('did-stop-loading', arrive);
+      page.contents.off('did-navigate-in-page', arrive);
+      page.contents.off('did-fail-load', fail);
+      settled(page, STILL, SETTLING).then(() => resolve(done(arrived(page, since))));
+    };
+    /** @type {(event: unknown, code: number, reason: string, address: string, main: boolean) => void} */
+    const fail = (_event, code, reason, address, main) => {
+      if (!main || code === -3) return;
+      page.contents.off('did-stop-loading', arrive);
+      page.contents.off('did-navigate-in-page', arrive);
+      page.contents.off('did-fail-load', fail);
+      resolve(failed(`The page did not load: ${reason} (${address})`));
+    };
+    page.contents.once('did-stop-loading', arrive);
+    page.contents.once('did-navigate-in-page', arrive);
+    page.contents.on('did-fail-load', fail);
   });
   act();
-  return Promise.race([stopped, late]);
+  return Promise.race([arriving, late]);
 }
 
 /**
@@ -246,7 +294,47 @@ function mayOpen(url) {
 }
 
 /**
- * Opens an address and ends when the page has loaded, fails to, or takes too long.
+ * Waits for the page to settle after it loaded: nothing is on its way and the network has been still for `quiet` milliseconds, or `most` milliseconds have passed.
+ * @param {Page} page The page.
+ * @param {number} quiet How long the network must be still.
+ * @param {number} most The longest to wait.
+ * @returns {Promise<void>} Ends when it has settled or the time is up.
+ */
+async function settled(page, quiet, most) {
+  if (!page.recorder) return;
+  const until = Date.now() + most;
+  while (!page.recorder.still(quiet) && Date.now() < until) {
+    await new Promise((resolve) => setTimeout(resolve, LOOK));
+  }
+}
+
+/**
+ * What a page that loaded looks like: where it is, what it is called and what its document answered, when it answered since `since`; a page the engine kept from before, as going back or forward can, says it came from the cache.
+ * @param {Page} page The page.
+ * @param {number} since When the move began, in milliseconds.
+ * @returns {string} The sentence.
+ */
+function arrived(page, since) {
+  const answer = page.recorder && page.recorder.document;
+  const fresh = answer && answer.url === page.contents.getURL() && answer.at >= since;
+  const status = fresh && answer ? ` (HTTP ${answer.status})` : ' (not fetched again, so the status is not known)';
+  return `The page loaded: ${page.contents.getURL()}${status}, titled "${page.contents.getTitle()}".`;
+}
+
+/**
+ * Whether the page may move `step` places through its history, or load again when `step` is nothing: the page it would show is one an agent may open.
+ * @param {Page} page The page.
+ * @param {number} step How far through the history, such as -1 for back; 0 for the page it shows.
+ * @returns {boolean} Whether it may.
+ */
+function mayVisit(page, step) {
+  const history = page.contents.navigationHistory;
+  const entry = history.getEntryAtIndex(history.getActiveIndex() + step);
+  return entry ? mayOpen(entry.url) : false;
+}
+
+/**
+ * Opens an address and ends when the page has loaded and settled, fails to, or takes too long.
  * @param {Page} page The page.
  * @param {string} url Where to go.
  * @returns {Promise<ToolOutcome>} The answer.
@@ -255,9 +343,13 @@ async function navigate(page, url) {
   if (!mayOpen(url)) return failed('Only http and https addresses can be opened.');
   /** @type {Promise<ToolOutcome>} */
   const late = new Promise((resolve) => setTimeout(() => resolve(failed('The page took too long to load.')), LOADING));
+  const since = Date.now();
   /** @type {Promise<ToolOutcome>} */
   const load = page.contents.loadURL(url).then(
-    () => done('The page loaded.'),
+    async () => {
+      await settled(page, STILL, SETTLING);
+      return done(arrived(page, since));
+    },
     (/** @type {Error} */ error) => failed(`The page did not load: ${error.message}`),
   );
   return Promise.race([load, late]);
@@ -281,6 +373,7 @@ async function run(page, tool, args) {
       return done(cut(text, MOST_TEXT));
     }
     case 'browser_screenshot': {
+      await settled(page, 0, SETTLING / 2);
       const reply = await protocol(page).call('Page.captureScreenshot', { format: 'png' }).catch(() => null);
       if (!reply || !reply.data) return failed('no picture could be taken');
       return done('Screenshot taken.', page.surface.savePicture(Buffer.from(reply.data, 'base64')));
@@ -301,12 +394,23 @@ async function run(page, tool, args) {
       if (typeof args.text !== 'string' || !element) return failed('give text, and an element by ref or selector');
       const found = await inWorld(
         page,
-        `(() => { const el = ${element}; if (!el) return JSON.stringify({ error: 'no such element; take a new browser_snapshot' }); el.scrollIntoView({ block: 'center' }); el.focus(); if (el.select) el.select(); return JSON.stringify({ ok: true }); })()`,
+        `(() => { const el = ${element}; if (!el) return JSON.stringify({ error: 'no such element; take a new browser_snapshot' }); const kind = el.tagName === 'SELECT' ? 'list' : el.type === 'checkbox' || el.type === 'radio' ? 'box' : ''; if (kind) return JSON.stringify({ kind }); el.scrollIntoView({ block: 'center' }); el.focus(); if (el.select) el.select(); return JSON.stringify({ ok: true }); })()`,
       );
       if (found.error) return failed(found.error);
+      if (found.kind) return failed(`A ${found.kind} cannot be typed in; use browser_select_option for a list and browser_click for a box.`);
       await protocol(page).call('Input.insertText', { text: args.text });
       if (args.submit === true) pressEnter(page);
       return done('Typed.');
+    }
+    case 'browser_select_option': {
+      const element = target(args);
+      if (!element || typeof args.value !== 'string') return failed('give the option as value, and the list by ref or selector');
+      const found = await inWorld(
+        page,
+        `(() => { const el = ${element}; if (!el) return JSON.stringify({ error: 'no such element; take a new browser_snapshot' }); if (el.tagName !== 'SELECT') return JSON.stringify({ error: 'the element is not a list' }); const want = ${JSON.stringify(args.value)}; const option = [...el.options].find((o) => o.value === want) || [...el.options].find((o) => o.text.trim() === want); if (!option) return JSON.stringify({ error: 'the list has no such option; it has: ' + [...el.options].map((o) => o.value || o.text.trim()).join(', ') }); el.value = option.value; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); return JSON.stringify({ chosen: option.text.trim() || option.value }); })()`,
+      );
+      if (found.error) return failed(found.error);
+      return done(`Chose ${found.chosen}.`);
     }
     case 'browser_press_key': {
       if (typeof args.key !== 'string' || args.key === '') return failed('no key was given');
@@ -343,21 +447,24 @@ async function run(page, tool, args) {
             else box.scrollBy({ top: by });
           }
           const root = el && named ? el : document.scrollingElement || document.documentElement;
-          return JSON.stringify({ top: Math.round(root.scrollTop), height: root.scrollHeight, view: root.clientHeight });
+          return JSON.stringify({ top: Math.round(root.scrollTop), most: Math.max(0, root.scrollHeight - root.clientHeight), height: root.scrollHeight });
         })()`,
       );
       if (found.error) return failed(found.error);
-      return done(`Scrolled to ${found.top} of ${found.height} (the view is ${found.view} tall).`);
+      return done(`Scrolled to ${found.top} of at most ${found.most} (the page is ${found.height} tall).`);
     }
     case 'browser_back': {
       if (!page.contents.navigationHistory.canGoBack()) return failed('There is no earlier page.');
+      if (!mayVisit(page, -1)) return failed('Only http and https addresses can be opened.');
       return loading(page, () => page.contents.navigationHistory.goBack());
     }
     case 'browser_forward': {
       if (!page.contents.navigationHistory.canGoForward()) return failed('There is no later page.');
+      if (!mayVisit(page, 1)) return failed('Only http and https addresses can be opened.');
       return loading(page, () => page.contents.navigationHistory.goForward());
     }
     case 'browser_reload':
+      if (!mayVisit(page, 0)) return failed('Only http and https addresses can be opened.');
       return loading(page, () => page.contents.reload());
     case 'browser_evaluate': {
       if (typeof args.expression !== 'string') return failed('no expression was given');
