@@ -21,5 +21,9 @@ pub use engine::Engine;
 pub use error::Error;
 pub use frame::Frame;
 pub use input::{Button, Cursor, Key, Modifiers};
+pub use link::Notice;
 pub use view::View;
-pub use wire::{EditAction, PickedElement, ToolResult};
+pub use wire::{
+    Capture, CaptureKind, CapturedPicture, CertificateInfo, DownloadState, EditAction,
+    PickedElement, ToolResult, ZoomAction,
+};

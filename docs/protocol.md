@@ -1239,12 +1239,35 @@ server hosts on its loopback address; the server hands each call to a window.
   tools are `browser_navigate`, `browser_snapshot`, `browser_screenshot`,
   `browser_click`, `browser_type`, `browser_select_option`, `browser_press_key`, `browser_scroll`,
   `browser_back`, `browser_forward`, `browser_reload`, `browser_evaluate`,
-  `browser_console`, `browser_network` and `browser_wait`; `arguments` is the
-  JSON the agent gave.
+  `browser_console`, `browser_network`, `browser_wait`, `browser_handle_dialog`,
+  `browser_hover`, `browser_drag`, `browser_fill_form`, `browser_highlight`,
+  `browser_get_bounding_box` and `browser_resize`; `arguments` is the JSON the
+  agent gave. `browser_screenshot` also takes `full_page`, or `ref` or
+  `selector` for one element. The schema of each tool is in
+  `crates/pm-server/src/browser_tools.rs`; how the helper runs them is in
+  [browser.md](browser.md#what-agents-can-do-with-a-page). The tools add no
+  message: they travel in `browser_call` and `browser_result` as before.
 - `browser_result` answers a call with the text the tool produced and, for
   `browser_screenshot`, the PNG it took. The server answers the agent with it,
   or with an error when no connection answers within a minute and a half or
   none can run the tools.
+- The window may refuse where a tool takes the page. With Settings, General,
+  "Restrict agent browsing" on, `browser_navigate`, `browser_back`,
+  `browser_forward` and `browser_reload`, and any move the page makes by itself
+  or by a redirect while a call runs, are limited to `localhost`, `127.0.0.1`,
+  `[::1]` and the origins the reader listed. The refusal comes back as a
+  `browser_result` with `ok` false whose `text` names the origin and says why;
+  a call that only clicked appends the same sentence when the click was
+  kept from moving the page. The setting belongs to the window and is enforced
+  by its browser helper, so it adds nothing to the messages above and the server
+  does not know of it. See [browser.md](browser.md#keeping-the-reader-safe).
+
+What the reader adds to a prompt from the browser pane, screenshots of the page
+and its console, adds nothing to this protocol. The window carries the pictures
+in the `attachments` of `start_session` and `prompt`, as it carries a pasted
+picture, and writes the console lines into `text`, as a fenced block under a
+sentence that says the page wrote it. The messages between the window and the
+browser helper that take them are in [browser.md](browser.md#adding-screenshots-and-the-console-to-the-prompt).
 
 ## Extensions
 

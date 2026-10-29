@@ -52,6 +52,7 @@ use winit::window::{CursorIcon, Window, WindowId};
 
 mod asides;
 mod browser;
+mod capture;
 mod code;
 mod editing;
 mod frame;
@@ -730,6 +731,10 @@ impl App {
         }
         if is_message_menu_item(id) {
             self.message_menu_action(id);
+            return;
+        }
+        if id == pm_components::browser::BROWSER_CAPTURE {
+            self.open_browser_capture_menu();
             return;
         }
         if let Some(command) = pm_components::browser_menu::BrowserCommand::of(id)

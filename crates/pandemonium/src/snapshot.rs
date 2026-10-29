@@ -8,6 +8,7 @@ use pm_acp::{
 };
 use pm_components::Project;
 use pm_components::adder::{ADDER_BROWSE, ADDER_CLONE, ADDER_ROW_BASE, Found, Kind as Row};
+use pm_components::browser_safety::{Certificate, Download, Question as Asked, Saving};
 use pm_components::diff::gutter_id;
 use pm_components::git_controls::{BRANCH_BUTTON, BRANCH_FILTER, Pick as Choosing};
 use pm_components::git_menus::MenuKind;
@@ -58,7 +59,7 @@ const NARROW_WIDTH: u32 = 640;
 const NARROW_HEIGHT: u32 = 420;
 
 /// The name of the shot of each section of the settings window, after `settings-`.
-pub const SETTINGS_SHOTS: [(&str, Section); 24] = [
+pub const SETTINGS_SHOTS: [(&str, Section); 25] = [
     ("general", Section::General),
     ("appearance", Section::Appearance),
     ("editor", Section::Editor),
@@ -71,6 +72,7 @@ pub const SETTINGS_SHOTS: [(&str, Section); 24] = [
     ("languages", Section::Languages),
     ("keymap", Section::Keymap),
     ("terminal", Section::Terminal),
+    ("browser", Section::Browser),
     ("git", Section::Git),
     ("worktrees", Section::Worktrees),
     ("agents", Section::Agents),
@@ -156,6 +158,20 @@ pub enum Shot {
     TerminalMenu,
     /// The workspace with the browser open and the menu over its page open.
     BrowserMenu,
+    /// The workspace with the browser zoomed to 125% and the bar for finding in its page open, with the sidebars wide so the pane is narrow when the flag is set.
+    BrowserFind(bool),
+    /// The same with the developer tools open beside the page.
+    BrowserFindTools,
+    /// The workspace with the browser open and the question about clearing cookies and site data asked.
+    BrowserClear,
+    /// The workspace with the browser open and a page asking to use the camera and microphone, with a second question waiting.
+    BrowserPermission,
+    /// The workspace with the browser open on a site whose certificate is not trusted.
+    BrowserCertificate,
+    /// The same page after the reader pressed to proceed once, which asks them to press again.
+    BrowserCertificateConfirm,
+    /// The workspace with the browser open and the note that a download was saved.
+    BrowserDownload,
     /// The overview of a project.
     Overview,
     /// The sidebar with the submodules of a project under it, a session working in one, and work being started in another.
@@ -252,6 +268,16 @@ pub enum Shot {
     ElementScrolled,
     /// A conversation whose first message was sent with two picked elements.
     ElementsSent,
+    /// The page for starting work with a picked element, a screenshot, a skipped area and the console held for the prompt.
+    Captures,
+    /// The same, with the screenshot's preview open.
+    CapturePreview,
+    /// The same, with the console's lines open.
+    CaptureConsole,
+    /// The browser with the menu of what can be added to the prompt open.
+    CaptureMenu,
+    /// A conversation whose first message was sent with a screenshot and the console.
+    CapturesSent,
     /// The page for starting work split with the browser beside it, after the first prompt was sent.
     SplitStarted,
     /// A pane that was split and had the browser brought into it with the button of the empty pane.
@@ -276,6 +302,8 @@ pub enum Shot {
     SoftWrap,
     /// The settings window on a section, at its narrowest when the flag is set.
     SettingsPage(Section, bool),
+    /// The settings window on General scrolled to the restriction on what agents may open and its list of origins, at its narrowest when the flag is set.
+    SettingsOrigins(bool),
     /// The settings window showing what a search for fonts found, at its narrowest when the flag is set.
     SettingsSearch(bool),
     /// The settings window on Appearance with the list of code fonts open, at its narrowest when the flag is set.
@@ -1663,6 +1691,49 @@ fn workspace_sample() -> WorkspaceState {
     WorkspaceState::sample()
 }
 
+/// The workspace with the browser on a page, zoomed to 125% with the bar for finding open and `tools` beside the page when set.
+fn browser_finding(tools: bool) -> WorkspaceState {
+    let mut state = workspace_sample();
+    state.open_browser("http://localhost:5173/docs/routing");
+    let (width, height) = (640_u32, 400_u32);
+    let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            let bar = y % 40 > 24 && x > 40 && x < 500 - (y / 40 % 3) * 90;
+            let shade = if bar { 200 } else { 247 };
+            pixels.extend_from_slice(&[shade, shade, shade, 255]);
+        }
+    }
+    let page = pm_renderer::Picture {
+        key: pm_renderer::Picture::live_key(pm_components::browser::PAGE_SURFACE, 1),
+        width,
+        height,
+        pixels: std::sync::Arc::new(pixels),
+    };
+    state.browser_painted(
+        Some(page),
+        None,
+        "Routing",
+        "http://localhost:5173/docs/routing",
+        pm_components::browser::Pointer::Arrow,
+        false,
+    );
+    state.browser_zoomed(1.25);
+    state.browser_find_opened();
+    let mut state = state.edited(
+        pm_components::browser::BROWSER_FIND_FIELD,
+        Edit::Paste("route".to_owned()),
+    );
+    state.browser_found(2, 7);
+    if tools {
+        state = state.browser_tools_shown();
+        if let Some(browser) = state.browser.as_mut() {
+            browser.tools_width = 300.0;
+        }
+    }
+    state
+}
+
 /// The workspace on the diff of its first session, the words that changed inside its changed lines marked as the server tells them.
 fn word_diff() -> WorkspaceState {
     let mut state = workspace_sample().after(TAB_DIFF);
@@ -2128,6 +2199,63 @@ fn picked_elements() -> WorkspaceState {
     welcome().with_element(link).with_element(card)
 }
 
+/// The page for starting work with a picked element, a screenshot, an area that was too large and the console held for the prompt.
+fn held_captures() -> WorkspaceState {
+    use pm_components::captures::{Capture, Kind, Shot};
+    let page = "http://localhost:5173/scenes/582".to_owned();
+    let screenshot = Capture {
+        kind: Kind::Screenshot,
+        shots: vec![Shot {
+            label: "Visible".to_owned(),
+            path: "/home/me/page-1.png".to_owned(),
+        }],
+        lines: Vec::new(),
+        url: page.clone(),
+        title: "vault".to_owned(),
+        note: String::new(),
+    };
+    let skipped = Capture {
+        kind: Kind::Area,
+        shots: vec![
+            Shot {
+                label: "Visible".to_owned(),
+                path: "/home/me/page-2.png".to_owned(),
+            },
+            Shot {
+                label: "Full page".to_owned(),
+                path: "/home/me/page-3.png".to_owned(),
+            },
+        ],
+        lines: Vec::new(),
+        url: page.clone(),
+        title: "vault".to_owned(),
+        note: "Area skipped: it was too large to attach. The visible part and the whole page are attached instead.".to_owned(),
+    };
+    let console = Capture {
+        kind: Kind::Console,
+        shots: Vec::new(),
+        lines: [
+            "[log] connected to ws://localhost:5173/",
+            "[warning] Each child in a list should have a unique \"key\" prop. Check the render method of `SceneList`.",
+            "[error] Uncaught TypeError: Cannot read properties of undefined (reading 'title') at Card (Card.tsx:41:22)",
+            "[error] GET http://localhost:5173/api/scenes/582 -> 500",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect(),
+        url: page,
+        title: "vault".to_owned(),
+        note: String::new(),
+    };
+    picked_elements()
+        .with_preview("/home/me/page-1.png", gradient())
+        .with_preview("/home/me/page-2.png", gradient())
+        .with_preview("/home/me/page-3.png", gradient())
+        .with_capture(screenshot)
+        .with_capture(skipped)
+        .with_capture(console)
+}
+
 impl Shot {
     /// Whether this snapshot shows the folder picker's window instead of the main one.
     fn in_picker_window(self) -> bool {
@@ -2139,6 +2267,7 @@ impl Shot {
         matches!(
             self,
             Self::SettingsPage(..)
+                | Self::SettingsOrigins(_)
                 | Self::SettingsSearch(_)
                 | Self::SettingsPicker(_)
                 | Self::SettingsMachine(_)
@@ -2154,6 +2283,7 @@ impl Shot {
         matches!(
             self,
             Self::SettingsPage(_, true)
+                | Self::SettingsOrigins(true)
                 | Self::SettingsSearch(true)
                 | Self::SettingsPicker(true)
                 | Self::SettingsMachine(true)
@@ -2172,6 +2302,7 @@ impl Shot {
         let rest = rest.strip_prefix('-').unwrap_or(rest);
         match rest {
             "" => Some(Self::SettingsPage(Section::General, narrow)),
+            "origins" => Some(Self::SettingsOrigins(narrow)),
             "search" => Some(Self::SettingsSearch(narrow)),
             "picker" => Some(Self::SettingsPicker(narrow)),
             "machine" => Some(Self::SettingsMachine(narrow)),
@@ -2654,7 +2785,66 @@ impl Shot {
             Self::BrowserMenu => {
                 let mut state = workspace_sample();
                 state.open_browser("http://localhost:5173");
-                Screen::Workspace(state.with_browser_menu((420.0, 300.0)))
+                Screen::Workspace(state.with_browser_menu((420.0, 120.0)))
+            }
+            Self::BrowserFind(narrow) => {
+                let mut state = browser_finding(false);
+                if narrow {
+                    state.sidebar_width = 360.0;
+                    state.review_width = 520.0;
+                }
+                Screen::Workspace(state)
+            }
+            Self::BrowserFindTools => Screen::Workspace(browser_finding(true)),
+            Self::BrowserClear => {
+                let mut state = browser_finding(false);
+                state.browser_find_closed();
+                state.browser_clear_asked();
+                Screen::Workspace(state)
+            }
+            Self::BrowserPermission => {
+                let mut state = workspace_sample();
+                state.open_browser("https://meet.example.com/room/42");
+                if let Some(browser) = state.browser.as_mut() {
+                    browser.safety.ask(Asked {
+                        id: 1,
+                        origin: "https://meet.example.com".to_owned(),
+                        permission: "camera and microphone".to_owned(),
+                    });
+                    browser.safety.ask(Asked {
+                        id: 2,
+                        origin: "https://meet.example.com".to_owned(),
+                        permission: "notifications".to_owned(),
+                    });
+                }
+                Screen::Workspace(state)
+            }
+            Self::BrowserCertificate | Self::BrowserCertificateConfirm => {
+                let mut state = workspace_sample();
+                state.open_browser("https://staging.internal.example.com/");
+                if let Some(browser) = state.browser.as_mut() {
+                    browser.safety.certificate = Some(Certificate {
+                        url: "https://staging.internal.example.com/".to_owned(),
+                        error: "ERR_CERT_AUTHORITY_INVALID".to_owned(),
+                        subject: "staging.internal.example.com".to_owned(),
+                        issuer: "Internal Dev CA".to_owned(),
+                        fingerprint: "sha256/q3Zk1b0VYtq0mYpPzI7m4v0Zc2n0b2bX5Qm8jT1yFhE=".to_owned(),
+                        expires: "2027-03-14".to_owned(),
+                        confirming: matches!(self, Self::BrowserCertificateConfirm),
+                    });
+                }
+                Screen::Workspace(state)
+            }
+            Self::BrowserDownload => {
+                let mut state = workspace_sample();
+                state.open_browser("http://localhost:5173");
+                if let Some(browser) = state.browser.as_mut() {
+                    browser.safety.download = Some(Download {
+                        name: "quarterly-report (1).pdf".to_owned(),
+                        saving: Saving::Finished,
+                    });
+                }
+                Screen::Workspace(state)
             }
             Self::TerminalComposing => {
                 let mut state = terminal();
@@ -2865,6 +3055,38 @@ impl Shot {
                 state.chat_back = 1.0e6;
                 Screen::Workspace(state)
             }
+            Self::Captures => Screen::Workspace(held_captures()),
+            Self::CapturePreview => {
+                let mut state = held_captures();
+                state.picker = Some(pm_components::state::Picker::Capture(0));
+                Screen::Workspace(state)
+            }
+            Self::CaptureConsole => {
+                let mut state = held_captures();
+                state.picker = Some(pm_components::state::Picker::Capture(2));
+                Screen::Workspace(state)
+            }
+            Self::CaptureMenu => {
+                let mut state = workspace_sample();
+                state.open_browser("http://localhost:5173");
+                Screen::Workspace(state.with_browser_capture_menu((420.0, 60.0)))
+            }
+            Self::CapturesSent => {
+                let mut state = workspace_sample();
+                let captures = held_captures().captures;
+                if let Some(message) = state
+                    .sessions
+                    .first_mut()
+                    .and_then(|session| session.messages.first_mut())
+                {
+                    message.text = format!(
+                        "the card on scene 582 crashes, can you see why\n\n{}",
+                        pm_components::captures::message(&captures)
+                    );
+                }
+                state.chat_back = 1.0e6;
+                Screen::Workspace(state)
+            }
             Self::ElementScrolled => {
                 let mut state = picked_elements();
                 state.picker = Some(pm_components::state::Picker::Element(0));
@@ -2874,16 +3096,11 @@ impl Shot {
             Self::Missing => {
                 Screen::Workspace(welcome().edited(PROMPT, Edit::Paste("@zzzzqq".to_owned())))
             }
-            Self::SettingsPage(section, _) => {
-                let mut state = settings_sample().after(section.id());
-                let mut window = state.window.clone();
-                window.general.embedded_browser = true;
-                state = state.with_window_settings(window);
-                state.set_browser_status(Some(
-                    "Downloading the embedded browser: 42 of about 120 MB.".to_owned(),
-                ));
-                Screen::Workspace(state)
+            Self::SettingsOrigins(narrow) => {
+                let state = browser_settings_sample(Section::Browser);
+                Screen::Workspace(state.scrolled_settings(if narrow { 900.0 } else { 420.0 }, 2000.0))
             }
+            Self::SettingsPage(section, _) => Screen::Workspace(browser_settings_sample(section)),
             Self::SettingsSearch(_) => Screen::Workspace(
                 settings_sample().edited(SETTINGS_FIND, Edit::Paste("font".to_owned())),
             ),
@@ -3030,6 +3247,23 @@ fn repositories() -> Vec<Found> {
         kind: Row::Repository,
     })
     .collect()
+}
+
+/// The settings window on `section` with the embedded browser turned on, its download under way, and agent browsing restricted to two listed origins.
+fn browser_settings_sample(section: Section) -> WorkspaceState {
+    let mut state = settings_sample().after(section.id());
+    let mut window = state.window.clone();
+    window.general.embedded_browser = true;
+    window.general.restrict_agent_browsing = true;
+    window.general.agent_origins = vec![
+        "https://docs.rs".to_owned(),
+        "staging.example.com:8443".to_owned(),
+    ];
+    state = state.with_window_settings(window);
+    state.set_browser_status(Some(
+        "Downloading the embedded browser: 42 of about 120 MB.".to_owned(),
+    ));
+    state
 }
 
 /// The page for starting work in this repository, once Claude Code has said what it offers.

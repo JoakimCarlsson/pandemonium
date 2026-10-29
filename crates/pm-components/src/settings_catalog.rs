@@ -80,6 +80,10 @@ pub enum Setting {
     EmbeddedBrowser,
     /// Whether the embedded browser opens on a dev server a shell started.
     OpenDevServers,
+    /// Whether agents may open only local addresses and the origins listed.
+    RestrictAgentBrowsing,
+    /// The origins agents may open besides local addresses.
+    AgentOrigins,
     /// Whether the window is light, dark or as the desktop says.
     ThemeMode,
     /// The theme drawn while it is light.
@@ -294,7 +298,7 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting, in the order the pages show them.
-    pub const ALL: [Self; 112] = [
+    pub const ALL: [Self; 114] = [
         Self::Launch,
         Self::ConfirmClose,
         Self::CheckUpdates,
@@ -302,6 +306,8 @@ impl Setting {
         Self::OfferLanguages,
         Self::EmbeddedBrowser,
         Self::OpenDevServers,
+        Self::RestrictAgentBrowsing,
+        Self::AgentOrigins,
         Self::ThemeMode,
         Self::LightTheme,
         Self::DarkTheme,
@@ -416,9 +422,11 @@ impl Setting {
             | Self::ConfirmClose
             | Self::CheckUpdates
             | Self::Channel
-            | Self::OfferLanguages
-            | Self::EmbeddedBrowser
-            | Self::OpenDevServers => Section::General,
+            | Self::OfferLanguages => Section::General,
+            Self::EmbeddedBrowser
+            | Self::OpenDevServers
+            | Self::RestrictAgentBrowsing
+            | Self::AgentOrigins => Section::Browser,
             Self::ThemeMode
             | Self::LightTheme
             | Self::DarkTheme
@@ -586,6 +594,14 @@ impl Setting {
             Self::OpenDevServers => (
                 "Open dev servers in the browser",
                 "Open the embedded browser on the web page a program started in a terminal serves, such as a dev server. Needs the embedded browser.",
+            ),
+            Self::RestrictAgentBrowsing => (
+                "Restrict agent browsing",
+                "Let agents open only localhost, 127.0.0.1, [::1] and the origins listed below. Pages the reader opens are not affected. Needs the embedded browser.",
+            ),
+            Self::AgentOrigins => (
+                "Origins agents may open",
+                "Besides local addresses, while agent browsing is restricted. Write an origin such as https://example.com; a host alone, such as example.com, means http and https on their usual ports.",
             ),
             Self::ThemeMode => (
                 "Theme mode",

@@ -253,9 +253,41 @@ fn button(label: &str, id: FocusId, variant: Variant) -> Node {
         .build()
 }
 
-/// A question: a title, the words that explain it, and the button that says yes beside the one that says no.
+/// What a question answers to: the dimmed window behind it, its panel, and the buttons that say yes and no.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct QuestionIds {
+    /// The dimmed window behind the question.
+    pub outside: FocusId,
+    /// The panel of the question.
+    pub inside: FocusId,
+    /// The button that says yes.
+    pub confirm: FocusId,
+    /// The button that says no.
+    pub cancel: FocusId,
+}
+
+/// The names of the questions of the source control panel.
+const GIT_QUESTION: QuestionIds = QuestionIds {
+    outside: PROMPT_OUTSIDE,
+    inside: PROMPT_INSIDE,
+    confirm: PROMPT_CONFIRM,
+    cancel: PROMPT_CANCEL,
+};
+
+/// A question of the source control panel: a title, the words that explain it, and the button that says yes beside the one that says no.
 fn question(title: String, words: &str, confirm: &str, variant: Variant) -> Node {
-    Modal::new(PROMPT_OUTSIDE, PROMPT_INSIDE)
+    question_of(GIT_QUESTION, title, words, confirm, variant)
+}
+
+/// A question answering to `ids`: a title, the words that explain it, and the button that says yes beside the one that says no.
+pub(crate) fn question_of(
+    ids: QuestionIds,
+    title: String,
+    words: &str,
+    confirm: &str,
+    variant: Variant,
+) -> Node {
+    Modal::new(ids.outside, ids.inside)
         .width(WIDTH)
         .child(
             node()
@@ -273,8 +305,8 @@ fn question(title: String, words: &str, confirm: &str, variant: Variant) -> Node
             node()
                 .styles([flex(), items_center(), gap(2), px(5), pb(5)])
                 .child(spacer())
-                .child(button("Cancel", PROMPT_CANCEL, Variant::Ghost))
-                .child(button(confirm, PROMPT_CONFIRM, variant)),
+                .child(button("Cancel", ids.cancel, Variant::Ghost))
+                .child(button(confirm, ids.confirm, variant)),
         )
         .build()
 }

@@ -544,7 +544,8 @@ pub fn composer(
     let working = session.is_some_and(|session| session.status == crate::sample::Status::Working);
     let empty = state.prompt.text().trim().is_empty()
         && state.attachments.is_empty()
-        && state.elements.is_empty();
+        && state.elements.is_empty()
+        && state.captures.is_empty();
     let settings = state.settings_now();
     let skills = state.has_skills();
     let placeholder = if skills {
@@ -649,6 +650,7 @@ pub fn composer(
         .children(slash_list(state))
         .children(attachment_row(state))
         .children(crate::elements::chips(state, shaper))
+        .children(crate::captures::chips(state, shaper))
         .child(
             Input::new(&state.prompt, PROMPT)
                 .variant(input::Variant::Multiline)

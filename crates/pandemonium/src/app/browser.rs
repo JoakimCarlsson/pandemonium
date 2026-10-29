@@ -3,13 +3,16 @@
 use std::time::{Duration, Instant};
 
 use pm_browser::{
-    Button as Mouse, Cursor as Shape, EditAction, Engine, Error, Key as Typed, Modifiers as Held,
-    PickedElement, View,
+    Button as Mouse, CaptureKind, Cursor as Shape, DownloadState, EditAction, Engine, Error,
+    Key as Typed, Modifiers as Held, Notice, PickedElement, View, ZoomAction,
 };
 use pm_components::browser::{
-    BROWSER_BODY, BROWSER_TOOLS_BODY, Command, HOME, PAGE_SURFACE, Pointer, TOOLS_SURFACE,
+    BROWSER_BODY, BROWSER_FIND_BAR, BROWSER_FIND_FIELD, BROWSER_TOOLS_BODY, Command, HOME,
+    PAGE_SURFACE, Pointer, TOOLS_SURFACE, ZoomStep,
 };
+use pm_components::browser_keys::{Shortcut, shortcut_of};
 use pm_components::browser_menu::{BROWSER_MENU_HEIGHT, BrowserCommand};
+use pm_components::browser_safety::{Answer, Certificate, Download, Question, Safety, Saving};
 use pm_components::elements::Element;
 use pm_components::state::PROMPT;
 use pm_editor::{Action, Pressed};
@@ -69,6 +72,8 @@ pub(super) struct Web {
     reason: Option<String>,
     /// The local port that carries each remote port, by machine and remote port.
     forwards: std::collections::HashMap<(String, u16), u16>,
+    /// The restriction on agent browsing and the origins listed, as the helper was last told.
+    sent_origins: Option<(bool, Vec<String>)>,
 }
 
 /// Whether an agent may send the browser to `url`: a web address or the blank page, never a local file or an internal page of the browser.
@@ -80,6 +85,44 @@ fn agent_may_open(url: &str) -> bool {
         .to_ascii_lowercase();
     url.eq_ignore_ascii_case("about:blank")
         || (matches!(scheme.as_str(), "http" | "https") && url[scheme.len()..].starts_with("://"))
+}
+
+/// Takes in one thing the helper reported that the reader is to see or answer.
+fn apply_notice(safety: &mut Safety, notice: Notice) {
+    match notice {
+        Notice::Permission {
+            id,
+            origin,
+            permission,
+        } => safety.ask(Question {
+            id,
+            origin,
+            permission,
+        }),
+        Notice::PermissionCancelled { id } => safety.cancel(id),
+        Notice::Certificate(info) => {
+            safety.certificate = Some(Certificate {
+                url: info.url,
+                error: info.error,
+                subject: info.subject,
+                issuer: info.issuer,
+                fingerprint: info.fingerprint,
+                expires: info.expires,
+                confirming: false,
+            });
+        }
+        Notice::CertificateCleared => safety.certificate = None,
+        Notice::Download { name, state } => {
+            safety.download = Some(Download {
+                name,
+                saving: match state {
+                    DownloadState::Started => Saving::Started,
+                    DownloadState::Finished => Saving::Finished,
+                    DownloadState::Failed => Saving::Failed,
+                },
+            });
+        }
+    }
 }
 
 /// The element the pane's page reported, as the prompt holds it.
@@ -256,17 +299,30 @@ impl App {
             .map(|region| region.rect)
     }
 
-    /// The window of a page the point `at` is over, and where in it, in logical pixels.
+    /// Whether the question about clearing cookies and site data is open, which covers the whole window.
+    fn browser_clearing(&self) -> bool {
+        self.model.read(|screen| {
+            let Screen::Workspace(state) = screen;
+            state.browser_clearing()
+        })
+    }
+
+    /// The window of a page the point `at` is over, and where in it, in logical pixels; nothing where the bar for finding or the question about clearing is drawn over the page.
     fn browser_under(&self, at: (f32, f32)) -> Option<(FocusId, (i32, i32))> {
+        let inside = |rect: Rect| {
+            at.0 >= rect.x
+                && at.1 >= rect.y
+                && at.0 < rect.x + rect.width
+                && at.1 < rect.y + rect.height
+        };
+        if self.browser_region(BROWSER_FIND_BAR).is_some_and(inside) || self.browser_clearing() {
+            return None;
+        }
         [BROWSER_BODY, BROWSER_TOOLS_BODY]
             .into_iter()
             .find_map(|id| {
                 let rect = self.browser_region(id)?;
-                let inside = at.0 >= rect.x
-                    && at.1 >= rect.y
-                    && at.0 < rect.x + rect.width
-                    && at.1 < rect.y + rect.height;
-                inside.then_some((id, ((at.0 - rect.x) as i32, (at.1 - rect.y) as i32)))
+                inside(rect).then_some((id, ((at.0 - rect.x) as i32, (at.1 - rect.y) as i32)))
             })
     }
 
@@ -290,19 +346,37 @@ impl App {
     pub(super) fn browser_menu_command(&mut self, command: BrowserCommand) {
         self.model
             .update(|screen| *screen = std::mem::take(screen).browser_command(command));
-        self.focus.focus(BROWSER_BODY);
+        if command == BrowserCommand::Find {
+            self.focus.claim(BROWSER_FIND_FIELD);
+        } else {
+            self.focus.focus(BROWSER_BODY);
+        }
+    }
+
+    /// What the page reported for the reader's additions to the prompt since the last call.
+    pub(super) fn browser_reports(&self) -> Vec<pm_browser::Capture> {
+        self.web
+            .page
+            .as_ref()
+            .map(View::take_captures)
+            .unwrap_or_default()
+    }
+
+    /// Where a menu over the page opens: just under the pointer and inside the window.
+    pub(super) fn browser_menu_place(&self) -> Option<(f32, f32)> {
+        let (x, y) = self.pointer.position?;
+        let (width, height) = self.window_size();
+        Some((
+            (x - 8.0).min(width - 260.0).max(0.0),
+            (y + 4.0).min(height - BROWSER_MENU_HEIGHT - 8.0).max(0.0),
+        ))
     }
 
     /// Opens the menu over the page just under the pointer and inside the window.
     pub(super) fn open_browser_menu(&mut self) {
-        let Some((x, y)) = self.pointer.position else {
+        let Some(at) = self.browser_menu_place() else {
             return;
         };
-        let (width, height) = self.window_size();
-        let at = (
-            (x - 8.0).min(width - 200.0).max(0.0),
-            (y + 4.0).min(height - BROWSER_MENU_HEIGHT - 8.0).max(0.0),
-        );
         self.model
             .update(|screen| *screen = std::mem::take(screen).with_browser_menu(at));
     }
@@ -430,11 +504,64 @@ impl App {
         true
     }
 
-    /// Sends a key into the page that holds the keyboard, unless the keymap binds it to something the window does, and says whether it did.
+    /// Takes a key meant for what the pane draws over the page, and says whether it did: while the question about clearing is open Escape declines it and every other key is ignored; in the bar for finding Escape closes it, Shift+Enter goes to the previous match and the keys for finding work.
+    fn browser_overlay_key(&mut self, event: KeyEvent) -> bool {
+        if self.browser_clearing() {
+            if matches!(event.key, Key::Escape) {
+                self.model.update(|screen| {
+                    let Screen::Workspace(state) = screen;
+                    state.browser_clear_declined();
+                });
+            }
+            return true;
+        }
+        if self.focus.current() != Some(BROWSER_FIND_FIELD) {
+            return false;
+        }
+        let shortcut = match event.key {
+            Key::Escape => {
+                self.model.update(|screen| {
+                    let Screen::Workspace(state) = screen;
+                    state.browser_find_closed();
+                });
+                self.focus.focus(BROWSER_BODY);
+                return true;
+            }
+            Key::Enter if event.modifiers.shift => Shortcut::FindPrevious,
+            _ => match shortcut_of(&event) {
+                Some(shortcut @ (Shortcut::Find | Shortcut::FindNext | Shortcut::FindPrevious)) => {
+                    shortcut
+                }
+                _ => return false,
+            },
+        };
+        self.model.update(|screen| {
+            let Screen::Workspace(state) = screen;
+            state.browser_shortcut(shortcut);
+        });
+        true
+    }
+
+    /// Sends a key into the page that holds the keyboard, unless the browser takes it for itself, as for finding, zooming and loading again, or the keymap binds it to something the window does, and says whether it did.
     pub(super) fn browser_key(&mut self, event: KeyEvent) -> bool {
+        if self.browser_overlay_key(event) {
+            return true;
+        }
         let Some(id) = self.browser_focused() else {
             return false;
         };
+        if id == BROWSER_BODY
+            && let Some(shortcut) = shortcut_of(&event)
+        {
+            self.model.update(|screen| {
+                let Screen::Workspace(state) = screen;
+                state.browser_shortcut(shortcut);
+            });
+            if shortcut == Shortcut::Find {
+                self.focus.claim(BROWSER_FIND_FIELD);
+            }
+            return true;
+        }
         let modifiers = event.modifiers;
         if (modifiers.control || modifiers.alt || modifiers.logo)
             && let Some(chord) = Self::chord_of(&event)
@@ -523,17 +650,81 @@ impl App {
         }
     }
 
+    /// Tells the helper which origins agents may open when that is not what it was last told; the helper enforces it, so it is sent as soon as the helper starts, before any page or tool.
+    fn browser_origins(&mut self) {
+        let general = &self.saved_window.general;
+        let wanted = (
+            general.restrict_agent_browsing,
+            general.agent_origins.clone(),
+        );
+        if self.web.sent_origins.as_ref() == Some(&wanted) {
+            return;
+        }
+        if let Some(engine) = self.web.engine.as_ref() {
+            engine.set_agent_origins(wanted.0, &wanted.1);
+            self.web.sent_origins = Some(wanted);
+        }
+    }
+
+    /// Takes in what the helper says the reader is to see or answer, and carries the reader's answers back.
+    fn browser_safety(&mut self) {
+        let notices = self
+            .web
+            .page
+            .as_ref()
+            .map(View::take_notices)
+            .unwrap_or_default();
+        if !notices.is_empty() {
+            self.model.update(|screen| {
+                let Screen::Workspace(state) = screen;
+                if let Some(browser) = state.browser.as_mut() {
+                    for notice in notices {
+                        apply_notice(&mut browser.safety, notice);
+                    }
+                }
+            });
+        }
+        let waiting = self.model.read(|screen| {
+            let Screen::Workspace(state) = screen;
+            state
+                .browser
+                .as_ref()
+                .is_some_and(|browser| !browser.safety.answers.is_empty())
+        });
+        if !waiting {
+            return;
+        }
+        let mut answers = Vec::new();
+        self.model.update(|screen| {
+            let Screen::Workspace(state) = screen;
+            answers = state.take_browser_answers();
+        });
+        let Some(page) = self.web.page.as_ref() else {
+            return;
+        };
+        for answer in answers {
+            match answer {
+                Answer::Permission { id, allow } => page.answer_permission(id, allow),
+                Answer::Certificate { proceed } => page.certificate_choice(proceed),
+            }
+        }
+    }
+
     /// Starts the helper when it is not running, and says why when it cannot be, every time it is asked.
     fn browser_engine(&mut self) -> Option<&Engine> {
         if self.web.engine.is_none() && !self.web.failed {
             if self.saved_window.general.embedded_browser {
                 match Engine::start() {
-                    Ok(engine) => self.web.engine = Some(engine),
+                    Ok(engine) => {
+                        self.web.engine = Some(engine);
+                        self.web.sent_origins = None;
+                        self.browser_origins();
+                    }
                     Err(error) => {
                         self.web.failed = true;
                         self.web.reason = Some(match error {
                             Error::NotInstalled => {
-                                "The embedded browser is not installed. It is downloaded when you turn it on in Settings under General, and this build has no download for it yet.".to_owned()
+                                "The embedded browser is not installed. It is downloaded when you turn it on in Settings under Browser, and this build has no download for it yet.".to_owned()
                             }
                             other => other.to_string(),
                         });
@@ -542,7 +733,7 @@ impl App {
             } else {
                 self.web.failed = true;
                 self.web.reason = Some(
-                    "The embedded browser is turned off. Turn it on in Settings under General to download it.".to_owned(),
+                    "The embedded browser is turned off. Turn it on in Settings under Browser to download it.".to_owned(),
                 );
             }
         }
@@ -647,6 +838,21 @@ impl App {
                         page.pick(on);
                     }
                 }
+                Command::Screenshot | Command::FullPage | Command::Console => {
+                    let kind = match command {
+                        Command::Screenshot => CaptureKind::Screenshot,
+                        Command::FullPage => CaptureKind::FullPage,
+                        _ => CaptureKind::Console,
+                    };
+                    if let Some(page) = self.web.page.as_ref() {
+                        page.capture(kind);
+                    }
+                }
+                Command::PickArea(on) => {
+                    if let Some(page) = self.web.page.as_ref() {
+                        page.pick_area(on);
+                    }
+                }
                 Command::Back => {
                     if let Some(page) = self.web.page.as_ref() {
                         page.back();
@@ -660,6 +866,46 @@ impl App {
                 Command::Reload => {
                     if let Some(page) = self.web.page.as_ref() {
                         page.reload();
+                    }
+                }
+                Command::HardReload => {
+                    if let Some(page) = self.web.page.as_ref() {
+                        page.hard_reload();
+                    }
+                }
+                Command::Find {
+                    text,
+                    forward,
+                    again,
+                } => {
+                    if let Some(page) = self.web.page.as_ref() {
+                        page.find(&text, forward, again);
+                    }
+                }
+                Command::StopFind => {
+                    if let Some(page) = self.web.page.as_ref() {
+                        page.stop_find();
+                    }
+                }
+                Command::Zoom(step) => {
+                    if let Some(page) = self.web.page.as_ref() {
+                        page.zoom(match step {
+                            ZoomStep::In => ZoomAction::In,
+                            ZoomStep::Out => ZoomAction::Out,
+                            ZoomStep::Reset => ZoomAction::Reset,
+                        });
+                    }
+                }
+                Command::OpenExternal => {
+                    if let Some(page) = self.web.page.as_ref()
+                        && let Err(reason) = pm_acp::open_address(&page.address())
+                    {
+                        eprintln!("{reason}");
+                    }
+                }
+                Command::ClearData => {
+                    if let Some(page) = self.web.page.as_ref() {
+                        page.clear_data();
                     }
                 }
                 Command::OpenTools => {
@@ -723,6 +969,20 @@ impl App {
                 self.focus.focus(PROMPT);
             }
         }
+        let found = self.web.page.as_ref().and_then(View::take_found);
+        let zoom = self.web.page.as_ref().and_then(View::take_zoom);
+        if found.is_some() || zoom.is_some() {
+            self.model.update(|screen| {
+                let Screen::Workspace(state) = screen;
+                if let Some((active, total)) = found {
+                    state.browser_found(active, total);
+                }
+                if let Some(zoom) = zoom {
+                    state.browser_zoomed(zoom);
+                }
+            });
+        }
+        self.browser_captured();
         let focused = self.browser_focused();
         if focused != self.web.focused {
             self.web.focused = focused;
@@ -1011,12 +1271,14 @@ impl App {
             .as_ref()
             .map_or(1.0, |window| window.scale_factor() as f32);
         let downloading = self.browser_install();
+        self.browser_origins();
         let calling = self.browser_agent(scale);
         self.browser_served();
         self.browser_commands(scale);
         if self.web.page.is_none() {
             return downloading || calling;
         }
+        self.browser_safety();
         self.browser_fit(scale);
         self.browser_present();
         true

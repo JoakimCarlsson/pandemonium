@@ -159,6 +159,10 @@ pub enum IconName {
     StepOver,
     /// A bulb: the language server offers changes here.
     Lightbulb,
+    /// A camera: a screenshot.
+    Camera,
+    /// The corners of a frame: an area of a page.
+    Scan,
 }
 
 impl IconName {
@@ -241,6 +245,8 @@ impl IconName {
             Self::StepOut => Svg::new("step_out", include_icon!("step_out")),
             Self::StepOver => Svg::new("step_over", include_icon!("step_over")),
             Self::Lightbulb => Svg::new("lightbulb", include_icon!("lightbulb")),
+            Self::Camera => Svg::new("camera", include_icon!("camera")),
+            Self::Scan => Svg::new("scan", include_icon!("scan")),
         }
     }
 }

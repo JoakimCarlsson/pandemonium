@@ -6,8 +6,10 @@ use crate::engine::Engine;
 use crate::error::Error;
 use crate::frame::Frame;
 use crate::input::{Button, Cursor, Key, Modifiers};
-use crate::link::{Link, PageState};
-use crate::wire::{EditAction, PickedElement, Request, ToolResult};
+use crate::link::{Link, Notice, PageState};
+use crate::wire::{
+    Capture, CaptureKind, EditAction, PickedElement, Request, ToolResult, ZoomAction,
+};
 
 /// A page open in the helper, painted into [`Frame`]s instead of a window.
 pub struct View {
@@ -174,6 +176,27 @@ impl View {
         self.state.take_pick()
     }
 
+    /// Asks for a picture of the page, or its console, to add to the prompt; the answer comes from [`View::take_captures`].
+    pub fn capture(&self, kind: CaptureKind) {
+        self.link.send(&Request::Capture {
+            page: self.page,
+            kind,
+        });
+    }
+
+    /// Turns on or off the mode in which the reader drags a rectangle over the page to take a picture of it.
+    pub fn pick_area(&self, on: bool) {
+        self.link.send(&Request::PickArea {
+            page: self.page,
+            on,
+        });
+    }
+
+    /// What the helper reported for the reader's additions to the prompt since the last call.
+    pub fn take_captures(&self) -> Vec<Capture> {
+        self.state.take_captures()
+    }
+
     /// Runs the tool `tool` of an agent against the page, given `arguments` as JSON text; the answer comes from [`View::take_tool_results`].
     pub fn tool(&self, call: u64, tool: &str, arguments: &str) {
         self.link.send(&Request::Tool {
@@ -189,12 +212,77 @@ impl View {
         self.state.take_tools()
     }
 
+    /// Gives the helper the reader's answer to the question `id` of the page; the answer holds for that origin until the helper ends.
+    pub fn answer_permission(&self, id: u64, allow: bool) {
+        self.link.send(&Request::PermissionAnswer {
+            page: self.page,
+            id,
+            allow,
+        });
+    }
+
+    /// Tells the helper what the reader chose on a site whose certificate is not trusted: to load it anyway, for that origin until the helper ends, or to go back.
+    pub fn certificate_choice(&self, proceed: bool) {
+        self.link.send(&Request::CertificateChoice {
+            page: self.page,
+            proceed,
+        });
+    }
+
+    /// What the reader is to see or answer, reported since the last call.
+    pub fn take_notices(&self) -> Vec<Notice> {
+        self.state.take_notices()
+    }
+
     /// Cuts, copies or pastes in the page, or marks everything in it.
     pub fn edit(&self, action: EditAction) {
         self.link.send(&Request::Edit {
             page: self.page,
             action,
         });
+    }
+
+    /// Looks for `text` in the page; `again` steps to the next match of the text already searched for, forward or, when `forward` is false, back.
+    pub fn find(&self, text: &str, forward: bool, again: bool) {
+        self.link.send(&Request::Find {
+            page: self.page,
+            text: text.to_owned(),
+            forward,
+            again,
+        });
+    }
+
+    /// Ends the search and clears the marks.
+    pub fn stop_find(&self) {
+        self.link.send(&Request::StopFind { page: self.page });
+    }
+
+    /// The count the helper reported since the last call: the search's current match, counting from 1 and 0 for none, and how many matches there are.
+    pub fn take_found(&self) -> Option<(u32, u32)> {
+        self.state.found.lock().ok()?.take()
+    }
+
+    /// Changes the page's zoom.
+    pub fn zoom(&self, action: ZoomAction) {
+        self.link.send(&Request::Zoom {
+            page: self.page,
+            action,
+        });
+    }
+
+    /// The page's zoom as a factor, 1.0 being 100%, when the helper reported it since the last call.
+    pub fn take_zoom(&self) -> Option<f32> {
+        self.state.zoom.lock().ok()?.take()
+    }
+
+    /// Loads the page again without using the cache.
+    pub fn hard_reload(&self) {
+        self.link.send(&Request::HardReload { page: self.page });
+    }
+
+    /// Throws away the cookies, site storage and cache of the helper's session, then loads the page again.
+    pub fn clear_data(&self) {
+        self.link.send(&Request::ClearData { page: self.page });
     }
 
     /// The newest picture of the page, once it has painted.

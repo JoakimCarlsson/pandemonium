@@ -1503,6 +1503,14 @@ pub enum Outgoing {
     },
 }
 
+/// A prompt put aside while another session is worked in: what was typed, the files attached, the elements picked and the captures held.
+pub type StashedPrompt = (
+    Field,
+    Vec<String>,
+    Vec<crate::elements::Element>,
+    Vec<crate::captures::Capture>,
+);
+
 /// What a menu over the prompt box is open for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Picker {
@@ -1514,6 +1522,8 @@ pub enum Picker {
     Account,
     /// An element of a web page picked for the prompt, by position among those picked.
     Element(usize),
+    /// A screenshot or the console of a web page held for the prompt, by position among those held.
+    Capture(usize),
 }
 
 /// Where new work is done.
@@ -1685,6 +1695,8 @@ pub struct WorkspaceState {
     pub attachments: Vec<String>,
     /// The elements of web pages picked for the prompt.
     pub elements: Vec<crate::elements::Element>,
+    /// The screenshots and consoles of web pages held for the prompt.
+    pub captures: Vec<crate::captures::Capture>,
     /// The machine, by destination, that the settings and commands held belong to; nothing for this one.
     pub discovery_host: Option<String>,
     /// What other machines said about the agents, by destination, while the settings of one machine are showing.
@@ -1747,8 +1759,7 @@ pub struct WorkspaceState {
     /// The panes of each session other than the one whose files are open now, by its position.
     pub pane_stash: std::collections::HashMap<usize, crate::panes::Panes>,
     /// What was typed in the prompt, and the files attached to it, for every session but the one being worked in, by session, so that coming back to one finds its message as it was left.
-    pub prompt_stash:
-        std::collections::HashMap<usize, (Field, Vec<String>, Vec<crate::elements::Element>)>,
+    pub prompt_stash: std::collections::HashMap<usize, StashedPrompt>,
     /// The search of the review panel of every session but the one being worked in, by session.
     pub search_stash: std::collections::HashMap<usize, crate::project_search::ProjectSearch>,
     /// The tab being dragged to another pane, if one is.
@@ -1986,6 +1997,7 @@ impl WorkspaceState {
             skill_names: std::collections::HashSet::new(),
             attachments: Vec::new(),
             elements: Vec::new(),
+            captures: Vec::new(),
             previews: std::collections::HashMap::new(),
             figures: crate::figures::Figures::new(),
             figures_asked: std::collections::HashSet::new(),
@@ -2348,6 +2360,7 @@ impl WorkspaceState {
                     browser.address.apply(edit);
                 }
             }
+            crate::browser::BROWSER_FIND_FIELD => self.browser_find_edited(edit),
             crate::find::REPLACE_FIELD => return self.replacement_typed(edit),
             ENTRY_FIELD => {
                 if let Some((_, field)) = self.git.naming.as_mut() {
@@ -2408,6 +2421,11 @@ impl WorkspaceState {
             crate::browser::BROWSER_ADDRESS => {
                 self.browser.as_ref().map(|browser| &browser.address)
             }
+            crate::browser::BROWSER_FIND_FIELD => self
+                .browser
+                .as_ref()
+                .and_then(|browser| browser.search.as_ref())
+                .map(|search| &search.query),
             crate::find::FIND_FIELD => self.finding.as_ref().map(|finding| &finding.query),
             crate::project_search::PROJECT_SEARCH_FIELD => Some(&self.project_search.query),
             crate::listing::LISTING_FILTER => self.listing_filter(),
@@ -2442,6 +2460,7 @@ impl WorkspaceState {
             || id == crate::color_picker::COLOR_HEX
             || id == crate::line_edits::GO_TO_LINE
             || id == crate::browser::BROWSER_ADDRESS
+            || id == crate::browser::BROWSER_FIND_FIELD
             || id == crate::find::FIND_FIELD
             || id == crate::project_search::PROJECT_SEARCH_FIELD
             || id == crate::listing::LISTING_FILTER
@@ -2473,6 +2492,7 @@ impl WorkspaceState {
             crate::color_picker::COLOR_HEX => crate::color_picker::COLOR_HEX_SUBMIT,
             crate::line_edits::GO_TO_LINE => crate::line_edits::GO_TO_LINE_SUBMIT,
             crate::browser::BROWSER_ADDRESS => crate::browser::BROWSER_GO,
+            crate::browser::BROWSER_FIND_FIELD => crate::browser::BROWSER_FIND_NEXT,
             crate::find::FIND_FIELD => crate::find::FIND_NEXT,
             crate::project_search::PROJECT_SEARCH_FIELD => crate::project_search::PROJECT_SEARCH_GO,
             crate::listing::LISTING_FILTER => crate::listing::LISTING_TAKE,
@@ -2995,7 +3015,16 @@ impl WorkspaceState {
             }
             text.push_str(&crate::elements::message(&self.elements));
         }
-        if text.is_empty() && self.attachments.is_empty() {
+        let captured = crate::captures::message(&self.captures);
+        if !captured.is_empty() {
+            if !text.is_empty() {
+                text.truncate(text.trim_end().len());
+                text.push_str("\n\n");
+            }
+            text.push_str(&captured);
+        }
+        let sent_files = self.prompt_files();
+        if text.is_empty() && sent_files.is_empty() {
             return;
         }
         let starting = matches!(self.page, Page::New(_));
@@ -3013,9 +3042,8 @@ impl WorkspaceState {
                 }
                 session.echoes += 1;
                 session.closed = false;
-                let files = self.attachments.clone();
                 let mut message = Message::user(&text);
-                message.attachments = files.clone();
+                message.attachments = sent_files;
                 session.messages.push(message);
                 index
             }
@@ -3038,7 +3066,7 @@ impl WorkspaceState {
                     self.branches.first().cloned().unwrap_or_default()
                 };
                 session.skills = self.skills.clone();
-                session.messages[0].attachments = self.attachments.clone();
+                session.messages[0].attachments = sent_files;
                 self.sessions.push(session);
                 self.pane_stash
                     .insert(self.sessions.len() - 1, self.panes.clone());
@@ -3088,6 +3116,7 @@ impl WorkspaceState {
 
     /// Empties the prompt box for the next message and returns the files that were attached.
     fn take_prompt(&mut self) -> Vec<String> {
+        let files = self.prompt_files();
         self.prompt = prompt_field("");
         self.chat_back = 0.0;
         if let Some(index) = self.open_index() {
@@ -3095,10 +3124,23 @@ impl WorkspaceState {
         }
         self.slash = 0;
         self.elements.clear();
-        if matches!(self.picker, Some(Picker::Element(_))) {
+        self.captures.clear();
+        if matches!(self.picker, Some(Picker::Element(_) | Picker::Capture(_))) {
             self.picker = None;
         }
-        std::mem::take(&mut self.attachments)
+        self.attachments.clear();
+        files
+    }
+
+    /// The files that go with the prompt: those attached and the screenshots of the captures held, each once.
+    fn prompt_files(&self) -> Vec<String> {
+        let mut files = self.attachments.clone();
+        for path in self.capture_files() {
+            if !files.contains(&path) {
+                files.push(path);
+            }
+        }
+        files
     }
 
     /// Stages every change of the session the review panel is about, or unstages them all when all are staged.
@@ -3291,9 +3333,11 @@ impl WorkspaceState {
         session.comments.clear();
         let draft = std::mem::replace(&mut self.prompt, prompt_field(&message));
         let attachments = std::mem::take(&mut self.attachments);
+        let captures = std::mem::take(&mut self.captures);
         self.send(false);
         self.prompt = draft;
         self.attachments = attachments;
+        self.captures = captures;
         self.comment_target = None;
         self.tab = Tab::Chat;
     }

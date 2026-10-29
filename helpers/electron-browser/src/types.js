@@ -20,6 +20,11 @@
  */
 
 /**
+ * How a zoom request changes the page's zoom.
+ * @typedef {'In' | 'Out' | 'Reset'} ZoomAction
+ */
+
+/**
  * How the pointer looks over a page.
  * @typedef {'Arrow' | 'Hand' | 'Text' | 'Cross' | 'Wait' | 'Help' | 'ResizeHorizontal' | 'ResizeVertical'} Cursor
  */
@@ -60,6 +65,30 @@
  * @property {[string, string][]} props That component's properties, name and value as written in markup: a string in quotes, anything else in braces.
  * @property {string} url The address of the page.
  * @property {string} title The title of the page.
+ */
+
+/**
+ * What the reader adds to the prompt from a page.
+ * @typedef {'Screenshot' | 'FullPage' | 'Area' | 'Console'} CaptureKind
+ */
+
+/**
+ * One picture of a capture.
+ * @typedef {object} CapturedPicture
+ * @property {string} label What the picture shows, such as `Visible` or `Full page`.
+ * @property {string} path Where the helper saved it, a file the window may read and remove.
+ */
+
+/**
+ * What the reader asked to add to the prompt from a page, or why they got nothing.
+ * @typedef {object} Capture
+ * @property {CaptureKind} kind What was asked.
+ * @property {CapturedPicture[]} pictures The pictures taken; none for the console and for an area that was not chosen.
+ * @property {string[]} lines The console's lines, oldest first; only for the console.
+ * @property {string} url The address of the page.
+ * @property {string} title The title of the page.
+ * @property {string} note Something the reader should know about what was taken, such as that an area was too large and the whole page was taken instead.
+ * @property {string} error Why nothing could be taken; empty when something was, or when the reader chose no area.
  */
 
 /**
@@ -134,6 +163,26 @@
  */
 
 /**
+ * @typedef {PageBody & { text: string, forward: boolean, again: boolean }} FindBody
+ * Finds `text` in the page; `again` steps to the next match of the text already searched for.
+ */
+
+/**
+ * @typedef {PageBody & { action: ZoomAction }} ZoomBody
+ * Changes the zoom of the page.
+ */
+
+/**
+ * @typedef {PageBody & { kind: CaptureKind }} CaptureBody
+ * Takes a picture of the page, or reads its console, for the reader to add to the prompt; the answer is a `Captured` report.
+ */
+
+/**
+ * @typedef {PageBody & { on: boolean }} PickAreaBody
+ * Turns the mode on or off in which the reader drags a rectangle over the page to take a picture of it.
+ */
+
+/**
  * What the window asks about a page that is not about opening or closing it, and is not input.
  * @typedef {{ Load: LoadBody }
  *   | { Back: PageBody }
@@ -142,7 +191,14 @@
  *   | { Resize: ResizeBody }
  *   | { Focus: FocusBody }
  *   | { Tool: ToolBody }
- *   | { Pick: PickBody }} PageRequest
+ *   | { Pick: PickBody }
+ *   | { Find: FindBody }
+ *   | { StopFind: PageBody }
+ *   | { Zoom: ZoomBody }
+ *   | { HardReload: PageBody }
+ *   | { ClearData: PageBody }
+ *   | { Capture: CaptureBody }
+ *   | { PickArea: PickAreaBody }} PageRequest
  */
 
 /**
@@ -156,13 +212,47 @@
  */
 
 /**
+ * @typedef {{ restrict: boolean, origins: string[] }} AgentOriginsBody
+ * Sets which origins agents' tools may take a page to: when `restrict`, only local addresses and `origins`.
+ */
+
+/**
+ * @typedef {PageBody & { id: number, allow: boolean }} PermissionAnswerBody
+ * The reader's answer to the permission question `id`.
+ */
+
+/**
+ * @typedef {PageBody & { proceed: boolean }} CertificateChoiceBody
+ * The reader's choice on a certificate error: load anyway, or go back.
+ */
+
+/**
  * What the window asks of the helper.
  * @typedef {'Shutdown'
  *   | { Open: OpenBody }
  *   | { OpenTools: OpenToolsBody }
  *   | { Close: PageBody }
  *   | PageRequest
- *   | InputRequest} Request
+ *   | InputRequest
+ *   | { AgentOrigins: AgentOriginsBody }
+ *   | { PermissionAnswer: PermissionAnswerBody }
+ *   | { CertificateChoice: CertificateChoiceBody }} Request
+ */
+
+/**
+ * What is wrong with the certificate of a site.
+ * @typedef {object} CertificateInfo
+ * @property {string} url The address that was being opened.
+ * @property {string} error The engine's name for what is wrong, such as `ERR_CERT_AUTHORITY_INVALID`.
+ * @property {string} subject Who the certificate was issued to.
+ * @property {string} issuer Who issued it.
+ * @property {string} fingerprint Its SHA-256 fingerprint.
+ * @property {string} expires When it expires, or an empty string when that is not known.
+ */
+
+/**
+ * How a download went.
+ * @typedef {'Started' | 'Finished' | 'Failed'} DownloadState
  */
 
 /**
@@ -174,7 +264,15 @@
  *   | { ToolDone: { page: number, result: ToolResult } }
  *   | { Title: { page: number, title: string } }
  *   | { Address: { page: number, url: string } }
- *   | { Cursor: { page: number, cursor: Cursor } }} Event
+ *   | { Cursor: { page: number, cursor: Cursor } }
+ *   | { Found: { page: number, active: number, total: number } }
+ *   | { Zoomed: { page: number, factor: number } }
+ *   | { PermissionAsked: { page: number, id: number, origin: string, permission: string } }
+ *   | { PermissionCancelled: { page: number, id: number } }
+ *   | { CertificateError: { page: number, info: CertificateInfo } }
+ *   | { CertificateCleared: { page: number } }
+ *   | { Download: { page: number, name: string, state: DownloadState } }
+ *   | { Captured: { page: number, capture: Capture } }} Event
  */
 
 /**

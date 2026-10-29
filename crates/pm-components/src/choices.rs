@@ -4,6 +4,7 @@ use pm_acp::{Discovery, Setting, Slash};
 use pm_input::FocusId;
 use pm_protocol::ExtensionCommand;
 
+use crate::captures::{CAPTURE_BASE, CAPTURE_REMOVE_BASE, MOST_CAPTURES};
 use crate::elements::{ELEMENT_BASE, ELEMENT_REMOVE_BASE, MOST_ELEMENTS};
 use crate::state::{
     ACCOUNT, ACCOUNT_BASE, AGENT_TOGGLE, APPROVALS_CHIP, ATTACHED_BASE, Activity, BRANCH_BASE,
@@ -44,6 +45,7 @@ impl WorkspaceState {
             || (ACCOUNT_BASE..ACCOUNT_BASE + 50).contains(&id)
             || (SETTING_BASE..SETTING_BASE + 10).contains(&id)
             || (ELEMENT_BASE..ELEMENT_BASE + MOST_ELEMENTS as u64).contains(&id)
+            || (CAPTURE_BASE..CAPTURE_BASE + MOST_CAPTURES as u64).contains(&id)
             || (PICK_BASE..PICK_BASE + 100).contains(&id)
             || (EFFORT_BASE..EFFORT_BASE + 50).contains(&id)
             || (PLACE_BASE..PLACE_BASE + 10).contains(&id)
@@ -730,6 +732,12 @@ impl WorkspaceState {
             self.menu_scroll = 0.0;
         } else if let Some(index) = within(ELEMENT_REMOVE_BASE, MOST_ELEMENTS) {
             self.remove_element(index);
+        } else if let Some(index) = within(CAPTURE_BASE, MOST_CAPTURES) {
+            let wanted = (index < self.captures.len()).then_some(Picker::Capture(index));
+            self.picker = if self.picker == wanted { None } else { wanted };
+            self.menu_scroll = 0.0;
+        } else if let Some(index) = within(CAPTURE_REMOVE_BASE, MOST_CAPTURES) {
+            self.remove_capture(index);
         } else if id == SLASH_BUTTON.0 {
             self.prompt = prompt_field("/");
             self.slash = 0;

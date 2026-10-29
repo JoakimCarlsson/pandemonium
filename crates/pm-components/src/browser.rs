@@ -9,6 +9,9 @@ use pm_style::{
 use pm_text::Field;
 use pm_ui::{Node, Picture, node};
 
+use crate::browser_address::address_of;
+use crate::browser_find::{PageSearch, find_bar};
+use crate::browser_safety::{Answer, Safety, certificate_page};
 use crate::button::Variant;
 use crate::parts::line;
 use crate::sash::Sash;
@@ -52,6 +55,39 @@ pub const BROWSER_PICK: FocusId = FocusId(7_440_010);
 /// The handle between the page and its developer tools, dragged to change how wide the tools are.
 pub const BROWSER_SASH: FocusId = FocusId(7_440_011);
 
+/// The line the text to find in the page is typed in.
+pub const BROWSER_FIND_FIELD: FocusId = FocusId(7_440_012);
+
+/// Goes to the next match of the text found in the page.
+pub const BROWSER_FIND_NEXT: FocusId = FocusId(7_440_013);
+
+/// Goes to the previous match of the text found in the page.
+pub const BROWSER_FIND_PREVIOUS: FocusId = FocusId(7_440_014);
+
+/// Closes the bar for finding in the page.
+pub const BROWSER_FIND_CLOSE: FocusId = FocusId(7_440_015);
+
+/// The bar for finding in the page.
+pub const BROWSER_FIND_BAR: FocusId = FocusId(7_440_016);
+
+/// The zoom of the page, shown while it is not 100%; pressing it puts the zoom back.
+pub const BROWSER_ZOOM: FocusId = FocusId(7_440_017);
+
+/// The dimmed window behind the question about clearing cookies and site data.
+pub const BROWSER_CLEAR_OUTSIDE: FocusId = FocusId(7_440_018);
+
+/// The panel of the question about clearing cookies and site data.
+pub const BROWSER_CLEAR_INSIDE: FocusId = FocusId(7_440_019);
+
+/// Clears the cookies and site data.
+pub const BROWSER_CLEAR_CONFIRM: FocusId = FocusId(7_440_020);
+
+/// Leaves the cookies and site data as they are.
+pub const BROWSER_CLEAR_CANCEL: FocusId = FocusId(7_440_021);
+
+/// Opens the menu of what can be added to the prompt from the page: pictures of it and its console.
+pub const BROWSER_CAPTURE: FocusId = FocusId(7_440_900);
+
 /// One past the last thing of the browser.
 const BROWSER_END: u64 = 7_441_000;
 
@@ -72,6 +108,17 @@ pub const PAGE_SURFACE: u32 = 1;
 
 /// The surface number the developer tools' pictures are drawn on.
 pub const TOOLS_SURFACE: u32 = 2;
+
+/// How a zoom command changes the zoom of the page.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ZoomStep {
+    /// To the next larger zoom.
+    In,
+    /// To the next smaller zoom.
+    Out,
+    /// Back to 100%.
+    Reset,
+}
 
 /// What the window asks the engine to do next.
 #[derive(Clone, Debug, PartialEq)]
@@ -94,12 +141,39 @@ pub enum Command {
     SelectAll,
     /// Turn on or off the mode in which a click picks an element of the page.
     Pick(bool),
+    /// Add a picture of what the page shows to the prompt.
+    Screenshot,
+    /// Add a picture of the whole page to the prompt.
+    FullPage,
+    /// Add the lines of the page's console to the prompt.
+    Console,
+    /// Turn on or off the mode in which the reader drags a rectangle over the page to add a picture of it.
+    PickArea(bool),
     /// Open the developer tools.
     OpenTools,
     /// Close the developer tools.
     CloseTools,
     /// Close the page.
     Close,
+    /// Load the page again without using the cache.
+    HardReload,
+    /// Look for `text` in the page; `again` steps to the next match, forward or back, of the text already looked for.
+    Find {
+        /// What to look for.
+        text: String,
+        /// Whether to go forward from the current match.
+        forward: bool,
+        /// Whether this steps to the next match of the same text, not a new search.
+        again: bool,
+    },
+    /// End the search in the page and clear its marks.
+    StopFind,
+    /// Change the zoom of the page.
+    Zoom(ZoomStep),
+    /// Open the page's address in the system's browser.
+    OpenExternal,
+    /// Throw away the cookies, site storage and cache of the browser, then load the page again.
+    ClearData,
 }
 
 /// How the pointer looks over the page, as the page asks.
@@ -141,10 +215,20 @@ pub struct Browser {
     pub pointer: Pointer,
     /// Whether a click on the page picks the element under the pointer.
     pub picking: bool,
+    /// Whether the reader is dragging a rectangle over the page to add a picture of it.
+    pub picking_area: bool,
     /// The machine the page is on when it is not this one, as the project that opened it names it.
     pub host: Option<String>,
     /// Why the page cannot be shown, when it cannot.
     pub notice: Option<String>,
+    /// The search of the page while its bar shows.
+    pub search: Option<PageSearch>,
+    /// The zoom of the page as a factor, 1.0 being 100%.
+    pub zoom: f32,
+    /// Whether the question about clearing cookies and site data is open.
+    pub clearing: bool,
+    /// What the page asked of the reader, a site whose certificate is not trusted, and the last download.
+    pub safety: Safety,
     /// What the engine has not yet been told to do.
     pub commands: Vec<Command>,
 }
@@ -161,9 +245,34 @@ impl Browser {
             tools_width: TOOLS_WIDTH,
             pointer: Pointer::Arrow,
             picking: false,
+            picking_area: false,
             host,
             notice: None,
+            search: None,
+            zoom: 1.0,
+            clearing: false,
+            safety: Safety::default(),
             commands: vec![Command::Load(address.to_owned())],
+        }
+    }
+}
+
+impl Browser {
+    /// Turns on the mode of dragging a rectangle over the page, and turns off the one of picking an element.
+    pub(crate) fn start_area(&mut self) {
+        if self.picking {
+            self.picking = false;
+            self.commands.push(Command::Pick(false));
+        }
+        self.picking_area = true;
+        self.commands.push(Command::PickArea(true));
+    }
+
+    /// Turns off the mode of dragging a rectangle over the page, if it is on.
+    fn end_area(&mut self) {
+        if self.picking_area {
+            self.picking_area = false;
+            self.commands.push(Command::PickArea(false));
         }
     }
 }
@@ -190,25 +299,6 @@ fn served_move(current: &str, address: &str) -> Move {
         .strip_prefix(origin)
         .is_some_and(|rest| rest.is_empty() || rest.starts_with(['/', '?', '#']));
     if same { Move::Reload } else { Move::Stay }
-}
-
-/// The address `typed` names: a web address as it is, a bare host with a scheme in front, and a local host over plain HTTP.
-pub fn address_of(typed: &str) -> String {
-    let typed = typed.trim();
-    if typed.contains("://") || typed.starts_with("about:") || typed.starts_with("data:") {
-        return typed.to_owned();
-    }
-    let local = typed.starts_with("localhost")
-        || typed.starts_with("127.")
-        || typed.starts_with("0.0.0.0")
-        || typed.starts_with('[');
-    if local || typed.starts_with(':') {
-        let typed = typed
-            .strip_prefix(':')
-            .map_or(typed.to_owned(), |port| format!("localhost:{port}"));
-        return format!("http://{typed}");
-    }
-    format!("https://{typed}")
 }
 
 /// Whether `id` is something of the browser.
@@ -316,13 +406,37 @@ impl WorkspaceState {
 
     /// Carries out what pressing `id` of the browser does.
     pub(crate) fn browser_pressed(mut self, id: FocusId) -> Self {
-        if id == BROWSER_CLOSE {
-            return self.browser_closed();
+        match id {
+            BROWSER_CLOSE => return self.browser_closed(),
+            BROWSER_FIND_NEXT => {
+                self.browser_find_stepped(false);
+                return self;
+            }
+            BROWSER_FIND_PREVIOUS => {
+                self.browser_find_stepped(true);
+                return self;
+            }
+            BROWSER_FIND_CLOSE => {
+                self.browser_find_closed();
+                return self;
+            }
+            BROWSER_CLEAR_CONFIRM => {
+                self.browser_clear_confirmed();
+                return self;
+            }
+            BROWSER_CLEAR_CANCEL | BROWSER_CLEAR_OUTSIDE => {
+                self.browser_clear_declined();
+                return self;
+            }
+            _ => {}
         }
         let host = self.current_project_host();
         let Some(browser) = self.browser.as_mut() else {
             return self;
         };
+        if browser.safety.press(id) {
+            return self;
+        }
         match id {
             TAB_BROWSER => self.tab = Tab::Browser,
             BROWSER_BACK => browser.commands.push(Command::Back),
@@ -333,7 +447,9 @@ impl WorkspaceState {
                 browser.host = host;
                 browser.commands.push(Command::Load(address));
             }
+            BROWSER_ZOOM => browser.commands.push(Command::Zoom(ZoomStep::Reset)),
             BROWSER_PICK => {
+                browser.end_area();
                 browser.picking = !browser.picking;
                 browser.commands.push(Command::Pick(browser.picking));
             }
@@ -358,6 +474,14 @@ impl WorkspaceState {
             .unwrap_or_default()
     }
 
+    /// What the reader answered to the page's questions and to a certificate that is not trusted, which the engine has not yet been told.
+    pub fn take_browser_answers(&mut self) -> Vec<Answer> {
+        self.browser
+            .as_mut()
+            .map(|browser| std::mem::take(&mut browser.safety.answers))
+            .unwrap_or_default()
+    }
+
     /// Clears the notice and loads the address in the bar again, as after the browser was installed.
     pub fn browser_retry(&mut self) {
         let host = self.current_project_host();
@@ -376,6 +500,24 @@ impl WorkspaceState {
         }
         match element {
             Some(element) => self.with_element(element),
+            None => self,
+        }
+    }
+
+    /// Takes in the zoom the engine reported for the page, as a factor.
+    pub fn browser_zoomed(&mut self, factor: f32) {
+        if let Some(browser) = self.browser.as_mut() {
+            browser.zoom = factor;
+        }
+    }
+
+    /// The state after the helper reported what the reader asked to add to the prompt: it becomes a chip, and the mode of dragging a rectangle, if it was on, is over; no capture means the mode ended without an area.
+    pub fn browser_captured(mut self, capture: Option<crate::captures::Capture>) -> Self {
+        if let Some(browser) = self.browser.as_mut() {
+            browser.picking_area = false;
+        }
+        match capture {
+            Some(capture) => self.with_capture(capture),
             None => self,
         }
     }
@@ -426,6 +568,7 @@ pub fn browser_view(state: &WorkspaceState, width: f32, height: f32) -> Node {
     let Some(browser) = state.browser.as_ref() else {
         return node();
     };
+    let zoomed = (browser.zoom - 1.0).abs() > 0.005;
     let toolbar = node()
         .styles([
             flex(),
@@ -448,9 +591,24 @@ pub fn browser_view(state: &WorkspaceState, width: f32, height: f32) -> Node {
                     .build(),
             ),
         )
+        .children(zoomed.then(|| {
+            Button::new(format!("{}%", (browser.zoom * 100.0).round()), BROWSER_ZOOM)
+                .variant(Variant::Ghost)
+                .size(Size::Sm)
+                .build()
+        }))
         .child(
             Button::icon(IconName::Pick, BROWSER_PICK)
                 .variant(if browser.picking {
+                    Variant::Secondary
+                } else {
+                    Variant::Ghost
+                })
+                .build(),
+        )
+        .child(
+            Button::icon(IconName::Camera, BROWSER_CAPTURE)
+                .variant(if browser.picking_area {
                     Variant::Secondary
                 } else {
                     Variant::Ghost
@@ -468,8 +626,13 @@ pub fn browser_view(state: &WorkspaceState, width: f32, height: f32) -> Node {
             )
             .build(),
         );
-    let room = (height - TOOLBAR).max(0.0);
+    let room = (height - TOOLBAR - browser.safety.bars()).max(0.0);
     let surface = |id: FocusId, picture: &Option<Picture>, wide: f32, tall: f32| {
+        if id == BROWSER_BODY
+            && let Some(certificate) = browser.safety.certificate.as_ref()
+        {
+            return certificate_page(certificate, wide, tall);
+        }
         let body = node()
             .styles([
                 flex_none(),
@@ -494,13 +657,17 @@ pub fn browser_view(state: &WorkspaceState, width: f32, height: f32) -> Node {
     let divider = |wide: f32, tall: f32| {
         node().styles([w_px(wide), h_px(tall), bg(Role::Border), flex_none()])
     };
-    let mut row = node().styles([flex(), w_full(), h_px(room)]);
+    let mut beside = 0.0;
+    let mut page_width = width;
+    let mut row = node().styles([flex(), w_full(), h_px(room), relative()]);
     if browser.tools {
         let tools = browser
             .tools_width
             .clamp(TOOLS_LEAST, (width - TOOLS_LEAST - 1.0).max(TOOLS_LEAST))
             .floor();
         let page = (width - tools - 1.0).max(0.0);
+        beside = tools + 1.0;
+        page_width = page;
         row = row
             .child(surface(BROWSER_BODY, &browser.page, page, room))
             .child(
@@ -517,7 +684,13 @@ pub fn browser_view(state: &WorkspaceState, width: f32, height: f32) -> Node {
     } else {
         row = row.child(surface(BROWSER_BODY, &browser.page, width, room));
     }
-    node()
+    row = row.children(
+        browser
+            .search
+            .as_ref()
+            .map(|search| find_bar(search, page_width, beside)),
+    );
+    let mut pane = node()
         .styles([
             flex(),
             flex_col(),
@@ -525,8 +698,11 @@ pub fn browser_view(state: &WorkspaceState, width: f32, height: f32) -> Node {
             h_px(height),
             bg(Role::Background),
         ])
-        .child(toolbar)
-        .child(row)
+        .child(toolbar);
+    for bar in browser.safety.bar_nodes() {
+        pane = pane.child(bar);
+    }
+    pane.child(row)
 }
 
 #[cfg(test)]

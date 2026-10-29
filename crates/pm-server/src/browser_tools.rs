@@ -338,8 +338,12 @@ fn definitions() -> Vec<Value> {
         ),
         tool(
             "browser_screenshot",
-            "Take a picture of what the browser pane shows, once the requests the page has under way are done.",
-            &json!({}),
+            "Take a picture of the page once the requests it has under way are done: the viewport by default, the whole scrollable page with `full_page` (cut at 16000 pixels), or one element given by `ref` or `selector`. `full_page` cannot be combined with an element.",
+            &json!({
+                "full_page": { "type": "boolean", "description": "Capture the whole page, not only the viewport." },
+                "ref": target["ref"],
+                "selector": target["selector"],
+            }),
             &[],
         ),
         tool(
@@ -442,5 +446,99 @@ fn definitions() -> Vec<Value> {
             }),
             &[],
         ),
+        tool(
+            "browser_handle_dialog",
+            "Answer the JavaScript dialog (`alert` or `confirm`) that the page has open. While one is open the page is stopped and the other browser tools refuse to run; it is dismissed by itself after 60 seconds. Other tools' answers say when a dialog is open or closed. `prompt` dialogs are cancelled by the browser at once and cannot be answered, so `prompt_text` has no effect today. `beforeunload` prompts are not answered here: a tool that navigates leaves the page anyway.",
+            &json!({
+                "accept": { "type": "boolean", "description": "true presses OK, false presses Cancel." },
+                "prompt_text": { "type": "string", "description": "Text for a prompt dialog; see the description." },
+            }),
+            &["accept"],
+        ),
+        tool(
+            "browser_hover",
+            "Move the pointer over an element, given by `ref` or `selector`, or a point given by `x` and `y`, so the page shows what hovering shows, such as menus and tooltips.",
+            &json!({
+                "ref": target["ref"],
+                "selector": target["selector"],
+                "x": { "type": "number" },
+                "y": { "type": "number" },
+            }),
+            &[],
+        ),
+        tool(
+            "browser_drag",
+            "Press the pointer at `from`, move it to `to` and let go. Each end is an element (`ref` or `selector`) or a point (`x` and `y`). Works for HTML drag and drop and for drags the page follows with mouse events, such as sliders.",
+            &json!({
+                "from": drag_end(&target, "Where the drag starts."),
+                "to": drag_end(&target, "Where the drag ends."),
+            }),
+            &["from", "to"],
+        ),
+        tool(
+            "browser_fill_form",
+            "Fill in several fields in one call, in order, stopping at the first that fails. A text field takes a string as `value` (as browser_type does, replacing what is there), a list (`select`) takes the option's value or text (as browser_select_option does), a checkbox or radio button takes `true` to tick it or `false` to clear it.",
+            &json!({
+                "fields": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 50,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "ref": target["ref"],
+                            "selector": target["selector"],
+                            "value": { "type": ["string", "boolean"] },
+                        },
+                        "required": ["value"],
+                    },
+                },
+            }),
+            &["fields"],
+        ),
+        tool(
+            "browser_highlight",
+            "Outline an element, given by `ref` or `selector`, in the browser pane for a moment so the person watching sees what you mean. It scrolls the element into view and returns at once; the outline fades after `duration_ms` (default 2000, from 200 to 10000), and a screenshot taken meanwhile shows it.",
+            &json!({
+                "ref": target["ref"],
+                "selector": target["selector"],
+                "duration_ms": { "type": "integer" },
+                "label": { "type": "string", "description": "A short caption shown on the outline." },
+            }),
+            &[],
+        ),
+        tool(
+            "browser_get_bounding_box",
+            "Say where an element, given by `ref` or `selector`, is, without moving the page: `x`, `y`, `width` and `height` in CSS pixels from the top left of the viewport, `pageX` and `pageY` from the top left of the page, and whether it is `inViewport`.",
+            &json!({
+                "ref": target["ref"],
+                "selector": target["selector"],
+            }),
+            &[],
+        ),
+        tool(
+            "browser_resize",
+            "Set the size of the page's viewport, in CSS pixels, by emulation, such as to test a narrow layout. The size stays through navigation and through the pane being resized; the pane shows the page at that size at its top left, and screenshots have that size. Give `reset` as true to follow the pane again.",
+            &json!({
+                "width": { "type": "integer", "minimum": 100, "maximum": 4000 },
+                "height": { "type": "integer", "minimum": 100, "maximum": 4000 },
+                "reset": { "type": "boolean" },
+            }),
+            &[],
+        ),
     ]
+}
+
+/// The schema of one end of a drag: an element by `ref` or `selector`, or a point by `x` and `y`.
+fn drag_end(target: &Value, description: &str) -> Value {
+    json!({
+        "type": "object",
+        "description": description,
+        "properties": {
+            "ref": target["ref"],
+            "selector": target["selector"],
+            "x": { "type": "number" },
+            "y": { "type": "number" },
+        },
+    })
 }

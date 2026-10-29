@@ -335,6 +335,20 @@ impl Screen {
         }
     }
 
+    /// The screen with the menu of what can be added to the prompt from the browser's page open at `at`, while the workspace is showing.
+    pub fn with_browser_capture_menu(self, at: (f32, f32)) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_browser_capture_menu(at)),
+        }
+    }
+
+    /// The screen after the helper reported a screenshot or the console of the browser's page for the prompt, or the end of choosing an area without one.
+    pub fn browser_captured(self, capture: Option<pm_components::captures::Capture>) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.browser_captured(capture)),
+        }
+    }
+
     /// The screen after `command` was carried out on the page of the browser, which closes the menu over it.
     pub fn browser_command(self, command: pm_components::browser_menu::BrowserCommand) -> Self {
         match self {

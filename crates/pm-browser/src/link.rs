@@ -8,21 +8,61 @@ use std::sync::{Arc, Mutex};
 use crate::frame::Frame;
 use crate::input::Cursor;
 use crate::surface::SurfaceReader;
-use crate::wire::{Event, PickedElement, Request, ToolResult, line};
+use crate::wire::{
+    Capture, CertificateInfo, DownloadState, Event, PickedElement, Request, ToolResult, line,
+};
+
+/// Something the helper reported about a page that the reader is to see or answer.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Notice {
+    /// The page asks for something of the reader's machine, and waits for an answer.
+    Permission {
+        /// The number of the question, for the answer.
+        id: u64,
+        /// The origin that asks.
+        origin: String,
+        /// What it asks for, in words.
+        permission: String,
+    },
+    /// A question is no longer open.
+    PermissionCancelled {
+        /// The number of the question.
+        id: u64,
+    },
+    /// The certificate of the site being opened is not trusted.
+    Certificate(Box<CertificateInfo>),
+    /// The certificate error no longer applies.
+    CertificateCleared,
+    /// A download started, finished or failed.
+    Download {
+        /// The name the file is saved under.
+        name: String,
+        /// How it went.
+        state: DownloadState,
+    },
+}
 
 /// What the helper reported about one page.
 #[derive(Default)]
 pub(crate) struct PageState {
+    /// What the reader is to see or answer, in the order it was reported, until the window takes it.
+    notices: Mutex<Vec<Notice>>,
     /// The newest picture that was copied out of the shared files.
     frame: Mutex<Option<Frame>>,
     /// The tool calls that ended since the window last asked.
     tools: Mutex<Vec<ToolResult>>,
     /// A pick the window has not taken yet: the element, or nothing when the mode ended without one.
     picked: Mutex<Option<Option<PickedElement>>>,
+    /// What the reader asked to add to the prompt that the window has not taken yet.
+    captured: Mutex<Vec<Capture>>,
     /// Which file the newest paint is in, and how many paints there have been.
     latest: Mutex<Option<(u8, u64)>>,
     /// The title, the address and how the pointer should look.
     pub(crate) about: Mutex<(String, String, Cursor)>,
+    /// A count of the search's matches the window has not taken yet: which is current and how many there are.
+    pub(crate) found: Mutex<Option<(u32, u32)>>,
+    /// The page's zoom as a factor, when the helper reported it and the window has not taken it yet.
+    pub(crate) zoom: Mutex<Option<f32>>,
     /// The two files the page paints into, once it has said where they are.
     surfaces: Mutex<Option<[SurfaceReader; 2]>>,
     /// The size of a picture in those files.
@@ -38,9 +78,32 @@ impl PageState {
             .unwrap_or_default()
     }
 
+    /// The notices reported since the last call.
+    pub(crate) fn take_notices(&self) -> Vec<Notice> {
+        self.notices
+            .lock()
+            .map(|mut held| std::mem::take(&mut *held))
+            .unwrap_or_default()
+    }
+
+    /// Records a notice for the window.
+    fn notify(&self, notice: Notice) {
+        if let Ok(mut held) = self.notices.lock() {
+            held.push(notice);
+        }
+    }
+
     /// The pick the helper reported since the last call, if any.
     pub(crate) fn take_pick(&self) -> Option<Option<PickedElement>> {
         self.picked.lock().ok()?.take()
+    }
+
+    /// What the helper reported for the reader's additions to the prompt since the last call.
+    pub(crate) fn take_captures(&self) -> Vec<Capture> {
+        self.captured
+            .lock()
+            .map(|mut held| std::mem::take(&mut *held))
+            .unwrap_or_default()
     }
 
     /// The newest picture, copied out of the shared files only when the page has painted since the last copy.
@@ -195,6 +258,13 @@ impl Link {
                     *picked = Some(element.map(|element| *element));
                 }
             }
+            Event::Captured { page, capture } => {
+                if let Some(state) = self.page(page)
+                    && let Ok(mut captured) = state.captured.lock()
+                {
+                    captured.push(*capture);
+                }
+            }
             Event::ToolDone { page, result } => {
                 if let Some(state) = self.page(page)
                     && let Ok(mut tools) = state.tools.lock()
@@ -221,6 +291,58 @@ impl Link {
                     && let Ok(mut about) = state.about.lock()
                 {
                     about.2 = cursor;
+                }
+            }
+            Event::Found {
+                page,
+                active,
+                total,
+            } => {
+                if let Some(state) = self.page(page)
+                    && let Ok(mut found) = state.found.lock()
+                {
+                    *found = Some((active, total));
+                }
+            }
+            Event::Zoomed { page, factor } => {
+                if let Some(state) = self.page(page)
+                    && let Ok(mut zoom) = state.zoom.lock()
+                {
+                    *zoom = Some(factor);
+                }
+            }
+            Event::PermissionAsked {
+                page,
+                id,
+                origin,
+                permission,
+            } => {
+                if let Some(state) = self.page(page) {
+                    state.notify(Notice::Permission {
+                        id,
+                        origin,
+                        permission,
+                    });
+                }
+            }
+            Event::PermissionCancelled { page, id } => {
+                if let Some(state) = self.page(page) {
+                    state.notify(Notice::PermissionCancelled { id });
+                }
+            }
+            Event::CertificateError { page, info } => {
+                if let Some(state) = self.page(page) {
+                    state.notify(Notice::Certificate(info));
+                }
+            }
+            Event::CertificateCleared { page } => {
+                if let Some(state) = self.page(page) {
+                    state.notify(Notice::CertificateCleared);
+                }
+            }
+            Event::Download { page, name, state } => {
+                if let Some(held) = self.page(page) {
+                    held.notify(Notice::Download { name, state });
                 }
             }
         }

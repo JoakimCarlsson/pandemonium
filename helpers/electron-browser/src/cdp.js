@@ -53,6 +53,15 @@ class Cdp {
   }
 
   /**
+   * Stops calling `listener`.
+   * @param {EventListener} listener What was given to `listen`.
+   * @returns {void}
+   */
+  unlisten(listener) {
+    this.listeners = this.listeners.filter((held) => held !== listener);
+  }
+
+  /**
    * Lets go of the page.
    * @returns {void}
    */

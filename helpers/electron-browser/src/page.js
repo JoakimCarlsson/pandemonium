@@ -7,8 +7,11 @@
 
 const { BrowserWindow } = require('electron');
 const agent = require('./agent');
+const capture = require('./capture');
 const { Cdp } = require('./cdp');
+const { Dialogs } = require('./dialogs');
 const { cursorOf, deliver } = require('./input');
+const origins = require('./origins');
 const pick = require('./pick');
 const { Recorder } = require('./recorder');
 const { Surface } = require('./surface');
@@ -30,6 +33,23 @@ function webAddress(url) {
   } catch (_) {
     return false;
   }
+}
+
+/** The zoom factors the zoom requests step through, as Chromium's own zoom menu does. */
+const ZOOM_STEPS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5];
+
+/**
+ * The zoom factor a zoom request leads to.
+ * @param {import('./types').ZoomAction} action How the zoom changes.
+ * @param {number} now The zoom factor now.
+ * @returns {number} The factor to go to: the next step up or down from `now`, or 1 to reset.
+ */
+function zoomFrom(action, now) {
+  if (action === 'Reset') return 1;
+  if (action === 'In') {
+    return ZOOM_STEPS.find((step) => step > now + 0.001) ?? ZOOM_STEPS[ZOOM_STEPS.length - 1];
+  }
+  return [...ZOOM_STEPS].reverse().find((step) => step < now - 0.001) ?? ZOOM_STEPS[0];
 }
 
 /**
@@ -82,23 +102,63 @@ class Page {
     this.cdp = null;
     /** @type {Recorder | null} What the page wrote to its console and asked of the network, for pages that are inspectable. */
     this.recorder = null;
+    /** @type {Dialogs | null} The page's dialogs, for pages that are inspectable. */
+    this.dialogs = null;
+    /** @type {{ width: number, height: number } | null} The size an agent set the viewport to with `browser_resize`, until it is reset. */
+    this.viewport = null;
+    /** @type {number} How many tools of agents are running against the page. */
+    this.agentRuns = 0;
+    /** @type {string | null} Why the page was kept from an address while a tool ran, until that tool's answer says so. */
+    this.refused = null;
+    /** @type {{ url: string, origin: string, fingerprint: string } | null} The site whose untrusted certificate kept the page from loading, while the reader has not chosen. */
+    this.certificate = null;
     this.contents.setFrameRate(60);
     this.contents.setWindowOpenHandler(({ url }) => {
-      if (webAddress(url)) this.contents.loadURL(url).catch(() => {});
+      if (webAddress(url) && !this.guard(url)) this.contents.loadURL(url).catch(() => {});
       return { action: 'deny' };
     });
     this.contents.on('will-navigate', (event, url) => {
-      if (!webAddress(url)) event.preventDefault();
+      if (!webAddress(url) || this.guard(url)) event.preventDefault();
+    });
+    this.contents.on('will-redirect', (event, url) => {
+      if (this.guard(url)) event.preventDefault();
     });
     this.contents.on('paint', (_event, _dirty, image) => this.paint(image));
     this.contents.on('page-title-updated', (_event, title) => send({ Title: { page: id, title } }));
-    this.contents.on('did-navigate', (_event, url) => send({ Address: { page: id, url } }));
+    this.contents.on('did-navigate', (_event, url) => {
+      send({ Address: { page: id, url } });
+      this.reportZoom();
+    });
+    this.contents.on('found-in-page', (_event, result) =>
+      send({ Found: { page: id, active: result.activeMatchOrdinal, total: result.matches } }),
+    );
     this.contents.on('did-navigate-in-page', (_event, url) => send({ Address: { page: id, url } }));
     this.contents.on('cursor-changed', (_event, type) => send({ Cursor: { page: id, cursor: cursorOf(type) } }));
     if (inspectable) {
       this.cdp = new Cdp(this.contents);
       this.recorder = new Recorder(this.cdp);
+      this.dialogs = new Dialogs(this);
     }
+  }
+
+  /**
+   * Whether a tool of an agent is running against the page, so that what it starts is the agent's doing.
+   * @returns {boolean} Whether one is.
+   */
+  agentBusy() {
+    return this.agentRuns > 0;
+  }
+
+  /**
+   * Checks an address the page is about to go to, by a link, a redirect or a new window, against what agents may open; it only holds while a tool of an agent runs, never for the reader's own moves.
+   * @param {string} url Where the page is going.
+   * @returns {string | null} Why it may not, which the tool's answer will say, or nothing when it may.
+   */
+  guard(url) {
+    if (!this.agentBusy()) return null;
+    const refusal = origins.mayOpen(url);
+    if (refusal) this.refused = refusal;
+    return refusal;
   }
 
   /**
@@ -139,15 +199,79 @@ class Page {
       this.contents.navigationHistory.goForward();
     } else if ('Reload' in asked) {
       this.contents.reload();
+    } else if ('HardReload' in asked) {
+      this.contents.reloadIgnoringCache();
+    } else if ('Find' in asked) {
+      this.find(asked.Find.text, asked.Find.forward, asked.Find.again);
+    } else if ('StopFind' in asked) {
+      this.contents.stopFindInPage('keepSelection');
+    } else if ('Zoom' in asked) {
+      this.contents.setZoomFactor(zoomFrom(asked.Zoom.action, this.contents.getZoomFactor()));
+      this.reportZoom();
+    } else if ('ClearData' in asked) {
+      this.clearData();
     } else if ('Resize' in asked) {
       this.win.setContentSize(asked.Resize.width, asked.Resize.height);
+      this.holdViewport();
     } else if ('Focus' in asked) {
       if (asked.Focus.focused) this.contents.focus();
     } else if ('Tool' in asked) {
       this.runTool(asked.Tool);
     } else if ('Pick' in asked) {
       this.pick(asked.Pick.on);
+    } else if ('Capture' in asked) {
+      capture.run(this, asked.Capture.kind);
+    } else if ('PickArea' in asked) {
+      capture.pickArea(this, asked.PickArea.on);
     }
+  }
+
+  /**
+   * Applies the size an agent chose with `browser_resize` again, so that the pane's own resizing leaves the emulated viewport as the agent set it.
+   * @returns {void}
+   */
+  holdViewport() {
+    if (!this.viewport || !this.cdp) return;
+    const { width, height } = this.viewport;
+    this.cdp.call('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 0, mobile: false }).catch(() => {});
+  }
+
+  /**
+   * Tells the window the page's zoom factor.
+   * @returns {void}
+   */
+  reportZoom() {
+    this.send({ Zoomed: { page: this.id, factor: this.contents.getZoomFactor() } });
+  }
+
+  /**
+   * Looks for text in the page and marks the matches; the window hears the count as `Found`.
+   * @param {string} text What to look for; nothing clears the marks.
+   * @param {boolean} forward Whether to look forward from the current match.
+   * @param {boolean} again Whether this steps to the next match of the text already searched for.
+   * @returns {void}
+   */
+  find(text, forward, again) {
+    if (!text) {
+      this.contents.stopFindInPage('clearSelection');
+      this.send({ Found: { page: this.id, active: 0, total: 0 } });
+      return;
+    }
+    this.contents.findInPage(text, { forward, findNext: again });
+  }
+
+  /**
+   * Throws away the cookies, site storage and cache of the session every page shares, then loads the page again.
+   * @returns {Promise<void>} Resolves once the page has been asked to load again.
+   */
+  async clearData() {
+    const { session } = this.contents;
+    try {
+      await Promise.all([session.clearStorageData(), session.clearCache(), session.clearAuthCache()]);
+    } catch (_) {
+      /* a failed clear still loads the page again, which shows what is left */
+    }
+    if (!this.win.isDestroyed()) this.contents.reload();
   }
 
   /**
@@ -168,10 +292,19 @@ class Page {
       } catch (_) {
         args = {};
       }
+      this.refused = null;
+      this.agentRuns += 1;
       try {
         outcome = await agent.run(this, body.tool, args && typeof args === 'object' ? /** @type {Record<string, any>} */ (args) : {});
       } catch (error) {
         outcome = { ok: false, text: String(error instanceof Error ? error.message : error), image: null };
+      } finally {
+        this.agentRuns -= 1;
+      }
+      if (this.refused) {
+        const moving = ['browser_navigate', 'browser_back', 'browser_forward', 'browser_reload'].includes(body.tool);
+        outcome = moving ? { ok: false, text: this.refused, image: null } : { ...outcome, text: `${outcome.text}\n${this.refused}` };
+        this.refused = null;
       }
     }
     this.send({ ToolDone: { page: this.id, result: { call: body.call, ...outcome } } });
@@ -201,6 +334,7 @@ class Page {
    */
   close() {
     this.surface.close();
+    if (this.dialogs) this.dialogs.dispose();
     if (this.cdp) this.cdp.detach();
     if (!this.win.isDestroyed()) this.win.destroy();
   }

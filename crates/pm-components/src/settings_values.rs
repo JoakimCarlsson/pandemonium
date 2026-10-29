@@ -94,6 +94,8 @@ impl Setting {
             Self::OfferLanguages => Control::Switch(window.general.offer_languages),
             Self::EmbeddedBrowser => Control::Switch(window.general.embedded_browser),
             Self::OpenDevServers => Control::Switch(window.general.open_dev_servers),
+            Self::RestrictAgentBrowsing => Control::Switch(window.general.restrict_agent_browsing),
+            Self::AgentOrigins => Control::List(self.lines(state)),
             Self::Channel => Control::Choice(
                 &["Stable", "Preview"],
                 place_of(
@@ -412,6 +414,7 @@ impl Setting {
             Self::OfferLanguages => window.general.offer_languages ^= true,
             Self::EmbeddedBrowser => window.general.embedded_browser ^= true,
             Self::OpenDevServers => window.general.open_dev_servers ^= true,
+            Self::RestrictAgentBrowsing => window.general.restrict_agent_browsing ^= true,
             Self::Channel => {
                 window.general.channel = [Channel::Stable, Channel::Preview][option.min(1)];
             }
@@ -647,6 +650,7 @@ impl Setting {
             | Self::BranchTemplate
             | Self::WorktreeFolder
             | Self::WorktreeInclude
+            | Self::AgentOrigins
             | Self::VimBindings
             | Self::GitHosts
             | Self::WorkspaceFolders
@@ -797,6 +801,7 @@ impl Setting {
     pub(crate) fn add_label(self) -> &'static str {
         match self {
             Self::VimBindings => "Add Binding",
+            Self::AgentOrigins => "Add Origin",
             _ => "Add Pattern",
         }
     }
@@ -805,6 +810,7 @@ impl Setting {
     pub(crate) fn add_placeholder(self) -> &'static str {
         match self {
             Self::VimBindings => "e.g. gh => Hover",
+            Self::AgentOrigins => "e.g. https://example.com",
             _ => "e.g. dist/ or .env.*",
         }
     }
@@ -822,6 +828,7 @@ impl Setting {
                 .map(str::to_owned)
                 .collect(),
             Self::VimBindings => state.editor.vim_bindings.clone(),
+            Self::AgentOrigins => state.window.general.agent_origins.clone(),
             _ => Vec::new(),
         }
     }
@@ -831,6 +838,7 @@ impl Setting {
         match self {
             Self::WorktreeInclude => state.machine.git.worktree_include = lines.join(", "),
             Self::VimBindings => state.editor.vim_bindings = lines.to_vec(),
+            Self::AgentOrigins => state.window.general.agent_origins = lines.to_vec(),
             _ => {}
         }
     }
@@ -902,6 +910,13 @@ impl Setting {
             Self::OpenDevServers => {
                 window.general.open_dev_servers = own.general.open_dev_servers;
             }
+            Self::RestrictAgentBrowsing => {
+                window.general.restrict_agent_browsing = own.general.restrict_agent_browsing;
+            }
+            Self::AgentOrigins => window
+                .general
+                .agent_origins
+                .clone_from(&own.general.agent_origins),
             Self::Channel => window.general.channel = own.general.channel,
             Self::ThemeMode => window.appearance.theme_mode = own.appearance.theme_mode,
             Self::LightTheme => window

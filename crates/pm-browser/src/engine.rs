@@ -116,6 +116,14 @@ impl Engine {
         self.link.clone()
     }
 
+    /// Tells the helper which origins the tools of agents may take a page to: when `restrict`, only local addresses and `origins`.
+    pub fn set_agent_origins(&self, restrict: bool, origins: &[String]) {
+        self.link.send(&Request::AgentOrigins {
+            restrict,
+            origins: origins.to_vec(),
+        });
+    }
+
     /// Why the helper failed, if it did.
     pub fn failure(&self) -> Option<String> {
         self.link.failure()

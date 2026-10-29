@@ -45,6 +45,10 @@ pub struct GeneralSettings {
     pub embedded_browser: bool,
     /// Whether the embedded browser opens on the web page a program started in a shell serves.
     pub open_dev_servers: bool,
+    /// Whether the tools agents browse with may open only local addresses and the origins listed in `agent_origins`.
+    pub restrict_agent_browsing: bool,
+    /// The origins agents may open besides local addresses while `restrict_agent_browsing` is on, such as `https://example.com`.
+    pub agent_origins: Vec<String>,
 }
 
 impl Default for GeneralSettings {
@@ -59,6 +63,8 @@ impl Default for GeneralSettings {
             declined_languages: Vec::new(),
             embedded_browser: false,
             open_dev_servers: true,
+            restrict_agent_browsing: false,
+            agent_origins: Vec::new(),
         }
     }
 }

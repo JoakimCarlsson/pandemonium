@@ -101,12 +101,13 @@ class Surface {
 
   /**
    * Saves a picture beside the shared files.
-   * @param {Buffer} bytes The picture, as a PNG file.
+   * @param {Buffer} bytes The picture, as the file's contents.
+   * @param {string} [extension] The file's extension, without the dot; a PNG file unless said otherwise.
    * @returns {string} Where it was saved.
    */
-  savePicture(bytes) {
+  savePicture(bytes, extension = 'png') {
     this.pictures += 1;
-    const file = path.join(this.folder, `pick-${this.page}-${this.pictures}.png`);
+    const file = path.join(this.folder, `pick-${this.page}-${this.pictures}.${extension}`);
     fs.writeFileSync(file, bytes);
     return file;
   }
