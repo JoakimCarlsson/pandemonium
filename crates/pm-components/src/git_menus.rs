@@ -418,9 +418,24 @@ impl WorkspaceState {
     /// The node that draws the menu that is open.
     pub fn git_menu_node(&self) -> Option<Node> {
         let open = self.git.menu?;
-        let mut menu = Menu::new(open.at.0, open.at.1);
+        Some(self.git_menu(open.kind, open.at).build())
+    }
+
+    /// The point at which the menu `kind`, opened from the control occupying `trigger` as `(x, y, width, height)`, lies below it or above it inside a window `window` wide and tall.
+    pub fn git_menu_below(
+        &self,
+        kind: MenuKind,
+        trigger: (f32, f32, f32, f32),
+        window: (f32, f32),
+    ) -> (f32, f32) {
+        self.git_menu(kind, (0.0, 0.0)).below(trigger, window).at()
+    }
+
+    /// The menu `kind` with its rows, its corner at `at`.
+    fn git_menu(&self, kind: MenuKind, at: (f32, f32)) -> Menu {
+        let mut menu = Menu::new(at.0, at.1);
         let mut position = 0;
-        for entry in self.menu_entries(open.kind) {
+        for entry in self.menu_entries(kind) {
             match entry {
                 Entry::Rule => menu = menu.separator(),
                 Entry::Row(label, command) => {
@@ -434,7 +449,7 @@ impl WorkspaceState {
                 }
             }
         }
-        Some(menu.build())
+        menu
     }
 
     /// Carries out what the `position`-th row of the open menu does, and closes it.

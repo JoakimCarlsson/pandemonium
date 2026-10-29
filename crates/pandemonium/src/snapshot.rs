@@ -131,7 +131,7 @@ pub enum Shot {
     /// The source control panel with git's refusal of a branch switch said in it.
     Refused,
     /// The source control panel with the menu over its actions open.
-    SourceMenu,
+    SourceMenu(Trigger),
     /// The source control panel with the menu on a commit of the graph open.
     HistoryMenu,
     /// The source control panel asking what to call a stash.
@@ -1821,6 +1821,36 @@ fn diff_listed() -> WorkspaceState {
     state
 }
 
+/// The control a dropdown of the source control panel opens from, and the density the window is set to.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Trigger {
+    /// The `…` button of the Changes section.
+    Changes,
+    /// The `…` button of the Changes section, with the window at its compact density.
+    ChangesCompact,
+    /// The history references button of the Graph section.
+    Refs,
+}
+
+impl Trigger {
+    /// The menu the control opens and where the control is, as `(x, y, width, height)` in logical pixels.
+    fn control(self) -> (MenuKind, (f32, f32, f32, f32)) {
+        match self {
+            Self::Changes => (MenuKind::Source, (1245.0, 130.0, 26.0, 28.0)),
+            Self::ChangesCompact => (MenuKind::Source, (1245.0, 112.0, 26.0, 24.0)),
+            Self::Refs => (MenuKind::Refs, (1065.0, 774.0, 66.0, 24.0)),
+        }
+    }
+
+    /// How closely the window is set for the shot.
+    fn density(self) -> pm_config::Density {
+        match self {
+            Self::ChangesCompact => pm_config::Density::Compact,
+            _ => pm_config::Density::Comfortable,
+        }
+    }
+}
+
 /// The workspace on the diff at its compact density, its first file replaced by one of five thousand added lines and scrolled a good way into it.
 fn diff_compact() -> WorkspaceState {
     let state = workspace_sample();
@@ -2761,8 +2791,13 @@ impl Shot {
             }
             Self::IgnoredFiles => Screen::Workspace(ignored_files()),
             Self::Source => Screen::Workspace(source()),
-            Self::SourceMenu => {
-                Screen::Workspace(source().with_git_menu(MenuKind::Source, (700.0, 110.0)))
+            Self::SourceMenu(trigger) => {
+                let state = source();
+                let (kind, control) = trigger.control();
+                let at = state.git_menu_below(kind, control, (WIDTH as f32, HEIGHT as f32));
+                let mut window = state.window.clone();
+                window.appearance.density = trigger.density();
+                Screen::Workspace(state.with_window_settings(window).with_git_menu(kind, at))
             }
             Self::HistoryMenu => {
                 let mut state = source();
@@ -3002,16 +3037,28 @@ impl Shot {
             Self::Live => Screen::Workspace(live(Turn::Finished)),
             Self::Asking => Screen::Workspace(live(Turn::Asking)),
             Self::AskingCommand => Screen::Workspace(live(Turn::Command)),
-            Self::Answered => Screen::Workspace(live(Turn::Working).heard(
-                0,
-                Event::Answered(vec![
-                    (
-                        "If a duck wore pants, how would it wear them?".to_owned(),
-                        Some("Something else".to_owned()),
-                    ),
-                    ("Which would win in a fight?".to_owned(), None),
-                ]),
-            )),
+            Self::Answered => {
+                let state = live(Turn::Working);
+                let session = state.open_index().unwrap();
+                let state = state.heard(
+                    session,
+                    Event::Answered(vec![
+                        (
+                            "If a duck wore pants, how would it wear them?".to_owned(),
+                            Some("Something else".to_owned()),
+                        ),
+                        ("Which would win in a fight?".to_owned(), None),
+                        (
+                            "PR #186 is still open and adds shared pieces the savings flow needs (AreaHero, SaveCard, FollowUp, TileSearch, NumberedAccordion defaultIndex, SECTION_TITLE). Which branch should this work be based on?".to_owned(),
+                            Some("task/172 branch (Recommended), because it already carries the shared pieces and keeps the open PR as the base for everything that follows it".to_owned()),
+                        ),
+                    ]),
+                );
+                Screen::Workspace(state.heard(
+                    session,
+                    Event::Said("Thanks, going with that.".to_owned()),
+                ))
+            }
             Self::Inquiring => Screen::Workspace(live(Turn::Inquiring)),
             Self::Hooks => Screen::Workspace(hooks_held()),
             Self::HooksReview => Screen::Workspace(hooks_held().after(HOOKS_REVIEW)),
@@ -3794,12 +3841,13 @@ fn live(turn: Turn) -> WorkspaceState {
         };
         events.push(Event::Ask(Permission {
             ticket: 1,
-            title: "Allow Claude to run Run a long read-only demo command?".to_owned(),
+            title: "Allow Claude to run a long read-only demo command? PR #186 is still open and adds shared pieces the savings flow needs (AreaHero, SaveCard, FollowUp, TileSearch, NumberedAccordion defaultIndex, SECTION_TITLE), so it matters which branch this runs on.".to_owned(),
             command: Some("printf '%s\\n' \"permission prompt demo\" \"line two of a deliberately long command\" && ls -la /home/jdaddy/Documents/repos/vault | head -n 5 && git -C /home/jdaddy/Documents/repos/vault log --oneline --decorate --max-count=3 && wc -l /home/jdaddy/Documents/repos/vault/AGENTS.md /home/jdaddy/Documents/repos/vault/Makefile 2>/dev/null && date --iso-8601=seconds".to_owned()),
             plan: None,
             choices: vec![
                 choice("a", "Allow once", Verdict::Allow),
                 choice("b", "Always allow", Verdict::Always),
+                choice("d", "Allow on the task/172 branch (Recommended) and keep the open PR #186 as the base for everything that follows it", Verdict::Allow),
                 choice("c", "Deny", Verdict::Reject),
             ],
         }));

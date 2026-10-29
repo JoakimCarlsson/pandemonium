@@ -3,12 +3,15 @@
 use pm_input::FocusId;
 use pm_style::{
     Radius, Role, absolute, bg, cursor_not_allowed, cursor_pointer, flex, flex_1, gap, h,
-    items_center, leading_ratio, left, min_w_px, opacity, p, px, rounded, text_color, text_px, top,
-    w, z,
+    items_center, leading_ratio, left_px, min_w_px, opacity, p, px, rounded, text_color, text_px,
+    top_px, w, z,
 };
 use pm_ui::{Node, node, text};
 
 use crate::Surface;
+
+/// How far a menu opened from a control hangs from it, in logical pixels.
+const MENU_GAP: f32 = 4.0;
 
 /// One row of a menu, or the rule between groups of rows.
 #[derive(Clone, Debug)]
@@ -93,14 +96,57 @@ impl Menu {
         self
     }
 
+    /// The menu opened from the control occupying `trigger`, as `(x, y, width, height)` in logical pixels, inside a window `window` wide and tall:
+    /// below the control with their left edges together, or their right edges together when it would leave the window on the right,
+    /// and above the control when there is more room above it than below.
+    pub fn below(mut self, trigger: (f32, f32, f32, f32), window: (f32, f32)) -> Self {
+        let (x, y, width, height) = trigger;
+        let (menu_width, menu_height) = self.extent();
+        let left = if x + menu_width <= window.0 {
+            x
+        } else {
+            x + width - menu_width
+        };
+        let room_below = window.1 - (y + height + MENU_GAP);
+        let top = if menu_height <= room_below || room_below >= y - MENU_GAP {
+            y + height + MENU_GAP
+        } else {
+            y - MENU_GAP - menu_height
+        };
+        self.at = (
+            left.min(window.0 - menu_width).max(0.0),
+            top.min(window.1 - menu_height).max(0.0),
+        );
+        self
+    }
+
+    /// Where its top-left corner is, in logical pixels.
+    pub fn at(&self) -> (f32, f32) {
+        self.at
+    }
+
+    /// How wide and how tall the menu is, in logical pixels, at the spacing scale being built for.
+    fn extent(&self) -> (f32, f32) {
+        let step = 4.0 * pm_style::step_scale();
+        let rows: f32 = self
+            .entries
+            .iter()
+            .map(|entry| match entry {
+                Entry::Item { .. } => self.row * step,
+                Entry::Separator => step * 2.25,
+            })
+            .sum();
+        (self.width * step, rows + step * 0.5)
+    }
+
     /// The node that draws the menu.
     pub fn build(self) -> Node {
         Surface::new()
             .build()
             .styles([
                 absolute(),
-                left(self.at.0 / 4.0),
-                top(self.at.1 / 4.0),
+                left_px(self.at.0),
+                top_px(self.at.1),
                 z(50),
                 w(self.width),
                 min_w_px(0),

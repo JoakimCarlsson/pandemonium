@@ -594,8 +594,12 @@ pub fn steps(
 /// What the card around a command and the command's own padding take from the card's width, in logical pixels.
 const COMMAND_INSET: f32 = 64.0;
 
+/// What the card's padding and border take from the card's width, in logical pixels.
+const CARD_INSET: f32 = 34.0;
+
 /// The card that asks whether the agent may go ahead, `width` logical pixels wide: what it wants to do, its command broken to fit, and a button for each answer.
 pub fn question(ask: &Permission, width: f32, shaper: &mut Shaper) -> Node {
+    let title = [text_px(13), leading_ratio(1.4), text_color(Role::Text)];
     let mut card = node()
         .styles([
             flex(),
@@ -609,7 +613,13 @@ pub fn question(ask: &Permission, width: f32, shaper: &mut Shaper) -> Node {
             bg(Role::Surface),
         ])
         .child(line("Needs your approval", 12, 1.4, Role::Muted))
-        .child(line(&ask.title, 13, 1.4, Role::Text));
+        .child(
+            node().styles([flex(), flex_col()]).children(
+                pm_ui::wrap(shaper, &ask.title, title, width - CARD_INSET)
+                    .into_iter()
+                    .map(|piece| text(&ask.title[piece.start..piece.end]).styles(title)),
+            ),
+        );
     if let Some(command) = &ask.command {
         let styles = [
             text_px(12),
@@ -636,11 +646,11 @@ pub fn question(ask: &Permission, width: f32, shaper: &mut Shaper) -> Node {
                 ),
         );
     }
-    card.child(answers(ask))
+    card.child(answers(ask, width - CARD_INSET, shaper))
 }
 
 /// A button for each answer on offer, the refusal first and the boldest last, wrapping when they do not fit one line.
-fn answers(ask: &Permission) -> Node {
+fn answers(ask: &Permission, width: f32, shaper: &mut Shaper) -> Node {
     let order = |verdict: &Verdict| match verdict {
         Verdict::Reject => 0,
         Verdict::Allow => 1,
@@ -664,6 +674,7 @@ fn answers(ask: &Permission) -> Node {
                     Verdict::Always => Variant::Default,
                 })
                 .size(Size::Sm)
+                .wrapped(width, shaper)
                 .build()
         }))
 }

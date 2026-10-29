@@ -4,10 +4,10 @@ use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_protocol::CompletionKind;
 use pm_style::{
-    Color, Radius, Role, ShadowLayer, absolute, bg, border, border_color, bottom, cursor_pointer,
-    flex, flex_1, flex_col, flex_none, font_mono, gap, h, h_px, items_center, justify_center,
-    leading_ratio, left, max_h, max_w_px, min_h, min_w_px, overflow_hidden, p, px, py, rounded,
-    shadow_layers, size, text_color, text_px, top, w_full, w_px, z,
+    Color, Radius, Role, ShadowLayer, absolute, bg, border, border_color, bottom_px,
+    cursor_pointer, flex, flex_1, flex_col, flex_none, font_mono, gap, h, h_px, items_center,
+    justify_center, leading_ratio, left_px, max_h, max_w_px, min_h, min_w_px, overflow_hidden, p,
+    px, py, rounded, shadow_layers, size, text_color, text_px, top_px, w_full, w_px, z,
 };
 use pm_text::Shaper;
 use pm_ui::{Mark, Node, Paint, node, text};
@@ -98,8 +98,8 @@ fn kind_mark(kind: CompletionKind) -> (&'static str, Role) {
 fn floating(at: (f32, f32)) -> Node {
     node().styles([
         absolute(),
-        left(at.0 / 4.0),
-        top(at.1 / 4.0),
+        left_px(at.0),
+        top_px(at.1),
         z(60),
         flex(),
         flex_col(),
@@ -420,15 +420,15 @@ fn hover_card(
     let downward = below >= CARD_HEIGHT.min(above) || below >= above;
     let room = if downward { below } else { above }.min(CARD_HEIGHT);
     let placed = if downward {
-        top((line_bottom + CARD_GAP) / 4.0)
+        top_px(line_bottom + CARD_GAP)
     } else {
-        bottom((height - card.at.1 + CARD_GAP) / 4.0)
+        bottom_px(height - card.at.1 + CARD_GAP)
     };
     Some(
         node()
             .styles([
                 absolute(),
-                left(card.at.0 / 4.0),
+                left_px(card.at.0),
                 placed,
                 z(60),
                 flex(),
