@@ -1,10 +1,10 @@
 'use strict';
 
 /**
- * The browser helper of the window: it speaks the line protocol over the control socket, paints
+ * The browser helper of the window: it speaks the line protocol over a loopback connection to the window, paints
  * pages offscreen into pairs of shared files the window maps, and runs the tools agents call.
  *
- * Started by the window as `main.js --control <socket> --surfaces <folder> --profile <folder>`.
+ * Started by the window as `main.js --control <host:port> --surfaces <folder> --profile <folder>`.
  */
 
 const { app, dialog } = require('electron');
@@ -29,8 +29,11 @@ function argument(name) {
   return at >= 0 ? process.argv[at + 1] : undefined;
 }
 
-/** The control socket the window listens on. */
+/** The loopback address, `host:port`, the window listens on. */
 const controlPath = argument('--control') || '';
+
+/** The secret that shows the window this is the helper it started, sent as the first line. */
+const controlToken = process.env.PANDEMONIUM_BROWSER_TOKEN || '';
 
 /** The folder the helper paints its shared files into. */
 const surfacesFolder = argument('--surfaces') || '';
@@ -135,10 +138,18 @@ function pageOf(contents) {
 app.whenReady().then(() => {
   holdNativeBoxes(dialog);
   safety.install({ send, pageOf });
-  const connection = net.createConnection(controlPath);
+  if (process.platform === 'darwin') app.dock?.hide();
+  const separator = controlPath.lastIndexOf(':');
+  const connection = net.createConnection({
+    host: controlPath.slice(0, separator),
+    port: Number(controlPath.slice(separator + 1)),
+  });
   socket = connection;
   let pending = '';
-  connection.on('connect', () => send('Ready'));
+  connection.on('connect', () => {
+    connection.write(`${controlToken}\n`);
+    send('Ready');
+  });
   connection.on('data', (chunk) => {
     pending += chunk.toString('utf8');
     let end = pending.indexOf('\n');

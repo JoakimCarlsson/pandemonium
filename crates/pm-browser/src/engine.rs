@@ -18,12 +18,11 @@ pub struct Engine {
     link: Arc<Link>,
     /// The helper's process.
     child: Child,
-    /// The folder the helper's control socket and shared files are in.
+    /// The folder the helper's shared files are in.
     folder: PathBuf,
 }
 
 /// Where the helper's own messages go: a file beside its profile, so that Chromium's noise does not fill the terminal and is still there to read.
-#[cfg(unix)]
 fn log_file(profile: &std::path::Path) -> std::process::Stdio {
     let path = profile.with_file_name("browser.log");
     if let Some(parent) = path.parent() {
@@ -33,14 +32,86 @@ fn log_file(profile: &std::path::Path) -> std::process::Stdio {
         .map_or_else(|_| std::process::Stdio::null(), std::process::Stdio::from)
 }
 
-impl Engine {
-    /// Starts the helper; fails when the browser is not installed.
+/// Creates `folder` and its parents, readable by this user alone where the system has such permissions.
+fn private_folder(folder: &std::path::Path) -> std::io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
     #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder.create(folder)
+}
+
+/// A secret the helper proves it is the helper with, as the first line it sends.
+fn token() -> std::io::Result<String> {
+    let mut bytes = [0u8; 16];
+    getrandom::fill(&mut bytes).map_err(|error| std::io::Error::other(error.to_string()))?;
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+/// Whether `line`, as read, is `token`, compared in time that does not depend on where they differ.
+fn is_token(line: &str, token: &str) -> bool {
+    let line = line.trim_end().as_bytes();
+    let token = token.as_bytes();
+    line.len() == token.len()
+        && line
+            .iter()
+            .zip(token)
+            .fold(0u8, |difference, (a, b)| difference | (a ^ b))
+            == 0
+}
+
+/// Waits for the helper to connect to `listener` and send `token`, ignoring anything else that connects.
+fn accept_helper(
+    listener: &std::net::TcpListener,
+    token: &str,
+    child: &mut Child,
+    folder: &std::path::Path,
+) -> Result<(std::net::TcpStream, BufReader<std::net::TcpStream>), Error> {
+    use std::io::{BufRead, Read};
+    use std::time::{Duration, Instant};
+
+    let fail = |what: &dyn std::fmt::Display| Error::Helper(what.to_string());
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        if child.try_wait().ok().flatten().is_some() {
+            let _ = std::fs::remove_dir_all(folder);
+            return Err(fail(&"the helper exited while starting"));
+        }
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = std::fs::remove_dir_all(folder);
+            return Err(fail(&"the helper did not start in time"));
+        }
+        let Ok((stream, _)) = listener.accept() else {
+            std::thread::sleep(Duration::from_millis(20));
+            continue;
+        };
+        stream
+            .set_nonblocking(false)
+            .map_err(|error| fail(&error))?;
+        stream
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .map_err(|error| fail(&error))?;
+        let mut reader = BufReader::new(stream.try_clone().map_err(|error| fail(&error))?);
+        let mut line = String::new();
+        let read = reader
+            .by_ref()
+            .take(token.len() as u64 + 2)
+            .read_line(&mut line);
+        if read.is_ok() && is_token(&line, token) {
+            stream
+                .set_read_timeout(None)
+                .map_err(|error| fail(&error))?;
+            return Ok((stream, reader));
+        }
+    }
+}
+
+impl Engine {
+    /// Starts the helper and waits for it to connect over a loopback port that only it, holding the token, may use; fails when the browser is not installed.
     pub fn start() -> Result<Self, Error> {
-        use std::os::unix::fs::DirBuilderExt;
-        use std::os::unix::net::UnixListener;
+        use std::net::{Ipv4Addr, TcpListener};
         use std::process::{Command, Stdio};
-        use std::time::{Duration, Instant};
 
         let helper = install::helper().ok_or(Error::NotInstalled)?;
         let fail = |what: &dyn std::fmt::Display| Error::Helper(what.to_string());
@@ -50,65 +121,36 @@ impl Engine {
             .ok_or_else(|| fail(&"this machine has no runtime folder"))?;
         let folder = root.join(format!("pandemonium-browser-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&folder);
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(&folder)
-            .map_err(|error| fail(&error))?;
-        let socket = folder.join("control.sock");
-        let listener = UnixListener::bind(&socket).map_err(|error| fail(&error))?;
+        private_folder(&folder).map_err(|error| fail(&error))?;
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).map_err(|error| fail(&error))?;
         listener
             .set_nonblocking(true)
             .map_err(|error| fail(&error))?;
+        let address = listener.local_addr().map_err(|error| fail(&error))?;
+        let secret = token().map_err(|error| fail(&error))?;
         let profile = install::profile().ok_or_else(|| fail(&"this machine has no data folder"))?;
         let mut child = Command::new(&helper)
             .arg("--control")
-            .arg(&socket)
+            .arg(address.to_string())
             .arg("--surfaces")
             .arg(&folder)
             .arg("--profile")
             .arg(&profile)
+            .env("PANDEMONIUM_BROWSER_TOKEN", &secret)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(log_file(&profile))
             .spawn()
             .map_err(|error| fail(&error))?;
-        let deadline = Instant::now() + Duration::from_secs(30);
-        let stream = loop {
-            match listener.accept() {
-                Ok((stream, _)) => break stream,
-                Err(_) if child.try_wait().ok().flatten().is_some() => {
-                    let _ = std::fs::remove_dir_all(&folder);
-                    return Err(fail(&"the helper exited while starting"));
-                }
-                Err(_) if Instant::now() > deadline => {
-                    let _ = child.kill();
-                    let _ = std::fs::remove_dir_all(&folder);
-                    return Err(fail(&"the helper did not start in time"));
-                }
-                Err(_) => std::thread::sleep(Duration::from_millis(20)),
-            }
-        };
-        stream
-            .set_nonblocking(false)
-            .map_err(|error| fail(&error))?;
-        let reader = stream.try_clone().map_err(|error| fail(&error))?;
+        let (stream, reader) = accept_helper(&listener, &secret, &mut child, &folder)?;
         let link = Link::new(Box::new(stream));
         let listening = link.clone();
-        std::thread::spawn(move || listening.listen(Box::new(BufReader::new(reader))));
+        std::thread::spawn(move || listening.listen(Box::new(reader)));
         Ok(Self {
             link,
             child,
             folder,
         })
-    }
-
-    /// Starts the helper; fails everywhere the helper is not built for.
-    #[cfg(not(unix))]
-    pub fn start() -> Result<Self, Error> {
-        Err(Error::Helper(
-            "the embedded browser is not available on this system yet".to_owned(),
-        ))
     }
 
     /// The connection pages talk through.

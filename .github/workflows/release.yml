@@ -22,11 +22,11 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
-          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm }
-          - { target: x86_64-apple-darwin, os: macos-latest }
-          - { target: aarch64-apple-darwin, os: macos-latest }
-          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04, browser: linux-x86_64, electron-arch: x64 }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04-arm, browser: linux-aarch64, electron-arch: arm64 }
+          - { target: x86_64-apple-darwin, os: macos-latest, browser: macos-x86_64, electron-arch: x64 }
+          - { target: aarch64-apple-darwin, os: macos-latest, browser: macos-aarch64, electron-arch: arm64 }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest, browser: windows-x86_64, electron-arch: x64 }
     defaults:
       run:
         shell: bash
@@ -60,8 +60,10 @@ jobs:
       - run: cargo build -p pandemonium -p pm-server --locked --profile dist --target ${{ matrix.target }}
 
       - name: Bundle the embedded browser
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: scripts/bundle-browser.sh build/dist/pandemonium-browser-linux-x86_64.tar.gz
+        if: matrix.browser != ''
+        env:
+          npm_config_arch: ${{ matrix.electron-arch }}
+        run: scripts/bundle-browser.sh build/dist/pandemonium-browser-${{ matrix.browser }}.tar.gz
 
       - name: Package
         run: |

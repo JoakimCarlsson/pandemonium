@@ -9,9 +9,9 @@ lint:
 run: browser-helper
 	XDG_DATA_HOME="$${XDG_DATA_HOME:-$$HOME/.local/share/pandemonium-dev}" PANDEMONIUM_BROWSER_HELPER="$(CURDIR)/helpers/electron-browser/pandemonium-browser-electron" cargo run -p pandemonium
 
-browser-helper: helpers/electron-browser/node_modules/electron/dist/electron
+browser-helper: helpers/electron-browser/node_modules/electron/path.txt
 
-helpers/electron-browser/node_modules/electron/dist/electron: helpers/electron-browser/package-lock.json
+helpers/electron-browser/node_modules/electron/path.txt: helpers/electron-browser/package-lock.json
 	cd helpers/electron-browser && npm ci --no-audit --no-fund && node node_modules/electron/install.js
 
 install:

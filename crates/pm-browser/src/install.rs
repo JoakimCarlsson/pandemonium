@@ -25,10 +25,20 @@ pub enum Step {
 
 /// Whether the browser is built for this system.
 pub fn supported() -> bool {
-    cfg!(all(target_os = "linux", target_arch = "x86_64"))
+    cfg!(any(
+        all(
+            target_os = "linux",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        ),
+        all(
+            target_os = "macos",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        ),
+        all(target_os = "windows", target_arch = "x86_64"),
+    ))
 }
 
-/// The platform this build runs on, as downloads name it: `linux-x86_64`.
+/// The platform this build runs on, as downloads name it: `linux-x86_64`, `macos-aarch64`, `windows-x86_64`.
 fn platform() -> String {
     format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
 }
