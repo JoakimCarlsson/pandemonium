@@ -8,7 +8,7 @@ use crate::browser::Command;
 use crate::state::WorkspaceState;
 
 /// The first of the rows of the menu over a page; each command's row follows it by the command's place.
-const BROWSER_MENU_BASE: u64 = 7_422_000;
+const BROWSER_MENU_BASE: u64 = 7_441_000;
 
 /// How tall the menu over a page is, in logical pixels, to keep it inside the window.
 pub const BROWSER_MENU_HEIGHT: f32 = 8.0 * 26.0 + 2.0 * 9.0 + 10.0;

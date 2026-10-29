@@ -17,43 +17,43 @@ use crate::state::{Tab, WorkspaceState};
 use crate::{Button, Input};
 
 /// The tab of the browser in a pane's strip.
-pub const TAB_BROWSER: FocusId = FocusId(7_420_000);
+pub const TAB_BROWSER: FocusId = FocusId(7_440_000);
 
 /// Closes the browser.
-pub const BROWSER_CLOSE: FocusId = FocusId(7_420_001);
+pub const BROWSER_CLOSE: FocusId = FocusId(7_440_001);
 
 /// The window of the page, which takes the pointer and the keyboard while it has focus.
-pub const BROWSER_BODY: FocusId = FocusId(7_420_002);
+pub const BROWSER_BODY: FocusId = FocusId(7_440_002);
 
 /// The line the address of the page is typed in.
-pub const BROWSER_ADDRESS: FocusId = FocusId(7_420_003);
+pub const BROWSER_ADDRESS: FocusId = FocusId(7_440_003);
 
 /// Goes back one page in the history.
-pub const BROWSER_BACK: FocusId = FocusId(7_420_004);
+pub const BROWSER_BACK: FocusId = FocusId(7_440_004);
 
 /// Goes forward one page in the history.
-pub const BROWSER_FORWARD: FocusId = FocusId(7_420_005);
+pub const BROWSER_FORWARD: FocusId = FocusId(7_440_005);
 
 /// Loads the page again.
-pub const BROWSER_RELOAD: FocusId = FocusId(7_420_006);
+pub const BROWSER_RELOAD: FocusId = FocusId(7_440_006);
 
 /// Shows or hides the developer tools beside the page.
-pub const BROWSER_TOOLS: FocusId = FocusId(7_420_007);
+pub const BROWSER_TOOLS: FocusId = FocusId(7_440_007);
 
 /// The window of the developer tools, which takes the pointer and the keyboard while it has focus.
-pub const BROWSER_TOOLS_BODY: FocusId = FocusId(7_420_008);
+pub const BROWSER_TOOLS_BODY: FocusId = FocusId(7_440_008);
 
 /// Loads the address that was typed.
-pub const BROWSER_GO: FocusId = FocusId(7_420_009);
+pub const BROWSER_GO: FocusId = FocusId(7_440_009);
 
 /// Turns on or off picking an element of the page to send to the agent.
-pub const BROWSER_PICK: FocusId = FocusId(7_420_010);
+pub const BROWSER_PICK: FocusId = FocusId(7_440_010);
 
 /// The handle between the page and its developer tools, dragged to change how wide the tools are.
-pub const BROWSER_SASH: FocusId = FocusId(7_420_011);
+pub const BROWSER_SASH: FocusId = FocusId(7_440_011);
 
 /// One past the last thing of the browser.
-const BROWSER_END: u64 = 7_421_000;
+const BROWSER_END: u64 = 7_441_000;
 
 /// Where a page opens when the browser is opened with nothing typed.
 pub const HOME: &str = "http://localhost:5173";
