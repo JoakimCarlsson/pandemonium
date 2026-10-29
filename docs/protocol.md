@@ -236,7 +236,7 @@ request with exactly one `response` carrying the same `id`.
 | `prepare_rename` | `directory`, `path`, `version`, `position`                                                     | `rename_target` |
 | `rename`       | `directory`, `path`, `version`, `position`, `name`                                               | `edited`        |
 | `code_actions` | `directory`, `path`, `version`, `span`, `only` (optional)                                        | `code_actions`  |
-| `take_code_action` | `directory`, `path`, `index`                                                                 | `edited`        |
+| `take_code_action` | `directory`, `path`, `index`                                                                 | `edited`, or `action_taken` |
 | `file_history` | `directory`, `path`                                                                              | `file_history`  |
 | `local_history`| `directory`, `path`                                                                              | `local_history` |
 | `read_version` | `directory`, `path`, `version`                                                                   | `file`          |
@@ -934,6 +934,7 @@ embedded context, and anything else as a link to the stored file.
 | `problems`   | `problems`: `[{path, diagnostic}]`, what the language servers last said is wrong with each file of the folder, open or not, the worst first |
 | `signature`  | `signature`: `{label, active, documentation, others}` or null; `active` is the byte range of `label` naming the parameter the place is at, `others` how many more signatures there are |
 | `edited`     | `files`: `[{path, changes: [{span, text}]}]` |
+| `action_taken` | `files`: as of `edited`; `shown`: the documents the language server asked to have shown while it carried the change out, each a link target as in `document_links`, a web address to open or a file to go to; sent instead of `edited` when there are any, such as the page of documentation a command opens. A page the server serves on its own machine is only reachable from a client on that machine |
 | `file_history` | `commits`: `[{object, id, author, when, time, summary, path}]`, newest first, following the file back through moves; `path` is what it was called in that commit and `time` when it was written, in seconds since the Unix epoch |
 | `local_history` | `versions`: `[{id, size}]`, the states the file was kept in each time it was saved, newest first; `id` is when it was kept, in milliseconds since the Unix epoch, and `size` how many bytes it held |
 | `conflict`   | `files`: `{ours, theirs, base, merged, language}`: what each side of a conflicted file holds, each text or null for a side that has no such file, `merged` the file as the working folder holds it with the markers git wrote, `language` as of `file` |

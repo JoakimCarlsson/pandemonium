@@ -1094,6 +1094,11 @@ impl Work {
                     *screen = std::mem::take(screen).with_edited_files(session, files);
                 });
             }
+            (Pending::TookAction(session), Response::ActionTaken { files, shown }) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_action_shown(session, files, shown);
+                });
+            }
             (Pending::RenameTarget(session), Response::RenameTarget { target }) => {
                 model.update(|screen| {
                     *screen = std::mem::take(screen).with_rename_target(session, target);

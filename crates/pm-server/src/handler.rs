@@ -1583,7 +1583,8 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             .hub
             .take_action(&place(&directory), &path, index)
         {
-            Ok(files) => Response::Edited { files },
+            Ok((files, shown)) if shown.is_empty() => Response::Edited { files },
+            Ok((files, shown)) => Response::ActionTaken { files, shown },
             Err(reason) => failed(reason),
         },
         Request::Hover {

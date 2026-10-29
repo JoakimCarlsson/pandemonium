@@ -327,6 +327,20 @@ impl WorkspaceState {
         self
     }
 
+    /// The state after a change of the language server was taken and it asked for documents to be shown: the changes are made to the open files, web addresses are opened in the browser and files are gone to.
+    pub fn with_action_shown(
+        mut self,
+        session: usize,
+        files: Vec<FileEdit>,
+        shown: Vec<pm_protocol::LinkTarget>,
+    ) -> Self {
+        self = self.with_edited_files(session, files);
+        for target in shown {
+            self = self.link_followed(target);
+        }
+        self
+    }
+
     /// The state after the language server said where a link of the file shown at the session at `session` leads: it is followed, and when it leads nowhere the session is told so.
     pub fn with_link_resolved(
         self,

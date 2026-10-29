@@ -40,6 +40,9 @@ type Raw = Arc<Mutex<HashMap<String, Vec<Value>>>>;
 /// The edits a server asked to have made while it carried out a command, as it wrote them.
 type Applied = Arc<Mutex<Vec<Value>>>;
 
+/// The documents a server asked to have shown while it carried out a command, as it asked.
+type Shown = Arc<Mutex<Vec<Value>>>;
+
 /// A place a server names: the address of the file, the stretch, and what the place is called when it says.
 pub(crate) type Found = (String, Span, Option<String>);
 
@@ -105,6 +108,8 @@ pub(crate) struct LanguageServer {
     raw: Raw,
     /// The edits it asked to have made while carrying out a command.
     applied: Applied,
+    /// The documents it asked to have shown while it carried out a command.
+    shown: Shown,
     /// How it takes changes: 0 not at all, 1 as the whole text, 2 as stretches.
     sync: u64,
     /// The characters after which it offers completions without being asked.
@@ -355,7 +360,7 @@ fn capabilities() -> Value {
             "publishDiagnostics": {"versionSupport": true},
             "diagnostic": {"dynamicRegistration": false, "relatedDocumentSupport": false}
         },
-        "window": {"workDoneProgress": false}
+        "window": {"workDoneProgress": false, "showDocument": {"support": true}}
     })
 }
 
@@ -366,6 +371,7 @@ fn handler(
     sink: DiagnosticsSink,
     raw: Raw,
     applied: Applied,
+    shown: Shown,
 ) -> Handler {
     Arc::new(move |method, params| match method {
         "workspace/configuration" => Value::Array(
@@ -393,6 +399,12 @@ fn handler(
                 held.push(edit.clone());
             }
             json!({"applied": true})
+        }
+        "window/showDocument" => {
+            if let Ok(mut held) = shown.lock() {
+                held.push(params.clone());
+            }
+            json!({"success": true})
         }
         "textDocument/publishDiagnostics" => {
             if let Some(uri) = params.get("uri").and_then(Value::as_str) {
@@ -461,6 +473,7 @@ impl LanguageServer {
             .collect();
         let raw = Raw::default();
         let applied = Applied::default();
+        let shown = Shown::default();
         let mut environment = env.clone();
         environment.extend(spec.env.clone());
         let folders: Folders = Arc::new(Mutex::new(
@@ -480,6 +493,7 @@ impl LanguageServer {
                 sink.clone(),
                 raw.clone(),
                 applied.clone(),
+                shown.clone(),
             ),
         )?;
         let mut params = json!({
@@ -533,6 +547,7 @@ impl LanguageServer {
             abilities: capabilities,
             raw,
             applied,
+            shown,
             sync,
             triggers,
             sink,
@@ -1763,7 +1778,7 @@ impl LanguageServer {
     }
 
     /// Carries out `action`, one of the changes the server offered: the edits it makes, as the server writes them, those of its command among them.
-    pub(crate) fn take_action(&self, action: &Value) -> Result<Vec<Value>, String> {
+    pub(crate) fn take_action(&self, action: &Value) -> Result<(Vec<Value>, Vec<Value>), String> {
         let resolves = self
             .abilities
             .get("codeActionProvider")
@@ -1783,8 +1798,12 @@ impl LanguageServer {
         } else {
             action.get("command").cloned()
         };
+        let mut shown = Vec::new();
         if let Some(command) = command {
             if let Ok(mut held) = self.applied.lock() {
+                held.clear();
+            }
+            if let Ok(mut held) = self.shown.lock() {
                 held.clear();
             }
             self.rpc.request(
@@ -1795,8 +1814,11 @@ impl LanguageServer {
             if let Ok(mut held) = self.applied.lock() {
                 edits.append(&mut held);
             }
+            if let Ok(mut held) = self.shown.lock() {
+                shown.append(&mut held);
+            }
         }
-        Ok(edits)
+        Ok((edits, shown))
     }
 
     /// Asks the server to stop, and ends it if it does not.

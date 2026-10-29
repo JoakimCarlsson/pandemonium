@@ -1632,13 +1632,13 @@ impl Hub {
         Ok(actions)
     }
 
-    /// Takes the `index`-th change last offered for the open file at `path` of the project at `root`: files of the project no client has open are changed on disk here, and the changes to the open ones are returned for the clients to make.
+    /// Takes the `index`-th change last offered for the open file at `path` of the project at `root`: files of the project no client has open are changed on disk here, and the changes to the open ones are returned for the clients to make, with the documents the language server asked to have shown while it did, such as the page of documentation a command opens.
     pub fn take_action(
         &self,
         root: &Path,
         path: &str,
         index: usize,
-    ) -> Result<Vec<FileEdit>, String> {
+    ) -> Result<(Vec<FileEdit>, Vec<LinkTarget>), String> {
         let key = (root.to_path_buf(), path.to_owned());
         let (server, action) = self
             .actions
@@ -1649,8 +1649,12 @@ impl Hub {
                 Some((server.clone(), offered.get(index)?.clone()))
             })
             .ok_or_else(|| "that change is no longer offered".to_owned())?;
-        let edits = server.take_action(&action)?;
-        self.share_edits(root, &edits)
+        let (edits, shown) = server.take_action(&action)?;
+        let shown = shown
+            .iter()
+            .filter_map(|asked| link_target(root, asked.get("uri")?.as_str()?))
+            .collect();
+        Ok((self.share_edits(root, &edits)?, shown))
     }
 
     /// Splits the edits across the project at `root` that a server wrote as `edits`: files of the project no client has open are changed on disk at once, and the changes to the open ones are returned; files outside the project are left alone.

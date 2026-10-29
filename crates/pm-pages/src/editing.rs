@@ -391,6 +391,16 @@ impl Screen {
         }
     }
 
+    /// The screen after a change of the language server was taken and it asked for documents to be shown.
+    pub fn with_action_shown(
+        self,
+        session: usize,
+        files: Vec<pm_protocol::FileEdit>,
+        shown: Vec<pm_protocol::LinkTarget>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_action_shown(session, files, shown))
+    }
+
     /// The screen after the language server said where a link leads.
     pub fn with_link_resolved(
         self,

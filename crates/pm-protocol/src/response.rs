@@ -535,6 +535,13 @@ pub enum Response {
         /// The changes to each open file.
         files: Vec<pm_lsp::FileEdit>,
     },
+    /// A change offered by the language server was taken, and the server asked for documents to be shown while it did: the changes to the open files, as in `edited`, and where to look.
+    ActionTaken {
+        /// The changes to each open file.
+        files: Vec<pm_lsp::FileEdit>,
+        /// The documents to show: web addresses to open and files to go to.
+        shown: Vec<pm_lsp::LinkTarget>,
+    },
     /// What the language server says about the thing at a place.
     Hovered {
         /// What it says, or nothing when it says nothing.
