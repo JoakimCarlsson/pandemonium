@@ -128,6 +128,26 @@ pub struct Picture {
     pub pixels: Arc<Vec<u8>>,
 }
 
+impl Picture {
+    /// The bit of a key that marks a picture as one frame of a live surface.
+    pub const LIVE: u64 = 1 << 63;
+
+    /// How many low bits of a live key count the frames of its surface.
+    const REVISION_BITS: u32 = 40;
+
+    /// The key of frame `revision` of live surface `surface`, whose pixels replace the surface's last frame instead of being kept beside it.
+    pub fn live_key(surface: u32, revision: u64) -> u64 {
+        Self::LIVE
+            | (u64::from(surface) << Self::REVISION_BITS)
+            | (revision & ((1 << Self::REVISION_BITS) - 1))
+    }
+
+    /// The live surface a key belongs to, or none when the key names an ordinary picture.
+    pub fn live_surface(key: u64) -> Option<u32> {
+        (key & Self::LIVE != 0).then_some(((key & !Self::LIVE) >> Self::REVISION_BITS) as u32)
+    }
+}
+
 impl PartialEq for Picture {
     /// Two pictures are equal when they carry the same key.
     fn eq(&self, other: &Self) -> bool {

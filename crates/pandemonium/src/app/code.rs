@@ -855,6 +855,10 @@ impl App {
             Action::StopAgent => self.activate(STOP),
             Action::ToggleTerminal => self.activate(TERMINAL),
             Action::NewTerminal => self.activate(NEW_TERMINAL),
+            Action::OpenBrowser => self.open_browser(),
+            Action::ToggleBrowserTools => {
+                self.activate(pm_components::browser::BROWSER_TOOLS);
+            }
             Action::ToggleSourceControl => self.activate(REVIEW),
             Action::ChangeModel | Action::ChangeMode => {
                 let category = if action == Action::ChangeModel {

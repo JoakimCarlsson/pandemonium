@@ -59,7 +59,7 @@ pub const FIND_TOGGLE_REPLACE: FocusId = FocusId(7_402_111);
 pub const FIND_IN_SELECTION: FocusId = FocusId(7_402_112);
 
 /// The shadow under the bar.
-const SHADOW: [ShadowLayer; 1] = [ShadowLayer::new(0.0, 8.0, 28.0, 0.0, 0.3, false)];
+pub(crate) const SHADOW: [ShadowLayer; 1] = [ShadowLayer::new(0.0, 8.0, 28.0, 0.0, 0.3, false)];
 
 /// The stretches a query finds, or why it cannot be used.
 type Matches = Result<Vec<Range<usize>>, String>;

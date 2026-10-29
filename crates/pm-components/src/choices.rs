@@ -4,6 +4,8 @@ use pm_acp::{Discovery, Setting, Slash};
 use pm_input::FocusId;
 use pm_protocol::ExtensionCommand;
 
+use crate::captures::{CAPTURE_BASE, CAPTURE_REMOVE_BASE, MOST_CAPTURES};
+use crate::elements::{ELEMENT_BASE, ELEMENT_REMOVE_BASE, MOST_ELEMENTS};
 use crate::state::{
     ACCOUNT, ACCOUNT_BASE, AGENT_TOGGLE, APPROVALS_CHIP, ATTACHED_BASE, Activity, BRANCH_BASE,
     DETAILS_BASE, EFFORT_BASE, LOCATION, Location, MENTION, MENU_BODY, Outgoing, PICK_BASE,
@@ -42,6 +44,8 @@ impl WorkspaceState {
             || action == ACCOUNT
             || (ACCOUNT_BASE..ACCOUNT_BASE + 50).contains(&id)
             || (SETTING_BASE..SETTING_BASE + 10).contains(&id)
+            || (ELEMENT_BASE..ELEMENT_BASE + MOST_ELEMENTS as u64).contains(&id)
+            || (CAPTURE_BASE..CAPTURE_BASE + MOST_CAPTURES as u64).contains(&id)
             || (PICK_BASE..PICK_BASE + 100).contains(&id)
             || (EFFORT_BASE..EFFORT_BASE + 50).contains(&id)
             || (PLACE_BASE..PLACE_BASE + 10).contains(&id)
@@ -722,6 +726,18 @@ impl WorkspaceState {
         };
         if let Some(index) = within(ATTACHED_BASE, 50) {
             self.detach(index);
+        } else if let Some(index) = within(ELEMENT_BASE, MOST_ELEMENTS) {
+            let wanted = (index < self.elements.len()).then_some(Picker::Element(index));
+            self.picker = if self.picker == wanted { None } else { wanted };
+            self.menu_scroll = 0.0;
+        } else if let Some(index) = within(ELEMENT_REMOVE_BASE, MOST_ELEMENTS) {
+            self.remove_element(index);
+        } else if let Some(index) = within(CAPTURE_BASE, MOST_CAPTURES) {
+            let wanted = (index < self.captures.len()).then_some(Picker::Capture(index));
+            self.picker = if self.picker == wanted { None } else { wanted };
+            self.menu_scroll = 0.0;
+        } else if let Some(index) = within(CAPTURE_REMOVE_BASE, MOST_CAPTURES) {
+            self.remove_capture(index);
         } else if id == SLASH_BUTTON.0 {
             self.prompt = prompt_field("/");
             self.slash = 0;
@@ -995,6 +1011,24 @@ impl WorkspaceState {
     pub fn with_preview(mut self, path: &str, picture: pm_ui::Picture) -> Self {
         self.previews.insert(path.to_owned(), picture);
         self
+    }
+
+    /// The state with an element of a web page picked for the prompt, unless it is the same as one already there or there are too many.
+    pub fn with_element(mut self, element: crate::elements::Element) -> Self {
+        if self.elements.len() < MOST_ELEMENTS && !self.elements.contains(&element) {
+            self.elements.push(element);
+        }
+        self
+    }
+
+    /// The state without the picked element at `index`.
+    fn remove_element(&mut self, index: usize) {
+        if index < self.elements.len() {
+            self.elements.remove(index);
+        }
+        if matches!(self.picker, Some(Picker::Element(_))) {
+            self.picker = None;
+        }
     }
 
     /// The state without the attachment at `index`.

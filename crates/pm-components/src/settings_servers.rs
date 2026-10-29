@@ -715,6 +715,9 @@ fn summary(section: Section) -> &'static str {
         Section::Terminal => {
             "The shell the terminal starts, and how its text and cursor are drawn."
         }
+        Section::Browser => {
+            "The browser beside your work: turn it on, have it open the dev servers you and your agents start, and limit where agents may take it."
+        }
         Section::Git => {
             "How the server fetches and keeps the history of files, and what git marks in files."
         }
@@ -791,6 +794,16 @@ pub(crate) fn body(state: &WorkspaceState, section: Section, room: f32) -> Node 
             .child(about)
             .child(crate::settings_pages::page_rows(state, section, room))
             .children(release_note(state, room)),
+        Section::Browser => inner
+            .child(about)
+            .child(crate::settings_pages::page_rows(state, section, room))
+            .children(
+                state
+                    .settings_page
+                    .browser
+                    .as_deref()
+                    .map(|said| wrapped_note(said, room)),
+            ),
         Section::Appearance | Section::Terminal | Section::Git | Section::Worktrees => inner
             .child(about)
             .child(crate::settings_pages::page_rows(state, section, room)),

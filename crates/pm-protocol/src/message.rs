@@ -88,6 +88,20 @@ pub enum ServerMessage {
         /// The shell.
         terminal: u64,
     },
+    /// A program started in a shell serves a web page on a port of the server's machine, as the shell's output says and the port bears out.
+    TerminalServing {
+        /// The shell.
+        terminal: u64,
+        /// The address of the page, as the server's machine knows it.
+        url: String,
+    },
+    /// A program of a session serves a web page on a port of the server's machine, found by watching the ports and which processes listen on them.
+    SessionServing {
+        /// The session.
+        session: u64,
+        /// The address of the page, as the server's machine knows it.
+        url: String,
+    },
     /// What a language server finds wrong with a file the connection opened, replacing what it found before.
     Diagnostics {
         /// The folder the file was opened in.
@@ -117,6 +131,15 @@ pub enum ServerMessage {
     ExtensionsChanged {
         /// Every extension, as `extensions` lists them.
         extensions: Vec<crate::ExtensionInfo>,
+    },
+    /// An agent asked for a browser tool, which this client is to run in its browser and answer with `browser_result`.
+    BrowserCall {
+        /// The call, to be given back with the answer.
+        call: u64,
+        /// The tool, such as `browser_screenshot`.
+        tool: String,
+        /// What the agent gave it, as JSON text.
+        arguments: String,
     },
     /// How far the download of an update has got. Sent to the client that asked for it.
     UpdateProgress {

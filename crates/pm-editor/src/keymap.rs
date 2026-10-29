@@ -43,6 +43,10 @@ pub enum Action {
     ToggleTerminal,
     /// Opens another terminal.
     NewTerminal,
+    /// Opens a page of the web beside the work, or shows it.
+    OpenBrowser,
+    /// Shows or hides the developer tools of the page of the web.
+    ToggleBrowserTools,
     /// Shows or hides the source control panel.
     ToggleSourceControl,
     /// Lists the models of the agent, to pick one.
@@ -411,7 +415,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, in the order the keymap lists them.
-    pub const ALL: [Self; 197] = [
+    pub const ALL: [Self; 199] = [
         Self::CommandPalette,
         Self::OpenSettings,
         Self::GoToSession,
@@ -427,6 +431,8 @@ impl Action {
         Self::StopAgent,
         Self::ToggleTerminal,
         Self::NewTerminal,
+        Self::OpenBrowser,
+        Self::ToggleBrowserTools,
         Self::ToggleSourceControl,
         Self::ChangeModel,
         Self::ChangeMode,
@@ -629,6 +635,8 @@ impl Action {
             Self::StopAgent => "stop_agent",
             Self::ToggleTerminal => "toggle_terminal",
             Self::NewTerminal => "new_terminal",
+            Self::OpenBrowser => "open_browser",
+            Self::ToggleBrowserTools => "toggle_browser_tools",
             Self::ToggleSourceControl => "toggle_source_control",
             Self::ChangeModel => "change_model",
             Self::ChangeMode => "change_mode",
@@ -832,6 +840,8 @@ impl Action {
             Self::StopAgent => "Stop Agent",
             Self::ToggleTerminal => "Toggle Terminal",
             Self::NewTerminal => "New Terminal",
+            Self::OpenBrowser => "Open Browser",
+            Self::ToggleBrowserTools => "Toggle Browser Developer Tools",
             Self::ToggleSourceControl => "Toggle Source Control",
             Self::ChangeModel => "Change Model",
             Self::ChangeMode => "Change Mode",
@@ -1114,6 +1124,8 @@ impl Action {
             | Self::StopAgent
             | Self::ToggleTerminal
             | Self::NewTerminal
+            | Self::OpenBrowser
+            | Self::ToggleBrowserTools
             | Self::ToggleSourceControl => "Session",
             Self::Commit
             | Self::CommitAndPush
@@ -1217,6 +1229,8 @@ impl Action {
                 | Self::StopAgent
                 | Self::ToggleTerminal
                 | Self::NewTerminal
+                | Self::OpenBrowser
+                | Self::ToggleBrowserTools
                 | Self::ToggleSourceControl
                 | Self::StartDebugging
                 | Self::AttachDebugger
@@ -1468,6 +1482,8 @@ fn own() -> &'static [(Action, &'static [&'static str])] {
         (StopAgent, &[]),
         (ToggleTerminal, &["ctrl+`"]),
         (NewTerminal, &["ctrl+shift+`"]),
+        (OpenBrowser, &["ctrl+alt+w"]),
+        (ToggleBrowserTools, &["ctrl+alt+i"]),
         (ToggleSourceControl, &["ctrl+shift+g"]),
         (Commit, &[]),
         (CommitAndPush, &[]),

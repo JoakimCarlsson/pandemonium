@@ -33,6 +33,20 @@ fn main() {
             arguments.into_iter().skip(1),
         ));
     }
+    if arguments.first().map(String::as_str) == Some("--snapshot-browser") {
+        let (Some(path), Some(url)) = (arguments.get(1), arguments.get(2)) else {
+            eprintln!("pandemonium: --snapshot-browser needs a path and an address");
+            std::process::exit(2);
+        };
+        let flag = |name: &str| arguments.iter().skip(3).any(|argument| argument == name);
+        if let Err(error) =
+            snapshot::write_browser(Path::new(path), url, flag("tools"), flag("input"))
+        {
+            eprintln!("pandemonium: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     pm_update::forget_previous();
     if arguments.first().map(String::as_str) == Some("--snapshot") {
         let Some(path) = arguments.get(1) else {
@@ -164,6 +178,27 @@ fn main() {
             Some("terminal") => Shot::Terminal,
             Some("terminallink") => Shot::TerminalLink,
             Some("terminalmenu") => Shot::TerminalMenu,
+            Some("browsermenu") => Shot::BrowserMenu,
+            Some("browser-find") => Shot::BrowserFind(false),
+            Some("browser-find-narrow") => Shot::BrowserFind(true),
+            Some("browser-find-tools") => Shot::BrowserFindTools,
+            Some("browser-tabs") => Shot::BrowserTabs(false),
+            Some("browser-tabs-many") => Shot::BrowserTabs(true),
+            Some("browser-clear") => Shot::BrowserClear,
+            Some("browser-permission") => Shot::BrowserPermission,
+            Some("browser-certificate") => Shot::BrowserCertificate,
+            Some("browser-certificate-confirm") => Shot::BrowserCertificateConfirm,
+            Some("browser-download") => Shot::BrowserDownload,
+            Some("elements") => Shot::Elements,
+            Some("element-details") => Shot::ElementDetails,
+            Some("element-scrolled") => Shot::ElementScrolled,
+            Some("elements-sent") => Shot::ElementsSent,
+            Some("captures") => Shot::Captures,
+            Some("capture-preview") => Shot::CapturePreview,
+            Some("capture-console") => Shot::CaptureConsole,
+            Some("capture-menu") => Shot::CaptureMenu,
+            Some("captures-sent") => Shot::CapturesSent,
+            Some("split-started") => Shot::SplitStarted,
             Some("overview") => Shot::Overview,
             Some("submodules") => Shot::Submodules,
             Some("overviewdiff") => Shot::OverviewDiff,
@@ -181,6 +216,7 @@ fn main() {
             Some("panes-dragging") => Shot::PanesDragging,
             Some("pane-menu") => Shot::PaneMenu,
             Some("pane-split") => Shot::PaneSplit,
+            Some("pane-browser") => Shot::PaneBrowser,
             Some("pane-split-file") => Shot::PaneSplitFile,
             Some("wrapped") => Shot::Wrapped,
             Some("slashed") => Shot::Slashed,

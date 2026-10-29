@@ -20,18 +20,34 @@ use crate::settings_row::{
 use crate::settings_values::Control;
 use crate::state::WorkspaceState;
 
+/// Whether `text` reads as an origin agents may be allowed to open: a host, optionally with a port, or a web address that begins with `http://` or `https://`, with no white space and no user name.
+fn origin_reads(text: &str) -> bool {
+    let rest = text
+        .strip_prefix("https://")
+        .or_else(|| text.strip_prefix("http://"))
+        .unwrap_or(text);
+    !rest.is_empty()
+        && !rest.contains("://")
+        && !text.contains(char::is_whitespace)
+        && !rest.contains('@')
+        && !rest.starts_with(['/', ':'])
+}
+
 impl WorkspaceState {
     /// Carries out pressing the control `id` of a setting, or a choice of the open list, and says whether it was one.
     pub(crate) fn setting_pressed(&mut self, id: FocusId) -> bool {
         // the box and the buttons of a list are shared, so the list they work on is the one of the page that is open
-        let listed = if self.settings == Some(Section::EditorVim) {
-            Setting::VimBindings
-        } else {
-            Setting::WorktreeInclude
+        let listed = match self.settings {
+            Some(Section::EditorVim) => Setting::VimBindings,
+            Some(Section::Browser) => Setting::AgentOrigins,
+            _ => Setting::WorktreeInclude,
         };
         if id == LIST_ADD {
             let pattern = self.settings_page.list_add.text().trim().to_owned();
             if listed == Setting::VimBindings && !crate::vim::binding_reads(&pattern) {
+                return true;
+            }
+            if listed == Setting::AgentOrigins && !origin_reads(&pattern) {
                 return true;
             }
             let mut lines = listed.lines(self);

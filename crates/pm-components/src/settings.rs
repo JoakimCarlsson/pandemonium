@@ -166,6 +166,8 @@ pub enum Section {
     Keymap,
     /// The shell the terminal starts and how it is drawn.
     Terminal,
+    /// The embedded browser: turning it on, opening dev servers in it and what agents may do with it.
+    Browser,
     /// How git is run and what it marks.
     Git,
     /// How sessions get their branches and worktrees.
@@ -196,7 +198,7 @@ pub enum Section {
 
 impl Section {
     /// Every section, in the order the list shows them, each followed by the ones inside it.
-    pub const ALL: [Section; 24] = [
+    pub const ALL: [Section; 25] = [
         Section::General,
         Section::Appearance,
         Section::Editor,
@@ -209,6 +211,7 @@ impl Section {
         Section::Languages,
         Section::Keymap,
         Section::Terminal,
+        Section::Browser,
         Section::Git,
         Section::Worktrees,
         Section::Agents,
@@ -230,6 +233,7 @@ impl Section {
             Self::Appearance => "Appearance",
             Self::Languages => "Languages",
             Self::Terminal => "Terminal",
+            Self::Browser => "Browser",
             Self::Git => "Git",
             Self::Worktrees => "Worktrees",
             Self::Servers => "Servers",
@@ -261,6 +265,7 @@ impl Section {
             Self::Appearance => IconName::Pencil,
             Self::Languages => IconName::File,
             Self::Terminal => IconName::Terminal,
+            Self::Browser => IconName::Globe,
             Self::Git | Self::Worktrees => IconName::Git,
             Self::Servers => IconName::Plug,
             Self::Editor
@@ -305,6 +310,7 @@ impl Section {
             | Self::Appearance
             | Self::Languages
             | Self::Terminal
+            | Self::Browser
             | Self::Git
             | Self::Servers
             | Self::Results

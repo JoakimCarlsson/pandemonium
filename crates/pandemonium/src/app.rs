@@ -51,6 +51,8 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::{CursorIcon, Window, WindowId};
 
 mod asides;
+mod browser;
+mod capture;
 mod code;
 mod editing;
 mod frame;
@@ -241,6 +243,10 @@ pub struct App {
     highlighted: Option<(String, i32, usize)>,
     /// The file, version and caret waiting to settle before the language server is asked about them, and since when.
     highlight_wait: Option<((String, i32, usize), Instant)>,
+    /// The engine that paints pages of the web, and the pages it holds.
+    web: browser::Web,
+    /// Whether the address of the browser is to take the keyboard once it is drawn.
+    focus_browser_address: bool,
     /// What the press held on selectable text took, so dragging selects the
     /// same amount.
     text_gesture: Gesture<TextPoint>,
@@ -405,6 +411,8 @@ impl App {
             terminal_gesture: Gesture::default(),
             terminal_scroll_rest: 0.0,
             text_selection: None,
+            web: browser::Web::default(),
+            focus_browser_address: false,
             text_gesture: Gesture::default(),
             hover_rest: None,
             hover_leaving: None,
@@ -491,6 +499,7 @@ impl App {
         self.fit_terminal();
         let reaching = self.reaching() || self.reaching_terminal_link();
         let edge = self.frame_edge();
+        let browser_cursor = self.browser_cursor();
         let (Some(window), Some(renderer)) = (self.window.as_ref(), self.renderer.as_mut()) else {
             return;
         };
@@ -526,6 +535,9 @@ impl App {
             );
             if std::mem::take(&mut self.focus_terminal) {
                 self.focus.focus(TERMINAL_BODY);
+            }
+            if std::mem::take(&mut self.focus_browser_address) {
+                self.focus.focus(pm_components::browser::BROWSER_ADDRESS);
             }
             if std::mem::take(&mut self.focus_filter) {
                 self.focus.focus(pm_components::listing::LISTING_FILTER);
@@ -599,7 +611,7 @@ impl App {
             Some((.., Grows::Up)) => Cursor::RowResize,
             Some(_) => Cursor::ColResize,
             None if reaching => Cursor::Pointer,
-            None => self.output.cursor,
+            None => browser_cursor.unwrap_or(self.output.cursor),
         };
         if cursor != self.cursor || edge != self.edge_cursor {
             self.cursor = cursor;
@@ -719,6 +731,16 @@ impl App {
         }
         if is_message_menu_item(id) {
             self.message_menu_action(id);
+            return;
+        }
+        if id == pm_components::browser::BROWSER_CAPTURE {
+            self.open_browser_capture_menu();
+            return;
+        }
+        if let Some(command) = pm_components::browser_menu::BrowserCommand::of(id)
+            && self.model.read(|screen| screen.is_menu_row(id))
+        {
+            self.browser_menu_command(command);
             return;
         }
         if let Some(command) = TerminalCommand::of(id)
@@ -1271,6 +1293,7 @@ impl App {
                         self.open_git_menu(MenuKind::History(row));
                     }
                     Some(TERMINAL_BODY) => self.open_terminal_menu(),
+                    Some(pm_components::browser::BROWSER_BODY) => self.open_browser_menu(),
                     _ => self.open_message_menu(),
                 }
             }
@@ -1387,7 +1410,11 @@ impl App {
                 if let (Some(pressed), Some(released)) = (self.pressed_on.take(), released_on)
                     && pressed == released
                 {
-                    if Screen::is_field(pressed) || pressed == TERMINAL_BODY {
+                    if Screen::is_field(pressed)
+                        || pressed == TERMINAL_BODY
+                        || pressed == pm_components::browser::BROWSER_BODY
+                        || pressed == pm_components::browser::BROWSER_TOOLS_BODY
+                    {
                         self.focus.focus(pressed);
                     }
                     self.activate(pressed);
@@ -1958,6 +1985,7 @@ impl App {
             return;
         }
         if self.recording_key(event)
+            || self.browser_key(event)
             || self.terminal_key(event)
             || self.list_key(event)
             || self.vim_key(event)
@@ -2146,6 +2174,7 @@ impl ApplicationHandler for App {
     fn exiting(&mut self, _: &ActiveEventLoop) {
         self.persist_view();
         self.view_writer.flush();
+        self.browser_shutdown();
     }
 
     /// Opens the window and builds its renderer once the platform is ready.
@@ -2198,6 +2227,7 @@ impl ApplicationHandler for App {
             self.persist_window();
             self.persist_editor();
         }
+        let browsing = self.browser_tick();
         let waiting = self.model.read(|screen| screen.waiting()) || self.work.busy();
         let hover = [
             self.editor_hover_due(),
@@ -2215,6 +2245,7 @@ impl ApplicationHandler for App {
             self.deliver();
         }
         event_loop.set_control_flow(match (waiting, hover) {
+            _ if browsing => ControlFlow::WaitUntil(Instant::now() + browser::PUMP),
             (true, _) => ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(50)),
             (false, Some(due)) => ControlFlow::WaitUntil(due),
             (false, None) => ControlFlow::Wait,
@@ -2293,6 +2324,7 @@ impl App {
                     position.x as f32 / scale,
                     position.y as f32 / scale,
                 ));
+                self.browser_moved((position.x as f32 / scale, position.y as f32 / scale));
                 if self.on_aside.is_none()
                     && self.model.version() == version
                     && !self.dirty.get()
@@ -2309,6 +2341,18 @@ impl App {
             }
             WindowEvent::CursorLeft { .. } => self.pointer(PointerEvent::Left),
             WindowEvent::MouseWheel { delta, .. } => {
+                let (across, down) = match delta {
+                    MouseScrollDelta::LineDelta(across, down) => {
+                        (across * WHEEL_LINE, down * WHEEL_LINE)
+                    }
+                    MouseScrollDelta::PixelDelta(moved) => {
+                        (moved.x as f32 / scale, moved.y as f32 / scale)
+                    }
+                };
+                if self.browser_wheel(across, down) {
+                    window.request_redraw();
+                    return;
+                }
                 let pixels = match delta {
                     MouseScrollDelta::LineDelta(_, lines) => -lines * WHEEL_LINE,
                     MouseScrollDelta::PixelDelta(moved) => -moved.y as f32 / scale,
@@ -2328,7 +2372,10 @@ impl App {
                     MouseButton::Left => Button::Left,
                     MouseButton::Right => Button::Right,
                     MouseButton::Back | MouseButton::Forward => {
-                        if state == ElementState::Pressed {
+                        if state == ElementState::Pressed
+                            && !(self.on_aside.is_none()
+                                && self.browser_history(button == MouseButton::Back))
+                        {
                             self.step_through_history(button == MouseButton::Back);
                         }
                         window.request_redraw();
@@ -2336,6 +2383,7 @@ impl App {
                     }
                     _ => return,
                 };
+                self.browser_button(button, state == ElementState::Pressed);
                 self.pointer(match state {
                     ElementState::Pressed => PointerEvent::Pressed(button),
                     ElementState::Released => PointerEvent::Released(button),
@@ -2352,7 +2400,7 @@ impl App {
                 if self.on_aside.is_none() {
                     self.timings.keyboard();
                 }
-                if self.commit_to_terminal(&committed) {
+                if self.commit_to_terminal(&committed) || self.commit_to_browser(&committed) {
                 } else if let Some(id) = self.focus.current()
                     && Screen::is_field(id)
                 {

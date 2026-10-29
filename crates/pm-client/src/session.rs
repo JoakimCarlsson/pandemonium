@@ -48,6 +48,18 @@ pub enum Incoming {
     },
     /// The shell with this number ended.
     TerminalExited(u64),
+    /// A program started in the shell with this number serves the web page at this address, on the server's machine.
+    TerminalServing {
+        /// The shell.
+        terminal: u64,
+        /// The address of the page.
+        url: String,
+    },
+    /// A program of the session with this number serves the web page at this address, on the server's machine.
+    SessionServing {
+        /// The address of the page.
+        url: String,
+    },
     /// How far the download of an update has got.
     UpdateProgress {
         /// How many bytes have arrived.
@@ -77,6 +89,15 @@ pub enum Incoming {
     },
     /// The languages changed; these are all of them now.
     ExtensionsChanged(Vec<pm_protocol::ExtensionInfo>),
+    /// An agent asked for a browser tool, to be run here and answered.
+    BrowserCall {
+        /// The call.
+        call: u64,
+        /// The tool.
+        tool: String,
+        /// What the agent gave it, as JSON text.
+        arguments: String,
+    },
     /// The files of a folder this client watches changed; this is the folder, as the client named it.
     FolderChanged(String),
     /// Something an agent did, numbered within its session.
@@ -426,6 +447,12 @@ fn converse(
                         memory.heard.remove(&terminal);
                         let _ = reporter.send(Incoming::TerminalExited(terminal));
                     }
+                    ServerMessage::TerminalServing { terminal, url } => {
+                        let _ = reporter.send(Incoming::TerminalServing { terminal, url });
+                    }
+                    ServerMessage::SessionServing { url, .. } => {
+                        let _ = reporter.send(Incoming::SessionServing { url });
+                    }
                     ServerMessage::UpdateProgress { received, total } => {
                         let _ = reporter.send(Incoming::UpdateProgress { received, total });
                     }
@@ -464,6 +491,17 @@ fn converse(
                     }
                     ServerMessage::ExtensionsChanged { extensions } => {
                         let _ = reporter.send(Incoming::ExtensionsChanged(extensions));
+                    }
+                    ServerMessage::BrowserCall {
+                        call,
+                        tool,
+                        arguments,
+                    } => {
+                        let _ = reporter.send(Incoming::BrowserCall {
+                            call,
+                            tool,
+                            arguments,
+                        });
                     }
                     ServerMessage::FolderChanged { directory } => {
                         let _ = reporter.send(Incoming::FolderChanged(directory));

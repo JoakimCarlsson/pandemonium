@@ -41,6 +41,16 @@ pub struct GeneralSettings {
     pub offer_languages: bool,
     /// The languages, by folder name, the reader turned the offer down for.
     pub declined_languages: Vec<String>,
+    /// Whether the embedded browser is turned on, which downloads it once.
+    pub embedded_browser: bool,
+    /// Whether the embedded browser opens on the web page a program started in a shell serves.
+    pub open_dev_servers: bool,
+    /// Whether a link to a page on this machine, such as `http://localhost:3000`, opens in the embedded browser instead of the system browser.
+    pub open_local_links: bool,
+    /// Whether the tools agents browse with may open only local addresses and the origins listed in `agent_origins`.
+    pub restrict_agent_browsing: bool,
+    /// The origins agents may open besides local addresses while `restrict_agent_browsing` is on, such as `https://example.com`.
+    pub agent_origins: Vec<String>,
 }
 
 impl Default for GeneralSettings {
@@ -53,6 +63,11 @@ impl Default for GeneralSettings {
             channel: Channel::Stable,
             offer_languages: true,
             declined_languages: Vec::new(),
+            embedded_browser: false,
+            open_dev_servers: true,
+            open_local_links: true,
+            restrict_agent_browsing: false,
+            agent_origins: Vec::new(),
         }
     }
 }

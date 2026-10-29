@@ -2,4 +2,4 @@
 
 mod remote;
 
-pub use remote::remote;
+pub use remote::{forward, remote};

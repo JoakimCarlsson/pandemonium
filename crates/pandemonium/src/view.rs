@@ -1,6 +1,8 @@
 //! Where the window was when it was closed, kept on this machine so that the next launch opens on the same page.
 
+use pm_components::browser_tabs::SavedTab;
 use pm_components::open_files::{Contents, EDITOR_FIELD, Left};
+use pm_components::panes::{Layout, Panes};
 use pm_components::state::{
     PROMPT, Page, ReviewTab, SESSION_BASE, Tab, WorkspaceState, prompt_field,
 };
@@ -156,6 +158,59 @@ pub struct View {
     /// The field the reader was typing in, if one had the keyboard.
     #[serde(default)]
     typing: Option<Typing>,
+    /// The browser, when it was open.
+    #[serde(default)]
+    browser: Option<SavedBrowser>,
+    /// How the main area was cut into panes, and the pane worked in.
+    #[serde(default)]
+    panes: Option<SavedPanes>,
+}
+
+/// The browser as it was left.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct SavedBrowser {
+    /// The address in the address line of the tab that was shown, which older versions kept as the only tab.
+    address: String,
+    /// The machine the page of that tab was on, when it was not this one.
+    host: Option<String>,
+    /// Every tab, in the order of the strip; empty when saved by a version without tabs.
+    #[serde(default)]
+    tabs: Vec<SavedBrowserTab>,
+    /// The index of the tab that was shown.
+    #[serde(default)]
+    active: usize,
+    /// Whether the developer tools were open.
+    tools: bool,
+    /// How wide the developer tools were, in logical pixels.
+    #[serde(default)]
+    tools_width: f32,
+    /// Whether the browser was what the main area showed.
+    shown: bool,
+}
+
+/// One tab of the browser as it was left.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct SavedBrowserTab {
+    /// The address in its address line.
+    address: String,
+    /// The machine the page was on, when it was not this one.
+    #[serde(default)]
+    host: Option<String>,
+    /// Whether an agent opened it.
+    #[serde(default)]
+    agent: bool,
+    /// Whether it was locked against agents.
+    #[serde(default)]
+    locked: bool,
+}
+
+/// The panes of the main area as they were left.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct SavedPanes {
+    /// How the area was cut.
+    layout: Layout,
+    /// The pane last worked in, by position.
+    focused: usize,
 }
 
 /// A flag that was set before it was kept.
@@ -289,6 +344,32 @@ impl View {
             agent: state.agent,
             prompt: state.prompt.text().to_owned(),
             typing,
+            browser: state
+                .browser_saved()
+                .map(|(tabs, active, tools, tools_width)| SavedBrowser {
+                    address: tabs
+                        .get(active)
+                        .map(|tab| tab.address.clone())
+                        .unwrap_or_default(),
+                    host: tabs.get(active).and_then(|tab| tab.host.clone()),
+                    tabs: tabs
+                        .into_iter()
+                        .map(|tab| SavedBrowserTab {
+                            address: tab.address,
+                            host: tab.host,
+                            agent: tab.agent,
+                            locked: tab.locked,
+                        })
+                        .collect(),
+                    active,
+                    tools,
+                    tools_width,
+                    shown: state.tab == Tab::Browser,
+                }),
+            panes: Some(SavedPanes {
+                layout: state.panes.layout.clone(),
+                focused: state.panes.focused,
+            }),
         }
     }
 
@@ -388,6 +469,41 @@ impl View {
         state.tree_scroll = self.tree_scroll;
         state.diff_scroll = self.diff_scroll;
         state.refresh_files();
+        if let Some(saved) = &self.panes {
+            state.panes = Panes {
+                layout: saved.layout.clone(),
+                focused: saved.focused,
+                parked: None,
+            };
+        }
+        if let Some(browser) = &self.browser {
+            let tabs: Vec<SavedTab> = if browser.tabs.is_empty() {
+                vec![SavedTab {
+                    address: browser.address.clone(),
+                    host: browser.host.clone(),
+                    agent: false,
+                    locked: false,
+                }]
+            } else {
+                browser
+                    .tabs
+                    .iter()
+                    .map(|tab| SavedTab {
+                        address: tab.address.clone(),
+                        host: tab.host.clone(),
+                        agent: tab.agent,
+                        locked: tab.locked,
+                    })
+                    .collect()
+            };
+            state.restore_browser(
+                &tabs,
+                browser.active,
+                browser.tools,
+                browser.tools_width,
+                browser.shown,
+            );
+        }
         state
     }
 

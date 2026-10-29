@@ -198,6 +198,8 @@ request with exactly one `response` carrying the same `id`.
 | `repositories` | `owner`, `organization`                                                                          | `repositories`  |
 | `folders`      | `path`                                                                                           | `folders`       |
 | `clone`        | `url`, `under` (optional)                                                                        | `directory`     |
+| `browser_available` | `available`                                                                                  | `done`          |
+| `browser_result` | `call`, `ok`, `text`, `image` (PNG bytes, optional)                                              | `done`          |
 | `extensions`   | none                                                                                             | `extensions`    |
 | `install_extensions` | `ids`                                                                                       | `done`          |
 | `remove_extension` | `id`                                                                                          | `done`          |
@@ -1073,6 +1075,8 @@ keeps its own emulator for them.
 ```json
 { "type": "terminal_output", "terminal": 1, "offset": 0, "data": "<base64>" }
 { "type": "terminal_exited", "terminal": 1 }
+{ "type": "terminal_serving", "terminal": 1, "url": "http://localhost:5173/" }
+{ "type": "session_serving", "session": 3, "url": "http://localhost:5173/" }
 ```
 
 - `terminal_output`: bytes the shell printed. `offset` is how many bytes it had
@@ -1086,6 +1090,25 @@ keeps its own emulator for them.
   with `after: 0` for each shell `terminals` lists.
 - `terminal_exited` is sent to every client when the shell's process ends, and
   the shell is forgotten.
+- `terminal_serving` is sent to the connections attached to a shell when a
+  program started in it serves a web page. The server finds one when a line of
+  output holds a bare `http://` address of a local port (`localhost`,
+  `127.0.0.1`, `0.0.0.0` or `[::1]`, with no path), the port was not listening
+  when the reader last pressed Enter in that shell and is now, and a request for
+  `/` on it answers with an HTML document that is not a redirect, a 404 or the
+  discovery endpoint of a browser's debugger. It is sent once for each address a
+  command prints. `url` is the address on the server's machine, so a client
+  carries it to that machine's port as it does for any page. A shell in a dev
+  container is not seen, since its ports are the container's.
+- `session_serving` is sent to every client when a program that works in the
+  folder of a session starts to listen on a port and the port answers with a web page as above. This finds what an agent
+  starts with its own tools, which no shell shows the server. The server looks
+  at the listening ports once a second and ignores what listened when it
+  started; a program that works elsewhere is not the session's, even when a
+  shell of the session started it. A port that stops listening is forgotten, so the page is announced
+  again when a program listens on it again. A page is announced once, whether a
+  shell or this found it first. The program is matched to a session on Linux
+  through the sockets of `/proc`, elsewhere through `lsof`.
 - `terminal_input` carries what a terminal sends the shell for a key or a paste
   (`"\r"` for Enter, `"\u001b[A"` for the up arrow), and the answers an
   emulator gives to the shell's queries.
@@ -1193,6 +1216,65 @@ extensions, described in [`docs/extensions.md`](extensions.md).
   `standing: "ended"` and the server forgets it.
 - `debugs` lists the sessions the server holds, for a client that attaches after
   a restart of the window; `debug_watch` subscribes to one and answers its view.
+
+## Browser tools
+
+A window that has the embedded browser turned on lets the agents of a server
+look at and use its browser. Agents reach the tools as an MCP server the
+server hosts on its loopback address; the server hands each call to a window.
+
+```json
+{ "type": "browser_call", "call": 7, "tool": "browser_screenshot", "arguments": "{}" }
+```
+
+- `browser_available` tells the server whether this connection can run the
+  tools. Send it with `available: true` after connecting and again from time
+  to time; the server uses the connection that said so most recently, and
+  forgets it when the connection ends.
+- An agent is given the tools when it starts, once any connection has said it
+  can run them, and keeps them while no connection can: a call then fails with
+  a message saying so. An agent that was started before any window could run
+  them does not have them until it is started again.
+- `browser_call` is sent to that connection when an agent calls a tool. The
+  tools are `browser_navigate`, `browser_snapshot`, `browser_screenshot`,
+  `browser_click`, `browser_type`, `browser_select_option`, `browser_press_key`, `browser_scroll`,
+  `browser_back`, `browser_forward`, `browser_reload`, `browser_evaluate`,
+  `browser_console`, `browser_network`, `browser_wait`, `browser_handle_dialog`,
+  `browser_hover`, `browser_drag`, `browser_fill_form`, `browser_highlight`,
+  `browser_get_bounding_box` and `browser_resize`; `arguments` is the JSON the
+  agent gave. `browser_screenshot` also takes `full_page`, or `ref` or
+  `selector` for one element. The schema of each tool is in
+  `crates/pm-server/src/browser_tools.rs`; how the helper runs them is in
+  [browser.md](browser.md#what-agents-can-do-with-a-page). The tools add no
+  message: they travel in `browser_call` and `browser_result` as before.
+- Tabs add a tool and an argument, not a message. `browser_tabs` (`action` is
+  `list`, `open`, `select` or `close`, with `url` and `tab`) and an optional
+  integer `tab` on every other tool travel in `arguments` of `browser_call` as
+  before; the window resolves the tab, refuses the tools that change a tab the
+  reader locked with `browser_result` `ok` false, and answers `browser_tabs`
+  itself. A window that predates tabs ignores `tab` and fails `browser_tabs` as an
+  unknown tool. See [browser.md](browser.md#tabs).
+- `browser_result` answers a call with the text the tool produced and, for
+  `browser_screenshot`, the PNG it took. The server answers the agent with it,
+  or with an error when no connection answers within a minute and a half or
+  none can run the tools.
+- The window may refuse where a tool takes the page. With Settings, General,
+  "Restrict agent browsing" on, `browser_navigate`, `browser_back`,
+  `browser_forward` and `browser_reload`, and any move the page makes by itself
+  or by a redirect while a call runs, are limited to `localhost`, `127.0.0.1`,
+  `[::1]` and the origins the reader listed. The refusal comes back as a
+  `browser_result` with `ok` false whose `text` names the origin and says why;
+  a call that only clicked appends the same sentence when the click was
+  kept from moving the page. The setting belongs to the window and is enforced
+  by its browser helper, so it adds nothing to the messages above and the server
+  does not know of it. See [browser.md](browser.md#keeping-the-reader-safe).
+
+What the reader adds to a prompt from the browser pane, screenshots of the page
+and its console, adds nothing to this protocol. The window carries the pictures
+in the `attachments` of `start_session` and `prompt`, as it carries a pasted
+picture, and writes the console lines into `text`, as a fenced block under a
+sentence that says the page wrote it. The messages between the window and the
+browser helper that take them are in [browser.md](browser.md#adding-screenshots-and-the-console-to-the-prompt).
 
 ## Extensions
 

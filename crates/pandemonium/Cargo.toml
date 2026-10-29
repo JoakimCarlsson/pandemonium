@@ -36,6 +36,7 @@ resvg = "0.48.1"
 mermaid-svg = "0.7.0"
 latex-rust = "2.1.1"
 pm-transport.workspace = true
+pm-browser = { path = "../pm-browser" }
 pm-update.workspace = true
 pm-vim.workspace = true
 

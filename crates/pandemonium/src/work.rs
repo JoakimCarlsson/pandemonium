@@ -82,6 +82,16 @@ const BOOTSTRAP_WAIT: std::time::Duration = std::time::Duration::from_secs(4);
 /// A machine the servers run on: nothing for this one, or how a project's address names another.
 type Host = Option<String>;
 
+/// Whether `url` is what a server may say a shell serves: the root of a port of `localhost` over plain HTTP, nothing a server could use to send the browser elsewhere.
+fn is_served_address(url: &str) -> bool {
+    url.strip_prefix("http://localhost:")
+        .and_then(|rest| rest.strip_suffix('/'))
+        .is_some_and(|port| {
+            port.bytes().all(|byte| byte.is_ascii_digit())
+                && port.parse::<u16>().is_ok_and(|port| port != 0)
+        })
+}
+
 /// What a thread that did some of the work reports back.
 enum Job {
     /// The picture at this path was decoded, when it is one.
@@ -414,6 +424,14 @@ pub struct Work {
     cancelled: HashSet<usize>,
     /// What agents did before their session was known by position, each with its number.
     early: HashMap<(Host, u64), Vec<(u64, Event)>>,
+    /// Whether this window can run the browser's tools, which each server is told as it connects.
+    browser_available: bool,
+    /// The browser tool calls agents made that the window has not taken yet, each with the machine, the call and the tool with its arguments.
+    browser_calls: Vec<(Host, u64, String, String)>,
+    /// The web pages that programs started in shells serve and the window has not taken yet, each with the machine and the address on it.
+    served: Vec<(Host, String)>,
+    /// The web links the reader followed, which the window sends to the embedded browser or the system browser.
+    followed: Vec<String>,
     /// What the threads report.
     jobs: Receiver<Job>,
     /// Handed to each thread.
@@ -460,6 +478,10 @@ impl Work {
             numbers: HashMap::new(),
             positions: HashMap::new(),
             forgotten: HashSet::new(),
+            browser_calls: Vec::new(),
+            served: Vec::new(),
+            followed: Vec::new(),
+            browser_available: false,
             cancelled: HashSet::new(),
             early: HashMap::new(),
             tabs: HashMap::new(),
@@ -577,6 +599,52 @@ impl Work {
     }
 
     /// Sends `request` to the server on `host`, or keeps it until that server is reached, and remembers what to do with the answer.
+    /// The browser tool calls agents made since this was last called.
+    pub fn take_browser_calls(&mut self) -> Vec<(Host, u64, String, String)> {
+        std::mem::take(&mut self.browser_calls)
+    }
+
+    /// The web links the reader followed since this was last called.
+    pub fn take_links(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.followed)
+    }
+
+    /// The web pages programs started in shells served since this was last called, each with the machine and the address on it.
+    pub fn take_served(&mut self) -> Vec<(Host, String)> {
+        std::mem::take(&mut self.served)
+    }
+
+    /// Answers the browser tool call `call` of the server on `host`.
+    pub fn browser_result(
+        &mut self,
+        host: &Host,
+        call: u64,
+        ok: bool,
+        text: String,
+        image: Vec<u8>,
+    ) {
+        let request = Request::BrowserResult {
+            call,
+            ok,
+            text,
+            image,
+        };
+        self.ask(host, request, Pending::Nothing);
+    }
+
+    /// Tells every server this window is connected to whether it can run the browser's tools for their agents.
+    pub fn announce_browser(&mut self, available: bool) {
+        self.browser_available = available;
+        let hosts: Vec<Host> = self.links.keys().cloned().collect();
+        for host in hosts {
+            self.ask(
+                &host,
+                Request::BrowserAvailable { available },
+                Pending::Nothing,
+            );
+        }
+    }
+
     fn ask(&mut self, host: &Host, request: Request, pending: Pending) {
         if !self.links.contains_key(host) {
             self.links.insert(host.clone(), Link::default());
@@ -1336,9 +1404,7 @@ impl Work {
                     }
                 }
                 Outgoing::Open { address } => {
-                    if let Err(reason) = pm_acp::open_address(&address) {
-                        eprintln!("{reason}");
-                    }
+                    self.followed.push(address);
                 }
                 Outgoing::LoadServers => {
                     self.ask(&None, Request::AgentServers, Pending::AgentServers);
@@ -1488,6 +1554,13 @@ impl Work {
                         self.share_extensions(model, &host);
                         self.ask_extension_assets(&host);
                         self.ask_debugs(&host);
+                        if self.browser_available {
+                            self.ask(
+                                &host,
+                                Request::BrowserAvailable { available: true },
+                                Pending::Nothing,
+                            );
+                        }
                         model.update(|screen| {
                             *screen = std::mem::take(screen).reopen_documents(&host);
                         });
@@ -1531,6 +1604,11 @@ impl Work {
                             model.update(|screen| screen.terminal_exited(tab));
                         }
                     }
+                    Incoming::TerminalServing { url, .. } | Incoming::SessionServing { url } => {
+                        if is_served_address(&url) {
+                            self.served.push((host.clone(), url));
+                        }
+                    }
                     Incoming::Debug {
                         debug,
                         view,
@@ -1565,6 +1643,13 @@ impl Work {
                             diagnostics,
                         );
                     }),
+                    Incoming::BrowserCall {
+                        call,
+                        tool,
+                        arguments,
+                    } => self
+                        .browser_calls
+                        .push((host.clone(), call, tool, arguments)),
                     Incoming::FolderChanged(directory) => {
                         self.folder_changed(model, &host, &directory);
                     }

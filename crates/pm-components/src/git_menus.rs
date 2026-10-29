@@ -175,6 +175,7 @@ impl WorkspaceState {
             || self.settings_menu_row(id)
             || self.is_tab_menu_row(id)
             || self.is_terminal_menu_row(id)
+            || self.is_browser_menu_row(id)
     }
 
     /// Which commit of the graph the row `id` is, if it is one.

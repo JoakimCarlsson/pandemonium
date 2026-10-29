@@ -141,8 +141,14 @@ pub(crate) fn given(agent: Agent, directory: &Path) -> (Vec<serde_json::Value>, 
         .into_iter()
         .filter(|item| !item.enabled(&withheld))
         .collect();
-    (
-        pm_acp::mcp_servers(&serde_json::to_string(&kept).unwrap_or_default()),
-        Launch::without(product, &off, &tools),
-    )
+    let mut servers = pm_acp::mcp_servers(&serde_json::to_string(&kept).unwrap_or_default());
+    if let Some((url, token)) = crate::browser_tools::offered() {
+        servers.push(serde_json::json!({
+            "type": "http",
+            "name": "pandemonium-browser",
+            "url": url,
+            "headers": [{ "name": "Authorization", "value": format!("Bearer {token}") }],
+        }));
+    }
+    (servers, Launch::without(product, &off, &tools))
 }

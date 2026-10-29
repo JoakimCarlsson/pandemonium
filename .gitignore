@@ -1,3 +1,4 @@
 /target
 /build
 /.pandemonium/tasks.yaml
+/helpers/electron-browser/node_modules

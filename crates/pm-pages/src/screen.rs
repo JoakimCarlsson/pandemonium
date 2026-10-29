@@ -293,7 +293,7 @@ impl Screen {
 
     /// Whether a menu is open over a project, a session or a message, so that a press elsewhere has to close it.
     pub fn list_menu_open(&self) -> bool {
-        matches!(self, Self::Workspace(state) if state.project_menu.is_some() || state.session_menu.is_some() || state.message_menu.is_some() || state.terminal_menu.is_some() || state.git.menu.is_some() || state.settings_servers.menu.is_some() || state.tab_menu.is_some() || state.pane_menu.is_some())
+        matches!(self, Self::Workspace(state) if state.project_menu.is_some() || state.session_menu.is_some() || state.message_menu.is_some() || state.terminal_menu.is_some() || state.browser_menu.is_some() || state.git.menu.is_some() || state.settings_servers.menu.is_some() || state.tab_menu.is_some() || state.pane_menu.is_some())
     }
 
     /// Which session the row `id` of the sidebar opens, while the workspace is showing.
@@ -318,6 +318,49 @@ impl Screen {
     pub fn with_terminal_menu(self, at: (f32, f32)) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_terminal_menu(at)),
+        }
+    }
+
+    /// The screen with the menu over the page of the browser open at `at`, while the workspace is showing.
+    pub fn with_browser_menu(self, at: (f32, f32)) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_browser_menu(at)),
+        }
+    }
+
+    /// The screen after the mode of picking an element of the page of tab `tab` of the browser ended, with the pick held for the prompt when there was one.
+    pub fn browser_picked(
+        self,
+        tab: u32,
+        element: Option<pm_components::elements::Element>,
+    ) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.browser_picked(tab, element)),
+        }
+    }
+
+    /// The screen with the menu of what can be added to the prompt from the browser's page open at `at`, while the workspace is showing.
+    pub fn with_browser_capture_menu(self, at: (f32, f32)) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_browser_capture_menu(at)),
+        }
+    }
+
+    /// The screen after the helper reported a screenshot or the console of the browser's page for the prompt, or the end of choosing an area without one.
+    pub fn browser_captured(
+        self,
+        tab: u32,
+        capture: Option<pm_components::captures::Capture>,
+    ) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.browser_captured(tab, capture)),
+        }
+    }
+
+    /// The screen after `command` was carried out on the page of the browser, which closes the menu over it.
+    pub fn browser_command(self, command: pm_components::browser_menu::BrowserCommand) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.browser_command(command)),
         }
     }
 

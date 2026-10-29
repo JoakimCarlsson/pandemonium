@@ -76,6 +76,16 @@ pub enum Setting {
     Channel,
     /// Whether a file in a language that is not installed offers to install it.
     OfferLanguages,
+    /// Whether the embedded browser is turned on.
+    EmbeddedBrowser,
+    /// Whether the embedded browser opens on a dev server a shell started.
+    OpenDevServers,
+    /// Whether links to local pages open in the embedded browser.
+    OpenLocalLinks,
+    /// Whether agents may open only local addresses and the origins listed.
+    RestrictAgentBrowsing,
+    /// The origins agents may open besides local addresses.
+    AgentOrigins,
     /// Whether the window is light, dark or as the desktop says.
     ThemeMode,
     /// The theme drawn while it is light.
@@ -290,12 +300,17 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting, in the order the pages show them.
-    pub const ALL: [Self; 110] = [
+    pub const ALL: [Self; 115] = [
         Self::Launch,
         Self::ConfirmClose,
         Self::CheckUpdates,
         Self::Channel,
         Self::OfferLanguages,
+        Self::EmbeddedBrowser,
+        Self::OpenDevServers,
+        Self::OpenLocalLinks,
+        Self::RestrictAgentBrowsing,
+        Self::AgentOrigins,
         Self::ThemeMode,
         Self::LightTheme,
         Self::DarkTheme,
@@ -411,6 +426,11 @@ impl Setting {
             | Self::CheckUpdates
             | Self::Channel
             | Self::OfferLanguages => Section::General,
+            Self::EmbeddedBrowser
+            | Self::OpenDevServers
+            | Self::OpenLocalLinks
+            | Self::RestrictAgentBrowsing
+            | Self::AgentOrigins => Section::Browser,
             Self::ThemeMode
             | Self::LightTheme
             | Self::DarkTheme
@@ -570,6 +590,26 @@ impl Setting {
             Self::OfferLanguages => (
                 "Offer to install languages",
                 "Offer to install a language when a file is opened that is written in one that is not installed.",
+            ),
+            Self::EmbeddedBrowser => (
+                "Embedded browser",
+                "Show web pages, such as a dev server, in a pane beside the work. Turning it on downloads the browser once, about 120 MB.",
+            ),
+            Self::OpenDevServers => (
+                "Open dev servers in the browser",
+                "Open the embedded browser on the web page a program started in a terminal serves, such as a dev server. Needs the embedded browser.",
+            ),
+            Self::OpenLocalLinks => (
+                "Open local links in the browser",
+                "Open links to localhost, 127.0.0.1, [::1] and 0.0.0.0 in the embedded browser instead of the system browser. Other links always open in the system browser. Needs the embedded browser.",
+            ),
+            Self::RestrictAgentBrowsing => (
+                "Restrict agent browsing",
+                "Let agents open only localhost, 127.0.0.1, [::1] and the origins listed below. Pages the reader opens are not affected. Needs the embedded browser.",
+            ),
+            Self::AgentOrigins => (
+                "Origins agents may open",
+                "Besides local addresses, while agent browsing is restricted. Write an origin such as https://example.com; a host alone, such as example.com, means http and https on their usual ports.",
             ),
             Self::ThemeMode => (
                 "Theme mode",
