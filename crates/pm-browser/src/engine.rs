@@ -48,6 +48,18 @@ fn token() -> std::io::Result<String> {
     Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
+/// Whether `line`, as read, is `token`, compared in time that does not depend on where they differ.
+fn is_token(line: &str, token: &str) -> bool {
+    let line = line.trim_end().as_bytes();
+    let token = token.as_bytes();
+    line.len() == token.len()
+        && line
+            .iter()
+            .zip(token)
+            .fold(0u8, |difference, (a, b)| difference | (a ^ b))
+            == 0
+}
+
 /// Waits for the helper to connect to `listener` and send `token`, ignoring anything else that connects.
 fn accept_helper(
     listener: &std::net::TcpListener,
@@ -55,39 +67,42 @@ fn accept_helper(
     child: &mut Child,
     folder: &std::path::Path,
 ) -> Result<(std::net::TcpStream, BufReader<std::net::TcpStream>), Error> {
-    use std::io::BufRead;
+    use std::io::{BufRead, Read};
     use std::time::{Duration, Instant};
 
     let fail = |what: &dyn std::fmt::Display| Error::Helper(what.to_string());
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
-        match listener.accept() {
-            Ok((stream, _)) => {
-                stream
-                    .set_nonblocking(false)
-                    .map_err(|error| fail(&error))?;
-                stream
-                    .set_read_timeout(Some(Duration::from_secs(5)))
-                    .map_err(|error| fail(&error))?;
-                let mut reader = BufReader::new(stream.try_clone().map_err(|error| fail(&error))?);
-                let mut line = String::new();
-                if reader.read_line(&mut line).is_ok() && line.trim_end() == token {
-                    stream
-                        .set_read_timeout(None)
-                        .map_err(|error| fail(&error))?;
-                    return Ok((stream, reader));
-                }
-            }
-            Err(_) if child.try_wait().ok().flatten().is_some() => {
-                let _ = std::fs::remove_dir_all(folder);
-                return Err(fail(&"the helper exited while starting"));
-            }
-            Err(_) if Instant::now() > deadline => {
-                let _ = child.kill();
-                let _ = std::fs::remove_dir_all(folder);
-                return Err(fail(&"the helper did not start in time"));
-            }
-            Err(_) => std::thread::sleep(Duration::from_millis(20)),
+        if child.try_wait().ok().flatten().is_some() {
+            let _ = std::fs::remove_dir_all(folder);
+            return Err(fail(&"the helper exited while starting"));
+        }
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = std::fs::remove_dir_all(folder);
+            return Err(fail(&"the helper did not start in time"));
+        }
+        let Ok((stream, _)) = listener.accept() else {
+            std::thread::sleep(Duration::from_millis(20));
+            continue;
+        };
+        stream
+            .set_nonblocking(false)
+            .map_err(|error| fail(&error))?;
+        stream
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .map_err(|error| fail(&error))?;
+        let mut reader = BufReader::new(stream.try_clone().map_err(|error| fail(&error))?);
+        let mut line = String::new();
+        let read = reader
+            .by_ref()
+            .take(token.len() as u64 + 2)
+            .read_line(&mut line);
+        if read.is_ok() && is_token(&line, token) {
+            stream
+                .set_read_timeout(None)
+                .map_err(|error| fail(&error))?;
+            return Ok((stream, reader));
         }
     }
 }

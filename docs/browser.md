@@ -399,7 +399,7 @@ download unpacked into the data folder; one beside the window's own program.
 the system it runs on and writes the archive's `.sha256`. Linux and Windows keep
 English as the only locale; macOS keeps Electron's app whole, since changing it
 would break its signature. The release workflow builds
-`pandemonium-browser-<os>-<arch>.tar.gz` for `linux-x86_64`, `macos-x86_64`,
+`pandemonium-browser-<os>-<arch>.tar.gz` for `linux-x86_64`, `linux-aarch64`, `macos-x86_64`,
 `macos-aarch64` and `windows-x86_64` and attaches them with their checksums; the
 window downloads the one for its system from the release of its own version and
 checks the checksum. `PANDEMONIUM_BROWSER_URL` names a folder or address to use
@@ -410,5 +410,3 @@ beside an `electron` folder. On Windows the archive is Electron itself, with
 `electron.exe` renamed `pandemonium-browser.exe` and the helper in
 `resources/app`, which Electron runs without a launcher. The helper hides its
 Dock icon on macOS.
-
-Linux on arm64 has no helper yet.

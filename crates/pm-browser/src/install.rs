@@ -26,7 +26,10 @@ pub enum Step {
 /// Whether the browser is built for this system.
 pub fn supported() -> bool {
     cfg!(any(
-        all(target_os = "linux", target_arch = "x86_64"),
+        all(
+            target_os = "linux",
+            any(target_arch = "x86_64", target_arch = "aarch64")
+        ),
         all(
             target_os = "macos",
             any(target_arch = "x86_64", target_arch = "aarch64")
