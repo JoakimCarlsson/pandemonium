@@ -762,7 +762,7 @@ impl App {
             return;
         }
         if let Some(kind) = Screen::menu_button_of(id) {
-            self.open_git_menu(kind);
+            self.open_git_menu(kind, Some(id));
             return;
         }
         if id == PANE_MENU {
@@ -1290,7 +1290,7 @@ impl App {
                             .model
                             .read(|screen| screen.history_row_of(id))
                             .unwrap_or_default();
-                        self.open_git_menu(MenuKind::History(row));
+                        self.open_git_menu(MenuKind::History(row), None);
                     }
                     Some(TERMINAL_BODY) => self.open_terminal_menu(),
                     Some(pm_components::browser::BROWSER_BODY) => self.open_browser_menu(),
@@ -1526,14 +1526,29 @@ impl App {
         });
     }
 
-    /// Opens the menu `kind` of the source control panel, just under the pointer.
-    fn open_git_menu(&mut self, kind: MenuKind) {
-        let Some((x, y)) = self.pointer.position else {
-            return;
-        };
-        let at = match kind {
-            MenuKind::History(_) => (x - 8.0, y + 12.0),
-            _ => (x - 190.0, y + 14.0),
+    /// Opens the menu `kind` of the source control panel from the control `trigger`, below it or above it, or just under the pointer when it comes from no control.
+    fn open_git_menu(&mut self, kind: MenuKind, trigger: Option<FocusId>) {
+        let window = self.window_size();
+        let control = self
+            .output
+            .regions
+            .iter()
+            .find(|region| Some(region.id) == trigger)
+            .map(|region| {
+                let rect = region.rect;
+                (rect.x, rect.y, rect.width, rect.height)
+            });
+        let at = if let Some(control) = control {
+            self.model
+                .read(|screen| screen.git_menu_below(kind, control, window))
+        } else {
+            let Some((x, y)) = self.pointer.position else {
+                return;
+            };
+            match kind {
+                MenuKind::History(_) => (x - 8.0, y + 12.0),
+                _ => (x - 190.0, y + 14.0),
+            }
         };
         self.model
             .update(|state| *state = std::mem::take(state).with_git_menu(kind, at));

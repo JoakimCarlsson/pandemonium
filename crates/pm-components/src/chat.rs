@@ -240,7 +240,7 @@ fn agent_message(
             .get(recorded)
             .filter(|(at, _)| *at <= before)
         {
-            reply = reply.child(answered(answers));
+            reply = reply.child(answered(answers, width, shaper));
             recorded += 1;
         }
         let base = number * FOLDS_PER_PIECE;
@@ -262,7 +262,7 @@ fn agent_message(
         reply = reply.child(run(shown, message.steps.len()));
     }
     for (_, answers) in &message.answers[recorded..] {
-        reply = reply.child(answered(answers));
+        reply = reply.child(answered(answers, width, shaper));
     }
     if !message.bullets.is_empty() {
         reply = reply.child(node().styles([flex(), flex_col(), gap(1.5)]).children(

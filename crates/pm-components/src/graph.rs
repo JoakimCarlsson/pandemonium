@@ -6,8 +6,9 @@ use pm_git::{Commit, Edge, Half, Lanes};
 use pm_icon::IconName;
 use pm_style::{
     Color, Role, absolute, bg, border_color, border_t, flex, flex_1, flex_col, flex_none,
-    font_mono, gap, h, h_px, items_center, leading_ratio, left, min_h, min_w_px, overflow_hidden,
-    px, relative, rounded, rounded_full, text_color, text_px, top, truncate, w_px,
+    font_mono, gap, h, h_px, items_center, leading_ratio, left_px, min_h, min_w_px,
+    overflow_hidden, px, relative, rounded, rounded_full, text_color, text_px, top_px, truncate,
+    w_px,
 };
 use pm_ui::{Node, node, text};
 
@@ -71,8 +72,8 @@ fn lane_x(lane: usize) -> f32 {
 fn rect(x: f32, y: f32, width: f32, height: f32, color: Color) -> Node {
     node().styles([
         absolute(),
-        left(x / 4.0),
-        top(y / 4.0),
+        left_px(x),
+        top_px(y),
         w_px(width.max(0.0)),
         h_px(height.max(0.0)),
         bg(color),

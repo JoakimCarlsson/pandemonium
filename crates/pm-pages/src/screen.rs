@@ -718,6 +718,18 @@ impl Screen {
         matches!(self, Self::Workspace(state) if state.is_menu_row(id))
     }
 
+    /// The point at which the menu `kind`, opened from the control occupying `trigger` as `(x, y, width, height)`, lies below it or above it inside a window `window` wide and tall.
+    pub fn git_menu_below(
+        &self,
+        kind: MenuKind,
+        trigger: (f32, f32, f32, f32),
+        window: (f32, f32),
+    ) -> (f32, f32) {
+        match self {
+            Self::Workspace(state) => state.git_menu_below(kind, trigger, window),
+        }
+    }
+
     /// The screen with the menu `kind` open at `at`.
     pub fn with_git_menu(self, kind: MenuKind, at: (f32, f32)) -> Self {
         match self {

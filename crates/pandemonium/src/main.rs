@@ -15,7 +15,7 @@ use std::path::Path;
 use winit::event_loop::{ControlFlow, EventLoop};
 
 use app::App;
-use snapshot::Shot;
+use snapshot::{Shot, Trigger};
 
 /// Opens the window and runs the event loop until it is closed, or, given `--version`, prints the version
 /// and leaves, or, given `--server`, runs the server
@@ -163,7 +163,9 @@ fn main() {
             Some("ignored-files") => Shot::IgnoredFiles,
             Some("source") => Shot::Source,
             Some("refused") => Shot::Refused,
-            Some("sourcemenu") => Shot::SourceMenu,
+            Some("sourcemenu") => Shot::SourceMenu(Trigger::Changes),
+            Some("sourcemenu-compact") => Shot::SourceMenu(Trigger::ChangesCompact),
+            Some("refsmenu") => Shot::SourceMenu(Trigger::Refs),
             Some("historymenu") => Shot::HistoryMenu,
             Some("stashing") => Shot::Stashing,
             Some("changemenu") => Shot::ChangeMenu,
