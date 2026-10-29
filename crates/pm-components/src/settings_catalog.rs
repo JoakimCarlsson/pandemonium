@@ -248,11 +248,17 @@ pub enum Setting {
     Notification,
     /// The server new projects are added on.
     DefaultServer,
+    /// Whether files are edited with vim's keys.
+    VimMode,
+    /// How much vim's unnamed register shares with the system clipboard.
+    VimClipboard,
+    /// The reader's own vim bindings, laid over the ones that come with it.
+    VimBindings,
 }
 
 impl Setting {
     /// Every setting, in the order the pages show them.
-    pub const ALL: [Self; 91] = [
+    pub const ALL: [Self; 94] = [
         Self::Launch,
         Self::ConfirmClose,
         Self::CheckUpdates,
@@ -344,6 +350,9 @@ impl Setting {
         Self::OnFinish,
         Self::Notification,
         Self::DefaultServer,
+        Self::VimMode,
+        Self::VimClipboard,
+        Self::VimBindings,
     ];
 
     /// The page it is on.
@@ -438,6 +447,7 @@ impl Setting {
                 Section::Agents
             }
             Self::DefaultServer => Section::Servers,
+            Self::VimMode | Self::VimClipboard | Self::VimBindings => Section::EditorVim,
         }
     }
 
@@ -801,6 +811,18 @@ impl Setting {
                 "How you are told an agent finished: a sound, a desktop notification, or neither.",
             ),
             Self::DefaultServer => ("Default server", "The server new projects are added on."),
+            Self::VimMode => (
+                "Vim mode",
+                "Edit files with vim's keys: normal, insert, visual and replace modes, motions, operators, text objects, registers, macros and the command line.",
+            ),
+            Self::VimClipboard => (
+                "Share the clipboard",
+                "Whether vim's unnamed register is the system clipboard: for every yank and delete, for yanks only, or never.",
+            ),
+            Self::VimBindings => (
+                "Your bindings",
+                "Keys written as keys => Action, with @ and a context after to hold only there, such as gh => Hover or jk => NormalBefore @ insert. They come after vim's own, so yours win; a line that cannot be read is not added.",
+            ),
         }
     }
 

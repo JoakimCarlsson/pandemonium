@@ -227,12 +227,13 @@ pub fn text_box(field: &Field, id: FocusId, placeholder: &str) -> Node {
         .build()
 }
 
-/// The `lines` one under another, each with a button that removes it answering to the name `remove_of` gives its place, then the box `field` answering to `field_id` with the button `add` that adds what is written in it.
+/// The `lines` one under another, each with a button that removes it answering to the name `remove_of` gives its place, then the box `field` answering to `field_id`, saying `placeholder` while empty, with the button `add`, labelled `label`, that adds what is written in it.
 pub fn list(
     lines: &[String],
     remove_of: impl Fn(usize) -> FocusId,
     field: (&Field, FocusId),
-    add: FocusId,
+    add: (FocusId, &str),
+    placeholder: &str,
 ) -> Node {
     let rows = lines.iter().enumerate().map(|(place, text)| {
         node()
@@ -262,9 +263,9 @@ pub fn list(
                 .child(
                     node()
                         .styles([w_px(TEXT_WIDTH), flex_none()])
-                        .child(text_box(field.0, field.1, "e.g. dist/ or .env.*")),
+                        .child(text_box(field.0, field.1, placeholder)),
                 )
-                .child(Button::new("Add Pattern", add).size(Size::Sm).build()),
+                .child(Button::new(add.1.to_owned(), add.0).size(Size::Sm).build()),
         )
 }
 

@@ -58,7 +58,7 @@ const NARROW_WIDTH: u32 = 640;
 const NARROW_HEIGHT: u32 = 420;
 
 /// The name of the shot of each section of the settings window, after `settings-`.
-pub const SETTINGS_SHOTS: [(&str, Section); 23] = [
+pub const SETTINGS_SHOTS: [(&str, Section); 24] = [
     ("general", Section::General),
     ("appearance", Section::Appearance),
     ("editor", Section::Editor),
@@ -67,6 +67,7 @@ pub const SETTINGS_SHOTS: [(&str, Section); 23] = [
     ("editor-saving", Section::EditorSaving),
     ("editor-intelligence", Section::EditorIntelligence),
     ("editor-search", Section::EditorSearch),
+    ("editor-vim", Section::EditorVim),
     ("languages", Section::Languages),
     ("keymap", Section::Keymap),
     ("terminal", Section::Terminal),
@@ -105,6 +106,8 @@ pub enum Shot {
     WordDiff,
     /// The workspace on the diff of its first session with the files after the first listed by the server and their diffs still to come.
     DiffListed,
+    /// The workspace on the diff at its compact density, with a file of thousands of added lines scrolled far down, whose rows must fill the view.
+    DiffCompact,
     /// The workspace on the diff of its first session with a comment kept and another being written.
     Commenting,
     /// The workspace on the diff of its first session with the project's files listed in the review panel.
@@ -351,6 +354,8 @@ pub enum Shot {
     ColorSwatches,
     /// The same file with the box for changing the first colour open, and the ways its language server offers to write it listed.
     ColorPicker,
+    /// The Rust file edited with vim's keys, with a word selected in visual mode, the mode named under the file and a command line being typed.
+    Vim,
     /// The review panel on its search tab, with the hits of a search for a word, grouped by file.
     ProjectSearch,
     /// The hits of a search as excerpts of three files, one under another, edited in place.
@@ -829,6 +834,36 @@ fn color_swatches() -> WorkspaceState {
                 swatch("pub fn new", "new", [0x4f, 0x8c, 0xe0, 0x80]),
             ],
         )
+}
+
+/// The Rust file with modal editing on, after keys that go down three lines, to the next word, select it in visual mode and start a command line.
+fn vim() -> WorkspaceState {
+    /// A clipboard that holds nothing, for keys that do not need one.
+    struct Empty;
+
+    impl pm_vim::Clipboard for Empty {
+        /// Nothing is on it.
+        fn read(&mut self) -> Option<String> {
+            None
+        }
+
+        /// What is put on it is dropped.
+        fn write(&mut self, _text: String) {}
+    }
+
+    let state = code();
+    let mut settings = state.editor.clone();
+    settings.vim_mode = true;
+    let mut state = state.with_editor_settings(settings);
+    for ch in "gg3jwve:".chars() {
+        let key = pm_vim::Keystroke {
+            key: pm_vim::Key::Char(ch),
+            ctrl: false,
+            shift: false,
+        };
+        state.vim_key(key, 600.0, &mut Empty);
+    }
+    state
 }
 
 /// The Rust file with the box for changing its first colour open, over the ways its language server offers to write it.
@@ -1626,6 +1661,20 @@ fn diff_listed() -> WorkspaceState {
     state
 }
 
+/// The workspace on the diff at its compact density, its first file replaced by one of five thousand added lines and scrolled a good way into it.
+fn diff_compact() -> WorkspaceState {
+    let state = workspace_sample();
+    let mut window = state.window.clone();
+    window.appearance.density = pm_config::Density::Compact;
+    let mut state = state.with_window_settings(window).after(TAB_DIFF);
+    let source: String = std::iter::once("@@ -0,0 +1,5000 @@".to_owned())
+        .chain((1..=5000).map(|line| format!("+    let value_{line} = {line};")))
+        .collect::<Vec<_>>()
+        .join("\n");
+    state.sessions[0].changes[0] = pm_components::sample::Change::new("src/long.rs", &source);
+    state.scrolled_diff(40_000.0, 200_000.0)
+}
+
 /// The workspace on the diff with a comment kept on some lines and a box open to write another on a file.
 fn commenting() -> WorkspaceState {
     let state = workspace_sample()
@@ -2204,6 +2253,7 @@ impl Shot {
             Self::Annotated => Screen::Workspace(annotated()),
             Self::ColorSwatches => Screen::Workspace(color_swatches()),
             Self::ColorPicker => Screen::Workspace(color_picker()),
+            Self::Vim => Screen::Workspace(vim()),
             Self::ProjectSearch => Screen::Workspace(project_search()),
             Self::Excerpts => Screen::Workspace(excerpts()),
             Self::TabMenu => Screen::Workspace(code().with_tab_menu(0, (500.0, 52.0))),
@@ -2398,6 +2448,10 @@ impl Shot {
             Self::DiffListed => {
                 load_installed_grammar("rust");
                 Screen::Workspace(diff_listed())
+            }
+            Self::DiffCompact => {
+                load_installed_grammar("rust");
+                Screen::Workspace(diff_compact())
             }
             Self::Commenting => Screen::Workspace(commenting()),
             Self::Files => Screen::Workspace(files()),

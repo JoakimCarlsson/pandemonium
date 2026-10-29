@@ -56,6 +56,30 @@ pub enum CursorShape {
     Underline,
 }
 
+/// How much vim's unnamed register shares with the system clipboard.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VimClipboard {
+    /// Every yank and delete goes to the clipboard, and pastes read it.
+    #[default]
+    Always,
+    /// Only yanks go to the clipboard; pastes still read it.
+    OnYank,
+    /// The clipboard is only reached through `"+` and `"*`.
+    Never,
+}
+
+impl From<VimClipboard> for pm_vim::ClipboardUse {
+    /// The sharing the engine knows by the same name.
+    fn from(sharing: VimClipboard) -> Self {
+        match sharing {
+            VimClipboard::Always => Self::Always,
+            VimClipboard::OnYank => Self::OnYank,
+            VimClipboard::Never => Self::Never,
+        }
+    }
+}
+
 /// How the editor looks and behaves.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -160,6 +184,12 @@ pub struct EditorSettings {
     pub dependency_hints: bool,
     /// The reader's own rules for what the types of tokens a language server names look like, which come before the language's.
     pub semantic_token_rules: Vec<pm_lsp::TokenRule>,
+    /// Whether files are edited with vim's keys.
+    pub vim_mode: bool,
+    /// How much vim's unnamed register shares with the system clipboard.
+    pub vim_clipboard: VimClipboard,
+    /// The reader's own vim bindings over the ones that come with it, each written as `keys => Action`, with `@ context` after when it holds only in one.
+    pub vim_bindings: Vec<String>,
     /// The bindings of keys the keymap starts from.
     pub keymap: crate::keymap::Preset,
     /// The reader's own bindings over the preset, by the name each action is kept under; an empty list leaves the action without keys.
@@ -200,6 +230,9 @@ impl Default for EditorSettings {
             code_lens: true,
             snippets_on_tab: true,
             emmet: true,
+            vim_mode: false,
+            vim_clipboard: VimClipboard::Always,
+            vim_bindings: Vec::new(),
             snippets: std::collections::BTreeMap::new(),
             minimap: true,
             sticky_scroll: true,

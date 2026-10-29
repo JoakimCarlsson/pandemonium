@@ -1774,6 +1774,8 @@ pub struct WorkspaceState {
     pub recent_files: Vec<String>,
     /// The box giving the thing at the caret a new name, when open.
     pub renaming: Option<crate::navigate::Renaming>,
+    /// What modal editing shares between files: its bindings, registers, macros and the last change and search.
+    pub vim: pm_vim::Vim,
     /// The colour of the file shown being changed, when the box for it is open.
     pub color_picking: Option<crate::color_picker::ColorPicking>,
     /// The box for going to a line of the file shown by its number, when open.
@@ -1949,6 +1951,7 @@ impl WorkspaceState {
             recent_files: Vec::new(),
             renaming: None,
             color_picking: None,
+            vim: pm_vim::Vim::default(),
             going_to: None,
             signature_at: (0.0, 0.0),
             finding: None,

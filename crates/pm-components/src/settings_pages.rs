@@ -23,10 +23,17 @@ use crate::state::WorkspaceState;
 impl WorkspaceState {
     /// Carries out pressing the control `id` of a setting, or a choice of the open list, and says whether it was one.
     pub(crate) fn setting_pressed(&mut self, id: FocusId) -> bool {
-        // shortcut: the one list setting is the worktree include list, give the lists a setting of their own when a second one comes
-        let listed = Setting::WorktreeInclude;
+        // the box and the buttons of a list are shared, so the list they work on is the one of the page that is open
+        let listed = if self.settings == Some(Section::EditorVim) {
+            Setting::VimBindings
+        } else {
+            Setting::WorktreeInclude
+        };
         if id == LIST_ADD {
             let pattern = self.settings_page.list_add.text().trim().to_owned();
+            if listed == Setting::VimBindings && !crate::vim::binding_reads(&pattern) {
+                return true;
+            }
             let mut lines = listed.lines(self);
             if !pattern.is_empty() && !lines.contains(&pattern) {
                 lines.push(pattern);
@@ -194,7 +201,8 @@ pub(crate) fn setting_row(state: &WorkspaceState, setting: Setting, room: f32) -
             &lines,
             list_remove_id,
             (&state.settings_page.list_add, LIST_FIELD),
-            LIST_ADD,
+            (LIST_ADD, setting.add_label()),
+            setting.add_placeholder(),
         ))),
         Control::Picker(shown) => {
             let width = PICKER_WIDTH.min(room - reserved);

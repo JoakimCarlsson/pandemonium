@@ -89,7 +89,7 @@ impl App {
     }
 
     /// How tall the window is, in logical pixels.
-    fn window_height(&self) -> f32 {
+    pub(super) fn window_height(&self) -> f32 {
         self.renderer
             .as_ref()
             .map_or(800.0, |renderer| renderer.size().1)

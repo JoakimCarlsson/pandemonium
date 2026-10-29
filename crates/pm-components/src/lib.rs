@@ -117,6 +117,7 @@ pub mod update;
 pub mod update_dialog;
 pub mod usage;
 pub mod viewer;
+pub mod vim;
 pub mod welcome;
 pub mod window;
 

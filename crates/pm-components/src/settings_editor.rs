@@ -4,12 +4,13 @@ use crate::settings::Section;
 use crate::state::WorkspaceState;
 
 /// The pages of the editor's settings, in the order the list of sections shows them.
-pub(crate) const PAGES: [Section; 5] = [
+pub(crate) const PAGES: [Section; 6] = [
     Section::EditorAppearance,
     Section::EditorEditing,
     Section::EditorSaving,
     Section::EditorIntelligence,
     Section::EditorSearch,
+    Section::EditorVim,
 ];
 
 impl WorkspaceState {
@@ -18,6 +19,7 @@ impl WorkspaceState {
         self.editor = settings;
         self.editor_loaded = true;
         self.apply_indentation();
+        self.apply_vim();
         self
     }
 
@@ -63,6 +65,9 @@ pub(crate) fn summary(section: Section) -> &'static str {
             "Completions, hovers, signatures and the problems the language server finds."
         }
         Section::EditorSearch => "Finding in a file, and how the view and its scrollbar follow it.",
+        Section::EditorVim => {
+            "Modal editing with vim's keys: whether it is on, what it shares with the clipboard and the bindings you add."
+        }
         _ => "",
     }
 }

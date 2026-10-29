@@ -201,6 +201,19 @@ impl Field {
         !self.past.is_empty()
     }
 
+    /// How many changes undo remembers now, for [`Field::squash_undo_since`].
+    pub fn undo_depth(&self) -> usize {
+        self.past.len()
+    }
+
+    /// Makes every change since undo remembered `depth` changes one, so that taking it back is one step; what began it is the change that was first.
+    pub fn squash_undo_since(&mut self, depth: usize) {
+        if self.past.len() > depth + 1 {
+            self.past.truncate(depth + 1);
+        }
+        self.typing = false;
+    }
+
     /// Whether there is a change that was taken back to make again.
     pub fn can_redo(&self) -> bool {
         !self.future.is_empty()

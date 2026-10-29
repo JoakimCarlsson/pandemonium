@@ -160,6 +160,10 @@ pub struct Document {
     pub(crate) linked: Option<Vec<Range<usize>>>,
     /// The rectangle being selected with the keys, while one is.
     pub(crate) column: Option<crate::column::ColumnBox>,
+    /// What modal editing is in the middle of in this document: its mode, the keys gathered towards a command and its marks.
+    pub(crate) vim: pm_vim::State,
+    /// Where undo stood when modal editing began typing, until it ends.
+    pub(crate) vim_typing_from: Option<usize>,
     /// Where the carets were before each move that changed nothing else, the latest last, to take back.
     pub(crate) cursor_past: Vec<crate::cursor_history::Carets>,
     /// Where the carets were before each move that was taken back, the latest last, to make again.
@@ -256,6 +260,8 @@ impl Document {
             server_folds: (0, Vec::new()),
             linked: None,
             column: None,
+            vim: pm_vim::State::default(),
+            vim_typing_from: None,
             cursor_past: Vec::new(),
             cursor_future: Vec::new(),
             snippet: None,

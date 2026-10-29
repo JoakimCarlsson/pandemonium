@@ -59,6 +59,7 @@ mod paste;
 mod performance;
 mod select;
 mod terminal;
+mod vim;
 
 use self::gesture::FieldText;
 use crate::keys::Clip;
@@ -1921,6 +1922,7 @@ impl App {
         if self.recording_key(event)
             || self.terminal_key(event)
             || self.list_key(event)
+            || self.vim_key(event)
             || self.text_key(event)
             || self.card_key(event)
             || self.rename_key(event)

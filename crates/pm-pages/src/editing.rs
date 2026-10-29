@@ -364,6 +364,23 @@ impl Screen {
         }
     }
 
+    /// Whether files are edited with vim's keys.
+    pub fn vim_on(&self) -> bool {
+        self.workspace_is(WorkspaceState::vim_on)
+    }
+
+    /// Carries `key` out on the file shown when modal editing is on, the view being `height` logical pixels tall; the commands it asks of the window come back, or nothing when modal editing did not take the key.
+    pub fn vim_key(
+        &mut self,
+        key: pm_vim::Keystroke,
+        height: f32,
+        clipboard: &mut dyn pm_vim::Clipboard,
+    ) -> Option<Vec<pm_vim::Command>> {
+        match self {
+            Self::Workspace(state) => state.vim_key(key, height, clipboard),
+        }
+    }
+
     /// The screen after the language server said where a link leads.
     pub fn with_link_resolved(
         self,

@@ -726,7 +726,8 @@ fn summary(section: Section) -> &'static str {
         | Section::EditorEditing
         | Section::EditorSaving
         | Section::EditorIntelligence
-        | Section::EditorSearch => crate::settings_editor::summary(section),
+        | Section::EditorSearch
+        | Section::EditorVim => crate::settings_editor::summary(section),
         Section::Agents => {
             "Tailor how agents work in your projects: what new sessions start with, what happens when an agent finishes, the agents that can be started and the tools they are given."
         }
@@ -807,7 +808,8 @@ pub(crate) fn body(state: &WorkspaceState, section: Section, room: f32) -> Node 
         | Section::EditorEditing
         | Section::EditorSaving
         | Section::EditorIntelligence
-        | Section::EditorSearch => inner
+        | Section::EditorSearch
+        | Section::EditorVim => inner
             .child(about)
             .child(crate::settings_pages::page_rows(state, section, room)),
         Section::Languages => inner

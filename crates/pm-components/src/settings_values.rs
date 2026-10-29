@@ -3,7 +3,7 @@
 use pm_config::{
     Channel, Density, Finish, GitMarks, Launch, Notification, TerminalCursor, ThemeMode,
 };
-use pm_editor::{CursorShape, DiagnosticsShown, Preset, SoftWrap};
+use pm_editor::{CursorShape, DiagnosticsShown, Preset, SoftWrap, VimClipboard};
 
 use crate::settings_catalog::Setting;
 use crate::settings_state::Kept;
@@ -206,6 +206,19 @@ impl Setting {
             Self::ScrollBeyond => Control::Switch(editor.scroll_beyond_last_line),
             Self::ScrollMargin => Control::Number(editor.vertical_scroll_margin.to_string()),
             Self::ScrollbarMarks => Control::Switch(editor.scrollbar_marks),
+            Self::VimMode => Control::Switch(editor.vim_mode),
+            Self::VimClipboard => Control::Choice(
+                &["Always", "On yank", "Never"],
+                place_of(
+                    &[
+                        VimClipboard::Always,
+                        VimClipboard::OnYank,
+                        VimClipboard::Never,
+                    ],
+                    &editor.vim_clipboard,
+                ),
+            ),
+            Self::VimBindings => Control::List(self.lines(state)),
             Self::Language => Control::Picker(
                 state
                     .settings_language()
@@ -426,6 +439,15 @@ impl Setting {
                     stepped(editor.vertical_scroll_margin as i64, 1, option, 0, 20) as usize;
             }
             Self::ScrollbarMarks => editor.scrollbar_marks ^= true,
+            Self::VimMode => editor.vim_mode ^= true,
+            Self::VimClipboard => {
+                let sharing = [
+                    VimClipboard::Always,
+                    VimClipboard::OnYank,
+                    VimClipboard::Never,
+                ];
+                editor.vim_clipboard = chosen(&sharing, option);
+            }
             Self::LanguageTabSize
             | Self::LanguageIndent
             | Self::LanguageFormat
@@ -519,6 +541,7 @@ impl Setting {
             | Self::BranchTemplate
             | Self::WorktreeFolder
             | Self::WorktreeInclude
+            | Self::VimBindings
             | Self::GitHosts
             | Self::DefaultAgent
             | Self::DefaultServer => {}
@@ -662,6 +685,22 @@ impl Setting {
         )
     }
 
+    /// What the button that adds a line to its list says, for a setting written as a list.
+    pub(crate) fn add_label(self) -> &'static str {
+        match self {
+            Self::VimBindings => "Add Binding",
+            _ => "Add Pattern",
+        }
+    }
+
+    /// What the box that a line of its list is written in says while it is empty, for a setting written as a list.
+    pub(crate) fn add_placeholder(self) -> &'static str {
+        match self {
+            Self::VimBindings => "e.g. gh => Hover",
+            _ => "e.g. dist/ or .env.*",
+        }
+    }
+
     /// The lines of the list it holds, for a setting written as a list.
     pub(crate) fn lines(self, state: &WorkspaceState) -> Vec<String> {
         match self {
@@ -674,14 +713,17 @@ impl Setting {
                 .filter(|line| !line.is_empty())
                 .map(str::to_owned)
                 .collect(),
+            Self::VimBindings => state.editor.vim_bindings.clone(),
             _ => Vec::new(),
         }
     }
 
     /// Has it hold `lines`, for a setting written as a list.
     pub(crate) fn set_lines(self, state: &mut WorkspaceState, lines: &[String]) {
-        if self == Self::WorktreeInclude {
-            state.machine.git.worktree_include = lines.join(", ");
+        match self {
+            Self::WorktreeInclude => state.machine.git.worktree_include = lines.join(", "),
+            Self::VimBindings => state.editor.vim_bindings = lines.to_vec(),
+            _ => {}
         }
     }
 
@@ -831,6 +873,9 @@ impl Setting {
             Self::ScrollBeyond => editor.scroll_beyond_last_line = source.scroll_beyond_last_line,
             Self::ScrollMargin => editor.vertical_scroll_margin = source.vertical_scroll_margin,
             Self::ScrollbarMarks => editor.scrollbar_marks = source.scrollbar_marks,
+            Self::VimMode => editor.vim_mode = source.vim_mode,
+            Self::VimClipboard => editor.vim_clipboard = source.vim_clipboard,
+            Self::VimBindings => editor.vim_bindings.clone_from(&source.vim_bindings),
             Self::Language => {}
             Self::LanguageTabSize
             | Self::LanguageIndent

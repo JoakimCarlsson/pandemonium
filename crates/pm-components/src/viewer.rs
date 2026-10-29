@@ -6,10 +6,10 @@ use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_protocol::{HintKind, Severity};
 use pm_style::{
-    Color, Radius, Role, bg, border_b, border_color, code_px, cursor_pointer, cursor_text, flex,
-    flex_1, flex_col, flex_none, font_mono, gap, h, h_px, items_center, justify_center,
-    justify_end, leading_ratio, min_h, min_w_px, ml, overflow_hidden, pl, pr, px, py, relative,
-    rounded, rounded_full, text_color, w, w_px,
+    Color, Radius, Role, bg, border_b, border_color, border_t, code_px, cursor_pointer,
+    cursor_text, flex, flex_1, flex_col, flex_none, font_mono, gap, h, h_px, items_center,
+    justify_center, justify_end, leading_ratio, min_h, min_w_px, ml, overflow_hidden, pl, pr, px,
+    py, relative, rounded, rounded_full, text_color, w, w_px,
 };
 use pm_text::Shaper;
 use pm_treesitter::{Highlight, Kind};
@@ -1042,6 +1042,7 @@ pub fn file_view(
                         blamed: &|line| state.blame_of_line(line).filter(|_| live),
                         settings: &pm_editor::EditorSettings {
                             git_gutter: state.shows_gutter(),
+                            cursor_shape: modal_shape(state, document, live),
                             ..state.editor.clone()
                         },
                         columns: state.wrap_columns(),
@@ -1140,4 +1141,47 @@ pub fn file_view(
                     _ => None,
                 }),
         )
+        .children(
+            state
+                .vim_status()
+                .filter(|_| live && source && matches!(viewer.contents, Contents::Text(_)))
+                .map(|status| vim_bar(&status)),
+        )
+}
+
+/// How the caret of `document` is drawn: as the mode of modal editing says while it is on and the file is the one being edited, and as the reader chose otherwise.
+fn modal_shape(state: &WorkspaceState, document: &Document, live: bool) -> pm_editor::CursorShape {
+    use pm_editor::CursorShape;
+    if !(live && state.vim_on()) {
+        return state.editor.cursor_shape;
+    }
+    match document.vim_shape() {
+        pm_vim::Shape::Block => CursorShape::Block,
+        pm_vim::Shape::Underline => CursorShape::Underline,
+        pm_vim::Shape::Typing => state.editor.cursor_shape,
+    }
+}
+
+/// The bar under the file that says which mode modal editing is in, the keys typed towards a command or the line being typed after `:` or `/`, and the register being recorded.
+fn vim_bar(status: &crate::vim::VimStatus) -> Node {
+    node()
+        .styles([
+            flex(),
+            items_center(),
+            gap(3),
+            h(6),
+            px(3),
+            flex_none(),
+            border_t(),
+            border_color(Role::Border),
+            bg(Role::Surface),
+        ])
+        .child(line(status.mode, 12, 1.4, Role::Text).styles([font_mono(), flex_none()]))
+        .children(status.pending.as_ref().map(|pending| {
+            line(pending, 12, 1.4, Role::Muted).styles([font_mono(), flex_1(), min_w_px(0)])
+        }))
+        .children(status.recording.map(|register| {
+            line(format!("recording @{register}"), 12, 1.4, Role::Danger)
+                .styles([font_mono(), flex_none()])
+        }))
 }
