@@ -61,12 +61,12 @@ fn action_for(command: Command) -> Option<Action> {
         Command::MoveLineDown => Action::MoveLineDown,
         Command::SelectAllMatches => Action::SelectAllOccurrences,
         Command::SelectNext => Action::AddNextOccurrence,
-        Command::NextTab
-        | Command::PreviousTab
-        | Command::ReopenTab
-        | Command::NextHunk
-        | Command::PreviousHunk
-        | Command::Cancel => return None,
+        Command::NextTab => Action::NextTab,
+        Command::PreviousTab => Action::PreviousTab,
+        Command::ReopenTab => Action::ReopenTab,
+        Command::NextHunk => Action::NextChange,
+        Command::PreviousHunk => Action::PreviousChange,
+        Command::Cancel => return None,
     })
 }
 

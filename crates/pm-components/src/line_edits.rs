@@ -44,6 +44,10 @@ pub enum LineEdit {
     NextProblem,
     /// Goes to the stretch before that the language server finds wrong.
     PreviousProblem,
+    /// Goes to the next stretch of lines changed since the last commit.
+    NextChange,
+    /// Goes to the stretch of lines changed since the last commit before.
+    PreviousChange,
     /// Backspace: an empty pair deleted whole, a level of indentation at once, or one character.
     Backspace,
     /// Selects the next place the selection comes again as well, or the word at the caret.
@@ -200,6 +204,8 @@ impl WorkspaceState {
                 | LineEdit::SelectObject(..)
                 | LineEdit::NextProblem
                 | LineEdit::PreviousProblem
+                | LineEdit::NextChange
+                | LineEdit::PreviousChange
                 | LineEdit::AddNextOccurrence
                 | LineEdit::SelectAllOccurrences
                 | LineEdit::AddCaretAbove
@@ -235,6 +241,8 @@ impl WorkspaceState {
             LineEdit::Shrink => document.shrink_selection_edit(),
             LineEdit::SelectObject(object, inside) => document.select_object_edit(object, inside),
             LineEdit::NextProblem => document.next_diagnostic_edit(false),
+            LineEdit::NextChange => document.next_change_edit(false),
+            LineEdit::PreviousChange => document.next_change_edit(true),
             LineEdit::PreviousProblem => document.next_diagnostic_edit(true),
             LineEdit::Backspace => Some(document.backspace_edit().unwrap_or(Edit::Backspace)),
             LineEdit::AddNextOccurrence => document.add_next_occurrence_edit(),

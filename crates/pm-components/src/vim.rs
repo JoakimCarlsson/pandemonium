@@ -128,6 +128,10 @@ impl WorkspaceState {
             rows,
             margin: self.editor.vertical_scroll_margin,
             wrap: self.editor.preferred_line_length,
+            auto_close: self.editor.auto_close,
+            auto_indent: self.editor.auto_indent,
+            replay_typing: self.editor.vim_replay_typing,
+            syntax_objects: self.editor.vim_syntax_objects,
         };
         let mut vim = std::mem::take(&mut self.vim);
         let pressed = self

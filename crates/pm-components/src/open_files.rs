@@ -639,6 +639,7 @@ impl WorkspaceState {
         let closed = self.git.viewers.remove(index);
         if let Some(session) = self.review_index() {
             self.close_document(session, &closed);
+            self.remember_closed_tab(session, &closed);
         }
         self.git.shown = match self.git.shown {
             _ if self.git.viewers.is_empty() => None,
@@ -670,6 +671,7 @@ impl WorkspaceState {
         {
             self.discard_file(index);
         }
+        self.forget_closed_tabs(path);
     }
 
     /// Carries out `action` if it is a tab of an open file, a button of one or the file's own keys, and says whether it was.

@@ -2,9 +2,15 @@
 //!
 //! The window's own documents count bytes and keep their history elsewhere, so modal editing works on a copy of the text that it is given before a key and gives back after it: [`Buffer::new`] takes the text and where the carets are, the engine changes it, and the window compares what is left with what it handed in. Undo is the window's: asking this buffer to undo only says so, in [`Buffer::take_history`], for the window to carry out on the document.
 
+use std::cell::OnceCell;
 use std::ops::Range;
+use std::sync::Arc;
 
 use ropey::Rope;
+
+mod replay;
+
+pub use replay::TypingRules;
 
 /// A place in a buffer: which line, and how many characters into it.
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
@@ -167,7 +173,11 @@ pub struct Buffer {
     /// What starts a comment that runs to the end of the line, when the language has one.
     line_comment: Option<String>,
     /// The nodes of the file's syntax tree that vim's objects and motions go by.
-    nodes: Vec<SyntaxNode>,
+    nodes: OnceCell<Arc<Vec<SyntaxNode>>>,
+    /// How to find the nodes when something asks for them, which is not every key.
+    nodes_from: Option<Box<dyn Fn() -> Vec<SyntaxNode>>>,
+    /// How replayed typing pairs brackets and indents lines, when the window gave rules for it.
+    typing: Option<TypingRules>,
     /// How many times the engine asked to undo and to redo.
     history: (usize, usize),
 }
@@ -205,7 +215,9 @@ impl Buffer {
             goal_column: None,
             indent: Indent::default(),
             line_comment: None,
-            nodes: Vec::new(),
+            nodes: OnceCell::new(),
+            nodes_from: None,
+            typing: None,
             history: (0, 0),
         }
     }
@@ -221,8 +233,20 @@ impl Buffer {
     }
 
     /// Sets the syntax nodes that function, class and comment objects go by.
-    pub fn set_syntax_nodes(&mut self, nodes: Vec<SyntaxNode>) {
-        self.nodes = nodes;
+    pub fn set_syntax_nodes(&mut self, nodes: Arc<Vec<SyntaxNode>>) {
+        self.nodes = OnceCell::from(nodes);
+        self.nodes_from = None;
+    }
+
+    /// Sets how the syntax nodes are found, which happens the first time a motion or object asks for them and not before.
+    pub fn set_syntax_loader(&mut self, load: impl Fn() -> Vec<SyntaxNode> + 'static) {
+        self.nodes = OnceCell::new();
+        self.nodes_from = Some(Box::new(load));
+    }
+
+    /// The syntax nodes, when they have been found or given, for the window to keep for the next key.
+    pub fn loaded_syntax_nodes(&self) -> Option<Arc<Vec<SyntaxNode>>> {
+        self.nodes.get().cloned()
     }
 
     /// How many times the engine asked to undo and to redo since the last call, which the window carries out on the document.
@@ -371,7 +395,15 @@ impl Buffer {
 
     /// The nodes of the syntax tree whose kind `keep` accepts.
     pub fn syntax_nodes(&self, keep: &dyn Fn(&str) -> bool) -> Vec<SyntaxNode> {
-        self.nodes
+        let nodes = self.nodes.get_or_init(|| {
+            Arc::new(
+                self.nodes_from
+                    .as_ref()
+                    .map(|load| load())
+                    .unwrap_or_default(),
+            )
+        });
+        nodes
             .iter()
             .filter(|node| keep(&node.kind))
             .cloned()
@@ -636,18 +668,18 @@ impl Buffer {
 
     /// Puts one typed character in.
     pub fn insert_typed(&mut self, ch: char) {
+        if self.selection.is_empty() && self.type_paired(ch) {
+            return;
+        }
         self.insert(&ch.to_string());
+        if self.typing.as_ref().is_some_and(|rules| rules.indent) {
+            self.outdent_closer();
+        }
     }
 
     /// Puts a line break in, indented as the line it leaves is.
     pub fn insert_newline(&mut self) {
-        let head = self.selection.start();
-        let indent: String = self
-            .line_chars(head.line)
-            .take_while(|ch| *ch == ' ' || *ch == '\t')
-            .take(head.column)
-            .collect();
-        self.insert(&format!("\n{indent}"));
+        self.break_line();
     }
 
     /// Puts an empty line below the one the cursor is on, indented as it is, and goes to it.
@@ -737,6 +769,9 @@ impl Buffer {
     pub fn backspace(&mut self) {
         if !self.selection.is_empty() {
             return self.insert("");
+        }
+        if self.backspace_paired() {
+            return;
         }
         let head = self.selection.head;
         let start = match (head.line, head.column) {

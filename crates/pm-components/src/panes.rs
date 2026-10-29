@@ -853,7 +853,7 @@ impl WorkspaceState {
     }
 
     /// Shows `item` in its pane and makes that pane the one being worked in.
-    fn show_item(&mut self, item: &Item) {
+    pub(crate) fn show_item(&mut self, item: &Item) {
         match item {
             Item::Page => self.tab = Tab::Chat,
             Item::Diff => self.tab = Tab::Diff,

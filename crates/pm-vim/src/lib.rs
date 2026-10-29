@@ -32,7 +32,7 @@ mod text;
 mod wrap;
 
 pub use action::{Command, Placement};
-pub use buffer::{Buffer, Indent, Motion, Position, Selection, SyntaxNode};
+pub use buffer::{Buffer, Indent, Motion, Position, Selection, SyntaxNode, TypingRules};
 pub use engine::{Effect, Outcome, State, Vim};
 pub use key::{Key, Keystroke};
 pub use keymap::BadBinding;
