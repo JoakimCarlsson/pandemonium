@@ -1075,6 +1075,7 @@ keeps its own emulator for them.
 ```json
 { "type": "terminal_output", "terminal": 1, "offset": 0, "data": "<base64>" }
 { "type": "terminal_exited", "terminal": 1 }
+{ "type": "terminal_serving", "terminal": 1, "url": "http://localhost:5173/" }
 ```
 
 - `terminal_output`: bytes the shell printed. `offset` is how many bytes it had
@@ -1088,6 +1089,16 @@ keeps its own emulator for them.
   with `after: 0` for each shell `terminals` lists.
 - `terminal_exited` is sent to every client when the shell's process ends, and
   the shell is forgotten.
+- `terminal_serving` is sent to the connections attached to a shell when a
+  program started in it serves a web page. The server finds one when a line of
+  output holds a bare `http://` address of a local port (`localhost`,
+  `127.0.0.1`, `0.0.0.0` or `[::1]`, with no path), the port was not listening
+  when the reader last pressed Enter in that shell and is now, and a request for
+  `/` on it answers with an HTML document that is not a redirect, a 404 or the
+  discovery endpoint of a browser's debugger. It is sent once for each address a
+  command prints. `url` is the address on the server's machine, so a client
+  carries it to that machine's port as it does for any page. A shell in a dev
+  container is not seen, since its ports are the container's.
 - `terminal_input` carries what a terminal sends the shell for a key or a paste
   (`"\r"` for Enter, `"\u001b[A"` for the up arrow), and the answers an
   emulator gives to the shell's queries.
@@ -1212,8 +1223,10 @@ server hosts on its loopback address; the server hands each call to a window.
   forgets it when the connection ends.
 - `browser_call` is sent to that connection when an agent calls a tool. The
   tools are `browser_navigate`, `browser_snapshot`, `browser_screenshot`,
-  `browser_click`, `browser_type`, `browser_evaluate`, `browser_console`,
-  `browser_network` and `browser_wait`; `arguments` is the JSON the agent gave.
+  `browser_click`, `browser_type`, `browser_press_key`, `browser_scroll`,
+  `browser_back`, `browser_forward`, `browser_reload`, `browser_evaluate`,
+  `browser_console`, `browser_network` and `browser_wait`; `arguments` is the
+  JSON the agent gave.
 - `browser_result` answers a call with the text the tool produced and, for
   `browser_screenshot`, the PNG it took. The server answers the agent with it,
   or with an error when no connection answers within a minute and a half or

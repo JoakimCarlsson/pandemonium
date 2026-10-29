@@ -1,20 +1,53 @@
 //! Shells the server runs in pseudo-terminals, kept going when no client is attached.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use pm_protocol::{ServerMessage, TerminalInfo};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 
 use crate::core::{Connection, Core};
+use crate::serving::{self, Found};
 
 /// How many bytes of a shell's output are kept to show a client that attaches late.
 const KEPT: usize = 256 * 1024;
 
 /// How many bytes are read from a shell at a time.
 const CHUNK: usize = 8 * 1024;
+
+/// How many times the port of a page a shell printed is looked at before it is given up on.
+const CONFIRMS: u32 = 20;
+
+/// How long to wait between looking at the port of a page.
+const CONFIRM_EVERY: Duration = Duration::from_millis(500);
+
+/// The ports that were listening when the reader last pressed Enter in a shell.
+#[derive(Clone, Default)]
+enum Baseline {
+    /// They are being read.
+    #[default]
+    Pending,
+    /// The system could not say.
+    Unavailable,
+    /// These were listening.
+    Ports(BTreeSet<u16>),
+}
+
+/// What a shell's programs serve, as far as what it printed and the ports say.
+#[derive(Default)]
+struct Watch {
+    /// Counted up each time the reader presses Enter, so that what is found for an earlier command is dropped.
+    epoch: u64,
+    /// What listened when this command began.
+    baseline: Baseline,
+    /// What was printed since the last line ended.
+    pending: String,
+    /// The address last found for this command.
+    last: Option<String>,
+}
 
 /// What a shell printed that is still kept, and how much was printed before it.
 #[derive(Default)]
@@ -41,6 +74,8 @@ pub(crate) struct Terminal {
     child: Mutex<Box<dyn Child + Send + Sync>>,
     /// What it printed.
     output: Mutex<Output>,
+    /// What its programs serve.
+    watch: Arc<Mutex<Watch>>,
 }
 
 /// The size a pseudo-terminal of `columns` and `rows` is opened at.
@@ -125,6 +160,7 @@ impl Terminal {
             writer: Mutex::new(writer),
             child: Mutex::new(child),
             output: Mutex::new(Output::default()),
+            watch: Arc::new(Mutex::new(Watch::default())),
         })
     }
 
@@ -186,8 +222,96 @@ impl Terminal {
         }
     }
 
+    /// Starts a command's watch: what it serves is what listens after now, so the ports listening now are read.
+    fn begin_command(&self) {
+        let epoch = match self.watch.lock() {
+            Ok(mut watch) => {
+                watch.epoch += 1;
+                watch.baseline = Baseline::Pending;
+                watch.last = None;
+                watch.epoch
+            }
+            Err(_) => return,
+        };
+        let watch = self.watch.clone();
+        std::thread::spawn(move || {
+            let baseline =
+                serving::listening_ports().map_or(Baseline::Unavailable, Baseline::Ports);
+            if let Ok(mut watch) = watch.lock()
+                && watch.epoch == epoch
+            {
+                watch.baseline = baseline;
+            }
+        });
+    }
+
+    /// Looks in what the shell printed for a web page its program serves, and confirms it in the background.
+    fn watch_output(self: &Arc<Self>, number: u64, data: &[u8]) {
+        let (epoch, found) = {
+            let Ok(mut watch) = self.watch.lock() else {
+                return;
+            };
+            let found = serving::scan(&mut watch.pending, data)
+                .filter(|found| watch.last.as_deref() != Some(found.url.as_str()));
+            if let Some(found) = &found {
+                watch.last = Some(found.url.clone());
+            }
+            (watch.epoch, found)
+        };
+        if let Some(found) = found {
+            let terminal = self.clone();
+            std::thread::spawn(move || terminal.confirm(number, epoch, &found));
+        }
+    }
+
+    /// Waits for the port of `found` to listen, which it did not when the command began, and tells the connections watching when it answers with a web page.
+    fn confirm(&self, number: u64, epoch: u64, found: &Found) {
+        for attempt in 0..CONFIRMS {
+            if attempt > 0 {
+                std::thread::sleep(CONFIRM_EVERY);
+            }
+            let baseline = match self.watch.lock() {
+                Ok(watch) if watch.epoch == epoch => watch.baseline.clone(),
+                _ => return,
+            };
+            match baseline {
+                Baseline::Pending => {}
+                Baseline::Unavailable => return,
+                Baseline::Ports(before) => {
+                    if before.contains(&found.port) {
+                        return;
+                    }
+                    if serving::listening_ports().is_some_and(|now| now.contains(&found.port)) {
+                        if serving::serves_page(found.port)
+                            && self.watch.lock().is_ok_and(|watch| watch.epoch == epoch)
+                        {
+                            self.announce(number, &found.url);
+                        }
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Tells the connections watching that the page at `url` is served.
+    fn announce(&self, number: u64, url: &str) {
+        let Ok(output) = self.output.lock() else {
+            return;
+        };
+        for connection in &output.watchers {
+            let _ = connection.outbox.send(ServerMessage::TerminalServing {
+                terminal: number,
+                url: url.to_owned(),
+            });
+        }
+    }
+
     /// Hands the shell what the reader typed.
     fn write(&self, data: &[u8]) {
+        if data.iter().any(|byte| matches!(byte, b'\r' | b'\n')) {
+            self.begin_command();
+        }
         if let Ok(mut writer) = self.writer.lock() {
             let _ = writer.write_all(data);
             let _ = writer.flush();
@@ -279,6 +403,7 @@ impl Core {
                     break;
                 }
                 terminal.print(number, &buffer[..count]);
+                terminal.watch_output(number, &buffer[..count]);
             }
             if let Ok(mut held) = core.terminals.lock() {
                 held.remove(&number);
@@ -352,3 +477,6 @@ impl Core {
         infos
     }
 }
+
+#[cfg(test)]
+mod tests;

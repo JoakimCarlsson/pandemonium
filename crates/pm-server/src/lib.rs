@@ -28,6 +28,7 @@ mod queue;
 mod releases;
 mod rewind;
 mod scan;
+mod serving;
 mod sessions;
 mod tasks;
 mod terminals;

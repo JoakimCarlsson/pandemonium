@@ -418,6 +418,8 @@ pub struct Work {
     browser_available: bool,
     /// The browser tool calls agents made that the window has not taken yet, each with the machine, the call and the tool with its arguments.
     browser_calls: Vec<(Host, u64, String, String)>,
+    /// The web pages that programs started in shells serve and the window has not taken yet, each with the machine and the address on it.
+    served: Vec<(Host, String)>,
     /// What the threads report.
     jobs: Receiver<Job>,
     /// Handed to each thread.
@@ -465,6 +467,7 @@ impl Work {
             positions: HashMap::new(),
             forgotten: HashSet::new(),
             browser_calls: Vec::new(),
+            served: Vec::new(),
             browser_available: false,
             cancelled: HashSet::new(),
             early: HashMap::new(),
@@ -586,6 +589,11 @@ impl Work {
     /// The browser tool calls agents made since this was last called.
     pub fn take_browser_calls(&mut self) -> Vec<(Host, u64, String, String)> {
         std::mem::take(&mut self.browser_calls)
+    }
+
+    /// The web pages programs started in shells served since this was last called, each with the machine and the address on it.
+    pub fn take_served(&mut self) -> Vec<(Host, String)> {
+        std::mem::take(&mut self.served)
     }
 
     /// Answers the browser tool call `call` of the server on `host`.
@@ -1579,6 +1587,9 @@ impl Work {
                             self.tabs.remove(&tab);
                             model.update(|screen| screen.terminal_exited(tab));
                         }
+                    }
+                    Incoming::TerminalServing { url, .. } => {
+                        self.served.push((host.clone(), url));
                     }
                     Incoming::Debug {
                         debug,

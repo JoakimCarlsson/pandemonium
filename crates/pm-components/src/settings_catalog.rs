@@ -78,6 +78,8 @@ pub enum Setting {
     OfferLanguages,
     /// Whether the embedded browser is turned on.
     EmbeddedBrowser,
+    /// Whether the embedded browser opens on a dev server a shell started.
+    OpenDevServers,
     /// Whether the window is light, dark or as the desktop says.
     ThemeMode,
     /// The theme drawn while it is light.
@@ -292,13 +294,14 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting, in the order the pages show them.
-    pub const ALL: [Self; 111] = [
+    pub const ALL: [Self; 112] = [
         Self::Launch,
         Self::ConfirmClose,
         Self::CheckUpdates,
         Self::Channel,
         Self::OfferLanguages,
         Self::EmbeddedBrowser,
+        Self::OpenDevServers,
         Self::ThemeMode,
         Self::LightTheme,
         Self::DarkTheme,
@@ -414,7 +417,8 @@ impl Setting {
             | Self::CheckUpdates
             | Self::Channel
             | Self::OfferLanguages
-            | Self::EmbeddedBrowser => Section::General,
+            | Self::EmbeddedBrowser
+            | Self::OpenDevServers => Section::General,
             Self::ThemeMode
             | Self::LightTheme
             | Self::DarkTheme
@@ -578,6 +582,10 @@ impl Setting {
             Self::EmbeddedBrowser => (
                 "Embedded browser",
                 "Show web pages, such as a dev server, in a pane beside the work. Turning it on downloads the browser once, about 120 MB.",
+            ),
+            Self::OpenDevServers => (
+                "Open dev servers in the browser",
+                "Open the embedded browser on the web page a program started in a terminal serves, such as a dev server. Needs the embedded browser.",
             ),
             Self::ThemeMode => (
                 "Theme mode",

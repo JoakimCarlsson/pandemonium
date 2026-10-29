@@ -35,6 +35,26 @@ window's pointer, scroll and key requests as input events. The picker and the
 agent tools use the page's DevTools protocol through Electron's debugger. The
 developer tools are Electron's own, painted into a second page.
 
+## Opening a dev server
+
+When a program started in a shell serves a web page, the browser opens on it.
+The server that runs the shell finds the page (`crates/pm-server/src/serving.rs`,
+wired into `terminals.rs`), so it works for remote projects too, and tells the
+window with `terminal_serving`. It takes four agreeing signals:
+
+1. a line of the shell's output holds a bare `http://` address of a local port,
+   such as vite's `Local: http://localhost:5173/`;
+2. the port was not listening when the reader last pressed Enter in that shell;
+3. the port listens now (`/proc/net/tcp` on Linux, `lsof` elsewhere);
+4. `GET /` on it answers with an HTML document that is not a redirect, a 404 or
+   a browser debugger's discovery endpoint.
+
+The window then opens the browser on the address, or sends an open browser to
+it, over the same SSH forward as any other page of that machine. It happens
+once for each address a command prints, only while the embedded browser is on
+and installed, and Settings, under General, can turn it off. A shell in a dev
+container is not seen, since its ports are the container's.
+
 ## Picking an element
 
 The Pick button of the pane turns on a mode in which a click on the page picks

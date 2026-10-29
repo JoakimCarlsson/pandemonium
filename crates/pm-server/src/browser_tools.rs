@@ -368,6 +368,46 @@ fn definitions() -> Vec<Value> {
             &["text"],
         ),
         tool(
+            "browser_press_key",
+            "Press a key, such as `Escape`, `Tab`, `Enter`, `ArrowDown`, `F5` or `a`, with `modifiers` held (some of `shift`, `control`, `alt`, `meta`); an element given by `ref` or `selector` is focused first.",
+            &json!({
+                "key": { "type": "string" },
+                "modifiers": { "type": "array", "items": { "type": "string" } },
+                "ref": target["ref"],
+                "selector": target["selector"],
+            }),
+            &["key"],
+        ),
+        tool(
+            "browser_scroll",
+            "Scroll the page, or the element given by `ref` or `selector`: bring it into view when no `direction` is given, or move `direction` (`up`, `down`, `left`, `right`, `top` or `bottom`) by `amount` pixels, a screen when not given. Says where it ended up.",
+            &json!({
+                "direction": { "type": "string" },
+                "amount": { "type": "number" },
+                "ref": target["ref"],
+                "selector": target["selector"],
+            }),
+            &[],
+        ),
+        tool(
+            "browser_back",
+            "Go back one page in the history and wait for it to load.",
+            &json!({}),
+            &[],
+        ),
+        tool(
+            "browser_forward",
+            "Go forward one page in the history and wait for it to load.",
+            &json!({}),
+            &[],
+        ),
+        tool(
+            "browser_reload",
+            "Load the page again and wait for it to load.",
+            &json!({}),
+            &[],
+        ),
+        tool(
             "browser_evaluate",
             "Run a JavaScript expression in the page and give back its value as JSON.",
             &json!({ "expression": { "type": "string" } }),

@@ -88,6 +88,13 @@ pub enum ServerMessage {
         /// The shell.
         terminal: u64,
     },
+    /// A program started in a shell serves a web page on a port of the server's machine, as the shell's output says and the port bears out.
+    TerminalServing {
+        /// The shell.
+        terminal: u64,
+        /// The address of the page, as the server's machine knows it.
+        url: String,
+    },
     /// What a language server finds wrong with a file the connection opened, replacing what it found before.
     Diagnostics {
         /// The folder the file was opened in.

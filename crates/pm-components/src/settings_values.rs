@@ -93,6 +93,7 @@ impl Setting {
             Self::CheckUpdates => Control::Switch(window.general.check_updates),
             Self::OfferLanguages => Control::Switch(window.general.offer_languages),
             Self::EmbeddedBrowser => Control::Switch(window.general.embedded_browser),
+            Self::OpenDevServers => Control::Switch(window.general.open_dev_servers),
             Self::Channel => Control::Choice(
                 &["Stable", "Preview"],
                 place_of(
@@ -410,6 +411,7 @@ impl Setting {
             Self::CheckUpdates => window.general.check_updates ^= true,
             Self::OfferLanguages => window.general.offer_languages ^= true,
             Self::EmbeddedBrowser => window.general.embedded_browser ^= true,
+            Self::OpenDevServers => window.general.open_dev_servers ^= true,
             Self::Channel => {
                 window.general.channel = [Channel::Stable, Channel::Preview][option.min(1)];
             }
@@ -896,6 +898,9 @@ impl Setting {
             }
             Self::EmbeddedBrowser => {
                 window.general.embedded_browser = own.general.embedded_browser;
+            }
+            Self::OpenDevServers => {
+                window.general.open_dev_servers = own.general.open_dev_servers;
             }
             Self::Channel => window.general.channel = own.general.channel,
             Self::ThemeMode => window.appearance.theme_mode = own.appearance.theme_mode,

@@ -207,6 +207,19 @@ impl WorkspaceState {
         self.tab = Tab::Browser;
     }
 
+    /// Shows the page a program started in a shell serves at `address` on the machine `host`: the browser opens on it, or when it is open it goes to it.
+    pub fn open_served_page(&mut self, address: &str, host: Option<String>) {
+        match self.browser.as_mut() {
+            Some(browser) => {
+                browser.host = host;
+                browser.address = Field::new(address);
+                browser.commands.push(Command::Load(address.to_owned()));
+            }
+            None => self.browser = Some(Browser::new(address, host)),
+        }
+        self.tab = Tab::Browser;
+    }
+
     /// Opens the browser as it was left: on `address`, on the machine `host`, with the developer tools open when `tools`, `tools_width` wide, shown when `shown`.
     pub fn restore_browser(
         &mut self,

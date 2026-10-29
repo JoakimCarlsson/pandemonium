@@ -43,6 +43,8 @@ pub struct GeneralSettings {
     pub declined_languages: Vec<String>,
     /// Whether the embedded browser is turned on, which downloads it once.
     pub embedded_browser: bool,
+    /// Whether the embedded browser opens on the web page a program started in a shell serves.
+    pub open_dev_servers: bool,
 }
 
 impl Default for GeneralSettings {
@@ -56,6 +58,7 @@ impl Default for GeneralSettings {
             offer_languages: true,
             declined_languages: Vec::new(),
             embedded_browser: false,
+            open_dev_servers: true,
         }
     }
 }

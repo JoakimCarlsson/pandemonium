@@ -961,6 +961,25 @@ impl App {
         true
     }
 
+    /// Opens the pages that programs started in shells serve, when the browser is on and installed and the setting to open them is.
+    fn browser_served(&mut self) {
+        let pages = self.work.take_served();
+        let general = &self.saved_window.general;
+        if !(general.embedded_browser
+            && general.open_dev_servers
+            && pm_browser::install::supported()
+            && pm_browser::install::installed())
+        {
+            return;
+        }
+        for (host, url) in pages {
+            self.model.update(|screen| {
+                let Screen::Workspace(state) = screen;
+                state.open_served_page(&url, host);
+            });
+        }
+    }
+
     /// Does the browser's work for one turn of the event loop, and says whether a page is open, which wants the loop to turn again soon.
     pub(super) fn browser_tick(&mut self) -> bool {
         let scale = self
@@ -969,6 +988,7 @@ impl App {
             .map_or(1.0, |window| window.scale_factor() as f32);
         let downloading = self.browser_install();
         let calling = self.browser_agent(scale);
+        self.browser_served();
         self.browser_commands(scale);
         if self.web.page.is_none() {
             return downloading || calling;

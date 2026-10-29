@@ -48,6 +48,13 @@ pub enum Incoming {
     },
     /// The shell with this number ended.
     TerminalExited(u64),
+    /// A program started in the shell with this number serves the web page at this address, on the server's machine.
+    TerminalServing {
+        /// The shell.
+        terminal: u64,
+        /// The address of the page.
+        url: String,
+    },
     /// How far the download of an update has got.
     UpdateProgress {
         /// How many bytes have arrived.
@@ -434,6 +441,9 @@ fn converse(
                         memory.shells.remove(&terminal);
                         memory.heard.remove(&terminal);
                         let _ = reporter.send(Incoming::TerminalExited(terminal));
+                    }
+                    ServerMessage::TerminalServing { terminal, url } => {
+                        let _ = reporter.send(Incoming::TerminalServing { terminal, url });
                     }
                     ServerMessage::UpdateProgress { received, total } => {
                         let _ = reporter.send(Incoming::UpdateProgress { received, total });

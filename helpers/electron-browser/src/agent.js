@@ -176,6 +176,61 @@ function pressEnter(page) {
 }
 
 /**
+ * The names Electron gives keys that the web names differently.
+ * @type {Readonly<Record<string, string>>}
+ */
+const KEY_NAMES = {
+  ArrowUp: 'Up',
+  ArrowDown: 'Down',
+  ArrowLeft: 'Left',
+  ArrowRight: 'Right',
+  Esc: 'Escape',
+  Return: 'Enter',
+  ' ': 'Space',
+  Del: 'Delete',
+};
+
+/** The modifiers a key press may hold. */
+const KEY_MODIFIERS = ['shift', 'control', 'alt', 'meta'];
+
+/**
+ * Presses a key in the page, with the modifiers held.
+ * @param {Page} page The page.
+ * @param {string} key The key, such as `Escape`, `Tab`, `ArrowDown`, `F5` or `a`.
+ * @param {Json} held The modifiers held: some of `shift`, `control`, `alt` and `meta`.
+ * @returns {ToolOutcome} The answer.
+ */
+function pressKey(page, key, held) {
+  const modifiers = /** @type {Array<'shift' | 'control' | 'alt' | 'meta'>} */ (
+    (Array.isArray(held) ? held : []).filter((name) => KEY_MODIFIERS.includes(name))
+  );
+  const keyCode = KEY_NAMES[key] || (key.length === 1 ? key.toUpperCase() : key);
+  page.contents.sendInputEvent({ type: 'keyDown', keyCode, modifiers });
+  if (key.length === 1 && !modifiers.includes('control') && !modifiers.includes('meta')) {
+    page.contents.sendInputEvent({ type: 'char', keyCode: key, modifiers });
+  }
+  page.contents.sendInputEvent({ type: 'keyUp', keyCode, modifiers });
+  return done(`Pressed ${[...modifiers, key].join('+')}.`);
+}
+
+/**
+ * Runs `act`, which moves through the page's history or loads it again, and ends when the page has stopped loading or takes too long.
+ * @param {Page} page The page.
+ * @param {() => void} act What to do.
+ * @returns {Promise<ToolOutcome>} The answer.
+ */
+async function loading(page, act) {
+  /** @type {Promise<ToolOutcome>} */
+  const late = new Promise((resolve) => setTimeout(() => resolve(failed('The page took too long to load.')), LOADING));
+  /** @type {Promise<ToolOutcome>} */
+  const stopped = new Promise((resolve) => {
+    page.contents.once('did-stop-loading', () => resolve(done(`The page loaded: ${page.contents.getURL()}`)));
+  });
+  act();
+  return Promise.race([stopped, late]);
+}
+
+/**
  * Whether an agent may send the page to an address: a web address or the blank page, never a local file or an internal page.
  * @param {string} url The address.
  * @returns {boolean} Whether it may.
@@ -253,6 +308,57 @@ async function run(page, tool, args) {
       if (args.submit === true) pressEnter(page);
       return done('Typed.');
     }
+    case 'browser_press_key': {
+      if (typeof args.key !== 'string' || args.key === '') return failed('no key was given');
+      const element = target(args);
+      if (element) {
+        const found = await inWorld(
+          page,
+          `(() => { const el = ${element}; if (!el) return JSON.stringify({ error: 'no such element; take a new browser_snapshot' }); el.focus(); return JSON.stringify({ ok: true }); })()`,
+        );
+        if (found.error) return failed(found.error);
+      }
+      return pressKey(page, args.key, args.modifiers);
+    }
+    case 'browser_scroll': {
+      const element = target(args);
+      const direction = typeof args.direction === 'string' ? args.direction : '';
+      const amount = Number.isFinite(args.amount) ? Number(args.amount) : 0;
+      const found = await inWorld(
+        page,
+        `(() => {
+          const el = ${element || 'null'};
+          const named = ${JSON.stringify(direction)};
+          if (${element ? 'true' : 'false'} && !el) return JSON.stringify({ error: 'no such element; take a new browser_snapshot' });
+          if (el && !named) {
+            el.scrollIntoView({ block: 'center', inline: 'center' });
+          } else {
+            const box = el || document.scrollingElement || document.documentElement;
+            const by = ${amount} || (named === 'left' || named === 'right' ? box.clientWidth : box.clientHeight) * 0.9;
+            if (named === 'top') box.scrollTo({ top: 0 });
+            else if (named === 'bottom') box.scrollTo({ top: box.scrollHeight });
+            else if (named === 'up') box.scrollBy({ top: -by });
+            else if (named === 'left') box.scrollBy({ left: -by });
+            else if (named === 'right') box.scrollBy({ left: by });
+            else box.scrollBy({ top: by });
+          }
+          const root = el && named ? el : document.scrollingElement || document.documentElement;
+          return JSON.stringify({ top: Math.round(root.scrollTop), height: root.scrollHeight, view: root.clientHeight });
+        })()`,
+      );
+      if (found.error) return failed(found.error);
+      return done(`Scrolled to ${found.top} of ${found.height} (the view is ${found.view} tall).`);
+    }
+    case 'browser_back': {
+      if (!page.contents.navigationHistory.canGoBack()) return failed('There is no earlier page.');
+      return loading(page, () => page.contents.navigationHistory.goBack());
+    }
+    case 'browser_forward': {
+      if (!page.contents.navigationHistory.canGoForward()) return failed('There is no later page.');
+      return loading(page, () => page.contents.navigationHistory.goForward());
+    }
+    case 'browser_reload':
+      return loading(page, () => page.contents.reload());
     case 'browser_evaluate': {
       if (typeof args.expression !== 'string') return failed('no expression was given');
       const value = await evaluate(page, null, args.expression);
