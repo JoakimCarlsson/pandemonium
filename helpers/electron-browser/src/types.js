@@ -272,7 +272,8 @@
  *   | { CertificateError: { page: number, info: CertificateInfo } }
  *   | { CertificateCleared: { page: number } }
  *   | { Download: { page: number, name: string, state: DownloadState } }
- *   | { Captured: { page: number, capture: Capture } }} Event
+ *   | { Captured: { page: number, capture: Capture } }
+ *   | { OpenRequested: { page: number, url: string, agent: boolean } }} Event
  */
 
 /**

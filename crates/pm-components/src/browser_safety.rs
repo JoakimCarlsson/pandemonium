@@ -1,10 +1,12 @@
 //! What keeps the reader safe in the browser pane: the questions a page asks about the reader's machine, a site whose certificate is not trusted, and the files a page downloaded.
 
+use std::time::{Duration, Instant};
+
 use pm_input::FocusId;
 use pm_style::{
-    Radius, Role, bg, border, border_b, border_color, flex, flex_1, flex_col, flex_none, font_mono,
-    font_semibold, gap, h_px, items_center, justify_center, min_w_px, p, px, py, rounded, w_full,
-    w_px,
+    Radius, Role, absolute, bg, border, border_b, border_color, flex, flex_1, flex_col, flex_none,
+    font_mono, font_semibold, gap, h_px, items_center, justify_center, left, min_w_px, p, px, py,
+    rounded, top, w_full, w_px, z,
 };
 use pm_ui::{Node, node};
 
@@ -13,11 +15,30 @@ use crate::button::Variant;
 use crate::parts::{clipped, line, wrap};
 use crate::size::Size;
 
-/// Allows what the first question of the page asks.
-pub const BROWSER_ALLOW: FocusId = FocusId(7_440_800);
+/// The first of the names of the button that allows what a question asks; the question's number, modulo [`QUESTION_SLOTS`], is added to it, so a press that began on one question cannot end on another.
+const ALLOW_BASE: u64 = 7_440_600;
 
-/// Refuses what the first question of the page asks.
-pub const BROWSER_BLOCK: FocusId = FocusId(7_440_801);
+/// The first of the names of the button that refuses what a question asks; numbered like the allow buttons.
+const BLOCK_BASE: u64 = 7_440_600 + QUESTION_SLOTS;
+
+/// How many questions the names of the allow and block buttons tell apart.
+const QUESTION_SLOTS: u64 = 64;
+
+/// The bar with the first question, which takes presses that land on it and are for neither button, so they never reach the page under it.
+pub const BROWSER_QUESTION_BAR: FocusId = FocusId(7_440_805);
+
+/// How long after a question first shows, or the question shown changes, pressing Allow does nothing, in case the reader was about to press something the page moved under the pointer.
+pub const ALLOW_DELAY: Duration = Duration::from_millis(500);
+
+/// The name of the button that allows what the question `id` asks.
+pub fn allow_id(id: u64) -> FocusId {
+    FocusId(ALLOW_BASE + id % QUESTION_SLOTS)
+}
+
+/// The name of the button that refuses what the question `id` asks.
+pub fn block_id(id: u64) -> FocusId {
+    FocusId(BLOCK_BASE + id % QUESTION_SLOTS)
+}
 
 /// Takes away the note about a download.
 pub const BROWSER_DISMISS: FocusId = FocusId(7_440_802);
@@ -109,31 +130,78 @@ pub struct Safety {
     pub download: Option<Download>,
     /// What the reader answered and the engine has not yet been told.
     pub answers: Vec<Answer>,
+    /// The question that is showing and when it first showed, which is when [`ALLOW_DELAY`] starts.
+    shown: Option<(u64, Instant)>,
 }
 
 impl Safety {
     /// Adds a question, unless it is already asked.
     pub fn ask(&mut self, question: Question) {
+        self.ask_at(question, Instant::now());
+    }
+
+    /// Adds a question, unless it is already asked, at the time `now`.
+    pub fn ask_at(&mut self, question: Question, now: Instant) {
         if !self.questions.iter().any(|asked| asked.id == question.id) {
             self.questions.push(question);
         }
+        self.track(now);
     }
 
     /// Takes away the question `id`, as when the page went away.
     pub fn cancel(&mut self, id: u64) {
+        self.cancel_at(id, Instant::now());
+    }
+
+    /// Takes away the question `id` at the time `now`.
+    pub fn cancel_at(&mut self, id: u64, now: Instant) {
         self.questions.retain(|asked| asked.id != id);
+        self.track(now);
+    }
+
+    /// Starts the delay over when the question showing is not the one the delay was counted for, and ends it when none shows.
+    fn track(&mut self, now: Instant) {
+        let first = self.questions.first().map(|asked| asked.id);
+        match (first, self.shown) {
+            (None, _) => self.shown = None,
+            (Some(id), Some((counted, _))) if id == counted => {}
+            (Some(id), _) => self.shown = Some((id, now)),
+        }
+    }
+
+    /// Whether pressing Allow does anything at the time `now`: the first question has been showing for [`ALLOW_DELAY`]. Block is never held back.
+    pub fn allow_ready(&self, now: Instant) -> bool {
+        match (self.questions.first(), self.shown) {
+            (Some(asked), Some((counted, since))) => {
+                asked.id == counted && now.saturating_duration_since(since) >= ALLOW_DELAY
+            }
+            _ => false,
+        }
     }
 
     /// Carries out pressing `id`, and says whether it was something of this part.
     pub fn press(&mut self, id: FocusId) -> bool {
+        self.press_at(id, Instant::now())
+    }
+
+    /// Carries out pressing `id` at the time `now`, and says whether it was something of this part. A press of Allow or Block answers only the question it was named for, which is the one that was showing when the press began, and Allow only once [`ALLOW_DELAY`] has passed.
+    pub fn press_at(&mut self, id: FocusId, now: Instant) -> bool {
         match id {
-            BROWSER_ALLOW | BROWSER_BLOCK => {
-                if !self.questions.is_empty() {
-                    let asked = self.questions.remove(0);
+            BROWSER_QUESTION_BAR => {}
+            FocusId(number) if (ALLOW_BASE..BLOCK_BASE + QUESTION_SLOTS).contains(&number) => {
+                let allow = number < BLOCK_BASE;
+                let slot = (number - if allow { ALLOW_BASE } else { BLOCK_BASE }) % QUESTION_SLOTS;
+                let showing = self.questions.first().map(|asked| asked.id);
+                let named = showing.filter(|shown| shown % QUESTION_SLOTS == slot);
+                if let Some(question) = named
+                    && (!allow || self.allow_ready(now))
+                {
+                    self.questions.remove(0);
                     self.answers.push(Answer::Permission {
-                        id: asked.id,
-                        allow: id == BROWSER_ALLOW,
+                        id: question,
+                        allow,
                     });
+                    self.track(now);
                 }
             }
             BROWSER_DISMISS => self.download = None,
@@ -157,20 +225,26 @@ impl Safety {
 
     /// How tall the bars above the page are together, in logical pixels.
     pub fn bars(&self) -> f32 {
-        let count = usize::from(!self.questions.is_empty()) + usize::from(self.download.is_some());
-        count as f32 * BAR
+        usize::from(self.download.is_some()) as f32 * BAR
     }
 
-    /// The bars to show above the page: the first question, and the note about the last download.
+    /// The bars to show above the page: the note about the last download. The question is not among them; it is laid over the page by [`Safety::question_overlay`], so that it appearing does not move the page.
     pub fn bar_nodes(&self) -> Vec<Node> {
-        let mut bars = Vec::new();
-        if let Some(asked) = self.questions.first() {
-            bars.push(question_bar(asked, self.questions.len() - 1));
-        }
-        if let Some(download) = self.download.as_ref() {
-            bars.push(download_bar(download));
-        }
-        bars
+        self.download
+            .as_ref()
+            .map(download_bar)
+            .into_iter()
+            .collect()
+    }
+
+    /// The bar with the first question, laid over the top of the page, which is `width` logical pixels wide, at the time `now`; Allow is drawn faint and cannot be pressed until [`ALLOW_DELAY`] has passed.
+    pub fn question_overlay(&self, width: f32, now: Instant) -> Option<Node> {
+        let asked = self.questions.first()?;
+        let bar = question_bar(asked, self.questions.len() - 1, self.allow_ready(now));
+        Some(
+            bar.styles([absolute(), top(0), left(0), w_px(width), z(40)])
+                .focusable(BROWSER_QUESTION_BAR),
+        )
     }
 }
 
@@ -201,8 +275,8 @@ fn bar(body: Node, buttons: Vec<Node>) -> Node {
     row
 }
 
-/// The bar that says which page asks for what, and has the buttons that allow or refuse it; `waiting` more questions come after it.
-fn question_bar(asked: &Question, waiting: usize) -> Node {
+/// The bar that says which page asks for what, and has the buttons that allow or refuse it; `waiting` more questions come after it, and Allow is faint and inert until `ready`.
+fn question_bar(asked: &Question, waiting: usize, ready: bool) -> Node {
     let mut words = format!(
         "{} wants to use your {}",
         host_of(&asked.origin),
@@ -214,11 +288,19 @@ fn question_bar(asked: &Question, waiting: usize) -> Node {
     bar(
         clipped(words, 13, Role::Text),
         vec![
-            Button::new("Block", BROWSER_BLOCK)
+            Button::new("Block", block_id(asked.id))
                 .variant(Variant::Outline)
                 .size(Size::Sm)
                 .build(),
-            Button::new("Allow", BROWSER_ALLOW).size(Size::Sm).build(),
+            Button::new("Allow", allow_id(asked.id))
+                .variant(if ready {
+                    Variant::Default
+                } else {
+                    Variant::Secondary
+                })
+                .size(Size::Sm)
+                .disabled(!ready)
+                .build(),
         ],
     )
 }

@@ -7,9 +7,19 @@
 
 /** @typedef {import('./cdp').Cdp} Cdp */
 /** @typedef {import('./types').Json} Json */
+/** @typedef {import('./netview').NetEntry} NetEntry */
+/** @typedef {import('./netview').ConsoleLine} ConsoleLine */
+
+const netview = require('./netview');
 
 /** The most lines the console and the network keep. */
 const KEPT = 200;
+
+/** The most bytes of response bodies the engine is asked to keep, so that `browser_network` can read them. */
+const BUFFER_TOTAL = 10 * 1024 * 1024;
+
+/** The most bytes of one response body the engine is asked to keep. */
+const BUFFER_ONE = 5 * 1024 * 1024;
 
 /** The kinds of request that stay open for as long as the page does, which say nothing of whether it is still loading. */
 const OPEN_ENDED = new Set(['EventSource', 'WebSocket', 'Ping']);
@@ -34,12 +44,14 @@ class Recorder {
    * @param {Cdp} cdp The page's protocol.
    */
   constructor(cdp) {
-    /** @type {string[]} The console's lines, oldest first. */
+    /** @type {ConsoleLine[]} The console's lines, oldest first. */
     this.console = [];
-    /** @type {string[]} The requests' lines, oldest first. */
+    /** @type {NetEntry[]} The requests, oldest first. */
     this.network = [];
-    /** @type {Map<string, [string, string]>} The method and address of each request, until it is answered. */
+    /** @type {Map<string, NetEntry>} The requests that are not finished, by the engine's id. */
     this.requests = new Map();
+    /** @type {number} The number the next request gets. */
+    this.sequence = 0;
     /** @type {Set<string>} The requests that were sent and are not finished. */
     this.pending = new Set();
     /** @type {number} When the network last did something, in milliseconds. */
@@ -47,15 +59,18 @@ class Recorder {
     /** @type {{ url: string, status: number, at: number, cached: boolean } | null} The page's own document as last answered, when, and whether the engine's cache answered. */
     this.document = null;
     cdp.listen((method, params) => this.hear(method, params));
-    for (const method of ['Runtime.enable', 'Network.enable', 'Page.enable', 'Log.enable']) {
+    /** @type {import('./cdp').Cdp} The page's protocol, to ask for bodies. */
+    this.cdp = cdp;
+    for (const method of ['Runtime.enable', 'Page.enable', 'Log.enable']) {
       cdp.call(method).catch(() => {});
     }
+    cdp.call('Network.enable', { maxTotalBufferSize: BUFFER_TOTAL, maxResourceBufferSize: BUFFER_ONE }).catch(() => {});
   }
 
   /**
    * Adds `line` to `lines`, forgetting the oldest when there are too many.
-   * @param {string[]} lines Where it goes.
-   * @param {string} line What to keep.
+   * @param {any[]} lines Where it goes.
+   * @param {any} line What to keep.
    * @returns {void}
    */
   keep(lines, line) {
@@ -73,28 +88,59 @@ class Recorder {
     if (method.startsWith('Network.')) this.active = Date.now();
     switch (method) {
       case 'Runtime.consoleAPICalled':
-        this.keep(this.console, `[${params.type || 'log'}] ${(params.args || []).map(said).join(' ')}`);
+        this.keep(this.console, { level: netview.levelOf(params.type || 'log'), text: (params.args || []).map(said).join(' ') });
         break;
       case 'Runtime.exceptionThrown': {
         const details = params.exceptionDetails || {};
         const text = (details.exception && details.exception.description) || details.text || 'an exception';
-        this.keep(this.console, `[error] ${text}`);
+        this.keep(this.console, { level: 'error', text });
         break;
       }
       case 'Log.entryAdded': {
         const entry = params.entry || {};
-        this.keep(this.console, `[${entry.level || 'info'}] ${entry.text || ''} ${entry.url || ''}`);
+        this.keep(this.console, { level: netview.levelOf(entry.level || 'info'), text: `${entry.text || ''} ${entry.url || ''}`.trim() });
         break;
       }
       case 'Network.requestWillBeSent':
         if (params.requestId && params.request) {
+          const before = this.requests.get(params.requestId);
+          if (before && params.redirectResponse) {
+            this.answer(before, params.redirectResponse);
+            before.finished = params.timestamp ?? null;
+          }
           if (!OPEN_ENDED.has(params.type)) this.pending.add(params.requestId);
-          this.requests.set(params.requestId, [params.request.method || 'GET', params.request.url]);
+          /** @type {NetEntry} */
+          const entry = {
+            id: ++this.sequence,
+            requestId: params.requestId,
+            method: params.request.method || 'GET',
+            url: params.request.url,
+            type: params.type || '',
+            status: null,
+            failure: null,
+            requestHeaders: params.request.headers || {},
+            responseHeaders: {},
+            mimeType: '',
+            size: null,
+            started: params.timestamp || 0,
+            finished: null,
+            timing: null,
+            cached: false,
+          };
+          this.requests.set(params.requestId, entry);
+          this.keep(this.network, entry);
         }
         break;
-      case 'Network.loadingFinished':
+      case 'Network.loadingFinished': {
         this.pending.delete(params.requestId);
+        const known = this.requests.get(params.requestId);
+        if (known) {
+          known.size = params.encodedDataLength ?? null;
+          known.finished = params.timestamp ?? null;
+          this.requests.delete(params.requestId);
+        }
         break;
+      }
       case 'Network.responseReceived': {
         if (params.type === 'Document' && params.response) {
           this.document = {
@@ -105,18 +151,16 @@ class Recorder {
           };
         }
         const known = this.requests.get(params.requestId);
-        if (known) {
-          this.requests.delete(params.requestId);
-          this.keep(this.network, `${known[0]} ${known[1]} -> ${params.response.status}`);
-        }
+        if (known && params.response) this.answer(known, params.response);
         break;
       }
       case 'Network.loadingFailed': {
         this.pending.delete(params.requestId);
         const known = this.requests.get(params.requestId);
         if (known) {
+          known.failure = params.errorText || 'unknown';
+          known.finished = params.timestamp ?? null;
           this.requests.delete(params.requestId);
-          this.keep(this.network, `${known[0]} ${known[1]} -> failed: ${params.errorText || 'unknown'}`);
         }
         break;
       }
@@ -135,21 +179,61 @@ class Recorder {
   }
 
   /**
+   * Notes what the engine answered a request with.
+   * @param {NetEntry} entry The request.
+   * @param {Json} response The protocol's response.
+   * @returns {void}
+   */
+  answer(entry, response) {
+    entry.status = response.status;
+    entry.responseHeaders = response.headers || {};
+    entry.mimeType = response.mimeType || '';
+    entry.timing = response.timing || null;
+    entry.cached = response.fromDiskCache === true || response.fromPrefetchCache === true;
+  }
+
+  /**
    * The console's lines.
    * @param {string} none What to say when there are no lines.
-   * @returns {string} The lines, oldest first, or `none`.
+   * @param {Set<string> | null} [levels] The levels wanted, or nothing for all.
+   * @param {boolean} [clear] Whether to forget every line after reading.
+   * @returns {string} The lines, oldest first, as `[level] text`, or `none`.
    */
-  consoleText(none) {
-    return this.console.length ? this.console.join('\n') : none;
+  consoleText(none, levels = null, clear = false) {
+    const shown = this.console.filter((entry) => !levels || levels.has(entry.level));
+    if (clear) this.console = [];
+    return shown.length ? shown.map((entry) => `[${entry.level}] ${entry.text}`).join('\n') : none;
   }
 
   /**
    * The requests' lines.
    * @param {string} none What to say when there are no lines.
+   * @param {string} [filter] A status class, status or text of the address that the requests must match.
+   * @param {boolean} [clear] Whether to forget every request after reading; those still on their way are forgotten too and are not recorded when they finish.
    * @returns {string} The lines, oldest first, or `none`.
    */
-  networkText(none) {
-    return this.network.length ? this.network.join('\n') : none;
+  networkText(none, filter = '', clear = false) {
+    const shown = this.network.filter((entry) => netview.matches(entry, filter));
+    if (clear) this.forgetNetwork();
+    return shown.length ? shown.map(netview.line).join('\n') : none;
+  }
+
+  /**
+   * Forgets the requests that were recorded, but not that some are still on their way.
+   * @returns {void}
+   */
+  forgetNetwork() {
+    this.network = [];
+    this.requests.clear();
+  }
+
+  /**
+   * The request that was given a number.
+   * @param {number} id The number from the list.
+   * @returns {NetEntry | undefined} The request, unless it is no longer kept.
+   */
+  request(id) {
+    return this.network.find((entry) => entry.id === id);
   }
 }
 

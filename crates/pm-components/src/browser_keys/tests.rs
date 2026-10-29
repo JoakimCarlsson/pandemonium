@@ -6,6 +6,15 @@ use super::{Shortcut, shortcut_of};
 use crate::browser::{Command, ZoomStep};
 use crate::state::WorkspaceState;
 
+/// What the engine has not yet been told to do, without the tabs it is for.
+fn commands(state: &mut WorkspaceState) -> Vec<Command> {
+    state
+        .take_browser_commands()
+        .into_iter()
+        .map(|(_, command)| command)
+        .collect()
+}
+
 /// A press of `key` with Control, and Shift when `shift`.
 fn control(key: Key, shift: bool) -> KeyEvent {
     KeyEvent {
@@ -99,13 +108,13 @@ fn function_keys_step_and_reload() {
 fn find_opens_steps_and_closes() {
     let mut state = WorkspaceState::sample();
     state.open_browser("http://localhost:5173");
-    state.take_browser_commands();
+    commands(&mut state);
     state.browser_shortcut(Shortcut::Find);
     assert!(state.browser_find_open());
-    assert!(state.take_browser_commands().is_empty());
+    assert!(commands(&mut state).is_empty());
     state.browser_find_edited(pm_text::Edit::Paste("ab".to_owned()));
     assert_eq!(
-        state.take_browser_commands(),
+        commands(&mut state),
         vec![Command::Find {
             text: "ab".to_owned(),
             forward: true,
@@ -114,14 +123,14 @@ fn find_opens_steps_and_closes() {
     );
     state.browser_shortcut(Shortcut::FindPrevious);
     assert_eq!(
-        state.take_browser_commands(),
+        commands(&mut state),
         vec![Command::Find {
             text: "ab".to_owned(),
             forward: false,
             again: true
         }]
     );
-    state.browser_found(2, 5);
+    state.browser_found(1, 2, 5);
     let search = state.browser.as_ref().and_then(|b| b.search.as_ref());
     assert_eq!(
         search.map(|search| search.tally().0),
@@ -129,7 +138,7 @@ fn find_opens_steps_and_closes() {
     );
     state.browser_find_closed();
     assert!(!state.browser_find_open());
-    assert_eq!(state.take_browser_commands(), vec![Command::StopFind]);
+    assert_eq!(commands(&mut state), vec![Command::StopFind]);
 }
 
 /// Zoom keys queue zoom steps for the engine.
@@ -137,11 +146,11 @@ fn find_opens_steps_and_closes() {
 fn zoom_keys_queue_steps() {
     let mut state = WorkspaceState::sample();
     state.open_browser("http://localhost:5173");
-    state.take_browser_commands();
+    commands(&mut state);
     state.browser_shortcut(Shortcut::ZoomIn);
     state.browser_shortcut(Shortcut::ZoomReset);
     assert_eq!(
-        state.take_browser_commands(),
+        commands(&mut state),
         vec![Command::Zoom(ZoomStep::In), Command::Zoom(ZoomStep::Reset)]
     );
 }

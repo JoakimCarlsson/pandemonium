@@ -162,6 +162,8 @@ pub enum Shot {
     BrowserFind(bool),
     /// The same with the developer tools open beside the page.
     BrowserFindTools,
+    /// The workspace with the browser open on several tabs: one shown, one opened by an agent, one locked against agents; with so many tabs that the strip scrolls when the flag is set.
+    BrowserTabs(bool),
     /// The workspace with the browser open and the question about clearing cookies and site data asked.
     BrowserClear,
     /// The workspace with the browser open and a page asking to use the camera and microphone, with a second question waiting.
@@ -1710,26 +1712,75 @@ fn browser_finding(tools: bool) -> WorkspaceState {
         height,
         pixels: std::sync::Arc::new(pixels),
     };
-    state.browser_painted(
+    state.browser_tab_painted(
+        1,
         Some(page),
-        None,
         "Routing",
         "http://localhost:5173/docs/routing",
         pm_components::browser::Pointer::Arrow,
         false,
     );
-    state.browser_zoomed(1.25);
+    state.browser_zoomed(1, 1.25);
     state.browser_find_opened();
     let mut state = state.edited(
         pm_components::browser::BROWSER_FIND_FIELD,
         Edit::Paste("route".to_owned()),
     );
-    state.browser_found(2, 7);
+    state.browser_found(1, 2, 7);
     if tools {
         state = state.browser_tools_shown();
         if let Some(browser) = state.browser.as_mut() {
             browser.tools_width = 300.0;
         }
+    }
+    state
+}
+
+/// The workspace with the browser on tabs: the shown one, one an agent opened, one locked, and, when `many`, enough more for the strip to scroll.
+fn browser_tabs(many: bool) -> WorkspaceState {
+    let mut state = browser_finding(false);
+    state.browser_find_closed();
+    state.browser_zoomed(1, 1.0);
+    let pages = [
+        ("Pandemonium - Dashboard", "http://localhost:3000/", false),
+        ("Checkout flow", "http://localhost:5173/checkout", true),
+        (
+            "Staging - Admin",
+            "https://staging.example.com/admin",
+            false,
+        ),
+        ("localhost:8080", "http://localhost:8080/health", false),
+    ];
+    for (title, address, agent) in pages {
+        if let Some(id) = state.browser_tab_opened(address, None, agent, false) {
+            state.browser_tab_painted(
+                id,
+                None,
+                title,
+                address,
+                pm_components::browser::Pointer::Arrow,
+                false,
+            );
+        }
+    }
+    if many {
+        for number in 0..9 {
+            let address = format!("http://localhost:{}/", 4000 + number);
+            if let Some(id) = state.browser_tab_opened(&address, None, false, false) {
+                state.browser_tab_painted(
+                    id,
+                    None,
+                    &format!("Preview {number}"),
+                    &address,
+                    pm_components::browser::Pointer::Arrow,
+                    false,
+                );
+            }
+        }
+    }
+    if let Some(browser) = state.browser.as_mut() {
+        browser.tabs[3].locked = true;
+        browser.active = 3;
     }
     state
 }
@@ -2796,6 +2847,7 @@ impl Shot {
                 Screen::Workspace(state)
             }
             Self::BrowserFindTools => Screen::Workspace(browser_finding(true)),
+            Self::BrowserTabs(many) => Screen::Workspace(browser_tabs(many)),
             Self::BrowserClear => {
                 let mut state = browser_finding(false);
                 state.browser_find_closed();
@@ -4454,16 +4506,24 @@ pub fn write_browser(path: &Path, url: &str, tools: bool, interact: bool) -> Res
     let title = page.title();
     let Screen::Workspace(state) = &mut screen;
     {
-        state.browser_painted(
+        let first = state
+            .browser
+            .as_ref()
+            .map_or(1, |browser| browser.active_id());
+        state.browser_tab_painted(
+            first,
             picture(&page, PAGE_SURFACE),
-            tools_view
-                .as_ref()
-                .and_then(|view| picture(view, TOOLS_SURFACE)),
             &title,
             &page.address(),
             Pointer::Arrow,
             false,
         );
+        if let Some(tools) = tools_view
+            .as_ref()
+            .and_then(|view| picture(view, TOOLS_SURFACE))
+        {
+            state.browser_tools_painted(tools);
+        }
     }
     println!("title: {title}");
     scene::paint(

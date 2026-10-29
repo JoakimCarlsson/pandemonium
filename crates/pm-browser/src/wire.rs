@@ -502,6 +502,15 @@ pub enum Event {
         /// What was taken.
         capture: Box<Capture>,
     },
+    /// The page asked for a new window (`window.open`, a link with `target=_blank`) and the helper opened nothing; the window opens the address in a tab of its own.
+    OpenRequested {
+        /// The page that asked.
+        page: u32,
+        /// Where the new tab goes.
+        url: String,
+        /// Whether a tool of an agent was running on the page when it asked, so the new tab is the agent's.
+        agent: bool,
+    },
 }
 
 /// `message` written as one line of JSON, ending in a newline.

@@ -5,6 +5,8 @@
  * the page's DevTools protocol.
  */
 
+const emulation = require('./emulation');
+const inspect = require('./inspect');
 const origins = require('./origins');
 
 /** @typedef {import('./page').Page} Page */
@@ -682,7 +684,7 @@ const VIEWPORT_LIMITS = [100, 4000];
 async function resize(page, args) {
   const cdp = protocol(page);
   if (args.reset === true) {
-    await cdp.call('Emulation.clearDeviceMetricsOverride');
+    await emulation.applyViewport(cdp, null);
     page.viewport = null;
     return done('The viewport follows the pane again.');
   }
@@ -691,8 +693,8 @@ async function resize(page, args) {
   if (![width, height].every((side) => Number.isInteger(side) && side >= low && side <= high)) {
     return failed(`give width and height as whole numbers from ${low} to ${high}, or reset as true`);
   }
-  await cdp.call('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 0, mobile: false });
-  page.viewport = { width, height };
+  page.viewport = { width, height, deviceScaleFactor: 0, mobile: false };
+  await emulation.applyViewport(cdp, page.viewport);
   const found = await inWorld(page, `JSON.stringify({ width: window.innerWidth, height: window.innerHeight })`);
   return done(`The viewport is ${width} by ${height}; the page reports ${found.width} by ${found.height}. The pane shows it at its top left.`);
 }
@@ -726,6 +728,7 @@ async function answerDialog(page, dialogs, args) {
  * @returns {Promise<ToolOutcome>} What it came to.
  */
 async function run(page, tool, args) {
+  delete args.tab;
   const dialogs = page.dialogs;
   if (!dialogs) return execute(page, tool, args);
   if (tool === 'browser_handle_dialog') return answerDialog(page, dialogs, args);
@@ -859,9 +862,13 @@ async function execute(page, tool, args) {
       return done(cut(JSON.stringify(value === undefined ? null : value), MOST_TEXT));
     }
     case 'browser_console':
-      return done(recorder(page).consoleText('The console is empty.'));
+      return inspect.consoleTool(page, args);
     case 'browser_network':
-      return done(recorder(page).networkText('No requests were made.'));
+      return inspect.networkTool(page, args);
+    case 'browser_cdp':
+      return inspect.cdpTool(page, args);
+    case 'browser_emulate':
+      return inspect.emulateTool(page, args);
     case 'browser_wait': {
       const timeout = Math.min(Number.isFinite(args.timeout_ms) ? args.timeout_ms : 10000, 30000);
       let condition = 'false';
@@ -874,19 +881,11 @@ async function execute(page, tool, args) {
       const found = await evaluate(page, await world(page), script);
       return found === true ? done('Found.') : failed('Timed out.');
     }
+    case 'browser_tabs':
+      return failed('browser_tabs is answered by the window, which owns the tabs, and never reaches a page');
     default:
       return failed(`there is no tool ${tool}`);
   }
-}
-
-/**
- * The page's recorder.
- * @param {Page} page The page.
- * @returns {import('./recorder').Recorder} Its recorder; throws when it has none.
- */
-function recorder(page) {
-  if (!page.recorder) throw new Error('the page has no recorder');
-  return page.recorder;
 }
 
 module.exports = { run };

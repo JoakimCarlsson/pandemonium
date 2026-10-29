@@ -328,10 +328,14 @@ impl Screen {
         }
     }
 
-    /// The screen after the mode of picking an element of the browser's page ended, with the pick held for the prompt when there was one.
-    pub fn browser_picked(self, element: Option<pm_components::elements::Element>) -> Self {
+    /// The screen after the mode of picking an element of the page of tab `tab` of the browser ended, with the pick held for the prompt when there was one.
+    pub fn browser_picked(
+        self,
+        tab: u32,
+        element: Option<pm_components::elements::Element>,
+    ) -> Self {
         match self {
-            Self::Workspace(state) => Self::Workspace(state.browser_picked(element)),
+            Self::Workspace(state) => Self::Workspace(state.browser_picked(tab, element)),
         }
     }
 
@@ -343,9 +347,13 @@ impl Screen {
     }
 
     /// The screen after the helper reported a screenshot or the console of the browser's page for the prompt, or the end of choosing an area without one.
-    pub fn browser_captured(self, capture: Option<pm_components::captures::Capture>) -> Self {
+    pub fn browser_captured(
+        self,
+        tab: u32,
+        capture: Option<pm_components::captures::Capture>,
+    ) -> Self {
         match self {
-            Self::Workspace(state) => Self::Workspace(state.browser_captured(capture)),
+            Self::Workspace(state) => Self::Workspace(state.browser_captured(tab, capture)),
         }
     }
 

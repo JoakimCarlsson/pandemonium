@@ -72,11 +72,12 @@ impl WorkspaceState {
         let Some(browser) = self.browser.as_mut() else {
             return;
         };
-        let search = browser.search.get_or_insert_with(PageSearch::default);
+        let tab = &mut **browser;
+        let search = tab.search.get_or_insert_with(PageSearch::default);
         search.query.apply(Edit::SelectAll);
         if !search.query.text().is_empty() {
             search.counted = false;
-            browser.commands.push(Command::Find {
+            tab.commands.push(Command::Find {
                 text: search.query.text().to_owned(),
                 forward: true,
                 again: false,
@@ -100,10 +101,11 @@ impl WorkspaceState {
             return;
         }
         if let Some(browser) = self.browser.as_mut()
-            && let Some(search) = browser.search.as_ref()
+            && let tab = &mut **browser
+            && let Some(search) = tab.search.as_ref()
             && !search.query.text().is_empty()
         {
-            browser.commands.push(Command::Find {
+            tab.commands.push(Command::Find {
                 text: search.query.text().to_owned(),
                 forward: !back,
                 again: true,
@@ -116,14 +118,15 @@ impl WorkspaceState {
         let Some(browser) = self.browser.as_mut() else {
             return;
         };
-        let Some(search) = browser.search.as_mut() else {
+        let tab = &mut **browser;
+        let Some(search) = tab.search.as_mut() else {
             return;
         };
         let before = search.query.text().to_owned();
         search.query.apply(edit);
         if search.query.text() != before {
             search.counted = false;
-            browser.commands.push(Command::Find {
+            tab.commands.push(Command::Find {
                 text: search.query.text().to_owned(),
                 forward: true,
                 again: false,
@@ -131,12 +134,13 @@ impl WorkspaceState {
         }
     }
 
-    /// Takes in the count the engine reported: which match is current and how many there are.
-    pub fn browser_found(&mut self, active: u32, total: u32) {
+    /// Takes in the count the engine reported for the page of tab `tab`: which match is current and how many there are.
+    pub fn browser_found(&mut self, tab: u32, active: u32, total: u32) {
         if let Some(search) = self
             .browser
             .as_mut()
-            .and_then(|browser| browser.search.as_mut())
+            .and_then(|browser| browser.tab_mut(tab))
+            .and_then(|tab| tab.search.as_mut())
         {
             search.active = active;
             search.total = total;

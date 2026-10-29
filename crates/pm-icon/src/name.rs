@@ -163,6 +163,10 @@ pub enum IconName {
     Camera,
     /// The corners of a frame: an area of a page.
     Scan,
+    /// A closed padlock: locked.
+    Lock,
+    /// An open padlock: not locked.
+    LockOpen,
 }
 
 impl IconName {
@@ -247,6 +251,8 @@ impl IconName {
             Self::Lightbulb => Svg::new("lightbulb", include_icon!("lightbulb")),
             Self::Camera => Svg::new("camera", include_icon!("camera")),
             Self::Scan => Svg::new("scan", include_icon!("scan")),
+            Self::Lock => Svg::new("lock", include_icon!("lock")),
+            Self::LockOpen => Svg::new("lock_open", include_icon!("lock_open")),
         }
     }
 }

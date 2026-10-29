@@ -1247,6 +1247,13 @@ server hosts on its loopback address; the server hands each call to a window.
   `crates/pm-server/src/browser_tools.rs`; how the helper runs them is in
   [browser.md](browser.md#what-agents-can-do-with-a-page). The tools add no
   message: they travel in `browser_call` and `browser_result` as before.
+- Tabs add a tool and an argument, not a message. `browser_tabs` (`action` is
+  `list`, `open`, `select` or `close`, with `url` and `tab`) and an optional
+  integer `tab` on every other tool travel in `arguments` of `browser_call` as
+  before; the window resolves the tab, refuses the tools that change a tab the
+  reader locked with `browser_result` `ok` false, and answers `browser_tabs`
+  itself. A window that predates tabs ignores `tab` and fails `browser_tabs` as an
+  unknown tool. See [browser.md](browser.md#tabs).
 - `browser_result` answers a call with the text the tool produced and, for
   `browser_screenshot`, the PNG it took. The server answers the agent with it,
   or with an error when no connection answers within a minute and a half or

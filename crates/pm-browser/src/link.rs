@@ -55,6 +55,8 @@ pub(crate) struct PageState {
     picked: Mutex<Option<Option<PickedElement>>>,
     /// What the reader asked to add to the prompt that the window has not taken yet.
     captured: Mutex<Vec<Capture>>,
+    /// The new windows the page asked for that the window has not opened yet: the address, and whether an agent's tool was running.
+    opened: Mutex<Vec<(String, bool)>>,
     /// Which file the newest paint is in, and how many paints there have been.
     latest: Mutex<Option<(u8, u64)>>,
     /// The title, the address and how the pointer should look.
@@ -101,6 +103,14 @@ impl PageState {
     /// What the helper reported for the reader's additions to the prompt since the last call.
     pub(crate) fn take_captures(&self) -> Vec<Capture> {
         self.captured
+            .lock()
+            .map(|mut held| std::mem::take(&mut *held))
+            .unwrap_or_default()
+    }
+
+    /// The new windows the page asked for since the last call.
+    pub(crate) fn take_opened(&self) -> Vec<(String, bool)> {
+        self.opened
             .lock()
             .map(|mut held| std::mem::take(&mut *held))
             .unwrap_or_default()
@@ -343,6 +353,13 @@ impl Link {
             Event::Download { page, name, state } => {
                 if let Some(held) = self.page(page) {
                     held.notify(Notice::Download { name, state });
+                }
+            }
+            Event::OpenRequested { page, url, agent } => {
+                if let Some(state) = self.page(page)
+                    && let Ok(mut opened) = state.opened.lock()
+                {
+                    opened.push((url, agent));
                 }
             }
         }

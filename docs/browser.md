@@ -30,6 +30,9 @@ otherwise; the window copies the pixels out only when it sees the same even
 number before and after. A `Surface` report names the files and a `Painted`
 report says which is newest.
 
+`OpenRequested` reports that a page asked for a new window, so that the window
+opens a tab for it (see [Tabs](#tabs)).
+
 The helper runs each page as an offscreen Electron window and replays the
 window's pointer, scroll and key requests as input events. The picker and the
 agent tools use the page's DevTools protocol through Electron's debugger. The
@@ -57,12 +60,71 @@ window is told with `session_serving`.
 
 The window then opens the browser on the address, or sends an open browser to
 it, over the same SSH forward as any other page of that machine. It happens
-once for each address a command prints. A browser that is open on another
+once for each address a command prints. A tab that is open on another
 page is left there when a different server starts, since the reader or an agent
-is using it; it goes to a server's page when it shows nothing, an error or a page
-of that same server, which it loads again where it is. It happens only while the embedded browser is on
+is using it, and the server's page opens in a new tab behind it (see
+[Tabs](#tabs)); the tab shown goes to a server's page when it shows nothing or
+an error, and every tab on a page of that same server loads it again where it
+is (`served_move` in `pm-components/src/browser.rs`). It happens only while the embedded browser is on
 and installed, and Settings, under Browser, can turn it off. A shell in a dev
 container is not seen, since its ports are the container's.
+
+## Tabs
+
+The pane has a strip of tabs above the address bar: a chip for each tab, with
+its title (or address while it has none), a close button, and a button for a
+new tab. Ctrl+T and Ctrl+W open and close one while a page has the keyboard.
+Each tab is its own `View` in the helper with its own history, zoom, find bar,
+picking mode, permission questions and certificate page, and keeps a number for
+as long as it lives; the window drives the views by that number
+(`Web::pages` in `app/browser.rs`) and drops a view when its tab is gone. The
+address bar, the buttons and the developer tools belong to the tab shown, and the
+developer tools move to another tab when it is shown. At most 32 tabs are open;
+when the strip cannot give each at least 84 pixels it scrolls, and showing a tab
+scrolls the strip to it. Only the tab shown is painted into the window and
+resized; the others keep their last picture.
+
+A page that asks for a new window (`window.open`, a link with `target=_blank`)
+no longer loads in place: the helper opens nothing and reports `OpenRequested`
+(page, address, and whether a tool of an agent was running on the page), and the
+window opens the address in a new tab on the same machine as the page that
+asked. The reader's own request is shown at once; one made while a tool of an
+agent ran is the agent's and opens behind the tab shown. The agent restriction on
+origins still applies in the helper before the request is sent.
+
+For a remote project a tab keeps the machine its page is on, so its address is
+resolved over the same SSH forward as before, and a window that restores a
+saved browser opens every tab on its own machine.
+
+The tabs are kept in the window's saved state: each with address, machine, the
+agent mark and the lock, and the one shown. State saved before tabs, which has
+one address, restores as one tab.
+
+### Locking a tab against agents
+
+The padlock in the address bar locks the tab shown. While it is locked the tools
+that change a page are refused with a message that says to open a tab of one's
+own: every tool except `browser_snapshot`, `browser_screenshot`,
+`browser_console`, `browser_get_bounding_box`, `browser_wait` and
+`browser_network`, which only read (`changes_page` in
+`pm-components/src/browser_tabs.rs`; a tool nobody listed counts as changing the
+page). Closing a locked tab by `browser_tabs` is refused too. A tab an agent
+opened carries a sparkle mark in the strip and cannot be locked: agents may
+always work in it. The check is made by the window, before a call reaches the
+helper, so it holds for agents of remote servers as well.
+
+### Tabs for agents
+
+`browser_tabs` is a tool handled by the window alone; the helper never sees it.
+`action` is `list` (every tab: number, title, address, and marks for the tab
+shown, the tools' tab, agent tabs and locked tabs), `open` (an agent's tab
+behind the one shown, on `url` or blank, which then is the tools' tab), `select`
+(makes `tab` the tools' tab without changing what the reader sees) and `close`
+(`tab`). Every other tool takes an optional `tab`. Without it a tool works on the
+tab an agent last opened, selected or named, and when there is none on the tab
+shown, so an agent that never uses tabs works as before, in the tab the reader
+looks at. `browser_navigate` with no tab open opens one marked as an agent's.
+The helper ignores `tab` (`agent.js` deletes it from the arguments).
 
 ## When a page counts as loaded
 

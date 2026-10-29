@@ -8,10 +8,12 @@ use pm_style::{
 };
 use pm_text::Field;
 use pm_ui::{Node, Picture, node};
+use std::ops::{Deref, DerefMut};
 
 use crate::browser_address::address_of;
-use crate::browser_find::{PageSearch, find_bar};
-use crate::browser_safety::{Answer, Safety, certificate_page};
+use crate::browser_find::find_bar;
+use crate::browser_safety::{Answer, certificate_page};
+use crate::browser_tabs::{BROWSER_LOCK, BrowserTab, SavedTab, TAB_STRIP, tab_strip};
 use crate::button::Variant;
 use crate::parts::line;
 use crate::sash::Sash;
@@ -153,8 +155,6 @@ pub enum Command {
     OpenTools,
     /// Close the developer tools.
     CloseTools,
-    /// Close the page.
-    Close,
     /// Load the page again without using the cache.
     HardReload,
     /// Look for `text` in the page; `again` steps to the next match, forward or back, of the text already looked for.
@@ -196,63 +196,63 @@ pub enum Pointer {
     ResizeVertical,
 }
 
-/// The browser: what its page last painted and what the window has asked of it.
+/// The browser: its tabs, the developer tools beside the page of the tab being shown, and what is shared by every tab.
+///
+/// It dereferences to the tab being shown, so what concerns the page the reader is looking at is written as it is for a tab.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Browser {
-    /// The line the address is typed in.
-    pub address: Field,
-    /// The title of the page.
-    pub title: String,
-    /// The newest picture of the page.
-    pub page: Option<Picture>,
+    /// The tabs, in the order of the strip; never empty while the browser is open.
+    pub tabs: Vec<BrowserTab>,
+    /// The index of the tab being shown.
+    pub active: usize,
+    /// The number the next tab gets.
+    pub next_tab: u32,
+    /// The tab the agents' tools work on when they name none, when an agent chose one.
+    pub agent_tab: Option<u32>,
+    /// The index of the first tab the strip draws when not all fit.
+    pub strip_start: usize,
+    /// How many tabs the strip drew when last drawn, which keeps the tab shown among them when another is shown.
+    pub strip_fit: std::cell::Cell<usize>,
     /// The newest picture of the developer tools.
     pub tools_page: Option<Picture>,
     /// Whether the developer tools are open beside the page.
     pub tools: bool,
     /// How wide the developer tools are when open, in logical pixels.
     pub tools_width: f32,
-    /// How the pointer looks over the page.
-    pub pointer: Pointer,
-    /// Whether a click on the page picks the element under the pointer.
-    pub picking: bool,
-    /// Whether the reader is dragging a rectangle over the page to add a picture of it.
-    pub picking_area: bool,
-    /// The machine the page is on when it is not this one, as the project that opened it names it.
-    pub host: Option<String>,
-    /// Why the page cannot be shown, when it cannot.
-    pub notice: Option<String>,
-    /// The search of the page while its bar shows.
-    pub search: Option<PageSearch>,
-    /// The zoom of the page as a factor, 1.0 being 100%.
-    pub zoom: f32,
     /// Whether the question about clearing cookies and site data is open.
     pub clearing: bool,
-    /// What the page asked of the reader, a site whose certificate is not trusted, and the last download.
-    pub safety: Safety,
-    /// What the engine has not yet been told to do.
-    pub commands: Vec<Command>,
+}
+
+impl Deref for Browser {
+    type Target = BrowserTab;
+
+    /// The tab being shown.
+    fn deref(&self) -> &BrowserTab {
+        &self.tabs[self.active]
+    }
+}
+
+impl DerefMut for Browser {
+    /// The tab being shown.
+    fn deref_mut(&mut self) -> &mut BrowserTab {
+        &mut self.tabs[self.active]
+    }
 }
 
 impl Browser {
-    /// A browser about to load `address`.
-    fn new(address: &str, host: Option<String>) -> Self {
+    /// A browser with one tab about to load `address`.
+    pub(crate) fn new(address: &str, host: Option<String>) -> Self {
         Self {
-            address: Field::new(address),
-            title: String::new(),
-            page: None,
+            tabs: vec![BrowserTab::new(1, address, host, false)],
+            active: 0,
+            next_tab: 2,
+            agent_tab: None,
+            strip_start: 0,
+            strip_fit: std::cell::Cell::new(usize::MAX),
             tools_page: None,
             tools: false,
             tools_width: TOOLS_WIDTH,
-            pointer: Pointer::Arrow,
-            picking: false,
-            picking_area: false,
-            host,
-            notice: None,
-            search: None,
-            zoom: 1.0,
             clearing: false,
-            safety: Safety::default(),
-            commands: vec![Command::Load(address.to_owned())],
         }
     }
 }
@@ -277,18 +277,18 @@ impl Browser {
     }
 }
 
-/// What a browser showing `current` does when a page is found at `address`.
+/// What a tab showing `current` does when a page is found at `address`.
 #[derive(Debug, PartialEq, Eq)]
 enum Move {
-    /// It is on another page, which the reader or an agent is using, and stays.
-    Stay,
+    /// It is on another page, which the reader or an agent is using, and is left there; the page opens in a tab of its own.
+    NewTab,
     /// It shows nothing or an error, and loads the page.
     Load,
     /// It shows a page of the same server, which started again, and loads that page again where it is.
     Reload,
 }
 
-/// What a browser showing `current` does when a page is found at `address`.
+/// What a tab showing `current` does when a page is found at `address`.
 fn served_move(current: &str, address: &str) -> Move {
     let current = current.trim();
     if current.is_empty() || current == "about:blank" || current.starts_with("chrome-error:") {
@@ -298,7 +298,7 @@ fn served_move(current: &str, address: &str) -> Move {
     let same = current
         .strip_prefix(origin)
         .is_some_and(|rest| rest.is_empty() || rest.starts_with(['/', '?', '#']));
-    if same { Move::Reload } else { Move::Stay }
+    if same { Move::Reload } else { Move::NewTab }
 }
 
 /// Whether `id` is something of the browser.
@@ -308,7 +308,7 @@ pub fn is_browser_part(id: FocusId) -> bool {
 
 impl WorkspaceState {
     /// The machine of the project the reader is in when it is not this one.
-    fn current_project_host(&self) -> Option<String> {
+    pub(crate) fn current_project_host(&self) -> Option<String> {
         self.projects.get(self.current_project())?.host()
     }
 
@@ -321,37 +321,68 @@ impl WorkspaceState {
         self.tab = Tab::Browser;
     }
 
-    /// Shows the page a program started in a shell serves at `address` on the machine `host`: the browser opens on it, or when it is open and is on nothing, on an error or on a page of the same server, it goes to it.
-    /// A browser on another page is left on it, since the reader or an agent is using it.
+    /// Shows the page a program started in a shell serves at `address` on the machine `host`: the browser opens on it, or when it is open, a tab that shows a page of the same server, which started again, loads it again where it is; failing that the tab being shown loads it when it is on nothing or on an error, and otherwise it opens in a new tab behind the one being shown, which the reader or an agent is using and which stays as it is.
     pub fn open_served_page(&mut self, address: &str, host: Option<String>) {
         match self.browser.as_mut() {
-            Some(browser) => match served_move(browser.address.text(), address) {
-                Move::Stay => return,
-                Move::Load => {
+            Some(browser) => {
+                let again: Vec<usize> = (0..browser.tabs.len())
+                    .filter(|index| {
+                        served_move(browser.tabs[*index].address.text(), address) == Move::Reload
+                    })
+                    .collect();
+                if !again.is_empty() {
+                    for index in again {
+                        browser.tabs[index].host.clone_from(&host);
+                        browser.tabs[index].commands.push(Command::Reload);
+                    }
+                } else if served_move(browser.address.text(), address) == Move::Load {
                     browser.host = host;
                     browser.address = Field::new(address);
                     browser.commands.push(Command::Load(address.to_owned()));
+                } else if browser.open_tab(address, host, false, false).is_none() {
+                    return;
                 }
-                Move::Reload => {
-                    browser.host = host;
-                    browser.commands.push(Command::Reload);
-                }
-            },
+            }
             None => self.browser = Some(Browser::new(address, host)),
         }
         self.tab = Tab::Browser;
     }
 
-    /// Opens the browser as it was left: on `address`, on the machine `host`, with the developer tools open when `tools`, `tools_width` wide, shown when `shown`.
+    /// Shows the page of a link the reader followed at `address`, on the machine of the project the reader is in: the browser opens on it, or goes to it where it is.
+    pub fn open_link_page(&mut self, address: &str) {
+        let host = self.current_project_host();
+        match self.browser.as_mut() {
+            Some(browser) => {
+                browser.host = host;
+                browser.address = Field::new(address);
+                browser.commands.push(Command::Load(address.to_owned()));
+            }
+            None => self.browser = Some(Browser::new(address, host)),
+        }
+        self.tab = Tab::Browser;
+    }
+
+    /// Opens the browser as it was left: with `tabs`, the one at `active` shown in it, the developer tools open when `tools`, `tools_width` wide, and the browser shown when `shown`.
     pub fn restore_browser(
         &mut self,
-        address: &str,
-        host: Option<String>,
+        tabs: &[SavedTab],
+        active: usize,
         tools: bool,
         tools_width: f32,
         shown: bool,
     ) {
-        let mut browser = Browser::new(address, host);
+        let Some(first) = tabs.first() else {
+            return;
+        };
+        let mut browser = Browser::new(&first.address, first.host.clone());
+        for saved in &tabs[1..] {
+            browser.open_tab(&saved.address, saved.host.clone(), saved.agent, false);
+        }
+        for (tab, saved) in browser.tabs.iter_mut().zip(tabs) {
+            tab.agent = saved.agent;
+            tab.locked = saved.locked && !saved.agent;
+        }
+        browser.active = active.min(browser.tabs.len() - 1);
         if tools_width > 0.0 {
             browser.tools_width = tools_width;
         }
@@ -365,15 +396,20 @@ impl WorkspaceState {
         }
     }
 
-    /// How the browser is to be put back after a restart: its address, its machine, whether its developer tools are open and how wide they are.
-    pub fn browser_saved(&self) -> Option<(String, Option<String>, bool, f32)> {
+    /// How the browser is to be put back after a restart: its tabs, the index of the one shown, whether its developer tools are open and how wide they are.
+    pub fn browser_saved(&self) -> Option<(Vec<SavedTab>, usize, bool, f32)> {
         let browser = self.browser.as_ref()?;
-        Some((
-            browser.address.text().to_owned(),
-            browser.host.clone(),
-            browser.tools,
-            browser.tools_width,
-        ))
+        let tabs = browser
+            .tabs
+            .iter()
+            .map(|tab| SavedTab {
+                address: tab.address.text().to_owned(),
+                host: tab.host.clone(),
+                agent: tab.agent,
+                locked: tab.locked,
+            })
+            .collect();
+        Some((tabs, browser.active, browser.tools, browser.tools_width))
     }
 
     /// Shows the developer tools beside the page when they are not shown, as pressing their button does.
@@ -389,14 +425,16 @@ impl WorkspaceState {
 
     /// Closes the browser.
     pub fn browser_closed(mut self) -> Self {
-        if let Some(browser) = self.browser.as_mut() {
-            browser.commands.push(Command::Close);
-        }
+        self.browser_dropped();
+        self
+    }
+
+    /// Takes the browser away, and shows the chat when the browser was what was shown.
+    pub(crate) fn browser_dropped(&mut self) {
         self.browser = None;
         if self.tab == Tab::Browser {
             self.tab = Tab::Chat;
         }
-        self
     }
 
     /// Whether the browser is open.
@@ -406,6 +444,9 @@ impl WorkspaceState {
 
     /// Carries out what pressing `id` of the browser does.
     pub(crate) fn browser_pressed(mut self, id: FocusId) -> Self {
+        if self.browser_tab_pressed(id) {
+            return self;
+        }
         match id {
             BROWSER_CLOSE => return self.browser_closed(),
             BROWSER_FIND_NEXT => {
@@ -450,12 +491,14 @@ impl WorkspaceState {
             BROWSER_ZOOM => browser.commands.push(Command::Zoom(ZoomStep::Reset)),
             BROWSER_PICK => {
                 browser.end_area();
-                browser.picking = !browser.picking;
-                browser.commands.push(Command::Pick(browser.picking));
+                let tab = &mut **browser;
+                tab.picking = !tab.picking;
+                tab.commands.push(Command::Pick(tab.picking));
             }
             BROWSER_TOOLS => {
                 browser.tools = !browser.tools;
-                browser.commands.push(if browser.tools {
+                let open = browser.tools;
+                browser.commands.push(if open {
                     Command::OpenTools
                 } else {
                     Command::CloseTools
@@ -466,37 +509,62 @@ impl WorkspaceState {
         self
     }
 
-    /// What the engine has not yet been told to do, which it is now.
-    pub fn take_browser_commands(&mut self) -> Vec<Command> {
-        self.browser
-            .as_mut()
-            .map(|browser| std::mem::take(&mut browser.commands))
-            .unwrap_or_default()
+    /// What the engine has not yet been told to do, each with the number of the tab it is for, which it is now.
+    pub fn take_browser_commands(&mut self) -> Vec<(u32, Command)> {
+        let Some(browser) = self.browser.as_mut() else {
+            return Vec::new();
+        };
+        let mut commands = Vec::new();
+        for tab in &mut browser.tabs {
+            let id = tab.id;
+            commands.extend(
+                std::mem::take(&mut tab.commands)
+                    .into_iter()
+                    .map(|c| (id, c)),
+            );
+        }
+        commands
     }
 
-    /// What the reader answered to the page's questions and to a certificate that is not trusted, which the engine has not yet been told.
-    pub fn take_browser_answers(&mut self) -> Vec<Answer> {
-        self.browser
-            .as_mut()
-            .map(|browser| std::mem::take(&mut browser.safety.answers))
-            .unwrap_or_default()
+    /// What the reader answered to the questions of the pages and to certificates that are not trusted, each with the number of the tab it is for, which the engine has not yet been told.
+    pub fn take_browser_answers(&mut self) -> Vec<(u32, Answer)> {
+        let Some(browser) = self.browser.as_mut() else {
+            return Vec::new();
+        };
+        let mut answers = Vec::new();
+        for tab in &mut browser.tabs {
+            let id = tab.id;
+            answers.extend(
+                std::mem::take(&mut tab.safety.answers)
+                    .into_iter()
+                    .map(|a| (id, a)),
+            );
+        }
+        answers
     }
 
-    /// Clears the notice and loads the address in the bar again, as after the browser was installed.
+    /// Clears the notice of every tab that has one and loads its address again, as after the browser was installed.
     pub fn browser_retry(&mut self) {
         let host = self.current_project_host();
         if let Some(browser) = self.browser.as_mut() {
-            browser.notice = None;
-            browser.host = host;
-            let address = address_of(browser.address.text());
-            browser.commands.push(Command::Load(address));
+            for tab in &mut browser.tabs {
+                if tab.notice.take().is_some() {
+                    tab.host.clone_from(&host);
+                    let address = address_of(tab.address.text());
+                    tab.commands.push(Command::Load(address));
+                }
+            }
         }
     }
 
-    /// The state after the mode of picking an element ended: the pick becomes a chip on the prompt of the chat and the pane being looked at stays as it is; no element means the mode ended without a pick.
-    pub fn browser_picked(mut self, element: Option<crate::elements::Element>) -> Self {
-        if let Some(browser) = self.browser.as_mut() {
-            browser.picking = false;
+    /// The state after the mode of picking an element ended in tab `tab`: the pick becomes a chip on the prompt of the chat and the pane being looked at stays as it is; no element means the mode ended without a pick.
+    pub fn browser_picked(mut self, tab: u32, element: Option<crate::elements::Element>) -> Self {
+        if let Some(tab) = self
+            .browser
+            .as_mut()
+            .and_then(|browser| browser.tab_mut(tab))
+        {
+            tab.picking = false;
         }
         match element {
             Some(element) => self.with_element(element),
@@ -504,17 +572,25 @@ impl WorkspaceState {
         }
     }
 
-    /// Takes in the zoom the engine reported for the page, as a factor.
-    pub fn browser_zoomed(&mut self, factor: f32) {
-        if let Some(browser) = self.browser.as_mut() {
-            browser.zoom = factor;
+    /// Takes in the zoom the engine reported for the page of tab `tab`, as a factor.
+    pub fn browser_zoomed(&mut self, tab: u32, factor: f32) {
+        if let Some(tab) = self
+            .browser
+            .as_mut()
+            .and_then(|browser| browser.tab_mut(tab))
+        {
+            tab.zoom = factor;
         }
     }
 
-    /// The state after the helper reported what the reader asked to add to the prompt: it becomes a chip, and the mode of dragging a rectangle, if it was on, is over; no capture means the mode ended without an area.
-    pub fn browser_captured(mut self, capture: Option<crate::captures::Capture>) -> Self {
-        if let Some(browser) = self.browser.as_mut() {
-            browser.picking_area = false;
+    /// The state after the helper reported, for tab `tab`, what the reader asked to add to the prompt: it becomes a chip, and the mode of dragging a rectangle, if it was on, is over; no capture means the mode ended without an area.
+    pub fn browser_captured(mut self, tab: u32, capture: Option<crate::captures::Capture>) -> Self {
+        if let Some(tab) = self
+            .browser
+            .as_mut()
+            .and_then(|browser| browser.tab_mut(tab))
+        {
+            tab.picking_area = false;
         }
         match capture {
             Some(capture) => self.with_capture(capture),
@@ -522,25 +598,49 @@ impl WorkspaceState {
         }
     }
 
-    /// Takes away the notice, as the page is about to be shown.
-    pub fn browser_notice_cleared(&mut self) {
-        if let Some(browser) = self.browser.as_mut() {
-            browser.notice = None;
+    /// Takes away the notice of tab `tab`, as its page is about to be shown.
+    pub fn browser_notice_cleared(&mut self, tab: u32) {
+        if let Some(tab) = self
+            .browser
+            .as_mut()
+            .and_then(|browser| browser.tab_mut(tab))
+        {
+            tab.notice = None;
         }
     }
 
-    /// Says why the page cannot be shown.
+    /// Says why the page of tab `tab` cannot be shown.
+    pub fn browser_tab_notice(&mut self, tab: u32, notice: &str) {
+        if let Some(tab) = self
+            .browser
+            .as_mut()
+            .and_then(|browser| browser.tab_mut(tab))
+        {
+            tab.notice = Some(notice.to_owned());
+        }
+    }
+
+    /// Says why no page can be shown, in every tab.
     pub fn browser_notice(&mut self, notice: &str) {
         if let Some(browser) = self.browser.as_mut() {
-            browser.notice = Some(notice.to_owned());
+            for tab in &mut browser.tabs {
+                tab.notice = Some(notice.to_owned());
+            }
         }
     }
 
-    /// Records what the engine reports: the pictures and title of the page, and, unless the address is being typed, its address.
-    pub fn browser_painted(
+    /// Records the newest picture of the developer tools.
+    pub fn browser_tools_painted(&mut self, tools_page: Picture) {
+        if let Some(browser) = self.browser.as_mut() {
+            browser.tools_page = Some(tools_page);
+        }
+    }
+
+    /// Records what the engine reports of the page of tab `tab`: its picture and title, how the pointer looks, and, unless the address is being typed in the tab shown, its address.
+    pub fn browser_tab_painted(
         &mut self,
+        tab: u32,
         page: Option<Picture>,
-        tools_page: Option<Picture>,
         title: &str,
         address: &str,
         pointer: Pointer,
@@ -549,16 +649,17 @@ impl WorkspaceState {
         let Some(browser) = self.browser.as_mut() else {
             return;
         };
+        let shown = browser.active_id() == tab;
+        let Some(tab) = browser.tab_mut(tab) else {
+            return;
+        };
         if page.is_some() {
-            browser.page = page;
+            tab.page = page;
         }
-        if tools_page.is_some() {
-            browser.tools_page = tools_page;
-        }
-        browser.title = title.to_owned();
-        browser.pointer = pointer;
-        if !typing && !address.is_empty() && browser.address.text() != address {
-            browser.address = Field::new(address);
+        title.clone_into(&mut tab.title);
+        tab.pointer = pointer;
+        if !(typing && shown) && !address.is_empty() && tab.address.text() != address {
+            tab.address = Field::new(address);
         }
     }
 }
@@ -617,6 +718,30 @@ pub fn browser_view(state: &WorkspaceState, width: f32, height: f32) -> Node {
         )
         .child(
             Button::icon(
+                if browser.locked {
+                    IconName::Lock
+                } else {
+                    IconName::LockOpen
+                },
+                BROWSER_LOCK,
+            )
+            .variant(if browser.locked {
+                Variant::Secondary
+            } else {
+                Variant::Ghost
+            })
+            .disabled(browser.agent)
+            .build()
+            .tooltip(if browser.agent {
+                "Opened by an agent: agents may always work in this tab"
+            } else if browser.locked {
+                "Locked: agents cannot change this tab. Press to unlock it."
+            } else {
+                "Lock this tab so agents cannot change it"
+            }),
+        )
+        .child(
+            Button::icon(
                 if browser.tools {
                     IconName::PanelRightFilled
                 } else {
@@ -626,7 +751,7 @@ pub fn browser_view(state: &WorkspaceState, width: f32, height: f32) -> Node {
             )
             .build(),
         );
-    let room = (height - TOOLBAR - browser.safety.bars()).max(0.0);
+    let room = (height - TAB_STRIP - TOOLBAR - browser.safety.bars()).max(0.0);
     let surface = |id: FocusId, picture: &Option<Picture>, wide: f32, tall: f32| {
         if id == BROWSER_BODY
             && let Some(certificate) = browser.safety.certificate.as_ref()
@@ -690,6 +815,11 @@ pub fn browser_view(state: &WorkspaceState, width: f32, height: f32) -> Node {
             .as_ref()
             .map(|search| find_bar(search, page_width, beside)),
     );
+    row = row.children(
+        browser
+            .safety
+            .question_overlay(page_width, std::time::Instant::now()),
+    );
     let mut pane = node()
         .styles([
             flex(),
@@ -698,6 +828,7 @@ pub fn browser_view(state: &WorkspaceState, width: f32, height: f32) -> Node {
             h_px(height),
             bg(Role::Background),
         ])
+        .child(tab_strip(browser, width))
         .child(toolbar);
     for bar in browser.safety.bar_nodes() {
         pane = pane.child(bar);

@@ -285,6 +285,11 @@ impl View {
         self.link.send(&Request::ClearData { page: self.page });
     }
 
+    /// The new windows the page asked for since the last call, each the address and whether a tool of an agent was running on the page when it asked.
+    pub fn take_opened(&self) -> Vec<(String, bool)> {
+        self.state.take_opened()
+    }
+
     /// The newest picture of the page, once it has painted.
     pub fn frame(&self) -> Option<Frame> {
         self.state.frame()

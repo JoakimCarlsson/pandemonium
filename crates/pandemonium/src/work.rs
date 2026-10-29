@@ -430,6 +430,8 @@ pub struct Work {
     browser_calls: Vec<(Host, u64, String, String)>,
     /// The web pages that programs started in shells serve and the window has not taken yet, each with the machine and the address on it.
     served: Vec<(Host, String)>,
+    /// The web links the reader followed, which the window sends to the embedded browser or the system browser.
+    followed: Vec<String>,
     /// What the threads report.
     jobs: Receiver<Job>,
     /// Handed to each thread.
@@ -478,6 +480,7 @@ impl Work {
             forgotten: HashSet::new(),
             browser_calls: Vec::new(),
             served: Vec::new(),
+            followed: Vec::new(),
             browser_available: false,
             cancelled: HashSet::new(),
             early: HashMap::new(),
@@ -599,6 +602,11 @@ impl Work {
     /// The browser tool calls agents made since this was last called.
     pub fn take_browser_calls(&mut self) -> Vec<(Host, u64, String, String)> {
         std::mem::take(&mut self.browser_calls)
+    }
+
+    /// The web links the reader followed since this was last called.
+    pub fn take_links(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.followed)
     }
 
     /// The web pages programs started in shells served since this was last called, each with the machine and the address on it.
@@ -1396,9 +1404,7 @@ impl Work {
                     }
                 }
                 Outgoing::Open { address } => {
-                    if let Err(reason) = pm_acp::open_address(&address) {
-                        eprintln!("{reason}");
-                    }
+                    self.followed.push(address);
                 }
                 Outgoing::LoadServers => {
                     self.ask(&None, Request::AgentServers, Pending::AgentServers);

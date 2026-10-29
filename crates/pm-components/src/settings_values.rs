@@ -94,6 +94,7 @@ impl Setting {
             Self::OfferLanguages => Control::Switch(window.general.offer_languages),
             Self::EmbeddedBrowser => Control::Switch(window.general.embedded_browser),
             Self::OpenDevServers => Control::Switch(window.general.open_dev_servers),
+            Self::OpenLocalLinks => Control::Switch(window.general.open_local_links),
             Self::RestrictAgentBrowsing => Control::Switch(window.general.restrict_agent_browsing),
             Self::AgentOrigins => Control::List(self.lines(state)),
             Self::Channel => Control::Choice(
@@ -414,6 +415,7 @@ impl Setting {
             Self::OfferLanguages => window.general.offer_languages ^= true,
             Self::EmbeddedBrowser => window.general.embedded_browser ^= true,
             Self::OpenDevServers => window.general.open_dev_servers ^= true,
+            Self::OpenLocalLinks => window.general.open_local_links ^= true,
             Self::RestrictAgentBrowsing => window.general.restrict_agent_browsing ^= true,
             Self::Channel => {
                 window.general.channel = [Channel::Stable, Channel::Preview][option.min(1)];
@@ -909,6 +911,9 @@ impl Setting {
             }
             Self::OpenDevServers => {
                 window.general.open_dev_servers = own.general.open_dev_servers;
+            }
+            Self::OpenLocalLinks => {
+                window.general.open_local_links = own.general.open_local_links;
             }
             Self::RestrictAgentBrowsing => {
                 window.general.restrict_agent_browsing = own.general.restrict_agent_browsing;

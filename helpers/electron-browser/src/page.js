@@ -10,10 +10,12 @@ const agent = require('./agent');
 const capture = require('./capture');
 const { Cdp } = require('./cdp');
 const { Dialogs } = require('./dialogs');
+const emulation = require('./emulation');
 const { cursorOf, deliver } = require('./input');
 const origins = require('./origins');
 const pick = require('./pick');
 const { Recorder } = require('./recorder');
+const { Restriction } = require('./restriction');
 const { Surface } = require('./surface');
 
 /** @typedef {import('./types').PageRequest} PageRequest */
@@ -104,24 +106,27 @@ class Page {
     this.recorder = null;
     /** @type {Dialogs | null} The page's dialogs, for pages that are inspectable. */
     this.dialogs = null;
-    /** @type {{ width: number, height: number } | null} The size an agent set the viewport to with `browser_resize`, until it is reset. */
+    /** @type {import('./emulation').Emulated | null} The viewport an agent set with `browser_resize` or `browser_emulate`, until it is reset. */
     this.viewport = null;
-    /** @type {number} How many tools of agents are running against the page. */
-    this.agentRuns = 0;
-    /** @type {string | null} Why the page was kept from an address while a tool ran, until that tool's answer says so. */
-    this.refused = null;
+    /** @type {string | null} The user agent an agent set with `browser_emulate`, until it is reset. */
+    this.userAgent = null;
+    /** @type {InstanceType<typeof Restriction>} When the restriction on agent browsing applies to the page, and what it refused. */
+    this.restriction = new Restriction();
     /** @type {{ url: string, origin: string, fingerprint: string } | null} The site whose untrusted certificate kept the page from loading, while the reader has not chosen. */
     this.certificate = null;
     this.contents.setFrameRate(60);
     this.contents.setWindowOpenHandler(({ url }) => {
-      if (webAddress(url) && !this.guard(url)) this.contents.loadURL(url).catch(() => {});
+      if (webAddress(url) && !this.guard(url)) send({ OpenRequested: { page: id, url, agent: this.agentBusy() } });
       return { action: 'deny' };
     });
     this.contents.on('will-navigate', (event, url) => {
       if (!webAddress(url) || this.guard(url)) event.preventDefault();
     });
-    this.contents.on('will-redirect', (event, url) => {
-      if (this.guard(url)) event.preventDefault();
+    this.contents.on('will-frame-navigate', (event) => {
+      if (event.isMainFrame ? this.guard(event.url) : this.guard(event.url, true)) event.preventDefault();
+    });
+    this.contents.on('will-redirect', (event) => {
+      if (this.guard(event.url, !event.isMainFrame)) event.preventDefault();
     });
     this.contents.on('paint', (_event, _dirty, image) => this.paint(image));
     this.contents.on('page-title-updated', (_event, title) => send({ Title: { page: id, title } }));
@@ -142,23 +147,21 @@ class Page {
   }
 
   /**
-   * Whether a tool of an agent is running against the page, so that what it starts is the agent's doing.
-   * @returns {boolean} Whether one is.
+   * Whether a tool of an agent runs against the page or ended a moment ago, so that what the page starts may be the agent's doing.
+   * @returns {boolean} Whether one does.
    */
   agentBusy() {
-    return this.agentRuns > 0;
+    return this.restriction.recent();
   }
 
   /**
-   * Checks an address the page is about to go to, by a link, a redirect or a new window, against what agents may open; it only holds while a tool of an agent runs, never for the reader's own moves.
+   * Checks an address the page is about to go to, by a link, a redirect, a new window or a frame, against what agents may open; it only holds while a tool of an agent runs and for a few seconds after, never otherwise.
    * @param {string} url Where the page is going.
-   * @returns {string | null} Why it may not, which the tool's answer will say, or nothing when it may.
+   * @param {boolean} [frame] Whether a frame inside the page goes there.
+   * @returns {string | null} Why it may not, which the next answer of a tool will say, or nothing when it may.
    */
-  guard(url) {
-    if (!this.agentBusy()) return null;
-    const refusal = origins.mayOpen(url);
-    if (refusal) this.refused = refusal;
-    return refusal;
+  guard(url, frame = false) {
+    return this.restriction.guard(url, frame);
   }
 
   /**
@@ -232,8 +235,7 @@ class Page {
    */
   holdViewport() {
     if (!this.viewport || !this.cdp) return;
-    const { width, height } = this.viewport;
-    this.cdp.call('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 0, mobile: false }).catch(() => {});
+    emulation.applyViewport(this.cdp, this.viewport).catch(() => {});
   }
 
   /**
@@ -292,19 +294,22 @@ class Page {
       } catch (_) {
         args = {};
       }
-      this.refused = null;
-      this.agentRuns += 1;
+      const carried = this.restriction.takeRefusal();
+      this.restriction.start(body.tool);
       try {
         outcome = await agent.run(this, body.tool, args && typeof args === 'object' ? /** @type {Record<string, any>} */ (args) : {});
       } catch (error) {
         outcome = { ok: false, text: String(error instanceof Error ? error.message : error), image: null };
       } finally {
-        this.agentRuns -= 1;
+        this.restriction.end(body.tool);
       }
-      if (this.refused) {
-        const moving = ['browser_navigate', 'browser_back', 'browser_forward', 'browser_reload'].includes(body.tool);
-        outcome = moving ? { ok: false, text: this.refused, image: null } : { ...outcome, text: `${outcome.text}\n${this.refused}` };
-        this.refused = null;
+      const fresh = this.restriction.takeRefusal();
+      const moving = ['browser_navigate', 'browser_back', 'browser_forward', 'browser_reload'].includes(body.tool);
+      if (fresh && moving) {
+        outcome = { ok: false, text: fresh, image: null };
+      } else if (fresh || carried) {
+        const notes = [carried && `Earlier, after the last tool ended: ${carried}`, fresh].filter(Boolean).join('\n');
+        outcome = { ...outcome, text: `${outcome.text}\n${notes}` };
       }
     }
     this.send({ ToolDone: { page: this.id, result: { call: body.call, ...outcome } } });
@@ -336,6 +341,7 @@ class Page {
     this.surface.close();
     if (this.dialogs) this.dialogs.dispose();
     if (this.cdp) this.cdp.detach();
+    this.restriction.dispose();
     if (!this.win.isDestroyed()) this.win.destroy();
   }
 }

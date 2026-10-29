@@ -24,7 +24,7 @@ impl App {
 
     /// Takes in what the helper reported for the reader's additions to the prompt: each becomes a chip, with the pictures attached from the window's own folder, and the previews are started.
     pub(super) fn browser_captured(&mut self) {
-        for report in self.browser_reports() {
+        for (tab, report) in self.browser_reports() {
             let capture = capture_of(&report);
             let paths: Vec<String> = capture
                 .as_ref()
@@ -32,7 +32,7 @@ impl App {
                 .unwrap_or_default();
             let held = capture.is_some();
             self.model.update(|screen| {
-                *screen = std::mem::take(screen).browser_captured(capture.clone());
+                *screen = std::mem::take(screen).browser_captured(tab, capture.clone());
             });
             if !paths.is_empty() {
                 self.work.preview(paths);

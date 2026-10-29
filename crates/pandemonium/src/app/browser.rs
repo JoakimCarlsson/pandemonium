@@ -11,8 +11,10 @@ use pm_components::browser::{
     PAGE_SURFACE, Pointer, TOOLS_SURFACE, ZoomStep,
 };
 use pm_components::browser_keys::{Shortcut, shortcut_of};
+use pm_components::browser_links::{Route, route};
 use pm_components::browser_menu::{BROWSER_MENU_HEIGHT, BrowserCommand};
 use pm_components::browser_safety::{Answer, Certificate, Download, Question, Safety, Saving};
+use pm_components::browser_tabs::{TabInfo, changes_page, locked_message};
 use pm_components::elements::Element;
 use pm_components::state::PROMPT;
 use pm_editor::{Action, Pressed};
@@ -34,20 +36,20 @@ const DOUBLE_CLICK: Duration = Duration::from_millis(450);
 pub(super) struct Web {
     /// The engine, once a page was first opened.
     engine: Option<Engine>,
-    /// The page, while one is open.
-    page: Option<View>,
-    /// The developer tools of the page, while they are open.
-    tools: Option<View>,
-    /// The size each window of a page was last given, in logical pixels, and the scale.
-    sized: [Option<(u32, u32, f32)>; 2],
-    /// The newest frame of the page and of the tools that was handed to the window.
-    shown: [u64; 2],
+    /// The page of each tab of the browser that has one, by the tab's number.
+    pages: std::collections::HashMap<u32, Shown>,
+    /// The developer tools, with the number of the tab whose page they are of, while they are open.
+    tools: Option<(u32, View)>,
+    /// The size the window of the tools was last given, in logical pixels, and the scale.
+    tools_sized: Option<(u32, u32, f32)>,
+    /// The newest frame of the tools that was handed to the window.
+    tools_shown: u64,
     /// Which window the primary button went down in, so the release goes to it too.
     pressed_in: Option<FocusId>,
     /// The last press, for counting clicks.
     last_press: Option<(Instant, (i32, i32), u8)>,
-    /// Which window had the keyboard when the page was last told.
-    focused: Option<FocusId>,
+    /// The tab being shown and which window had the keyboard when the pages were last told.
+    focused: Option<(Option<u32>, Option<FocusId>)>,
     /// Whether the engine could not start.
     failed: bool,
     /// The download of the browser, while it runs, and whether it already failed.
@@ -76,6 +78,16 @@ pub(super) struct Web {
     sent_origins: Option<(bool, Vec<String>)>,
 }
 
+/// The page of one tab and what the window last handed it.
+struct Shown {
+    /// The page.
+    view: View,
+    /// The size the window of the page was last given, in logical pixels, and the scale.
+    sized: Option<(u32, u32, f32)>,
+    /// The newest frame of the page that was handed to the window.
+    shown: u64,
+}
+
 /// Whether an agent may send the browser to `url`: a web address or the blank page, never a local file or an internal page of the browser.
 fn agent_may_open(url: &str) -> bool {
     let url = url.trim();
@@ -85,6 +97,68 @@ fn agent_may_open(url: &str) -> bool {
         .to_ascii_lowercase();
     url.eq_ignore_ascii_case("about:blank")
         || (matches!(scheme.as_str(), "http" | "https") && url[scheme.len()..].starts_with("://"))
+}
+
+/// The scheme, host and port of a web address, in lower case with the scheme's usual port left out; nothing when it is not a plain `http` or `https` address, or has a login, a backslash or a space in it.
+fn origin_parts(address: &str) -> Option<(String, String, String)> {
+    let address = address.trim();
+    if address
+        .chars()
+        .any(|c| c.is_whitespace() || c.is_control() || c == '\\')
+    {
+        return None;
+    }
+    let (scheme, rest) = address.split_once("://")?;
+    let scheme = scheme.to_ascii_lowercase();
+    if scheme != "http" && scheme != "https" {
+        return None;
+    }
+    let end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
+    let authority = &rest[..end];
+    if authority.is_empty() || authority.contains('@') {
+        return None;
+    }
+    let (host, port) = match authority.strip_prefix('[') {
+        Some(inner) => {
+            let (host, after) = inner.split_once(']')?;
+            (
+                format!("[{host}]"),
+                after.strip_prefix(':').unwrap_or("").to_owned(),
+            )
+        }
+        None => {
+            let (host, port) = authority.split_once(':').unwrap_or((authority, ""));
+            (host.to_owned(), port.to_owned())
+        }
+    };
+    let usual = if scheme == "http" { "80" } else { "443" };
+    let port = if port == usual { "" } else { port.as_str() };
+    Some((scheme, host.to_ascii_lowercase(), port.to_owned()))
+}
+
+/// Whether the restriction on agent browsing lets an agent open `url`: always when it is off or the blank page; otherwise only an address of `localhost`, `127.0.0.1` or `[::1]`, or of an origin in `origins`, as `helpers/electron-browser/src/origins.js` decides for the tools the helper runs.
+fn origin_allowed(url: &str, restricted: bool, origins: &[String]) -> bool {
+    if !restricted || url.trim().eq_ignore_ascii_case("about:blank") {
+        return true;
+    }
+    let Some((scheme, host, port)) = origin_parts(url) else {
+        return false;
+    };
+    if matches!(host.as_str(), "localhost" | "127.0.0.1" | "[::1]") {
+        return true;
+    }
+    origins.iter().any(|line| {
+        let line = line.trim();
+        let candidates = if line.contains("://") {
+            vec![line.to_owned()]
+        } else {
+            vec![format!("http://{line}"), format!("https://{line}")]
+        };
+        candidates
+            .iter()
+            .filter_map(|candidate| origin_parts(candidate))
+            .any(|entry| entry == (scheme.clone(), host.clone(), port.clone()))
+    })
 }
 
 /// Takes in one thing the helper reported that the reader is to see or answer.
@@ -123,6 +197,33 @@ fn apply_notice(safety: &mut Safety, notice: Notice) {
             });
         }
     }
+}
+
+/// What an agent is told of the tabs: one line for each, with its number and what marks it.
+fn tabs_text(tabs: &[TabInfo]) -> String {
+    if tabs.is_empty() {
+        return "No tabs are open.".to_owned();
+    }
+    tabs.iter()
+        .map(|tab| {
+            let marks: Vec<&str> = [
+                (tab.target, "the tools' tab"),
+                (tab.viewing, "shown to the reader"),
+                (tab.agent, "opened by an agent"),
+                (tab.locked, "locked by the reader"),
+            ]
+            .into_iter()
+            .filter_map(|(on, mark)| on.then_some(mark))
+            .collect();
+            let marks = if marks.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", marks.join(", "))
+            };
+            format!("Tab {}{marks}: {} - {}", tab.id, tab.title, tab.address)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The element the pane's page reported, as the prompt holds it.
@@ -326,11 +427,25 @@ impl App {
             })
     }
 
+    /// The number of the tab being shown, while the browser is open.
+    fn browser_active(&self) -> Option<u32> {
+        self.model.read(|screen| {
+            let Screen::Workspace(state) = screen;
+            state.browser.as_ref().map(|browser| browser.active_id())
+        })
+    }
+
+    /// The page of the tab being shown.
+    fn browser_page(&self) -> Option<&View> {
+        let active = self.browser_active()?;
+        self.web.pages.get(&active).map(|shown| &shown.view)
+    }
+
     /// The view that shows in the window `id`.
     fn browser_view_of(&self, id: FocusId) -> Option<&View> {
         match id {
-            BROWSER_BODY => self.web.page.as_ref(),
-            BROWSER_TOOLS_BODY => self.web.tools.as_ref(),
+            BROWSER_BODY => self.browser_page(),
+            BROWSER_TOOLS_BODY => self.web.tools.as_ref().map(|(_, view)| view),
             _ => None,
         }
     }
@@ -353,13 +468,19 @@ impl App {
         }
     }
 
-    /// What the page reported for the reader's additions to the prompt since the last call.
-    pub(super) fn browser_reports(&self) -> Vec<pm_browser::Capture> {
+    /// What the pages reported for the reader's additions to the prompt since the last call, each with the number of the tab it came from.
+    pub(super) fn browser_reports(&self) -> Vec<(u32, pm_browser::Capture)> {
         self.web
-            .page
-            .as_ref()
-            .map(View::take_captures)
-            .unwrap_or_default()
+            .pages
+            .iter()
+            .flat_map(|(id, shown)| {
+                shown
+                    .view
+                    .take_captures()
+                    .into_iter()
+                    .map(|capture| (*id, capture))
+            })
+            .collect()
     }
 
     /// Where a menu over the page opens: just under the pointer and inside the window.
@@ -482,7 +603,7 @@ impl App {
         if !over && self.browser_focused() != Some(BROWSER_BODY) {
             return false;
         }
-        let Some(page) = self.web.page.as_ref() else {
+        let Some(page) = self.browser_page() else {
             return false;
         };
         if back {
@@ -666,30 +787,37 @@ impl App {
         }
     }
 
-    /// Takes in what the helper says the reader is to see or answer, and carries the reader's answers back.
+    /// Takes in what the helper says the reader is to see or answer, in each tab, and carries the reader's answers back to the tab they are for.
     fn browser_safety(&mut self) {
-        let notices = self
+        let notices: Vec<(u32, Vec<Notice>)> = self
             .web
-            .page
-            .as_ref()
-            .map(View::take_notices)
-            .unwrap_or_default();
+            .pages
+            .iter()
+            .map(|(id, shown)| (*id, shown.view.take_notices()))
+            .filter(|(_, notices)| !notices.is_empty())
+            .collect();
         if !notices.is_empty() {
             self.model.update(|screen| {
                 let Screen::Workspace(state) = screen;
                 if let Some(browser) = state.browser.as_mut() {
-                    for notice in notices {
-                        apply_notice(&mut browser.safety, notice);
+                    for (id, notices) in notices {
+                        if let Some(tab) = browser.tab_mut(id) {
+                            for notice in notices {
+                                apply_notice(&mut tab.safety, notice);
+                            }
+                        }
                     }
                 }
             });
         }
         let waiting = self.model.read(|screen| {
             let Screen::Workspace(state) = screen;
-            state
-                .browser
-                .as_ref()
-                .is_some_and(|browser| !browser.safety.answers.is_empty())
+            state.browser.as_ref().is_some_and(|browser| {
+                browser
+                    .tabs
+                    .iter()
+                    .any(|tab| !tab.safety.answers.is_empty())
+            })
         });
         if !waiting {
             return;
@@ -699,10 +827,10 @@ impl App {
             let Screen::Workspace(state) = screen;
             answers = state.take_browser_answers();
         });
-        let Some(page) = self.web.page.as_ref() else {
-            return;
-        };
-        for answer in answers {
+        for (tab, answer) in answers {
+            let Some(page) = self.web.pages.get(&tab).map(|shown| &shown.view) else {
+                continue;
+            };
             match answer {
                 Answer::Permission { id, allow } => page.answer_permission(id, allow),
                 Answer::Certificate { proceed } => page.certificate_choice(proceed),
@@ -764,14 +892,14 @@ impl App {
         })
     }
 
-    /// Carries out what the window asked of the engine.
+    /// Carries out what the window asked of the engine, each command in the tab it is for.
     fn browser_commands(&mut self, scale: f32) {
         let pending = self.model.read(|screen| {
             let Screen::Workspace(state) = screen;
             state
                 .browser
                 .as_ref()
-                .is_some_and(|browser| !browser.commands.is_empty())
+                .is_some_and(|browser| browser.tabs.iter().any(|tab| !tab.commands.is_empty()))
         });
         if !pending {
             return;
@@ -781,215 +909,235 @@ impl App {
             let Screen::Workspace(state) = screen;
             commands = state.take_browser_commands();
         });
-        for command in commands {
+        for (tab, command) in commands {
             match command {
-                Command::Load(address) => {
-                    let host = self.model.read(|screen| {
-                        let Screen::Workspace(state) = screen;
-                        state
-                            .browser
-                            .as_ref()
-                            .and_then(|browser| browser.host.clone())
-                    });
-                    let address = match self.browser_resolve(&address, host.as_deref()) {
-                        Ok(address) => address,
-                        Err(message) => {
-                            self.model.update(|screen| {
-                                let Screen::Workspace(state) = screen;
-                                state.browser_notice(&message);
-                            });
-                            continue;
-                        }
-                    };
-                    self.model.update(|screen| {
-                        let Screen::Workspace(state) = screen;
-                        state.browser_notice_cleared();
-                    });
-                    if let Some(page) = self.web.page.as_ref() {
-                        page.load(&address);
-                    } else {
-                        let (width, height, scale) = self.browser_size(BROWSER_BODY, scale);
-                        if let Some(engine) = self.browser_engine() {
-                            match View::open(engine, &address, width, height, scale) {
-                                Ok(view) => self.web.page = Some(view),
-                                Err(error) => {
-                                    self.model.update(|screen| {
-                                        let Screen::Workspace(state) = screen;
-                                        state.browser_notice(&error.to_string());
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-                Command::Cut | Command::Copy | Command::Paste | Command::SelectAll => {
-                    let action = match command {
-                        Command::Cut => EditAction::Cut,
-                        Command::Copy => EditAction::Copy,
-                        Command::Paste => EditAction::Paste,
-                        _ => EditAction::SelectAll,
-                    };
-                    if let Some(page) = self.web.page.as_ref() {
-                        page.edit(action);
-                    }
-                }
-                Command::Pick(on) => {
-                    if let Some(page) = self.web.page.as_ref() {
-                        page.pick(on);
-                    }
-                }
-                Command::Screenshot | Command::FullPage | Command::Console => {
-                    let kind = match command {
-                        Command::Screenshot => CaptureKind::Screenshot,
-                        Command::FullPage => CaptureKind::FullPage,
-                        _ => CaptureKind::Console,
-                    };
-                    if let Some(page) = self.web.page.as_ref() {
-                        page.capture(kind);
-                    }
-                }
-                Command::PickArea(on) => {
-                    if let Some(page) = self.web.page.as_ref() {
-                        page.pick_area(on);
-                    }
-                }
-                Command::Back => {
-                    if let Some(page) = self.web.page.as_ref() {
-                        page.back();
-                    }
-                }
-                Command::Forward => {
-                    if let Some(page) = self.web.page.as_ref() {
-                        page.forward();
-                    }
-                }
-                Command::Reload => {
-                    if let Some(page) = self.web.page.as_ref() {
-                        page.reload();
-                    }
-                }
-                Command::HardReload => {
-                    if let Some(page) = self.web.page.as_ref() {
-                        page.hard_reload();
-                    }
-                }
-                Command::Find {
-                    text,
-                    forward,
-                    again,
-                } => {
-                    if let Some(page) = self.web.page.as_ref() {
-                        page.find(&text, forward, again);
-                    }
-                }
-                Command::StopFind => {
-                    if let Some(page) = self.web.page.as_ref() {
-                        page.stop_find();
-                    }
-                }
-                Command::Zoom(step) => {
-                    if let Some(page) = self.web.page.as_ref() {
-                        page.zoom(match step {
-                            ZoomStep::In => ZoomAction::In,
-                            ZoomStep::Out => ZoomAction::Out,
-                            ZoomStep::Reset => ZoomAction::Reset,
-                        });
-                    }
-                }
-                Command::OpenExternal => {
-                    if let Some(page) = self.web.page.as_ref()
-                        && let Err(reason) = pm_acp::open_address(&page.address())
-                    {
-                        eprintln!("{reason}");
-                    }
-                }
-                Command::ClearData => {
-                    if let Some(page) = self.web.page.as_ref() {
-                        page.clear_data();
-                    }
-                }
+                Command::Load(address) => self.browser_load(tab, &address, scale),
                 Command::OpenTools => {
                     let (width, height, scale) = self.browser_size(BROWSER_TOOLS_BODY, scale);
-                    if let Some(page) = self.web.page.as_ref() {
-                        self.web.tools = Some(page.open_devtools(width.max(1), height, scale));
+                    if let Some(page) = self.web.pages.get(&tab).map(|shown| &shown.view) {
+                        self.web.tools =
+                            Some((tab, page.open_devtools(width.max(1), height, scale)));
+                        self.web.tools_sized = None;
+                        self.web.tools_shown = 0;
                     }
                 }
                 Command::CloseTools => {
                     self.web.tools = None;
-                    self.web.sized[1] = None;
-                    self.web.shown[1] = 0;
+                    self.web.tools_sized = None;
+                    self.web.tools_shown = 0;
                 }
-                Command::Close => {
-                    self.web.tools = None;
-                    self.web.page = None;
-                    self.web.sized = [None, None];
-                    self.web.shown = [0, 0];
+                other => {
+                    if let Some(page) = self.web.pages.get(&tab).map(|shown| &shown.view) {
+                        Self::browser_page_command(page, other);
+                    }
                 }
             }
+        }
+    }
+
+    /// Loads `address` in the tab `tab`, opening its page first when it has none.
+    fn browser_load(&mut self, tab: u32, address: &str, scale: f32) {
+        let host = self.model.read(|screen| {
+            let Screen::Workspace(state) = screen;
+            state
+                .browser
+                .as_ref()
+                .and_then(|browser| browser.tab(tab))
+                .and_then(|tab| tab.host.clone())
+        });
+        let address = match self.browser_resolve(address, host.as_deref()) {
+            Ok(address) => address,
+            Err(message) => {
+                self.model.update(|screen| {
+                    let Screen::Workspace(state) = screen;
+                    state.browser_tab_notice(tab, &message);
+                });
+                return;
+            }
+        };
+        self.model.update(|screen| {
+            let Screen::Workspace(state) = screen;
+            state.browser_notice_cleared(tab);
+        });
+        if let Some(shown) = self.web.pages.get(&tab) {
+            shown.view.load(&address);
+            return;
+        }
+        let size = self.browser_size(BROWSER_BODY, scale);
+        let Some(engine) = self.browser_engine() else {
+            return;
+        };
+        match View::open(engine, &address, size.0, size.1, size.2) {
+            Ok(view) => {
+                self.web.pages.insert(
+                    tab,
+                    Shown {
+                        view,
+                        sized: Some(size),
+                        shown: 0,
+                    },
+                );
+            }
+            Err(error) => self.model.update(|screen| {
+                let Screen::Workspace(state) = screen;
+                state.browser_tab_notice(tab, &error.to_string());
+            }),
+        }
+    }
+
+    /// Carries out the command of a page that is open: all the ones that need only the page.
+    fn browser_page_command(page: &View, command: Command) {
+        match command {
+            Command::Cut => page.edit(EditAction::Cut),
+            Command::Copy => page.edit(EditAction::Copy),
+            Command::Paste => page.edit(EditAction::Paste),
+            Command::SelectAll => page.edit(EditAction::SelectAll),
+            Command::Pick(on) => page.pick(on),
+            Command::Screenshot => page.capture(CaptureKind::Screenshot),
+            Command::FullPage => page.capture(CaptureKind::FullPage),
+            Command::Console => page.capture(CaptureKind::Console),
+            Command::PickArea(on) => page.pick_area(on),
+            Command::Back => page.back(),
+            Command::Forward => page.forward(),
+            Command::Reload => page.reload(),
+            Command::HardReload => page.hard_reload(),
+            Command::Find {
+                text,
+                forward,
+                again,
+            } => page.find(&text, forward, again),
+            Command::StopFind => page.stop_find(),
+            Command::Zoom(step) => page.zoom(match step {
+                ZoomStep::In => ZoomAction::In,
+                ZoomStep::Out => ZoomAction::Out,
+                ZoomStep::Reset => ZoomAction::Reset,
+            }),
+            Command::OpenExternal => {
+                if let Err(reason) = pm_acp::open_address(&page.address()) {
+                    eprintln!("{reason}");
+                }
+            }
+            Command::ClearData => page.clear_data(),
+            Command::Load(_) | Command::OpenTools | Command::CloseTools => {}
+        }
+    }
+
+    /// Closes the pages of tabs that were closed, and all of them when the browser was.
+    fn browser_sync_tabs(&mut self) {
+        let open: Option<Vec<u32>> = self.model.read(|screen| {
+            let Screen::Workspace(state) = screen;
+            state
+                .browser
+                .as_ref()
+                .map(|browser| browser.tabs.iter().map(|tab| tab.id).collect())
+        });
+        let open = open.unwrap_or_default();
+        self.web.pages.retain(|id, _| open.contains(id));
+        if self
+            .web
+            .tools
+            .as_ref()
+            .is_some_and(|(tab, _)| !open.contains(tab))
+        {
+            self.web.tools = None;
+            self.web.tools_sized = None;
+            self.web.tools_shown = 0;
         }
     }
 
     /// Closes the pages and ends the helper, so the process can leave.
     pub(super) fn browser_shutdown(&mut self) {
         self.web.tools = None;
-        self.web.page = None;
+        self.web.pages.clear();
         self.web.engine = None;
     }
 
-    /// Gives each window of a page the size of the room the pane has for it.
+    /// Gives the page being shown and the tools the size of the room the pane has for them.
     fn browser_fit(&mut self, scale: f32) {
-        for (slot, id) in [(0, BROWSER_BODY), (1, BROWSER_TOOLS_BODY)] {
-            let Some(rect) = self.browser_region(id) else {
-                continue;
-            };
-            let size = (
+        let size_of = |rect: Rect| {
+            (
                 rect.width.max(1.0) as u32,
                 rect.height.max(1.0) as u32,
                 scale,
-            );
-            if self.web.sized[slot] == Some(size) {
-                continue;
+            )
+        };
+        if let Some(rect) = self.browser_region(BROWSER_BODY)
+            && let Some(active) = self.browser_active()
+            && let Some(shown) = self.web.pages.get_mut(&active)
+        {
+            let size = size_of(rect);
+            if shown.sized != Some(size) {
+                shown.sized = Some(size);
+                shown.view.resize(size.0, size.1, size.2);
             }
-            self.web.sized[slot] = Some(size);
-            if let Some(view) = self.browser_view_of(id) {
+        }
+        if let Some(rect) = self.browser_region(BROWSER_TOOLS_BODY)
+            && let Some((_, view)) = self.web.tools.as_ref()
+        {
+            let size = size_of(rect);
+            if self.web.tools_sized != Some(size) {
+                self.web.tools_sized = Some(size);
                 view.resize(size.0, size.1, size.2);
             }
         }
     }
 
-    /// Hands the window what the pages painted since it last looked and what they say about themselves, and tells the pages which of them has the keyboard.
+    /// Takes in what each page says about itself, hands the window what the page being shown and the tools painted since it last looked, opens the tabs the pages asked for, and tells the pages which of them has the keyboard.
     fn browser_present(&mut self) {
-        if let Some(result) = self.web.page.as_ref().and_then(View::take_pick) {
-            let element = result.as_ref().map(element_of);
-            let picked = element.is_some();
-            self.model.update(|screen| {
-                *screen = std::mem::take(screen).browser_picked(element.clone());
-            });
-            if picked {
-                self.focus.focus(PROMPT);
+        let ids: Vec<u32> = self.web.pages.keys().copied().collect();
+        for id in &ids {
+            let Some(view) = self.web.pages.get(id).map(|shown| &shown.view) else {
+                continue;
+            };
+            let picked = view.take_pick();
+            let found = view.take_found();
+            let zoom = view.take_zoom();
+            let opened = view.take_opened();
+            if let Some(result) = picked {
+                let element = result.as_ref().map(element_of);
+                let picked = element.is_some();
+                self.model.update(|screen| {
+                    *screen = std::mem::take(screen).browser_picked(*id, element.clone());
+                });
+                if picked {
+                    self.focus.focus(PROMPT);
+                }
             }
-        }
-        let found = self.web.page.as_ref().and_then(View::take_found);
-        let zoom = self.web.page.as_ref().and_then(View::take_zoom);
-        if found.is_some() || zoom.is_some() {
-            self.model.update(|screen| {
-                let Screen::Workspace(state) = screen;
-                if let Some((active, total)) = found {
-                    state.browser_found(active, total);
-                }
-                if let Some(zoom) = zoom {
-                    state.browser_zoomed(zoom);
-                }
-            });
+            if found.is_some() || zoom.is_some() {
+                self.model.update(|screen| {
+                    let Screen::Workspace(state) = screen;
+                    if let Some((active, total)) = found {
+                        state.browser_found(*id, active, total);
+                    }
+                    if let Some(zoom) = zoom {
+                        state.browser_zoomed(*id, zoom);
+                    }
+                });
+            }
+            for (url, agent) in opened {
+                let address = self.browser_unresolve(&url);
+                self.model.update(|screen| {
+                    let Screen::Workspace(state) = screen;
+                    let host = state
+                        .browser
+                        .as_ref()
+                        .and_then(|browser| browser.tab(*id))
+                        .and_then(|tab| tab.host.clone());
+                    state.browser_tab_opened(&address, host, agent, !agent);
+                });
+            }
         }
         self.browser_captured();
+        let active = self.browser_active();
         let focused = self.browser_focused();
-        if focused != self.web.focused {
-            self.web.focused = focused;
-            if let Some(view) = self.web.page.as_ref() {
-                view.focus(focused == Some(BROWSER_BODY));
+        if self.web.focused != Some((active, focused)) {
+            self.web.focused = Some((active, focused));
+            for (id, shown) in &self.web.pages {
+                shown
+                    .view
+                    .focus(Some(*id) == active && focused == Some(BROWSER_BODY));
             }
-            if let Some(view) = self.web.tools.as_ref() {
+            if let Some((_, view)) = self.web.tools.as_ref() {
                 view.focus(focused == Some(BROWSER_TOOLS_BODY));
             }
         }
@@ -1003,43 +1151,62 @@ impl App {
                 pixels: frame.rgba,
             })
         };
-        let mut shown = self.web.shown;
-        let page = self
-            .web
-            .page
-            .as_ref()
-            .and_then(|view| picture(view, PAGE_SURFACE, &mut shown[0]));
+        let typing = self.focus.current() == Some(pm_components::browser::BROWSER_ADDRESS);
+        let mut reports = Vec::new();
+        for id in self.web.pages.keys().copied().collect::<Vec<_>>() {
+            let address = self
+                .web
+                .pages
+                .get(&id)
+                .map(|shown| self.browser_unresolve(&shown.view.address()))
+                .unwrap_or_default();
+            let Some(shown) = self.web.pages.get_mut(&id) else {
+                continue;
+            };
+            let page = if Some(id) == active {
+                picture(&shown.view, PAGE_SURFACE, &mut shown.shown)
+            } else {
+                None
+            };
+            reports.push((
+                id,
+                page,
+                shown.view.title(),
+                address,
+                pointer_of(shown.view.cursor()),
+            ));
+        }
         let tools = self
             .web
             .tools
             .as_ref()
-            .and_then(|view| picture(view, TOOLS_SURFACE, &mut shown[1]));
-        let (title, address, pointer) = self.web.page.as_ref().map_or_else(
-            || (String::new(), String::new(), Pointer::Arrow),
-            |view| {
-                (
-                    view.title(),
-                    self.browser_unresolve(&view.address()),
-                    pointer_of(view.cursor()),
-                )
-            },
-        );
-        let typing = self.focus.current() == Some(pm_components::browser::BROWSER_ADDRESS);
+            .and_then(|(_, view)| picture(view, TOOLS_SURFACE, &mut self.web.tools_shown));
         let changed = self.model.read(|screen| {
             let Screen::Workspace(state) = screen;
             state.browser.as_ref().is_some_and(|browser| {
-                browser.title != title
-                    || browser.pointer != pointer
-                    || (!typing && !address.is_empty() && browser.address.text() != address)
+                reports.iter().any(|(id, page, title, address, pointer)| {
+                    page.is_some()
+                        || browser.tab(*id).is_some_and(|tab| {
+                            tab.title != *title
+                                || tab.pointer != *pointer
+                                || (!(typing && Some(*id) == active)
+                                    && !address.is_empty()
+                                    && tab.address.text() != address)
+                        })
+                })
             })
         });
-        if page.is_none() && tools.is_none() && !changed {
+        if !changed && tools.is_none() {
             return;
         }
-        self.web.shown = shown;
         self.model.update(|screen| {
             let Screen::Workspace(state) = screen;
-            state.browser_painted(page, tools, &title, &address, pointer, typing);
+            for (id, page, title, address, pointer) in reports {
+                state.browser_tab_painted(id, page, &title, &address, pointer, typing);
+            }
+            if let Some(tools) = tools {
+                state.browser_tools_painted(tools);
+            }
         });
     }
 
@@ -1165,10 +1332,10 @@ impl App {
         }
         let results: Vec<_> = self
             .web
-            .page
-            .as_ref()
-            .map(View::take_tool_results)
-            .unwrap_or_default();
+            .pages
+            .values()
+            .flat_map(|shown| shown.view.take_tool_results())
+            .collect();
         for result in results {
             let image = result
                 .image
@@ -1192,6 +1359,8 @@ impl App {
     }
 
     /// Starts the tool `tool` an agent called; says whether it could be started, the answer coming later.
+    ///
+    /// A tool works on the tab its `tab` argument names, which then is the one tools work on when they name none; with no such argument, on the tab an agent chose or opened, and else on the one being shown. A tool that changes a page is refused on a tab the reader locked.
     fn browser_tool(
         &mut self,
         host: &Option<String>,
@@ -1202,6 +1371,28 @@ impl App {
     ) -> bool {
         let mut arguments_json: serde_json::Value =
             serde_json::from_str(arguments).unwrap_or(serde_json::Value::Null);
+        if tool == "browser_tabs" {
+            self.browser_tabs_tool(host, local, &arguments_json, scale);
+            return true;
+        }
+        let named = match arguments_json.get("tab") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(value) => match value.as_u64().and_then(|id| u32::try_from(id).ok()) {
+                Some(id) => Some(id),
+                None => {
+                    self.browser_answer(
+                        local,
+                        false,
+                        "tab must be the number of a tab, as browser_tabs lists them".to_owned(),
+                        Vec::new(),
+                    );
+                    return true;
+                }
+            },
+        };
+        if let Some(object) = arguments_json.as_object_mut() {
+            object.remove("tab");
+        }
         if tool == "browser_navigate" {
             let Some(url) = arguments_json["url"].as_str().map(str::to_owned) else {
                 self.browser_answer(local, false, "no url was given".to_owned(), Vec::new());
@@ -1223,26 +1414,222 @@ impl App {
                     return true;
                 }
             };
-            if self.web.page.is_none() {
-                self.model.update(|screen| {
-                    let Screen::Workspace(state) = screen;
-                    state.open_browser("about:blank");
-                });
-                self.browser_commands(scale);
-            }
             arguments_json["url"] = serde_json::Value::String(resolved);
         }
-        let Some(page) = self.web.page.as_ref() else {
+        let tabs = self.model.read(|screen| {
+            let Screen::Workspace(state) = screen;
+            state.browser.as_ref().map(|browser| browser.tab_infos())
+        });
+        let target = match (named, tabs.as_deref()) {
+            (Some(id), Some(tabs)) if tabs.iter().any(|tab| tab.id == id) => Some(id),
+            (Some(id), _) => {
+                self.browser_answer(
+                    local,
+                    false,
+                    format!("There is no tab {id}; browser_tabs lists the tabs there are."),
+                    Vec::new(),
+                );
+                return true;
+            }
+            (None, Some(tabs)) => tabs.iter().find(|tab| tab.target).map(|tab| tab.id),
+            (None, None) => None,
+        };
+        let target = match target {
+            Some(id) => id,
+            None if tool == "browser_navigate" => {
+                let mut opened = None;
+                self.model.update(|screen| {
+                    let Screen::Workspace(state) = screen;
+                    opened = state.browser_tab_opened("about:blank", host.clone(), true, true);
+                });
+                self.browser_commands(scale);
+                match opened {
+                    Some(id) => id,
+                    None => {
+                        self.browser_answer(
+                            local,
+                            false,
+                            "The browser holds too many tabs.".to_owned(),
+                            Vec::new(),
+                        );
+                        return true;
+                    }
+                }
+            }
+            None => {
+                self.browser_answer(
+                    local,
+                    false,
+                    "No page is open in the browser; use browser_navigate first.".to_owned(),
+                    Vec::new(),
+                );
+                return true;
+            }
+        };
+        let locked = tabs
+            .as_deref()
+            .and_then(|tabs| tabs.iter().find(|tab| tab.id == target))
+            .is_some_and(|tab| tab.locked);
+        if locked && changes_page(tool) {
+            self.browser_answer(local, false, locked_message(tool, target), Vec::new());
+            return true;
+        }
+        if named.is_some() {
+            self.model.update(|screen| {
+                let Screen::Workspace(state) = screen;
+                if let Some(browser) = state.browser.as_mut() {
+                    browser.agent_tab = Some(target);
+                }
+            });
+        }
+        let Some(page) = self.web.pages.get(&target).map(|shown| &shown.view) else {
             self.browser_answer(
                 local,
                 false,
-                "No page is open in the browser; use browser_navigate first.".to_owned(),
+                format!(
+                    "No page is open in tab {target}; use browser_navigate with tab {target} first."
+                ),
                 Vec::new(),
             );
             return true;
         };
         page.tool(local, tool, &arguments_json.to_string());
         true
+    }
+
+    /// Runs the tool `browser_tabs` an agent called, which the window answers itself: `list`, `open`, `select` and `close`.
+    fn browser_tabs_tool(
+        &mut self,
+        host: &Option<String>,
+        local: u64,
+        arguments: &serde_json::Value,
+        scale: f32,
+    ) {
+        let tab = arguments["tab"]
+            .as_u64()
+            .and_then(|id| u32::try_from(id).ok());
+        let tabs = self.model.read(|screen| {
+            let Screen::Workspace(state) = screen;
+            state
+                .browser
+                .as_ref()
+                .map(|browser| browser.tab_infos())
+                .unwrap_or_default()
+        });
+        let (ok, text) = match arguments["action"].as_str().unwrap_or("list") {
+            "list" => (true, tabs_text(&tabs)),
+            "open" => {
+                let url = arguments["url"].as_str().unwrap_or("about:blank").trim();
+                if !agent_may_open(url) {
+                    (
+                        false,
+                        "Only http and https addresses can be opened.".to_owned(),
+                    )
+                } else if !origin_allowed(
+                    url,
+                    self.saved_window.general.restrict_agent_browsing,
+                    &self.saved_window.general.agent_origins,
+                ) {
+                    (
+                        false,
+                        format!(
+                            "Blocked: {url} is not an origin agents may open. Agent browsing is restricted to localhost, 127.0.0.1, [::1] and the origins the reader added in Settings under Browser."
+                        ),
+                    )
+                } else if let Err(message) = self.browser_resolve(url, host.as_deref()) {
+                    (false, message)
+                } else {
+                    let mut opened = None;
+                    self.model.update(|screen| {
+                        let Screen::Workspace(state) = screen;
+                        opened = state.browser_tab_opened(url, host.clone(), true, false);
+                    });
+                    self.browser_commands(scale);
+                    match opened {
+                        Some(id) => (
+                            true,
+                            format!(
+                                "Opened tab {id} at {url}. It is the tab the tools work on from now on, and the reader sees it in the strip, marked as yours. Give tab {id} to a tool to name it."
+                            ),
+                        ),
+                        None => (
+                            false,
+                            "The browser holds too many tabs; close one first.".to_owned(),
+                        ),
+                    }
+                }
+            }
+            action @ ("select" | "close") => {
+                match tab.filter(|id| tabs.iter().any(|t| t.id == *id)) {
+                    None => (
+                        false,
+                        format!(
+                            "Give tab as the number of a tab; the tabs are:\n{}",
+                            tabs_text(&tabs)
+                        ),
+                    ),
+                    Some(id) if action == "close" => {
+                        if tabs.iter().any(|t| t.id == id && t.locked) {
+                            (false, locked_message("browser_tabs close", id))
+                        } else {
+                            self.model.update(|screen| {
+                                let Screen::Workspace(state) = screen;
+                                state.browser_tab_closed(id);
+                            });
+                            (true, format!("Closed tab {id}."))
+                        }
+                    }
+                    Some(id) => {
+                        self.model.update(|screen| {
+                            let Screen::Workspace(state) = screen;
+                            if let Some(browser) = state.browser.as_mut() {
+                                browser.agent_tab = Some(id);
+                            }
+                        });
+                        let locked = tabs.iter().any(|t| t.id == id && t.locked);
+                        (
+                            true,
+                            format!(
+                                "Tools now work on tab {id}; what the reader sees is unchanged.{}",
+                                if locked {
+                                    " It is locked by the reader, so tools that change it are refused; reading it is allowed."
+                                } else {
+                                    ""
+                                }
+                            ),
+                        )
+                    }
+                }
+            }
+            other => (
+                false,
+                format!("there is no action {other}; use list, open, select or close"),
+            ),
+        };
+        self.browser_answer(local, ok, text, Vec::new());
+    }
+
+    /// Opens the web links the reader followed: a local one in the browser pane when the setting to do so is on and the embedded browser is on and installed, every other in the reader's browser.
+    fn browser_links(&mut self) {
+        let links = self.work.take_links();
+        let general = &self.saved_window.general;
+        let ready = general.embedded_browser
+            && pm_browser::install::supported()
+            && pm_browser::install::installed();
+        let local_links = general.open_local_links;
+        for link in links {
+            match route(&link, local_links, ready) {
+                Route::Pane(address) => self.model.update(|screen| {
+                    let Screen::Workspace(state) = screen;
+                    state.open_link_page(&address);
+                }),
+                Route::System(address) => {
+                    if let Err(reason) = pm_acp::open_address(&address) {
+                        eprintln!("{reason}");
+                    }
+                }
+            }
+        }
     }
 
     /// Opens the pages that programs started in shells serve, when the browser is on and installed and the setting to open them is.
@@ -1274,13 +1661,52 @@ impl App {
         self.browser_origins();
         let calling = self.browser_agent(scale);
         self.browser_served();
+        self.browser_links();
         self.browser_commands(scale);
-        if self.web.page.is_none() {
+        self.browser_sync_tabs();
+        if self.web.pages.is_empty() {
             return downloading || calling;
         }
         self.browser_safety();
         self.browser_fit(scale);
         self.browser_present();
         true
+    }
+}
+
+#[cfg(test)]
+mod origin_tests {
+    use super::origin_allowed;
+
+    /// The restriction lets local addresses and listed origins through, and nothing else.
+    #[test]
+    fn restriction_holds_new_tabs_to_local_and_listed_origins() {
+        let list = vec![
+            "https://docs.rs".to_owned(),
+            "staging.example.com:8443".to_owned(),
+        ];
+        assert!(origin_allowed("https://evil.com", false, &list));
+        for ok in [
+            "about:blank",
+            "http://localhost:3000/x",
+            "http://[::1]:80/",
+            "https://docs.rs/a",
+            "https://staging.example.com:8443/",
+            "http://staging.example.com:8443",
+        ] {
+            assert!(origin_allowed(ok, true, &list), "{ok}");
+        }
+        for bad in [
+            "https://evil.com",
+            "http://docs.rs/",
+            "https://docs.rs:444/",
+            "http://localhost@evil.com/",
+            "http://evil.com\\@localhost/",
+            "file:///etc/passwd",
+            "https://staging.example.com/",
+            "http://localhost.evil.com",
+        ] {
+            assert!(!origin_allowed(bad, true, &list), "{bad}");
+        }
     }
 }

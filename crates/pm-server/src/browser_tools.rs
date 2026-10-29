@@ -323,7 +323,7 @@ fn definitions() -> Vec<Value> {
         "ref": { "type": "integer", "description": "A number from the last browser_snapshot." },
         "selector": { "type": "string", "description": "A CSS selector." },
     });
-    vec![
+    let mut tools = vec![
         tool(
             "browser_navigate",
             "Open an address in the browser pane and wait for it to load and settle, then say where it ended up, its title and its HTTP status.",
@@ -426,14 +426,21 @@ fn definitions() -> Vec<Value> {
         ),
         tool(
             "browser_console",
-            "The messages and errors the page wrote to its console since it was opened.",
-            &json!({}),
+            "The messages and errors the page wrote to its console since it was opened (the latest 200 are kept), one per line as `[level] text`. `level` keeps only some levels (`error`, `warning`, `info`, `log`, `debug`; several separated by commas). `clear` true forgets every message after this answer.",
+            &json!({
+                "level": { "type": "string", "description": "Levels to show: some of error, warning, info, log, debug, separated by commas." },
+                "clear": { "type": "boolean", "description": "Forget all recorded messages after returning the matching ones." },
+            }),
             &[],
         ),
         tool(
             "browser_network",
-            "The requests the page made since it was opened, with their status.",
-            &json!({}),
+            "The requests the page made since it was opened (the latest 200 are kept), one per line as `#number METHOD url -> status`. `filter` keeps requests whose address contains the text, whose method is it, whose status is it, or whose status class it names (`4xx`; `failed` for failures). `clear` true forgets every recorded request after this answer. `request` gives one request in full by its number: type, size on the wire, timing, request and response headers (Authorization, Cookie and Set-Cookie values are redacted) and, for text types such as HTML, JSON and scripts, the response body cut to 8000 characters. Limits: headers are those the engine reports before it adds its own (cookies it attaches are not shown); the body is only there while the engine still holds it, so it can be missing after navigation or for big responses.",
+            &json!({
+                "filter": { "type": "string", "description": "Part of the address, a method, a status such as 404, a class such as 4xx, or failed." },
+                "clear": { "type": "boolean", "description": "Forget all recorded requests after returning the matching ones." },
+                "request": { "type": "integer", "description": "The number of one request from the list, to see its headers, size, timing and body." },
+            }),
             &[],
         ),
         tool(
@@ -518,7 +525,7 @@ fn definitions() -> Vec<Value> {
         ),
         tool(
             "browser_resize",
-            "Set the size of the page's viewport, in CSS pixels, by emulation, such as to test a narrow layout. The size stays through navigation and through the pane being resized; the pane shows the page at that size at its top left, and screenshots have that size. Give `reset` as true to follow the pane again.",
+            "Set the size of the page's viewport, in CSS pixels, by emulation, such as to test a narrow layout. The size stays through navigation and through the pane being resized; the pane shows the page at that size at its top left, and screenshots have that size. Give `reset` as true to follow the pane again. It sets a plain desktop viewport (pixel ratio of the pane, not mobile); see browser_emulate for devices.",
             &json!({
                 "width": { "type": "integer", "minimum": 100, "maximum": 4000 },
                 "height": { "type": "integer", "minimum": 100, "maximum": 4000 },
@@ -526,7 +533,47 @@ fn definitions() -> Vec<Value> {
             }),
             &[],
         ),
-    ]
+        tool(
+            "browser_cdp",
+            "Send one raw Chrome DevTools Protocol command to the page and get its JSON result, cut at 20000 characters (a cut result is no longer valid JSON). Only a conservative allowlist is accepted so that it cannot leave the agent origin restriction or touch files: `DOM.*`, `CSS.*`, `Accessibility.*`, `DOMSnapshot.*` and `Performance.*` (except `DOM.setFileInputFiles` and `DOM.getFileInfo`), and these commands: `Runtime.evaluate`, `Runtime.callFunctionOn`, `Runtime.getProperties`, `Runtime.releaseObject`, `Runtime.releaseObjectGroup`, `Runtime.globalLexicalScopeNames`, `Runtime.getHeapUsage`, `Page.getLayoutMetrics`, `Page.getFrameTree`, `Page.captureScreenshot` (always PNG, returned as a picture), `Network.getResponseBody`, `Emulation.setEmulatedMedia`, `Emulation.setEmulatedVisionDeficiency`, `Emulation.setScrollbarsHidden`, and `Overlay.enable`, `Overlay.disable`, `Overlay.highlightNode`, `Overlay.highlightRect`, `Overlay.highlightQuad`, `Overlay.hideHighlight`. Everything else is refused with a message, including all navigation (`Page.navigate*`), `Target.*`, `Browser.*`, `IO.*`, `Fetch.*`, `Storage.*`, other `Network.*`, `Input.*` and the device-size and user-agent commands (use browser_emulate for those). Commands that change the page or its state (DOM and CSS edits, emulated media) are allowed and stay until undone. A command that takes over 30 seconds fails.",
+            &json!({
+                "method": { "type": "string", "description": "The command, such as DOM.getDocument or Runtime.evaluate." },
+                "params": { "type": "object", "description": "The command's parameters, as the protocol defines them." },
+            }),
+            &["method"],
+        ),
+        tool(
+            "browser_emulate",
+            "Emulate a device for the page: give a `device` preset (`iphone-se`, `iphone-15`, `ipad`, `pixel-8`, `desktop-1280`, `desktop-1440`, `desktop-1920`; `iphone`, `pixel` and `desktop` are shortcuts), and/or `width` and `height` (100 to 4000 CSS pixels), `device_scale_factor` (up to 5), `mobile` (mobile layout, meta viewport honoured, touch events present) and `user_agent` (an empty string restores the browser's own). A `device` replaces all earlier emulation; other fields change just what they name. With no arguments it says what is emulated; `reset` true clears everything, the user agent too. The size and user agent stay through navigation, and the viewport stays through the pane being resized (the pane shows the page at that size at its top left, screenshots have that size). Limits: the engine is still Chromium, so a Safari user agent changes only the header and `navigator.userAgent`, not rendering or client hints (`navigator.userAgentData`); touch is emulated as touch event support, and clicks are still sent as mouse events.",
+            &json!({
+                "device": { "type": "string", "description": "A preset: iphone-se, iphone-15, ipad, pixel-8, desktop-1280, desktop-1440, desktop-1920, or iphone, pixel, desktop." },
+                "width": { "type": "integer", "minimum": 100, "maximum": 4000 },
+                "height": { "type": "integer", "minimum": 100, "maximum": 4000 },
+                "device_scale_factor": { "type": "number", "exclusiveMinimum": 0, "maximum": 5 },
+                "mobile": { "type": "boolean" },
+                "user_agent": { "type": "string", "description": "The user agent string to send; empty restores the browser's own." },
+                "reset": { "type": "boolean", "description": "Clear all emulation." },
+            }),
+            &[],
+        ),
+    ];
+    for definition in &mut tools {
+        definition["inputSchema"]["properties"]["tab"] = json!({
+            "type": "integer",
+            "description": "The tab to work on, by the number browser_tabs gives. Without it the tool works on the tab you last opened or selected with browser_tabs or named here, and otherwise on the tab the reader is looking at. A tab the reader locked refuses every tool that changes it; reading it with browser_snapshot, browser_screenshot, browser_console and browser_network is allowed.",
+        });
+    }
+    tools.push(tool(
+        "browser_tabs",
+        "List, open, select and close the tabs of the browser pane. `list` gives every tab with its number, title and address and marks the one the reader is looking at, the one tools work on, the ones agents opened and the ones the reader locked. `open` makes a tab behind the one the reader looks at, on `url` or blank, marked as an agent's tab, and makes it the tab tools work on; agents may always work in their own tabs. `select` makes the tab named by `tab` the one tools work on without changing what the reader sees. `close` closes the tab named by `tab`. A tab the reader locked cannot be closed or changed by tools; open a tab of your own instead. At most 32 tabs are open.",
+        &json!({
+            "action": { "type": "string", "enum": ["list", "open", "select", "close"], "description": "What to do; list when omitted." },
+            "url": { "type": "string", "description": "For open: the address to load, http or https; blank when omitted." },
+            "tab": { "type": "integer", "description": "For select and close: the number of the tab." },
+        }),
+        &[],
+    ));
+    tools
 }
 
 /// The schema of one end of a drag: an element by `ref` or `selector`, or a point by `x` and `y`.
@@ -541,4 +588,67 @@ fn drag_end(target: &Value, description: &str) -> Value {
             "y": { "type": "number" },
         },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::definitions;
+
+    /// The names of the tools, in order.
+    fn names() -> Vec<String> {
+        definitions()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap_or_default().to_owned())
+            .collect()
+    }
+
+    /// Every tool has a unique name, and the second round and the tabs end the list as one block.
+    #[test]
+    fn second_round_ends_the_list() {
+        let names = names();
+        let mut unique = names.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), names.len());
+        let tail = &names[names.len() - 3..];
+        assert_eq!(tail, ["browser_cdp", "browser_emulate", "browser_tabs"]);
+    }
+
+    /// The network and console tools take the new options.
+    #[test]
+    fn network_and_console_take_options() {
+        let all = definitions();
+        let properties = |name: &str| {
+            let tool = all.iter().find(|tool| tool["name"] == name).unwrap();
+            tool["inputSchema"]["properties"].clone()
+        };
+        for option in ["filter", "clear", "request"] {
+            assert!(properties("browser_network").get(option).is_some());
+        }
+        for option in ["level", "clear"] {
+            assert!(properties("browser_console").get(option).is_some());
+        }
+    }
+
+    /// Every tool but browser_tabs takes an optional `tab`, and browser_tabs takes an action.
+    #[test]
+    fn tools_take_a_tab() {
+        for tool in definitions() {
+            let properties = &tool["inputSchema"]["properties"];
+            assert!(properties.get("tab").is_some(), "{}", tool["name"]);
+            assert!(
+                !tool["inputSchema"]["required"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|name| name == "tab")
+            );
+        }
+        let all = definitions();
+        let tabs = all
+            .iter()
+            .find(|tool| tool["name"] == "browser_tabs")
+            .unwrap();
+        assert!(tabs["inputSchema"]["properties"].get("action").is_some());
+    }
 }

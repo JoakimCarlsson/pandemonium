@@ -80,6 +80,8 @@ pub enum Setting {
     EmbeddedBrowser,
     /// Whether the embedded browser opens on a dev server a shell started.
     OpenDevServers,
+    /// Whether links to local pages open in the embedded browser.
+    OpenLocalLinks,
     /// Whether agents may open only local addresses and the origins listed.
     RestrictAgentBrowsing,
     /// The origins agents may open besides local addresses.
@@ -298,7 +300,7 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting, in the order the pages show them.
-    pub const ALL: [Self; 114] = [
+    pub const ALL: [Self; 115] = [
         Self::Launch,
         Self::ConfirmClose,
         Self::CheckUpdates,
@@ -306,6 +308,7 @@ impl Setting {
         Self::OfferLanguages,
         Self::EmbeddedBrowser,
         Self::OpenDevServers,
+        Self::OpenLocalLinks,
         Self::RestrictAgentBrowsing,
         Self::AgentOrigins,
         Self::ThemeMode,
@@ -425,6 +428,7 @@ impl Setting {
             | Self::OfferLanguages => Section::General,
             Self::EmbeddedBrowser
             | Self::OpenDevServers
+            | Self::OpenLocalLinks
             | Self::RestrictAgentBrowsing
             | Self::AgentOrigins => Section::Browser,
             Self::ThemeMode
@@ -594,6 +598,10 @@ impl Setting {
             Self::OpenDevServers => (
                 "Open dev servers in the browser",
                 "Open the embedded browser on the web page a program started in a terminal serves, such as a dev server. Needs the embedded browser.",
+            ),
+            Self::OpenLocalLinks => (
+                "Open local links in the browser",
+                "Open links to localhost, 127.0.0.1, [::1] and 0.0.0.0 in the embedded browser instead of the system browser. Other links always open in the system browser. Needs the embedded browser.",
             ),
             Self::RestrictAgentBrowsing => (
                 "Restrict agent browsing",

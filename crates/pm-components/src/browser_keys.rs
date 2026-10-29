@@ -24,9 +24,13 @@ pub enum Shortcut {
     Reload,
     /// Loads the page again without the cache.
     HardReload,
+    /// Opens a new tab.
+    NewTab,
+    /// Closes the tab being shown.
+    CloseTab,
 }
 
-/// What `event` does in the browser while a page has the keyboard, if it is a key the browser takes: with Control or Command, `F` finds, `G` steps through the matches, `=`, `-` and `0` zoom, `R` reloads and with Shift reloads without the cache; and `F3`, `F5` and Control `F5` do the same on their own.
+/// What `event` does in the browser while a page has the keyboard, if it is a key the browser takes: with Control or Command, `F` finds, `G` steps through the matches, `=`, `-` and `0` zoom, `R` reloads and with Shift reloads without the cache, `T` opens a new tab and `W` closes the tab; and `F3`, `F5` and Control `F5` do the same on their own.
 pub fn shortcut_of(event: &KeyEvent) -> Option<Shortcut> {
     let modifiers = event.modifiers;
     let command = (modifiers.control || modifiers.logo) && !modifiers.alt;
@@ -40,6 +44,8 @@ pub fn shortcut_of(event: &KeyEvent) -> Option<Shortcut> {
             '0' => Some(Shortcut::ZoomReset),
             'r' if modifiers.shift => Some(Shortcut::HardReload),
             'r' => Some(Shortcut::Reload),
+            't' => Some(Shortcut::NewTab),
+            'w' => Some(Shortcut::CloseTab),
             _ => None,
         },
         Key::Function(3) if !modifiers.alt && !command => Some(if modifiers.shift {
@@ -68,6 +74,8 @@ impl WorkspaceState {
             Shortcut::ZoomReset => self.browser_queue(Command::Zoom(ZoomStep::Reset)),
             Shortcut::Reload => self.browser_queue(Command::Reload),
             Shortcut::HardReload => self.browser_queue(Command::HardReload),
+            Shortcut::NewTab => self.browser_new_tab(),
+            Shortcut::CloseTab => self.browser_close_tab(),
         }
     }
 
