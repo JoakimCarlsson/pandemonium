@@ -913,26 +913,61 @@ fn file_diff(directory: &Path, path: &str) -> String {
     diff
 }
 
+/// How many files of one request have their diffs read at the same time, each by its own `git`.
+const DIFF_WORKERS: usize = 8;
+
 /// The diffs of `paths` of the folder `directory`, each file's from the repository it is in: one of a folder that holds several, or a submodule. A path no repository of the folder holds is left out.
 pub fn diffs(directory: &Path, paths: &[String]) -> Vec<FileDiff> {
     let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
     let Ok(owners) = submodule::by_owner(directory, &paths) else {
         return Vec::new();
     };
-    let mut found = Vec::new();
-    for (folder, inner) in owners {
-        let from_root = folder.strip_prefix(directory).unwrap_or(Path::new(""));
-        for path in inner {
-            let diff = file_diff(&folder, &path);
-            let shown = from_root.join(&path).to_string_lossy().replace('\\', "/");
-            found.push(FileDiff {
-                words: words(&diff),
-                path: shown,
-                diff,
+    let jobs: Vec<(PathBuf, String, String)> = owners
+        .into_iter()
+        .flat_map(|(folder, inner)| {
+            let from_root = folder.strip_prefix(directory).unwrap_or(Path::new(""));
+            inner
+                .into_iter()
+                .map(|path| {
+                    let shown = from_root.join(&path).to_string_lossy().replace('\\', "/");
+                    (folder.clone(), path, shown)
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let done: std::sync::Mutex<Vec<Option<FileDiff>>> =
+        std::sync::Mutex::new((0..jobs.len()).map(|_| None).collect());
+    let workers = std::thread::available_parallelism()
+        .map_or(4, usize::from)
+        .clamp(1, DIFF_WORKERS)
+        .min(jobs.len());
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| {
+                loop {
+                    let at = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some((folder, path, shown)) = jobs.get(at) else {
+                        break;
+                    };
+                    let diff = file_diff(folder, path);
+                    let read = FileDiff {
+                        words: words(&diff),
+                        path: shown.clone(),
+                        diff,
+                    };
+                    if let Ok(mut held) = done.lock() {
+                        held[at] = Some(read);
+                    }
+                }
             });
         }
-    }
-    found
+    });
+    done.into_inner()
+        .unwrap_or_default()
+        .into_iter()
+        .flatten()
+        .collect()
 }
 
 /// `path` when it names a file inside the repository and nothing else: not empty, not absolute, never stepping out with `..`, and free of line breaks and NUL.

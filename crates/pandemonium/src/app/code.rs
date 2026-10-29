@@ -11,6 +11,7 @@ use pm_components::arrange::{
 use pm_components::assist::{
     HOVER_CARD, HOVER_LINK_BASE, HOVER_LINK_END, HOVER_TEXT, list_height, signature_height,
 };
+use pm_components::color_picker::{COLOR_BOX, COLOR_HEX, color_format_of};
 use pm_components::extensions::EXTENSIONS;
 use pm_components::find::{FIND_CASE, FIND_FIELD, FIND_REGEX, FIND_WORD, REPLACE_FIELD};
 use pm_components::line_edits::{GO_TO_LINE, GO_TO_LINE_BOX, LineEdit};
@@ -29,7 +30,7 @@ use pm_components::state::{
 use pm_components::tab_menu::TabCommand;
 use pm_components::title_bar::{COMMAND_CENTER, TITLE_BAR_HEIGHT};
 use pm_config::ThemeMode;
-use pm_editor::{Action, Chord, Keymap, Pressed};
+use pm_editor::{Action, Case, Chord, Keymap, LineOrder, Pressed};
 use pm_input::{FocusId, Key, KeyEvent};
 use pm_pages::Screen;
 use pm_protocol::{DebugAction, Seek};
@@ -88,7 +89,7 @@ impl App {
     }
 
     /// How tall the window is, in logical pixels.
-    fn window_height(&self) -> f32 {
+    pub(super) fn window_height(&self) -> f32 {
         self.renderer
             .as_ref()
             .map_or(800.0, |renderer| renderer.size().1)
@@ -412,7 +413,11 @@ impl App {
             || focused == Some(EDITOR_FIELD)
             || (matches!(
                 action,
-                Action::Find | Action::Replace | Action::FindNext | Action::FindPrevious
+                Action::Find
+                    | Action::Replace
+                    | Action::FindNext
+                    | Action::FindPrevious
+                    | Action::ToggleFindInSelection
             ) && (focused == Some(FIND_FIELD) || focused == Some(REPLACE_FIELD)))
     }
 
@@ -617,6 +622,8 @@ impl App {
             Action::SelectClassBody => Some(LineEdit::SelectObject(TextObject::Class, true)),
             Action::SelectComment => Some(LineEdit::SelectObject(TextObject::Comment, false)),
             Action::NextProblem => Some(LineEdit::NextProblem),
+            Action::NextChange => Some(LineEdit::NextChange),
+            Action::PreviousChange => Some(LineEdit::PreviousChange),
             Action::PreviousProblem => Some(LineEdit::PreviousProblem),
             Action::AddNextOccurrence => Some(LineEdit::AddNextOccurrence),
             Action::SelectAllOccurrences => Some(LineEdit::SelectAllOccurrences),
@@ -624,11 +631,39 @@ impl App {
             Action::AddCaretBelow => Some(LineEdit::AddCaretBelow),
             Action::SelectLine => Some(LineEdit::SelectLine),
             Action::JoinLines => Some(LineEdit::JoinLines),
+            Action::UppercaseSelection => Some(LineEdit::Case(Case::Upper)),
+            Action::LowercaseSelection => Some(LineEdit::Case(Case::Lower)),
+            Action::TitleCaseSelection => Some(LineEdit::Case(Case::Title)),
+            Action::SwapCaseSelection => Some(LineEdit::Case(Case::Swap)),
+            Action::SnakeCaseSelection => Some(LineEdit::Case(Case::Snake)),
+            Action::KebabCaseSelection => Some(LineEdit::Case(Case::Kebab)),
+            Action::CamelCaseSelection => Some(LineEdit::Case(Case::Camel)),
+            Action::PascalCaseSelection => Some(LineEdit::Case(Case::Pascal)),
+            Action::ConstantCaseSelection => Some(LineEdit::Case(Case::Constant)),
+            Action::SortLinesAscending => Some(LineEdit::OrderLines(LineOrder::Ascending)),
+            Action::SortLinesDescending => Some(LineEdit::OrderLines(LineOrder::Descending)),
+            Action::SortLinesIgnoringCase => Some(LineEdit::OrderLines(LineOrder::IgnoringCase)),
+            Action::ReverseLines => Some(LineEdit::OrderLines(LineOrder::Reversed)),
+            Action::UniqueLines => Some(LineEdit::OrderLines(LineOrder::Unique)),
+            Action::TransposeCharacters => Some(LineEdit::Transpose),
+            Action::TrimTrailingWhitespace => Some(LineEdit::TrimTrailing),
+            Action::DeleteToLineEnd => Some(LineEdit::DeleteToLineEnd),
+            Action::DeleteToLineStart => Some(LineEdit::DeleteToLineStart),
+            Action::ToggleBlockComment => Some(LineEdit::ToggleBlockComment),
+            Action::SplitSelectionIntoLines => Some(LineEdit::SplitIntoLines),
+            Action::ColumnSelectUp => Some(LineEdit::Column(-1, 0)),
+            Action::ColumnSelectDown => Some(LineEdit::Column(1, 0)),
+            Action::ColumnSelectLeft => Some(LineEdit::Column(0, -1)),
+            Action::ColumnSelectRight => Some(LineEdit::Column(0, 1)),
             Action::MatchingBracket => Some(LineEdit::MatchingBracket),
             Action::NewlineBelow => Some(LineEdit::LineBelow),
             Action::NewlineAbove => Some(LineEdit::LineAbove),
             Action::Fold => Some(LineEdit::Fold),
             Action::Unfold => Some(LineEdit::Unfold),
+            Action::FoldAll => Some(LineEdit::FoldAll),
+            Action::CursorUndo => Some(LineEdit::CursorUndo),
+            Action::CursorRedo => Some(LineEdit::CursorRedo),
+            Action::UnfoldAll => Some(LineEdit::UnfoldAll),
             _ => None,
         };
         if let Some(what) = edit {
@@ -640,21 +675,35 @@ impl App {
         match action {
             Action::Hover => self.hover_at_caret(),
             Action::Complete => self.complete_at_caret(),
+            Action::OrganizeImports | Action::FixAll => {
+                let at = self
+                    .editor_caret()
+                    .map_or((48.0, 96.0), |caret| self.hung(caret, LISTING_HEIGHT));
+                self.model.update(|screen| {
+                    let taken = std::mem::take(screen);
+                    *screen = if action == Action::FixAll {
+                        taken.fix_all_requested(at)
+                    } else {
+                        taken.organize_imports_requested(at)
+                    };
+                });
+                self.deliver();
+            }
             Action::SignatureHelp => self
                 .model
                 .update(|screen| *screen = std::mem::take(screen).signature_requested()),
-            Action::GoBack | Action::GoForward => self.model.update(|screen| {
-                let taken = std::mem::take(screen);
-                *screen = if action == Action::GoForward {
-                    taken.jumped_forward()
-                } else {
-                    taken.jumped_back()
-                };
-            }),
+            Action::GoBack => self.navigate(-1),
+            Action::GoForward => self.navigate(1),
             Action::Find | Action::Replace => {
                 let replacing = action == Action::Replace;
                 self.model
                     .update(|screen| *screen = std::mem::take(screen).find_opened(replacing));
+                self.focus.claim(FIND_FIELD);
+                self.show_editor_caret();
+            }
+            Action::ToggleFindInSelection => {
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).find_scope_toggled());
                 self.focus.claim(FIND_FIELD);
                 self.show_editor_caret();
             }
@@ -756,6 +805,27 @@ impl App {
                 self.deliver();
             }
             Action::Save => self.activate(EDITOR_SAVE),
+            Action::CompareWithClipboard => {
+                let text = self
+                    .clipboard()
+                    .and_then(|clipboard| clipboard.get_text().ok())
+                    .unwrap_or_default();
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).compare_with_clipboard(text));
+            }
+            Action::CompareWithSaved => {
+                self.model.update(|screen| {
+                    *screen = std::mem::take(screen).compare_with_saved_requested()
+                });
+                self.deliver();
+            }
+            Action::CompareWithFile => {
+                let at = self.across_top();
+                self.model.update(|screen| {
+                    *screen = std::mem::take(screen).compare_with_file_requested(at)
+                });
+                self.focus_listing();
+            }
             Action::CommandPalette => {
                 let at = self.across_top();
                 self.model
@@ -824,6 +894,16 @@ impl App {
             Action::CopyBranchName => self.session_command(SESSION_MENU_COPY_BRANCH),
             Action::OpenSessionFolder => self.session_command(SESSION_MENU_OPEN_FOLDER),
             Action::FocusPrompt => self.focus.focus(PROMPT),
+            Action::NextTab | Action::PreviousTab => {
+                let delta = if action == Action::NextTab { 1 } else { -1 };
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).tab_stepped(delta));
+            }
+            Action::ReopenTab => {
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).tab_reopened());
+                self.deliver();
+            }
             Action::CloseTab => self.tab_command(TabCommand::Close),
             Action::CloseOtherTabs => self.tab_command(TabCommand::CloseOthers),
             Action::CloseSavedTabs => self.tab_command(TabCommand::CloseClean),
@@ -907,12 +987,18 @@ impl App {
     pub(super) fn rename_key(&mut self, event: KeyEvent) -> bool {
         let focused = self.focus.current();
         if event.key != Key::Escape
-            || !(focused == Some(RENAME_SYMBOL) || focused == Some(GO_TO_LINE))
+            || !(focused == Some(RENAME_SYMBOL)
+                || focused == Some(GO_TO_LINE)
+                || focused == Some(COLOR_HEX))
         {
             return false;
         }
-        self.model
-            .update(|screen| *screen = std::mem::take(screen).rename_closed().go_to_line_closed());
+        self.model.update(|screen| {
+            *screen = std::mem::take(screen)
+                .rename_closed()
+                .go_to_line_closed()
+                .color_picker_closed()
+        });
         self.focus.focus(EDITOR_FIELD);
         true
     }
@@ -1012,6 +1098,16 @@ impl App {
             self.model
                 .update(|screen| *screen = std::mem::take(screen).rename_closed());
         }
+        let on_color_box = on.is_some_and(|id| {
+            id == COLOR_HEX
+                || id == COLOR_BOX
+                || color_format_of(id).is_some()
+                || pm_components::color_picker::color_swatch_of(id).is_some()
+        });
+        if !on_color_box && self.model.read(Screen::color_picker_open) {
+            self.model
+                .update(|screen| *screen = std::mem::take(screen).color_picker_closed());
+        }
         let on_line_box = on.is_some_and(|id| id == GO_TO_LINE || id == GO_TO_LINE_BOX);
         if !on_line_box && self.model.read(Screen::going_to_open) {
             self.model
@@ -1024,6 +1120,7 @@ impl App {
         let focused = self.focus.current();
         let closed = (focused == Some(RENAME_SYMBOL) && !self.model.read(Screen::renaming_open))
             || (focused == Some(GO_TO_LINE) && !self.model.read(Screen::going_to_open))
+            || (focused == Some(COLOR_HEX) && !self.model.read(Screen::color_picker_open))
             || ((focused == Some(FIND_FIELD) || focused == Some(REPLACE_FIELD))
                 && !self.model.read(Screen::find_open))
             || (focused == Some(LISTING_FILTER) && !self.model.read(Screen::listing_open));
@@ -1156,7 +1253,10 @@ impl App {
             return;
         }
         let stretch = self.word_under(over, x, y);
-        self.reach(stretch.clone().filter(|_| self.modifiers.control));
+        self.reach(
+            self.reach_under(over, x, y)
+                .filter(|_| self.modifiers.control),
+        );
         let word = stretch.map(|stretch| stretch.start);
         let shown = self.model.read(|screen| match screen {
             Screen::Workspace(state) => state
@@ -1184,6 +1284,31 @@ impl App {
         };
     }
 
+    /// The link of the file shown under the point `x`, `y`, where `over` is what the point is over, when it is on one: the bytes it covers and where it leads.
+    fn link_under_point(
+        &self,
+        over: Option<pm_input::FocusId>,
+        x: f32,
+        y: f32,
+    ) -> Option<(std::ops::Range<usize>, pm_protocol::LinkTarget)> {
+        let byte = (over == Some(EDITOR_FIELD))
+            .then(|| self.editor_byte_at(x, y))
+            .flatten()?;
+        self.model.read(|screen| screen.link_under(byte))
+    }
+
+    /// What Ctrl underlines under the point `x`, `y`: the link there, or else the word, which is what a press takes to its definition.
+    fn reach_under(
+        &self,
+        over: Option<pm_input::FocusId>,
+        x: f32,
+        y: f32,
+    ) -> Option<std::ops::Range<usize>> {
+        self.link_under_point(over, x, y)
+            .map(|(range, _)| range)
+            .or_else(|| self.word_under(over, x, y))
+    }
+
     /// The word of the file shown under the point `x`, `y`, where `over` is what the point is over, when it is on one.
     fn word_under(
         &self,
@@ -1203,6 +1328,20 @@ impl App {
                 .any(|character| character.is_alphanumeric() || character == '_')
                 .then_some(word)
         })
+    }
+
+    /// Opens the box for changing the colour at `index` of the colours of the file shown, hanging by the line it is on, and gives it the keyboard.
+    pub(super) fn open_color_picker(&mut self, index: usize) {
+        let Some(offset) = self.model.read(|screen| screen.color_swatch_offset(index)) else {
+            return;
+        };
+        let at = self.hung(offset, 150.0);
+        self.model
+            .update(|screen| *screen = std::mem::take(screen).color_picker_requested(index, at));
+        self.deliver();
+        if self.model.read(Screen::color_picker_open) {
+            self.focus.focus(COLOR_HEX);
+        }
     }
 
     /// Underlines `stretch` of the file shown as what a press takes to its definition, or nothing, when that differs from what is underlined.
@@ -1233,7 +1372,7 @@ impl App {
             .pointer
             .position
             .filter(|_| self.modifiers.control)
-            .and_then(|(x, y)| self.word_under(self.output.hit((x, y)), x, y));
+            .and_then(|(x, y)| self.reach_under(self.output.hit((x, y)), x, y));
         self.reach(stretch);
     }
 
@@ -1245,6 +1384,15 @@ impl App {
         let Some((x, y)) = self.pointer.position else {
             return false;
         };
+        if let Some((_, target)) = self.link_under_point(self.output.hit((x, y)), x, y) {
+            self.model.update(|screen| {
+                *screen = std::mem::take(screen)
+                    .with_reach(None)
+                    .link_followed(target)
+            });
+            self.deliver();
+            return true;
+        }
         let Some(stretch) = self.word_under(self.output.hit((x, y)), x, y) else {
             return false;
         };

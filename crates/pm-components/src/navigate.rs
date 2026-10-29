@@ -33,6 +33,8 @@ pub struct Renaming {
     pub at: (f32, f32),
     /// Whether the language server is renaming it now.
     pub busy: bool,
+    /// Whether the language server is yet to say what the name is and whether it can be renamed.
+    pub preparing: bool,
     /// Why the last rename failed, when it did.
     pub problem: Option<String>,
 }
@@ -52,7 +54,7 @@ fn is_name(character: char) -> bool {
 
 impl WorkspaceState {
     /// The session the review panel is about and the file it shows, by path, when the file is read by a language server.
-    fn coding_file(&self) -> Option<(usize, String)> {
+    pub(crate) fn coding_file(&self) -> Option<(usize, String)> {
         let session = self.review_index()?;
         let path = self.shown_viewer()?.path.clone();
         self.coding().then_some((session, path))
@@ -165,22 +167,87 @@ impl WorkspaceState {
         };
         let mut field = Field::new(&document.field.text()[range.clone()]);
         field.apply(Edit::SelectAll);
+        let (version, position) = (document.version, document.position_of(range.start));
         self.renaming = Some(Renaming {
             session,
-            path,
-            version: document.version,
-            position: document.position_of(range.start),
+            path: path.clone(),
+            version,
+            position,
             field,
             at,
             busy: false,
+            preparing: true,
             problem: None,
         });
+        let request = Outgoing::PrepareRename {
+            session,
+            path,
+            version,
+            position,
+        };
+        self.outbox.push(request);
+        self
+    }
+
+    /// The state after the language server said what can be renamed where the box for a new name was opened: the name it says, or the word the box holds, is what is typed over; and the box says so when nothing there can be renamed.
+    pub fn with_rename_target(
+        mut self,
+        session: usize,
+        target: Option<pm_protocol::RenameTarget>,
+    ) -> Self {
+        let Some(renaming) = self
+            .renaming
+            .as_ref()
+            .filter(|held| held.session == session && held.preparing)
+        else {
+            return self;
+        };
+        let Some(target) = target else {
+            if let Some(renaming) = &mut self.renaming {
+                renaming.problem = Some("nothing at this place can be renamed".to_owned());
+            }
+            return self;
+        };
+        let (path, position) = (renaming.path.clone(), renaming.position);
+        let named = target.placeholder.or_else(|| {
+            let document = self.shown_document().filter(|_| {
+                self.shown_viewer()
+                    .is_some_and(|viewer| viewer.path == path)
+            })?;
+            let span = target.span?;
+            let text = document.field.text();
+            let start = document.line_index().offset_of(span.start, text);
+            let end = document.line_index().offset_of(span.end, text);
+            text.get(start..end).map(str::to_owned)
+        });
+        let start = target.span.map_or(position, |span| span.start);
+        if let Some(renaming) = &mut self.renaming {
+            renaming.preparing = false;
+            renaming.position = start;
+            if let Some(name) = named {
+                renaming.field = Field::new(name);
+                renaming.field.apply(Edit::SelectAll);
+            }
+        }
+        self
+    }
+
+    /// The state after asking the language server what can be renamed failed for `problem`: the box says why and the name can still be tried.
+    pub fn rename_unprepared(mut self, problem: String) -> Self {
+        if let Some(renaming) = &mut self.renaming {
+            renaming.preparing = false;
+            renaming.problem = Some(problem);
+        }
         self
     }
 
     /// Asks the language server to rename the thing to the name typed in the box, which closes once it has answered.
     pub fn rename_submitted(mut self) -> Self {
-        let Some(renaming) = self.renaming.as_mut().filter(|held| !held.busy) else {
+        let Some(renaming) = self
+            .renaming
+            .as_mut()
+            .filter(|held| !held.busy && !held.preparing)
+        else {
             return self;
         };
         let name = renaming.field.text().trim().to_owned();
@@ -217,6 +284,73 @@ impl WorkspaceState {
             renaming.problem = Some(problem);
         }
         self
+    }
+
+    /// The byte range of the link at the byte `offset` of the file shown, and where it leads.
+    pub fn link_under(
+        &self,
+        offset: usize,
+    ) -> Option<(std::ops::Range<usize>, pm_protocol::LinkTarget)> {
+        let (range, target) = self.shown_document()?.link_at(offset)?;
+        Some((range, target.clone()))
+    }
+
+    /// Follows a link of the file shown: a web address is opened in the browser, and a file of the project is opened at the place the link names, after remembering where the caret was so that going back returns there.
+    pub fn link_followed(mut self, target: pm_protocol::LinkTarget) -> Self {
+        match target {
+            pm_protocol::LinkTarget::Url { address } => {
+                if pm_acp::is_web_address(&address) {
+                    self.outbox.push(Outgoing::Open { address });
+                }
+            }
+            pm_protocol::LinkTarget::Unresolved { link } => {
+                if let Some((session, path)) = self.coding_file() {
+                    self.outbox.push(Outgoing::ResolveLink {
+                        session,
+                        path,
+                        link,
+                    });
+                }
+            }
+            pm_protocol::LinkTarget::File { path, position } => {
+                self.remember_spot();
+                self.open_viewer(path, false);
+                if let Some(viewer) = self
+                    .git
+                    .shown
+                    .and_then(|index| self.git.viewers.get_mut(index))
+                {
+                    viewer.jump = position;
+                }
+            }
+        }
+        self
+    }
+
+    /// The state after a change of the language server was taken and it asked for documents to be shown: the changes are made to the open files, web addresses are opened in the browser and files are gone to.
+    pub fn with_action_shown(
+        mut self,
+        session: usize,
+        files: Vec<FileEdit>,
+        shown: Vec<pm_protocol::LinkTarget>,
+    ) -> Self {
+        self = self.with_edited_files(session, files);
+        for target in shown {
+            self = self.link_followed(target);
+        }
+        self
+    }
+
+    /// The state after the language server said where a link of the file shown at the session at `session` leads: it is followed, and when it leads nowhere the session is told so.
+    pub fn with_link_resolved(
+        self,
+        session: usize,
+        target: Option<pm_protocol::LinkTarget>,
+    ) -> Self {
+        match target {
+            Some(target) => self.link_followed(target),
+            None => self.noted(session, "That link leads nowhere the editor can open"),
+        }
     }
 
     /// Asks the language server what changes it offers at the caret of the file shown, or for the selection, a list of them hanging at `at`.

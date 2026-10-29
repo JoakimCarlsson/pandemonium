@@ -385,11 +385,25 @@ pub enum Response {
         /// Whether the server says which names to show the values of while a program is paused.
         #[serde(default)]
         inline_values: bool,
+        /// Whether the server says which stretches of a file lead somewhere when pressed.
+        #[serde(default)]
+        document_links: bool,
+        /// Whether the server says which stretches of a file spell a colour.
+        #[serde(default)]
+        colors: bool,
+        /// Whether the server says what each name of a stretch of a file is, without the rest of the file.
+        #[serde(default)]
+        semantic_ranges: bool,
     },
     /// What could be written at a place.
     Completions {
         /// The best match for the word typed there first.
         items: Vec<pm_lsp::Completion>,
+    },
+    /// A completion with what its language server adds when asked, its `resolve` unchanged.
+    CompletionResolved {
+        /// The item.
+        item: pm_lsp::Completion,
     },
     /// The edits that format a file, each a stretch of its text at the version asked for and what replaces it; none when its language server cannot format.
     Formatted {
@@ -405,11 +419,34 @@ pub enum Response {
     SemanticTokens {
         /// The tokens, in the order of the file.
         tokens: Vec<pm_lsp::SemanticToken>,
+        /// Whether the tokens are only those of the stretch asked for, because the language server says the names of a stretch; the whole file when not set.
+        #[serde(default)]
+        partial: bool,
     },
     /// What to show inside the lines of a file; none when the language server does not say.
     InlayHints {
         /// The hints, in the order of the file.
         hints: Vec<pm_lsp::InlayHint>,
+    },
+    /// Which stretches of a file lead somewhere when pressed; none when the language server does not say.
+    DocumentLinks {
+        /// The links, in the order the server gave them.
+        links: Vec<pm_lsp::DocumentLink>,
+    },
+    /// Where a link leads.
+    LinkResolved {
+        /// Where it leads, or nothing when the server does not say or it leads outside the folder and the web.
+        target: Option<pm_lsp::LinkTarget>,
+    },
+    /// The ways a colour can be written.
+    ColorPresentations {
+        /// The ways, in the order the server gave them.
+        presentations: Vec<pm_lsp::ColorPresentation>,
+    },
+    /// Which stretches of a file spell a colour; none when the language server does not say.
+    Colors {
+        /// The colours, in the order the server gave them.
+        colors: Vec<pm_lsp::ColorSwatch>,
     },
     /// Which stretches of a file to show the values of while a program is paused; none when the language server does not say.
     InlineValues {
@@ -483,6 +520,11 @@ pub enum Response {
         /// The signature, or nothing when the place is in no call.
         signature: Option<pm_lsp::Signature>,
     },
+    /// What can be renamed at a place.
+    RenameTarget {
+        /// The thing that can be renamed, or nothing when nothing at the place can be.
+        target: Option<pm_lsp::RenameTarget>,
+    },
     /// The changes the language server offers for a stretch.
     CodeActions {
         /// Each change, in the order the server gave them.
@@ -492,6 +534,13 @@ pub enum Response {
     Edited {
         /// The changes to each open file.
         files: Vec<pm_lsp::FileEdit>,
+    },
+    /// A change offered by the language server was taken, and the server asked for documents to be shown while it did: the changes to the open files, as in `edited`, and where to look.
+    ActionTaken {
+        /// The changes to each open file.
+        files: Vec<pm_lsp::FileEdit>,
+        /// The documents to show: web addresses to open and files to go to.
+        shown: Vec<pm_lsp::LinkTarget>,
     },
     /// What the language server says about the thing at a place.
     Hovered {

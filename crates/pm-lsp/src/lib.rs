@@ -40,7 +40,7 @@ mod uri;
 pub use candidates::WILDCARD;
 pub use choice::ServerChoice;
 pub use editing::{editing_of, scopes_of, tags_of};
-pub use hub::{Environment, Hub, Published, Sink, rank, score};
+pub use hub::{Environment, Hub, Neighbours, Published, Sink, rank, score};
 pub use index::{Index, Listing, build_index};
 pub use inherit::language_file;
 pub use install::{
@@ -58,7 +58,8 @@ pub use provider::{Provided, ProvidedCommand, Provider, SymbolLabel};
 pub use resolve::{server_ready, server_state};
 pub use semantic::{TokenRule, kind_by_rules, parse_rules, rules_for};
 pub use types::{
-    CodeAction, CodeLens, Completion, CompletionKind, Diagnostic, FileEdit, FoldRange, HintKind,
-    Hover, InlayHint, InlineValue, InlineValueKind, Location, Problem, Seek, SemanticToken,
-    Severity, Signature, TextChange, TokenKind, Triggers,
+    CodeAction, CodeLens, ColorPresentation, ColorSwatch, Completion, CompletionKind, Diagnostic,
+    DocumentLink, FileEdit, FoldRange, HintKind, Hover, InlayHint, InlineValue, InlineValueKind,
+    LinkTarget, Location, Problem, RenameTarget, Seek, SemanticToken, Severity, Signature,
+    TextChange, TokenKind, Triggers,
 };

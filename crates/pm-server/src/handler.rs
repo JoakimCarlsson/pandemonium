@@ -1170,6 +1170,9 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                     inlay_hints: triggers.inlay_hints,
                     code_lens: triggers.code_lens || crate::dependencies::applies(&language, &path),
                     inline_values: triggers.inline_values,
+                    document_links: triggers.document_links,
+                    colors: triggers.colors,
+                    semantic_ranges: triggers.semantic_ranges,
                 },
                 Err(reason) => failed(reason),
             }
@@ -1204,6 +1207,18 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             scope.as_deref(),
         ) {
             Ok(items) => Response::Completions { items },
+            Err(reason) => failed(reason),
+        },
+        Request::ResolveCompletion {
+            directory,
+            path,
+            item,
+        } => match core
+            .documents
+            .hub
+            .resolve_completion(&place(&directory), &path, &item)
+        {
+            Ok(item) => Response::CompletionResolved { item },
             Err(reason) => failed(reason),
         },
         Request::Format {
@@ -1355,6 +1370,19 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             Ok(signature) => Response::Signature { signature },
             Err(reason) => failed(reason),
         },
+        Request::PrepareRename {
+            directory,
+            path,
+            version,
+            position,
+        } => match core
+            .documents
+            .hub
+            .prepare_rename(&place(&directory), &path, version, position)
+        {
+            Ok(target) => Response::RenameTarget { target },
+            Err(reason) => failed(reason),
+        },
         Request::Rename {
             directory,
             path,
@@ -1374,11 +1402,14 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             path,
             version,
             span,
-        } => match core
-            .documents
-            .hub
-            .code_actions(&place(&directory), &path, version, span)
-        {
+            only,
+        } => match core.documents.hub.code_actions(
+            &place(&directory),
+            &path,
+            version,
+            span,
+            &only.unwrap_or_default(),
+        ) {
             Ok(actions) => Response::CodeActions { actions },
             Err(reason) => failed(reason),
         },
@@ -1387,12 +1418,15 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             path,
             version,
             rules,
-        } => match core
-            .documents
-            .hub
-            .semantic_tokens(&place(&directory), &path, version, &rules)
-        {
-            Ok(tokens) => Response::SemanticTokens { tokens },
+            range,
+        } => match core.documents.hub.semantic_tokens(
+            &place(&directory),
+            &path,
+            version,
+            &rules,
+            range,
+        ) {
+            Ok((tokens, partial)) => Response::SemanticTokens { tokens, partial },
             Err(reason) => failed(reason),
         },
         Request::InlayHints {
@@ -1406,6 +1440,58 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             .inlay_hints(&place(&directory), &path, version, span)
         {
             Ok(hints) => Response::InlayHints { hints },
+            Err(reason) => failed(reason),
+        },
+        Request::DocumentLinks {
+            directory,
+            path,
+            version,
+        } => match core
+            .documents
+            .hub
+            .document_links(&place(&directory), &path, version)
+        {
+            Ok(links) => Response::DocumentLinks { links },
+            Err(reason) => failed(reason),
+        },
+        Request::ResolveLink {
+            directory,
+            path,
+            link,
+        } => match core
+            .documents
+            .hub
+            .resolve_link(&place(&directory), &path, &link)
+        {
+            Ok(target) => Response::LinkResolved { target },
+            Err(reason) => failed(reason),
+        },
+        Request::ColorPresentations {
+            directory,
+            path,
+            version,
+            span,
+            color,
+        } => match core.documents.hub.color_presentations(
+            &place(&directory),
+            &path,
+            version,
+            span,
+            color,
+        ) {
+            Ok(presentations) => Response::ColorPresentations { presentations },
+            Err(reason) => failed(reason),
+        },
+        Request::Colors {
+            directory,
+            path,
+            version,
+        } => match core
+            .documents
+            .hub
+            .colors(&place(&directory), &path, version)
+        {
+            Ok(colors) => Response::Colors { colors },
             Err(reason) => failed(reason),
         },
         Request::InlineValues {
@@ -1497,7 +1583,8 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             .hub
             .take_action(&place(&directory), &path, index)
         {
-            Ok(files) => Response::Edited { files },
+            Ok((files, shown)) if shown.is_empty() => Response::Edited { files },
+            Ok((files, shown)) => Response::ActionTaken { files, shown },
             Err(reason) => failed(reason),
         },
         Request::Hover {

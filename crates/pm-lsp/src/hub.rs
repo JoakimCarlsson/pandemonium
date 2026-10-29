@@ -14,10 +14,13 @@ use crate::install::{installed_manifest, language_of};
 use crate::manifest::ServerSpec;
 use crate::preferences::ServerOverride;
 use crate::provider::{Provider, SymbolLabel};
-use crate::server::{DiagnosticsSink, Found, LanguageServer, Pressed, action_of, file_changes};
+use crate::server::{
+    DiagnosticsSink, Found, LanguageServer, LinkAnswer, Pressed, action_of, file_changes,
+};
 use crate::types::{
-    CodeAction, CodeLens, Completion, Diagnostic, FileEdit, FoldRange, Hover, InlayHint,
-    InlineValue, Location, Problem, Seek, SemanticToken, Signature, TextChange, Triggers,
+    CodeAction, CodeLens, ColorPresentation, ColorSwatch, Completion, Diagnostic, DocumentLink,
+    FileEdit, FoldRange, Hover, InlayHint, InlineValue, LinkTarget, Location, Problem,
+    RenameTarget, Seek, SemanticToken, Signature, TextChange, Triggers,
 };
 use crate::uri::{file_uri, path_of};
 
@@ -29,6 +32,9 @@ const MOST_SHOWN: u64 = 2 * 1024 * 1024;
 
 /// The most symbols handed back for one search of a project.
 const MOST_SYMBOLS: usize = 200;
+
+/// The most symbols of folders attached to a project that are handed back for one search, each with the text of its file to be shown read only.
+const MOST_ATTACHED_SYMBOLS: usize = 25;
 
 /// The most completions handed back for one question.
 const MOST_COMPLETIONS: usize = 200;
@@ -64,6 +70,9 @@ type Latest = (Option<i32>, Vec<Diagnostic>);
 
 /// The changes a server last offered for a file, as it wrote them, with that server.
 type Offered = (Arc<LanguageServer>, Vec<Value>);
+
+/// The folders besides a project's own that its language servers work on, as the project at a folder has them.
+pub type Neighbours = Arc<dyn Fn(&Path) -> Vec<PathBuf> + Send + Sync>;
 
 /// A language server of one project, started once however many files ask for it at the same time.
 type Slot = Arc<OnceLock<Result<Arc<LanguageServer>, String>>>;
@@ -131,6 +140,8 @@ pub struct Hub {
     sink: Sink,
     /// What servers are started with.
     environment: Environment,
+    /// The folders besides a project's own its servers work on.
+    neighbours: Mutex<Neighbours>,
 }
 
 /// How well `filter`, what a completion is matched by, matches the word `typed`: lower is better, nothing when it does not match.
@@ -224,6 +235,56 @@ impl Hub {
             provider: Mutex::new(None),
             sink,
             environment,
+            neighbours: Mutex::new(Arc::new(|_| Vec::new())),
+        })
+    }
+
+    /// The folders `neighbours` names for each project are attached to the workspace of its language servers from now on, and the servers running are told which came and went.
+    pub fn attach_folders(&self, neighbours: Neighbours) {
+        if let Ok(mut held) = self.neighbours.lock() {
+            *held = neighbours;
+        }
+        self.refresh_folders();
+    }
+
+    /// The folders besides the project at `root`'s own that its servers work on.
+    fn neighbours_of(&self, root: &Path) -> Vec<PathBuf> {
+        let resolve = self.neighbours.lock().map(|held| held.clone()).ok();
+        resolve
+            .map(|resolve| resolve(root))
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|folder| folder != root && folder.is_dir())
+            .collect()
+    }
+
+    /// Tells every running server which folders the workspace of its project holds now.
+    pub fn refresh_folders(&self) {
+        let running: Vec<(PathBuf, Arc<LanguageServer>)> = self
+            .servers
+            .lock()
+            .map(|servers| {
+                servers
+                    .iter()
+                    .filter_map(|((root, _), slot)| {
+                        Some((root.clone(), slot.get()?.as_ref().ok()?.clone()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        for (root, server) in running {
+            let _ = server.set_extra_folders(&self.neighbours_of(&root));
+        }
+    }
+
+    /// Whether `file` is inside a folder attached to the workspace of a server running for the project at `root`, besides the project's own.
+    fn attached(&self, root: &Path, file: &Path) -> bool {
+        self.running(root).iter().any(|server| {
+            server
+                .workspace_folders()
+                .iter()
+                .skip(1)
+                .any(|folder| file.starts_with(folder))
         })
     }
 
@@ -557,6 +618,7 @@ impl Hub {
                     LanguageServer::start(
                         &ready,
                         root,
+                        &self.neighbours_of(root),
                         &(self.environment)(root, language, &ready),
                         sink.clone(),
                     )
@@ -702,9 +764,12 @@ impl Hub {
             folds: server.folds(),
             links: server.links(),
             semantic_tokens: server.has_semantic_tokens(),
+            semantic_ranges: server.has_semantic_ranges(),
             inlay_hints: server.has_inlay_hints(),
             code_lens: server.has_code_lens(),
             inline_values: server.has_inline_values(),
+            document_links: server.has_document_links(),
+            colors: server.has_colors(),
         })
     }
 
@@ -969,10 +1034,29 @@ impl Hub {
                 || scope.is_some_and(|scope| scopes.iter().any(|name| name == scope));
             if here && let Ok(mut more) = companion.completion(&address, position, trigger) {
                 self.label_completions(&language, &spec, &mut more);
+                more.iter_mut().for_each(|item| item.resolve = None);
                 items.extend(more);
             }
         }
         Ok(rank(items, &typed, MOST_COMPLETIONS))
+    }
+
+    /// The completion `raw`, as the language server of the open file at `path` of the project at `root` wrote it in its list, with what that server adds when asked: its documentation and detail, and the edits choosing it makes besides writing it.
+    pub fn resolve_completion(
+        &self,
+        root: &Path,
+        path: &str,
+        raw: &str,
+    ) -> Result<Completion, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let server = self
+            .documents
+            .lock()
+            .map_err(|_| "the server is shutting down".to_owned())?
+            .get(&key)
+            .and_then(|document| document.server.clone())
+            .ok_or_else(|| format!("{path} has no language server"))?;
+        server.resolve_completion(raw)
     }
 
     /// What the server says about the thing at `position` of the open file at `path` of the project at `root`, once it reaches `version`.
@@ -1185,7 +1269,7 @@ impl Hub {
         found
     }
 
-    /// The symbols of the project at `root` whose names match `query`, as the language server of the open file at `path` finds them, defined inside the project, at most a limit of them.
+    /// The symbols of the project at `root` whose names match `query`, as the language server of the open file at `path` finds them, defined inside the project or in a folder attached to its workspace, at most a limit of them; those in attached folders come with their files, to be shown read only.
     pub fn workspace_symbols(
         &self,
         root: &Path,
@@ -1216,12 +1300,26 @@ impl Hub {
             }
         }
         let mut texts: HashMap<PathBuf, Option<String>> = HashMap::new();
-        Ok(found
-            .into_iter()
-            .take(MOST_SYMBOLS)
-            .filter_map(|place| self.location(root, place, Seek::References, &mut texts))
-            .filter(|location| location.inside)
-            .collect())
+        let mut inside = Vec::new();
+        let mut beside = Vec::new();
+        for place in found.into_iter().take(MOST_SYMBOLS) {
+            let in_attached = path_of(&place.0).is_some_and(|file| {
+                relative_to(root, &file).is_none() && self.attached(root, &file)
+            });
+            if in_attached {
+                if beside.len() < MOST_ATTACHED_SYMBOLS
+                    && let Some(location) = self.location(root, place, Seek::Definition, &mut texts)
+                {
+                    beside.push(location);
+                }
+            } else if let Some(location) = self.location(root, place, Seek::References, &mut texts)
+                && location.inside
+            {
+                inside.push(location);
+            }
+        }
+        inside.extend(beside);
+        Ok(inside)
     }
 
     /// The stretches of the open file at `path` of the project at `root` where the thing at `position` is used, once the file reaches `version`.
@@ -1239,17 +1337,18 @@ impl Hub {
         server.highlights(&file_uri(&root.join(path)), position)
     }
 
-    /// What each name of the open file at `path` of the project at `root` is, once the file reaches `version`; none when its language server does not say.
+    /// What each name of the open file at `path` of the project at `root` is, once the file reaches `version`, only those within `range` when it is given and its language server says the names of a stretch, which is told alongside; none when its language server does not say.
     pub fn semantic_tokens(
         &self,
         root: &Path,
         path: &str,
         version: i32,
         user: &[crate::semantic::TokenRule],
-    ) -> Result<Vec<SemanticToken>, String> {
+        range: Option<Span>,
+    ) -> Result<(Vec<SemanticToken>, bool), String> {
         let key = (root.to_path_buf(), path.to_owned());
         let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), false));
         };
         let language = self
             .documents
@@ -1262,7 +1361,7 @@ impl Hub {
             })
             .unwrap_or_default();
         let rules = crate::semantic::rules_for(&language, user);
-        server.semantic_tokens(&file_uri(&root.join(path)), &rules)
+        server.semantic_tokens(&file_uri(&root.join(path)), &rules, range)
     }
 
     /// Which stretches of the open file at `path` of the project at `root` within `range` to show the values of while the program is paused at `stopped` in the debugger's frame `frame`, once the file reaches `version`; none when its language server does not say.
@@ -1315,6 +1414,80 @@ impl Hub {
         Ok(lenses)
     }
 
+    /// The stretches of the open file at `path` of the project at `root` that lead somewhere when pressed, once the file reaches `version`: web addresses, and files inside the project; links to anywhere else are left out.
+    pub fn document_links(
+        &self,
+        root: &Path,
+        path: &str,
+        version: i32,
+    ) -> Result<Vec<DocumentLink>, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
+            return Ok(Vec::new());
+        };
+        let found = server.document_links(&file_uri(&root.join(path)))?;
+        Ok(found
+            .into_iter()
+            .filter_map(|(span, address)| {
+                let target = match address {
+                    LinkAnswer::Address(address) => link_target(root, &address)?,
+                    LinkAnswer::Raw(link) => LinkTarget::Unresolved { link },
+                };
+                Some(DocumentLink { span, target })
+            })
+            .collect())
+    }
+
+    /// Where the link `raw`, as the language server of the open file at `path` of the project at `root` wrote it, leads; nothing when the server does not say or it leads outside the project and the web.
+    pub fn resolve_link(
+        &self,
+        root: &Path,
+        path: &str,
+        raw: &str,
+    ) -> Result<Option<LinkTarget>, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let server = self
+            .documents
+            .lock()
+            .map_err(|_| "the server is shutting down".to_owned())?
+            .get(&key)
+            .and_then(|document| document.server.clone())
+            .ok_or_else(|| format!("{path} has no language server"))?;
+        Ok(server
+            .resolve_link(raw)?
+            .and_then(|address| link_target(root, &address)))
+    }
+
+    /// The ways the language server of the open file at `path` of the project at `root` offers to write `color` in place of `span`, once the file reaches `version`.
+    pub fn color_presentations(
+        &self,
+        root: &Path,
+        path: &str,
+        version: i32,
+        span: Span,
+        color: [u8; 4],
+    ) -> Result<Vec<ColorPresentation>, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
+            return Ok(Vec::new());
+        };
+        server.color_presentations(&file_uri(&root.join(path)), color, span)
+    }
+
+    /// The stretches of the open file at `path` of the project at `root` that spell a colour, once the file reaches `version`; none when its language server does not say.
+    pub fn colors(
+        &self,
+        root: &Path,
+        path: &str,
+        version: i32,
+    ) -> Result<Vec<ColorSwatch>, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
+            return Ok(Vec::new());
+        };
+        server.colors(&file_uri(&root.join(path)))
+    }
+
     /// Presses the `index`-th lens last offered for the open file at `path` of the project at `root`: the places it points to, as to be shown, or the changes the press made to the open files, files no client has open being changed on disk here.
     pub fn press_lens(
         &self,
@@ -1358,6 +1531,21 @@ impl Hub {
             return Ok(None);
         };
         server.signature(&file_uri(&root.join(path)), position)
+    }
+
+    /// What can be renamed at `position` of the open file at `path` of the project at `root`, once the file reaches `version`; nothing when nothing there can be.
+    pub fn prepare_rename(
+        &self,
+        root: &Path,
+        path: &str,
+        version: i32,
+        position: Position,
+    ) -> Result<Option<RenameTarget>, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
+            return Err("no language server reads this file".to_owned());
+        };
+        server.prepare_rename(&file_uri(&root.join(path)), position)
     }
 
     /// Renames the thing at `position` of the open file at `path` of the project at `root` to `name`, once the file reaches `version`: files of the project no client has open are changed on disk here, and the changes to the open ones are returned for the clients to make.
@@ -1419,20 +1607,21 @@ impl Hub {
         }
     }
 
-    /// The changes the language server of the open file at `path` of the project at `root` offers for the stretch `span`, once the file reaches `version`; they are kept to be taken by their place in the list.
+    /// The changes the language server of the open file at `path` of the project at `root` offers for the stretch `span`, once the file reaches `version`, only those of the kinds in `only` when it names any; they are kept to be taken by their place in the list.
     pub fn code_actions(
         &self,
         root: &Path,
         path: &str,
         version: i32,
         span: Span,
+        only: &[String],
     ) -> Result<Vec<CodeAction>, String> {
         let key = (root.to_path_buf(), path.to_owned());
         let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
             return Ok(Vec::new());
         };
         let offered: Vec<Value> = server
-            .code_actions(&file_uri(&root.join(path)), span)?
+            .code_actions(&file_uri(&root.join(path)), span, only)?
             .into_iter()
             .filter(|value| action_of(value).is_some())
             .collect();
@@ -1443,13 +1632,13 @@ impl Hub {
         Ok(actions)
     }
 
-    /// Takes the `index`-th change last offered for the open file at `path` of the project at `root`: files of the project no client has open are changed on disk here, and the changes to the open ones are returned for the clients to make.
+    /// Takes the `index`-th change last offered for the open file at `path` of the project at `root`: files of the project no client has open are changed on disk here, and the changes to the open ones are returned for the clients to make, with the documents the language server asked to have shown while it did, such as the page of documentation a command opens.
     pub fn take_action(
         &self,
         root: &Path,
         path: &str,
         index: usize,
-    ) -> Result<Vec<FileEdit>, String> {
+    ) -> Result<(Vec<FileEdit>, Vec<LinkTarget>), String> {
         let key = (root.to_path_buf(), path.to_owned());
         let (server, action) = self
             .actions
@@ -1460,8 +1649,12 @@ impl Hub {
                 Some((server.clone(), offered.get(index)?.clone()))
             })
             .ok_or_else(|| "that change is no longer offered".to_owned())?;
-        let edits = server.take_action(&action)?;
-        self.share_edits(root, &edits)
+        let (edits, shown) = server.take_action(&action)?;
+        let shown = shown
+            .iter()
+            .filter_map(|asked| link_target(root, asked.get("uri")?.as_str()?))
+            .collect();
+        Ok((self.share_edits(root, &edits)?, shown))
     }
 
     /// Splits the edits across the project at `root` that a server wrote as `edits`: files of the project no client has open are changed on disk at once, and the changes to the open ones are returned; files outside the project are left alone.
@@ -1491,6 +1684,31 @@ impl Hub {
         }
         Ok(open)
     }
+}
+
+/// Where the address `address` a language server gave a link leads: a web address as it is, a file inside the project at `root` with the place its fragment names, `L12,5` or `12,5` counted from 1; nothing for any other address.
+fn link_target(root: &Path, address: &str) -> Option<LinkTarget> {
+    if ["http://", "https://", "mailto:"]
+        .iter()
+        .any(|scheme| address.starts_with(scheme))
+    {
+        return Some(LinkTarget::Url {
+            address: address.to_owned(),
+        });
+    }
+    let (file, fragment) = address.split_once('#').unwrap_or((address, ""));
+    let path = relative_to(root, &path_of(file)?)?;
+    let mut numbers = fragment
+        .trim_start_matches('L')
+        .split([',', ':', 'C'])
+        .filter_map(|number| number.trim_start_matches('L').parse::<u32>().ok());
+    let position = numbers.next().map(|line| {
+        pm_buffer::Position::new(
+            line.saturating_sub(1),
+            numbers.next().map_or(0, |column| column.saturating_sub(1)),
+        )
+    });
+    Some(LinkTarget::File { path, position })
 }
 
 /// The path of `file` from the root of the project at `root`, when it is inside it.

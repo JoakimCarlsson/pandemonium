@@ -71,8 +71,11 @@ One crate per layer, each depending only on the layers below it.
   (an open file being edited: its syntax tree and language server version kept
   in step, completions, indentation as the language says, pairs, whole-line
   edits, several carets, find and replace, folding, how its lines differ from
-  the last commit, formatting edits and jumps back and forward; every rule
-  returns the edits it calls for and `pm-components` draws it). A language is a
+  the last commit, formatting edits and modal editing; every rule returns the edits it calls for and
+  `pm-components` draws it) and `pm-vim` (vim's keys: a binding table, motions,
+  operators, text objects, registers, macros and the command line, carried out
+  on a copy of the text that `pm-editor` hands in before a key and compares
+  with after it; the window keeps undo and the settings). A language is a
   folder in `languages/`: a `config.toml` manifest and its tree-sitter queries,
   among them `runnables.scm`, which marks the places the gutter puts a run
   button beside, and `tasks.json`, which says what running each place and

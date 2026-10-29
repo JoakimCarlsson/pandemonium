@@ -108,6 +108,8 @@ pub enum Paint {
     Caret,
     /// A thin upright line the height of the line at the column its first number counts, in spaces from the left, which may lie past the end of the text.
     Guide,
+    /// A steady upright line before its first byte, in its colour: where dragged text would be dropped.
+    Drop,
 }
 
 /// A stretch of a line of text painted apart from the rest.

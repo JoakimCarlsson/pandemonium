@@ -100,30 +100,60 @@ impl Document {
             .any(|fold| self.line_of(fold.head) == index)
     }
 
+    /// The fold of the smallest block of three lines or more that holds the line at `index`, when there is one.
+    fn fold_around_line(&self, index: usize) -> Option<(usize, usize, Fold)> {
+        let text = self.field.text();
+        let line = self.line(index);
+        let leading = text[line.clone()].len() - text[line.clone()].trim_start().len();
+        let from = (line.start + leading).min(text.len());
+        let range = self.server_fold(index).or_else(|| match &self.syntax {
+            Some(syntax) => syntax.fold_range(from),
+            None => self.indented_block(index),
+        })?;
+        let first = self.line_of(range.start);
+        let last = self.line_of(range.end.saturating_sub(1).max(range.start));
+        (last > first + 1).then(|| {
+            (
+                first,
+                last,
+                Fold {
+                    head: self.line(first).end,
+                    tail: self.line(last).start,
+                },
+            )
+        })
+    }
+
+    /// Folds away every block of three lines or more that is not inside another, so that what stays in view is the outline of the file.
+    pub fn fold_all(&mut self) {
+        let mut index = 0;
+        while index < self.lines() {
+            match self.fold_around_line(index) {
+                Some((first, last, fold)) if first == index => {
+                    if !self.folds.contains(&fold) {
+                        self.folds.push(fold);
+                    }
+                    index = last + 1;
+                }
+                _ => index += 1,
+            }
+        }
+        let caret = self.field.caret();
+        if let Some(fold) = self
+            .folds
+            .iter()
+            .find(|fold| (fold.head..fold.tail).contains(&caret))
+            .copied()
+        {
+            self.field.apply(pm_text::Edit::Place(fold.head, false));
+        }
+    }
+
     /// Folds away the block around the caret: the lines between its first and its last; nothing happens when no block of three lines or more holds the caret.
     pub fn fold_at_caret(&mut self) -> bool {
         let caret = self.field.caret();
-        let text = self.field.text();
-        let line = self.line(self.line_of(caret));
-        let leading = text[line.clone()].len() - text[line.clone()].trim_start().len();
-        let from = (line.start + leading).min(text.len());
-        let range = self
-            .server_fold(self.line_of(caret))
-            .or_else(|| match &self.syntax {
-                Some(syntax) => syntax.fold_range(from),
-                None => self.indented_block(self.line_of(caret)),
-            });
-        let Some(range) = range else {
+        let Some((_, _, fold)) = self.fold_around_line(self.line_of(caret)) else {
             return false;
-        };
-        let first = self.line_of(range.start);
-        let last = self.line_of(range.end.saturating_sub(1).max(range.start));
-        if last <= first + 1 {
-            return false;
-        }
-        let fold = Fold {
-            head: self.line(first).end,
-            tail: self.line(last).start,
         };
         if !self.folds.contains(&fold) {
             self.folds.push(fold);

@@ -201,6 +201,8 @@ enum Pending {
     Opened(usize, String),
     /// What could be written in the file of the session at this position, at this path, as asked at this version.
     Completions(usize, String, i32),
+    /// What the language server adds to a completion of a file of a session, by position and path.
+    CompletionResolved(usize, String),
     /// What the language server says about this place of the file of the session at this position, at this path.
     Hovered(usize, String, pm_protocol::Position),
     /// The extensions the server on this machine can install.
@@ -228,21 +230,39 @@ enum Pending {
     /// The hits of a search of the project of the session at this position for a text, matching case or not, as a regular expression or not.
     ProjectSearch(usize, String, bool, bool),
     /// What each name of the file of the session at this position, at this path and version, is.
-    SemanticTokens(usize, String, i32),
+    SemanticTokens(usize, String, i32, Option<pm_protocol::Span>),
     /// What to show inside the lines of the file of the session at this position, at this path and version.
     InlayHints(usize, String, i32),
+    /// Which stretches of the file of the session at this position, at this path and version, lead somewhere when pressed.
+    DocumentLinks(usize, String, i32),
+    /// Where a link of the file of the session at this position leads.
+    LinkResolved(usize),
+    /// How the colour can be written in the file of the session at this position, at this path.
+    ColorPresentations(usize, String, [u8; 4]),
+    /// Which stretches of the file of the session at this position, at this path and version, spell a colour.
+    Colors(usize, String, i32),
     /// Which names of the file of the session at this position, at this path and version, to show the values of while a program is paused.
     InlineValues(usize, String, i32),
     /// What to show at the end of the lines of the file of the session at this position, at this path and version.
     CodeLenses(usize, String, i32),
     /// What pressing a lens of a file of the session at this position came to.
     LensPressed(usize),
+    /// What the language server says can be renamed at the place of the file of the session at this position.
+    RenameTarget(usize),
     /// The edits that rename something across the project of the session at this position.
     Renamed(usize),
     /// The changes the language server offers for the file of the session at this position, at this path.
     CodeActions(usize, String),
+    /// How many changes the language server offers at the caret of the file of the session at this position, at this path, version and line.
+    Lightbulb(usize, String, i32, usize),
+    /// A file of the session at this position, at the second path, as the folder holds it, to compare with the file at the first path, as saved when true.
+    Compared(usize, String, String, bool),
     /// The edits a change the language server offered makes across the project of the session at this position.
     TookAction(usize),
+    /// The changes of one kind the language server offers for a whole file, one step of a run of them.
+    SourceOffered(pm_components::source_actions::SourceStep),
+    /// The edits one of those changes makes across the project.
+    SourceTaken(pm_components::source_actions::SourceStep),
     /// The web address of a file or a line, opened in the browser when true and copied otherwise.
     Permalink(bool),
     /// The commits that changed the file of the session at this position, at this path.
@@ -2273,6 +2293,7 @@ impl Work {
             Pending::Grammar(_)
             | Pending::Opened(..)
             | Pending::Completions(..)
+            | Pending::CompletionResolved(..)
             | Pending::Hovered(..)
             | Pending::Definitions(..)
             | Pending::Base(..)
@@ -2284,12 +2305,21 @@ impl Work {
             | Pending::ProjectSearch(..)
             | Pending::SemanticTokens(..)
             | Pending::InlayHints(..)
+            | Pending::DocumentLinks(..)
+            | Pending::LinkResolved(_)
+            | Pending::ColorPresentations(..)
+            | Pending::Colors(..)
             | Pending::InlineValues(..)
             | Pending::CodeLenses(..)
             | Pending::LensPressed(_)
+            | Pending::RenameTarget(_)
             | Pending::Renamed(_)
             | Pending::CodeActions(..)
+            | Pending::Lightbulb(..)
+            | Pending::Compared(..)
             | Pending::TookAction(_)
+            | Pending::SourceOffered(_)
+            | Pending::SourceTaken(_)
             | Pending::Permalink(_)
             | Pending::FileHistory(..)
             | Pending::Revision(..)

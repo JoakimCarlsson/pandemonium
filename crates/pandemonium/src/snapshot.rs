@@ -58,7 +58,7 @@ const NARROW_WIDTH: u32 = 640;
 const NARROW_HEIGHT: u32 = 420;
 
 /// The name of the shot of each section of the settings window, after `settings-`.
-pub const SETTINGS_SHOTS: [(&str, Section); 23] = [
+pub const SETTINGS_SHOTS: [(&str, Section); 24] = [
     ("general", Section::General),
     ("appearance", Section::Appearance),
     ("editor", Section::Editor),
@@ -67,6 +67,7 @@ pub const SETTINGS_SHOTS: [(&str, Section); 23] = [
     ("editor-saving", Section::EditorSaving),
     ("editor-intelligence", Section::EditorIntelligence),
     ("editor-search", Section::EditorSearch),
+    ("editor-vim", Section::EditorVim),
     ("languages", Section::Languages),
     ("keymap", Section::Keymap),
     ("terminal", Section::Terminal),
@@ -105,6 +106,8 @@ pub enum Shot {
     WordDiff,
     /// The workspace on the diff of its first session with the files after the first listed by the server and their diffs still to come.
     DiffListed,
+    /// The workspace on the diff at its compact density, with a file of thousands of added lines scrolled far down, whose rows must fill the view.
+    DiffCompact,
     /// The workspace on the diff of its first session with a comment kept and another being written.
     Commenting,
     /// The workspace on the diff of its first session with the project's files listed in the review panel.
@@ -347,6 +350,12 @@ pub enum Shot {
     Signing,
     /// The same file with brackets coloured by depth, names coloured by what the language server says they are, hints inside lines and lenses at the ends of lines.
     Annotated,
+    /// The Rust file with small squares of colour before the stretches its language server says spell a colour.
+    ColorSwatches,
+    /// The same file with the box for changing the first colour open, and the ways its language server offers to write it listed.
+    ColorPicker,
+    /// The Rust file edited with vim's keys, with a word selected in visual mode, the mode named under the file and a command line being typed.
+    Vim,
     /// The review panel on its search tab, with the hits of a search for a word, grouped by file.
     ProjectSearch,
     /// The hits of a search as excerpts of three files, one under another, edited in place.
@@ -359,6 +368,8 @@ pub enum Shot {
     Outline,
     /// The same file with every use of a name selected, a caret at each.
     Cursors,
+    /// The same file with a rectangle of text selected over three lines, dragged from the first to the third.
+    ColumnSelection,
     /// The same file with the body of a function folded away.
     Folded,
     /// The same file scrolled into a method, the lines that open its blocks kept at the top.
@@ -387,6 +398,30 @@ pub enum Shot {
     Extensions,
     /// The extensions page asking whether to install an extension, with what it asks to be allowed.
     ExtensionInstall,
+    /// The same file with the lines of one function selected and finding limited to them, the matches in them marked.
+    FindInSelection,
+    /// The same, after every match in the selected lines was replaced.
+    FindInSelectionReplaced,
+    /// The same file with a selected line carried over the text, the mark of where it would be dropped in view.
+    DraggingText,
+    /// The same file after the selected line was dropped, moved.
+    DraggedText,
+    /// The same file with the marker beside the line of the caret that the language server offers changes on.
+    Lightbulb,
+    /// A file written with the arrows and comparisons a code font may join, as the code font with ligatures draws them.
+    Ligatures,
+    /// The same file with ligatures switched off.
+    LigaturesOff,
+    /// A file with lines of Hebrew, Arabic and mixed text, a selection and the caret in them.
+    Bidi,
+    /// The file compared with what the clipboard holds.
+    CompareClipboard,
+    /// The file compared with what was last saved of it.
+    CompareSaved,
+    /// The list of files of the project open to pick the one to compare the file with.
+    ComparePicking,
+    /// The file compared with another file of the project.
+    CompareFile,
 }
 
 /// Loads the grammar of the language `id` installed on this machine, if it is, and learns the endings of the files written in it, so a snapshot can highlight with it.
@@ -776,6 +811,106 @@ fn annotated() -> WorkspaceState {
         )
 }
 
+/// The Rust file with swatches before three stretches its language server says spell a colour.
+fn color_swatches() -> WorkspaceState {
+    let state = code();
+    let (text, version) = state
+        .shown_document()
+        .map(|document| (document.field.text().to_owned(), document.version))
+        .unwrap_or_default();
+    let swatch = |line: &str, word: &str, [red, green, blue, alpha]: [u8; 4]| {
+        let row = text
+            .lines()
+            .position(|held| held.contains(line))
+            .unwrap_or(0);
+        let column = text
+            .lines()
+            .nth(row)
+            .and_then(|held| held.find(word))
+            .unwrap_or(0) as u32;
+        pm_protocol::ColorSwatch {
+            span: pm_protocol::Span::new(
+                pm_protocol::Position::new(row as u32, column),
+                pm_protocol::Position::new(row as u32, column + word.len() as u32),
+            ),
+            red,
+            green,
+            blue,
+            alpha,
+        }
+    };
+    state
+        .with_opened(
+            0,
+            CODE_PATH,
+            Ok(pm_protocol::Triggers {
+                colors: true,
+                ..Default::default()
+            }),
+        )
+        .with_colors(
+            0,
+            CODE_PATH,
+            version,
+            vec![
+                swatch("pub struct Session", "Session", [0xe0, 0x4f, 0x5f, 0xff]),
+                swatch("pub fn count", "count", [0x3d, 0xa5, 0x6c, 0xff]),
+                swatch("pub fn new", "new", [0x4f, 0x8c, 0xe0, 0x80]),
+            ],
+        )
+}
+
+/// The Rust file with modal editing on, after keys that go down three lines, to the next word, select it in visual mode and start a command line.
+fn vim() -> WorkspaceState {
+    /// A clipboard that holds nothing, for keys that do not need one.
+    struct Empty;
+
+    impl pm_vim::Clipboard for Empty {
+        /// Nothing is on it.
+        fn read(&mut self) -> Option<String> {
+            None
+        }
+
+        /// What is put on it is dropped.
+        fn write(&mut self, _text: String) {}
+    }
+
+    let state = code();
+    let mut settings = state.editor.clone();
+    settings.vim_mode = true;
+    let mut state = state.with_editor_settings(settings);
+    for ch in "gg3jwve:".chars() {
+        let key = pm_vim::Keystroke {
+            key: pm_vim::Key::Char(ch),
+            ctrl: false,
+            shift: false,
+        };
+        state.vim_key(key, 600.0, &mut Empty);
+    }
+    state
+}
+
+/// The Rust file with the box for changing its first colour open, over the ways its language server offers to write it.
+fn color_picker() -> WorkspaceState {
+    let format = |label: &str| pm_protocol::ColorPresentation {
+        label: label.to_owned(),
+        text: label.to_owned(),
+        ..Default::default()
+    };
+    color_swatches()
+        .color_picker_requested(0, (430.0, 262.0))
+        .with_color_presentations(
+            0,
+            CODE_PATH,
+            [0xe0, 0x4f, 0x5f, 0xff],
+            vec![
+                format("#e04f5f"),
+                format("rgb(224, 79, 95)"),
+                format("hsl(354, 70%, 60%)"),
+            ],
+        )
+}
+
 /// The Rust file with `self.names.` typed into `count` and the language server's completions open under it.
 fn completing() -> WorkspaceState {
     let state = code();
@@ -800,6 +935,8 @@ fn completing() -> WorkspaceState {
             span: None,
             filter: label.to_owned(),
             sort: label.to_owned(),
+            additional_edits: Vec::new(),
+            resolve: None,
             documentation: (label == "insert").then(|| {
                 "Inserts a key-value pair into the map.\n\nIf the map did not have this key present, `None` is returned.\n\n```rust\nlet mut map = HashMap::new();\nassert_eq!(map.insert(37, \"a\"), None);\n```".to_owned()
             }),
@@ -1548,6 +1685,20 @@ fn diff_listed() -> WorkspaceState {
     state
 }
 
+/// The workspace on the diff at its compact density, its first file replaced by one of five thousand added lines and scrolled a good way into it.
+fn diff_compact() -> WorkspaceState {
+    let state = workspace_sample();
+    let mut window = state.window.clone();
+    window.appearance.density = pm_config::Density::Compact;
+    let mut state = state.with_window_settings(window).after(TAB_DIFF);
+    let source: String = std::iter::once("@@ -0,0 +1,5000 @@".to_owned())
+        .chain((1..=5000).map(|line| format!("+    let value_{line} = {line};")))
+        .collect::<Vec<_>>()
+        .join("\n");
+    state.sessions[0].changes[0] = pm_components::sample::Change::new("src/long.rs", &source);
+    state.scrolled_diff(40_000.0, 200_000.0)
+}
+
 /// The workspace on the diff with a comment kept on some lines and a box open to write another on a file.
 fn commenting() -> WorkspaceState {
     let state = workspace_sample()
@@ -2124,8 +2275,23 @@ impl Shot {
             Self::BranchesSubmodule(inside) => Screen::Workspace(branches_submodule(inside)),
             Self::Signing => Screen::Workspace(signing()),
             Self::Annotated => Screen::Workspace(annotated()),
+            Self::ColorSwatches => Screen::Workspace(color_swatches()),
+            Self::ColorPicker => Screen::Workspace(color_picker()),
+            Self::Vim => Screen::Workspace(vim()),
             Self::ProjectSearch => Screen::Workspace(project_search()),
             Self::Excerpts => Screen::Workspace(excerpts()),
+            Self::FindInSelection => Screen::Workspace(find_in_selection(false)),
+            Self::FindInSelectionReplaced => Screen::Workspace(find_in_selection(true)),
+            Self::DraggingText => Screen::Workspace(dragging_text(false)),
+            Self::DraggedText => Screen::Workspace(dragging_text(true)),
+            Self::Lightbulb => Screen::Workspace(lightbulb()),
+            Self::Ligatures => Screen::Workspace(ligatures(true)),
+            Self::LigaturesOff => Screen::Workspace(ligatures(false)),
+            Self::Bidi => Screen::Workspace(bidi()),
+            Self::CompareClipboard => Screen::Workspace(compared(Compare::Clipboard)),
+            Self::CompareSaved => Screen::Workspace(compared(Compare::Saved)),
+            Self::ComparePicking => Screen::Workspace(compared(Compare::Picking)),
+            Self::CompareFile => Screen::Workspace(compared(Compare::File)),
             Self::TabMenu => Screen::Workspace(code().with_tab_menu(0, (500.0, 52.0))),
             Self::Finder => {
                 let mut state = code();
@@ -2199,6 +2365,18 @@ impl Shot {
                         .edited(EDITOR_FIELD, Edit::Place(at + 2, false))
                         .lines_edited(pm_components::line_edits::LineEdit::SelectAllOccurrences),
                 )
+            }
+            Self::ColumnSelection => {
+                let state = code();
+                let text = state
+                    .shown_document()
+                    .map(|document| document.field.text().to_owned())
+                    .unwrap_or_default();
+                let first = text.find("    pub id").unwrap_or_default() + 8;
+                let last = text.find("    names:").unwrap_or_default() + 13;
+                Screen::Workspace(state.lines_edited(
+                    pm_components::line_edits::LineEdit::ColumnDrag(first, last),
+                ))
             }
             Self::Outline => Screen::Workspace(
                 code()
@@ -2306,6 +2484,10 @@ impl Shot {
             Self::DiffListed => {
                 load_installed_grammar("rust");
                 Screen::Workspace(diff_listed())
+            }
+            Self::DiffCompact => {
+                load_installed_grammar("rust");
+                Screen::Workspace(diff_compact())
             }
             Self::Commenting => Screen::Workspace(commenting()),
             Self::Files => Screen::Workspace(files()),
@@ -3290,6 +3472,138 @@ fn live(turn: Turn) -> WorkspaceState {
     state
 }
 
+/// The text of the Rust file the code snapshots write in.
+fn code_text(state: &WorkspaceState) -> String {
+    state
+        .shown_document()
+        .map(|document| document.field.text().to_owned())
+        .unwrap_or_default()
+}
+
+/// The Rust file with the lines of `new` selected and the bar for finding open on "names", limited to the selection, where the editor limits finding to a selection of several lines; every match in them replaced when `replaced`.
+fn find_in_selection(replaced: bool) -> WorkspaceState {
+    let mut state = code();
+    state.editor.auto_find_in_selection = pm_editor::FindInSelection::Multiline;
+    let text = code_text(&state);
+    let start = text.find("    /// Makes a session").unwrap_or_default();
+    let end = text.find("    /// How many names").unwrap_or_default();
+    let state = state
+        .edited(EDITOR_FIELD, Edit::Select(start, end))
+        .find_opened(replaced)
+        .find_typed(Edit::Paste("names".to_owned()));
+    if !replaced {
+        return state;
+    }
+    state
+        .replacement_typed(Edit::Paste("labels".to_owned()))
+        .replaced_all()
+}
+
+/// The Rust file with the line that holds `label` selected, picked up, and carried over the line above it; dropped there, moving it, when `dropped`.
+fn dragging_text(dropped: bool) -> WorkspaceState {
+    let mut state = code();
+    let text = code_text(&state);
+    let start = text.find("        let label").unwrap_or_default();
+    let end = start + text[start..].find('\n').map_or(0, |at| at + 1);
+    let target = text.find("        let names").unwrap_or_default();
+    state = state.edited(EDITOR_FIELD, Edit::Select(start, end));
+    state.editor_drag_started(start + 16);
+    state.editor_drag_over(target);
+    if dropped {
+        state.editor_dropped(false);
+    }
+    state
+}
+
+/// The Rust file with the caret on the line that has a problem, where the language server offers two changes, and the marker for that beside the line.
+fn lightbulb() -> WorkspaceState {
+    let state = code();
+    let text = code_text(&state);
+    let at = text.find("label: u32").unwrap_or_default() + 4;
+    let state = state.edited(EDITOR_FIELD, Edit::Place(at, false));
+    let (version, line) = state
+        .shown_document()
+        .map_or((0, 0), |document| (document.version, document.line_of(at)));
+    state.with_lightbulb(0, CODE_PATH, version, line, 2)
+}
+
+/// A file of words with the letter pairs a font joins and of arrows and comparisons, set in a code font that has ligatures for the pairs of letters, joined or not as `joined` says; no code font with ligatures for arrows is installed where the snapshots are made, so the pairs of letters stand for them.
+fn ligatures(joined: bool) -> WorkspaceState {
+    let path = "notes/operators.txt";
+    let mut state = workspace_sample().after(TAB_DIFF);
+    state.editor.ligatures = joined;
+    state.window.appearance.code_font = "DejaVu Sans".to_owned();
+    state.open_viewer(path.to_owned(), false);
+    state.with_file(
+        0,
+        path,
+        false,
+        Ok((
+            Some("office affluent final flow waffle\na -> b => c <- d <= e >= f != g == h === i\nx |> y <|> z :: w ::= v >>= u <<= t\nwww //// /* */ <!-- --> 0xFF .. ... && ||\n".to_owned()),
+            false,
+            None,
+        )),
+    )
+}
+
+/// A file with a line of Hebrew, a line of Arabic and lines of left-to-right text mixed with them, a word of the Hebrew line selected and a stretch of the mixed line from its left-to-right text into the start of its Hebrew.
+fn bidi() -> WorkspaceState {
+    let path = "notes/mixed.txt";
+    let mut state = workspace_sample().after(TAB_DIFF);
+    state.open_viewer(path.to_owned(), false);
+    let text = "Left to right: hello world\nשלום עולם, זה טקסט בעברית\nmixed: abc שלום עולם def 123\nمرحبا بالعالم، هذا نص عربي\nAfter: the end\n";
+    let state = state.with_file(0, path, false, Ok((Some(text.to_owned()), false, None)));
+    let hebrew = text.find("שלום עולם,").unwrap_or_default();
+    let from = text.find("abc").unwrap_or_default() + 2;
+    let to = text.find("שלום עולם def").unwrap_or_default() + 6;
+    state
+        .edited(EDITOR_FIELD, Edit::Select(hebrew, hebrew + 8))
+        .edited(EDITOR_FIELD, Edit::AddSelection(from, to))
+}
+
+/// How the file is compared in a snapshot.
+#[derive(Clone, Copy)]
+enum Compare {
+    /// With what the clipboard holds.
+    Clipboard,
+    /// With what was last saved of it.
+    Saved,
+    /// With the list of files open to pick another.
+    Picking,
+    /// With another file of the project.
+    File,
+}
+
+/// The Rust file compared as `how` says, with an older text standing for the clipboard, the saved file or the other file.
+fn compared(how: Compare) -> WorkspaceState {
+    let mut state = code();
+    let edited = code_text(&state);
+    let older = edited
+        .replace("const LIMIT: usize = 64;", "const LIMIT: usize = 32;")
+        .replace("HashMap::with_capacity(LIMIT)", "HashMap::new()")
+        .replace(
+            "    /// How many names the session knows.\n    pub fn count(&self) -> usize {\n        self.names.len()\n    }\n",
+            "    pub fn len(&self) -> usize {\n        self.names.len()\n    }\n",
+        );
+    let other = "crates/pandemonium/src/session_old.rs";
+    match how {
+        Compare::Clipboard => state.compare_with_clipboard(older),
+        Compare::Saved => state.with_compared(0, CODE_PATH, CODE_PATH, true, &older),
+        Compare::Picking => {
+            state.files = [
+                CODE_PATH,
+                other,
+                "crates/pandemonium/src/main.rs",
+                "Cargo.toml",
+            ]
+            .map(str::to_owned)
+            .to_vec();
+            state.compare_with_file_requested((340.0, 0.0))
+        }
+        Compare::File => state.with_compared(0, CODE_PATH, other, false, &older),
+    }
+}
+
 /// Draws the screen as it looks `elapsed_ms` into the animations, with the
 /// pointer at `pointer` and focus on `focused` if given, in `appearance`, and
 /// writes it to `path` as a PNG. The pointer is taken to have rested where it
@@ -3337,6 +3651,12 @@ pub fn write(
     let family = default_family();
     let theme = family.variant(appearance);
     let screen = shot.screen();
+    let Screen::Workspace(held) = &screen;
+    let looks = &held.window.appearance;
+    if !looks.code_font.is_empty() || !looks.interface_font.is_empty() {
+        scene::set_fonts(&mut shaper, &looks.interface_font, &looks.code_font);
+    }
+    shaper.set_ligatures(held.editor.ligatures);
     let resting = Input {
         elapsed_ms: 0.0,
         ..input

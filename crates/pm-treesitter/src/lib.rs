@@ -37,7 +37,7 @@ pub use grammar::{
 pub use highlight::Highlight;
 pub use indent::Indent;
 pub use kind::Kind;
-pub use objects::TextObject;
+pub use objects::{ObjectSpan, TextObject};
 pub use outline::Item;
 pub use runnables::Runnable;
 pub use syntax::Syntax;

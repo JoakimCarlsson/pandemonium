@@ -6,10 +6,10 @@ use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_protocol::{HintKind, Severity};
 use pm_style::{
-    Radius, Role, bg, border_b, border_color, code_px, cursor_pointer, cursor_text, flex, flex_1,
-    flex_col, flex_none, font_mono, gap, h, h_px, items_center, justify_center, justify_end,
-    leading_ratio, min_h, min_w_px, ml, overflow_hidden, pl, pr, px, py, relative, rounded,
-    rounded_full, text_color, w, w_px,
+    Color, Radius, Role, bg, border_b, border_color, border_t, code_px, cursor_pointer,
+    cursor_text, flex, flex_1, flex_col, flex_none, font_mono, gap, h, h_px, items_center,
+    justify_center, justify_end, leading_ratio, min_h, min_w_px, ml, overflow_hidden, pl, pr, px,
+    py, relative, rounded, rounded_full, text_color, w, w_px,
 };
 use pm_text::Shaper;
 use pm_treesitter::{Highlight, Kind};
@@ -18,6 +18,7 @@ use pm_ui::{Mark, Node, Paint, node, text};
 use crate::Button;
 use crate::annotations::lens_mark;
 use crate::button::Variant;
+use crate::color_picker::COLOR_SWATCH_BASE;
 use crate::debug::{Dot, Gutter, breakpoint_mark};
 use crate::file_icon::file_icon;
 use crate::git_controls::VIEWER_SCROLL;
@@ -27,7 +28,7 @@ use crate::parts::{glyph, line, spacer};
 use crate::size::Size;
 use crate::state::WorkspaceState;
 use crate::tasks::run_mark;
-use pm_editor::{Document, EditorSettings, Hint, Lens, LineChange};
+use pm_editor::{Document, EditorSettings, Hint, Lens, LineChange, Swatch};
 
 /// How wide a view of a file must be, in logical pixels, for a minimap to be drawn beside it.
 const MINIMAP_ROOM: f32 = 420.0;
@@ -175,6 +176,11 @@ pub(crate) fn line_marks(
             })
         })
         .collect();
+    marks.extend(clipped(&document.find_scope(), &line).map(|range| Mark {
+        range,
+        color: Role::SurfaceHover.into(),
+        paint: Paint::Fill,
+    }));
     if settings.bracket_colors {
         for (range, depth) in document.brackets_on(index) {
             recolor(&mut marks, range, bracket_role(depth));
@@ -233,6 +239,16 @@ pub(crate) fn line_marks(
             paint: Paint::Fill,
         })
     }));
+    marks.extend(
+        document
+            .drop_mark()
+            .filter(|at| (line.start..=line.end).contains(at))
+            .map(|at| Mark {
+                range: at - line.start..at - line.start,
+                color: Role::Accent.into(),
+                paint: Paint::Drop,
+            }),
+    );
     marks.extend(clipped(&document.reach, &line).map(|range| Mark {
         range,
         color: Role::SyntaxFunction.into(),
@@ -377,6 +393,8 @@ pub(crate) struct Beside {
     pub(crate) blamed: Option<String>,
     /// The cell before the line number.
     pub(crate) breakpoint: Node,
+    /// Whether the marker for the changes the language server offers stands beside the line number.
+    pub(crate) bulb: bool,
     /// Whether a program being debugged is paused on the line.
     pub(crate) paused: bool,
 }
@@ -394,6 +412,7 @@ pub(crate) fn file_line(
     let Beside {
         blamed,
         breakpoint,
+        bulb,
         paused,
     } = beside;
     let line = document.line(index);
@@ -416,14 +435,17 @@ pub(crate) fn file_line(
     let lens_row = document.lens_row_at(index);
     let text_segments = &segments[usize::from(lens_row)..];
     let last = text_segments.len().saturating_sub(1);
-    let hints: Vec<&Hint> = if settings.inlay_hints {
+    let swatches = document.colors_on(index);
+    let mut hints: Vec<&Hint> = if settings.inlay_hints {
         document.hints_on(index).iter().collect()
     } else {
         Vec::new()
     }
     .into_iter()
     .chain(document.values_on(index))
+    .chain(swatches.iter())
     .collect();
+    hints.sort_by_key(|hint| hint.offset);
     let run_lenses: Vec<(usize, String)> = document
         .run_lens_items()
         .into_iter()
@@ -546,6 +568,7 @@ pub(crate) fn file_line(
             .child(
                 node()
                     .styles([flex(), items_center(), justify_end(), h_px(height)])
+                    .children((bulb && settings.line_numbers).then(|| bulb_button(height)))
                     .children(settings.line_numbers.then(|| {
                         text(number.to_string()).styles([
                             code_px(font),
@@ -600,8 +623,47 @@ fn run_lens_row(
         )
 }
 
+/// The marker that says the language server offers changes on the line, which opens the list of them when pressed.
+fn bulb_button(height: f32) -> Node {
+    node()
+        .styles([
+            flex(),
+            items_center(),
+            justify_center(),
+            flex_none(),
+            w_px(16.0),
+            h_px(height),
+            cursor_pointer(),
+        ])
+        .focusable(crate::lightbulb::LIGHTBULB)
+        .child(glyph(IconName::Lightbulb, 3.5, Role::Warning))
+}
+
 /// The text of `hint` written inside a line in a smaller, quieter hand than the code around it.
 fn hint_chip(hint: &Hint, font: u32) -> Node {
+    if let Some(Swatch {
+        color: [red, green, blue, alpha],
+        index,
+    }) = hint.swatch
+    {
+        let side = (font as f32 * 0.8).max(8.0);
+        return node()
+            .styles([
+                flex(),
+                items_center(),
+                flex_none(),
+                pr(1.0),
+                cursor_pointer(),
+            ])
+            .focusable(FocusId(COLOR_SWATCH_BASE + index as u64))
+            .child(node().styles([
+                w_px(side),
+                h_px(side),
+                flex_none(),
+                rounded(Radius::Sm),
+                bg(Color::rgb(red, green, blue).alpha(f32::from(alpha) / 255.0)),
+            ]));
+    }
     let tone = match hint.kind {
         HintKind::Type | HintKind::Value => Role::Subtle,
         HintKind::Parameter | HintKind::Other => Role::Muted,
@@ -744,6 +806,8 @@ struct Look<'a> {
     file: usize,
     /// The breakpoints and the paused line of the file.
     gutter: &'a Gutter,
+    /// The line the marker for the changes the language server offers stands beside.
+    bulb: Option<usize>,
 }
 
 /// The lines of `document` that are in or near a view `height` tall scrolled `scroll` down, drawn as `look` says, with a blank for those above and below.
@@ -756,6 +820,7 @@ fn visible(document: &Document, scroll: f32, height: f32, look: &Look) -> Vec<No
         owner,
         file,
         gutter,
+        bulb,
     } = *look;
     let row = settings.row_height();
     let total = document.wrapped_rows(columns);
@@ -804,6 +869,7 @@ fn visible(document: &Document, scroll: f32, height: f32, look: &Look) -> Vec<No
                         Beside {
                             blamed: blamed(index),
                             breakpoint: cell,
+                            bulb: bulb == Some(index),
                             paused: gutter.paused == Some(index),
                         },
                         settings,
@@ -1015,12 +1081,14 @@ pub fn file_view(
                         blamed: &|line| state.blame_of_line(line).filter(|_| live),
                         settings: &pm_editor::EditorSettings {
                             git_gutter: state.shows_gutter(),
+                            cursor_shape: modal_shape(state, document, live),
                             ..state.editor.clone()
                         },
                         columns: state.wrap_columns(),
                         owner,
                         file: index,
                         gutter: &state.gutter_of(index),
+                        bulb: state.lightbulb_line().filter(|_| live),
                     },
                 ));
             if document.truncated {
@@ -1113,4 +1181,47 @@ pub fn file_view(
                     _ => None,
                 }),
         )
+        .children(
+            state
+                .vim_status()
+                .filter(|_| live && source && matches!(viewer.contents, Contents::Text(_)))
+                .map(|status| vim_bar(&status)),
+        )
+}
+
+/// How the caret of `document` is drawn: as the mode of modal editing says while it is on and the file is the one being edited, and as the reader chose otherwise.
+fn modal_shape(state: &WorkspaceState, document: &Document, live: bool) -> pm_editor::CursorShape {
+    use pm_editor::CursorShape;
+    if !(live && state.vim_on()) {
+        return state.editor.cursor_shape;
+    }
+    match document.vim_shape() {
+        pm_vim::Shape::Block => CursorShape::Block,
+        pm_vim::Shape::Underline => CursorShape::Underline,
+        pm_vim::Shape::Typing => state.editor.cursor_shape,
+    }
+}
+
+/// The bar under the file that says which mode modal editing is in, the keys typed towards a command or the line being typed after `:` or `/`, and the register being recorded.
+fn vim_bar(status: &crate::vim::VimStatus) -> Node {
+    node()
+        .styles([
+            flex(),
+            items_center(),
+            gap(3),
+            h(6),
+            px(3),
+            flex_none(),
+            border_t(),
+            border_color(Role::Border),
+            bg(Role::Surface),
+        ])
+        .child(line(status.mode, 12, 1.4, Role::Text).styles([font_mono(), flex_none()]))
+        .children(status.pending.as_ref().map(|pending| {
+            line(pending, 12, 1.4, Role::Muted).styles([font_mono(), flex_1(), min_w_px(0)])
+        }))
+        .children(status.recording.map(|register| {
+            line(format!("recording @{register}"), 12, 1.4, Role::Danger)
+                .styles([font_mono(), flex_none()])
+        }))
 }

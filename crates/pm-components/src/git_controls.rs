@@ -319,7 +319,12 @@ impl WorkspaceState {
 
     /// The position of the session the review panel is about: the open one, or, on the page for starting work or a project's overview, the stand-in for the project's own folder.
     pub fn review_index(&self) -> Option<usize> {
-        match self.page {
+        self.review_of(self.page)
+    }
+
+    /// The position of the session the review panel would be about on `page`.
+    pub(crate) fn review_of(&self, page: Page) -> Option<usize> {
+        match page {
             Page::Session(index) => Some(index),
             Page::New(project) | Page::Project(project) => self
                 .sessions

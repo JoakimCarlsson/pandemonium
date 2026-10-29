@@ -88,6 +88,7 @@ impl WorkspaceState {
             | Setting::LanguageTabSize
             | Setting::LanguageIndent => self.apply_indentation(),
             Setting::Scrollback => self.apply_scrollback(),
+            Setting::VimMode | Setting::VimClipboard | Setting::VimBindings => self.apply_vim(),
             Setting::Channel | Setting::CheckUpdates => {
                 self.settings_page.release = None;
                 if self.window.general.check_updates {

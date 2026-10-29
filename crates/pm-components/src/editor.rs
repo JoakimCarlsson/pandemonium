@@ -237,8 +237,11 @@ impl WorkspaceState {
                     document.folds_supported = triggers.folds;
                     document.links_supported = triggers.links;
                     document.semantic_tokens_supported = triggers.semantic_tokens;
+                    document.semantic_ranges_supported = triggers.semantic_ranges;
                     document.inlay_hints_supported = triggers.inlay_hints;
                     document.code_lens_supported = triggers.code_lens;
+                    document.document_links_supported = triggers.document_links;
+                    document.colors_supported = triggers.colors;
                     document.inline_values_supported = triggers.inline_values;
                     document.server_problem = None;
                 }
@@ -354,7 +357,7 @@ impl WorkspaceState {
     }
 
     /// Makes `edits` to the file shown, one after another.
-    fn file_edits(&mut self, edits: Vec<Edit>) {
+    pub(crate) fn file_edits(&mut self, edits: Vec<Edit>) {
         for edit in edits {
             self.file_edited(edit);
         }
@@ -507,8 +510,29 @@ impl WorkspaceState {
         version: i32,
         items: Vec<Completion>,
     ) -> Self {
-        if let Some(document) = self.file_mut(session, path) {
+        let asked = self.file_mut(session, path).and_then(|document| {
             document.take_completions(version, items);
+            document.completion_to_resolve()
+        });
+        if let Some(item) = asked {
+            self.outbox.push(Outgoing::ResolveCompletion {
+                session,
+                path: path.to_owned(),
+                item,
+            });
+        }
+        self
+    }
+
+    /// The state after the language server said what it adds to a completion of the file at `path` of the session at `session`.
+    pub fn with_completion_resolved(
+        mut self,
+        session: usize,
+        path: &str,
+        item: Completion,
+    ) -> Self {
+        if let Some(document) = self.file_mut(session, path) {
+            document.take_resolved(item);
         }
         self
     }
@@ -521,11 +545,21 @@ impl WorkspaceState {
 
     /// Moves the pick of the open list of completions `delta` rows down, upwards when negative, wrapping around.
     pub fn completion_moved(mut self, delta: isize) -> Self {
-        if let Some((_, viewer)) = self.shown_mut()
-            && let Some(document) = document_of(viewer)
-        {
-            document.move_completion(delta);
+        let mut asked = None;
+        if let Some((session, viewer)) = self.shown_mut() {
+            let path = viewer.path.clone();
+            if let Some(document) = document_of(viewer) {
+                document.move_completion(delta);
+                asked = document
+                    .completion_to_resolve()
+                    .map(|item| Outgoing::ResolveCompletion {
+                        session,
+                        path,
+                        item,
+                    });
+            }
         }
+        self.outbox.extend(asked);
         self
     }
 
@@ -623,8 +657,16 @@ impl WorkspaceState {
         self
     }
 
-    /// Asks the language server to format the file shown, or only the stretch `range` of it, and writes it to the folder afterwards when `save`; a file no language server reads is written as it is.
+    /// Asks the language server to format the file shown, or only the stretch `range` of it, and writes it to the folder afterwards when `save`, after the changes the settings ask for before saving, such as organizing the imports; a file no language server reads is written as it is.
     pub(crate) fn format_then_save(&mut self, save: bool, range: Option<std::ops::Range<usize>>) {
+        if save && self.sources_before_save() {
+            return;
+        }
+        self.format_and_save(save, range);
+    }
+
+    /// Asks the language server to format the file shown, or only the stretch `range` of it, and writes it to the folder afterwards when `save`; a file no language server reads is written as it is.
+    pub(crate) fn format_and_save(&mut self, save: bool, range: Option<std::ops::Range<usize>>) {
         let Some((session, viewer)) = self.shown_mut() else {
             return;
         };
@@ -850,6 +892,13 @@ fn edit_viewer(
             path: path.clone(),
             version,
             position,
+        });
+    }
+    if let Some(item) = document.completion_to_resolve() {
+        told.push(Outgoing::ResolveCompletion {
+            session,
+            path: path.clone(),
+            item,
         });
     }
     if let Some(trigger) = edited.ask.filter(|_| settings.completions_on_input) {

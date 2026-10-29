@@ -29,6 +29,7 @@ pub use history::{ConflictFiles, LocalVersion};
 pub use machine::{
     AgentPreferences, ExtensionPreferences, FETCH_MINUTES, GitPreferences, HISTORY_DAYS,
     HISTORY_MEGABYTES, HistoryPreferences, LanguagePreferences, MachineSettings, ShellPreferences,
+    WorkspacePreferences,
 };
 pub use message::{ClientMessage, ServerMessage};
 pub use pm_agent_library as library;
@@ -39,9 +40,10 @@ pub use pm_dap::{
     View as DebugView, Watched as DebugWatched,
 };
 pub use pm_lsp::{
-    CodeAction, CodeLens, Completion, CompletionKind, Diagnostic, FileEdit, FoldRange, HintKind,
-    Hover, InlayHint, InlineValue, InlineValueKind, Location, Problem, Seek, SemanticToken,
-    Severity, Signature, TextChange, TokenKind, TokenRule, Triggers,
+    CodeAction, CodeLens, ColorPresentation, ColorSwatch, Completion, CompletionKind, Diagnostic,
+    DocumentLink, FileEdit, FoldRange, HintKind, Hover, InlayHint, InlineValue, InlineValueKind,
+    LinkTarget, Location, Problem, RenameTarget, Seek, SemanticToken, Severity, Signature,
+    TextChange, TokenKind, TokenRule, Triggers,
 };
 pub use pm_task::Task;
 pub use release::ReleaseAsset;
