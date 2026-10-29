@@ -76,6 +76,12 @@ document. `browser_screenshot` also waits, for up to two and a half seconds,
 for requests under way to finish. Sockets and event streams stay open for as
 long as the page does, so they are not waited for.
 
+## Back and forward buttons
+
+The mouse's back and forward buttons go through the history of the page while
+the pointer is over it, or it holds the keyboard and is on screen. Anywhere else
+they move through the pages of the window, as before.
+
 ## Picking an element
 
 The Pick button of the pane turns on a mode in which a click on the page picks

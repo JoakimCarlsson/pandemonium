@@ -2367,7 +2367,10 @@ impl App {
                     MouseButton::Left => Button::Left,
                     MouseButton::Right => Button::Right,
                     MouseButton::Back | MouseButton::Forward => {
-                        if state == ElementState::Pressed {
+                        if state == ElementState::Pressed
+                            && !(self.on_aside.is_none()
+                                && self.browser_history(button == MouseButton::Back))
+                        {
                             self.step_through_history(button == MouseButton::Back);
                         }
                         window.request_redraw();

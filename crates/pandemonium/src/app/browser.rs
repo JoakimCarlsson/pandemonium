@@ -395,6 +395,30 @@ impl App {
         true
     }
 
+    /// Takes the mouse's back or forward button into the page, when the pointer is over the page or the page holds the keyboard and is on screen, and says whether it did.
+    pub(super) fn browser_history(&mut self, back: bool) -> bool {
+        if self.browser_region(BROWSER_BODY).is_none() {
+            return false;
+        }
+        let over = self
+            .pointer
+            .position
+            .and_then(|at| self.browser_under(at))
+            .is_some_and(|(id, _)| id == BROWSER_BODY);
+        if !over && self.browser_focused() != Some(BROWSER_BODY) {
+            return false;
+        }
+        let Some(page) = self.web.page.as_ref() else {
+            return false;
+        };
+        if back {
+            page.back();
+        } else {
+            page.forward();
+        }
+        true
+    }
+
     /// Types the text an input method committed into the page that holds the keyboard, and says whether one did.
     pub(super) fn commit_to_browser(&mut self, text: &str) -> bool {
         let Some(id) = self.browser_focused() else {
