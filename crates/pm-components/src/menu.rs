@@ -106,6 +106,7 @@ impl Menu {
                 min_w_px(0),
                 p(1),
             ])
+            .keep_in_view()
             .children(self.entries.into_iter().map(|entry| row(entry, self.row)))
     }
 }

@@ -85,6 +85,8 @@ pub struct Node {
     pub(crate) group: bool,
     /// Words shown over the box once the pointer has rested on it for a moment.
     pub(crate) tooltip: Option<String>,
+    /// Whether the box is moved, wherever it was laid out, to lie inside the window.
+    pub(crate) keep_in_view: bool,
     /// The selectable text the lines inside the box are part of.
     pub(crate) selectable: Option<FocusId>,
     /// Stretches of the box's text painted apart from the rest.
@@ -217,6 +219,12 @@ impl Node {
     /// Shows `words` over the box, above everything else, once the pointer has rested on it for a moment.
     pub fn tooltip(mut self, words: impl Into<String>) -> Self {
         self.tooltip = Some(words.into());
+        self
+    }
+
+    /// Moves the box, with what it holds, as far as it takes to lie inside the window when it was laid out partly outside it.
+    pub fn keep_in_view(mut self) -> Self {
+        self.keep_in_view = true;
         self
     }
 
