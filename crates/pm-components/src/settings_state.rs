@@ -90,6 +90,7 @@ impl WorkspaceState {
             | Setting::LanguageTabSize
             | Setting::LanguageIndent => self.apply_indentation(),
             Setting::Scrollback => self.apply_scrollback(),
+            Setting::VimMode | Setting::VimClipboard | Setting::VimBindings => self.apply_vim(),
             Setting::Channel | Setting::CheckUpdates => {
                 self.settings_page.release = None;
                 if self.window.general.check_updates {
@@ -168,13 +169,11 @@ impl WorkspaceState {
         )
     }
 
-    /// Opens the page of the newer release found, when one was.
-    pub(crate) fn open_release(&mut self) {
-        if let Some(crate::update::Update::Newer { url, .. }) = &self.settings_page.release {
-            self.outbox.push(Outgoing::Open {
-                address: url.clone(),
-            });
-        }
+    /// Whether an installed language or language server has a newer version than the machine has.
+    pub fn language_update_available(&self) -> bool {
+        self.extensions
+            .iter()
+            .any(|extension| extension.installed && extension.update.is_some())
     }
 
     /// The language whose settings the languages page shows, by id, when any is installed.

@@ -104,7 +104,7 @@ impl WorkspaceState {
             .filter(|document| document.inline_values_supported && document.synced)
             .map(|document| (document.version, document.whole_span()))
         else {
-            return self;
+            return self.local_inline_values(stop);
         };
         let Some((frame, line, column)) = stop else {
             self.debug.inline = None;
@@ -145,6 +145,22 @@ impl WorkspaceState {
             document.show_values(labels(document, &run.view, &inline.values));
         }
         self.debug.inline = inline;
+        self.debug.run = run;
+        self
+    }
+
+    /// Shows the values of the names the language's debugger query marks, for a file whose language server does not say which to show, while the program is paused on `stop`, and takes them away when it is not.
+    fn local_inline_values(mut self, stop: Option<(i64, usize, usize)>) -> Self {
+        let run = self.debug.run.take();
+        if let Some(document) = self.shown_text() {
+            let values = match (&run, stop) {
+                (Some(run), Some((_, line, _))) => {
+                    labels(document, &run.view, &document.debug_values(line))
+                }
+                _ => Vec::new(),
+            };
+            document.show_values(values);
+        }
         self.debug.run = run;
         self
     }

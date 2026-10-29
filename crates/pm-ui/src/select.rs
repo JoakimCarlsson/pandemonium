@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use pm_input::FocusId;
 use pm_renderer::Rect;
-use pm_text::Run;
+use pm_text::{Reach, Run};
 
 use crate::paint::{Output, Region};
 use crate::retain::Retained;
@@ -57,19 +57,6 @@ impl TextSelection {
         let end = if piece == to.piece { to.byte } else { length };
         (start < end).then_some(start..end)
     }
-}
-
-/// How much of a selectable text a press takes at a time: one click places
-/// a point, two take a word and three a paragraph.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Unit {
-    /// A point between two characters.
-    #[default]
-    Point,
-    /// A word, or a run of space or of other characters.
-    Word,
-    /// The rows of text that run on without a blank line between them.
-    Paragraph,
 }
 
 /// One line of text inside a selectable box, as it was drawn.
@@ -279,7 +266,12 @@ impl Output {
 
     /// The stretch of the selectable text `id` that `unit` takes around
     /// `point`, the earlier end first.
-    pub fn unit_around(&self, id: FocusId, point: TextPoint, unit: Unit) -> (TextPoint, TextPoint) {
+    pub fn unit_around(
+        &self,
+        id: FocusId,
+        point: TextPoint,
+        unit: Reach,
+    ) -> (TextPoint, TextPoint) {
         let pieces: Vec<&TextPiece> = self
             .pieces()
             .iter()
@@ -289,8 +281,8 @@ impl Output {
             return (point, point);
         };
         match unit {
-            Unit::Point => (point, point),
-            Unit::Word => {
+            Reach::Point => (point, point),
+            Reach::Word => {
                 let word = pm_text::word_at(&pieces[at].content, point.byte);
                 (
                     TextPoint {
@@ -303,7 +295,7 @@ impl Output {
                     },
                 )
             }
-            Unit::Paragraph => {
+            Reach::Line => {
                 let runs_on = |pair: &[&TextPiece]| separator(pair[0], pair[1]) != "\n\n";
                 let first = at
                     - pieces[..=at]
@@ -328,24 +320,6 @@ impl Output {
                 )
             }
         }
-    }
-
-    /// The selection that runs from the stretch `held`, which a press took,
-    /// to the `unit` around `point`, which dragging has reached, so that
-    /// both are wholly inside it.
-    pub fn select_from(
-        &self,
-        id: FocusId,
-        held: (TextPoint, TextPoint),
-        point: TextPoint,
-        unit: Unit,
-    ) -> TextSelection {
-        let (start, end) = self.unit_around(id, point, unit);
-        let (anchor, head) = match start < held.0 {
-            true => (held.1, start),
-            false => (held.0, end.max(held.1)),
-        };
-        TextSelection { id, anchor, head }
     }
 
     /// What `selection` covers, its lines broken where they were drawn on

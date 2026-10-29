@@ -18,11 +18,11 @@ use pm_components::panes::{Item, SPLIT_RIGHT, Side};
 use pm_components::settings::{SETTINGS_ADD, SETTINGS_FIND, Section};
 use pm_components::settings_catalog::{OPEN_LIST, Setting as SettingsCatalogue};
 use pm_components::settings_machines::{MACHINE_ADD, MACHINE_ADDRESS, MACHINE_NAME};
-use pm_components::state::SETTINGS;
 use pm_components::state::{
     AGENT_BASE, CHAT_TEXT, COMMENT_ADD, COMMENT_FIELD, COMMIT_MESSAGE, DETAILS_BASE, FILE_BASE,
     RESTORE_BASE, REVIEW_FILES, STAGE_BASE, SUBAGENTS_CHIP, TAB_CHAT,
 };
+use pm_components::state::{LOCATION, SETTINGS};
 use pm_components::tree_actions::{TREE_NEW_FOLDER, TreeTarget};
 use pm_input::{FocusId, PointerState};
 use pm_pages::{ADD_PROJECT, HISTORY, PROMPT, SEND, Screen, TAB_DIFF, TERMINAL, WorkspaceState};
@@ -58,7 +58,7 @@ const NARROW_WIDTH: u32 = 640;
 const NARROW_HEIGHT: u32 = 420;
 
 /// The name of the shot of each section of the settings window, after `settings-`.
-pub const SETTINGS_SHOTS: [(&str, Section); 23] = [
+pub const SETTINGS_SHOTS: [(&str, Section); 24] = [
     ("general", Section::General),
     ("appearance", Section::Appearance),
     ("editor", Section::Editor),
@@ -67,6 +67,7 @@ pub const SETTINGS_SHOTS: [(&str, Section); 23] = [
     ("editor-saving", Section::EditorSaving),
     ("editor-intelligence", Section::EditorIntelligence),
     ("editor-search", Section::EditorSearch),
+    ("editor-vim", Section::EditorVim),
     ("languages", Section::Languages),
     ("keymap", Section::Keymap),
     ("terminal", Section::Terminal),
@@ -103,6 +104,10 @@ pub enum Shot {
     Diff,
     /// The workspace on the diff of its first session with the words that changed inside changed lines marked.
     WordDiff,
+    /// The workspace on the diff of its first session with the files after the first listed by the server and their diffs still to come.
+    DiffListed,
+    /// The workspace on the diff at its compact density, with a file of thousands of added lines scrolled far down, whose rows must fill the view.
+    DiffCompact,
     /// The workspace on the diff of its first session with a comment kept and another being written.
     Commenting,
     /// The workspace on the diff of its first session with the project's files listed in the review panel.
@@ -255,6 +260,8 @@ pub enum Shot {
     Unfolded,
     /// The page for starting work with a dead key's accent waiting for its letter in the prompt.
     Composing,
+    /// The page for starting work in a project with a `devcontainer.json`, the menu of where work runs open with the dev container turned on.
+    DevContainer,
     /// The workspace with the terminal open and a dead key's accent waiting for its letter at the cursor.
     TerminalComposing,
     /// The workspace on its first session with a stretch of the conversation's text selected.
@@ -281,8 +288,8 @@ pub enum Shot {
     SettingsMcp,
     /// The settings panel on the Agent Servers inside Agents, with the form for adding one open.
     SettingsForm,
-    /// The settings panel on the Agent Servers inside Agents, with two accounts added to the first agent.
-    SettingsAccounts,
+    /// The settings panel on the Agent Servers inside Agents, with two accounts added to the first agent, at its narrowest when the flag is set.
+    SettingsAccounts(bool),
     /// The same panel waiting for the accounts and organizations to clone from.
     Loading,
     /// The same panel on the accounts and organizations to clone from.
@@ -293,6 +300,28 @@ pub enum Shot {
     Folders,
     /// A Rust file being written: highlighted, with what the language server finds wrong under it and the brackets at the caret paired.
     Code,
+    /// A TSX component highlighted: JSX tags, attributes and braces, and the CSS of a styled-components template.
+    CodeTsx,
+    /// An MDX file highlighted: its Markdown, with the JSX and the import and export lines read as TSX.
+    CodeMdx,
+    /// A dotenv file highlighted.
+    CodeEnv,
+    /// A JavaScript file highlighted, with the run buttons its language marks.
+    CodeJs,
+    /// A shell script highlighted, with the run buttons its language marks.
+    CodeShell,
+    /// A Docker Compose file with the run button of each service in the gutter.
+    RunCompose,
+    /// A Dockerfile with the run button of each build stage in the gutter.
+    RunDockerfile,
+    /// A go.mod with the run button of the module line, the requires and each module in the gutter.
+    RunGoMod,
+    /// A package.json with a link for each script and a link that updates a dependency.
+    RunPackageJson,
+    /// A file of the sample extension's language, with its private values showing.
+    CodeSample,
+    /// The same file with the values its language marks as private hidden behind blocks.
+    Redacted,
     /// A file written in a language that is not installed, with the offer to install it above its lines.
     LanguageOffer,
     /// A markdown file shown rendered as a page, with the switch to its source.
@@ -327,12 +356,20 @@ pub enum Shot {
     Conflict,
     /// The diff of a session that edited files inside a submodule and moved it to another commit.
     DiffSubmodule,
+    /// The changes of a session in a folder that holds two repositories side by side: files edited in both, listed under the repository each is in, or, `true`, only those of the repository `api` picked in the list of repositories.
+    ChangesRepositories(bool),
     /// The source control panel of a folder with submodules: the list of repositories with the folder's own picked, or, `true`, a submodule picked with its branches open.
     BranchesSubmodule(bool),
     /// The same file with the caret in a call, its signature over it and the uses of a name marked.
     Signing,
     /// The same file with brackets coloured by depth, names coloured by what the language server says they are, hints inside lines and lenses at the ends of lines.
     Annotated,
+    /// The Rust file with small squares of colour before the stretches its language server says spell a colour.
+    ColorSwatches,
+    /// The same file with the box for changing the first colour open, and the ways its language server offers to write it listed.
+    ColorPicker,
+    /// The Rust file edited with vim's keys, with a word selected in visual mode, the mode named under the file and a command line being typed.
+    Vim,
     /// The review panel on its search tab, with the hits of a search for a word, grouped by file.
     ProjectSearch,
     /// The hits of a search as excerpts of three files, one under another, edited in place.
@@ -345,6 +382,8 @@ pub enum Shot {
     Outline,
     /// The same file with every use of a name selected, a caret at each.
     Cursors,
+    /// The same file with a rectangle of text selected over three lines, dragged from the first to the third.
+    ColumnSelection,
     /// The same file with the body of a function folded away.
     Folded,
     /// The same file scrolled into a method, the lines that open its blocks kept at the top.
@@ -373,6 +412,30 @@ pub enum Shot {
     Extensions,
     /// The extensions page asking whether to install an extension, with what it asks to be allowed.
     ExtensionInstall,
+    /// The same file with the lines of one function selected and finding limited to them, the matches in them marked.
+    FindInSelection,
+    /// The same, after every match in the selected lines was replaced.
+    FindInSelectionReplaced,
+    /// The same file with a selected line carried over the text, the mark of where it would be dropped in view.
+    DraggingText,
+    /// The same file after the selected line was dropped, moved.
+    DraggedText,
+    /// The same file with the marker beside the line of the caret that the language server offers changes on.
+    Lightbulb,
+    /// A file written with the arrows and comparisons a code font may join, as the code font with ligatures draws them.
+    Ligatures,
+    /// The same file with ligatures switched off.
+    LigaturesOff,
+    /// A file with lines of Hebrew, Arabic and mixed text, a selection and the caret in them.
+    Bidi,
+    /// The file compared with what the clipboard holds.
+    CompareClipboard,
+    /// The file compared with what was last saved of it.
+    CompareSaved,
+    /// The list of files of the project open to pick the one to compare the file with.
+    ComparePicking,
+    /// The file compared with another file of the project.
+    CompareFile,
 }
 
 /// Loads the grammar of the language `id` installed on this machine, if it is, and learns the endings of the files written in it, so a snapshot can highlight with it.
@@ -380,10 +443,14 @@ fn load_installed_grammar(id: &str) {
     let Some(manifest) = pm_lsp::installed_manifest(id) else {
         return;
     };
-    let (Ok(folder), Ok(grammar)) = (pm_lsp::language_folder(id), pm_lsp::grammar_file(id)) else {
+    let Ok(grammar) = pm_lsp::grammar_file(id) else {
         return;
     };
-    let read = |file: &str| std::fs::read_to_string(folder.join(file)).unwrap_or_default();
+    let read = |file: &str| {
+        pm_lsp::language_file(id, file)
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .unwrap_or_default()
+    };
     let Ok(wasm) = std::fs::read(grammar) else {
         return;
     };
@@ -394,12 +461,18 @@ fn load_installed_grammar(id: &str) {
         injections: read("injections.scm"),
         brackets: read("brackets.scm"),
         runnables: read("runnables.scm"),
+        overrides: read("overrides.scm"),
+        redactions: read("redactions.scm"),
+        textobjects: read("textobjects.scm"),
+        debugger: read("debugger.scm"),
+        dependencies: String::new(),
     };
     let editing = pm_treesitter::Editing {
-        indent: manifest.indent,
-        tabs: manifest.tabs,
-        line_comment: manifest.line_comment.clone(),
-        pairs: pm_treesitter::Editing::pairs_of(&manifest.pairs),
+        run_lenses: pm_lsp::run_lenses_of(id)
+            .into_iter()
+            .map(|lens| (lens.tags, lens.label))
+            .collect(),
+        ..pm_lsp::editing_of(&manifest)
     };
     if let Ok(loaded) =
         pm_treesitter::Grammar::load(id, &manifest.grammar, &wasm, &queries, editing)
@@ -412,6 +485,14 @@ fn load_installed_grammar(id: &str) {
             &[pm_protocol::ExtensionInfo {
                 id: id.to_owned(),
                 suffixes: manifest.suffixes.clone(),
+                names: manifest.names.clone(),
+                patterns: manifest.patterns.clone(),
+                icon: manifest
+                    .icon
+                    .as_deref()
+                    .and_then(|file| pm_lsp::language_file(id, file))
+                    .and_then(|path| std::fs::read_to_string(path).ok()),
+                color: manifest.color.clone(),
                 installed: true,
                 ..Default::default()
             }],
@@ -502,6 +583,51 @@ fn code() -> WorkspaceState {
                 summary: "Reopen files browsed on a project page".to_owned(),
             },
         )
+}
+
+/// The TSX component the TSX snapshot shows.
+const CODE_TSX: &str = "import styled, { css } from \"styled-components\";\n\nconst Card = styled.div`\n  color: ${(props) => props.color};\n  margin: 0 auto;\n  ${(props) => props.wide && css`width: 100%;`}\n`;\n\nexport function Button({ label, count }: { label: string; count: number }) {\n  return (\n    <>\n      <Card color=\"red\" {...rest}>\n        <Icon.Check size={16} />\n        {/* the label */}\n        <button className=\"flex items-center\" disabled>\n          {label} &amp; {count}\n        </button>\n      </Card>\n    </>\n  );\n}\n";
+
+/// The MDX file the MDX snapshot shows.
+const CODE_MDX: &str = "---\ntitle: Release notes\n---\n\nimport { Chart } from \"./chart.js\"\nexport const year = 2018\n\n# Hello, *MDX*\n\nSome `inline` text with a [link](https://example.com).\n\n<Chart year={year} color=\"red\" />\n\n```ts\nconst answer: number = 42;\n```\n";
+
+/// The dotenv file the dotenv snapshot shows.
+const CODE_ENV: &str = "# Database\nDATABASE_URL=\"postgres://user:secret@localhost:5432/app\"\nexport PORT=3000\nDEBUG=true\nSITE_URL='https://example.com'\nAPI_BASE=${SITE_URL}/api\nNEXT_PUBLIC_NAME=My app\n";
+
+/// The JavaScript file the JavaScript snapshot shows.
+const CODE_JS: &str = "import { readFile } from \"node:fs/promises\";\n\n/** Reads the settings of a project. */\nexport async function load(path) {\n  const text = await readFile(path, \"utf8\");\n  return JSON.parse(text);\n}\n\nconst main = async () => {\n  const settings = await load(\"settings.json\");\n  console.log(settings.name ?? `unnamed`);\n};\n\nmain();\n";
+
+/// The compose file the compose snapshot shows.
+const CODE_COMPOSE: &str = "name: demo\n\nservices:\n  web:\n    image: nginx:1.27\n    ports:\n      - \"8080:80\"\n    depends_on:\n      - api\n\n  api:\n    build: ./api\n    environment:\n      DATABASE_URL: postgres://db/app\n\n  db:\n    image: postgres:17\n    volumes:\n      - data:/var/lib/postgresql/data\n\nvolumes:\n  data: {}\n";
+
+/// The file the sample language snapshots show.
+const CODE_SAMPLE: &str = "# Sample program\nSECRET_TOKEN = \"hunter2\"\napi_key = 'abc-123-def'\ncount = 0\n\ndef bump(step):\n    total = count + step\n    return total\n";
+
+/// The Dockerfile the Dockerfile snapshot shows.
+const CODE_DOCKERFILE: &str = "FROM node:24-bookworm-slim AS web-build\nWORKDIR /app/web\nCOPY web/package.json ./\nRUN npm ci\n\nFROM golang:1.27.1 AS api-build\nWORKDIR /app\nRUN go build -o /app/api ./cmd/api\n\nFROM gcr.io/distroless/static-debian13:nonroot\nCOPY --from=api-build /app/api /api\nENTRYPOINT [\"/api\"]\n";
+
+/// The go.mod the go.mod snapshot shows.
+const CODE_GOMOD: &str = "module github.com/JoakimCarlsson/vault\n\ngo 1.27.0\n\nrequire (\n\tgithub.com/PuerkitoBio/goquery v1.13.0\n\tgithub.com/andybalholm/cascadia v1.3.5\n\tgolang.org/x/net v0.52.0 // indirect\n)\n\nreplace github.com/andybalholm/cascadia => ../cascadia\n";
+
+/// The package.json the package snapshot shows.
+const CODE_PACKAGE: &str = "{\n  \"name\": \"vault-web\",\n  \"scripts\": {\n    \"dev\": \"vite\",\n    \"build\": \"vite build\",\n    \"test\": \"vitest run\"\n  },\n  \"dependencies\": {\n    \"react\": \"^18.2.0\",\n    \"zod\": \"3.23.8\"\n  }\n}\n";
+
+/// The shell script the shell snapshot shows.
+const CODE_SHELL: &str = "#!/usr/bin/env bash\nset -euo pipefail\n\nroot=\"$(git rev-parse --show-toplevel)\"\n\nbuild() {\n  cargo build --workspace \"$@\"\n}\n\nfor crate in \"$root\"/crates/*; do\n  echo \"building ${crate##*/}\"\ndone\n\nbuild\n";
+
+/// A workspace with the file `path`, written in the installed language `language` and holding `text`, open for writing, the grammars of the languages `grammars` loaded.
+fn written(path: &str, language: &str, grammars: &[&str], text: &str) -> WorkspaceState {
+    for id in grammars {
+        load_installed_grammar(id);
+    }
+    let mut state = workspace_sample().after(TAB_DIFF);
+    state.open_viewer(path.to_owned(), false);
+    state.with_file(
+        0,
+        path,
+        false,
+        Ok((Some(text.to_owned()), false, Some(language.to_owned()))),
+    )
 }
 
 /// The review panel on its search tab, after a search for `names` that found lines in three files.
@@ -699,6 +825,106 @@ fn annotated() -> WorkspaceState {
         )
 }
 
+/// The Rust file with swatches before three stretches its language server says spell a colour.
+fn color_swatches() -> WorkspaceState {
+    let state = code();
+    let (text, version) = state
+        .shown_document()
+        .map(|document| (document.field.text().to_owned(), document.version))
+        .unwrap_or_default();
+    let swatch = |line: &str, word: &str, [red, green, blue, alpha]: [u8; 4]| {
+        let row = text
+            .lines()
+            .position(|held| held.contains(line))
+            .unwrap_or(0);
+        let column = text
+            .lines()
+            .nth(row)
+            .and_then(|held| held.find(word))
+            .unwrap_or(0) as u32;
+        pm_protocol::ColorSwatch {
+            span: pm_protocol::Span::new(
+                pm_protocol::Position::new(row as u32, column),
+                pm_protocol::Position::new(row as u32, column + word.len() as u32),
+            ),
+            red,
+            green,
+            blue,
+            alpha,
+        }
+    };
+    state
+        .with_opened(
+            0,
+            CODE_PATH,
+            Ok(pm_protocol::Triggers {
+                colors: true,
+                ..Default::default()
+            }),
+        )
+        .with_colors(
+            0,
+            CODE_PATH,
+            version,
+            vec![
+                swatch("pub struct Session", "Session", [0xe0, 0x4f, 0x5f, 0xff]),
+                swatch("pub fn count", "count", [0x3d, 0xa5, 0x6c, 0xff]),
+                swatch("pub fn new", "new", [0x4f, 0x8c, 0xe0, 0x80]),
+            ],
+        )
+}
+
+/// The Rust file with modal editing on, after keys that go down three lines, to the next word, select it in visual mode and start a command line.
+fn vim() -> WorkspaceState {
+    /// A clipboard that holds nothing, for keys that do not need one.
+    struct Empty;
+
+    impl pm_vim::Clipboard for Empty {
+        /// Nothing is on it.
+        fn read(&mut self) -> Option<String> {
+            None
+        }
+
+        /// What is put on it is dropped.
+        fn write(&mut self, _text: String) {}
+    }
+
+    let state = code();
+    let mut settings = state.editor.clone();
+    settings.vim_mode = true;
+    let mut state = state.with_editor_settings(settings);
+    for ch in "gg3jwve:".chars() {
+        let key = pm_vim::Keystroke {
+            key: pm_vim::Key::Char(ch),
+            ctrl: false,
+            shift: false,
+        };
+        state.vim_key(key, 600.0, &mut Empty);
+    }
+    state
+}
+
+/// The Rust file with the box for changing its first colour open, over the ways its language server offers to write it.
+fn color_picker() -> WorkspaceState {
+    let format = |label: &str| pm_protocol::ColorPresentation {
+        label: label.to_owned(),
+        text: label.to_owned(),
+        ..Default::default()
+    };
+    color_swatches()
+        .color_picker_requested(0, (430.0, 262.0))
+        .with_color_presentations(
+            0,
+            CODE_PATH,
+            [0xe0, 0x4f, 0x5f, 0xff],
+            vec![
+                format("#e04f5f"),
+                format("rgb(224, 79, 95)"),
+                format("hsl(354, 70%, 60%)"),
+            ],
+        )
+}
+
 /// The Rust file with `self.names.` typed into `count` and the language server's completions open under it.
 fn completing() -> WorkspaceState {
     let state = code();
@@ -723,6 +949,8 @@ fn completing() -> WorkspaceState {
             span: None,
             filter: label.to_owned(),
             sort: label.to_owned(),
+            additional_edits: Vec::new(),
+            resolve: None,
             documentation: (label == "insert").then(|| {
                 "Inserts a key-value pair into the map.\n\nIf the map did not have this key present, `None` is returned.\n\n```rust\nlet mut map = HashMap::new();\nassert_eq!(map.insert(37, \"a\"), None);\n```".to_owned()
             }),
@@ -792,6 +1020,10 @@ fn sample_toolchains() -> Vec<pm_protocol::ToolchainInfo> {
             name: id.to_owned(),
             detail: detail.to_owned(),
             selected,
+            language_name: match language {
+                "javascript" => "Node.js".to_owned(),
+                _ => String::new(),
+            },
         };
     vec![
         toolchain("rust", "stable-x86_64-unknown-linux-gnu", "default", true),
@@ -1112,6 +1344,59 @@ fn diff_submodule() -> WorkspaceState {
     state.after(TAB_DIFF)
 }
 
+/// The first session in a folder that holds the repositories `api` and `web`, with files edited in both and one of them staged, where each repository stands, and, when `picked`, `api` picked in the list of repositories.
+fn changes_repositories(picked: bool) -> WorkspaceState {
+    let mut state = workspace_sample();
+    if let Some(session) = state.sessions.first_mut() {
+        let mut changes = Vec::new();
+        for (repository, path) in [
+            ("api", "api/src/routes.rs"),
+            ("api", "api/src/main.rs"),
+            ("web", "web/src/app.tsx"),
+        ] {
+            let mut change = pm_components::sample::Change::new(
+                path,
+                "@@ -1,3 +1,4 @@\n fn handler() {\n-    todo!()\n+    let body = read();\n+    respond(body)\n }",
+            );
+            change.repository = Some(repository.to_owned());
+            changes.push(change);
+        }
+        changes[1].staged = true;
+        changes[1].unstaged = false;
+        changes[1].index = Some('M');
+        changes[1].worktree = None;
+        session.changes = changes;
+        session.branch = "task/339-shared-branch".to_owned();
+        session.on_branch = true;
+        session.standings = vec![
+            pm_git::Standing {
+                path: "api".to_owned(),
+                branch: Some("task/339-shared-branch".to_owned()),
+                head: Some("3f2a1c9".to_owned()),
+                tracking: pm_git::Tracking {
+                    upstream: Some("origin/task/339-shared-branch".to_owned()),
+                    ahead: 2,
+                    behind: 0,
+                },
+            },
+            pm_git::Standing {
+                path: "web".to_owned(),
+                branch: Some("task/339-shared-branch".to_owned()),
+                head: Some("9b8c7d6".to_owned()),
+                tracking: pm_git::Tracking::default(),
+            },
+        ];
+    }
+    state.git.submodule_heads = vec![
+        ("api".to_owned(), "task/339-shared-branch".to_owned()),
+        ("web".to_owned(), "task/339-shared-branch".to_owned()),
+    ];
+    if picked {
+        state.git.repository = Some("api".to_owned());
+    }
+    state.after(TAB_DIFF)
+}
+
 /// The session of [`diff_submodule`] with its submodules listed as repositories, the folder's own picked, or, when `inside`, the submodule `vendor/inner` picked with its branches open.
 fn branches_submodule(inside: bool) -> WorkspaceState {
     let mut state = diff_submodule();
@@ -1346,8 +1631,10 @@ fn sample_languages() -> Vec<pm_protocol::ExtensionInfo> {
             server: Some("gopls v0.24.0".to_owned()),
             ..language("go", "Go", "go", true)
         },
+        language("dotenv", "Dotenv", "env", false),
         language("javascript", "JavaScript", "js", false),
         language("json", "JSON", "json", false),
+        language("mdx", "MDX", "mdx", false),
         pm_protocol::ExtensionInfo {
             busy: Some("Installing the language server".to_owned()),
             ..language("markdown", "Markdown", "md", false)
@@ -1366,6 +1653,7 @@ fn sample_languages() -> Vec<pm_protocol::ExtensionInfo> {
             server: Some("zls 0.14.0".to_owned()),
             ..language("zig", "Zig", "zig", true)
         },
+        language("tsx", "TSX", "tsx", true),
         language("typescript", "TypeScript", "ts", false),
     ]
 }
@@ -1396,6 +1684,33 @@ fn word_diff() -> WorkspaceState {
         change.words = pm_git::words(&source);
     }
     state
+}
+
+/// The workspace on the diff with every file but the first as the server lists them: with the lines they change counted and their diffs not yet read.
+fn diff_listed() -> WorkspaceState {
+    let mut state = workspace_sample().after(TAB_DIFF);
+    for change in state.sessions[0].changes.iter_mut().skip(1) {
+        let (added, removed) = (change.added(), change.removed());
+        change.counts = Some((added, removed));
+        change.diff.clear();
+        change.words.clear();
+        change.loaded = false;
+    }
+    state
+}
+
+/// The workspace on the diff at its compact density, its first file replaced by one of five thousand added lines and scrolled a good way into it.
+fn diff_compact() -> WorkspaceState {
+    let state = workspace_sample();
+    let mut window = state.window.clone();
+    window.appearance.density = pm_config::Density::Compact;
+    let mut state = state.with_window_settings(window).after(TAB_DIFF);
+    let source: String = std::iter::once("@@ -0,0 +1,5000 @@".to_owned())
+        .chain((1..=5000).map(|line| format!("+    let value_{line} = {line};")))
+        .collect::<Vec<_>>()
+        .join("\n");
+    state.sessions[0].changes[0] = pm_components::sample::Change::new("src/long.rs", &source);
+    state.scrolled_diff(40_000.0, 200_000.0)
 }
 
 /// The workspace on the diff with a comment kept on some lines and a box open to write another on a file.
@@ -1830,7 +2145,7 @@ impl Shot {
                 | Self::SettingsCompact(_)
                 | Self::SettingsMcp
                 | Self::SettingsForm
-                | Self::SettingsAccounts
+                | Self::SettingsAccounts(_)
         )
     }
 
@@ -1843,6 +2158,7 @@ impl Shot {
                 | Self::SettingsPicker(true)
                 | Self::SettingsMachine(true)
                 | Self::SettingsCompact(true)
+                | Self::SettingsAccounts(true)
         )
     }
 
@@ -1861,7 +2177,7 @@ impl Shot {
             "machine" => Some(Self::SettingsMachine(narrow)),
             "compact" => Some(Self::SettingsCompact(narrow)),
             "form" => Some(Self::SettingsForm),
-            "accounts" => Some(Self::SettingsAccounts),
+            "accounts" => Some(Self::SettingsAccounts(narrow)),
             "mcp" => Some(Self::SettingsMcp),
             slug => SETTINGS_SHOTS
                 .iter()
@@ -1884,6 +2200,107 @@ impl Shot {
         let workspace = workspace_sample;
         match self {
             Self::Code => Screen::Workspace(code()),
+            Self::CodeTsx => Screen::Workspace(written(
+                "src/Button.tsx",
+                "tsx",
+                &["tsx", "css"],
+                CODE_TSX,
+            )),
+            Self::CodeMdx => Screen::Workspace(written(
+                "docs/post.mdx",
+                "mdx",
+                &["mdx", "tsx", "markdown-inline", "yaml"],
+                CODE_MDX,
+            )),
+            Self::CodeEnv => Screen::Workspace(written(
+                ".env.local",
+                "dotenv",
+                &["dotenv"],
+                CODE_ENV,
+            )),
+            Self::CodeJs => Screen::Workspace(written(
+                "scripts/settings.js",
+                "javascript",
+                &["javascript"],
+                CODE_JS,
+            )),
+            Self::CodeShell => Screen::Workspace(written(
+                "scripts/build.sh",
+                "bash",
+                &["bash"],
+                CODE_SHELL,
+            )),
+            Self::RunCompose => Screen::Workspace(written(
+                "docker-compose.yml",
+                "docker-compose",
+                &["yaml", "docker-compose"],
+                CODE_COMPOSE,
+            )),
+            Self::CodeSample => Screen::Workspace(written(
+                "settings.smpl",
+                "sample-sample",
+                &["python", "sample-sample"],
+                CODE_SAMPLE,
+            )),
+            Self::Redacted => Screen::Workspace(
+                written(
+                    "settings.smpl",
+                    "sample-sample",
+                    &["python", "sample-sample"],
+                    CODE_SAMPLE,
+                )
+                .with_editor_settings(pm_editor::EditorSettings {
+                    redact_private_values: true,
+                    ..pm_editor::EditorSettings::default()
+                }),
+            ),
+            Self::RunDockerfile => Screen::Workspace(written(
+                "Dockerfile",
+                "dockerfile",
+                &["dockerfile"],
+                CODE_DOCKERFILE,
+            )),
+            Self::RunGoMod => Screen::Workspace(written(
+                "go.mod",
+                "gomod",
+                &["gomod"],
+                CODE_GOMOD,
+            )),
+            Self::RunPackageJson => {
+                let state = written("package.json", "json", &["json"], CODE_PACKAGE);
+                let version = state
+                    .shown_document()
+                    .map(|document| document.version)
+                    .unwrap_or_default();
+                let at = |row: u32, word: &str| {
+                    let column = CODE_PACKAGE
+                        .lines()
+                        .nth(row as usize)
+                        .and_then(|held| held.find(word))
+                        .unwrap_or(0) as u32;
+                    pm_protocol::Span::new(
+                        pm_protocol::Position::new(row, column),
+                        pm_protocol::Position::new(row, column + word.len() as u32),
+                    )
+                };
+                Screen::Workspace(state.with_code_lenses(
+                    0,
+                    "package.json",
+                    version,
+                    vec![
+                        pm_protocol::CodeLens {
+                            span: at(8, "^18.2.0"),
+                            title: "Update to 19.3.1".to_owned(),
+                            pressable: true,
+                        },
+                        pm_protocol::CodeLens {
+                            span: at(9, "3.23.8"),
+                            title: "Update to 4.1.0".to_owned(),
+                            pressable: true,
+                        },
+                    ],
+                ))
+            }
             Self::LanguageOffer => Screen::Workspace(language_offer()),
             Self::MarkdownPreview => Screen::Workspace(previewed("README.md")),
             Self::VectorPreview => Screen::Workspace(previewed("assets/logo.svg")),
@@ -1927,11 +2344,27 @@ impl Shot {
             Self::Timeline => Screen::Workspace(timeline()),
             Self::Conflict => Screen::Workspace(conflict()),
             Self::DiffSubmodule => Screen::Workspace(diff_submodule()),
+            Self::ChangesRepositories(picked) => Screen::Workspace(changes_repositories(picked)),
             Self::BranchesSubmodule(inside) => Screen::Workspace(branches_submodule(inside)),
             Self::Signing => Screen::Workspace(signing()),
             Self::Annotated => Screen::Workspace(annotated()),
+            Self::ColorSwatches => Screen::Workspace(color_swatches()),
+            Self::ColorPicker => Screen::Workspace(color_picker()),
+            Self::Vim => Screen::Workspace(vim()),
             Self::ProjectSearch => Screen::Workspace(project_search()),
             Self::Excerpts => Screen::Workspace(excerpts()),
+            Self::FindInSelection => Screen::Workspace(find_in_selection(false)),
+            Self::FindInSelectionReplaced => Screen::Workspace(find_in_selection(true)),
+            Self::DraggingText => Screen::Workspace(dragging_text(false)),
+            Self::DraggedText => Screen::Workspace(dragging_text(true)),
+            Self::Lightbulb => Screen::Workspace(lightbulb()),
+            Self::Ligatures => Screen::Workspace(ligatures(true)),
+            Self::LigaturesOff => Screen::Workspace(ligatures(false)),
+            Self::Bidi => Screen::Workspace(bidi()),
+            Self::CompareClipboard => Screen::Workspace(compared(Compare::Clipboard)),
+            Self::CompareSaved => Screen::Workspace(compared(Compare::Saved)),
+            Self::ComparePicking => Screen::Workspace(compared(Compare::Picking)),
+            Self::CompareFile => Screen::Workspace(compared(Compare::File)),
             Self::TabMenu => Screen::Workspace(code().with_tab_menu(0, (500.0, 52.0))),
             Self::Finder => {
                 let mut state = code();
@@ -2005,6 +2438,18 @@ impl Shot {
                         .edited(EDITOR_FIELD, Edit::Place(at + 2, false))
                         .lines_edited(pm_components::line_edits::LineEdit::SelectAllOccurrences),
                 )
+            }
+            Self::ColumnSelection => {
+                let state = code();
+                let text = state
+                    .shown_document()
+                    .map(|document| document.field.text().to_owned())
+                    .unwrap_or_default();
+                let first = text.find("    pub id").unwrap_or_default() + 8;
+                let last = text.find("    names:").unwrap_or_default() + 13;
+                Screen::Workspace(state.lines_edited(
+                    pm_components::line_edits::LineEdit::ColumnDrag(first, last),
+                ))
             }
             Self::Outline => Screen::Workspace(
                 code()
@@ -2089,10 +2534,14 @@ impl Shot {
             Self::Quitting => Screen::Workspace(workspace().close_asked()),
             Self::Update => Screen::Workspace(workspace().with_release(
                 pm_components::update::Update::Newer {
-                name: "Pandemonium 0.14.0".to_owned(),
-                url: "https://github.com".to_owned(),
-            },
-            )),
+                    name: "Pandemonium 0.14.0".to_owned(),
+                    url: "https://github.com".to_owned(),
+                    version: "0.14.0".to_owned(),
+                    published: Some("2026-10-20T09:00:00Z".to_owned()),
+                    body: Some("## Changes\n\n- Update from inside the app\n- Faster diffs".to_owned()),
+                    blocker: None,
+                },
+            ).after(pm_components::title_bar::UPDATE)),
             Self::MessageMenu => {
                 Screen::Workspace(workspace().with_message_menu(3, (520.0, 230.0), true))
             }
@@ -2104,6 +2553,14 @@ impl Shot {
             Self::WordDiff => {
                 load_installed_grammar("rust");
                 Screen::Workspace(word_diff())
+            }
+            Self::DiffListed => {
+                load_installed_grammar("rust");
+                Screen::Workspace(diff_listed())
+            }
+            Self::DiffCompact => {
+                load_installed_grammar("rust");
+                Screen::Workspace(diff_compact())
             }
             Self::Commenting => Screen::Workspace(commenting()),
             Self::Files => Screen::Workspace(files()),
@@ -2208,6 +2665,13 @@ impl Shot {
                 welcome()
                     .edited(PROMPT, Edit::Paste("Varför försvinner sm".to_owned()))
                     .edited(PROMPT, Edit::Compose("¨".to_owned())),
+            ),
+            Self::DevContainer => Screen::Workspace(
+                welcome()
+                    .with_devcontainer(0, true)
+                    .with_branches(0, vec!["main".to_owned(), "next".to_owned()])
+                    .after(LOCATION)
+                    .after(FocusId(pm_components::state::PLACE_BASE + 2)),
             ),
             Self::New => Screen::Workspace(WorkspaceState::new(&projects())),
             Self::Empty => Screen::default(),
@@ -2476,7 +2940,7 @@ impl Shot {
                     .after(Section::AgentServers.id())
                     .after(SETTINGS_ADD),
             ),
-            Self::SettingsAccounts => {
+            Self::SettingsAccounts(_) => {
                 let agent = welcome().agent_id_at(0).unwrap_or_default();
                 Screen::Workspace(
                     welcome()
@@ -2652,6 +3116,10 @@ fn settings_sample() -> WorkspaceState {
         .with_release(pm_components::update::Update::Newer {
             name: "Pandemonium 0.14.0".to_owned(),
             url: "https://github.com".to_owned(),
+            version: "0.14.0".to_owned(),
+            published: None,
+            body: None,
+            blocker: None,
         })
         .after(SETTINGS);
     with_library_sample(state)
@@ -3132,6 +3600,138 @@ fn live(turn: Turn) -> WorkspaceState {
     state
 }
 
+/// The text of the Rust file the code snapshots write in.
+fn code_text(state: &WorkspaceState) -> String {
+    state
+        .shown_document()
+        .map(|document| document.field.text().to_owned())
+        .unwrap_or_default()
+}
+
+/// The Rust file with the lines of `new` selected and the bar for finding open on "names", limited to the selection, where the editor limits finding to a selection of several lines; every match in them replaced when `replaced`.
+fn find_in_selection(replaced: bool) -> WorkspaceState {
+    let mut state = code();
+    state.editor.auto_find_in_selection = pm_editor::FindInSelection::Multiline;
+    let text = code_text(&state);
+    let start = text.find("    /// Makes a session").unwrap_or_default();
+    let end = text.find("    /// How many names").unwrap_or_default();
+    let state = state
+        .edited(EDITOR_FIELD, Edit::Select(start, end))
+        .find_opened(replaced)
+        .find_typed(Edit::Paste("names".to_owned()));
+    if !replaced {
+        return state;
+    }
+    state
+        .replacement_typed(Edit::Paste("labels".to_owned()))
+        .replaced_all()
+}
+
+/// The Rust file with the line that holds `label` selected, picked up, and carried over the line above it; dropped there, moving it, when `dropped`.
+fn dragging_text(dropped: bool) -> WorkspaceState {
+    let mut state = code();
+    let text = code_text(&state);
+    let start = text.find("        let label").unwrap_or_default();
+    let end = start + text[start..].find('\n').map_or(0, |at| at + 1);
+    let target = text.find("        let names").unwrap_or_default();
+    state = state.edited(EDITOR_FIELD, Edit::Select(start, end));
+    state.editor_drag_started(start + 16);
+    state.editor_drag_over(target);
+    if dropped {
+        state.editor_dropped(false);
+    }
+    state
+}
+
+/// The Rust file with the caret on the line that has a problem, where the language server offers two changes, and the marker for that beside the line.
+fn lightbulb() -> WorkspaceState {
+    let state = code();
+    let text = code_text(&state);
+    let at = text.find("label: u32").unwrap_or_default() + 4;
+    let state = state.edited(EDITOR_FIELD, Edit::Place(at, false));
+    let (version, line) = state
+        .shown_document()
+        .map_or((0, 0), |document| (document.version, document.line_of(at)));
+    state.with_lightbulb(0, CODE_PATH, version, line, 2)
+}
+
+/// A file of words with the letter pairs a font joins and of arrows and comparisons, set in a code font that has ligatures for the pairs of letters, joined or not as `joined` says; no code font with ligatures for arrows is installed where the snapshots are made, so the pairs of letters stand for them.
+fn ligatures(joined: bool) -> WorkspaceState {
+    let path = "notes/operators.txt";
+    let mut state = workspace_sample().after(TAB_DIFF);
+    state.editor.ligatures = joined;
+    state.window.appearance.code_font = "DejaVu Sans".to_owned();
+    state.open_viewer(path.to_owned(), false);
+    state.with_file(
+        0,
+        path,
+        false,
+        Ok((
+            Some("office affluent final flow waffle\na -> b => c <- d <= e >= f != g == h === i\nx |> y <|> z :: w ::= v >>= u <<= t\nwww //// /* */ <!-- --> 0xFF .. ... && ||\n".to_owned()),
+            false,
+            None,
+        )),
+    )
+}
+
+/// A file with a line of Hebrew, a line of Arabic and lines of left-to-right text mixed with them, a word of the Hebrew line selected and a stretch of the mixed line from its left-to-right text into the start of its Hebrew.
+fn bidi() -> WorkspaceState {
+    let path = "notes/mixed.txt";
+    let mut state = workspace_sample().after(TAB_DIFF);
+    state.open_viewer(path.to_owned(), false);
+    let text = "Left to right: hello world\nשלום עולם, זה טקסט בעברית\nmixed: abc שלום עולם def 123\nمرحبا بالعالم، هذا نص عربي\nAfter: the end\n";
+    let state = state.with_file(0, path, false, Ok((Some(text.to_owned()), false, None)));
+    let hebrew = text.find("שלום עולם,").unwrap_or_default();
+    let from = text.find("abc").unwrap_or_default() + 2;
+    let to = text.find("שלום עולם def").unwrap_or_default() + 6;
+    state
+        .edited(EDITOR_FIELD, Edit::Select(hebrew, hebrew + 8))
+        .edited(EDITOR_FIELD, Edit::AddSelection(from, to))
+}
+
+/// How the file is compared in a snapshot.
+#[derive(Clone, Copy)]
+enum Compare {
+    /// With what the clipboard holds.
+    Clipboard,
+    /// With what was last saved of it.
+    Saved,
+    /// With the list of files open to pick another.
+    Picking,
+    /// With another file of the project.
+    File,
+}
+
+/// The Rust file compared as `how` says, with an older text standing for the clipboard, the saved file or the other file.
+fn compared(how: Compare) -> WorkspaceState {
+    let mut state = code();
+    let edited = code_text(&state);
+    let older = edited
+        .replace("const LIMIT: usize = 64;", "const LIMIT: usize = 32;")
+        .replace("HashMap::with_capacity(LIMIT)", "HashMap::new()")
+        .replace(
+            "    /// How many names the session knows.\n    pub fn count(&self) -> usize {\n        self.names.len()\n    }\n",
+            "    pub fn len(&self) -> usize {\n        self.names.len()\n    }\n",
+        );
+    let other = "crates/pandemonium/src/session_old.rs";
+    match how {
+        Compare::Clipboard => state.compare_with_clipboard(older),
+        Compare::Saved => state.with_compared(0, CODE_PATH, CODE_PATH, true, &older),
+        Compare::Picking => {
+            state.files = [
+                CODE_PATH,
+                other,
+                "crates/pandemonium/src/main.rs",
+                "Cargo.toml",
+            ]
+            .map(str::to_owned)
+            .to_vec();
+            state.compare_with_file_requested((340.0, 0.0))
+        }
+        Compare::File => state.with_compared(0, CODE_PATH, other, false, &older),
+    }
+}
+
 /// Draws the screen as it looks `elapsed_ms` into the animations, with the
 /// pointer at `pointer` and focus on `focused` if given, in `appearance`, and
 /// writes it to `path` as a PNG. The pointer is taken to have rested where it
@@ -3179,6 +3779,12 @@ pub fn write(
     let family = default_family();
     let theme = family.variant(appearance);
     let screen = shot.screen();
+    let Screen::Workspace(held) = &screen;
+    let looks = &held.window.appearance;
+    if !looks.code_font.is_empty() || !looks.interface_font.is_empty() {
+        scene::set_fonts(&mut shaper, &looks.interface_font, &looks.code_font);
+    }
+    shaper.set_ligatures(held.editor.ligatures);
     let resting = Input {
         elapsed_ms: 0.0,
         ..input

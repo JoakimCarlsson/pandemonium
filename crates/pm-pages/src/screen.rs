@@ -440,6 +440,13 @@ impl Screen {
         }
     }
 
+    /// The screen after the notes of an update are scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
+    pub fn scrolled_update(self, delta: f32, room: f32) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.scrolled_update(delta, room)),
+        }
+    }
+
     /// The screen after the plan panel is scrolled by `delta` logical
     /// pixels, downwards when positive, with `room` pixels to scroll.
     pub fn scrolled_plan(self, delta: f32, room: f32) -> Self {
@@ -606,6 +613,13 @@ impl Screen {
         }
     }
 
+    /// The screen asking again for the open files of the session at `session`, which may have changed in the folder.
+    pub fn open_files_wanted(self, session: usize) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.open_files_wanted(session)),
+        }
+    }
+
     /// The screen after the server answered for the file at `path` of the session at `session`.
     pub fn with_file(
         self,
@@ -722,6 +736,13 @@ impl Screen {
             Self::Workspace(state) => {
                 Self::Workspace(state.tracked(session, branch, tracking, operation))
             }
+        }
+    }
+
+    /// The screen after the folder of the session at `session` was seen to hold repositories that stand as `standings` say.
+    pub fn with_standings(self, session: usize, standings: Vec<pm_git::Standing>) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_standings(session, standings)),
         }
     }
 
@@ -915,12 +936,12 @@ impl Screen {
         }
     }
 
-    /// The screen after the agent at `agent` signed in, which may have changed who it is.
-    pub fn signed_in(self, agent: usize) -> Self {
+    /// The screen after the agent at `agent` signed in under the login `login`, which may have changed who it is.
+    pub fn signed_in(self, agent: usize, login: Option<String>) -> Self {
         match self {
             Self::Workspace(mut state) => {
                 state.forget_identity(agent);
-                state.outbox_identity(agent);
+                state.outbox_identity(agent, login);
                 Self::Workspace(state)
             }
         }
@@ -1007,7 +1028,7 @@ impl Screen {
         agent: usize,
         default: Option<String>,
         selected: Option<String>,
-        naming: bool,
+        naming: Option<String>,
     ) -> Self {
         match self {
             Self::Workspace(state) => {
@@ -1058,6 +1079,13 @@ impl Screen {
         }
     }
 
+    /// The screen after the project at `project` was seen to have, or lack, a `devcontainer.json`.
+    pub fn with_devcontainer(self, project: usize, configured: bool) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_devcontainer(project, configured)),
+        }
+    }
+
     /// The screen after the folder of the session at `session` was seen to have `branch` checked out, or a detached `head`.
     pub fn checked_out(self, session: usize, branch: Option<&str>, head: Option<&str>) -> Self {
         match self {
@@ -1086,6 +1114,13 @@ impl Screen {
     pub fn take_outbox(&mut self) -> Vec<Outgoing> {
         match self {
             Self::Workspace(state) => state.take_outbox(),
+        }
+    }
+
+    /// Asks for the diffs of the changed files in or near the view of the diff that the server listed without them.
+    pub fn diffs_wanted(&mut self) {
+        match self {
+            Self::Workspace(state) => state.diffs_wanted(),
         }
     }
 
@@ -1166,12 +1201,6 @@ impl Screen {
         }
     }
 
-    /// Starts a shell in the open session when it is on the machine `host` and the dock shows none.
-    pub fn revive_terminal(&mut self, host: &Option<String>) {
-        let Self::Workspace(state) = self;
-        state.revive_terminal(host);
-    }
-
     /// The position of the session on the machine `host` whose folder holds `directory`, the innermost when several do.
     pub fn session_in(&self, host: &Option<String>, directory: &str) -> Option<usize> {
         match self {
@@ -1197,6 +1226,30 @@ impl Screen {
     pub fn select_in_terminal(&mut self, anchor: (usize, usize), head: (usize, usize)) {
         let Self::Workspace(state) = self;
         state.select_in_terminal(anchor, head);
+    }
+
+    /// The line counted from the oldest kept that is the first of the window of the shell showing.
+    pub fn terminal_first_line(&self) -> Option<usize> {
+        match self {
+            Self::Workspace(state) => state.terminal_first_line(),
+        }
+    }
+
+    /// What `reach` takes around the cell at `at`, a line counted from the oldest kept and a column, of the shell showing, as its first and last cell.
+    pub fn terminal_reach(
+        &self,
+        reach: pm_text::Reach,
+        at: (usize, usize),
+    ) -> Option<pm_terminal::Span> {
+        match self {
+            Self::Workspace(state) => state.terminal_reach(reach, at),
+        }
+    }
+
+    /// Marks text in the shell showing, from `anchor` to `head`, each a line counted from the oldest kept and a column.
+    pub fn select_terminal_span(&mut self, anchor: (usize, usize), head: (usize, usize)) {
+        let Self::Workspace(state) = self;
+        state.select_terminal_span(anchor, head);
     }
 
     /// Underlines the web address at `at` of the window of the shell showing, a line of it and a column, or none when `at` is nothing.

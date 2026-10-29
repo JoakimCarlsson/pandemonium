@@ -1,4 +1,4 @@
-//! What goes over the connection, each message one frame of text.
+//! What goes over the connection, each message one JSON text message, possibly split across frames.
 
 use pm_acp::Event;
 use serde::{Deserialize, Serialize};
@@ -126,5 +126,12 @@ pub enum ServerMessage {
         tool: String,
         /// What the agent gave it, as JSON text.
         arguments: String,
+    },
+    /// How far the download of an update has got. Sent to the client that asked for it.
+    UpdateProgress {
+        /// How many bytes have arrived.
+        received: u64,
+        /// How many there are in all; zero when not known.
+        total: u64,
     },
 }

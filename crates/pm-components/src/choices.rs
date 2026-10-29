@@ -339,22 +339,24 @@ impl WorkspaceState {
         }
     }
 
-    /// The state knowing who the agent at `agent` is signed in as, and naming the login in use after it when `naming`.
+    /// The state knowing who the agent at `agent` is signed in as, and naming the login `naming` after the one asked about when there is one; `selected` is who the login in use is when nothing is named.
     pub fn with_identity(
         mut self,
         agent: usize,
         default: Option<String>,
         selected: Option<String>,
-        naming: bool,
+        naming: Option<String>,
     ) -> Self {
         if let Some(held) = self.defaults.get_mut(agent) {
             *held = Some(default);
         }
-        if let Some(held) = self.identities.get_mut(agent) {
-            *held = Some(selected.clone());
-        }
-        if naming {
-            self.name_login(agent, selected);
+        match naming {
+            Some(login) => self.name_login(agent, &login, selected),
+            None => {
+                if let Some(held) = self.identities.get_mut(agent) {
+                    *held = Some(selected);
+                }
+            }
         }
         self
     }
@@ -601,6 +603,26 @@ impl WorkspaceState {
         });
     }
 
+    /// Asks who every agent is signed in as in its own folder, for those not asked yet, so that the list of accounts names each default account.
+    pub(crate) fn ask_default_accounts(&mut self) {
+        for agent in 0..self.agent_slots() {
+            let Some(held) = self.defaults.get_mut(agent) else {
+                continue;
+            };
+            if held.is_some() {
+                continue;
+            }
+            *held = Some(None);
+            if let Some(identity) = self.identities.get_mut(agent) {
+                identity.get_or_insert(None);
+            }
+            self.outbox.push(Outgoing::Identity {
+                agent,
+                naming: None,
+            });
+        }
+    }
+
     /// Reads what the page shown needs of its project: on a project's overview its own folder, and on the page for starting work also its branches, when they are not the ones read already.
     pub fn sync_context(&mut self) {
         self.sync_skills();
@@ -630,7 +652,7 @@ impl WorkspaceState {
             }
             self.outbox.push(Outgoing::Identity {
                 agent: self.agent,
-                naming: false,
+                naming: None,
             });
         }
         let Some(held) = self.projects.get(project) else {
@@ -668,6 +690,22 @@ impl WorkspaceState {
     /// Whether the project being started in is a repository, so that work can be done in a worktree.
     pub fn is_repository(&self) -> bool {
         !self.branches.is_empty()
+    }
+
+    /// Whether the project being started in offers a dev container.
+    pub fn offers_container(&self) -> bool {
+        match self.page {
+            Page::New(project) => self
+                .projects
+                .get(project)
+                .is_some_and(|held| held.devcontainer),
+            _ => false,
+        }
+    }
+
+    /// Whether new work is to run in a dev container: the reader asked for one and the project offers it.
+    pub fn container_for_new_work(&self) -> bool {
+        self.container && self.offers_container()
     }
 
     /// The branch the worktree of new work is made from, when the work is to be done in one.
@@ -736,13 +774,15 @@ impl WorkspaceState {
             self.toggle_agent();
         } else if let Some(index) = within(EFFORT_BASE, 50) {
             self.pick_effort(index);
+        } else if id == PLACE_BASE + 2 {
+            self.container = !self.container;
         } else if let Some(index) = within(PLACE_BASE, 2) {
             self.location = if index == 0 {
                 Location::Worktree
             } else {
                 Location::Local
             };
-            if self.location == Location::Local {
+            if self.location == Location::Local && !self.offers_container() {
                 self.picker = None;
             }
         } else if let Some(index) = within(BRANCH_BASE, self.branches.len()) {
@@ -851,19 +891,35 @@ impl WorkspaceState {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |since| since.as_millis());
         let id = format!("{stamp:x}");
-        let held = self.logins.iter().filter(|(by, _, _)| *by == owner).count();
+        let name = self.placeholder_name(&owner);
         self.in_use.retain(|(by, _)| *by != owner);
-        self.logins
-            .push((owner.clone(), id.clone(), format!("Account {}", held + 1)));
-        self.in_use.push((owner, id));
+        self.logins.push((owner.clone(), id.clone(), name));
+        self.in_use.push((owner, id.clone()));
         self.outbox.push(Outgoing::Accounts {
             logins: self.logins.clone(),
             in_use: self.in_use.clone(),
         });
-        self.outbox.push(Outgoing::SignIn { agent });
+        self.outbox.push(Outgoing::SignIn {
+            agent,
+            login: Some(id),
+        });
         if let Some(identity) = self.identities.get_mut(agent) {
             *identity = None;
         }
+    }
+
+    /// The name a new login of the agent `owner` has until its sign-in tells who it is: the lowest number free of the logins' own, counting the agent's default account as the first.
+    fn placeholder_name(&self, owner: &str) -> String {
+        let number = (2..)
+            .find(|number| {
+                let name = format!("Account {number}");
+                !self
+                    .logins
+                    .iter()
+                    .any(|(by, _, held)| by == owner && *held == name)
+            })
+            .unwrap_or(2);
+        format!("Account {number}")
     }
 
     /// Takes the `index`-th login of the list out, and has the server keep the list and delete its sign-in.
@@ -985,26 +1041,23 @@ impl WorkspaceState {
         self
     }
 
-    /// Names the login in use for the agent after who it is now signed in as, when it still has the name it was given on adding.
-    pub fn name_login(&mut self, agent: usize, who: Option<String>) {
+    /// Names the login `used` of the agent after who it is now signed in as, when it still has the name it was given on adding; it also tells who the agent is signed in as when that login is the one in use.
+    pub fn name_login(&mut self, agent: usize, used: &str, who: Option<String>) {
         let Some(held) = self.agent_id_at(agent) else {
             return;
         };
+        if self.login_for_new_work(agent) == Some(used)
+            && let Some(identity) = self.identities.get_mut(agent)
+        {
+            *identity = Some(who.clone());
+        }
         let Some(who) = who else {
-            return;
-        };
-        let Some((_, used)) = self
-            .in_use
-            .iter()
-            .find(|(owner, _)| *owner == held)
-            .cloned()
-        else {
             return;
         };
         if let Some(login) = self
             .logins
             .iter_mut()
-            .find(|(owner, id, name)| *owner == held && *id == used && name.starts_with("Account "))
+            .find(|(owner, id, name)| *owner == held && id == used && name.starts_with("Account "))
         {
             login.2 = who;
             self.outbox.push(Outgoing::Accounts {
@@ -1014,11 +1067,11 @@ impl WorkspaceState {
         }
     }
 
-    /// Asks who the agent is signed in as, to name the login in use after it.
-    pub fn outbox_identity(&mut self, agent: usize) {
+    /// Asks who the agent is signed in as under the login `login`, to name that login after it.
+    pub fn outbox_identity(&mut self, agent: usize, login: Option<String>) {
         self.outbox.push(Outgoing::Identity {
             agent,
-            naming: true,
+            naming: login,
         });
     }
 

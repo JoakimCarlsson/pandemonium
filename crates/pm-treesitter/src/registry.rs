@@ -17,13 +17,28 @@ struct Held {
 /// What this process has loaded.
 static HELD: LazyLock<Mutex<Held>> = LazyLock::new(|| Mutex::new(Held::default()));
 
-/// Keeps `grammar`, under its own name and every name of `aliases`.
+/// Whether `grammar` is the one called `name`, as against one that answers to it as another name.
+fn is_called(grammar: &Grammar, name: &str) -> bool {
+    grammar.name().eq_ignore_ascii_case(name)
+}
+
+/// Keeps `grammar` under its own name, taking the place of whatever answered to it, and under every name of `aliases`, except those a grammar called that answers to already.
 pub fn add(grammar: Arc<Grammar>, aliases: &[String]) {
     let Ok(mut held) = HELD.lock() else {
         return;
     };
-    for name in std::iter::once(grammar.name()).chain(aliases.iter().map(String::as_str)) {
+    let own = grammar.name().to_ascii_lowercase();
+    held.wanted.remove(&own);
+    held.grammars.insert(own, grammar.clone());
+    for name in aliases {
         let name = name.to_ascii_lowercase();
+        if held
+            .grammars
+            .get(&name)
+            .is_some_and(|taken| is_called(taken, &name))
+        {
+            continue;
+        }
         held.wanted.remove(&name);
         held.grammars.insert(name, grammar.clone());
     }
@@ -51,6 +66,11 @@ pub fn loaded(name: &str) -> Option<Arc<Grammar>> {
         .grammars
         .get(&name.to_ascii_lowercase())
         .cloned()
+}
+
+/// The grammar called `name`, if one is loaded, not one that only answers to it as another name.
+pub fn called(name: &str) -> Option<Arc<Grammar>> {
+    loaded(name).filter(|grammar| is_called(grammar, name))
 }
 
 /// The names asked for since the last look that no grammar answered to, each told once.

@@ -77,6 +77,7 @@ pub fn revision_changes(
             })
             .unwrap_or_default();
         let diff = hunks(&shown);
+        let (added, removed) = crate::tally(&diff);
         found.push(Change {
             path: path.to_owned(),
             words: crate::words(&diff),
@@ -88,7 +89,11 @@ pub fn revision_changes(
             conflicted: false,
             from: before,
             submodule: None,
+            repository: None,
             moved: None,
+            added,
+            removed,
+            lazy: false,
         });
     }
     Ok(found)

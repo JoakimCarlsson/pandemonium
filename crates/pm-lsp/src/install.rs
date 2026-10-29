@@ -18,11 +18,35 @@ pub fn installed_manifest(id: &str) -> Option<Manifest> {
     Manifest::read(&folder).ok()
 }
 
-/// The installed language a file at `path` is written in, by folder name.
+/// The installed language a file at `path` is written in, by folder name: one that reads the file by its whole name or a pattern before one that reads it by its ending.
 pub fn language_of(path: &str) -> Option<String> {
+    let languages = installed();
+    languages
+        .iter()
+        .find(|(_, manifest)| manifest.matches_by_name(path))
+        .or_else(|| {
+            languages
+                .iter()
+                .find(|(_, manifest)| manifest.matches(path))
+        })
+        .map(|(id, _)| id.clone())
+}
+
+/// The installed language a file at `path` holding `text` is written in: the one `language_of` finds, or else the first whose `first_line_pattern` matches the first line of `text`.
+pub fn language_of_text(path: &str, text: &str) -> Option<String> {
+    if let Some(found) = language_of(path) {
+        return Some(found);
+    }
+    let first = text.lines().next().unwrap_or_default();
     installed()
         .into_iter()
-        .find(|(_, manifest)| manifest.matches(path))
+        .find(|(_, manifest)| {
+            manifest
+                .first_line_pattern
+                .as_deref()
+                .and_then(|pattern| regex::Regex::new(pattern).ok())
+                .is_some_and(|pattern| pattern.is_match(first))
+        })
         .map(|(id, _)| id)
 }
 
@@ -93,7 +117,7 @@ fn fetch_folder(index: &Index, id: &str, staging: &Path) -> Result<Manifest, Str
         &std::fs::read_to_string(staging.join("config.toml"))
             .map_err(|error| format!("{id} has no config.toml: {error}"))?,
     )?;
-    if staging.join("grammar.wasm").is_file() {
+    if staging.join("grammar.wasm").is_file() || manifest.inherits.is_some() {
         return Ok(manifest);
     }
     if manifest.grammar_file.url.is_empty() {
@@ -111,10 +135,37 @@ fn is_current(index: &Index, id: &str) -> bool {
     let (Some(listing), Ok(folder)) = (index.find(id), language_folder(id)) else {
         return false;
     };
-    folder.join("grammar.wasm").is_file()
+    grammar_file(id).is_ok_and(|grammar| grammar.is_file())
         && listing.files.iter().all(|(name, checksum)| {
             std::fs::read(folder.join(name)).is_ok_and(|bytes| sha256(&bytes) == *checksum)
         })
+}
+
+/// What is newer for the installed language `id` than what the machine has, in words for the reader: its files as `index` now lists them, or the language server its manifest now asks for when only an older one is installed; nothing when nothing is.
+pub fn update_for(index: &Index, id: &str) -> Option<String> {
+    let listing = index.find(id)?;
+    let manifest = installed_manifest(id)?;
+    if !is_current(index, id) {
+        return Some(if listing.version != manifest.version {
+            format!(
+                "Version {} of the language is available, {} is installed",
+                listing.version, manifest.version
+            )
+        } else {
+            "A newer build of the language is available".to_owned()
+        });
+    }
+    let server = manifest.server.as_ref()?;
+    let install = server.install.as_ref().filter(|_| !server.provided)?;
+    if pm_tools::installed(&server.command).is_some() || crate::resolve::server_ready(server) {
+        return None;
+    }
+    crate::resolve::has_earlier_install(server, install).then(|| {
+        format!(
+            "Version {} of the language server {} is available",
+            install.version, server.command
+        )
+    })
 }
 
 /// Installs the language `id` and the languages it needs, as the index lists them, then their language servers, telling `progress` what it is doing; returns why a language server could not be installed, if one could not, while the languages themselves are.
@@ -139,13 +190,22 @@ pub fn install(id: &str, progress: &dyn Fn(&str, &str)) -> Result<Vec<String>, S
             return Err(reason);
         }
         let folder = language_folder(id)?;
-        let _ = std::fs::remove_dir_all(&folder);
-        std::fs::rename(&staging, &folder).map_err(|error| error.to_string())?;
+        let kept = root.join(format!(".{id}.previous"));
+        let _ = std::fs::remove_dir_all(&kept);
+        let had_one = std::fs::rename(&folder, &kept).is_ok();
+        if let Err(error) = std::fs::rename(&staging, &folder) {
+            if had_one {
+                let _ = std::fs::rename(&kept, &folder);
+            }
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(error.to_string());
+        }
+        let _ = std::fs::remove_dir_all(&kept);
         manifests.push((id.clone(), Manifest::read(&folder)?));
     }
     let mut problems = Vec::new();
     for (id, manifest) in manifests {
-        let Some(server) = manifest.server else {
+        let Some(server) = manifest.server.filter(|server| !server.provided) else {
             continue;
         };
         progress(&id, "Installing the language server");
@@ -172,7 +232,9 @@ pub fn add_folder(source: &Path, id: &str) -> Result<(), String> {
     if id.is_empty() || id.starts_with('.') || id.contains(['/', '\\']) {
         return Err(format!("{id} is not the name of a language"));
     }
-    Manifest::read(source)?;
+    let text = std::fs::read_to_string(source.join("config.toml"))
+        .map_err(|error| format!("{} has no config.toml: {error}", source.display()))?;
+    Manifest::parse(&text)?;
     let root = local_root()?;
     let staging = root.join(format!(".{id}.partial"));
     let _ = std::fs::remove_dir_all(&staging);

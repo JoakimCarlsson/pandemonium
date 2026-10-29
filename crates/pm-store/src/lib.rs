@@ -147,6 +147,11 @@ pub fn data_directory() -> Option<PathBuf> {
     directory()
 }
 
+/// The folder the app keeps what can be fetched again in, under the desktop's cache directory.
+pub fn cache_directory() -> Option<PathBuf> {
+    dirs::cache_dir().map(|cache| cache.join(app_name()))
+}
+
 /// A named login of an agent kept apart from the others: the agent, the folder name it is kept under and what it is called.
 pub type Account = (String, String, String);
 

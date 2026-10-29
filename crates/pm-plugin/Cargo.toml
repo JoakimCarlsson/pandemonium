@@ -9,8 +9,10 @@ pm-lsp.workspace = true
 pm-plugin-api.workspace = true
 pm-policy.workspace = true
 pm-store.workspace = true
+pm-tools.workspace = true
 pm-wasm.workspace = true
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+sha2 = "0.11.1"
 toml = "1.1.8"
 ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }

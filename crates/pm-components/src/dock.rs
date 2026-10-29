@@ -5,12 +5,14 @@ use std::rc::Rc;
 
 use pm_input::FocusId;
 use pm_terminal::{Emulator, Link};
+use pm_text::Reach;
 
 use crate::sample::Session;
 
 use crate::state::{
     BOTTOM_PROBLEMS, BOTTOM_PROBLEMS_COUNT, BOTTOM_TERMINAL, MAXIMIZE_TERMINAL, NEW_TERMINAL,
-    Outgoing, PROBLEM_ROW_BASE, TERMINAL, TERMINAL_CLOSE_BASE, TERMINAL_TAB_BASE, WorkspaceState,
+    Outgoing, PROBLEM_ROW_BASE, ProblemsKey, TERMINAL, TERMINAL_CLOSE_BASE, TERMINAL_TAB_BASE,
+    WorkspaceState,
 };
 
 /// The tabs of the dock, one of which shows at a time.
@@ -237,22 +239,58 @@ impl WorkspaceState {
         self.ask_problems();
     }
 
-    /// Asks the server what is wrong with the files of the project of the session the dock is about, unless it was asked and has not answered.
+    /// The folder, and the machine it is on, of the session at `session`.
+    fn problems_key(&self, session: usize) -> Option<ProblemsKey> {
+        let held = self.sessions.get(session)?;
+        let host = self.projects.get(held.project)?.host();
+        Some((host, held.directory.clone()))
+    }
+
+    /// Asks the server what is wrong with the files of the folder of the session the dock is about, unless it was asked about that folder and has not answered.
     pub(crate) fn ask_problems(&mut self) {
-        if self.problems_asked {
+        let Some(session) = self.docked_position() else {
+            return;
+        };
+        let key = self.problems_key(session);
+        if key.is_none() || self.problems_asked == key {
             return;
         }
-        if let Some(session) = self.docked_position() {
-            self.problems_asked = true;
-            self.outbox.push(Outgoing::Problems { session });
+        self.problems_asked = key;
+        self.outbox.push(Outgoing::Problems { session });
+    }
+
+    /// Asks again when the list of problems is showing but is about another folder than the one the dock is about, as after another session was brought into view.
+    pub(crate) fn ask_problems_again(&mut self) {
+        if !self.terminal || self.bottom != BottomTab::Problems {
+            return;
+        }
+        let key = self.docked_position().and_then(|at| self.problems_key(at));
+        if self.problems_of != key {
+            self.ask_problems();
         }
     }
 
-    /// The state after the server said what is wrong with the files of the project of the session at `session`.
+    /// The problems of the folder of the session the dock is about, none while the list held is about another folder.
+    pub fn current_problems(&self) -> &[pm_protocol::Problem] {
+        let key = self.docked_position().and_then(|at| self.problems_key(at));
+        match &self.problems_of {
+            Some(held) if key.as_ref() == Some(held) => &self.problems,
+            _ => &[],
+        }
+    }
+
+    /// The state after the server said what is wrong with the files of the folder of the session at `session`; an answer about a folder the dock is no longer about is dropped.
     pub fn with_problems(mut self, session: usize, problems: Vec<pm_protocol::Problem>) -> Self {
-        self.problems_asked = false;
-        if self.docked_position() == Some(session) {
+        let key = self.problems_key(session);
+        if self.problems_asked == key {
+            self.problems_asked = None;
+        }
+        if key.is_some() && self.docked_position().and_then(|at| self.problems_key(at)) == key {
+            if self.problems_of != key {
+                self.problems_scroll = 0.0;
+            }
             self.problems = problems;
+            self.problems_of = key;
         }
         self
     }
@@ -268,9 +306,10 @@ impl WorkspaceState {
         let Some(index) = self.problem_picked.take() else {
             return self;
         };
-        let (Some(session), Some(problem)) =
-            (self.docked_position(), self.problems.get(index).cloned())
-        else {
+        let (Some(session), Some(problem)) = (
+            self.docked_position(),
+            self.current_problems().get(index).cloned(),
+        ) else {
             return self;
         };
         self.go_to_location(
@@ -330,7 +369,7 @@ impl WorkspaceState {
                 } else if let Some(index) = number
                     .checked_sub(PROBLEM_ROW_BASE)
                     .map(|offset| offset as usize)
-                    .filter(|offset| *offset < self.problems.len())
+                    .filter(|offset| *offset < self.current_problems().len())
                 {
                     self.problem_picked = Some(index);
                 } else {
@@ -513,6 +552,26 @@ impl WorkspaceState {
         }
     }
 
+    /// The line counted from the oldest kept that is the first of the window of the shell showing.
+    pub fn terminal_first_line(&self) -> Option<usize> {
+        let tab = self.active_terminal()?;
+        let emulator = tab.emulator.read();
+        Some(emulator.first_line(tab.back))
+    }
+
+    /// What `reach` takes around the cell at `at`, a line counted from the oldest kept and a column, of the shell showing, as its first and last cell.
+    pub fn terminal_reach(&self, reach: Reach, at: (usize, usize)) -> Option<pm_terminal::Span> {
+        let tab = self.active_terminal()?;
+        Some(tab.emulator.read().reach_around(reach, at))
+    }
+
+    /// Marks text in the shell showing, from `anchor` to `head`, each a line counted from the oldest kept and a column.
+    pub fn select_terminal_span(&mut self, anchor: (usize, usize), head: (usize, usize)) {
+        if let Some(tab) = self.active_terminal() {
+            tab.emulator.write().select(anchor, head);
+        }
+    }
+
     /// Unmarks the text of the shell showing.
     pub fn clear_terminal_selection(&mut self) {
         if let Some(tab) = self.active_terminal() {
@@ -549,36 +608,6 @@ impl WorkspaceState {
             })
             .max_by_key(|(_, length)| *length)
             .map(|(position, _)| position)
-    }
-
-    /// Starts a shell in the session the dock is about when it is on the machine `host` and the dock shows none, as when the shells it showed ended with an earlier server.
-    pub fn revive_terminal(&mut self, host: &Option<String>) {
-        let Some(session) = self.docked() else {
-            return;
-        };
-        if self.debug_docked() {
-            return;
-        }
-        let on_host = self
-            .projects
-            .get(session.project)
-            .is_some_and(|project| project.host() == *host);
-        if self.terminal && on_host && session.terminals.is_empty() {
-            self.open_terminal();
-        }
-    }
-
-    /// Starts a shell in the session the dock is about when the dock is open on the shells and that session has none, as after moving to another session or project.
-    pub(crate) fn fill_terminal_dock(&mut self) {
-        if !self.terminal || self.bottom_tab() != BottomTab::Terminal || self.debug_docked() {
-            return;
-        }
-        if self
-            .docked()
-            .is_some_and(|session| session.terminals.is_empty())
-        {
-            self.open_terminal();
-        }
     }
 
     /// Whether the dock shows a shell, and what its window holds: columns, lines and how far it is scrolled back.

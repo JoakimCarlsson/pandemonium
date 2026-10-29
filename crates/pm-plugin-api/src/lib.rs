@@ -12,18 +12,23 @@
 //! fields and replies and never removes or repurposes one, so an editor that
 //! speaks a newer [`API_VERSION`] loads an extension written for an older one.
 //! A new thing the host can do is a new variant of [`HostCall`], not a new
-//! import.
+//! import. Version 2 added the [`HookCall`]s the host asks a module while it
+//! runs a language server or a debug adapter, answered by the optional
+//! [`EXPORT_HOOK`], and the host calls that let a module find programs, fetch
+//! a release into its own storage and tell the reader what it is doing.
 
 mod call;
+mod hook;
 mod host;
 mod pack;
 
 pub use call::{CommandCall, CommandReply};
-pub use host::{Host, HostCall, HostReply, ProcessOutput};
+pub use hook::{Command, CompletionItem, HookCall, HookReply, SymbolItem};
+pub use host::{Host, HostCall, HostReply, ProcessOutput, Release, ReleaseAsset, StorageEntry};
 pub use pack::{pack, unpack};
 
 /// The version of this contract that this build speaks.
-pub const API_VERSION: u32 = 1;
+pub const API_VERSION: u32 = 2;
 
 /// The module the host's import lives in.
 pub const HOST_MODULE: &str = "pandemonium";
@@ -39,3 +44,6 @@ pub const EXPORT_COMMAND: &str = "pm_command";
 
 /// The memory the module exports.
 pub const EXPORT_MEMORY: &str = "memory";
+
+/// The export, added by version 2, that answers a [`HookCall`]: `(pointer, length) -> packed`. A module without it answers no hook.
+pub const EXPORT_HOOK: &str = "pm_hook";

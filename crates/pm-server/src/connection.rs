@@ -6,6 +6,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use pm_protocol::{ClientMessage, ServerMessage, VERSION};
+use tungstenite::protocol::frame::Frame;
+use tungstenite::protocol::frame::coding::{Data, OpCode};
 use tungstenite::{Message, WebSocket};
 
 use crate::core::{Connection, Core};
@@ -23,12 +25,35 @@ const BRISK: Duration = Duration::from_millis(1);
 /// How long after its last message the connection keeps waiting [`BRISK`]ly.
 const BRISK_FOR: Duration = Duration::from_secs(1);
 
-/// Sends `message` to the client as one frame of text.
+/// The most bytes sent in one frame, within the client's default 16 MiB frame limit.
+const FRAME_BYTES: usize = 16 * 1024 * 1024;
+
+/// Sends one JSON text message, fragmenting large responses to fit the client's frame limit.
 fn send(socket: &mut WebSocket<TcpStream>, message: &ServerMessage) -> bool {
-    match serde_json::to_string(message) {
-        Ok(text) => socket.send(Message::text(text)).is_ok(),
-        Err(_) => false,
+    let Ok(text) = serde_json::to_string(message) else {
+        return false;
+    };
+    if text.len() <= FRAME_BYTES {
+        return socket.send(Message::text(text)).is_ok();
     }
+    let bytes = tungstenite::Bytes::from(text);
+    for start in (0..bytes.len()).step_by(FRAME_BYTES) {
+        let end = (start + FRAME_BYTES).min(bytes.len());
+        let opcode = if start == 0 {
+            Data::Text
+        } else {
+            Data::Continue
+        };
+        let frame = Frame::message(
+            bytes.slice(start..end),
+            OpCode::Data(opcode),
+            end == bytes.len(),
+        );
+        if socket.send(Message::Frame(frame)).is_err() {
+            return false;
+        }
+    }
+    true
 }
 
 /// Whether `error` only says that nothing arrived in time.
@@ -156,4 +181,66 @@ pub(crate) fn serve(core: &Arc<Core>, stream: TcpStream, token: &str) {
     crate::browser_tools::forget(&connection);
     core.documents.forget(&connection);
     core.folders.forget(&connection);
+}
+
+/// Regression coverage for messages larger than a client's frame limit.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::TcpListener;
+
+    /// Large repository inspections arrive intact without changing the client's default size limits.
+    #[test]
+    fn sends_large_repository_inspection() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let message = ServerMessage::Response {
+            id: 1,
+            response: pm_protocol::Response::Inspected {
+                changes: vec![
+                    serde_json::from_value(serde_json::json!({
+                        "path": "results.txt",
+                        "diff": "é".repeat(9 * 1024 * 1024),
+                        "staged": false,
+                    }))
+                    .unwrap(),
+                ],
+                commits: None,
+                branch: Some("main".into()),
+                head: Some("89b6c4a".into()),
+                tracking: Default::default(),
+                operation: None,
+                repositories: Vec::new(),
+            },
+        };
+        let expected = message.clone();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            stream
+                .set_write_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut socket = tungstenite::accept(stream).unwrap();
+            assert!(send(&mut socket, &message));
+            assert!(send(
+                &mut socket,
+                &ServerMessage::ProjectsChanged { paths: Vec::new() }
+            ));
+        });
+        let stream = TcpStream::connect(address).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let (mut socket, _) = tungstenite::client(format!("ws://{address}/"), stream).unwrap();
+        let text = socket.read().unwrap().into_text().unwrap();
+        assert_eq!(
+            serde_json::from_str::<ServerMessage>(&text).unwrap(),
+            expected
+        );
+        let text = socket.read().unwrap().into_text().unwrap();
+        assert_eq!(
+            serde_json::from_str::<ServerMessage>(&text).unwrap(),
+            ServerMessage::ProjectsChanged { paths: Vec::new() }
+        );
+        server.join().unwrap();
+    }
 }

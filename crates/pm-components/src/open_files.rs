@@ -379,7 +379,7 @@ impl WorkspaceState {
         self
     }
 
-    /// The state after the server answered for the file at `path` of the session at `session`: its text, whether it was cut short and the installed language it is written in, or why there is none.
+    /// The state after the server answered for the file at `path` of the session at `session`: its text, whether it was cut short and the installed language it is written in, or why there is none. A file already showing its text, read again, keeps its caret, and is left alone when it has unsaved changes or the text did not change.
     pub fn with_file(
         mut self,
         session: usize,
@@ -387,6 +387,18 @@ impl WorkspaceState {
         head: bool,
         read: Result<(Option<String>, bool, Option<String>), String>,
     ) -> Self {
+        let current = self.viewer_of(session, path, head).is_some_and(|viewer| {
+            match &viewer.contents {
+                Contents::Text(document) => {
+                    document.is_dirty()
+                        || matches!(&read, Ok((Some(text), _, _)) if text == document.field.text())
+                }
+                _ => false,
+            }
+        });
+        if current {
+            return self;
+        }
         let row = self.editor.row_height();
         let columns = self.wrap_columns();
         let language = read
@@ -395,6 +407,12 @@ impl WorkspaceState {
             .and_then(|(text, _, language)| text.as_ref().and(language.clone()));
         let mut draw = None;
         if let Some(viewer) = self.viewer_of(session, path, head) {
+            if let Contents::Text(shown) = &viewer.contents {
+                viewer.left.get_or_insert(Left {
+                    unsaved: None,
+                    caret: shown.field.caret(),
+                });
+            }
             viewer.contents = match read {
                 Ok((Some(text), truncated, _)) => {
                     let mut document = Document::new(&text, head, truncated);
@@ -630,6 +648,7 @@ impl WorkspaceState {
         let closed = self.git.viewers.remove(index);
         if let Some(session) = self.review_index() {
             self.close_document(session, &closed);
+            self.remember_closed_tab(session, &closed);
         }
         self.git.shown = match self.git.shown {
             _ if self.git.viewers.is_empty() => None,
@@ -661,6 +680,7 @@ impl WorkspaceState {
         {
             self.discard_file(index);
         }
+        self.forget_closed_tabs(path);
     }
 
     /// Carries out `action` if it is a tab of an open file, a button of one or the file's own keys, and says whether it was.

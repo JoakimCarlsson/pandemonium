@@ -11,6 +11,7 @@ grammar = "xml"
 suffixes = ["xml", "xsd", "xsl", "xslt", "svg", "plist", "rss", "atom", "xaml", "csproj", "fsproj", "vbproj", "props", "targets", "nuspec", "resx", "wsdl", "pom", "xib", "storyboard"]
 aliases = ["xsd", "xsl", "xslt", "svg", "plist"]
 indent = 2
+emmet_dialect = "markup"
 pairs = ["()", "[]", "\"\"", "''"]
 
 [grammar_file]

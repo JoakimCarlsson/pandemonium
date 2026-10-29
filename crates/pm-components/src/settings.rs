@@ -158,6 +158,8 @@ pub enum Section {
     EditorIntelligence,
     /// Finding and scrolling.
     EditorSearch,
+    /// Editing with vim's keys.
+    EditorVim,
     /// How each language is edited, and the languages installed and offered.
     Languages,
     /// The keys that work the editor.
@@ -194,7 +196,7 @@ pub enum Section {
 
 impl Section {
     /// Every section, in the order the list shows them, each followed by the ones inside it.
-    pub const ALL: [Section; 23] = [
+    pub const ALL: [Section; 24] = [
         Section::General,
         Section::Appearance,
         Section::Editor,
@@ -203,6 +205,7 @@ impl Section {
         Section::EditorSaving,
         Section::EditorIntelligence,
         Section::EditorSearch,
+        Section::EditorVim,
         Section::Languages,
         Section::Keymap,
         Section::Terminal,
@@ -237,6 +240,7 @@ impl Section {
             Self::EditorSaving => "Saving",
             Self::EditorIntelligence => "Code Intelligence",
             Self::EditorSearch => "Search & Scrolling",
+            Self::EditorVim => "Vim",
             Self::Keymap => "Keymap",
             Self::Agents => "Agents",
             Self::AgentServers => "Agent Servers",
@@ -264,7 +268,8 @@ impl Section {
             | Self::EditorEditing
             | Self::EditorSaving
             | Self::EditorIntelligence
-            | Self::EditorSearch => IconName::FileCode,
+            | Self::EditorSearch
+            | Self::EditorVim => IconName::FileCode,
             Self::Keymap => IconName::SquareSlash,
             Self::Agents => IconName::Sparkles,
             Self::AgentServers => IconName::Folder,
@@ -293,7 +298,8 @@ impl Section {
             | Self::EditorEditing
             | Self::EditorSaving
             | Self::EditorIntelligence
-            | Self::EditorSearch => Some(Self::Editor),
+            | Self::EditorSearch
+            | Self::EditorVim => Some(Self::Editor),
             Self::Worktrees => Some(Self::Git),
             Self::General
             | Self::Appearance
@@ -378,7 +384,10 @@ impl WorkspaceState {
                 self.settings_page.server_form = None;
             }
             SETTINGS_CLOSE => return self.without_settings(),
-            SETTINGS_RELEASE => self.open_release(),
+            SETTINGS_RELEASE => {
+                self.open_release();
+                return self.without_settings();
+            }
             SETTINGS_FIND_CLEAR => {
                 self.settings_page.find = pm_text::Field::default();
                 self.settings_servers.scroll = 0.0;
@@ -402,6 +411,9 @@ impl WorkspaceState {
                     self.settings_page.picker = None;
                     self.recording = None;
                     self.section_changed();
+                    if section == Section::AgentServers {
+                        self.ask_default_accounts();
+                    }
                     if crate::settings_library::lists(section) {
                         self.read_library();
                     }

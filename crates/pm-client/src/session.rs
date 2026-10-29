@@ -48,6 +48,13 @@ pub enum Incoming {
     },
     /// The shell with this number ended.
     TerminalExited(u64),
+    /// How far the download of an update has got.
+    UpdateProgress {
+        /// How many bytes have arrived.
+        received: u64,
+        /// How many there are in all; zero when not known.
+        total: u64,
+    },
     /// What a language server finds wrong with a file this client opened.
     Diagnostics {
         /// The folder the file was opened in.
@@ -427,6 +434,9 @@ fn converse(
                         memory.shells.remove(&terminal);
                         memory.heard.remove(&terminal);
                         let _ = reporter.send(Incoming::TerminalExited(terminal));
+                    }
+                    ServerMessage::UpdateProgress { received, total } => {
+                        let _ = reporter.send(Incoming::UpdateProgress { received, total });
                     }
                     ServerMessage::SessionAdded { info } => {
                         let _ = reporter.send(Incoming::SessionAdded(info));

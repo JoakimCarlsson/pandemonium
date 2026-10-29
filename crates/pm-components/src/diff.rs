@@ -25,6 +25,11 @@ use crate::{Button, Input, Tally};
 /// How tall a line of a diff is, in logical pixels.
 const ROW: f32 = 20.0;
 
+/// How many pixels one logical pixel of the sizes below comes to: the rows, headers and notes are set in steps that follow the interface size, while the view and the scroll are counted in pixels.
+fn pixels() -> f32 {
+    pm_style::step_scale()
+}
+
 /// How tall the header of a file is, in logical pixels.
 const HEADER: f32 = 40.0;
 
@@ -189,6 +194,9 @@ fn rows(change: &Change) -> Vec<Row<'_>> {
 
 /// How many rows the diff of `change` shows, counted without building them.
 fn row_count(change: &Change) -> usize {
+    if !change.loaded {
+        return change.expected_rows();
+    }
     let (mut rows, mut removed, mut added) = (0, 0, 0);
     for line in &change.diff {
         match line.kind {
@@ -220,16 +228,22 @@ fn notes_height(state: &WorkspaceState, session: &Session, index: usize, column:
 }
 
 /// About how tall the file at `index` is with its header, its rows and its notes, in logical pixels, folded away or not.
-fn section_height(state: &WorkspaceState, session: &Session, index: usize, width: f32) -> f32 {
+pub(crate) fn section_height(
+    state: &WorkspaceState,
+    session: &Session,
+    index: usize,
+    width: f32,
+) -> f32 {
     let change = &session.changes[index];
     if state.closed_diffs.contains(&change.path) {
-        return SECTION_CHROME + HEADER;
+        return (SECTION_CHROME + HEADER) * pixels();
     }
     let column = ((width - 34.0) / 2.0 - 46.0).max(80.0);
-    SECTION_CHROME
+    (SECTION_CHROME
         + HEADER
         + row_count(change) as f32 * ROW
-        + notes_height(state, session, index, column)
+        + notes_height(state, session, index, column))
+        * pixels()
 }
 
 /// How far down the diff the file at `index` starts, in logical pixels, for the files folded away in `state` and a view `width` wide.
@@ -537,7 +551,7 @@ fn file(
 ) -> Node {
     let height = section_height(state, session, index, width);
     if top + height < window.0 || top > window.1 {
-        return node().styles([h(height / 4.0), flex_none()]);
+        return node().styles([h(height / (4.0 * pixels())), flex_none()]);
     }
     let change = &session.changes[index];
     let open = !state.closed_diffs.contains(&change.path);
@@ -630,6 +644,14 @@ fn file(
     if !open {
         return section;
     }
+    if !change.loaded {
+        return section.child(
+            node()
+                .styles([flex(), px(3), py(2), flex_none()])
+                .styles([h(change.expected_rows() as f32 * ROW / 4.0)])
+                .child(line("Reading the diff…", 12, 1.4, Role::Subtle)),
+        );
+    }
     if let Some(target) = target.filter(|target| target.range.is_none() && !target.dragging) {
         section = section.child(comment_box(state, target));
     }
@@ -641,7 +663,8 @@ fn file(
     if state.window.git.word_diff {
         colours = colours.with_words(&change.diff, &change.words);
     }
-    let mut at = top + SECTION_CHROME + HEADER;
+    let scale = pixels();
+    let mut at = top + (SECTION_CHROME + HEADER) * scale;
     let mut skipped = 0;
     for row in rows(change) {
         let mut blocks = Vec::new();
@@ -669,18 +692,18 @@ fn file(
                 }
             }
         }
-        let near = at + ROW >= window.0 && at <= window.1;
+        let near = at + ROW * scale >= window.0 && at <= window.1;
         if blocks.is_empty() && !near {
             skipped += 1;
-            at += ROW;
+            at += ROW * scale;
             continue;
         }
         section = skip(section, &mut skipped);
         section = section.child(row_node(&row, &colours, index, selected));
-        at += ROW;
+        at += ROW * scale;
         for (block, tall) in blocks {
             section = section.child(block);
-            at += tall;
+            at += tall * scale;
         }
     }
     skip(section, &mut skipped)
@@ -754,10 +777,10 @@ pub fn diff(state: &WorkspaceState, session: &Session, width: f32, height: f32) 
         .map(|index| section_height(state, session, index, width))
         .collect();
     let total: f32 = heights.iter().sum();
-    let view = (height - CHROME).max(0.0);
+    let view = (height - CHROME * pixels()).max(0.0);
     let window = (
-        state.diff_scroll.min(total - view) - OVERSCAN,
-        state.diff_scroll.min(total) + view + OVERSCAN,
+        state.diff_scroll.min(total - view) - OVERSCAN * pixels(),
+        state.diff_scroll.min(total) + view + OVERSCAN * pixels(),
     );
     let mut top = 0.0;
     let files: Vec<Node> = heights

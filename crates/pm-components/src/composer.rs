@@ -124,21 +124,34 @@ fn setting_menu(state: &WorkspaceState, index: usize, rows: u32, above: f32) -> 
 fn location_menu(state: &WorkspaceState) -> Node {
     let worktree = state.location == Location::Worktree;
     let chosen = state.base.as_ref().or(state.branches.first());
-    let mut menu = Popover::new()
-        .width(MENU_WIDTH)
-        .heading("Run in", None)
-        .row(
-            "Worktree",
-            "A worktree of its own on a detached head",
-            worktree,
-            FocusId(PLACE_BASE),
-        )
-        .row(
-            "Local",
-            "Work directly in the main checkout",
-            !worktree,
-            FocusId(PLACE_BASE + 1),
+    let mut menu = Popover::new().width(MENU_WIDTH).heading("Run in", None);
+    if state.is_repository() {
+        menu = menu
+            .row(
+                "Worktree",
+                "A worktree of its own on a detached head",
+                worktree,
+                FocusId(PLACE_BASE),
+            )
+            .row(
+                "Local",
+                "Work directly in the main checkout",
+                !worktree,
+                FocusId(PLACE_BASE + 1),
+            );
+    }
+    if state.offers_container() {
+        menu = menu.child(
+            node()
+                .styles([border_t(), border_color(Role::Border), mt(1)])
+                .child(row(
+                    "Dev container",
+                    "Not a security boundary",
+                    state.container,
+                    FocusId(PLACE_BASE + 2),
+                )),
         );
+    }
     if worktree {
         menu = menu
             .child(
@@ -578,21 +591,29 @@ pub fn composer(
                 .flatten(),
         ));
     }
-    if session.is_none() && state.is_repository() {
+    let mut place = None;
+    if session.is_none() && (state.is_repository() || state.offers_container()) {
         let base = state
             .base
             .as_ref()
             .filter(|base| state.branches.first() != Some(base));
-        let label = match (state.location, base) {
+        let mut label = match (state.location, base) {
             (Location::Worktree, Some(base)) => format!("Worktree from {base}"),
             (Location::Worktree, None) => "Worktree".to_owned(),
             (Location::Local, _) => "Local".to_owned(),
         };
+        if state.container_for_new_work() {
+            label.push_str(" in a dev container");
+        }
         let open = state.picker == Some(Picker::Location);
-        strip = strip.child(anchored(
-            chip(&label, Some(IconName::GitFork), LOCATION, open),
-            open.then(|| location_menu(state)),
-        ));
+        place = Some(
+            node()
+                .styles([flex(), items_center(), gap(1), px(2.5)])
+                .child(anchored(
+                    chip(&label, Some(IconName::GitFork), LOCATION, open),
+                    open.then(|| location_menu(state)),
+                )),
+        );
     }
     if state.on_this_computer() && state.agent_has_accounts(state.agent_now()) {
         let account = state.account().unwrap_or("Account");
@@ -606,7 +627,7 @@ pub fn composer(
     let strip = strip.child(spacer());
     let strip = strip.children(session.and_then(usage::context_ring));
     let strip = strip.children(send_buttons(working, empty));
-    node()
+    let prompt_box = node()
         .styles([
             relative(),
             flex(),
@@ -636,5 +657,9 @@ pub fn composer(
                 .wrap(text_width, shaper)
                 .build(),
         )
-        .child(strip)
+        .child(strip);
+    node()
+        .styles([flex(), flex_col(), gap(1.5), w_full()])
+        .children(place)
+        .child(prompt_box)
 }

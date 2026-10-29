@@ -11,6 +11,7 @@ grammar = "html"
 suffixes = ["html", "htm", "xhtml"]
 aliases = ["htm", "xhtml"]
 indent = 2
+emmet_dialect = "markup"
 pairs = ["()", "[]", "{}", "\"\"", "''"]
 
 [grammar_file]
@@ -31,6 +32,40 @@ css = true
 javascript = true
 
 [server.install]
-kind = "npm"
+kind = "command"
+tool = "npm"
+needs = "Node.js and npm"
+steps = [["ci", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"]]
+copy = ["package.json", "package-lock.json"]
+bin = "node_modules/.bin"
 version = "4.10.0"
 packages = ["vscode-langservers-extracted@4.10.0"]
+
+# Tailwind CSS class names, read alongside the main server in projects that use
+# Tailwind. Its completions are offered everywhere in the file.
+[[companion]]
+
+[companion.detect]
+dependencies = ["tailwindcss"]
+files = ["tailwind.config.*"]
+
+[companion.server]
+id = "tailwindcss-language-server"
+language_id = "html"
+command = "tailwindcss-language-server"
+args = ["--stdio"]
+project = ["node_modules/.bin"]
+
+[companion.server.settings.tailwindCSS]
+classAttributes = ["class", "className", "ngClass", "class:list"]
+
+[companion.server.install]
+kind = "command"
+tool = "npm"
+needs = "Node.js and npm"
+steps = [["ci", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"]]
+copy = ["package.json", "package-lock.json"]
+bin = "node_modules/.bin"
+version = "0.16.0"
+packages = ["@tailwindcss/language-server@0.16.0"]
+pin = "tailwindcss"

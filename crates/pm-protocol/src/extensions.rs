@@ -33,6 +33,9 @@ pub struct ExtensionInfo {
     /// Whole file names written in it, such as `Makefile`.
     #[serde(default)]
     pub names: Vec<String>,
+    /// File names written in it, where `*` stands for any run of characters, such as `.env.*`.
+    #[serde(default)]
+    pub patterns: Vec<String>,
     /// Whether it is installed.
     pub installed: bool,
     /// What installing it is doing now, while it is being installed.
@@ -59,6 +62,12 @@ pub struct ExtensionInfo {
     /// What the reader allowed it, by the names of capabilities.
     #[serde(default)]
     pub granted: Vec<String>,
+    /// What its code last said it was doing, such as which release of a language server it fetched.
+    #[serde(default)]
+    pub status: Option<String>,
+    /// What is newer than what is installed, in words for the reader: the language itself as the list now has it, or its language server; nothing when what is installed is the newest.
+    #[serde(default)]
+    pub update: Option<String>,
 }
 
 /// The ids of the capabilities an extension may ask for, with what each lets it do.
@@ -135,6 +144,47 @@ pub struct ExtensionAssets {
     pub commands: Vec<ExtensionCommand>,
 }
 
+/// The queries and editing rules a language folder gained after the first ones, kept apart so that a bundle stays small.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct GrammarMore {
+    /// The links shown at the end of the runnable lines instead of a run button.
+    #[serde(default)]
+    pub lenses: Vec<pm_lsp::RunLens>,
+    /// How Emmet abbreviations are written in its files, `markup` or `style`, when it takes them.
+    #[serde(default)]
+    pub emmet_dialect: Option<String>,
+    /// The overrides query: which nodes make up the scopes whose settings differ.
+    #[serde(default)]
+    pub overrides: String,
+    /// The redactions query: which nodes are private values.
+    #[serde(default)]
+    pub redactions: String,
+    /// The text objects query: which nodes are functions, classes and comments.
+    #[serde(default)]
+    pub textobjects: String,
+    /// The debugger query: which names are variables to show the value of, and the scopes they are looked for in.
+    #[serde(default)]
+    pub debugger: String,
+    /// The dependencies query: which nodes are the names and versions of the dependencies a manifest lists.
+    #[serde(default)]
+    pub dependencies: String,
+    /// The characters besides letters, digits and the underscore that are part of a word.
+    #[serde(default)]
+    pub word_characters: Vec<String>,
+    /// The pairs with more to say than `pairs` can.
+    #[serde(default)]
+    pub bracket_pairs: Vec<pm_lsp::BracketSpec>,
+    /// A line that matches indents the line after it.
+    #[serde(default)]
+    pub increase_indent_pattern: Option<String>,
+    /// A line that starts matching goes back one level.
+    #[serde(default)]
+    pub decrease_indent_pattern: Option<String>,
+    /// Lines that line up with an earlier construct, the first that matches deciding.
+    #[serde(default)]
+    pub decrease_indent_patterns: Vec<pm_lsp::DecreaseRule>,
+}
+
 /// An installed language's grammar and queries, which a client highlights its files with.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct GrammarBundle {
@@ -161,6 +211,10 @@ pub struct GrammarBundle {
     /// The runnables query.
     #[serde(default)]
     pub runnables: String,
+    /// What the language's folder says besides the queries above and the rules of editing below, which a client that does not know a newer key leaves alone.
+    #[serde(flatten)]
+    pub more: Box<GrammarMore>,
+
     /// How many columns one level of indentation is.
     pub indent: usize,
     /// Whether a level of indentation is a tab.
@@ -172,4 +226,29 @@ pub struct GrammarBundle {
     /// The pairs the editor closes as the opening character is typed, each the opening and the closing character; brackets and double quotes when the server says nothing.
     #[serde(default)]
     pub pairs: Option<Vec<String>>,
+    /// The parts of a file edited differently from the rest, by name.
+    #[serde(default)]
+    pub scopes: std::collections::BTreeMap<String, pm_lsp::ScopeSpec>,
+    /// How the language's tags are closed as they are opened, when it has tags.
+    #[serde(default)]
+    pub tags: Option<pm_lsp::TagSpec>,
+}
+
+impl ExtensionInfo {
+    /// Whether the language reads the file at `path`, by its whole name, a pattern its name matches or the ending of its name.
+    pub fn reads(&self, path: &str) -> bool {
+        let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
+        self.names.iter().any(|whole| whole == name)
+            || self
+                .patterns
+                .iter()
+                .any(|pattern| pm_lsp::glob(pattern, name))
+            || name.rsplit_once('.').is_some_and(|(stem, suffix)| {
+                !stem.is_empty()
+                    && self
+                        .suffixes
+                        .iter()
+                        .any(|held| held.eq_ignore_ascii_case(suffix))
+            })
+    }
 }

@@ -11,6 +11,24 @@ use crate::state::{Outgoing, WorkspaceState};
 /// The first of the marks in the gutter that run a place of a file; each file shown has [`RUN_LINES`] after its own base.
 pub const RUN_BASE: u64 = 6_000_000_000_000;
 
+/// The first of the marks of the links at the ends of lines that run a place with one task of its language; each follows the base by its place in the list of links of the file shown.
+pub const RUN_LENS_BASE: u64 = 8_700_000;
+
+/// One past the last mark of those links.
+pub const RUN_LENS_END: u64 = 8_800_000;
+
+/// The mark of the link at `index` of the links of the file shown.
+pub fn run_lens_mark(index: usize) -> FocusId {
+    FocusId(RUN_LENS_BASE + index as u64)
+}
+
+/// The place in the list of links of the file shown that the mark `id` is.
+pub fn run_lens_of(id: FocusId) -> Option<usize> {
+    (RUN_LENS_BASE..RUN_LENS_END)
+        .contains(&id.0)
+        .then(|| (id.0 - RUN_LENS_BASE) as usize)
+}
+
 /// How many lines one file has room for among the run marks of the gutter.
 pub const RUN_LINES: u64 = 1_000_000;
 
@@ -39,11 +57,32 @@ pub enum Rerun {
     Runnable {
         /// The file, from the root of the session's folder.
         path: String,
-        /// What kind of place it is.
-        kind: String,
-        /// What it is called.
-        name: String,
+        /// What its language tagged it with.
+        tags: Vec<String>,
+        /// What each of its captures matched, by the capture's name.
+        variables: std::collections::BTreeMap<String, String>,
+        /// Its line and its column, from zero.
+        position: (usize, usize),
+        /// The name of the task tied to it that is run in place of the first, when one was chosen.
+        task: Option<String>,
     },
+}
+
+impl Rerun {
+    /// What the tab that runs it is titled: the first thing its place captured, or its first tag.
+    fn title(&self) -> String {
+        match self {
+            Self::Task(task) => task.name.clone(),
+            Self::Runnable {
+                tags, variables, ..
+            } => variables
+                .values()
+                .next()
+                .or(tags.first())
+                .cloned()
+                .unwrap_or_default(),
+        }
+    }
 }
 
 /// What the workspace holds of tasks and toolchains.
@@ -57,21 +96,15 @@ pub struct TaskState {
     pub toolchains: Vec<ToolchainInfo>,
     /// What was run last.
     pub last: Option<Rerun>,
+    /// The place of a file whose run button was pressed, while the server says which tasks can run it and the reader picks one.
+    pub waiting: Option<Rerun>,
+    /// The tasks that can run that place, which the reader picks from when there is more than one.
+    pub options: Vec<pm_protocol::RunnableTask>,
 }
 
-/// The language `family` as a reader knows it.
-fn language_name(family: &str) -> String {
-    match family {
-        "javascript" => "Node.js".to_owned(),
-        "go" => "Go".to_owned(),
-        other => {
-            let mut letters = other.chars();
-            letters
-                .next()
-                .map(|first| first.to_uppercase().chain(letters).collect())
-                .unwrap_or_default()
-        }
-    }
+/// The language `family` as a reader knows it: what its manifest calls it, or the family as it is written.
+fn language_name(family: &str, named: &str) -> String {
+    if named.is_empty() { family } else { named }.to_owned()
 }
 
 impl WorkspaceState {
@@ -116,10 +149,7 @@ impl WorkspaceState {
         let Some(tab) = self.add_terminal(session, columns, rows) else {
             return;
         };
-        let title = match &how {
-            Rerun::Task(task) => task.name.clone(),
-            Rerun::Runnable { name, .. } => name.clone(),
-        };
+        let title = how.title();
         if let Some(held) = self
             .sessions
             .get_mut(session)
@@ -137,11 +167,19 @@ impl WorkspaceState {
                 columns,
                 rows,
             },
-            Rerun::Runnable { path, kind, name } => Outgoing::RunRunnable {
+            Rerun::Runnable {
+                path,
+                tags,
+                variables,
+                position,
+                task,
+            } => Outgoing::RunRunnable {
                 session,
                 path,
-                kind,
-                name,
+                tags,
+                variables,
+                position,
+                task,
                 tab,
                 columns,
                 rows,
@@ -179,10 +217,85 @@ impl WorkspaceState {
         let Some(place) = self.shown_runnable(file, line) else {
             return;
         };
+        let Some(session) = self.review_index() else {
+            return;
+        };
+        self.outbox.push(Outgoing::RunnableTasks {
+            session,
+            path: path.clone(),
+            tags: place.tags.clone(),
+            variables: place.variables.clone(),
+            position: (line, 0),
+        });
+        self.tasks.waiting = Some(Rerun::Runnable {
+            path,
+            tags: place.tags,
+            variables: place.variables,
+            position: (line, 0),
+            task: None,
+        });
+    }
+
+    /// Runs the place of the link at `index` of those the file shown has at the ends of its lines, with the task the link names.
+    pub(crate) fn run_lens_pressed(&mut self, index: usize) {
+        let Some(path) = self.shown_viewer().map(|viewer| viewer.path.clone()) else {
+            return;
+        };
+        let Some(item) = self
+            .shown_document()
+            .and_then(|document| document.run_lens_items().into_iter().nth(index))
+        else {
+            return;
+        };
         self.run_in_terminal(Rerun::Runnable {
             path,
-            kind: place.kind,
-            name: place.name,
+            tags: item.place.tags,
+            variables: item.place.variables,
+            position: (item.line, 0),
+            task: Some(item.label),
+        });
+    }
+
+    /// The state after the server listed the tasks that can run the place whose button was pressed: the first runs at once when it is the only one, and otherwise the reader is asked which to run.
+    pub fn with_runnable_tasks(
+        mut self,
+        session: usize,
+        tasks: Vec<pm_protocol::RunnableTask>,
+    ) -> Self {
+        if self.review_index() != Some(session) || self.tasks.waiting.is_none() {
+            return self;
+        }
+        if tasks.len() <= 1 {
+            if let Some(place) = self.tasks.waiting.take() {
+                self.run_in_terminal(place);
+            }
+            return self;
+        }
+        self.tasks.options = tasks;
+        self.choices_requested(crate::quick_choices::Choosing::RunnableTask, (340.0, 0.0))
+    }
+
+    /// Runs the place whose button was pressed with the task at `index` of those the reader was offered.
+    pub(crate) fn runnable_taken(&mut self, index: usize) {
+        let Some(Rerun::Runnable {
+            path,
+            tags,
+            variables,
+            position,
+            ..
+        }) = self.tasks.waiting.take()
+        else {
+            return;
+        };
+        let Some(chosen) = self.tasks.options.get(index) else {
+            return;
+        };
+        self.run_in_terminal(Rerun::Runnable {
+            path,
+            tags,
+            variables,
+            position,
+            task: Some(chosen.name.clone()),
         });
     }
 
@@ -195,7 +308,7 @@ impl WorkspaceState {
         document
             .runnables()
             .iter()
-            .find(|(held, _)| *held == line)
+            .find(|(held, place)| *held == line && !document.is_lens_place(place))
             .map(|(_, place)| place.clone())
     }
 
@@ -206,8 +319,12 @@ impl WorkspaceState {
         };
         match &viewer.contents {
             crate::open_files::Contents::Text(document) => {
-                let mut lines: Vec<usize> =
-                    document.runnables().iter().map(|(line, _)| *line).collect();
+                let mut lines: Vec<usize> = document
+                    .runnables()
+                    .iter()
+                    .filter(|(_, place)| !document.is_lens_place(place))
+                    .map(|(line, _)| *line)
+                    .collect();
                 lines.dedup();
                 lines
             }
@@ -283,7 +400,7 @@ impl WorkspaceState {
     }
 
     /// The name `language`, by family, is shown under in the list of toolchains.
-    pub(crate) fn toolchain_language(language: &str) -> String {
-        language_name(language)
+    pub(crate) fn toolchain_language(language: &str, named: &str) -> String {
+        language_name(language, named)
     }
 }

@@ -4,14 +4,17 @@ use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_protocol::CompletionKind;
 use pm_style::{
-    Radius, Role, ShadowLayer, absolute, bg, border, border_color, bottom, cursor_pointer, flex,
-    flex_1, flex_col, flex_none, font_mono, gap, h, h_px, items_center, justify_center,
+    Color, Radius, Role, ShadowLayer, absolute, bg, border, border_color, bottom, cursor_pointer,
+    flex, flex_1, flex_col, flex_none, font_mono, gap, h, h_px, items_center, justify_center,
     leading_ratio, left, max_h, max_w_px, min_h, min_w_px, overflow_hidden, p, px, py, rounded,
     shadow_layers, size, text_color, text_px, top, w_full, w_px, z,
 };
 use pm_text::Shaper;
 use pm_ui::{Mark, Node, Paint, node, text};
 
+use crate::color_picker::{
+    COLOR_BOX, COLOR_FORMAT_BASE, COLOR_FORMATS_SHOWN, COLOR_HEX, ColorPicking,
+};
 use crate::editor::COMPLETIONS_SHOWN;
 use crate::input::Input;
 use crate::line_edits::{GO_TO_LINE, GO_TO_LINE_BOX, GoingTo};
@@ -488,6 +491,9 @@ pub fn assist(state: &WorkspaceState, height: f32, shaper: &mut Shaper) -> Vec<N
     if let Some(renaming) = &state.renaming {
         floating.push(rename_box(renaming));
     }
+    if let Some(picking) = &state.color_picking {
+        floating.push(color_box(picking));
+    }
     if let Some(going) = &state.going_to {
         floating.push(go_to_line_box(going, document.lines()));
     }
@@ -797,6 +803,11 @@ fn listing_panel(listing: &Listing) -> Node {
     };
     let filter = match &listing.items {
         Items::Outline { filter, .. } => Some((filter, "Go to an item of this file")),
+        Items::Files {
+            filter,
+            compare: Some(_),
+            ..
+        } => Some((filter, "Compare with a file of this project")),
         Items::Files { filter, .. } => Some((filter, "Open a file of this project")),
         Items::Commands { filter, .. } => Some((filter, "Run a command")),
         Items::Symbols { filter, .. } => Some((filter, "Go to a symbol of this project")),
@@ -877,6 +888,77 @@ fn rename_box(renaming: &Renaming) -> Node {
             } else {
                 Role::Subtle
             },
+        ))
+}
+
+/// The box a colour of the file is changed in: the colour as a square beside its hex, and the ways the language server offers to write it, each a row to press.
+fn color_box(picking: &ColorPicking) -> Node {
+    let [red, green, blue, alpha] = picking.color;
+    let status = if picking.loading {
+        Some("Asking the language server…".to_owned())
+    } else if let Some(problem) = &picking.problem {
+        Some(problem.clone())
+    } else if picking.formats.is_empty() {
+        Some("The language server offers no way to write this colour".to_owned())
+    } else {
+        None
+    };
+    let rows = picking
+        .formats
+        .iter()
+        .take(COLOR_FORMATS_SHOWN)
+        .enumerate()
+        .map(|(place, format)| {
+            node()
+                .styles([
+                    flex(),
+                    items_center(),
+                    h(6.5),
+                    px(1.5),
+                    rounded(Radius::Sm),
+                    cursor_pointer(),
+                    bg(Role::SurfaceHover).hover(),
+                ])
+                .focusable(FocusId(COLOR_FORMAT_BASE + place as u64))
+                .child(line(&format.label, 13, 1.4, Role::Text).styles([font_mono()]))
+        });
+    floating(picking.at)
+        .styles([w_px(260.0), gap(1), p(1.5)])
+        .focusable(COLOR_BOX)
+        .child(
+            node()
+                .styles([flex(), items_center(), gap(2)])
+                .child(node().styles([
+                    size(7),
+                    flex_none(),
+                    rounded(Radius::Sm),
+                    border(),
+                    border_color(Role::Border),
+                    bg(Color::rgb(red, green, blue).alpha(f32::from(alpha) / 255.0)),
+                ]))
+                .child(
+                    node().styles([flex_1()]).child(
+                        Input::new(&picking.hex, COLOR_HEX)
+                            .size(Size::Sm)
+                            .invalid(crate::color_picker::color_of(picking.hex.text()).is_none())
+                            .build(),
+                    ),
+                ),
+        )
+        .children(status.map(|said| {
+            node()
+                .styles([px(1.5), py(1)])
+                .child(line(said, 11, 1.4, Role::Subtle))
+        }))
+        .children(rows)
+        .child(line(
+            picking.formats.first().map_or_else(
+                || "Type a colour as hex".to_owned(),
+                |format| format!("Enter writes {}", format.label),
+            ),
+            11,
+            1.4,
+            Role::Subtle,
         ))
 }
 

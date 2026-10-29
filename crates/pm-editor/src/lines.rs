@@ -36,10 +36,14 @@ fn mapped(offset: usize, splices: &[Splice]) -> usize {
 
 impl Document {
     /// The lines the selection or the caret is on, as a byte range from the start of the first to past the line break of the last; a selection that ends at the start of a line leaves that line out.
-    fn picked_lines(&self) -> Range<usize> {
-        let text = self.field.text();
+    pub(crate) fn picked_lines(&self) -> Range<usize> {
         let caret = self.field.caret();
-        let range = self.field.selection().unwrap_or(caret..caret);
+        self.lines_around(self.field.selection().unwrap_or(caret..caret))
+    }
+
+    /// The lines `range` touches, as a byte range from the start of the first to past the line break of the last; a range that ends at the start of a line leaves that line out.
+    pub(crate) fn lines_around(&self, range: Range<usize>) -> Range<usize> {
+        let text = self.field.text();
         let start = line_start(text, range.start);
         let end = if range.end > range.start && range.end == line_start(text, range.end) {
             range.end
@@ -50,7 +54,7 @@ impl Document {
     }
 
     /// The lines of `block`, each as the byte range of its text without its line break.
-    fn lines_in(&self, block: Range<usize>) -> Vec<Range<usize>> {
+    pub(crate) fn lines_in(&self, block: Range<usize>) -> Vec<Range<usize>> {
         let text = self.field.text();
         let mut lines = Vec::new();
         let mut at = block.start;
@@ -66,7 +70,7 @@ impl Document {
     }
 
     /// The edit that makes `splices`, sorted by where they start and not overlapping, as one change, the selection carried along with the text.
-    fn spliced(&self, splices: Vec<Splice>) -> Option<Edit> {
+    pub(crate) fn spliced(&self, splices: Vec<Splice>) -> Option<Edit> {
         let first = splices.first()?.0;
         let last = splices.iter().map(|(at, removed, _)| at + removed).max()?;
         let text = self.field.text();
@@ -93,9 +97,8 @@ impl Document {
         ))
     }
 
-    /// The edit that comments out the lines the selection is on with the language's line comment, or takes the comment away when every line that holds anything has one; nothing for a language without line comments.
+    /// The edit that comments out the lines the selection is on with the line comment of the scope the first of them is in, or of the language, or takes the comment away when every line that holds anything has one; where there are no line comments it wraps them in the scope's block comment, and does nothing where there are neither.
     pub fn toggle_comment_edit(&self) -> Option<Edit> {
-        let prefix = self.editing.line_comment.clone()?;
         let text = self.field.text();
         let lines: Vec<(Range<usize>, usize)> = self
             .lines_in(self.picked_lines())
@@ -106,9 +109,10 @@ impl Document {
                 (line, indent)
             })
             .collect();
-        if lines.is_empty() {
-            return None;
-        }
+        let first = lines.first().map(|(line, indent)| line.start + indent)?;
+        let Some(prefix) = self.line_comment_at(first) else {
+            return self.toggle_block_comment_edit(&lines, first);
+        };
         let commented = lines
             .iter()
             .all(|(line, indent)| text[line.start + indent..line.end].starts_with(&prefix));
@@ -130,6 +134,22 @@ impl Document {
                 .collect()
         };
         self.spliced(splices)
+    }
+
+    /// The edit that wraps the lines the selection is on in a block comment of the scope the first of them is in, or takes the comment away when they are in one; nothing where the scope has no block comment.
+    pub fn toggle_block_comment_lines_edit(&self) -> Option<Edit> {
+        let text = self.field.text();
+        let lines: Vec<(Range<usize>, usize)> = self
+            .lines_in(self.picked_lines())
+            .into_iter()
+            .filter(|line| !text[line.clone()].trim().is_empty())
+            .map(|line| {
+                let indent = text[line.clone()].len() - text[line.clone()].trim_start().len();
+                (line, indent)
+            })
+            .collect();
+        let first = lines.first().map(|(line, indent)| line.start + indent)?;
+        self.toggle_block_comment_edit(&lines, first)
     }
 
     /// The edit that indents the lines the selection is on one level, or takes one level off them when `outdent`.

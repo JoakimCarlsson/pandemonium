@@ -18,6 +18,15 @@ impl Screen {
         self.in_workspace_tasking(|state| state.tasks_requested(at))
     }
 
+    /// The screen after the server listed the tasks that can run the place of a file at `session` whose button was pressed.
+    pub fn with_runnable_tasks(
+        self,
+        session: usize,
+        tasks: Vec<pm_protocol::RunnableTask>,
+    ) -> Self {
+        self.in_workspace_tasking(|state| state.with_runnable_tasks(session, tasks))
+    }
+
     /// The screen listing the toolchains installed at `at`, to choose one.
     pub fn toolchains_requested(self, at: (f32, f32)) -> Self {
         self.in_workspace_tasking(|state| state.toolchains_requested(at))

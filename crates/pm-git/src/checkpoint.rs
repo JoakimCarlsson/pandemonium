@@ -53,6 +53,8 @@ fn snapshot(top: &Path) -> Result<String, String> {
 /// Neither the branch, the head nor what is staged changes.
 ///
 /// shortcut: the files inside submodules are not kept, only the commit each is at; keep them when a rewind has to undo edits made inside one.
+///
+/// shortcut: a folder that holds several repositories is not a repository, so nothing of it is kept; keep each repository's files under the reference when a rewind has to undo edits made across them.
 pub fn checkpoint(directory: &Path, name: &str) -> Result<(), String> {
     let top = toplevel(directory)?;
     let tree = snapshot(&top)?;

@@ -1,0 +1,6 @@
+[
+  { "token_type": "keywordControl", "style": ["keyword"] },
+  { "token_type": "stringTemplate", "style": ["string"] },
+  { "token_type": "decorator", "token_modifiers": ["deprecated"], "style": ["comment"] },
+  { "token_type": "decorator", "style": ["function"] }
+]

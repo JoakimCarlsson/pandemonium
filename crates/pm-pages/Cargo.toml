@@ -14,5 +14,7 @@ pm-icon.workspace = true
 pm-input.workspace = true
 pm-protocol.workspace = true
 pm-style.workspace = true
+pm-terminal.workspace = true
 pm-text.workspace = true
 pm-ui.workspace = true
+pm-vim.workspace = true

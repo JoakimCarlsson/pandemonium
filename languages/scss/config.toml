@@ -12,6 +12,7 @@ grammar = "scss"
 suffixes = ["scss"]
 line_comment = "//"
 indent = 2
+emmet_dialect = "style"
 pairs = ["()", "[]", "{}", "\"\"", "''"]
 
 [server]
@@ -24,6 +25,11 @@ args = ["--stdio"]
 provideFormatter = true
 
 [server.install]
-kind = "npm"
+kind = "command"
+tool = "npm"
+needs = "Node.js and npm"
+steps = [["ci", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"]]
+copy = ["package.json", "package-lock.json"]
+bin = "node_modules/.bin"
 version = "4.10.0"
 packages = ["vscode-langservers-extracted@4.10.0"]

@@ -104,6 +104,7 @@ pub(crate) fn processes() -> (Vec<DebugAdapter>, Vec<DebugProcess>) {
         .map(|adapter| DebugAdapter {
             id: adapter.id,
             name: adapter.name,
+            attach_names: adapter.attach_names,
         })
         .collect();
     let processes = pm_dap::processes()
@@ -259,5 +260,79 @@ impl Core {
             .collect();
         infos.sort_by_key(|info| info.debug);
         infos
+    }
+}
+
+/// The debug adapters and the offers of what is installed on this machine: those the installed languages declare, then those the extensions bring.
+pub(crate) struct Installed;
+
+impl pm_dap::Catalog for Installed {
+    fn adapters(&self) -> Vec<Adapter> {
+        let owners = crate::extensions::language_owners();
+        let mut languages = pm_lsp::installed();
+        languages.sort_by_key(|(id, _)| owners.contains_key(id));
+        let mut found: Vec<Adapter> = Vec::new();
+        for (id, manifest) in languages {
+            let denied = owners.get(&id).and_then(|package| {
+                crate::extensions::grants_of(&package.id)
+                    .check(pm_policy::Capability::Process)
+                    .err()
+                    .map(|denied| denied.to_string())
+            });
+            for spec in manifest.debug_adapters {
+                let types: Vec<String> =
+                    spec.types.iter().map(|name| name.to_lowercase()).collect();
+                if found.iter().any(|held| {
+                    held.id == spec.id || held.types.iter().any(|name| types.contains(name))
+                }) {
+                    continue;
+                }
+                found.push(Adapter {
+                    id: spec.id,
+                    name: spec.name,
+                    programs: spec.programs,
+                    arguments: spec.arguments,
+                    connect: if spec.connect == "tcp" {
+                        pm_dap::Connect::Tcp
+                    } else {
+                        pm_dap::Connect::Stdio
+                    },
+                    types,
+                    denied: denied.clone(),
+                    provided: false,
+                    attach_names: spec.attach_names,
+                    set: spec.set,
+                    default: spec.default,
+                });
+            }
+        }
+        for adapter in crate::extensions::adapters() {
+            if !found.iter().any(|held| {
+                held.id == adapter.id || held.types.iter().any(|name| adapter.types.contains(name))
+            }) {
+                found.push(adapter);
+            }
+        }
+        found
+    }
+
+    fn offers(&self, name: &str) -> Vec<pm_dap::Offer> {
+        pm_lsp::installed()
+            .into_iter()
+            .filter(|(_, manifest)| manifest.matches(name))
+            .flat_map(|(_, manifest)| manifest.debug_scenarios)
+            .filter(|spec| {
+                name.rsplit_once('.').is_some_and(|(_, suffix)| {
+                    spec.suffixes
+                        .iter()
+                        .any(|held| held.eq_ignore_ascii_case(suffix))
+                })
+            })
+            .map(|spec| pm_dap::Offer {
+                label: spec.label,
+                kind: spec.adapter,
+                config: spec.config,
+            })
+            .collect()
     }
 }

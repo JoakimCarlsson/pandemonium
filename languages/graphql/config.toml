@@ -23,6 +23,11 @@ command = "graphql-lsp"
 args = ["server", "-m", "stream"]
 
 [server.install]
-kind = "npm"
+kind = "command"
+tool = "npm"
+needs = "Node.js and npm"
+steps = [["ci", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"]]
+copy = ["package.json", "package-lock.json"]
+bin = "node_modules/.bin"
 version = "3.5.0"
 packages = ["graphql-language-service-cli@3.5.0"]

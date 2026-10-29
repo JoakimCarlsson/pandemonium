@@ -64,6 +64,13 @@ impl Work {
                 if !previous.contains(&directory) {
                     self.ask(
                         &host,
+                        Request::DevContainer {
+                            directory: directory.clone(),
+                        },
+                        Pending::DevContainer(project),
+                    );
+                    self.ask(
+                        &host,
                         Request::Submodules { directory },
                         Pending::Submodules(project),
                     );
@@ -72,10 +79,17 @@ impl Work {
         }
     }
 
-    /// Refreshes matching project submodules and reads the git panel again when `directory`, which the server on `host` watches, is the folder of the session shown.
+    /// Refreshes matching project submodules and reads the git panel, the file tree and the open files again when `directory`, which the server on `host` watches, is the folder of the session shown.
     pub(super) fn folder_changed(&mut self, model: &State<Screen>, host: &Host, directory: &str) {
         for (project, root) in Self::project_folders(model, host) {
             if root == directory {
+                self.ask(
+                    host,
+                    Request::DevContainer {
+                        directory: root.clone(),
+                    },
+                    Pending::DevContainer(project),
+                );
                 self.ask(
                     host,
                     Request::Submodules { directory: root },
@@ -88,7 +102,11 @@ impl Work {
             && shown == directory
         {
             self.refresh(model, position);
-            model.update(|screen| *screen = std::mem::take(screen).with_tree_stale());
+            model.update(|screen| {
+                *screen = std::mem::take(screen)
+                    .with_tree_stale()
+                    .open_files_wanted(position);
+            });
         }
     }
 }
@@ -126,7 +144,7 @@ mod tests {
         assert_eq!(work.links[&remote].backlog.len(), count);
         work.watched.remove(&remote);
         work.watch_shown(&model);
-        assert_eq!(work.links[&remote].backlog.len(), count + 2);
+        assert_eq!(work.links[&remote].backlog.len(), count + 3);
         work.folder_changed(&model, &remote, "/work/two");
         assert!(matches!(work.links[&remote].backlog.last(),
             Some((Request::Submodules { directory }, Pending::Submodules(1))) if directory == "/work/two"));

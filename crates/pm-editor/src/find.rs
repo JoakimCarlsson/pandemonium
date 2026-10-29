@@ -79,6 +79,42 @@ impl Document {
             .collect())
     }
 
+    /// Every stretch of the text `query` finds that lies inside `scope`, in order, no more than a limit of them, looking at what surrounds the stretch as it is in the whole text; everywhere when `scope` is nothing.
+    pub fn find_all_within(
+        &self,
+        query: &Query,
+        scope: Option<Range<usize>>,
+    ) -> Result<Vec<Range<usize>>, String> {
+        let Some(scope) = scope else {
+            return self.find_all(query);
+        };
+        let Some(pattern) = query.pattern()? else {
+            return Ok(Vec::new());
+        };
+        let text = self.field.text();
+        let end = scope.end.min(text.len());
+        let mut at = scope.start.min(end);
+        let mut found = Vec::new();
+        while at <= end && found.len() < MOST_MATCHES {
+            let Some(next) = pattern.find_at(text, at) else {
+                break;
+            };
+            if next.end() > end {
+                break;
+            }
+            if next.is_empty() {
+                match text[next.end()..].chars().next() {
+                    Some(character) => at = next.end() + character.len_utf8(),
+                    None => break,
+                }
+                continue;
+            }
+            at = next.end();
+            found.push(next.range());
+        }
+        Ok(found)
+    }
+
     /// Which of `matches` is selected now, when one is.
     pub fn selected_match(&self, matches: &[Range<usize>]) -> Option<usize> {
         let selected = self.field.selection()?;

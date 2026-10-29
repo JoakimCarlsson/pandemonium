@@ -22,6 +22,13 @@ pub(crate) fn root() -> Result<PathBuf, String> {
         .ok_or_else(|| "this machine has no data folder".to_owned())
 }
 
+/// The folder the extension `id` keeps what it fetches in, apart from its own folder so that installing it again keeps what it fetched.
+pub(crate) fn storage(id: &str) -> Result<PathBuf, String> {
+    pm_store::data_directory()
+        .map(|data| data.join("extension-data").join(id))
+        .ok_or_else(|| "this machine has no data folder".to_owned())
+}
+
 /// Whether `id` can name an extension's folder.
 pub(crate) fn is_name(id: &str) -> bool {
     !id.is_empty() && !id.starts_with('.') && !id.contains(['/', '\\'])

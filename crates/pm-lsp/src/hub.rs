@@ -8,13 +8,19 @@ use std::time::{Duration, Instant};
 use pm_buffer::{Buffer, Lines, Position, Span};
 use serde_json::Value;
 
+use crate::candidates::{self, Candidate};
 use crate::choice::ServerChoice;
 use crate::install::{installed_manifest, language_of};
 use crate::manifest::ServerSpec;
-use crate::server::{DiagnosticsSink, Found, LanguageServer, Pressed, action_of, file_changes};
+use crate::preferences::ServerOverride;
+use crate::provider::{Provider, SymbolLabel};
+use crate::server::{
+    DiagnosticsSink, Found, LanguageServer, LinkAnswer, Pressed, action_of, file_changes,
+};
 use crate::types::{
-    CodeAction, CodeLens, Completion, Diagnostic, FileEdit, FoldRange, Hover, InlayHint,
-    InlineValue, Location, Problem, Seek, SemanticToken, Signature, TextChange, Triggers,
+    CodeAction, CodeLens, ColorPresentation, ColorSwatch, Completion, Diagnostic, DocumentLink,
+    FileEdit, FoldRange, Hover, InlayHint, InlineValue, LinkTarget, Location, Problem,
+    RenameTarget, Seek, SemanticToken, Signature, TextChange, Triggers,
 };
 use crate::uri::{file_uri, path_of};
 
@@ -26,6 +32,9 @@ const MOST_SHOWN: u64 = 2 * 1024 * 1024;
 
 /// The most symbols handed back for one search of a project.
 const MOST_SYMBOLS: usize = 200;
+
+/// The most symbols of folders attached to a project that are handed back for one search, each with the text of its file to be shown read only.
+const MOST_ATTACHED_SYMBOLS: usize = 25;
 
 /// The most completions handed back for one question.
 const MOST_COMPLETIONS: usize = 200;
@@ -49,8 +58,9 @@ pub struct Published {
 /// What is done with what servers say is wrong with open files.
 pub type Sink = Arc<dyn Fn(Published) + Send + Sync>;
 
-/// What a server is started with besides the machine's own environment, for the project at a folder and the server of a spec: the variables to set, among them the `PATH` to run it with.
-pub type Environment = Arc<dyn Fn(&Path, &ServerSpec) -> BTreeMap<String, String> + Send + Sync>;
+/// What a server is started with besides the machine's own environment, for the project at a folder, the language whose file asked for it and the server of a spec: the variables to set, among them the `PATH` to run it with.
+pub type Environment =
+    Arc<dyn Fn(&Path, &str, &ServerSpec) -> BTreeMap<String, String> + Send + Sync>;
 
 /// Edits by the version they make.
 type Edits = BTreeMap<i32, Vec<TextChange>>;
@@ -61,8 +71,30 @@ type Latest = (Option<i32>, Vec<Diagnostic>);
 /// The changes a server last offered for a file, as it wrote them, with that server.
 type Offered = (Arc<LanguageServer>, Vec<Value>);
 
+/// The folders besides a project's own that its language servers work on, as the project at a folder has them.
+pub type Neighbours = Arc<dyn Fn(&Path) -> Vec<PathBuf> + Send + Sync>;
+
 /// A language server of one project, started once however many files ask for it at the same time.
 type Slot = Arc<OnceLock<Result<Arc<LanguageServer>, String>>>;
+
+/// A companion server a file is open on, besides its language's own.
+struct Attached {
+    /// The server's spec.
+    spec: ServerSpec,
+    /// The scopes of the language its completions are offered in; everywhere when none.
+    scopes: Vec<String>,
+    /// The server, running.
+    server: Arc<LanguageServer>,
+}
+
+/// The servers that read one file: the one that is its language's and the others that run beside it.
+#[derive(Default)]
+struct Plan {
+    /// The language's server, when one reads the file.
+    primary: Option<ServerSpec>,
+    /// The others, each with the scopes of the language its completions are offered in; everywhere when none.
+    beside: Vec<(ServerSpec, Vec<String>)>,
+}
 
 /// A file open in a project.
 struct Document {
@@ -76,6 +108,8 @@ struct Document {
     early: Edits,
     /// The server it was opened on, once that is running.
     server: Option<Arc<LanguageServer>>,
+    /// The companion servers it was opened on, once those are running.
+    companions: Vec<Attached>,
 }
 
 /// The language servers and the open files.
@@ -98,10 +132,16 @@ pub struct Hub {
     lenses: Mutex<HashMap<(PathBuf, String), Offered>>,
     /// The language servers the reader chose other than the ones languages come with, by language.
     choices: Mutex<HashMap<String, ServerChoice>>,
+    /// What the reader set for each language server, by the server's id.
+    overrides: Mutex<HashMap<String, ServerOverride>>,
+    /// Whoever asks the extensions that brought languages about their language servers.
+    provider: Mutex<Option<Arc<dyn Provider>>>,
     /// Where diagnostics of open files go.
     sink: Sink,
     /// What servers are started with.
     environment: Environment,
+    /// The folders besides a project's own its servers work on.
+    neighbours: Mutex<Neighbours>,
 }
 
 /// How well `filter`, what a completion is matched by, matches the word `typed`: lower is better, nothing when it does not match.
@@ -170,6 +210,10 @@ fn catch_up(document: &mut Document, uri: &str) -> Option<ServerSpec> {
                 lost = document.spec.clone();
             }
         }
+        let text = document.buffer.text();
+        document.companions.retain(|held| {
+            held.server.change(uri, reached, &next, text).is_ok() && held.server.is_alive()
+        });
     }
     lost
 }
@@ -187,8 +231,60 @@ impl Hub {
             actions: Mutex::new(HashMap::new()),
             lenses: Mutex::new(HashMap::new()),
             choices: Mutex::new(HashMap::new()),
+            overrides: Mutex::new(HashMap::new()),
+            provider: Mutex::new(None),
             sink,
             environment,
+            neighbours: Mutex::new(Arc::new(|_| Vec::new())),
+        })
+    }
+
+    /// The folders `neighbours` names for each project are attached to the workspace of its language servers from now on, and the servers running are told which came and went.
+    pub fn attach_folders(&self, neighbours: Neighbours) {
+        if let Ok(mut held) = self.neighbours.lock() {
+            *held = neighbours;
+        }
+        self.refresh_folders();
+    }
+
+    /// The folders besides the project at `root`'s own that its servers work on.
+    fn neighbours_of(&self, root: &Path) -> Vec<PathBuf> {
+        let resolve = self.neighbours.lock().map(|held| held.clone()).ok();
+        resolve
+            .map(|resolve| resolve(root))
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|folder| folder != root && folder.is_dir())
+            .collect()
+    }
+
+    /// Tells every running server which folders the workspace of its project holds now.
+    pub fn refresh_folders(&self) {
+        let running: Vec<(PathBuf, Arc<LanguageServer>)> = self
+            .servers
+            .lock()
+            .map(|servers| {
+                servers
+                    .iter()
+                    .filter_map(|((root, _), slot)| {
+                        Some((root.clone(), slot.get()?.as_ref().ok()?.clone()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        for (root, server) in running {
+            let _ = server.set_extra_folders(&self.neighbours_of(&root));
+        }
+    }
+
+    /// Whether `file` is inside a folder attached to the workspace of a server running for the project at `root`, besides the project's own.
+    fn attached(&self, root: &Path, file: &Path) -> bool {
+        self.running(root).iter().any(|server| {
+            server
+                .workspace_folders()
+                .iter()
+                .skip(1)
+                .any(|folder| file.starts_with(folder))
         })
     }
 
@@ -202,6 +298,124 @@ impl Hub {
         match choice {
             Some(choice) => choice.applied(language, own),
             None => own,
+        }
+    }
+
+    /// Has `provider` say what the language servers of the languages extensions brought are started with and told, and what their completions and symbols are called.
+    pub fn set_provider(&self, provider: Arc<dyn Provider>) {
+        if let Ok(mut held) = self.provider.lock() {
+            *held = Some(provider);
+        }
+    }
+
+    /// The provider, when there is one.
+    fn provider(&self) -> Option<Arc<dyn Provider>> {
+        self.provider.lock().ok().and_then(|held| held.clone())
+    }
+
+    /// `spec`, a server of `language` that an extension provides, with what the extension says put under what the reader set, ready to start for the project at `root`; `spec` itself when it is not provided.
+    fn provided(
+        &self,
+        language: &str,
+        spec: &ServerSpec,
+        root: &Path,
+    ) -> Result<ServerSpec, String> {
+        let Some(provider) = self.provider().filter(|_| spec.provided) else {
+            return Ok(spec.clone());
+        };
+        let set = self
+            .overrides
+            .lock()
+            .ok()
+            .and_then(|held| held.get(&spec.id).cloned())
+            .unwrap_or_default();
+        let said = provider.provide(language, spec, root, set.binary.trim().is_empty())?;
+        let mut merged = spec.clone();
+        if let Some(command) = said.command {
+            merged.command = command.command;
+            merged.args = command.args;
+            merged.env.extend(command.env);
+            merged.install = None;
+            merged.check = Vec::new();
+        }
+        if let Some(init) = said.init {
+            merged.init = init;
+        }
+        if let Some(settings) = said.settings {
+            merged.settings = settings;
+        }
+        Ok(set.applied(&merged))
+    }
+
+    /// `spec` with what the reader set for the server it is put over it.
+    fn overridden(&self, spec: ServerSpec) -> ServerSpec {
+        match self
+            .overrides
+            .lock()
+            .ok()
+            .and_then(|held| held.get(&spec.id).cloned())
+        {
+            Some(set) => set.applied(&spec),
+            None => spec,
+        }
+    }
+
+    /// The servers that read the file at `path` of the project at `root`, written in `language`: the one that is the language's server and the others that run beside it, as the reader chose, each with what the reader set for it.
+    fn plan(&self, language: &str, root: &Path, path: &str) -> Plan {
+        let own = installed_manifest(language).and_then(|manifest| manifest.server);
+        let choice = self
+            .choices
+            .lock()
+            .ok()
+            .and_then(|choices| choices.get(language).cloned());
+        if matches!(choice, Some(ServerChoice::Refused(_))) {
+            return Plan::default();
+        }
+        let refused: Vec<String> = self
+            .choices
+            .lock()
+            .map(|choices| {
+                choices
+                    .iter()
+                    .filter(|(_, choice)| matches!(choice, ServerChoice::Refused(_)))
+                    .map(|(name, _)| name.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let offers: Vec<Candidate> = candidates::candidates_of(language, own.clone())
+            .into_iter()
+            .filter(|offer| !refused.contains(&offer.origin))
+            .collect();
+        let (primary, beside): (Option<ServerSpec>, Vec<Candidate>) = match &choice {
+            Some(ServerChoice::Servers(names)) => {
+                let mut list = candidates::named(&offers, names, language, root, path);
+                if list.is_empty() {
+                    (None, Vec::new())
+                } else {
+                    let first = list.remove(0);
+                    (Some(first.spec), list)
+                }
+            }
+            _ => {
+                let mut primary = self.chosen(language, own);
+                let mut beside: Vec<Candidate> =
+                    candidates::by_default(&offers, language, root, path)
+                        .into_iter()
+                        .filter(|offer| !offer.primary)
+                        .collect();
+                let off = matches!(choice, Some(ServerChoice::Off));
+                if primary.is_none() && !off && !beside.is_empty() {
+                    primary = Some(beside.remove(0).spec);
+                }
+                (primary, beside)
+            }
+        };
+        Plan {
+            primary: primary.map(|spec| self.overridden(spec)),
+            beside: beside
+                .into_iter()
+                .map(|offer| (self.overridden(offer.spec), offer.scopes))
+                .collect(),
         }
     }
 
@@ -229,31 +443,111 @@ impl Hub {
         }
     }
 
-    /// Takes the open file `key` off the server it is on and onto the one its language is read by now.
+    /// Takes the open file `key` off the servers it is on and onto the ones its language is read by now.
     fn move_server(self: &Arc<Self>, key: (PathBuf, String)) {
         let uri = file_uri(&key.0.join(&key.1));
-        let (old, spec) = {
+        let (old, dropped, spec) = {
             let Ok(mut documents) = self.documents.lock() else {
                 return;
             };
             let Some(document) = documents.get_mut(&key) else {
                 return;
             };
-            let own = installed_manifest(&document.language).and_then(|manifest| manifest.server);
-            let spec = self.chosen(&document.language, own);
+            let plan = self.plan(&document.language, &key.0, &key.1);
             let old = document.server.take().zip(document.spec.take());
-            document.spec = spec.clone();
-            (old, spec)
+            document.spec = plan.primary.clone();
+            let (kept, dropped): (Vec<Attached>, Vec<Attached>) =
+                std::mem::take(&mut document.companions)
+                    .into_iter()
+                    .partition(|held| {
+                        plan.beside.iter().any(|(spec, _)| spec.id == held.spec.id)
+                            && plan
+                                .primary
+                                .as_ref()
+                                .is_none_or(|primary| primary.id != held.spec.id)
+                    });
+            document.companions = kept;
+            (old, dropped, plan.primary)
         };
         if let Some((server, old_spec)) = old {
             let _ = server.close(&uri);
             self.stop_unused(&key.0, &old_spec, server);
         }
-        if let Some(spec) = spec {
-            let hub = self.clone();
-            std::thread::spawn(move || {
-                let _ = hub.attach(&key, &spec);
-            });
+        for held in dropped {
+            let _ = held.server.close(&uri);
+            self.stop_unused(&key.0, &held.spec, held.server);
+        }
+        match spec {
+            Some(spec) => {
+                let hub = self.clone();
+                std::thread::spawn(move || {
+                    let _ = hub.attach(&key, &spec);
+                });
+            }
+            None => {
+                let hub = self.clone();
+                std::thread::spawn(move || hub.attach_companions(&key));
+            }
+        }
+    }
+
+    /// What the reader set for each language server, by the server's id; a server whose settings changed is stopped and started again with them, and the open files it reads move onto the new one at once.
+    pub fn set_overrides(self: &Arc<Self>, overrides: HashMap<String, ServerOverride>) {
+        let before = match self.overrides.lock() {
+            Ok(mut held) => std::mem::replace(&mut *held, overrides.clone()),
+            Err(_) => return,
+        };
+        let changed: Vec<String> = before
+            .keys()
+            .chain(overrides.keys())
+            .filter(|id| before.get(*id) != overrides.get(*id))
+            .cloned()
+            .collect();
+        if changed.is_empty() {
+            return;
+        }
+        let stopping: Vec<Arc<LanguageServer>> = match self.servers.lock() {
+            Ok(mut servers) => {
+                let keys: Vec<(PathBuf, String)> = servers
+                    .keys()
+                    .filter(|(_, id)| changed.contains(id))
+                    .cloned()
+                    .collect();
+                keys.iter()
+                    .filter_map(|key| servers.remove(key))
+                    .filter_map(|slot| slot.get().and_then(|started| started.clone().ok()))
+                    .collect()
+            }
+            Err(_) => return,
+        };
+        let moved: Vec<(PathBuf, String)> = self
+            .documents
+            .lock()
+            .map(|mut documents| {
+                documents
+                    .iter_mut()
+                    .filter(|(_, document)| {
+                        document
+                            .spec
+                            .iter()
+                            .chain(document.companions.iter().map(|held| &held.spec))
+                            .any(|spec| changed.contains(&spec.id))
+                    })
+                    .map(|(key, document)| {
+                        document.server = None;
+                        document
+                            .companions
+                            .retain(|held| !changed.contains(&held.spec.id));
+                        key.clone()
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        for server in stopping {
+            std::thread::spawn(move || server.stop());
+        }
+        for key in moved {
+            self.move_server(key);
         }
     }
 
@@ -261,7 +555,9 @@ impl Hub {
     fn stop_unused(&self, root: &Path, spec: &ServerSpec, server: Arc<LanguageServer>) {
         let still_used = self.documents.lock().is_ok_and(|documents| {
             documents.iter().any(|((held_root, _), held)| {
-                held_root == root && held.spec.as_ref().is_some_and(|other| other.id == spec.id)
+                held_root == root
+                    && (held.spec.as_ref().is_some_and(|other| other.id == spec.id)
+                        || held.companions.iter().any(|other| other.spec.id == spec.id))
             })
         });
         if still_used {
@@ -303,7 +599,9 @@ impl Hub {
     fn server(
         self: &Arc<Self>,
         root: &Path,
+        language: &str,
         spec: &ServerSpec,
+        sink: DiagnosticsSink,
     ) -> Result<Arc<LanguageServer>, String> {
         let key = (root.to_path_buf(), spec.id.clone());
         for _ in 0..2 {
@@ -316,11 +614,13 @@ impl Hub {
                 .clone();
             let started = slot
                 .get_or_init(|| {
+                    let ready = self.provided(language, spec, root)?;
                     LanguageServer::start(
-                        spec,
+                        &ready,
                         root,
-                        &(self.environment)(root, spec),
-                        self.diagnostics_sink(),
+                        &self.neighbours_of(root),
+                        &(self.environment)(root, language, &ready),
+                        sink.clone(),
                     )
                     .map(Arc::new)
                 })
@@ -351,8 +651,9 @@ impl Hub {
         version: i32,
         text: &str,
     ) -> Result<Triggers, String> {
-        let manifest = installed_manifest(language)
+        installed_manifest(language)
             .ok_or_else(|| format!("{language} is not installed on this machine"))?;
+        let plan = self.plan(language, root, path);
         let key = (root.to_path_buf(), path.to_owned());
         let uri = file_uri(&root.join(path));
         let replaced = {
@@ -370,15 +671,22 @@ impl Hub {
             let mut document = Document {
                 language: language.to_owned(),
                 buffer: Buffer::new(text, version),
-                spec: self.chosen(language, manifest.server.clone()),
+                spec: plan.primary.clone(),
                 early,
                 server: None,
+                companions: Vec::new(),
             };
             catch_up(&mut document, &uri);
             documents.insert(key.clone(), document)
         };
-        if let Some(server) = replaced.and_then(|document| document.server) {
-            let _ = server.close(&uri);
+        if let Some(document) = replaced {
+            for server in document
+                .server
+                .into_iter()
+                .chain(document.companions.into_iter().map(|held| held.server))
+            {
+                let _ = server.close(&uri);
+            }
         }
         if let Ok(mut addresses) = self.addresses.lock() {
             addresses.insert(uri.clone(), key.clone());
@@ -391,7 +699,7 @@ impl Hub {
         {
             return Err(reason);
         }
-        let Some(spec) = self.chosen(language, manifest.server) else {
+        let Some(spec) = plan.primary else {
             return Ok(Triggers::default());
         };
         self.attach(&key, &spec)
@@ -403,7 +711,13 @@ impl Hub {
         key: &(PathBuf, String),
         spec: &ServerSpec,
     ) -> Result<Triggers, String> {
-        let server = self.server(&key.0, spec)?;
+        let language = self
+            .documents
+            .lock()
+            .ok()
+            .and_then(|documents| documents.get(key).map(|document| document.language.clone()))
+            .unwrap_or_default();
+        let server = self.server(&key.0, &language, spec, self.diagnostics_sink())?;
         let uri = file_uri(&key.0.join(&key.1));
         {
             let mut documents = self
@@ -416,7 +730,7 @@ impl Hub {
             if document.server.is_none() {
                 server.open(
                     &uri,
-                    &spec.language_id,
+                    spec.language_id_for(&document.language, &key.1),
                     document.buffer.version(),
                     document.buffer.text(),
                 )?;
@@ -426,6 +740,9 @@ impl Hub {
                 }
             }
         }
+        let hub = self.clone();
+        let companions_of = key.clone();
+        std::thread::spawn(move || hub.attach_companions(&companions_of));
         let kept = self
             .published
             .lock()
@@ -447,9 +764,100 @@ impl Hub {
             folds: server.folds(),
             links: server.links(),
             semantic_tokens: server.has_semantic_tokens(),
+            semantic_ranges: server.has_semantic_ranges(),
             inlay_hints: server.has_inlay_hints(),
             code_lens: server.has_code_lens(),
             inline_values: server.has_inline_values(),
+            document_links: server.has_document_links(),
+            colors: server.has_colors(),
+        })
+    }
+
+    /// Opens the open file `key` on each server that runs beside its language's own, starting those first; a server that cannot be started is left out, for the language's own server still reads the file.
+    fn attach_companions(self: &Arc<Self>, key: &(PathBuf, String)) {
+        let Some(language) = self
+            .documents
+            .lock()
+            .ok()
+            .and_then(|documents| documents.get(key).map(|document| document.language.clone()))
+        else {
+            return;
+        };
+        let uri = file_uri(&key.0.join(&key.1));
+        for (spec, scopes) in self.plan(&language, &key.0, &key.1).beside {
+            let quiet: DiagnosticsSink = Arc::new(|_, _, _| {});
+            let Ok(server) = self.server(&key.0, &language, &spec, quiet) else {
+                continue;
+            };
+            let Ok(mut documents) = self.documents.lock() else {
+                return;
+            };
+            let Some(document) = documents.get_mut(key) else {
+                return;
+            };
+            if document
+                .companions
+                .iter()
+                .any(|held| held.spec.id == spec.id)
+            {
+                continue;
+            }
+            let opened = server.open(
+                &uri,
+                spec.language_id_for(&language, &key.1),
+                document.buffer.version(),
+                document.buffer.text(),
+            );
+            if opened.is_ok() {
+                document.companions.push(Attached {
+                    spec,
+                    scopes,
+                    server,
+                });
+            }
+        }
+    }
+
+    /// The language of the open file `key` and the spec of the server it is on, when it is on one.
+    fn language_and_spec(&self, key: &(PathBuf, String)) -> (String, Option<ServerSpec>) {
+        self.documents
+            .lock()
+            .ok()
+            .and_then(|documents| {
+                documents
+                    .get(key)
+                    .map(|document| (document.language.clone(), document.spec.clone()))
+            })
+            .unwrap_or_default()
+    }
+
+    /// Renames `items`, completions of the server `spec` for files of `language`, as the extension that provides the server says.
+    fn label_completions(&self, language: &str, spec: &ServerSpec, items: &mut [Completion]) {
+        let Some(provider) = self.provider().filter(|_| spec.provided) else {
+            return;
+        };
+        let labels = provider.label_completions(language, spec, items);
+        for (item, label) in items.iter_mut().zip(labels) {
+            if let Some(label) = label {
+                item.label = label;
+            }
+        }
+    }
+
+    /// The companion servers the open file `key` is on, each with the scopes of its language their completions are offered in, which are none when they are offered everywhere.
+    fn companions_of(
+        &self,
+        key: &(PathBuf, String),
+    ) -> Vec<(Vec<String>, Arc<LanguageServer>, ServerSpec)> {
+        let Ok(documents) = self.documents.lock() else {
+            return Vec::new();
+        };
+        documents.get(key).map_or_else(Vec::new, |document| {
+            document
+                .companions
+                .iter()
+                .map(|held| (held.scopes.clone(), held.server.clone(), held.spec.clone()))
+                .collect()
         })
     }
 
@@ -526,6 +934,10 @@ impl Hub {
         if let Ok(mut lenses) = self.lenses.lock() {
             lenses.remove(&key);
         }
+        for held in document.companions {
+            let _ = held.server.close(&uri);
+            self.stop_unused(root, &held.spec, held.server);
+        }
         let (Some(server), Some(spec)) = (document.server, document.spec) else {
             return;
         };
@@ -564,6 +976,36 @@ impl Hub {
         }
     }
 
+    /// What `look` makes of the language and the text of the open file at `path` of the project at `root`, once the file reaches `version`; it is told the text as the language server has it, whether or not the language has a server.
+    pub fn read_open<T>(
+        &self,
+        root: &Path,
+        path: &str,
+        version: i32,
+        look: impl FnOnce(&str, &Buffer) -> T,
+    ) -> Result<T, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let deadline = Instant::now() + CATCHING_UP;
+        let mut documents = self
+            .documents
+            .lock()
+            .map_err(|_| "the server is shutting down".to_owned())?;
+        loop {
+            let document = documents
+                .get(&key)
+                .ok_or_else(|| format!("{path} is not open"))?;
+            let now = Instant::now();
+            if document.buffer.version() >= version || now >= deadline {
+                return Ok(look(&document.language, &document.buffer));
+            }
+            documents = self
+                .changed
+                .wait_timeout(documents, deadline - now)
+                .map_err(|_| "the server is shutting down".to_owned())?
+                .0;
+        }
+    }
+
     /// What could be written at `position` of the open file at `path` of the project at `root`, once it reaches `version`, the best match for the word typed there first; `trigger` is the character typed that asked for them, if one did.
     pub fn completion(
         &self,
@@ -572,6 +1014,7 @@ impl Hub {
         version: i32,
         position: Position,
         trigger: Option<&str>,
+        scope: Option<&str>,
     ) -> Result<Vec<Completion>, String> {
         let key = (root.to_path_buf(), path.to_owned());
         let Some((server, typed)) = self.caught_up(&key, version, |buffer| {
@@ -580,8 +1023,40 @@ impl Hub {
         else {
             return Ok(Vec::new());
         };
-        let items = server.completion(&file_uri(&root.join(path)), position, trigger)?;
+        let address = file_uri(&root.join(path));
+        let (language, own) = self.language_and_spec(&key);
+        let mut items = server.completion(&address, position, trigger)?;
+        if let Some(own) = &own {
+            self.label_completions(&language, own, &mut items);
+        }
+        for (scopes, companion, spec) in self.companions_of(&key) {
+            let here = scopes.is_empty()
+                || scope.is_some_and(|scope| scopes.iter().any(|name| name == scope));
+            if here && let Ok(mut more) = companion.completion(&address, position, trigger) {
+                self.label_completions(&language, &spec, &mut more);
+                more.iter_mut().for_each(|item| item.resolve = None);
+                items.extend(more);
+            }
+        }
         Ok(rank(items, &typed, MOST_COMPLETIONS))
+    }
+
+    /// The completion `raw`, as the language server of the open file at `path` of the project at `root` wrote it in its list, with what that server adds when asked: its documentation and detail, and the edits choosing it makes besides writing it.
+    pub fn resolve_completion(
+        &self,
+        root: &Path,
+        path: &str,
+        raw: &str,
+    ) -> Result<Completion, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let server = self
+            .documents
+            .lock()
+            .map_err(|_| "the server is shutting down".to_owned())?
+            .get(&key)
+            .and_then(|document| document.server.clone())
+            .ok_or_else(|| format!("{path} has no language server"))?;
+        server.resolve_completion(raw)
     }
 
     /// What the server says about the thing at `position` of the open file at `path` of the project at `root`, once it reaches `version`.
@@ -596,7 +1071,21 @@ impl Hub {
         let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
             return Ok(None);
         };
-        server.hover(&file_uri(&root.join(path)), position)
+        let address = file_uri(&root.join(path));
+        let mut hover = server.hover(&address, position)?;
+        for (_, companion, _) in self.companions_of(&key) {
+            let Ok(Some(more)) = companion.hover(&address, position) else {
+                continue;
+            };
+            hover = Some(match hover {
+                Some(held) => Hover {
+                    text: format!("{}\n\n---\n\n{}", held.text, more.text),
+                    span: held.span.or(more.span),
+                },
+                None => more,
+            });
+        }
+        Ok(hover)
     }
 
     /// How a level of indentation is written in the file at `path`: the columns it is and whether it is a tab, as its language says.
@@ -780,7 +1269,7 @@ impl Hub {
         found
     }
 
-    /// The symbols of the project at `root` whose names match `query`, as the language server of the open file at `path` finds them, defined inside the project, at most a limit of them.
+    /// The symbols of the project at `root` whose names match `query`, as the language server of the open file at `path` finds them, defined inside the project or in a folder attached to its workspace, at most a limit of them; those in attached folders come with their files, to be shown read only.
     pub fn workspace_symbols(
         &self,
         root: &Path,
@@ -788,6 +1277,7 @@ impl Hub {
         query: &str,
     ) -> Result<Vec<Location>, String> {
         let key = (root.to_path_buf(), path.to_owned());
+        let (language, spec) = self.language_and_spec(&key);
         let server = self
             .documents
             .lock()
@@ -797,14 +1287,39 @@ impl Hub {
         let Some(server) = server else {
             return Ok(Vec::new());
         };
-        let found = server.workspace_symbols(query)?;
+        let (mut found, symbols): (Vec<_>, Vec<SymbolLabel>) =
+            server.workspace_symbols(query)?.into_iter().unzip();
+        if let (Some(provider), Some(spec)) = (self.provider(), spec.filter(|spec| spec.provided)) {
+            for (place, label) in found
+                .iter_mut()
+                .zip(provider.label_symbols(&language, &spec, &symbols))
+            {
+                if label.is_some() {
+                    place.2 = label;
+                }
+            }
+        }
         let mut texts: HashMap<PathBuf, Option<String>> = HashMap::new();
-        Ok(found
-            .into_iter()
-            .take(MOST_SYMBOLS)
-            .filter_map(|place| self.location(root, place, Seek::References, &mut texts))
-            .filter(|location| location.inside)
-            .collect())
+        let mut inside = Vec::new();
+        let mut beside = Vec::new();
+        for place in found.into_iter().take(MOST_SYMBOLS) {
+            let in_attached = path_of(&place.0).is_some_and(|file| {
+                relative_to(root, &file).is_none() && self.attached(root, &file)
+            });
+            if in_attached {
+                if beside.len() < MOST_ATTACHED_SYMBOLS
+                    && let Some(location) = self.location(root, place, Seek::Definition, &mut texts)
+                {
+                    beside.push(location);
+                }
+            } else if let Some(location) = self.location(root, place, Seek::References, &mut texts)
+                && location.inside
+            {
+                inside.push(location);
+            }
+        }
+        inside.extend(beside);
+        Ok(inside)
     }
 
     /// The stretches of the open file at `path` of the project at `root` where the thing at `position` is used, once the file reaches `version`.
@@ -822,18 +1337,31 @@ impl Hub {
         server.highlights(&file_uri(&root.join(path)), position)
     }
 
-    /// What each name of the open file at `path` of the project at `root` is, once the file reaches `version`; none when its language server does not say.
+    /// What each name of the open file at `path` of the project at `root` is, once the file reaches `version`, only those within `range` when it is given and its language server says the names of a stretch, which is told alongside; none when its language server does not say.
     pub fn semantic_tokens(
         &self,
         root: &Path,
         path: &str,
         version: i32,
-    ) -> Result<Vec<SemanticToken>, String> {
+        user: &[crate::semantic::TokenRule],
+        range: Option<Span>,
+    ) -> Result<(Vec<SemanticToken>, bool), String> {
         let key = (root.to_path_buf(), path.to_owned());
         let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), false));
         };
-        server.semantic_tokens(&file_uri(&root.join(path)))
+        let language = self
+            .documents
+            .lock()
+            .ok()
+            .and_then(|documents| {
+                documents
+                    .get(&key)
+                    .map(|document| document.language.clone())
+            })
+            .unwrap_or_default();
+        let rules = crate::semantic::rules_for(&language, user);
+        server.semantic_tokens(&file_uri(&root.join(path)), &rules, range)
     }
 
     /// Which stretches of the open file at `path` of the project at `root` within `range` to show the values of while the program is paused at `stopped` in the debugger's frame `frame`, once the file reaches `version`; none when its language server does not say.
@@ -886,6 +1414,80 @@ impl Hub {
         Ok(lenses)
     }
 
+    /// The stretches of the open file at `path` of the project at `root` that lead somewhere when pressed, once the file reaches `version`: web addresses, and files inside the project; links to anywhere else are left out.
+    pub fn document_links(
+        &self,
+        root: &Path,
+        path: &str,
+        version: i32,
+    ) -> Result<Vec<DocumentLink>, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
+            return Ok(Vec::new());
+        };
+        let found = server.document_links(&file_uri(&root.join(path)))?;
+        Ok(found
+            .into_iter()
+            .filter_map(|(span, address)| {
+                let target = match address {
+                    LinkAnswer::Address(address) => link_target(root, &address)?,
+                    LinkAnswer::Raw(link) => LinkTarget::Unresolved { link },
+                };
+                Some(DocumentLink { span, target })
+            })
+            .collect())
+    }
+
+    /// Where the link `raw`, as the language server of the open file at `path` of the project at `root` wrote it, leads; nothing when the server does not say or it leads outside the project and the web.
+    pub fn resolve_link(
+        &self,
+        root: &Path,
+        path: &str,
+        raw: &str,
+    ) -> Result<Option<LinkTarget>, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let server = self
+            .documents
+            .lock()
+            .map_err(|_| "the server is shutting down".to_owned())?
+            .get(&key)
+            .and_then(|document| document.server.clone())
+            .ok_or_else(|| format!("{path} has no language server"))?;
+        Ok(server
+            .resolve_link(raw)?
+            .and_then(|address| link_target(root, &address)))
+    }
+
+    /// The ways the language server of the open file at `path` of the project at `root` offers to write `color` in place of `span`, once the file reaches `version`.
+    pub fn color_presentations(
+        &self,
+        root: &Path,
+        path: &str,
+        version: i32,
+        span: Span,
+        color: [u8; 4],
+    ) -> Result<Vec<ColorPresentation>, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
+            return Ok(Vec::new());
+        };
+        server.color_presentations(&file_uri(&root.join(path)), color, span)
+    }
+
+    /// The stretches of the open file at `path` of the project at `root` that spell a colour, once the file reaches `version`; none when its language server does not say.
+    pub fn colors(
+        &self,
+        root: &Path,
+        path: &str,
+        version: i32,
+    ) -> Result<Vec<ColorSwatch>, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
+            return Ok(Vec::new());
+        };
+        server.colors(&file_uri(&root.join(path)))
+    }
+
     /// Presses the `index`-th lens last offered for the open file at `path` of the project at `root`: the places it points to, as to be shown, or the changes the press made to the open files, files no client has open being changed on disk here.
     pub fn press_lens(
         &self,
@@ -929,6 +1531,21 @@ impl Hub {
             return Ok(None);
         };
         server.signature(&file_uri(&root.join(path)), position)
+    }
+
+    /// What can be renamed at `position` of the open file at `path` of the project at `root`, once the file reaches `version`; nothing when nothing there can be.
+    pub fn prepare_rename(
+        &self,
+        root: &Path,
+        path: &str,
+        version: i32,
+        position: Position,
+    ) -> Result<Option<RenameTarget>, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
+            return Err("no language server reads this file".to_owned());
+        };
+        server.prepare_rename(&file_uri(&root.join(path)), position)
     }
 
     /// Renames the thing at `position` of the open file at `path` of the project at `root` to `name`, once the file reaches `version`: files of the project no client has open are changed on disk here, and the changes to the open ones are returned for the clients to make.
@@ -990,20 +1607,21 @@ impl Hub {
         }
     }
 
-    /// The changes the language server of the open file at `path` of the project at `root` offers for the stretch `span`, once the file reaches `version`; they are kept to be taken by their place in the list.
+    /// The changes the language server of the open file at `path` of the project at `root` offers for the stretch `span`, once the file reaches `version`, only those of the kinds in `only` when it names any; they are kept to be taken by their place in the list.
     pub fn code_actions(
         &self,
         root: &Path,
         path: &str,
         version: i32,
         span: Span,
+        only: &[String],
     ) -> Result<Vec<CodeAction>, String> {
         let key = (root.to_path_buf(), path.to_owned());
         let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
             return Ok(Vec::new());
         };
         let offered: Vec<Value> = server
-            .code_actions(&file_uri(&root.join(path)), span)?
+            .code_actions(&file_uri(&root.join(path)), span, only)?
             .into_iter()
             .filter(|value| action_of(value).is_some())
             .collect();
@@ -1014,13 +1632,13 @@ impl Hub {
         Ok(actions)
     }
 
-    /// Takes the `index`-th change last offered for the open file at `path` of the project at `root`: files of the project no client has open are changed on disk here, and the changes to the open ones are returned for the clients to make.
+    /// Takes the `index`-th change last offered for the open file at `path` of the project at `root`: files of the project no client has open are changed on disk here, and the changes to the open ones are returned for the clients to make, with the documents the language server asked to have shown while it did, such as the page of documentation a command opens.
     pub fn take_action(
         &self,
         root: &Path,
         path: &str,
         index: usize,
-    ) -> Result<Vec<FileEdit>, String> {
+    ) -> Result<(Vec<FileEdit>, Vec<LinkTarget>), String> {
         let key = (root.to_path_buf(), path.to_owned());
         let (server, action) = self
             .actions
@@ -1031,8 +1649,12 @@ impl Hub {
                 Some((server.clone(), offered.get(index)?.clone()))
             })
             .ok_or_else(|| "that change is no longer offered".to_owned())?;
-        let edits = server.take_action(&action)?;
-        self.share_edits(root, &edits)
+        let (edits, shown) = server.take_action(&action)?;
+        let shown = shown
+            .iter()
+            .filter_map(|asked| link_target(root, asked.get("uri")?.as_str()?))
+            .collect();
+        Ok((self.share_edits(root, &edits)?, shown))
     }
 
     /// Splits the edits across the project at `root` that a server wrote as `edits`: files of the project no client has open are changed on disk at once, and the changes to the open ones are returned; files outside the project are left alone.
@@ -1062,6 +1684,31 @@ impl Hub {
         }
         Ok(open)
     }
+}
+
+/// Where the address `address` a language server gave a link leads: a web address as it is, a file inside the project at `root` with the place its fragment names, `L12,5` or `12,5` counted from 1; nothing for any other address.
+fn link_target(root: &Path, address: &str) -> Option<LinkTarget> {
+    if ["http://", "https://", "mailto:"]
+        .iter()
+        .any(|scheme| address.starts_with(scheme))
+    {
+        return Some(LinkTarget::Url {
+            address: address.to_owned(),
+        });
+    }
+    let (file, fragment) = address.split_once('#').unwrap_or((address, ""));
+    let path = relative_to(root, &path_of(file)?)?;
+    let mut numbers = fragment
+        .trim_start_matches('L')
+        .split([',', ':', 'C'])
+        .filter_map(|number| number.trim_start_matches('L').parse::<u32>().ok());
+    let position = numbers.next().map(|line| {
+        pm_buffer::Position::new(
+            line.saturating_sub(1),
+            numbers.next().map_or(0, |column| column.saturating_sub(1)),
+        )
+    });
+    Some(LinkTarget::File { path, position })
 }
 
 /// The path of `file` from the root of the project at `root`, when it is inside it.

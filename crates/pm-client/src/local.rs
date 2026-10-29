@@ -39,8 +39,11 @@ fn running() -> Option<Target> {
     })
 }
 
-/// Stops the server on this machine when it runs another build than this program, or is too old to say what it runs, so that a rebuilt or freshly started program is never served by the code it replaced. Its sessions are kept on disk and its agents start again on their next prompt.
+/// Stops the server on this machine when it runs another build than this program, or is too old to say what it runs, so that a rebuilt or freshly started program is never served by the code it replaced. Its sessions are kept on disk and its agents start again on their next prompt. A program that an update relaunched leaves it be, so that the agents keep running through the update.
 fn retire_outdated() {
+    if std::env::var_os(pm_update::KEEP_SERVER).is_some() {
+        return;
+    }
     let Some(held) = credential() else {
         return;
     };

@@ -29,6 +29,17 @@ impl Document {
             .is_some_and(|syntax| syntax.in_text(self.field.caret()))
     }
 
+    /// Whether the language does not write the pair `open` opens at the caret, because the scope the caret is in is one it is `not_in`.
+    fn pair_excluded(&self, open: char) -> bool {
+        let Some(scope) = self.scope_name() else {
+            return false;
+        };
+        self.editing
+            .not_in
+            .iter()
+            .any(|(held, names)| *held == open && names.contains(&scope))
+    }
+
     /// The edit that types `character` as the language pairs it, or nothing when it is typed as it is: a selection is wrapped in the pair it opens, an opening character is written with its closing one, and a closing character is typed over when it is already next.
     pub fn typed_edit(&self, character: char) -> Option<Edit> {
         self.typed_edit_with(character, true, true)
@@ -37,6 +48,13 @@ impl Document {
     /// The edit that types `character` as the language pairs it, closing what it opens only when `close` and going around a selection only when `surround`, or nothing when it is typed as it is.
     pub fn typed_edit_with(&self, character: char, close: bool, surround: bool) -> Option<Edit> {
         let caret = self.field.caret();
+        if character == '>'
+            && close
+            && self.field.selection().is_none()
+            && let Some(edit) = self.closing_tag_edit()
+        {
+            return Some(edit);
+        }
         let pair = self
             .editing
             .pairs
@@ -65,7 +83,13 @@ impl Document {
             return Some(Edit::Place(caret + character.len_utf8(), false));
         }
         let (open, close) = pair.filter(|_| close)?;
-        if self.caret_in_text() || !opens_before(next) {
+        let stated = self.editing.not_in.iter().any(|(held, _)| *held == open);
+        let barred = if stated {
+            self.pair_excluded(open)
+        } else {
+            self.caret_in_text()
+        };
+        if barred || !opens_before(next) {
             return None;
         }
         let quote = open == close;
@@ -125,6 +149,21 @@ impl Document {
         }
         self.grown.push((range, larger.clone()));
         Some(Edit::Select(larger.start, larger.end))
+    }
+
+    /// The edit that selects the `object` around the caret, or what is inside it when `inside`, as the language's text objects say; none when the language has none there.
+    pub fn select_object_edit(
+        &self,
+        object: pm_treesitter::TextObject,
+        inside: bool,
+    ) -> Option<Edit> {
+        let range = self.syntax.as_ref()?.text_object(
+            self.field.text(),
+            object,
+            inside,
+            self.field.caret(),
+        )?;
+        Some(Edit::Select(range.start, range.end))
     }
 
     /// The edit that shrinks the selection back to what it was before it last grew, when it is still what it grew to.

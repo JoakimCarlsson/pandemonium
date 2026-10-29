@@ -189,7 +189,16 @@ fn repository(state: &WorkspaceState) -> Option<Node> {
             vec![
                 row()
                     .child(glyph(IconName::Folder, 4.0, Role::Muted))
-                    .child(line("Not a Git repository", 13, 1.4, Role::Muted)),
+                    .child(line(
+                        if home.unknown {
+                            "Reading the folder…"
+                        } else {
+                            "Not a Git repository"
+                        },
+                        13,
+                        1.4,
+                        Role::Muted,
+                    )),
             ],
         );
     }

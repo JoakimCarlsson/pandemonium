@@ -165,6 +165,10 @@ pub enum Action {
     Undo,
     /// Does again what was undone.
     Redo,
+    /// Takes back the last move of the carets or selections, leaving the text.
+    CursorUndo,
+    /// Makes again the last move of the carets that was taken back.
+    CursorRedo,
     /// Commits the staged changes.
     Commit,
     /// Commits the staged changes and pushes them.
@@ -261,6 +265,16 @@ pub enum Action {
     ExpandSelection,
     /// Shrinks it back.
     ShrinkSelection,
+    /// Selects the whole function around the caret, as the language's text objects say.
+    SelectFunction,
+    /// Selects the body of the function around the caret.
+    SelectFunctionBody,
+    /// Selects the whole class around the caret.
+    SelectClass,
+    /// Selects the contents of the class around the caret.
+    SelectClassBody,
+    /// Selects the comment around the caret.
+    SelectComment,
     /// Goes to the next problem.
     NextProblem,
     /// Goes to the problem before.
@@ -277,6 +291,54 @@ pub enum Action {
     SelectLine,
     /// Joins the line with the next.
     JoinLines,
+    /// Writes the selection, or the word at the caret, in capitals.
+    UppercaseSelection,
+    /// Writes the selection, or the word at the caret, in small letters.
+    LowercaseSelection,
+    /// Starts each word of the selection, or the word at the caret, with a capital.
+    TitleCaseSelection,
+    /// Turns capitals of the selection, or the word at the caret, into small letters and the other way round.
+    SwapCaseSelection,
+    /// Writes the selection, or the word at the caret, as snake_case.
+    SnakeCaseSelection,
+    /// Writes the selection, or the word at the caret, as kebab-case.
+    KebabCaseSelection,
+    /// Writes the selection, or the word at the caret, as camelCase.
+    CamelCaseSelection,
+    /// Writes the selection, or the word at the caret, as PascalCase.
+    PascalCaseSelection,
+    /// Writes the selection, or the word at the caret, as CONSTANT_CASE.
+    ConstantCaseSelection,
+    /// Sorts the selected lines, or every line when nothing is selected, from first to last.
+    SortLinesAscending,
+    /// Sorts the selected lines, or every line when nothing is selected, from last to first.
+    SortLinesDescending,
+    /// Sorts the selected lines, or every line when nothing is selected, without telling capitals from small letters.
+    SortLinesIgnoringCase,
+    /// Turns the order of the selected lines round, or of every line when nothing is selected.
+    ReverseLines,
+    /// Deletes the selected lines that come again, or those of the whole file when nothing is selected, keeping the first of each.
+    UniqueLines,
+    /// Swaps the characters on both sides of the caret.
+    TransposeCharacters,
+    /// Takes the spaces and tabs off the ends of the lines.
+    TrimTrailingWhitespace,
+    /// Deletes from the caret to the end of its line.
+    DeleteToLineEnd,
+    /// Deletes from the caret to the start of its line.
+    DeleteToLineStart,
+    /// Wraps the selection in a block comment, or takes the comment away.
+    ToggleBlockComment,
+    /// Puts a caret at the end of each line the selection covers.
+    SplitSelectionIntoLines,
+    /// Grows a rectangular selection a line up.
+    ColumnSelectUp,
+    /// Grows a rectangular selection a line down.
+    ColumnSelectDown,
+    /// Grows a rectangular selection a column left.
+    ColumnSelectLeft,
+    /// Grows a rectangular selection a column right.
+    ColumnSelectRight,
     /// Goes to the matching bracket.
     MatchingBracket,
     /// Starts a new line below.
@@ -287,6 +349,10 @@ pub enum Action {
     Fold,
     /// Unfolds it.
     Unfold,
+    /// Folds every block of the file that is not inside another.
+    FoldAll,
+    /// Unfolds every block of the file.
+    UnfoldAll,
     /// Finds in the file.
     Find,
     /// Finds and replaces in the file.
@@ -323,11 +389,33 @@ pub enum Action {
     TerminalClear,
     /// Ends the shell.
     KillTerminal,
+    /// Sorts and prunes the imports of the file as its language server says.
+    OrganizeImports,
+    /// Applies every fix the language server marks safe to apply at once.
+    FixAll,
+    /// Shows the next tab of the pane.
+    NextTab,
+    /// Shows the tab before in the pane.
+    PreviousTab,
+    /// Opens the file tab closed last again.
+    ReopenTab,
+    /// Goes to the next changed stretch of the file, as the marks beside its lines show.
+    NextChange,
+    /// Goes to the changed stretch of the file before, as the marks beside its lines show.
+    PreviousChange,
+    /// Limits finding to the lines selected, or to the whole file again.
+    ToggleFindInSelection,
+    /// Compares the file with what the clipboard holds.
+    CompareWithClipboard,
+    /// Compares the file with what was last saved of it.
+    CompareWithSaved,
+    /// Compares the file with another file of the project, picked from a list.
+    CompareWithFile,
 }
 
 impl Action {
     /// Every action, in the order the keymap lists them.
-    pub const ALL: [Self; 155] = [
+    pub const ALL: [Self; 199] = [
         Self::CommandPalette,
         Self::OpenSettings,
         Self::GoToSession,
@@ -404,6 +492,8 @@ impl Action {
         Self::CopyWithoutIndentation,
         Self::Undo,
         Self::Redo,
+        Self::CursorUndo,
+        Self::CursorRedo,
         Self::Commit,
         Self::CommitAndPush,
         Self::Pull,
@@ -451,10 +541,39 @@ impl Action {
         Self::DuplicateLineDown,
         Self::DeleteLine,
         Self::JoinLines,
+        Self::UppercaseSelection,
+        Self::LowercaseSelection,
+        Self::TitleCaseSelection,
+        Self::SwapCaseSelection,
+        Self::SnakeCaseSelection,
+        Self::KebabCaseSelection,
+        Self::CamelCaseSelection,
+        Self::PascalCaseSelection,
+        Self::ConstantCaseSelection,
+        Self::SortLinesAscending,
+        Self::SortLinesDescending,
+        Self::SortLinesIgnoringCase,
+        Self::ReverseLines,
+        Self::UniqueLines,
+        Self::TransposeCharacters,
+        Self::TrimTrailingWhitespace,
+        Self::DeleteToLineEnd,
+        Self::DeleteToLineStart,
+        Self::ToggleBlockComment,
+        Self::SplitSelectionIntoLines,
+        Self::ColumnSelectUp,
+        Self::ColumnSelectDown,
+        Self::ColumnSelectLeft,
+        Self::ColumnSelectRight,
         Self::NewlineBelow,
         Self::NewlineAbove,
         Self::ExpandSelection,
         Self::ShrinkSelection,
+        Self::SelectFunction,
+        Self::SelectFunctionBody,
+        Self::SelectClass,
+        Self::SelectClassBody,
+        Self::SelectComment,
         Self::SelectLine,
         Self::AddNextOccurrence,
         Self::SelectAllOccurrences,
@@ -463,6 +582,8 @@ impl Action {
         Self::MatchingBracket,
         Self::Fold,
         Self::Unfold,
+        Self::FoldAll,
+        Self::UnfoldAll,
         Self::NextProblem,
         Self::PreviousProblem,
         Self::Find,
@@ -483,6 +604,17 @@ impl Action {
         Self::TerminalSelectAll,
         Self::TerminalClear,
         Self::KillTerminal,
+        Self::OrganizeImports,
+        Self::FixAll,
+        Self::NextTab,
+        Self::PreviousTab,
+        Self::ReopenTab,
+        Self::NextChange,
+        Self::PreviousChange,
+        Self::ToggleFindInSelection,
+        Self::CompareWithClipboard,
+        Self::CompareWithSaved,
+        Self::CompareWithFile,
     ];
 
     /// The name it is kept under in the settings.
@@ -564,6 +696,8 @@ impl Action {
             Self::CopyWithoutIndentation => "copy_without_indentation",
             Self::Undo => "undo",
             Self::Redo => "redo",
+            Self::CursorUndo => "cursor_undo",
+            Self::CursorRedo => "cursor_redo",
             Self::Commit => "git_commit",
             Self::CommitAndPush => "git_commit_and_push",
             Self::Pull => "git_pull",
@@ -597,6 +731,8 @@ impl Action {
             Self::Format => "format",
             Self::FormatSelection => "format_selection",
             Self::CodeActions => "code_actions",
+            Self::OrganizeImports => "organize_imports",
+            Self::FixAll => "fix_all",
             Self::Hover => "hover",
             Self::Complete => "complete",
             Self::SignatureHelp => "signature_help",
@@ -612,6 +748,11 @@ impl Action {
             Self::DeleteLine => "delete_line",
             Self::ExpandSelection => "expand_selection",
             Self::ShrinkSelection => "shrink_selection",
+            Self::SelectFunction => "select_function",
+            Self::SelectFunctionBody => "select_function_body",
+            Self::SelectClass => "select_class",
+            Self::SelectClassBody => "select_class_body",
+            Self::SelectComment => "select_comment",
             Self::NextProblem => "next_problem",
             Self::PreviousProblem => "previous_problem",
             Self::AddNextOccurrence => "add_next_occurrence",
@@ -620,11 +761,37 @@ impl Action {
             Self::AddCaretBelow => "add_caret_below",
             Self::SelectLine => "select_line",
             Self::JoinLines => "join_lines",
+            Self::UppercaseSelection => "uppercase",
+            Self::LowercaseSelection => "lowercase",
+            Self::TitleCaseSelection => "title_case",
+            Self::SwapCaseSelection => "swap_case",
+            Self::SnakeCaseSelection => "snake_case",
+            Self::KebabCaseSelection => "kebab_case",
+            Self::CamelCaseSelection => "camel_case",
+            Self::PascalCaseSelection => "pascal_case",
+            Self::ConstantCaseSelection => "constant_case",
+            Self::SortLinesAscending => "sort_lines_ascending",
+            Self::SortLinesDescending => "sort_lines_descending",
+            Self::SortLinesIgnoringCase => "sort_lines_ignoring_case",
+            Self::ReverseLines => "reverse_lines",
+            Self::UniqueLines => "unique_lines",
+            Self::TransposeCharacters => "transpose_characters",
+            Self::TrimTrailingWhitespace => "trim_trailing_whitespace",
+            Self::DeleteToLineEnd => "delete_to_line_end",
+            Self::DeleteToLineStart => "delete_to_line_start",
+            Self::ToggleBlockComment => "toggle_block_comment",
+            Self::SplitSelectionIntoLines => "split_selection_into_lines",
+            Self::ColumnSelectUp => "column_select_up",
+            Self::ColumnSelectDown => "column_select_down",
+            Self::ColumnSelectLeft => "column_select_left",
+            Self::ColumnSelectRight => "column_select_right",
             Self::MatchingBracket => "matching_bracket",
             Self::NewlineBelow => "newline_below",
             Self::NewlineAbove => "newline_above",
             Self::Fold => "fold",
             Self::Unfold => "unfold",
+            Self::FoldAll => "fold_all",
+            Self::UnfoldAll => "unfold_all",
             Self::Find => "find",
             Self::Replace => "replace",
             Self::FindNext => "find_next",
@@ -643,6 +810,15 @@ impl Action {
             Self::TerminalSelectAll => "terminal_select_all",
             Self::TerminalClear => "terminal_clear",
             Self::KillTerminal => "kill_terminal",
+            Self::NextTab => "next_tab",
+            Self::PreviousTab => "previous_tab",
+            Self::ReopenTab => "reopen_tab",
+            Self::NextChange => "next_change",
+            Self::PreviousChange => "previous_change",
+            Self::ToggleFindInSelection => "toggle_find_in_selection",
+            Self::CompareWithClipboard => "compare_with_clipboard",
+            Self::CompareWithSaved => "compare_with_saved",
+            Self::CompareWithFile => "compare_with_file",
         }
     }
 
@@ -725,6 +901,8 @@ impl Action {
             Self::CopyWithoutIndentation => "Copy Without Indentation",
             Self::Undo => "Undo",
             Self::Redo => "Redo",
+            Self::CursorUndo => "Cursor Undo",
+            Self::CursorRedo => "Cursor Redo",
             Self::Commit => "Commit",
             Self::CommitAndPush => "Commit and Push",
             Self::Pull => "Pull",
@@ -758,6 +936,8 @@ impl Action {
             Self::Format => "Format Buffer",
             Self::FormatSelection => "Format Selection",
             Self::CodeActions => "Show Code Actions",
+            Self::OrganizeImports => "Organize Imports",
+            Self::FixAll => "Fix All",
             Self::Hover => "Show Hover",
             Self::Complete => "Show Completions",
             Self::SignatureHelp => "Show Signature Help",
@@ -773,6 +953,11 @@ impl Action {
             Self::DeleteLine => "Delete Line",
             Self::ExpandSelection => "Expand Selection",
             Self::ShrinkSelection => "Shrink Selection",
+            Self::SelectFunction => "Select Function",
+            Self::SelectFunctionBody => "Select Function Body",
+            Self::SelectClass => "Select Class",
+            Self::SelectClassBody => "Select Class Body",
+            Self::SelectComment => "Select Comment",
             Self::NextProblem => "Next Problem",
             Self::PreviousProblem => "Previous Problem",
             Self::AddNextOccurrence => "Add Next Occurrence",
@@ -781,11 +966,37 @@ impl Action {
             Self::AddCaretBelow => "Add Caret Below",
             Self::SelectLine => "Select Line",
             Self::JoinLines => "Join Lines",
+            Self::UppercaseSelection => "Transform to Uppercase",
+            Self::LowercaseSelection => "Transform to Lowercase",
+            Self::TitleCaseSelection => "Transform to Title Case",
+            Self::SwapCaseSelection => "Swap Case",
+            Self::SnakeCaseSelection => "Transform to Snake Case",
+            Self::KebabCaseSelection => "Transform to Kebab Case",
+            Self::CamelCaseSelection => "Transform to Camel Case",
+            Self::PascalCaseSelection => "Transform to Pascal Case",
+            Self::ConstantCaseSelection => "Transform to Constant Case",
+            Self::SortLinesAscending => "Sort Lines Ascending",
+            Self::SortLinesDescending => "Sort Lines Descending",
+            Self::SortLinesIgnoringCase => "Sort Lines Ascending, Ignoring Case",
+            Self::ReverseLines => "Reverse Lines",
+            Self::UniqueLines => "Delete Duplicate Lines",
+            Self::TransposeCharacters => "Transpose Characters",
+            Self::TrimTrailingWhitespace => "Trim Trailing Whitespace",
+            Self::DeleteToLineEnd => "Delete to End of Line",
+            Self::DeleteToLineStart => "Delete to Start of Line",
+            Self::ToggleBlockComment => "Toggle Block Comment",
+            Self::SplitSelectionIntoLines => "Add Carets to Line Ends",
+            Self::ColumnSelectUp => "Column Select Up",
+            Self::ColumnSelectDown => "Column Select Down",
+            Self::ColumnSelectLeft => "Column Select Left",
+            Self::ColumnSelectRight => "Column Select Right",
             Self::MatchingBracket => "Go to Matching Bracket",
             Self::NewlineBelow => "New Line Below",
             Self::NewlineAbove => "New Line Above",
             Self::Fold => "Fold",
             Self::Unfold => "Unfold",
+            Self::FoldAll => "Fold All",
+            Self::UnfoldAll => "Unfold All",
             Self::Find => "Find",
             Self::Replace => "Replace",
             Self::FindNext => "Find Next",
@@ -804,6 +1015,15 @@ impl Action {
             Self::TerminalSelectAll => "Select All",
             Self::TerminalClear => "Clear",
             Self::KillTerminal => "Kill Terminal",
+            Self::NextTab => "Show Next Tab",
+            Self::PreviousTab => "Show Previous Tab",
+            Self::ReopenTab => "Reopen Closed Tab",
+            Self::NextChange => "Go to Next Change",
+            Self::PreviousChange => "Go to Previous Change",
+            Self::ToggleFindInSelection => "Toggle Find in Selection",
+            Self::CompareWithClipboard => "Compare with Clipboard",
+            Self::CompareWithSaved => "Compare with Saved",
+            Self::CompareWithFile => "Compare Active File With...",
         }
     }
 
@@ -851,6 +1071,9 @@ impl Action {
             | Self::CloseOtherTabs
             | Self::CloseSavedTabs
             | Self::CloseAllTabs
+            | Self::NextTab
+            | Self::PreviousTab
+            | Self::ReopenTab
             | Self::PinTab
             | Self::ToggleReadOnly
             | Self::CopyPath
@@ -882,7 +1105,11 @@ impl Action {
             | Self::StepInto
             | Self::StepOut => "Debug",
             Self::RunTask | Self::RerunTask | Self::SelectToolchain => "Tasks",
-            Self::CopyWithoutIndentation | Self::Undo | Self::Redo => "Editing",
+            Self::CopyWithoutIndentation
+            | Self::Undo
+            | Self::Redo
+            | Self::CursorUndo
+            | Self::CursorRedo => "Editing",
             Self::CommandPalette | Self::OpenSettings => "Window",
             Self::GoToSession
             | Self::NewSession
@@ -933,6 +1160,8 @@ impl Action {
             | Self::GoForward
             | Self::NextProblem
             | Self::PreviousProblem
+            | Self::NextChange
+            | Self::PreviousChange
             | Self::MatchingBracket
             | Self::GoToLine
             | Self::Outline
@@ -943,6 +1172,8 @@ impl Action {
             | Self::Format
             | Self::FormatSelection
             | Self::CodeActions
+            | Self::OrganizeImports
+            | Self::FixAll
             | Self::Hover
             | Self::Complete
             | Self::SignatureHelp => "Code Intelligence",
@@ -951,14 +1182,29 @@ impl Action {
             | Self::AddCaretAbove
             | Self::AddCaretBelow
             | Self::SelectLine
+            | Self::SplitSelectionIntoLines
+            | Self::ColumnSelectUp
+            | Self::ColumnSelectDown
+            | Self::ColumnSelectLeft
+            | Self::ColumnSelectRight
             | Self::ExpandSelection
-            | Self::ShrinkSelection => "Selection",
+            | Self::ShrinkSelection
+            | Self::SelectFunction
+            | Self::SelectFunctionBody
+            | Self::SelectClass
+            | Self::SelectClassBody
+            | Self::SelectComment => "Selection",
             Self::Find
             | Self::Replace
             | Self::FindNext
             | Self::FindPrevious
+            | Self::ToggleFindInSelection
             | Self::SearchProject => "Search",
-            Self::RevealInFileManager | Self::Save => "File",
+            Self::RevealInFileManager
+            | Self::Save
+            | Self::CompareWithClipboard
+            | Self::CompareWithSaved
+            | Self::CompareWithFile => "File",
             action if action.in_terminal() => "Terminal",
             _ => "Editing",
         }
@@ -1039,6 +1285,9 @@ impl Action {
                 | Self::CloseOtherTabs
                 | Self::CloseSavedTabs
                 | Self::CloseAllTabs
+                | Self::NextTab
+                | Self::PreviousTab
+                | Self::ReopenTab
                 | Self::PinTab
                 | Self::ToggleReadOnly
                 | Self::CopyPath
@@ -1133,6 +1382,10 @@ impl Preset {
                 (AddCaretAbove, &["alt+shift+up"]),
                 (AddCaretBelow, &["alt+shift+down"]),
                 (JoinLines, &[]),
+                (ColumnSelectUp, &[]),
+                (ColumnSelectDown, &[]),
+                (ColumnSelectLeft, &[]),
+                (ColumnSelectRight, &[]),
                 (MatchingBracket, &["ctrl+shift+\\"]),
             ],
             Self::JetBrains => &[
@@ -1171,6 +1424,8 @@ impl Preset {
                 (NewlineAbove, &["ctrl+alt+enter"]),
                 (Fold, &["ctrl+-"]),
                 (Unfold, &["ctrl+="]),
+                (FoldAll, &[]),
+                (UnfoldAll, &[]),
                 (Replace, &["ctrl+r"]),
                 (Outline, &["ctrl+f12"]),
                 (ProjectSymbols, &["ctrl+alt+shift+n"]),
@@ -1297,6 +1552,8 @@ fn own() -> &'static [(Action, &'static [&'static str])] {
         (CopyWithoutIndentation, &[]),
         (Undo, &[]),
         (Redo, &[]),
+        (CursorUndo, &["ctrl+u"]),
+        (CursorRedo, &["ctrl+shift+u"]),
         (GoToDefinition, &["f12"]),
         (GoToDeclaration, &[]),
         (GoToTypeDefinition, &["ctrl+f12"]),
@@ -1330,11 +1587,37 @@ fn own() -> &'static [(Action, &'static [&'static str])] {
         (AddCaretBelow, &["ctrl+alt+down"]),
         (SelectLine, &["ctrl+l"]),
         (JoinLines, &["ctrl+j"]),
+        (UppercaseSelection, &["ctrl+k ctrl+u"]),
+        (LowercaseSelection, &["ctrl+k ctrl+l"]),
+        (TitleCaseSelection, &[]),
+        (SwapCaseSelection, &[]),
+        (SnakeCaseSelection, &[]),
+        (KebabCaseSelection, &[]),
+        (CamelCaseSelection, &[]),
+        (PascalCaseSelection, &[]),
+        (ConstantCaseSelection, &[]),
+        (SortLinesAscending, &[]),
+        (SortLinesDescending, &[]),
+        (SortLinesIgnoringCase, &[]),
+        (ReverseLines, &[]),
+        (UniqueLines, &[]),
+        (TransposeCharacters, &[]),
+        (TrimTrailingWhitespace, &["ctrl+k ctrl+x"]),
+        (DeleteToLineEnd, &["ctrl+k ctrl+k"]),
+        (DeleteToLineStart, &[]),
+        (ToggleBlockComment, &["alt+shift+a"]),
+        (SplitSelectionIntoLines, &["alt+shift+i"]),
+        (ColumnSelectUp, &["ctrl+alt+shift+up"]),
+        (ColumnSelectDown, &["ctrl+alt+shift+down"]),
+        (ColumnSelectLeft, &["ctrl+alt+shift+left"]),
+        (ColumnSelectRight, &["ctrl+alt+shift+right"]),
         (MatchingBracket, &["ctrl+m", "ctrl+shift+\\"]),
         (NewlineBelow, &["ctrl+enter"]),
         (NewlineAbove, &["ctrl+shift+enter"]),
         (Fold, &["ctrl+shift+["]),
         (Unfold, &["ctrl+shift+]"]),
+        (FoldAll, &["ctrl+k ctrl+0"]),
+        (UnfoldAll, &["ctrl+k ctrl+j"]),
         (Find, &["ctrl+f"]),
         (Replace, &["ctrl+h"]),
         (FindNext, &["f3"]),
@@ -1353,6 +1636,17 @@ fn own() -> &'static [(Action, &'static [&'static str])] {
         (TerminalSelectAll, &["ctrl+shift+a"]),
         (TerminalClear, &[]),
         (KillTerminal, &[]),
+        (OrganizeImports, &[]),
+        (FixAll, &[]),
+        (NextTab, &["ctrl+pagedown"]),
+        (PreviousTab, &["ctrl+pageup"]),
+        (ReopenTab, &["ctrl+shift+t"]),
+        (NextChange, &["alt+f5"]),
+        (PreviousChange, &["alt+shift+f5"]),
+        (ToggleFindInSelection, &["alt+l"]),
+        (CompareWithClipboard, &[]),
+        (CompareWithSaved, &[]),
+        (CompareWithFile, &[]),
     ]
 }
 

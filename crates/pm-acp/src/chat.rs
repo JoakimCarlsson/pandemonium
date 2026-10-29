@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 use crate::agent::Agent;
 use crate::background::{self, Shells};
 use crate::client::{self, Answer, Client, Heard, LOGIN_REQUIRED, answer};
+use crate::contained::{Containment, Terminals};
 use crate::inquiry::{self, Inquiry, Question, Reply};
 use crate::subagent::Subagents;
 
@@ -261,6 +262,8 @@ pub enum Event {
     SignedIn,
     /// The agent could not be started or stopped, for this reason.
     Failed(String),
+    /// The dev container the agent runs in is being built or started, and this is the step it is on.
+    Container(String),
     /// The agent named the conversation, or named it again.
     Titled(String),
     /// The hooks the agent's Codex holds back until the reader trusts them, all of them as they stand now; empty when none is held back.
@@ -364,6 +367,13 @@ impl Events {
     }
 }
 
+/// How a command is made to run inside the dev container of a session.
+pub type Enclose = Arc<dyn Fn(std::process::Command) -> std::process::Command + Send + Sync>;
+
+/// Brings the dev container of a session up, reporting each step to the closure it is given, and returns the folder the session works in inside it and how commands run there.
+pub type Enclosure =
+    Box<dyn FnOnce(&dyn Fn(&str)) -> Result<(PathBuf, Enclose), String> + Send + 'static>;
+
 /// A running agent and the conversation held with it.
 ///
 /// Everything the agent does happens on a thread of its own, so nothing it
@@ -383,13 +393,15 @@ pub struct Chat {
 }
 
 impl Chat {
-    /// Starts `agent` in the folder `directory`, keeping its config and login in the folder `home` or in its own when there is none, and opens a conversation with it that has the tool servers `tools`, leaving out what `launch` says to; `notify` is called whenever the agent has something for [`Chat::events`].
+    /// Starts `agent` in the folder `directory`, keeping its config and login in the folder `home` or in its own when there is none, and opens a conversation with it that has the tool servers `tools`, leaving out what `launch` says to; `notify` is called whenever the agent has something for [`Chat::events`]. With an `enclosure` the commands the agent runs go to the dev container it brings up, while the agent itself stays on this machine with its login.
+    #[allow(clippy::too_many_arguments)]
     pub fn start(
         agent: Agent,
         directory: PathBuf,
         home: Option<PathBuf>,
         tools: Vec<serde_json::Value>,
         launch: pm_agent_library::Launch,
+        enclosure: Option<Enclosure>,
         notify: Notify,
     ) -> Self {
         let (commands, received) = mpsc::channel();
@@ -409,7 +421,7 @@ impl Chat {
         }
         let driver = std::thread::spawn(move || {
             if let Err(reason) = drive(
-                agent, &directory, home, &tools, &launch, &shared, &received, &sender,
+                agent, &directory, home, &tools, &launch, enclosure, &shared, &received, &sender,
             ) {
                 let _ = sender.send(Event::Failed(reason));
             }
@@ -623,6 +635,7 @@ fn drive(
     home: Option<PathBuf>,
     tools: &[serde_json::Value],
     launch: &pm_agent_library::Launch,
+    enclosure: Option<Enclosure>,
     ending: &Mutex<Ending>,
     commands: &Receiver<Command>,
     events: &Events,
@@ -634,11 +647,23 @@ fn drive(
         return Err(format!("{} is not a folder", directory.display()));
     }
     let patience = if agent.fetches() { FETCH } else { QUICK };
+    let enclosed = match enclosure {
+        Some(enclosure) => Some(enclosure(&|step| {
+            let _ = events.send(Event::Container(step.to_owned()));
+        })?),
+        None => None,
+    };
     if let Some(home) = &home {
         crate::profile::share_setup(agent, home);
     }
     let mut command = agent.command_in(&[], home);
     command.envs(launch.env.iter().map(|(name, value)| (name, value)));
+    let containment = enclosed.map(|(workspace, enclose)| Containment {
+        host: directory.to_path_buf(),
+        workspace,
+        enclose,
+    });
+    let working = directory.to_path_buf();
     let mut client = Client::start_in(command, directory)?;
     {
         let mut ending = ending.lock().map_err(|_| "the chat was dropped")?;
@@ -649,7 +674,7 @@ fn drive(
     }
     let shaken = client.initialize(patience)?;
     let prompts = shaken["agentCapabilities"]["promptCapabilities"].clone();
-    let mut opening = json!({ "cwd": directory, "mcpServers": tools });
+    let mut opening = json!({ "cwd": working, "mcpServers": tools });
     if let Some(meta) = &launch.meta {
         opening["_meta"] = meta.clone();
     }
@@ -678,6 +703,7 @@ fn drive(
         &prompts,
         commands,
         events,
+        containment,
     )
 }
 
@@ -761,6 +787,8 @@ struct Waiting {
     subagents: Subagents,
     /// Whether the reader stopped the turn that is running.
     cancelled: bool,
+    /// The commands the agent has the app run in the container of its session.
+    terminals: Terminals,
 }
 
 /// Passes commands to the agent and what it says back, until the chat is
@@ -772,8 +800,10 @@ fn converse(
     prompts: &Value,
     commands: &Receiver<Command>,
     events: &Events,
+    containment: Option<Containment>,
 ) -> Result<(), String> {
     let mut waiting = Waiting {
+        terminals: Terminals::new(containment),
         images: prompts["image"] == json!(true),
         embeds: prompts["embeddedContext"] == json!(true),
         turn: None,
@@ -796,6 +826,7 @@ fn converse(
                 Err(TryRecvError::Disconnected) => return Ok(()),
             }
         }
+        waiting.terminals.poll(client)?;
         let message = match client.receive(LISTEN) {
             Heard::Message(message) => message,
             Heard::Silence => continue,
@@ -899,6 +930,13 @@ fn hear_agent(
             }
             None => client.respond(id, &json!({ "action": "decline" }))?,
         },
+        (Some(method), Some(id))
+            if method.starts_with("terminal/") && waiting.terminals.serves() =>
+        {
+            waiting
+                .terminals
+                .serve(client, id, method, &message["params"])?
+        }
         (Some(_), Some(id)) => client.refuse(id, NO_SUCH_METHOD, "not supported")?,
         (Some("session/update"), None) => {
             for event in updated(session, waiting, &message["params"]) {

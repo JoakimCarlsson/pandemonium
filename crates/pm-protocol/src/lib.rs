@@ -9,6 +9,7 @@ mod extensions;
 mod history;
 mod machine;
 mod message;
+mod release;
 mod request;
 mod response;
 mod task;
@@ -22,12 +23,13 @@ pub use credential::{Build, Credential, Target};
 pub use debug::{DebugAction, DebugAdapter, DebugFile, DebugInfo, DebugProcess, DebugScenario};
 pub use extensions::{
     CAPABILITIES, ExtensionAssets, ExtensionCommand, ExtensionIcon, ExtensionIconTheme,
-    ExtensionInfo, ExtensionTheme, GrammarBundle,
+    ExtensionInfo, ExtensionTheme, GrammarBundle, GrammarMore,
 };
 pub use history::{ConflictFiles, LocalVersion};
 pub use machine::{
     AgentPreferences, ExtensionPreferences, FETCH_MINUTES, GitPreferences, HISTORY_DAYS,
     HISTORY_MEGABYTES, HistoryPreferences, LanguagePreferences, MachineSettings, ShellPreferences,
+    WorkspacePreferences,
 };
 pub use message::{ClientMessage, ServerMessage};
 pub use pm_agent_library as library;
@@ -38,14 +40,16 @@ pub use pm_dap::{
     View as DebugView, Watched as DebugWatched,
 };
 pub use pm_lsp::{
-    CodeAction, CodeLens, Completion, CompletionKind, Diagnostic, FileEdit, FoldRange, HintKind,
-    Hover, InlayHint, InlineValue, InlineValueKind, Location, Problem, Seek, SemanticToken,
-    Severity, Signature, TextChange, TokenKind, Triggers,
+    CodeAction, CodeLens, ColorPresentation, ColorSwatch, Completion, CompletionKind, Diagnostic,
+    DocumentLink, FileEdit, FoldRange, HintKind, Hover, InlayHint, InlineValue, InlineValueKind,
+    LinkTarget, Location, Problem, RenameTarget, Seek, SemanticToken, Severity, Signature,
+    TextChange, TokenKind, TokenRule, Triggers,
 };
 pub use pm_task::Task;
+pub use release::ReleaseAsset;
 pub use request::{AgentServer, Attachment, Login, McpServer, RegistryAgent, Request, ToolListing};
 pub use response::{Response, SessionInfo, TerminalInfo};
-pub use task::ToolchainInfo;
+pub use task::{RunnableTask, ToolchainInfo};
 
 /// The version of the protocol this build speaks; clients and servers refuse each other when they differ.
 pub const VERSION: u32 = 1;

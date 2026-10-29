@@ -38,6 +38,9 @@ pub(crate) struct Meta {
     /// The submodule its agent works in, from the root of `directory`, or nothing for the project itself.
     #[serde(default)]
     pub(crate) submodule: Option<String>,
+    /// Whether its agent runs in the dev container of `directory`.
+    #[serde(default)]
+    pub(crate) container: bool,
 }
 
 impl Meta {

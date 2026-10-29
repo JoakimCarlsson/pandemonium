@@ -16,19 +16,44 @@ pub enum Update {
         name: String,
         /// The page it is published on.
         url: String,
+        /// Its version, as the release workflow names the files by.
+        version: String,
+        /// When it was published, as the releases API writes it.
+        published: Option<String>,
+        /// Its notes, in markdown, when it has any.
+        body: Option<String>,
+        /// Why this install cannot be replaced from the window, when it cannot.
+        blocker: Option<String>,
     },
 }
 
 impl Update {
-    /// What the newest release found on the channel means for the running build: `version` is its version, nothing when none was found, and `url` its page.
-    pub fn judged(version: Option<String>, url: String) -> Self {
+    /// What the newest release found on the channel means for the running build: `version` is its version, nothing when none was found, `url` its page, and `published` and `body` its date and notes.
+    pub fn judged(
+        version: Option<String>,
+        url: String,
+        published: Option<String>,
+        body: Option<String>,
+    ) -> Self {
         match version {
             Some(version) if !url.is_empty() && is_newer(&version, RUNNING) => Self::Newer {
                 name: format!("Pandemonium {version}"),
                 url,
+                version,
+                published,
+                body,
+                blocker: None,
             },
             _ => Self::Current,
         }
+    }
+
+    /// The update told that this install cannot be replaced from the window, for `reason`, when there is one.
+    pub fn blocked_by(mut self, reason: Option<String>) -> Self {
+        if let Self::Newer { blocker, .. } = &mut self {
+            *blocker = reason;
+        }
+        self
     }
 }
 

@@ -19,7 +19,7 @@ use pm_state::State;
 
 use crate::view::View;
 
-mod code;
+pub(crate) mod code;
 mod debug;
 mod machine;
 pub(crate) mod picture;
@@ -98,6 +98,8 @@ enum Job {
     Starting(Host, String),
     /// The grammar of the language with this folder name was compiled, or could not be.
     Grammar(String, Result<(), String>),
+    /// The downloaded update was put in place and the new version started, or it could not be.
+    Installed(Result<(), String>),
 }
 
 /// What is to be done with the answer to a request.
@@ -109,6 +111,8 @@ enum Pending {
     MachineSettings,
     /// The newest release on a channel.
     LatestRelease,
+    /// The update the reader asked for, being downloaded.
+    Update,
     /// The agents the reader added by hand.
     AgentServers,
     /// The tool servers every agent is started with.
@@ -120,7 +124,7 @@ enum Pending {
     /// The agent with this id told what it lets the reader change.
     Discover(Host, String),
     /// The agent at this position was signed in, or could not be.
-    SignIn(usize),
+    SignIn(usize, Option<String>),
     /// The skills of an agent in a project.
     Skills(usize, usize),
     /// What the agent at the second position is given in the project at the first.
@@ -135,16 +139,22 @@ enum Pending {
     Branches(usize),
     /// The submodules of the project at this position.
     Submodules(usize),
+    /// Whether the folder of the project at this position holds a `devcontainer.json`.
+    DevContainer(usize),
     /// What the submodules of the folder of the session at this position have checked out.
     SubmoduleHeads(usize),
-    /// Who an agent is signed in as, and whether that names the login in use.
-    Identity(usize, bool),
+    /// Who an agent is signed in as, and which login that names.
+    Identity(usize, Option<String>),
     /// The session at this position was started.
     Start(usize),
     /// The session with this number on the server answering was asked to close.
     Close(u64),
     /// The folder of the session at this position was looked at.
     Inspect(usize),
+    /// What the folder of the session at this position is, and where it stands.
+    Standing(usize),
+    /// The diffs of these files of the session at this position were asked for.
+    Diffs(usize, Vec<String>),
     /// Files of the session at this position were staged or unstaged.
     Stage(usize),
     /// A commit was made in the folder of the session at this position.
@@ -191,6 +201,8 @@ enum Pending {
     Opened(usize, String),
     /// What could be written in the file of the session at this position, at this path, as asked at this version.
     Completions(usize, String, i32),
+    /// What the language server adds to a completion of a file of a session, by position and path.
+    CompletionResolved(usize, String),
     /// What the language server says about this place of the file of the session at this position, at this path.
     Hovered(usize, String, pm_protocol::Position),
     /// The extensions the server on this machine can install.
@@ -218,21 +230,39 @@ enum Pending {
     /// The hits of a search of the project of the session at this position for a text, matching case or not, as a regular expression or not.
     ProjectSearch(usize, String, bool, bool),
     /// What each name of the file of the session at this position, at this path and version, is.
-    SemanticTokens(usize, String, i32),
+    SemanticTokens(usize, String, i32, Option<pm_protocol::Span>),
     /// What to show inside the lines of the file of the session at this position, at this path and version.
     InlayHints(usize, String, i32),
+    /// Which stretches of the file of the session at this position, at this path and version, lead somewhere when pressed.
+    DocumentLinks(usize, String, i32),
+    /// Where a link of the file of the session at this position leads.
+    LinkResolved(usize),
+    /// How the colour can be written in the file of the session at this position, at this path.
+    ColorPresentations(usize, String, [u8; 4]),
+    /// Which stretches of the file of the session at this position, at this path and version, spell a colour.
+    Colors(usize, String, i32),
     /// Which names of the file of the session at this position, at this path and version, to show the values of while a program is paused.
     InlineValues(usize, String, i32),
     /// What to show at the end of the lines of the file of the session at this position, at this path and version.
     CodeLenses(usize, String, i32),
     /// What pressing a lens of a file of the session at this position came to.
     LensPressed(usize),
+    /// What the language server says can be renamed at the place of the file of the session at this position.
+    RenameTarget(usize),
     /// The edits that rename something across the project of the session at this position.
     Renamed(usize),
     /// The changes the language server offers for the file of the session at this position, at this path.
     CodeActions(usize, String),
+    /// How many changes the language server offers at the caret of the file of the session at this position, at this path, version and line.
+    Lightbulb(usize, String, i32, usize),
+    /// A file of the session at this position, at the second path, as the folder holds it, to compare with the file at the first path, as saved when true.
+    Compared(usize, String, String, bool),
     /// The edits a change the language server offered makes across the project of the session at this position.
     TookAction(usize),
+    /// The changes of one kind the language server offers for a whole file, one step of a run of them.
+    SourceOffered(pm_components::source_actions::SourceStep),
+    /// The edits one of those changes makes across the project.
+    SourceTaken(pm_components::source_actions::SourceStep),
     /// The web address of a file or a line, opened in the browser when true and copied otherwise.
     Permalink(bool),
     /// The commits that changed the file of the session at this position, at this path.
@@ -257,6 +287,8 @@ enum Pending {
     DebugStarted(usize),
     /// What the folder of the session at this position can be built, tested and run with.
     Tasks(usize),
+    /// The tasks that can run the place of a file whose button was pressed in the session at this position.
+    RunnableTasks(usize),
     /// The toolchains installed on the machine of the session at this position.
     Toolchains(usize),
     /// The programs the server of this machine debugs.
@@ -291,6 +323,8 @@ mod tests {
     fn git_progress_ignores_background_reads() {
         for pending in [
             Pending::Inspect(0),
+            Pending::Standing(0),
+            Pending::Diffs(0, Vec::new()),
             Pending::Log(0),
             Pending::Stashes(0),
             Pending::SessionBranches(0),
@@ -754,7 +788,10 @@ impl Work {
     /// Carries out what the reader asked of the agents and the folders since the last look, and returns what to copy.
     pub fn deliver(&mut self, model: &State<Screen>) -> Vec<String> {
         let mut outbox = Vec::new();
-        model.update(|screen| outbox = screen.take_outbox());
+        model.update(|screen| {
+            screen.diffs_wanted();
+            outbox = screen.take_outbox();
+        });
         let mut copies = Vec::new();
         for outgoing in outbox {
             match outgoing {
@@ -837,6 +874,7 @@ impl Work {
                     files,
                     settings,
                     base,
+                    container,
                 } => {
                     let Some(placement) = Self::session_of(model, session) else {
                         continue;
@@ -856,6 +894,7 @@ impl Work {
                             text,
                             attachments: Self::attachments(&files),
                             submodule: placement.submodule,
+                            container,
                         },
                         Pending::Start(session),
                     );
@@ -1146,6 +1185,15 @@ impl Work {
                     },
                     Pending::SessionBranches(session),
                 ),
+                Outgoing::Diffs { session, paths } => {
+                    let asked = paths.clone();
+                    self.ask_in_folder(
+                        model,
+                        session,
+                        |directory| Request::Diffs { directory, paths },
+                        Pending::Diffs(session, asked),
+                    );
+                }
                 Outgoing::SubmoduleHeads { session } => self.ask_in_folder(
                     model,
                     session,
@@ -1231,9 +1279,16 @@ impl Work {
                     |session| Request::SignInSession { session },
                     Pending::Nothing,
                 ),
-                Outgoing::SignIn { agent } => {
+                Outgoing::SignIn { agent, login } => {
                     if let Some(id) = self.agent_id(agent) {
-                        self.ask(&None, Request::SignIn { agent: id }, Pending::SignIn(agent));
+                        self.ask(
+                            &None,
+                            Request::SignIn {
+                                agent: id,
+                                login: login.clone(),
+                            },
+                            Pending::SignIn(agent, login),
+                        );
                     }
                 }
                 Outgoing::Files {
@@ -1265,6 +1320,15 @@ impl Work {
                     &host,
                     Request::Branches { directory },
                     Pending::Branches(project),
+                ),
+                Outgoing::DevContainer {
+                    project,
+                    host,
+                    directory,
+                } => self.ask(
+                    &host,
+                    Request::DevContainer { directory },
+                    Pending::DevContainer(project),
                 ),
                 Outgoing::Submodules {
                     project,
@@ -1305,7 +1369,10 @@ impl Work {
                     if let Some(id) = self.agent_id(agent) {
                         self.ask(
                             &None,
-                            Request::Identity { agent: id },
+                            Request::Identity {
+                                agent: id,
+                                login: naming.clone(),
+                            },
                             Pending::Identity(agent, naming),
                         );
                     }
@@ -1408,6 +1475,10 @@ impl Work {
                 Outgoing::Copy { text } => copies.push(text),
                 Outgoing::SaveMachineSettings(settings) => self.save_machine_settings(settings),
                 Outgoing::LatestRelease { channel } => self.ask_release(channel),
+                Outgoing::DownloadUpdate { channel, version } => {
+                    self.download_update(channel, version)
+                }
+                Outgoing::CancelUpdate => self.ask(&None, Request::CancelUpdate, Pending::Nothing),
                 Outgoing::Notify { title, body, how } => crate::notify::tell(how, &title, &body),
                 debugging @ (Outgoing::DebugScenarios { .. }
                 | Outgoing::DebugProcesses { .. }
@@ -1417,6 +1488,7 @@ impl Work {
                 tasking @ (Outgoing::Tasks { .. }
                 | Outgoing::RunTask { .. }
                 | Outgoing::RunRunnable { .. }
+                | Outgoing::RunnableTasks { .. }
                 | Outgoing::Toolchains { .. }
                 | Outgoing::SelectToolchain { .. }) => self.deliver_tasks(model, tasking),
                 code => self.deliver_code(model, code),
@@ -1445,6 +1517,13 @@ impl Work {
             };
             for item in items {
                 match item {
+                    Incoming::UpdateProgress { received, total } => {
+                        if host.is_none() {
+                            Self::in_workspace(model, |state| {
+                                state.with_update_progress(received, total)
+                            });
+                        }
+                    }
                     Incoming::Connected => {
                         self.watched.remove(&host);
                         self.ask(&host, Request::Sessions, Pending::Sessions(host.clone()));
@@ -1637,6 +1716,10 @@ impl Work {
                 link.client = Some(client);
             }
             Job::Grammar(language, outcome) => self.grammar_compiled(model, &language, outcome),
+            Job::Installed(outcome) => Self::in_workspace(model, |state| match outcome {
+                Ok(()) => state.with_update_installed(),
+                Err(reason) => state.with_update_failed(reason),
+            }),
             Job::Starting(host, text) => {
                 let Some(link) = self.links.get(&host) else {
                     return;
@@ -1772,8 +1855,8 @@ impl Work {
                     *screen = std::mem::take(screen).with_discovery_of(origin, &id, found);
                 });
             }
-            Pending::SignIn(agent) => {
-                model.update(|screen| *screen = std::mem::take(screen).signed_in(agent));
+            Pending::SignIn(agent, login) => {
+                model.update(|screen| *screen = std::mem::take(screen).signed_in(agent, login));
                 if let Some(message) = failure {
                     eprintln!("sign-in failed: {message}");
                 } else if let Some(id) = self.agent_id(agent) {
@@ -1948,6 +2031,13 @@ impl Work {
                     });
                 }
             }
+            Pending::DevContainer(project) => {
+                if let Response::DevContainer { configured } = response {
+                    model.update(|screen| {
+                        *screen = std::mem::take(screen).with_devcontainer(project, configured)
+                    });
+                }
+            }
             Pending::Submodules(project) => {
                 if let Response::Submodules { paths } = response {
                     model.update(|screen| {
@@ -2044,18 +2134,56 @@ impl Work {
                     head,
                     tracking,
                     operation,
+                    repositories,
                 } = response
                 {
                     model.update(|screen| {
                         *screen = std::mem::take(screen)
                             .refreshed(session, &changes, commits)
                             .checked_out(session, branch.as_deref(), head.as_deref())
-                            .tracked(session, branch.as_deref(), tracking, operation);
+                            .tracked(session, branch.as_deref(), tracking, operation)
+                            .with_standings(session, repositories);
                     });
+                } else if let Some(message) = failure {
+                    let reason = format!("Could not read the folder: {message}");
+                    model.update(|screen| *screen = std::mem::take(screen).git_failed(&reason));
                 }
                 if self.read_again.remove(&session) {
                     self.refresh(model, session);
                 }
+            }
+            Pending::Standing(session) => {
+                if let Response::Standing {
+                    branch,
+                    head,
+                    tracking,
+                    operation,
+                    repositories,
+                    repository: _,
+                } = response
+                {
+                    model.update(|screen| {
+                        *screen = std::mem::take(screen).with_standing(
+                            session,
+                            pm_components::lazy_diffs::Standing {
+                                branch,
+                                head,
+                                tracking,
+                                operation,
+                                repositories,
+                            },
+                        );
+                    });
+                }
+            }
+            Pending::Diffs(session, asked) => {
+                let files = match response {
+                    Response::Diffs { files } => files,
+                    _ => Vec::new(),
+                };
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_diffs(session, &asked, files);
+                });
             }
             Pending::Stage(session) => {
                 if let Some(message) = failure {
@@ -2221,6 +2349,7 @@ impl Work {
             Pending::Grammar(_)
             | Pending::Opened(..)
             | Pending::Completions(..)
+            | Pending::CompletionResolved(..)
             | Pending::Hovered(..)
             | Pending::Definitions(..)
             | Pending::Base(..)
@@ -2232,12 +2361,21 @@ impl Work {
             | Pending::ProjectSearch(..)
             | Pending::SemanticTokens(..)
             | Pending::InlayHints(..)
+            | Pending::DocumentLinks(..)
+            | Pending::LinkResolved(_)
+            | Pending::ColorPresentations(..)
+            | Pending::Colors(..)
             | Pending::InlineValues(..)
             | Pending::CodeLenses(..)
             | Pending::LensPressed(_)
+            | Pending::RenameTarget(_)
             | Pending::Renamed(_)
             | Pending::CodeActions(..)
+            | Pending::Lightbulb(..)
+            | Pending::Compared(..)
             | Pending::TookAction(_)
+            | Pending::SourceOffered(_)
+            | Pending::SourceTaken(_)
             | Pending::Permalink(_)
             | Pending::FileHistory(..)
             | Pending::Revision(..)
@@ -2258,10 +2396,10 @@ impl Work {
             | Pending::Debugs(_)
             | Pending::DebugWatched(_)
             | Pending::DebugRewatched(_) => self.answered_debug(model, pending, response),
-            Pending::Tasks(_) | Pending::Toolchains(_) => {
+            Pending::Tasks(_) | Pending::RunnableTasks(_) | Pending::Toolchains(_) => {
                 self.answered_tasks(model, pending, response)
             }
-            Pending::MachineSettings | Pending::LatestRelease => {
+            Pending::MachineSettings | Pending::LatestRelease | Pending::Update => {
                 self.answered_machine(model, pending, response)
             }
             Pending::Back(session, failing) => {
@@ -2317,7 +2455,7 @@ impl Work {
         }
     }
 
-    /// Adds a tab for each shell of the server on `origin` that runs in the folder of a session the window shows and has no tab yet, and starts a fresh one when the dock was left open on a session whose shells are gone.
+    /// Adds a tab for each shell of the server on `origin` that runs in the folder of a session the window shows and has no tab yet, as after a reconnect. It never starts a shell that was not running.
     fn adopt_terminals(
         &mut self,
         model: &State<Screen>,
@@ -2345,7 +2483,6 @@ impl Work {
                 client.watch_terminal(info.terminal, 0);
             }
         }
-        model.update(|screen| screen.revive_terminal(origin));
     }
 
     /// Adds the sessions of the server of `origin` that the window does not show yet, and starts watching them.
@@ -2504,6 +2641,13 @@ impl Work {
             return;
         }
         let log = model.read(|screen| screen.graph_wanted());
+        self.ask(
+            &placement.host,
+            Request::Standing {
+                directory: placement.directory.clone(),
+            },
+            Pending::Standing(session),
+        );
         self.ask(
             &placement.host,
             Request::Inspect {

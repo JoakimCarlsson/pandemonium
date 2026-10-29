@@ -73,7 +73,40 @@ impl Document {
         }
     }
 
-    /// The edits that write the completion picked, or the one at `row` of the list when given, in place of the word it completes; nothing when there is none.
+    /// The completion picked, as its language server wrote it, when the server has more to say about it that was not asked yet; it is marked as asked.
+    pub fn completion_to_resolve(&mut self) -> Option<String> {
+        let completion = self.completion.as_mut()?;
+        let raw = completion
+            .shown
+            .get(completion.picked)
+            .and_then(|place| completion.items.get(*place))?
+            .resolve
+            .clone()?;
+        if completion.resolving.as_deref() == Some(raw.as_str()) {
+            return None;
+        }
+        completion.resolving = Some(raw.clone());
+        Some(raw)
+    }
+
+    /// Takes in what the language server added to the completion `resolved` stands for, when it is still in the list: its documentation, detail and the edits choosing it makes besides writing it.
+    pub fn take_resolved(&mut self, resolved: Completion) {
+        let (Some(completion), Some(raw)) = (&mut self.completion, resolved.resolve) else {
+            return;
+        };
+        if let Some(item) = completion
+            .items
+            .iter_mut()
+            .find(|item| item.resolve.as_deref() == Some(raw.as_str()))
+        {
+            item.additional_edits = resolved.additional_edits;
+            item.documentation = resolved.documentation.or(item.documentation.take());
+            item.detail = resolved.detail.or(item.detail.take());
+            item.resolve = None;
+        }
+    }
+
+    /// The edits that write the completion picked, or the one at `row` of the list when given, in place of the word it completes, and make the other edits choosing it calls for, such as the line that imports it; nothing when there is none.
     pub fn completion_edits(&self, row: Option<usize>) -> Option<Vec<Edit>> {
         let completion = self.completion.as_ref()?;
         let item = completion
@@ -88,10 +121,46 @@ impl Document {
             }
             None => (completion.start.min(caret), caret),
         };
-        Some(vec![
+        Some(self.replacement_edits(start, end, &item.text, &item.additional_edits))
+    }
+
+    /// The edits that write `text` in place of the bytes `start` to `end`, the caret after it, and make the changes `extras` call for, such as the line that imports what is written, in an order that keeps every stretch right.
+    pub fn replacement_edits(
+        &self,
+        start: usize,
+        end: usize,
+        text: &str,
+        extras: &[pm_protocol::TextChange],
+    ) -> Vec<Edit> {
+        let caret = self.field.caret();
+        let mut before: Vec<(std::ops::Range<usize>, &str)> = Vec::new();
+        let mut after: Vec<(std::ops::Range<usize>, &str)> = Vec::new();
+        for change in extras {
+            let range = change
+                .span
+                .map_or(0..self.field.text().len(), |span| self.range_of(span));
+            if range.end <= start {
+                before.push((range, &change.text));
+            } else if range.start >= end {
+                after.push((range, &change.text));
+            }
+        }
+        before.sort_by_key(|(range, _)| std::cmp::Reverse(range.start));
+        after.sort_by_key(|(range, _)| std::cmp::Reverse(range.start));
+        let mut edits: Vec<Edit> = after
+            .into_iter()
+            .map(|(range, text)| Edit::Replace(range, text.to_owned(), (caret, caret)))
+            .collect();
+        edits.extend([
             Edit::Place(start, false),
             Edit::Place(end, true),
-            Edit::Paste(item.text.clone()),
-        ])
+            Edit::Paste(text.to_owned()),
+        ]);
+        let mut at = start + text.len();
+        for (range, text) in before {
+            at = (at + text.len()).saturating_sub(range.len());
+            edits.push(Edit::Replace(range, text.to_owned(), (at, at)));
+        }
+        edits
     }
 }

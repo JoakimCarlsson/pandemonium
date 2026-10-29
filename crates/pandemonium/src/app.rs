@@ -16,6 +16,7 @@ use pm_components::folder_picker::{
 };
 use pm_components::git_controls::{GRAPH_SCROLL, Pick, REVIEW_DISMISS, VIEWER_SCROLL};
 use pm_components::git_menus::{CHANGE_MENU_HEIGHT, MenuKind};
+use pm_components::line_edits::LineEdit;
 use pm_components::message_menu::is_message_menu_item;
 use pm_components::minimap::MINIMAP;
 use pm_components::open_files::{EDITOR_FIELD, STRIP};
@@ -40,9 +41,9 @@ use pm_pages::{
 use pm_renderer::{DrawList, Renderer};
 use pm_state::State;
 
-use pm_text::{Edit, Shaper};
+use pm_text::{Clicks, Edit, Gesture, Reach, Shaper};
 use pm_theme::{Appearance, ThemeFamily};
-use pm_ui::{Cursor, Input, Output, SCROLLBAR_GRIP, TextPoint, TextSelection, Unit};
+use pm_ui::{Cursor, Input, Output, SCROLLBAR_GRIP, TextPoint, TextSelection};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalPosition, LogicalSize};
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
@@ -52,13 +53,17 @@ use winit::window::{CursorIcon, Window, WindowId};
 mod asides;
 mod browser;
 mod code;
+mod editing;
 mod frame;
+mod gesture;
 mod panes;
 mod paste;
 mod performance;
 mod select;
 mod terminal;
+mod vim;
 
+use self::gesture::FieldText;
 use crate::keys::Clip;
 use crate::view::View;
 use crate::work::Work;
@@ -159,8 +164,14 @@ pub struct App {
     clipboard: Option<arboard::Clipboard>,
     /// The field a press began in, while the button is held, so dragging selects.
     dragging: Option<FocusId>,
-    /// The last press that landed in a field, for noticing a double click.
-    last_press: Option<(Instant, FocusId, u8)>,
+    /// What the press held in a field took, so dragging extends by the same amount.
+    field_gesture: Gesture<usize>,
+    /// What was last copied in the file shown: its text, the indentation of the lines it came from and whether it is whole lines copied with nothing selected.
+    copied: Option<(String, String, bool)>,
+    /// The byte of the file a press with Alt and Shift held began at, while the button is held, so dragging selects a rectangle of text.
+    column_press: Option<usize>,
+    /// The last press that landed in a field, selectable text or the shell, for counting double and triple clicks.
+    clicks: Clicks<FocusId>,
     /// The field or shell showing what an input method is composing, while it composes something.
     composing_in: Option<FocusId>,
     /// The project paths last written to disk, so only changes are written.
@@ -209,8 +220,8 @@ pub struct App {
     focus_filter: bool,
     /// Whether the shell is to take the keyboard once it is drawn.
     focus_terminal: bool,
-    /// The cell of the shell's window a press began in, while the button is held, so dragging marks text.
-    terminal_anchor: Option<(usize, usize)>,
+    /// What the press held in the shell's window took, so dragging marks the same amount.
+    terminal_gesture: Gesture<(usize, usize)>,
     /// The part of a line the wheel has scrolled the shell that was not enough to move it.
     terminal_scroll_rest: f32,
     /// The stretch of the conversation's text that is selected, if any.
@@ -231,14 +242,19 @@ pub struct App {
     highlighted: Option<(String, i32, usize)>,
     /// The file, version and caret waiting to settle before the language server is asked about them, and since when.
     highlight_wait: Option<((String, i32, usize), Instant)>,
-    /// What a press on selectable text took, from its start to its end, and
-    /// how much it takes at a time, while the button is held, so dragging
-    /// selects from it.
-    text_held: Option<(TextPoint, TextPoint, Unit)>,
     /// The engine that paints pages of the web, and the pages it holds.
     web: browser::Web,
     /// Whether the address of the browser is to take the keyboard once it is drawn.
     focus_browser_address: bool,
+    /// What the press held on selectable text took, so dragging selects the
+    /// same amount.
+    text_gesture: Gesture<TextPoint>,
+    /// The file, version, caret, other end of the selection and number of problems the language server was last asked about for the marker beside the caret's line.
+    bulb_asked: Option<editing::BulbKey>,
+    /// The same, waiting to settle before the language server is asked, and since when.
+    bulb_wait: Option<(editing::BulbKey, Instant)>,
+    /// The selected text of the file shown that was pressed on, while the button is held.
+    text_drag: Option<editing::TextDrag>,
 }
 
 impl App {
@@ -363,7 +379,10 @@ impl App {
             cursor: Cursor::Default,
             clipboard: None,
             dragging: None,
-            last_press: None,
+            field_gesture: Gesture::default(),
+            column_press: None,
+            copied: None,
+            clicks: Clicks::default(),
             composing_in: None,
             saved,
             refocus: saved_view.as_ref().and_then(View::typing),
@@ -388,12 +407,12 @@ impl App {
             closing: false,
             focus_filter: false,
             focus_terminal: false,
-            terminal_anchor: None,
+            terminal_gesture: Gesture::default(),
             terminal_scroll_rest: 0.0,
             text_selection: None,
-            text_held: None,
             web: browser::Web::default(),
             focus_browser_address: false,
+            text_gesture: Gesture::default(),
             hover_rest: None,
             hover_leaving: None,
             hover_entered: false,
@@ -402,6 +421,9 @@ impl App {
             record_deadline: None,
             highlighted: None,
             highlight_wait: None,
+            bulb_asked: None,
+            bulb_wait: None,
+            text_drag: None,
         }
     }
 }
@@ -638,15 +660,24 @@ impl App {
 
     /// Tells the screen how wide the view of the file shown was drawn and how wide a character of code is, when that changed, so long lines wrap at its edge.
     fn note_code_view(&mut self) {
-        let Some(width) = self
+        let Some((width, height)) = self
             .output
             .regions
             .iter()
             .find(|region| region.id == VIEWER_SCROLL)
-            .map(|region| region.rect.width)
+            .map(|region| (region.rect.width, region.rect.height))
         else {
             return;
         };
+        if self.model.read(Screen::code_height) != Some(height) {
+            self.model
+                .update(|screen| *screen = std::mem::take(screen).with_code_height(height));
+        }
+        if self.model.read(Screen::names_in_view_wanted) {
+            self.model
+                .update(|screen| *screen = std::mem::take(screen).annotations_requested());
+            self.deliver();
+        }
         let Some(font) = self.model.read(|screen| {
             screen
                 .editor_settings()
@@ -683,8 +714,12 @@ impl App {
         if self.take_command(id) || self.window_control(id) {
             return;
         }
+        if let Some(index) = pm_components::color_picker::color_swatch_of(id) {
+            return self.open_color_picker(index);
+        }
         match id {
             COMMAND_CENTER => return self.perform(Action::CommandPalette),
+            pm_components::lightbulb::LIGHTBULB => return self.perform(Action::CodeActions),
             GO_BACK => return self.navigate(-1),
             GO_FORWARD => return self.navigate(1),
             _ => {}
@@ -779,6 +814,7 @@ impl App {
 
     /// Writes the editor's settings to disk when they differ from what was last written.
     fn persist_editor(&mut self) {
+        self.follow_ligatures();
         let Some(settings) = self
             .model
             .read(Screen::editor_settings)
@@ -1013,6 +1049,9 @@ impl App {
                 MENU_SCROLL => std::mem::take(state).scrolled_menu(pixels, room),
                 SUBAGENTS_SCROLL => std::mem::take(state).scrolled_subagents(pixels, room),
                 PLAN_SCROLL => std::mem::take(state).scrolled_plan(pixels, room),
+                pm_components::update_dialog::UPDATE_SCROLL => {
+                    std::mem::take(state).scrolled_update(pixels, room)
+                }
                 DIFF_SCROLL => std::mem::take(state).scrolled_diff(pixels, room),
                 TREE_SCROLL => std::mem::take(state).scrolled_tree(pixels, room),
                 PICKER_SCROLL => std::mem::take(state).scrolled_folder_picker(pixels, room),
@@ -1039,6 +1078,9 @@ impl App {
                 },
             };
         });
+        if id == DIFF_SCROLL {
+            self.deliver();
+        }
     }
 
     /// How wide and tall the window is, in logical pixels.
@@ -1335,10 +1377,11 @@ impl App {
                 self.terminal_drag((x, y));
                 self.reach_terminal_link();
                 self.text_drag((x, y));
+                self.drag_text_moved(x, y);
                 if let Some(id) = self.dragging
                     && let Some(offset) = self.output.offset_in(id, x, y)
                 {
-                    self.edit_field(id, Edit::Place(offset, true));
+                    self.drag_in_field(id, offset);
                 }
             }
             PointerEvent::Released(Button::Left) => {
@@ -1346,8 +1389,11 @@ impl App {
                 self.minimap_drag = false;
                 self.sash_drag = None;
                 self.end_comment_drag();
+                self.drag_text_released();
                 self.dragging = None;
-                if self.terminal_anchor.take().is_some() {
+                self.column_press = None;
+                self.field_gesture.release();
+                if self.terminal_gesture.release() {
                     self.copy_terminal_selection();
                 }
                 self.text_release();
@@ -1603,14 +1649,14 @@ impl App {
         self.pressed_on = Some(EDITOR_FIELD);
         self.focus.focus(EDITOR_FIELD);
         if let Some(offset) = offset {
-            self.edit_field(EDITOR_FIELD, Edit::Place(offset, false));
-            self.dragging = Some(EDITOR_FIELD);
+            self.press_field_at(EDITOR_FIELD, offset, Reach::Point, false);
         }
     }
 
     /// Takes a press inside the field `id`: focuses it, puts the caret where
     /// the pointer is, and starts a selection that dragging extends. A second
-    /// press soon after the first selects the word under it.
+    /// press soon after the first selects the word under it and a third the
+    /// line, which dragging then extends by words or lines.
     fn press_in_field(&mut self, id: FocusId) {
         let Some((x, y)) = self.pointer.position else {
             return;
@@ -1619,22 +1665,74 @@ impl App {
             return;
         };
         self.focus.focus(id);
+        if id == EDITOR_FIELD && self.modifiers.alt && self.modifiers.shift {
+            let byte = self
+                .model
+                .read(|screen| screen.field(id).map(|field| field.to_text(offset)));
+            if let Some(byte) = byte {
+                self.column_press = Some(byte);
+                self.dragging = Some(id);
+                self.edit_field(id, Edit::Select(byte, byte));
+            }
+            return;
+        }
         if id == EDITOR_FIELD && self.modifiers.alt {
             self.edit_field(id, Edit::AddSelection(offset, offset));
             return;
         }
-        let clicks = match self.last_press {
-            Some((at, last, clicks)) if last == id && at.elapsed() < DOUBLE_CLICK => clicks + 1,
-            _ => 1,
+        let reach = Reach::of_clicks(self.clicks.press(id, DOUBLE_CLICK));
+        if id == EDITOR_FIELD
+            && reach == Reach::Point
+            && !self.modifiers.shift
+            && !self.modifiers.control
+            && !self.modifiers.logo
+            && let Some(byte) = self
+                .model
+                .read(|screen| screen.field(id).map(|field| field.to_text(offset)))
+            && self.drag_text_begins(byte, (x, y))
+        {
+            return;
+        }
+        self.press_field_at(id, offset, reach, self.modifiers.shift);
+    }
+
+    /// Starts the press in the field `id` at the shown offset `offset`, taking `reach` of the text, or running the selection there was out to it when `extending`.
+    fn press_field_at(&mut self, id: FocusId, offset: usize, reach: Reach, extending: bool) {
+        let Some((byte, anchor)) = self.model.read(|screen| {
+            screen
+                .field(id)
+                .map(|field| (field.to_text(offset), field.anchor()))
+        }) else {
+            return;
         };
-        self.last_press = Some((Instant::now(), id, clicks));
+        let mut gesture = std::mem::take(&mut self.field_gesture);
+        let mut surface = FieldText { app: self, id };
+        match extending {
+            true => gesture.press_from(&mut surface, anchor, byte),
+            false => gesture.press(&mut surface, byte, reach),
+        }
+        self.field_gesture = gesture;
         self.dragging = Some(id);
-        let edit = match clicks {
-            1 => Edit::Place(offset, self.modifiers.shift),
-            2 => Edit::SelectWordAt(offset),
-            _ => Edit::SelectAll,
+    }
+
+    /// Extends the press held in the field `id` to the shown offset `offset`.
+    fn drag_in_field(&mut self, id: FocusId, offset: usize) {
+        let Some(byte) = self
+            .model
+            .read(|screen| screen.field(id).map(|field| field.to_text(offset)))
+        else {
+            return;
         };
-        self.edit_field(id, edit);
+        if let Some(from) = self.column_press {
+            self.model.update(|screen| {
+                *screen = std::mem::take(screen).lines_edited(LineEdit::ColumnDrag(from, byte))
+            });
+            self.show_editor_caret();
+            return;
+        }
+        let gesture = std::mem::take(&mut self.field_gesture);
+        gesture.drag(&mut FieldText { app: self, id }, byte);
+        self.field_gesture = gesture;
     }
 
     /// Moves the caret of the multiline field `id` by `by` lines as they are
@@ -1776,14 +1874,38 @@ impl App {
                         })
                         .unwrap_or_default()
                 });
+                let mut whole_lines = false;
+                let mut indentation = String::new();
+                let mut selected = selected;
+                if id == EDITOR_FIELD
+                    && let Some((lines, indent)) = self.model.read(Screen::editor_copied)
+                {
+                    indentation = indent;
+                    if selected.is_empty()
+                        && let Some(lines) = lines
+                    {
+                        selected = lines;
+                        whole_lines = true;
+                    }
+                }
                 if selected.is_empty() {
                     return;
+                }
+                if id == EDITOR_FIELD {
+                    self.copied = Some((selected.clone(), indentation, whole_lines));
                 }
                 if let Some(clipboard) = self.clipboard() {
                     let _ = clipboard.set_text(selected);
                 }
                 if action == Clip::Cut {
-                    self.edit_field(id, Edit::Backspace);
+                    if whole_lines {
+                        self.model.update(|screen| {
+                            *screen = std::mem::take(screen).lines_edited(LineEdit::Delete)
+                        });
+                        self.show_editor_caret();
+                    } else {
+                        self.edit_field(id, Edit::Backspace);
+                    }
                 }
             }
             Clip::Paste => {
@@ -1794,7 +1916,15 @@ impl App {
                     .clipboard()
                     .and_then(|clipboard| clipboard.get_text().ok());
                 if let Some(text) = pasted {
-                    self.edit_field(id, Edit::Paste(text));
+                    let adjusted = (id == EDITOR_FIELD)
+                        .then_some(self.copied.as_ref())
+                        .flatten()
+                        .filter(|(copied, ..)| *copied == text)
+                        .and_then(|(_, indentation, whole)| {
+                            self.model
+                                .read(|screen| screen.editor_paste_edit(&text, *whole, indentation))
+                        });
+                    self.edit_field(id, adjusted.unwrap_or(Edit::Paste(text)));
                 }
             }
         }
@@ -1853,6 +1983,7 @@ impl App {
             || self.browser_key(event)
             || self.terminal_key(event)
             || self.list_key(event)
+            || self.vim_key(event)
             || self.text_key(event)
             || self.card_key(event)
             || self.rename_key(event)
@@ -1933,6 +2064,7 @@ impl App {
             Key::Escape if self.model.read(|screen| screen.commenting()) => {
                 self.activate(COMMENT_CANCEL)
             }
+            Key::Escape if self.text_drag.is_some() => self.drag_text_cancelled(),
             Key::Escape if self.model.read(|screen| screen.menu().is_some()) => {
                 self.model
                     .update(|state| *state = std::mem::take(state).without_menu());
@@ -1972,6 +2104,7 @@ impl App {
                         );
                     } else if multiline && matches!(event.key, Key::Home | Key::End) {
                         self.move_to_line_edge(id, event.key == Key::End, shift);
+                    } else if id == EDITOR_FIELD && self.move_along_screen(&event) {
                     } else if let Some(action) = keys::clip(&event) {
                         self.clip(id, action);
                     } else if let Some(edit) = keys::edit(&event) {
@@ -2094,6 +2227,7 @@ impl ApplicationHandler for App {
         let hover = [
             self.editor_hover_due(),
             self.editor_highlight_due(),
+            self.editor_bulb_due(),
             self.editor_autosave_due(),
             self.recording_due(),
             self.release_due(),

@@ -157,6 +157,8 @@ pub enum IconName {
     StepOut,
     /// An arc over a dot: step over a line.
     StepOver,
+    /// A bulb: the language server offers changes here.
+    Lightbulb,
 }
 
 impl IconName {
@@ -238,6 +240,7 @@ impl IconName {
             Self::StepInto => Svg::new("step_into", include_icon!("step_into")),
             Self::StepOut => Svg::new("step_out", include_icon!("step_out")),
             Self::StepOver => Svg::new("step_over", include_icon!("step_over")),
+            Self::Lightbulb => Svg::new("lightbulb", include_icon!("lightbulb")),
         }
     }
 }

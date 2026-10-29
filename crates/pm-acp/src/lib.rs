@@ -12,6 +12,7 @@ mod attachment;
 mod background;
 mod chat;
 mod client;
+mod contained;
 mod hooks;
 mod inquiry;
 mod install;
@@ -24,12 +25,12 @@ mod standing;
 mod subagent;
 mod tool_registry;
 
-pub use account::{account, default_account, skill_names};
+pub use account::{account, account_in_folder, default_account, skill_names};
 pub use agent::{AGENTS, Agent, Definition, Source};
 pub use agent_registry::{Available, fetch as registry_agents};
 pub use chat::{
-    Background, Chat, Choice, Diff, Discovery, Event, Kind, Notify, Permission, Pick, PlanStep,
-    Progress, Setting, Slash, Tool, ToolState, Usage, Verdict, discover, skills,
+    Background, Chat, Choice, Diff, Discovery, Enclose, Enclosure, Event, Kind, Notify, Permission,
+    Pick, PlanStep, Progress, Setting, Slash, Tool, ToolState, Usage, Verdict, discover, skills,
 };
 pub use hooks::{Hook, trust_hooks};
 pub use inquiry::{Alternative, Inquiry, Question, Reply};

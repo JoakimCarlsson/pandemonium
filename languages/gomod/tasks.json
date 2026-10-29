@@ -1,0 +1,74 @@
+[
+  {
+    "label": "Run govulncheck",
+    "command": "go run golang.org/x/vuln/cmd/govulncheck@latest ./...",
+    "folder": "$PM_DIRNAME",
+    "group": "test",
+    "language": "go",
+    "source": "$PM_RELATIVE_FILE",
+    "lens": true,
+    "tags": [
+      "go-mod-module"
+    ]
+  },
+  {
+    "label": "Run go mod tidy",
+    "command": "go mod tidy",
+    "folder": "$PM_DIRNAME",
+    "group": "build",
+    "language": "go",
+    "source": "$PM_RELATIVE_FILE",
+    "lens": true,
+    "tags": [
+      "go-mod-module"
+    ]
+  },
+  {
+    "label": "Create vendor directory",
+    "command": "go mod vendor",
+    "folder": "$PM_DIRNAME",
+    "group": "build",
+    "language": "go",
+    "source": "$PM_RELATIVE_FILE",
+    "lens": true,
+    "tags": [
+      "go-mod-module"
+    ]
+  },
+  {
+    "label": "Check for upgrades",
+    "command": "go list -u -m all",
+    "folder": "$PM_DIRNAME",
+    "group": "",
+    "language": "go",
+    "source": "$PM_RELATIVE_FILE",
+    "lens": true,
+    "tags": [
+      "go-mod-require"
+    ]
+  },
+  {
+    "label": "Upgrade transitive dependencies",
+    "command": "go get -u ./... && go mod tidy",
+    "folder": "$PM_DIRNAME",
+    "group": "build",
+    "language": "go",
+    "source": "$PM_RELATIVE_FILE",
+    "lens": true,
+    "tags": [
+      "go-mod-require"
+    ]
+  },
+  {
+    "label": "Upgrade direct dependencies",
+    "command": "go get -u $(go list -m -f '{{if not (or .Indirect .Main)}}{{.Path}}{{end}}' all) && go mod tidy",
+    "folder": "$PM_DIRNAME",
+    "group": "build",
+    "language": "go",
+    "source": "$PM_RELATIVE_FILE",
+    "lens": true,
+    "tags": [
+      "go-mod-require"
+    ]
+  }
+]

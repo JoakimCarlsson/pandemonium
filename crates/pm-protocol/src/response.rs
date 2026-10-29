@@ -95,6 +95,11 @@ pub enum Response {
         /// Where each is, nested ones included, from the root of the repository.
         paths: Vec<String>,
     },
+    /// Whether a folder holds a `devcontainer.json`.
+    DevContainer {
+        /// Whether it does.
+        configured: bool,
+    },
     /// What the checked out submodules of a repository have checked out.
     SubmoduleHeads {
         /// Each submodule's path from the root and its branch, or `@` and the commit on a detached head.
@@ -211,6 +216,23 @@ pub enum Response {
         version: Option<String>,
         /// The page it is published on.
         url: String,
+        /// What the release is called, when it is given a name.
+        #[serde(default)]
+        name: Option<String>,
+        /// When it was published, as the releases API writes it.
+        #[serde(default)]
+        published: Option<String>,
+        /// The notes of the release, in markdown, as its page shows them; nothing when it has none.
+        #[serde(default)]
+        body: Option<String>,
+        /// The files attached to it.
+        #[serde(default)]
+        assets: Vec<crate::ReleaseAsset>,
+    },
+    /// An update was downloaded, checked and unpacked, ready to be installed.
+    UpdateStaged {
+        /// What is installed from: the program, or the app bundle on macOS, as a path on the server's machine.
+        path: String,
     },
     /// The named logins and the one in use for each agent.
     Accounts {
@@ -242,6 +264,29 @@ pub enum Response {
         /// The merge, rebase or cherry-pick the folder is stopped in, if it is in one.
         #[serde(default)]
         operation: Option<pm_git::Operation>,
+        /// Where each repository stands when the folder holds several repositories side by side, and nothing when it is one; `branch`, `head` and `tracking` then sum them up.
+        #[serde(default)]
+        repositories: Vec<pm_git::Standing>,
+    },
+    /// Where a folder stands.
+    Standing {
+        /// The branch the folder has checked out, when it is a repository and on one.
+        branch: Option<String>,
+        /// The commit the folder is at, abbreviated, when it is a repository with one.
+        head: Option<String>,
+        /// What the checked out branch follows and how far apart they are.
+        tracking: pm_git::Tracking,
+        /// The merge, rebase or cherry-pick the folder is stopped in, if it is in one.
+        operation: Option<pm_git::Operation>,
+        /// Where each repository stands when the folder holds several repositories side by side, and nothing when it is one.
+        repositories: Vec<pm_git::Standing>,
+        /// Whether the folder is a repository, or holds some, at all.
+        repository: bool,
+    },
+    /// The diffs of the files asked for, those the folder has none of left out.
+    Diffs {
+        /// Each file's.
+        files: Vec<pm_git::FileDiff>,
     },
     /// A shell was started.
     Terminal {
@@ -260,6 +305,11 @@ pub enum Response {
         /// Why the project's own file could not be read, when it could not.
         #[serde(default)]
         problem: Option<String>,
+    },
+    /// The tasks that can run a place of a file.
+    RunnableTasks {
+        /// Each one, the one that runs by default first.
+        tasks: Vec<crate::RunnableTask>,
     },
     /// The toolchains a project can start its tasks and tools with.
     Toolchains {
@@ -335,11 +385,25 @@ pub enum Response {
         /// Whether the server says which names to show the values of while a program is paused.
         #[serde(default)]
         inline_values: bool,
+        /// Whether the server says which stretches of a file lead somewhere when pressed.
+        #[serde(default)]
+        document_links: bool,
+        /// Whether the server says which stretches of a file spell a colour.
+        #[serde(default)]
+        colors: bool,
+        /// Whether the server says what each name of a stretch of a file is, without the rest of the file.
+        #[serde(default)]
+        semantic_ranges: bool,
     },
     /// What could be written at a place.
     Completions {
         /// The best match for the word typed there first.
         items: Vec<pm_lsp::Completion>,
+    },
+    /// A completion with what its language server adds when asked, its `resolve` unchanged.
+    CompletionResolved {
+        /// The item.
+        item: pm_lsp::Completion,
     },
     /// The edits that format a file, each a stretch of its text at the version asked for and what replaces it; none when its language server cannot format.
     Formatted {
@@ -355,11 +419,34 @@ pub enum Response {
     SemanticTokens {
         /// The tokens, in the order of the file.
         tokens: Vec<pm_lsp::SemanticToken>,
+        /// Whether the tokens are only those of the stretch asked for, because the language server says the names of a stretch; the whole file when not set.
+        #[serde(default)]
+        partial: bool,
     },
     /// What to show inside the lines of a file; none when the language server does not say.
     InlayHints {
         /// The hints, in the order of the file.
         hints: Vec<pm_lsp::InlayHint>,
+    },
+    /// Which stretches of a file lead somewhere when pressed; none when the language server does not say.
+    DocumentLinks {
+        /// The links, in the order the server gave them.
+        links: Vec<pm_lsp::DocumentLink>,
+    },
+    /// Where a link leads.
+    LinkResolved {
+        /// Where it leads, or nothing when the server does not say or it leads outside the folder and the web.
+        target: Option<pm_lsp::LinkTarget>,
+    },
+    /// The ways a colour can be written.
+    ColorPresentations {
+        /// The ways, in the order the server gave them.
+        presentations: Vec<pm_lsp::ColorPresentation>,
+    },
+    /// Which stretches of a file spell a colour; none when the language server does not say.
+    Colors {
+        /// The colours, in the order the server gave them.
+        colors: Vec<pm_lsp::ColorSwatch>,
     },
     /// Which stretches of a file to show the values of while a program is paused; none when the language server does not say.
     InlineValues {
@@ -433,6 +520,11 @@ pub enum Response {
         /// The signature, or nothing when the place is in no call.
         signature: Option<pm_lsp::Signature>,
     },
+    /// What can be renamed at a place.
+    RenameTarget {
+        /// The thing that can be renamed, or nothing when nothing at the place can be.
+        target: Option<pm_lsp::RenameTarget>,
+    },
     /// The changes the language server offers for a stretch.
     CodeActions {
         /// Each change, in the order the server gave them.
@@ -442,6 +534,13 @@ pub enum Response {
     Edited {
         /// The changes to each open file.
         files: Vec<pm_lsp::FileEdit>,
+    },
+    /// A change offered by the language server was taken, and the server asked for documents to be shown while it did: the changes to the open files, as in `edited`, and where to look.
+    ActionTaken {
+        /// The changes to each open file.
+        files: Vec<pm_lsp::FileEdit>,
+        /// The documents to show: web addresses to open and files to go to.
+        shown: Vec<pm_lsp::LinkTarget>,
     },
     /// What the language server says about the thing at a place.
     Hovered {

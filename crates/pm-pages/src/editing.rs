@@ -65,6 +65,11 @@ impl Screen {
         self.in_workspace(|state| state.with_completions(session, path, version, items))
     }
 
+    /// The screen after the language server said what it adds to a completion of the file at `path` of the session at `session`.
+    pub fn with_completion_resolved(self, session: usize, path: &str, item: Completion) -> Self {
+        self.in_workspace(|state| state.with_completion_resolved(session, path, item))
+    }
+
     /// The screen after the language server said what it knows about `position` of the file at `path` of the session at `session`.
     pub fn with_hover(
         self,
@@ -114,16 +119,6 @@ impl Screen {
     /// The screen after the card about a place is scrolled by `delta` logical pixels, with `room` pixels to scroll.
     pub fn scrolled_hover(self, delta: f32, room: f32) -> Self {
         self.in_workspace(|state| state.scrolled_hover(delta, room))
-    }
-
-    /// The screen gone back to where the caret was before the last jump.
-    pub fn jumped_back(self) -> Self {
-        self.in_workspace(WorkspaceState::jumped_back)
-    }
-
-    /// The screen gone forward again to where the caret was before the last step back.
-    pub fn jumped_forward(self) -> Self {
-        self.in_workspace(WorkspaceState::jumped_forward)
     }
 
     /// The screen with the file shown formatted as its language says, without writing it.
@@ -222,6 +217,16 @@ impl Screen {
     /// The screen working in the pane `delta` panes along from the one worked in.
     pub fn pane_stepped(self, delta: isize) -> Self {
         self.in_workspace(|state| state.pane_stepped(delta))
+    }
+
+    /// The screen showing the tab `delta` tabs along from the one shown in the pane worked in.
+    pub fn tab_stepped(self, delta: isize) -> Self {
+        self.in_workspace(|state| state.tab_stepped(delta))
+    }
+
+    /// The screen with the file tab closed last open again.
+    pub fn tab_reopened(self) -> Self {
+        self.in_workspace(WorkspaceState::tab_reopened)
     }
 
     /// The screen drawn in `mode`.
@@ -357,6 +362,111 @@ impl Screen {
     /// The screen with the box for a new name closed.
     pub fn rename_closed(self) -> Self {
         self.in_workspace(WorkspaceState::rename_closed)
+    }
+
+    /// Where the link of the file shown at the byte `offset` leads, with the bytes it covers.
+    pub fn link_under(
+        &self,
+        offset: usize,
+    ) -> Option<(std::ops::Range<usize>, pm_protocol::LinkTarget)> {
+        match self {
+            Self::Workspace(state) => state.link_under(offset),
+        }
+    }
+
+    /// Whether files are edited with vim's keys.
+    pub fn vim_on(&self) -> bool {
+        self.workspace_is(WorkspaceState::vim_on)
+    }
+
+    /// Carries `key` out on the file shown when modal editing is on, the view being `height` logical pixels tall; the commands it asks of the window come back, or nothing when modal editing did not take the key.
+    pub fn vim_key(
+        &mut self,
+        key: pm_vim::Keystroke,
+        height: f32,
+        clipboard: &mut dyn pm_vim::Clipboard,
+    ) -> Option<Vec<pm_vim::Command>> {
+        match self {
+            Self::Workspace(state) => state.vim_key(key, height, clipboard),
+        }
+    }
+
+    /// The screen after a change of the language server was taken and it asked for documents to be shown.
+    pub fn with_action_shown(
+        self,
+        session: usize,
+        files: Vec<pm_protocol::FileEdit>,
+        shown: Vec<pm_protocol::LinkTarget>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_action_shown(session, files, shown))
+    }
+
+    /// The screen after the language server said where a link leads.
+    pub fn with_link_resolved(
+        self,
+        session: usize,
+        target: Option<pm_protocol::LinkTarget>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_link_resolved(session, target))
+    }
+
+    /// Whether the box for changing a colour is open.
+    pub fn color_picker_open(&self) -> bool {
+        self.workspace_is(WorkspaceState::color_picker_open)
+    }
+
+    /// The screen with the box for changing a colour closed.
+    pub fn color_picker_closed(self) -> Self {
+        self.in_workspace(WorkspaceState::color_picker_closed)
+    }
+
+    /// The byte of the file shown the colour at `index` of its list starts at.
+    pub fn color_swatch_offset(&self, index: usize) -> Option<usize> {
+        match self {
+            Self::Workspace(state) => state.color_swatch_offset(index),
+        }
+    }
+
+    /// The screen with the box for changing the colour at `index` open at `at`.
+    pub fn color_picker_requested(self, index: usize, at: (f32, f32)) -> Self {
+        self.in_workspace(|state| state.color_picker_requested(index, at))
+    }
+
+    /// The screen after the language server said how a colour can be written.
+    pub fn with_color_presentations(
+        self,
+        session: usize,
+        path: &str,
+        color: [u8; 4],
+        presentations: Vec<pm_protocol::ColorPresentation>,
+    ) -> Self {
+        self.in_workspace(|state| {
+            state.with_color_presentations(session, path, color, presentations)
+        })
+    }
+
+    /// The screen after asking how a colour can be written failed for `problem`.
+    pub fn color_picker_failed(self, problem: String) -> Self {
+        self.in_workspace(|state| state.color_picker_failed(problem))
+    }
+
+    /// The screen after a link of the file shown was followed.
+    pub fn link_followed(self, target: pm_protocol::LinkTarget) -> Self {
+        self.in_workspace(|state| state.link_followed(target))
+    }
+
+    /// The screen after the language server said what can be renamed where the box for a new name was opened.
+    pub fn with_rename_target(
+        self,
+        session: usize,
+        target: Option<pm_protocol::RenameTarget>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_rename_target(session, target))
+    }
+
+    /// The screen after asking the language server what can be renamed failed for `problem`.
+    pub fn rename_unprepared(self, problem: String) -> Self {
+        self.in_workspace(|state| state.rename_unprepared(problem))
     }
 
     /// The screen after renaming failed for `problem`.
@@ -515,6 +625,11 @@ impl Screen {
         self.workspace_is(WorkspaceState::find_open)
     }
 
+    /// The screen with finding limited to the selection of the file shown, or the limit lifted.
+    pub fn find_scope_toggled(self) -> Self {
+        self.in_workspace(WorkspaceState::find_scope_toggled)
+    }
+
     /// The screen with the bar for finding closed.
     pub fn find_closed(self) -> Self {
         self.in_workspace(WorkspaceState::find_closed)
@@ -545,6 +660,25 @@ impl Screen {
         self.in_workspace(|state| state.bases_wanted(session))
     }
 
+    /// The screen after the server sent the diffs `files` of the session at `session`, in answer to the request for `asked`.
+    pub fn with_diffs(
+        self,
+        session: usize,
+        asked: &[String],
+        files: Vec<pm_git::FileDiff>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_diffs(session, asked, files))
+    }
+
+    /// The screen after the server said what the folder of the session at `session` is and where it stands.
+    pub fn with_standing(
+        self,
+        session: usize,
+        standing: pm_components::lazy_diffs::Standing,
+    ) -> Self {
+        self.in_workspace(|state| state.with_standing(session, standing))
+    }
+
     /// The screen asking the language server where the thing at the caret of the file shown is used.
     pub fn highlights_requested(self) -> Self {
         self.in_workspace(WorkspaceState::highlights_requested)
@@ -559,6 +693,50 @@ impl Screen {
         spans: Vec<pm_protocol::Span>,
     ) -> Self {
         self.in_workspace(|state| state.with_highlights(session, path, version, spans))
+    }
+
+    /// The screen comparing the file shown with `clipboard`.
+    pub fn compare_with_clipboard(self, clipboard: String) -> Self {
+        self.in_workspace(|state| state.compare_with_clipboard(clipboard))
+    }
+
+    /// The screen asking for the file shown as it was saved, to compare it with the file as it is being edited.
+    pub fn compare_with_saved_requested(self) -> Self {
+        self.in_workspace(WorkspaceState::compare_with_saved_requested)
+    }
+
+    /// The screen with the list of files open at `at`, to pick the one to compare the file shown with.
+    pub fn compare_with_file_requested(self, at: (f32, f32)) -> Self {
+        self.in_workspace(|state| state.compare_with_file_requested(at))
+    }
+
+    /// The screen after the server read a file to compare with the file `active`.
+    pub fn with_compared(
+        self,
+        session: usize,
+        active: &str,
+        path: &str,
+        saved: bool,
+        text: &str,
+    ) -> Self {
+        self.in_workspace(|state| state.with_compared(session, active, path, saved, text))
+    }
+
+    /// The screen asking the language server whether it offers changes at the caret of the file shown, to mark the line.
+    pub fn lightbulb_requested(self) -> Self {
+        self.in_workspace(WorkspaceState::lightbulb_requested)
+    }
+
+    /// The screen after the language server said how many changes it offers at the caret of a file.
+    pub fn with_lightbulb(
+        self,
+        session: usize,
+        path: &str,
+        version: i32,
+        line: usize,
+        offered: usize,
+    ) -> Self {
+        self.in_workspace(|state| state.with_lightbulb(session, path, version, line, offered))
     }
 
     /// The screen asking the language server which blocks of the file shown can be folded.
@@ -627,6 +805,25 @@ impl Screen {
     /// The screen with `what` done to the lines or the selection of the file shown.
     pub fn lines_edited(self, what: pm_components::line_edits::LineEdit) -> Self {
         self.in_workspace(|state| state.lines_edited(what))
+    }
+
+    /// What copying in the file shown copies when nothing is selected, and the indentation of what it copies otherwise.
+    pub fn editor_copied(&self) -> Option<(Option<String>, String)> {
+        match self {
+            Self::Workspace(state) => state.editor_copied(),
+        }
+    }
+
+    /// The edit that pastes `text` into the file shown at the place it goes to, when that is better than pasting it as it is.
+    pub fn editor_paste_edit(
+        &self,
+        text: &str,
+        whole_lines: bool,
+        indentation: &str,
+    ) -> Option<pm_text::Edit> {
+        match self {
+            Self::Workspace(state) => state.editor_paste_edit(text, whole_lines, indentation),
+        }
     }
 
     /// Whether the selection of the file shown runs over more than one line.
@@ -798,6 +995,61 @@ impl Screen {
         self.in_workspace(WorkspaceState::snippet_ended)
     }
 
+    /// The screen asking the language server to organize the imports of the file shown.
+    pub fn organize_imports_requested(self, at: (f32, f32)) -> Self {
+        self.in_workspace(|state| state.organize_imports_requested(at))
+    }
+
+    /// The screen asking the language server to apply the safe fixes to the file shown.
+    pub fn fix_all_requested(self, at: (f32, f32)) -> Self {
+        self.in_workspace(|state| state.fix_all_requested(at))
+    }
+
+    /// The screen after one kind of change to a whole file came to `outcome`.
+    pub fn with_source_done(
+        self,
+        step: pm_components::source_actions::SourceStep,
+        outcome: pm_components::source_actions::SourceOutcome,
+    ) -> Self {
+        self.in_workspace(|state| state.with_source_done(step, outcome))
+    }
+
+    /// The screen after the language server made changes to the open files of a session by a change of a whole file.
+    pub fn with_source_edited(self, session: usize, files: Vec<pm_protocol::FileEdit>) -> Self {
+        self.in_workspace(|state| state.with_edited_files(session, files))
+    }
+
+    /// The screen knowing the view of the file shown is `height` logical pixels tall.
+    pub fn with_code_height(self, height: f32) -> Self {
+        self.in_workspace(|state| state.with_code_height(height))
+    }
+
+    /// How tall the view of the file shown was last drawn, while the workspace is showing and it was drawn.
+    pub fn code_height(&self) -> Option<f32> {
+        match self {
+            Self::Workspace(state) => state.code_height,
+        }
+    }
+
+    /// Whether the language server should be asked for the names of the lines in view alone.
+    pub fn names_in_view_wanted(&self) -> bool {
+        match self {
+            Self::Workspace(state) => state.names_in_view_wanted(),
+        }
+    }
+
+    /// The screen after the language server said what each name within a stretch of a file is.
+    pub fn with_semantic_range(
+        self,
+        session: usize,
+        path: &str,
+        version: i32,
+        range: pm_protocol::Span,
+        tokens: Vec<pm_protocol::SemanticToken>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_semantic_range(session, path, version, range, tokens))
+    }
+
     /// The screen asking the language server what it says to show in and beside the lines of the file shown.
     pub fn annotations_requested(self) -> Self {
         self.in_workspace(WorkspaceState::annotations_requested)
@@ -812,6 +1064,28 @@ impl Screen {
         tokens: Vec<pm_protocol::SemanticToken>,
     ) -> Self {
         self.in_workspace(|state| state.with_semantic_tokens(session, path, version, tokens))
+    }
+
+    /// The screen after the language server said which stretches of a file lead somewhere when pressed.
+    pub fn with_document_links(
+        self,
+        session: usize,
+        path: &str,
+        version: i32,
+        links: Vec<pm_protocol::DocumentLink>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_document_links(session, path, version, links))
+    }
+
+    /// The screen after the language server said which stretches of a file spell a colour.
+    pub fn with_colors(
+        self,
+        session: usize,
+        path: &str,
+        version: i32,
+        colors: Vec<pm_protocol::ColorSwatch>,
+    ) -> Self {
+        self.in_workspace(|state| state.with_colors(session, path, version, colors))
     }
 
     /// The screen after the language server said what to show inside the lines of a file.

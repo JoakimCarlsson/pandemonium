@@ -8,7 +8,10 @@ license.workspace = true
 flate2 = "1.1.10"
 pm-buffer.workspace = true
 pm-store.workspace = true
+pm-task.workspace = true
 pm-tools.workspace = true
+pm-treesitter.workspace = true
+regex = "1.13.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.11.1"

@@ -60,10 +60,19 @@ fn works(program: &Path, arguments: &[String]) -> bool {
 
 /// Where the program of `spec` is inside the folder `folder` it was installed in the way `install` says.
 fn installed_program(spec: &ServerSpec, install: &Install, folder: &Path) -> Option<PathBuf> {
-    match install.kind {
-        InstallKind::Npm => in_folder(&folder.join("node_modules").join(".bin"), &spec.command),
-        InstallKind::Download | InstallKind::Go => in_folder(folder, &spec.command),
-    }
+    let install = crate::legacy::command_form(install);
+    let place = match install.bin.as_deref() {
+        Some(bin)
+            if Path::new(bin)
+                .components()
+                .all(|part| matches!(part, std::path::Component::Normal(_))) =>
+        {
+            folder.join(bin)
+        }
+        Some(_) => return None,
+        None => folder.to_path_buf(),
+    };
+    in_folder(&place, &spec.command)
 }
 
 /// Runs `command`, saying what it needed, `needs`, when it cannot be started, and what it printed when it fails.
@@ -114,45 +123,64 @@ fn install_into(spec: &ServerSpec, install: &Install, folder: &Path) -> Result<(
             let program = unpack(bytes, download.archive, download.member.as_deref())?;
             write_program(&folder.join(program_name(&spec.command)), &program)
         }
-        InstallKind::Go => {
-            let package = install
-                .package
-                .as_deref()
-                .ok_or("the manifest names no package for go to install")?;
-            run("go", "Go", &["install", package], |command| {
-                command
-                    .env("GOBIN", folder)
-                    .env("GOSUMDB", "sum.golang.org")
-                    .env("GOFLAGS", "-mod=readonly")
-                    .env_remove("GONOSUMDB")
-                    .env_remove("GONOSUMCHECK")
-                    .env_remove("GOPRIVATE")
-                    .env_remove("GOINSECURE")
-                    .current_dir(folder);
-            })
-        }
-        InstallKind::Npm => {
-            let origin = spec
-                .origin
-                .as_deref()
-                .ok_or("an npm install needs the language folder that pins it")?;
-            for pin in ["package.json", "package-lock.json"] {
-                std::fs::copy(origin.join(pin), folder.join(pin)).map_err(|error| {
-                    format!("the language has no {pin} pinning its server: {error}")
-                })?;
-            }
-            let arguments = [
-                "ci",
-                "--ignore-scripts",
-                "--no-audit",
-                "--no-fund",
-                "--loglevel=error",
-            ];
-            run("npm", "Node.js and npm", &arguments, |command| {
-                command.current_dir(folder);
-            })
+        InstallKind::Command | InstallKind::Go | InstallKind::Npm => {
+            run_steps(spec, &crate::legacy::command_form(install), folder)
         }
     }
+}
+
+/// Whether `name` names one file: no folders, no way up and no hidden file.
+fn plain_name(name: &str) -> bool {
+    !name.is_empty() && !name.starts_with('.') && !name.contains(['/', '\\', ':'])
+}
+
+/// Runs the steps of the `command` install `install` of `spec` in `folder`, after copying the pin files its language folder holds.
+fn run_steps(spec: &ServerSpec, install: &Install, folder: &Path) -> Result<(), String> {
+    let tool = install
+        .tool
+        .as_deref()
+        .ok_or("the manifest names no program to install it with")?;
+    for name in &install.copy {
+        let held = match &install.pin {
+            Some(prefix) => format!("{prefix}.{name}"),
+            None => name.clone(),
+        };
+        if !plain_name(name) || !plain_name(&held) {
+            return Err(format!(
+                "{name} is not a file name inside the language folder"
+            ));
+        }
+        let origin = spec
+            .origin
+            .as_deref()
+            .ok_or("an install that copies files needs the language folder that holds them")?;
+        std::fs::copy(origin.join(&held), folder.join(name))
+            .map_err(|error| format!("the language has no {held} for its install: {error}"))?;
+    }
+    let fill = |text: &str| {
+        text.replace("{folder}", &folder.to_string_lossy())
+            .replace("{version}", &install.version)
+    };
+    for step in &install.steps {
+        let arguments: Vec<String> = step.iter().map(|argument| fill(argument)).collect();
+        let arguments: Vec<&str> = arguments.iter().map(String::as_str).collect();
+        run(
+            tool,
+            install.needs.as_deref().unwrap_or(tool),
+            &arguments,
+            |command| {
+                let env = pm_task::safe_env(install.env.clone());
+                for (name, value) in &env {
+                    command.env(name, fill(value));
+                }
+                for name in &install.env_remove {
+                    command.env_remove(name);
+                }
+                command.current_dir(folder);
+            },
+        )?;
+    }
+    Ok(())
 }
 
 /// The program of `spec` in a version installed before, the newest by name first, for when the wanted version cannot be installed.
@@ -174,6 +202,11 @@ fn earlier_install(spec: &ServerSpec, install: &Install) -> Option<PathBuf> {
         .iter()
         .rev()
         .find_map(|folder| installed_program(spec, install, folder))
+}
+
+/// Whether a version of the program of `spec` other than the one `install` asks for is installed.
+pub(crate) fn has_earlier_install(spec: &ServerSpec, install: &Install) -> bool {
+    earlier_install(spec, install).is_some()
 }
 
 /// The program of `spec` found in the project at `root` or on the machine, without installing anything.
@@ -237,10 +270,13 @@ fn server_found(spec: &ServerSpec) -> Option<String> {
 
 /// What the machine has of the language server of `spec`, in words for the reader, without installing anything.
 pub fn server_state(spec: &ServerSpec) -> String {
+    if spec.provided {
+        return "Provided by its extension".to_owned();
+    }
     server_found(spec).unwrap_or_else(|| format!("{} is not installed", spec.command))
 }
 
 /// Whether the machine has the language server of `spec`.
 pub fn server_ready(spec: &ServerSpec) -> bool {
-    server_found(spec).is_some()
+    spec.provided || server_found(spec).is_some()
 }

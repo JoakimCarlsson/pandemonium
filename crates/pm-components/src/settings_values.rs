@@ -3,7 +3,9 @@
 use pm_config::{
     Channel, Density, Finish, GitMarks, Launch, Notification, TerminalCursor, ThemeMode,
 };
-use pm_editor::{CursorShape, DiagnosticsShown, Preset, SoftWrap};
+use pm_editor::{
+    CursorShape, DiagnosticsShown, FindInSelection, LightbulbShown, Preset, SoftWrap, VimClipboard,
+};
 
 use crate::settings_catalog::Setting;
 use crate::settings_state::Kept;
@@ -133,6 +135,8 @@ impl Setting {
             Self::InlineBlame => Control::Switch(editor.inline_blame),
             Self::Occurrences => Control::Switch(editor.occurrence_highlights),
             Self::BracketColors => Control::Switch(editor.bracket_colors),
+            Self::RedactPrivateValues => Control::Switch(editor.redact_private_values),
+            Self::DependencyHints => Control::Switch(editor.dependency_hints),
             Self::SemanticHighlighting => Control::Switch(editor.semantic_highlighting),
             Self::InlayHints => Control::Switch(editor.inlay_hints),
             Self::CodeLens => Control::Switch(editor.code_lens),
@@ -205,6 +209,47 @@ impl Setting {
             Self::ScrollBeyond => Control::Switch(editor.scroll_beyond_last_line),
             Self::ScrollMargin => Control::Number(editor.vertical_scroll_margin.to_string()),
             Self::ScrollbarMarks => Control::Switch(editor.scrollbar_marks),
+            Self::VimMode => Control::Switch(editor.vim_mode),
+            Self::VimClipboard => Control::Choice(
+                &["Always", "On yank", "Never"],
+                place_of(
+                    &[
+                        VimClipboard::Always,
+                        VimClipboard::OnYank,
+                        VimClipboard::Never,
+                    ],
+                    &editor.vim_clipboard,
+                ),
+            ),
+            Self::VimReplayTyping => Control::Switch(editor.vim_replay_typing),
+            Self::VimSyntaxObjects => Control::Switch(editor.vim_syntax_objects),
+            Self::VimBindings => Control::List(self.lines(state)),
+            Self::AutoFindInSelection => Control::Choice(
+                &["Never", "Always", "Multiline"],
+                place_of(
+                    &[
+                        FindInSelection::Never,
+                        FindInSelection::Always,
+                        FindInSelection::Multiline,
+                    ],
+                    &editor.auto_find_in_selection,
+                ),
+            ),
+            Self::DragAndDrop => Control::Switch(editor.drag_and_drop),
+            Self::Lightbulb => Control::Choice(
+                &["Off", "Caret line", "Problem lines"],
+                place_of(
+                    &[
+                        LightbulbShown::Off,
+                        LightbulbShown::CaretLine,
+                        LightbulbShown::Problems,
+                    ],
+                    &editor.lightbulb,
+                ),
+            ),
+            Self::Ligatures => Control::Switch(editor.ligatures),
+            Self::VisualCaret => Control::Switch(editor.visual_caret_movement),
+            Self::CompareIgnoreWhitespace => Control::Switch(editor.compare_ignore_whitespace),
             Self::Language => Control::Picker(
                 state
                     .settings_language()
@@ -242,8 +287,35 @@ impl Setting {
                     Some(false) => 2,
                 },
             ),
+            Self::LanguageOrganize => Control::Choice(
+                LANGUAGE_FORMAT,
+                match language.organize_imports_on_save {
+                    None => 0,
+                    Some(true) => 1,
+                    Some(false) => 2,
+                },
+            ),
+            Self::LanguageFixAll => Control::Choice(
+                LANGUAGE_FORMAT,
+                match language.fix_all_on_save {
+                    None => 0,
+                    Some(true) => 1,
+                    Some(false) => 2,
+                },
+            ),
+            Self::OrganizeOnSave => Control::Switch(editor.organize_imports_on_save),
+            Self::FixAllOnSave => Control::Switch(editor.fix_all_on_save),
+            Self::SemanticRangeLines => Control::Number(if editor.semantic_range_lines == 0 {
+                "Never".to_owned()
+            } else {
+                editor.semantic_range_lines.to_string()
+            }),
+            Self::SemanticRangeMargin => Control::Number(editor.semantic_range_margin.to_string()),
+            Self::WorkspaceRepositories => Control::Switch(machine.workspace.attach_repositories),
+            Self::WorkspaceFolders => Control::Text("e.g. ../shared"),
             Self::LanguageServer => Control::Switch(!language.server_off),
             Self::LanguageServerCommand => Control::Text("The one it comes with"),
+            Self::LanguageServers => Control::Text("The ones it comes with"),
             Self::BaseKeymap => Control::Choice(PRESETS, place_of(&Preset::ALL, &editor.keymap)),
             Self::Shell => Control::Text("Your login shell"),
             Self::ShellArguments => Control::Text("None"),
@@ -371,6 +443,8 @@ impl Setting {
             Self::InlineBlame => editor.inline_blame ^= true,
             Self::Occurrences => editor.occurrence_highlights ^= true,
             Self::BracketColors => editor.bracket_colors ^= true,
+            Self::RedactPrivateValues => editor.redact_private_values ^= true,
+            Self::DependencyHints => editor.dependency_hints ^= true,
             Self::SemanticHighlighting => editor.semantic_highlighting ^= true,
             Self::InlayHints => editor.inlay_hints ^= true,
             Self::CodeLens => editor.code_lens ^= true,
@@ -423,9 +497,57 @@ impl Setting {
                     stepped(editor.vertical_scroll_margin as i64, 1, option, 0, 20) as usize;
             }
             Self::ScrollbarMarks => editor.scrollbar_marks ^= true,
+            Self::VimMode => editor.vim_mode ^= true,
+            Self::VimReplayTyping => editor.vim_replay_typing ^= true,
+            Self::VimSyntaxObjects => editor.vim_syntax_objects ^= true,
+            Self::VimClipboard => {
+                let sharing = [
+                    VimClipboard::Always,
+                    VimClipboard::OnYank,
+                    VimClipboard::Never,
+                ];
+                editor.vim_clipboard = chosen(&sharing, option);
+            }
+            Self::OrganizeOnSave => editor.organize_imports_on_save ^= true,
+            Self::FixAllOnSave => editor.fix_all_on_save ^= true,
+            Self::SemanticRangeLines => {
+                editor.semantic_range_lines =
+                    stepped(editor.semantic_range_lines as i64, 1000, option, 0, 100_000) as usize;
+            }
+            Self::SemanticRangeMargin => {
+                editor.semantic_range_margin =
+                    stepped(editor.semantic_range_margin as i64, 50, option, 0, 2000) as usize;
+            }
+            Self::WorkspaceRepositories => machine.workspace.attach_repositories ^= true,
+            Self::AutoFindInSelection => {
+                editor.auto_find_in_selection = chosen(
+                    &[
+                        FindInSelection::Never,
+                        FindInSelection::Always,
+                        FindInSelection::Multiline,
+                    ],
+                    option,
+                );
+            }
+            Self::DragAndDrop => editor.drag_and_drop ^= true,
+            Self::Lightbulb => {
+                editor.lightbulb = chosen(
+                    &[
+                        LightbulbShown::Off,
+                        LightbulbShown::CaretLine,
+                        LightbulbShown::Problems,
+                    ],
+                    option,
+                );
+            }
+            Self::Ligatures => editor.ligatures ^= true,
+            Self::VisualCaret => editor.visual_caret_movement ^= true,
+            Self::CompareIgnoreWhitespace => editor.compare_ignore_whitespace ^= true,
             Self::LanguageTabSize
             | Self::LanguageIndent
             | Self::LanguageFormat
+            | Self::LanguageOrganize
+            | Self::LanguageFixAll
             | Self::LanguageServer => {
                 let Some(id) = language else {
                     return;
@@ -440,6 +562,13 @@ impl Setting {
                     }
                     Self::LanguageFormat => {
                         held.format_on_save = [None, Some(true), Some(false)][option.min(2)];
+                    }
+                    Self::LanguageOrganize => {
+                        held.organize_imports_on_save =
+                            [None, Some(true), Some(false)][option.min(2)];
+                    }
+                    Self::LanguageFixAll => {
+                        held.fix_all_on_save = [None, Some(true), Some(false)][option.min(2)];
                     }
                     _ => held.server_off ^= true,
                 }
@@ -510,12 +639,15 @@ impl Setting {
             | Self::CodeFont
             | Self::Language
             | Self::LanguageServerCommand
+            | Self::LanguageServers
             | Self::Shell
             | Self::ShellArguments
             | Self::BranchTemplate
             | Self::WorktreeFolder
             | Self::WorktreeInclude
+            | Self::VimBindings
             | Self::GitHosts
+            | Self::WorkspaceFolders
             | Self::DefaultAgent
             | Self::DefaultServer => {}
         }
@@ -618,6 +750,7 @@ impl Setting {
                     .settings_page
                     .fields
                     .remove(&Self::LanguageServerCommand);
+                state.settings_page.fields.remove(&Self::LanguageServers);
                 state.fill_fields();
             }
             Self::DefaultAgent => {
@@ -648,12 +781,30 @@ impl Setting {
         matches!(
             self,
             Self::LanguageServerCommand
+                | Self::LanguageServers
                 | Self::Shell
                 | Self::ShellArguments
                 | Self::BranchTemplate
                 | Self::WorktreeFolder
                 | Self::GitHosts
+                | Self::WorkspaceFolders
         )
+    }
+
+    /// What the button that adds a line to its list says, for a setting written as a list.
+    pub(crate) fn add_label(self) -> &'static str {
+        match self {
+            Self::VimBindings => "Add Binding",
+            _ => "Add Pattern",
+        }
+    }
+
+    /// What the box that a line of its list is written in says while it is empty, for a setting written as a list.
+    pub(crate) fn add_placeholder(self) -> &'static str {
+        match self {
+            Self::VimBindings => "e.g. gh => Hover",
+            _ => "e.g. dist/ or .env.*",
+        }
     }
 
     /// The lines of the list it holds, for a setting written as a list.
@@ -668,14 +819,17 @@ impl Setting {
                 .filter(|line| !line.is_empty())
                 .map(str::to_owned)
                 .collect(),
+            Self::VimBindings => state.editor.vim_bindings.clone(),
             _ => Vec::new(),
         }
     }
 
     /// Has it hold `lines`, for a setting written as a list.
     pub(crate) fn set_lines(self, state: &mut WorkspaceState, lines: &[String]) {
-        if self == Self::WorktreeInclude {
-            state.machine.git.worktree_include = lines.join(", ");
+        match self {
+            Self::WorktreeInclude => state.machine.git.worktree_include = lines.join(", "),
+            Self::VimBindings => state.editor.vim_bindings = lines.to_vec(),
+            _ => {}
         }
     }
 
@@ -684,11 +838,13 @@ impl Setting {
         let machine = &state.machine;
         match self {
             Self::LanguageServerCommand => self.language_preferences(state).server_command,
+            Self::LanguageServers => self.language_preferences(state).servers.join(", "),
             Self::Shell => machine.shell.program.clone(),
             Self::ShellArguments => machine.shell.arguments.clone(),
             Self::BranchTemplate => machine.git.branch_template.clone(),
             Self::WorktreeFolder => machine.git.worktree_root.clone(),
             Self::GitHosts => machine.git.hosts_text(),
+            Self::WorkspaceFolders => machine.workspace.folders_text(),
             _ => String::new(),
         }
     }
@@ -705,11 +861,23 @@ impl Setting {
                     machine.set_language(&id, held);
                 }
             }
+            Self::LanguageServers => {
+                if let Some(id) = language {
+                    let mut held = machine.language(&id);
+                    held.servers = text
+                        .split([',', '\n'])
+                        .map(|name| name.trim().to_owned())
+                        .filter(|name| !name.is_empty())
+                        .collect();
+                    machine.set_language(&id, held);
+                }
+            }
             Self::Shell => machine.shell.program = text,
             Self::ShellArguments => machine.shell.arguments = text,
             Self::BranchTemplate => machine.git.branch_template = text,
             Self::WorktreeFolder => machine.git.worktree_root = text,
             Self::GitHosts => machine.git.set_hosts_text(&text),
+            Self::WorkspaceFolders => machine.workspace.set_folders_text(&text),
             _ => {}
         }
     }
@@ -765,6 +933,10 @@ impl Setting {
             Self::InlineBlame => editor.inline_blame = source.inline_blame,
             Self::Occurrences => editor.occurrence_highlights = source.occurrence_highlights,
             Self::BracketColors => editor.bracket_colors = source.bracket_colors,
+            Self::RedactPrivateValues => {
+                editor.redact_private_values = source.redact_private_values
+            }
+            Self::DependencyHints => editor.dependency_hints = source.dependency_hints,
             Self::SemanticHighlighting => {
                 editor.semantic_highlighting = source.semantic_highlighting
             }
@@ -788,6 +960,21 @@ impl Setting {
                 editor.extend_comment_on_newline = source.extend_comment_on_newline;
             }
             Self::FormatOnSave => editor.format_on_save = source.format_on_save,
+            Self::OrganizeOnSave => {
+                editor.organize_imports_on_save = source.organize_imports_on_save;
+            }
+            Self::FixAllOnSave => editor.fix_all_on_save = source.fix_all_on_save,
+            Self::SemanticRangeLines => editor.semantic_range_lines = source.semantic_range_lines,
+            Self::SemanticRangeMargin => {
+                editor.semantic_range_margin = source.semantic_range_margin;
+            }
+            Self::WorkspaceRepositories => {
+                machine.workspace.attach_repositories = kept.workspace.attach_repositories;
+            }
+            Self::WorkspaceFolders => machine
+                .workspace
+                .folders
+                .clone_from(&kept.workspace.folders),
             Self::TrimWhitespace => {
                 editor.remove_trailing_whitespace_on_save =
                     source.remove_trailing_whitespace_on_save;
@@ -812,12 +999,30 @@ impl Setting {
             Self::ScrollBeyond => editor.scroll_beyond_last_line = source.scroll_beyond_last_line,
             Self::ScrollMargin => editor.vertical_scroll_margin = source.vertical_scroll_margin,
             Self::ScrollbarMarks => editor.scrollbar_marks = source.scrollbar_marks,
+            Self::VimMode => editor.vim_mode = source.vim_mode,
+            Self::VimReplayTyping => editor.vim_replay_typing = source.vim_replay_typing,
+            Self::VimSyntaxObjects => editor.vim_syntax_objects = source.vim_syntax_objects,
+            Self::VimClipboard => editor.vim_clipboard = source.vim_clipboard,
+            Self::VimBindings => editor.vim_bindings.clone_from(&source.vim_bindings),
+            Self::AutoFindInSelection => {
+                editor.auto_find_in_selection = source.auto_find_in_selection;
+            }
+            Self::DragAndDrop => editor.drag_and_drop = source.drag_and_drop,
+            Self::Lightbulb => editor.lightbulb = source.lightbulb,
+            Self::Ligatures => editor.ligatures = source.ligatures,
+            Self::VisualCaret => editor.visual_caret_movement = source.visual_caret_movement,
+            Self::CompareIgnoreWhitespace => {
+                editor.compare_ignore_whitespace = source.compare_ignore_whitespace;
+            }
             Self::Language => {}
             Self::LanguageTabSize
             | Self::LanguageIndent
             | Self::LanguageFormat
+            | Self::LanguageOrganize
+            | Self::LanguageFixAll
             | Self::LanguageServer
-            | Self::LanguageServerCommand => {
+            | Self::LanguageServerCommand
+            | Self::LanguageServers => {
                 let Some(id) = language else {
                     return;
                 };
@@ -826,7 +1031,12 @@ impl Setting {
                     Self::LanguageTabSize => held.tab_size = given.tab_size,
                     Self::LanguageIndent => held.hard_tabs = given.hard_tabs,
                     Self::LanguageFormat => held.format_on_save = given.format_on_save,
+                    Self::LanguageOrganize => {
+                        held.organize_imports_on_save = given.organize_imports_on_save;
+                    }
+                    Self::LanguageFixAll => held.fix_all_on_save = given.fix_all_on_save,
                     Self::LanguageServer => held.server_off = given.server_off,
+                    Self::LanguageServers => held.servers = given.servers,
                     _ => held.server_command = given.server_command,
                 }
                 machine.set_language(id, held);

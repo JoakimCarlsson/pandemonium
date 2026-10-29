@@ -2,10 +2,29 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::multirepo::{self, Layout};
 use crate::{Change, Moved, run};
 
-/// Where every submodule of `repository` is, nested ones included, from the root of the repository, in the order git lists them; none when it has none or is no repository.
+/// Where every submodule of `repository` is, nested ones included, from the root of the repository, in the order git lists them; none when it has none or is no repository. Of a folder of repositories, each repository in it followed by its own submodules, from the folder, so that each is listed as a repository to work in.
 pub fn submodules(repository: &Path) -> Vec<String> {
+    match crate::layout(repository) {
+        Layout::Repositories(children) => children
+            .iter()
+            .flat_map(|child| {
+                std::iter::once(child.clone()).chain(
+                    own_submodules(&repository.join(child))
+                        .into_iter()
+                        .map(move |path| format!("{child}/{path}")),
+                )
+            })
+            .collect(),
+        Layout::Repository => own_submodules(repository),
+        Layout::Neither => Vec::new(),
+    }
+}
+
+/// Where every submodule of the one repository `repository` is, nested ones included, from its root, in the order git lists them.
+pub(crate) fn own_submodules(repository: &Path) -> Vec<String> {
     run(repository, &["submodule", "status", "--recursive"])
         .map(|listed| listed.lines().filter_map(listed_path).collect())
         .unwrap_or_default()
@@ -66,7 +85,7 @@ pub fn populate(worktree: &Path) -> Vec<(String, String)> {
 
 /// Puts every checked out submodule of `worktree`, nested ones included, on a new `branch` from the commit it is at, so that what is committed in one is on a branch rather than a detached head, and returns each that could not be, as its path and why.
 pub(crate) fn branch_all(worktree: &Path, branch: &str) -> Vec<(String, String)> {
-    submodules(worktree)
+    own_submodules(worktree)
         .into_iter()
         .filter(|path| populated(&worktree.join(path)))
         .filter_map(|path| {
@@ -77,22 +96,49 @@ pub(crate) fn branch_all(worktree: &Path, branch: &str) -> Vec<(String, String)>
         .collect()
 }
 
-/// What each checked out submodule of `repository`, nested ones included, has checked out: its path from the root and its branch, or `@` and the commit on a detached head.
+/// What each checked out submodule of `repository`, nested ones included, has checked out: its path from the root and its branch, or `@` and the commit on a detached head. Of a folder of repositories, each repository in it followed by its own submodules, from the folder.
 pub fn submodule_heads(repository: &Path) -> Vec<(String, String)> {
-    submodules(repository)
+    match crate::layout(repository) {
+        Layout::Repositories(children) => children
+            .iter()
+            .flat_map(|child| {
+                let folder = repository.join(child);
+                head_of(&folder)
+                    .map(|head| (child.clone(), head))
+                    .into_iter()
+                    .chain(
+                        own_submodule_heads(&folder)
+                            .into_iter()
+                            .map(move |(path, head)| (format!("{child}/{path}"), head)),
+                    )
+                    .collect::<Vec<_>>()
+            })
+            .collect(),
+        Layout::Repository => own_submodule_heads(repository),
+        Layout::Neither => Vec::new(),
+    }
+}
+
+/// What each checked out submodule of the one repository `repository` has checked out, from its root.
+fn own_submodule_heads(repository: &Path) -> Vec<(String, String)> {
+    own_submodules(repository)
         .into_iter()
         .filter_map(|path| {
             let folder = repository.join(&path);
             if !populated(&folder) {
                 return None;
             }
-            let head = match crate::current_branch(&folder) {
-                Some(branch) => branch,
-                None => format!("@ {}", short(&folder, &commit_of(&folder, "HEAD")?)),
-            };
-            Some((path, head))
+            head_of(&folder).map(|head| (path, head))
         })
         .collect()
+}
+
+/// What the repository at `folder` has checked out: its branch, or `@` and the commit on a detached head.
+fn head_of(folder: &Path) -> Option<String> {
+    Some(match crate::current_branch(folder) {
+        Some(branch) => branch,
+        None => format!("@ {}", short(folder, &commit_of(folder, "HEAD")?)),
+    })
 }
 
 /// Where each submodule `repository` itself declares is, without the ones nested in them, from its root, as git lists them.
@@ -122,23 +168,36 @@ fn owner(directory: &Path, paths: &[String], path: &str) -> (PathBuf, String) {
         )
 }
 
-/// The repository the file at `path` of `directory` is in, and the path from there.
-pub(crate) fn owner_of(directory: &Path, path: &str) -> (PathBuf, String) {
-    owner(directory, &submodules(directory), path)
+/// The repository the file at `path` of `directory` is in, and the path from there: the repository in a folder of repositories that holds it, then the innermost submodule of that holding it.
+pub(crate) fn owner_of(directory: &Path, path: &str) -> Result<(PathBuf, String), String> {
+    let (folder, inner) = multirepo::holder(directory, path)?;
+    Ok(owner(&folder, &own_submodules(&folder), &inner))
 }
 
-/// `paths` of `directory` sorted by the repository each is in, the repository itself or one of its submodules: each repository's folder with the paths from there, in the order they first come.
-pub(crate) fn by_owner(directory: &Path, paths: &[&str]) -> Vec<(PathBuf, Vec<String>)> {
-    let held = submodules(directory);
+/// `paths` of `directory` sorted by the repository each is in, a repository of a folder of repositories, the repository itself or one of their submodules: each repository's folder with the paths from there, in the order they first come.
+pub(crate) fn by_owner(
+    directory: &Path,
+    paths: &[&str],
+) -> Result<Vec<(PathBuf, Vec<String>)>, String> {
+    let children = multirepo::children_of(directory);
+    let mut held: Vec<(PathBuf, Vec<String>)> = Vec::new();
     let mut groups: Vec<(PathBuf, Vec<String>)> = Vec::new();
     for path in paths {
-        let (folder, inner) = owner(directory, &held, path);
+        let (root, inside) = multirepo::split(directory, children.as_deref(), path)?;
+        let at = match held.iter().position(|(known, _)| *known == root) {
+            Some(at) => at,
+            None => {
+                held.push((root.clone(), own_submodules(&root)));
+                held.len() - 1
+            }
+        };
+        let (folder, inner) = owner(&root, &held[at].1, &inside);
         match groups.iter_mut().find(|(known, _)| *known == folder) {
             Some((_, group)) => group.push(inner),
             None => groups.push((folder, vec![inner])),
         }
     }
-    groups
+    Ok(groups)
 }
 
 /// The commit `reference` names in `directory`, in full.
@@ -212,7 +271,7 @@ pub(crate) fn within(mut change: Change, path: &str) -> Change {
 
 /// Pushes each checked out submodule of `directory` that is on a branch with commits no remote has, the innermost first, so that the repository around it never records a commit only this machine has.
 pub(crate) fn push_inside(directory: &Path) -> Result<(), String> {
-    let mut paths = submodules(directory);
+    let mut paths = own_submodules(directory);
     paths.sort_by_key(|path| std::cmp::Reverse(path.matches('/').count()));
     for path in &paths {
         let folder = directory.join(path);

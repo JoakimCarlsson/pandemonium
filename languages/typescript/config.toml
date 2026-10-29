@@ -12,8 +12,17 @@ suffixes = ["ts", "mts", "cts"]
 aliases = ["ts"]
 line_comment = "//"
 indent = 2
+toolchain = "javascript"
+toolchain_name = "Node.js"
 pairs = ["()", "[]", "{}", "\"\"", "''", "``"]
-requires = ["tsx"]
+
+# Quotes are not closed inside strings and comments, which overrides.scm names.
+brackets = [
+  { start = "\"", end = "\"", close = true, not_in = ["string", "comment"] },
+  { start = "'", end = "'", close = true, not_in = ["string", "comment"] },
+  { start = "`", end = "`", close = true, not_in = ["string", "comment"] },
+]
+requires = ["tsx", "json"]
 
 [grammar_file]
 url = "https://github.com/tree-sitter/tree-sitter-typescript/releases/download/v0.23.2/tree-sitter-typescript.wasm"
@@ -27,6 +36,11 @@ args = ["--stdio"]
 project = ["node_modules/.bin"]
 
 [server.install]
-kind = "npm"
+kind = "command"
+tool = "npm"
+needs = "Node.js and npm"
+steps = [["ci", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"]]
+copy = ["package.json", "package-lock.json"]
+bin = "node_modules/.bin"
 version = "6.0.2"
 packages = ["typescript-language-server@6.0.2", "typescript@6.0.3"]
