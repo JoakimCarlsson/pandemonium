@@ -2,8 +2,8 @@
 
 use pm_input::FocusId;
 use pm_style::{
-    Role, bg, flex, flex_1, flex_col, gap, items_center, justify_center, max_w_px, min_h, min_w_px,
-    overflow_hidden, px, py, w_full,
+    Role, bg, flex, flex_1, flex_col, gap, items_center, min_h, min_w_px, overflow_hidden, px, py,
+    w_full,
 };
 use pm_text::Shaper;
 use pm_ui::{Node, node};
@@ -32,9 +32,6 @@ pub const UPDATE_LATER: FocusId = FocusId(7_411_002);
 
 /// The box the notes of the release scroll in.
 pub const UPDATE_SCROLL: FocusId = FocusId(7_026);
-
-/// The widest the page's column gets, in logical pixels, so the notes stay readable on a wide window.
-const COLUMN_WIDTH: u32 = 820;
 
 /// The space around the page's column, in logical pixels, which the notes' width is taken from.
 const MARGIN: f32 = 48.0;
@@ -181,7 +178,7 @@ pub fn page(state: &WorkspaceState, update: &Update, width: f32, shaper: &mut Sh
     else {
         return node();
     };
-    let text_width = (width - 2.0 * MARGIN).min(COLUMN_WIDTH as f32);
+    let text_width = width - 2.0 * MARGIN;
     let date = published
         .as_deref()
         .map(|date| format!(", published {}", date.split('T').next().unwrap_or(date)))
@@ -194,7 +191,6 @@ pub fn page(state: &WorkspaceState, update: &Update, width: f32, shaper: &mut Sh
             flex_1(),
             min_h(0),
             w_full(),
-            max_w_px(COLUMN_WIDTH),
             py(8),
         ])
         .child(line(name, 22, 1.3, Role::Text).styles([pm_style::font_medium()]))
@@ -245,7 +241,6 @@ pub fn page(state: &WorkspaceState, update: &Update, width: f32, shaper: &mut Sh
     node()
         .styles([
             flex(),
-            justify_center(),
             flex_1(),
             min_w_px(0),
             min_h(0),
