@@ -305,8 +305,37 @@ struct Frame<'a> {
 }
 
 impl Frame<'_> {
-    /// Paints `node` and its children, drawn through `parent` at `opacity`.
+    /// Paints `node` and its children, drawn through `parent` at `opacity`, moved inside the window first when it asks to be kept there.
     fn node(
+        &mut self,
+        node: &Node,
+        laid: &Placed,
+        parent: Affine,
+        opacity: f32,
+        inherited: Cursor,
+        scrolled: (f32, f32),
+    ) {
+        let outer = self.origin;
+        if node.keep_in_view {
+            let shown = Rect::new(
+                laid.x + outer.0 - scrolled.0,
+                laid.y + outer.1 - scrolled.1,
+                laid.width,
+                laid.height,
+            );
+            let right = (self.width - shown.x - shown.width).min(0.0);
+            let bottom = (self.height - shown.y - shown.height).min(0.0);
+            self.origin = (
+                outer.0 + right + (-(shown.x + right)).max(0.0),
+                outer.1 + bottom + (-(shown.y + bottom)).max(0.0),
+            );
+        }
+        self.node_in_place(node, laid, parent, opacity, inherited, scrolled);
+        self.origin = outer;
+    }
+
+    /// Paints `node` and its children where `laid` and the origin put them.
+    fn node_in_place(
         &mut self,
         node: &Node,
         laid: &Placed,

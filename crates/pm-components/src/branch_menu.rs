@@ -73,5 +73,6 @@ pub fn branch_menu(state: &WorkspaceState) -> Node {
     }
     menu.build()
         .styles([absolute(), top(TOP / 4.0), left(3), z(60)])
+        .keep_in_view()
         .focusable(BRANCH_BODY)
 }
