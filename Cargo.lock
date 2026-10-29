@@ -2459,6 +2459,7 @@ name = "pm-browser"
 version = "0.14.0-rc.3"
 dependencies = [
  "flate2",
+ "getrandom 0.4.3",
  "memmap2",
  "pm-store",
  "serde",

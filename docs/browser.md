@@ -20,9 +20,12 @@ downloads the engine once, about 120 MB.
 
 ## How the window and the helper talk
 
-The window starts the helper with `--control <socket> --surfaces <folder>
---profile <folder>` and connects over the Unix socket. Requests and reports
-are one JSON object to a line; `crates/pm-browser/src/wire.rs` defines them.
+The window listens on a loopback port and starts the helper with `--control
+<host:port> --surfaces <folder> --profile <folder>`, passing a random token in
+`PANDEMONIUM_BROWSER_TOKEN`. The helper connects and sends the token as its
+first line; the window ignores any connection that does not. Loopback TCP is
+used on every system, since Windows has no Unix sockets in the standard
+library. Requests and reports are one JSON object to a line; `crates/pm-browser/src/wire.rs` defines them.
 
 Each page paints into two files in the surfaces folder, written in turn. A
 file starts with a counter that is odd while the helper fills it and even
@@ -392,12 +395,20 @@ download unpacked into the data folder; one beside the window's own program.
 
 ## Releases
 
-`scripts/bundle-browser.sh <archive>` packs Electron, with English as its only
-locale, and the helper's files into `pandemonium-browser-linux-x86_64.tar.gz`
-and writes its `.sha256`. The release workflow attaches both to the release; the
-window downloads them from the release of its own version and checks the
-checksum. `PANDEMONIUM_BROWSER_URL` names a folder or address to use instead.
+`scripts/bundle-browser.sh <archive>` packs Electron and the helper's files for
+the system it runs on and writes the archive's `.sha256`. Linux and Windows keep
+English as the only locale; macOS keeps Electron's app whole, since changing it
+would break its signature. The release workflow builds
+`pandemonium-browser-<os>-<arch>.tar.gz` for `linux-x86_64`, `macos-x86_64`,
+`macos-aarch64` and `windows-x86_64` and attaches them with their checksums; the
+window downloads the one for its system from the release of its own version and
+checks the checksum. `PANDEMONIUM_BROWSER_URL` names a folder or address to use
+instead.
 
-The helper is built for Linux on x86-64 only so far. Other systems need a
-launcher for their Electron build and the window's control connection on
-Windows.
+Linux and macOS start the helper through a `pandemonium-browser` launcher script
+beside an `electron` folder. On Windows the archive is Electron itself, with
+`electron.exe` renamed `pandemonium-browser.exe` and the helper in
+`resources/app`, which Electron runs without a launcher. The helper hides its
+Dock icon on macOS.
+
+Linux on arm64 has no helper yet.
