@@ -8,11 +8,20 @@ use crate::state::{DIFF_WIDTH, Outgoing, Tab, WorkspaceState};
 /// How far down from the top of the view, in logical pixels, the files whose diffs are wanted reach; the view and some of what is beyond it.
 const REACH: f32 = 2400.0;
 
-/// How many files one request asks the diffs of at most.
-const BATCH: usize = 40;
+/// How many files one request for the files in view asks the diffs of at most; a small one comes back quickly.
+const BATCH_VIEW: usize = 12;
+
+/// How many files one request for the files beyond the view asks the diffs of at most.
+const BATCH_AHEAD: usize = 16;
+
+/// How far down from the top of the view, in logical pixels, the files count as in view.
+const VIEW: f32 = 1400.0;
+
+/// How many files may have their diffs asked and not yet answered before those beyond the view are left until some have been: scrolling fast must not queue up what it has left behind in front of what it has come to.
+const AHEAD_IN_FLIGHT: usize = 24;
 
 impl WorkspaceState {
-    /// Asks for the diffs of the files in or near the view of the diff, those the server listed without and those shown from before the folder was looked at again, each once while the answer is on its way.
+    /// Asks for the diffs of the files in or near the view of the diff, those the server listed without and those shown from before the folder was looked at again, each once while the answer is on its way: the files in view first and on their own, so that they are read at once, then some of those beyond it while few are waiting.
     pub fn diffs_wanted(&mut self) {
         if self.tab != Tab::Diff {
             return;
@@ -25,10 +34,11 @@ impl WorkspaceState {
         };
         let from = self.diff_scroll - REACH / 4.0;
         let to = self.diff_scroll + REACH;
+        let (seen_from, seen_to) = (self.diff_scroll, self.diff_scroll + VIEW);
         let mut top = 0.0;
-        let mut paths = Vec::new();
+        let (mut in_view, mut beyond) = (Vec::new(), Vec::new());
         for (at, change) in session.changes.iter().enumerate() {
-            if top > to || paths.len() >= BATCH {
+            if top > to {
                 break;
             }
             let height = crate::diff::section_height(self, session, at, DIFF_WIDTH);
@@ -36,20 +46,31 @@ impl WorkspaceState {
                 && (!change.loaded || change.stale)
                 && !self.asking_diffs.contains(&(index, change.path.clone()))
             {
-                paths.push(change.path.clone());
+                if top + height >= seen_from && top <= seen_to {
+                    in_view.push(change.path.clone());
+                } else {
+                    beyond.push(change.path.clone());
+                }
             }
             top += height;
         }
-        if paths.is_empty() {
-            return;
+        in_view.truncate(BATCH_VIEW);
+        beyond.truncate(BATCH_AHEAD);
+        if self.asking_diffs.len() + in_view.len() >= AHEAD_IN_FLIGHT {
+            beyond.clear();
         }
-        for path in &paths {
-            self.asking_diffs.insert((index, path.clone()));
+        for paths in [in_view, beyond] {
+            if paths.is_empty() {
+                continue;
+            }
+            for path in &paths {
+                self.asking_diffs.insert((index, path.clone()));
+            }
+            self.outbox.push(Outgoing::Diffs {
+                session: index,
+                paths,
+            });
         }
-        self.outbox.push(Outgoing::Diffs {
-            session: index,
-            paths,
-        });
     }
 
     /// The state after the server sent the diffs `files` of the session at `session`, in answer to the request for `asked`; a file it sent none of is shown with none.

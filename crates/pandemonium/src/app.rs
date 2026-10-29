@@ -1040,6 +1040,9 @@ impl App {
                 },
             };
         });
+        if id == DIFF_SCROLL {
+            self.deliver();
+        }
     }
 
     /// How wide and tall the window is, in logical pixels.
