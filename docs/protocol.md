@@ -147,7 +147,7 @@ request with exactly one `response` carrying the same `id`.
 | `save_withheld`| `keys`: `[string]`                                                                               | `done`          |
 | `watch_folders`| `directories`: `[string]`                                                                       | `done`          |
 | `machine_settings`| none                                                                                          | `machine_settings` |
-| `save_machine_settings`| `settings`: `{git, history, agents, shell, languages, extensions, servers}`              | `done`          |
+| `save_machine_settings`| `settings`: `{git, history, agents, shell, languages, workspace, extensions, servers}`              | `done`          |
 | `latest_release`| `channel`: `stable` or `preview`                                                                 | `latest_release` |
 | `download_update`| `channel`, `version`                                                                            | `update_staged` |
 | `cancel_update`| none                                                                                              | `done`          |
@@ -217,7 +217,7 @@ request with exactly one `response` carrying the same `id`.
 | `format_on_type` | `directory`, `path`, `version`, `position`, `character`                                        | `formatted`     |
 | `folding_ranges` | `directory`, `path`, `version`                                                                 | `folding_ranges` |
 | `linked_ranges` | `directory`, `path`, `version`, `position`                                                      | `linked_ranges` |
-| `semantic_tokens` | `directory`, `path`, `version`, `rules` (optional)                                            | `semantic_tokens` |
+| `semantic_tokens` | `directory`, `path`, `version`, `rules`, `range` (optional)                                          | `semantic_tokens` |
 | `inlay_hints`  | `directory`, `path`, `version`, `span`                                                           | `inlay_hints`   |
 | `document_links` | `directory`, `path`, `version`                                                                 | `document_links` |
 | `colors`       | `directory`, `path`, `version`                                                                   | `colors`        |
@@ -235,7 +235,7 @@ request with exactly one `response` carrying the same `id`.
 | `signature`    | `directory`, `path`, `version`, `position`                                                       | `signature`     |
 | `prepare_rename` | `directory`, `path`, `version`, `position`                                                     | `rename_target` |
 | `rename`       | `directory`, `path`, `version`, `position`, `name`                                               | `edited`        |
-| `code_actions` | `directory`, `path`, `version`, `span`                                                           | `code_actions`  |
+| `code_actions` | `directory`, `path`, `version`, `span`, `only` (optional)                                        | `code_actions`  |
 | `take_code_action` | `directory`, `path`, `index`                                                                 | `edited`        |
 | `file_history` | `directory`, `path`                                                                              | `file_history`  |
 | `local_history`| `directory`, `path`                                                                              | `local_history` |
@@ -500,6 +500,24 @@ everything said of them, its submodules' paths written from `directory`.
   workspace_configuration}`, each over what the language says. Files already
   open move to the new servers at once, and a server whose settings changed is
   stopped and started again.
+  `organize_imports_on_save` and `fix_all_on_save` are optional too, for
+  clients to decide whether saving first asks the language server for the
+  `source.organizeImports` and `source.fixAll` changes.
+  `workspace` is `{attach_repositories, folders}`: the folders besides a
+  project's own that its language servers work on. The server sends a language
+  server all of them as `workspaceFolders` when it starts it, the project's
+  folder first, and tells a running server which came and went with
+  `workspace/didChangeWorkspaceFolders` when the settings change, for a server
+  that says it follows them. `folders` are written `folder` for every project
+  or `project=folder` for one, a project named by its folder or that folder's
+  name, a folder that is not a full path taken from the project's root.
+  `attach_repositories` adds the folders inside the project that are
+  repositories of their own and the submodules of its repository. All of it is
+  resolved on the machine that holds the project, so a project on another
+  machine takes the folders of that machine's settings. A definition in an
+  attached folder comes as a file outside the project, with its text, and
+  `workspace_symbols` lists up to 25 symbols of attached folders in the same
+  way after those inside the project.
   The window sends the settings the server on its own machine keeps to every
   other server it reaches, as it reaches it and whenever they change, so a
   project on another machine works by the same settings.
@@ -766,6 +784,13 @@ everything said of them, its submodules' paths written from `directory`.
   does not say. `rules` are the reader's own rules for what the types of tokens
   look like, `{token_type, token_modifiers, style}`, which come before those of
   the language's `semantic_token_rules.json`.
+  With a `range` (a span of whole lines) the server asks the
+  language server only for the names within it when the language server says
+  it can (`opened` tells `semantic_ranges`), and the answer has `partial` set;
+  otherwise, or without a `range`, the answer holds every name of the file and
+  `partial` is not set. A client with a long file asks for the lines in view
+  first and for the whole file after, and asks for a further `range` while the
+  whole file has not arrived and the view moves past the lines it holds.
 - **`document_links`:** which stretches of the open file at `version` lead
   somewhere when pressed, as the language server says: web addresses, and
   files inside the folder with the place they name. Links to anywhere else are
@@ -811,14 +836,19 @@ everything said of them, its submodules' paths written from `directory`.
   open ones come back in `edited` for the client to make, each a stretch of
   the file as it is before any of them. `code_actions` lists what the language
   server offers for `span`, and `take_code_action` takes one by its place in
-  the latest list for that file.
+  the latest list for that file. `only` limits the list to the kinds of change
+  named, such as `source.organizeImports` or `source.fixAll`, which the
+  language server is asked for in `context.only`; every kind when it is empty
+  or not given. A client organizes the imports of a file by asking for that
+  kind over the whole file and taking the one the server prefers.
 - **`search_files`:** the lines of the files of the folder's repository,
   tracked or not but not ignored, that hold `query`, as typed or as a regular
   expression when `regex`, matching case only when `case`; as `definitions`
   with `line` holding each line, at most 500 of them.
 - **`workspace_symbols`:** the symbols of the folder whose names match
   `query`, as the language server of the open file `path` finds them, those
-  defined inside the folder only, as `definitions` with `name` naming each.
+  defined inside the folder, or in a folder attached to its language server's
+  workspace (see `machine_settings`), as `definitions` with `name` naming each.
 
 A **position** is `{line, character}`, counted from 0, `character` in UTF-16
 code units as language servers count; a **span** is `{start, end}`.
@@ -881,14 +911,14 @@ embedded context, and anything else as a link to the stored file.
 | `extension_assets` | `themes`: `[{extension, name, dark, light}]`, `icon_themes`: `[{extension, name, icons: [{suffix, svg, color}]}]`, `commands`: `[{extension, id, title, description}]` |
 | `extension_command` | `prompt`: the text to put in the prompt box, `message`: a line to tell the reader; each is optional |
 | `grammar`    | `{id, symbol, aliases, wasm, highlights, indents, outline, injections, brackets, runnables, overrides, redactions, textobjects, debugger, indent, tabs, line_comment, pairs, scopes, tags, word_characters, bracket_pairs, increase_indent_pattern, decrease_indent_pattern, decrease_indent_patterns}` |
-| `opened`     | `triggers`: the characters after which the server offers completions; `signature`: those after which it tells what the call the caret is in looks like; `format`: those after which it formats what was typed; `formats_ranges`, `folds`, `links`, `semantic_tokens`, `inlay_hints`, `code_lens`, `inline_values`, `document_links`, `colors`: whether it formats a stretch, says what can be folded, says what is edited together, says what each name is, says what to show inside lines, says what to show with stretches and says which names to show the values of while a program is paused, says which stretches lead somewhere when pressed and says which stretches spell a colour |
+| `opened`     | `triggers`: the characters after which the server offers completions; `signature`: those after which it tells what the call the caret is in looks like; `format`: those after which it formats what was typed; `formats_ranges`, `folds`, `links`, `semantic_tokens`, `inlay_hints`, `code_lens`, `inline_values`, `document_links`, `colors`, `semantic_ranges`: whether it formats a stretch, says what can be folded, says what is edited together, says what each name is, says what to show inside lines, says what to show with stretches and says which names to show the values of while a program is paused, says which stretches lead somewhere when pressed and says which stretches spell a colour and says what the names of a stretch are |
 | `completion_resolved` | `item`: a completion, as in `completions`, with what its server added when asked |
 | `completions`| `items`: `[{label, detail, kind, text, span, filter, sort, documentation, additional_edits, resolve}]`, `kind` one of `function`, `variable`, `type`, `module`, `keyword`, `constant`, `snippet`, `other` |
 | `hovered`    | `hover`: `{text, span}` or null |
 | `formatted`  | `edits`: `[{span, text}]` |
 | `folding_ranges` | `ranges`: `[{start, end}]`, the first and last line of each block, counted from 0 |
 | `linked_ranges` | `spans`: the stretches edited together |
-| `semantic_tokens` | `tokens`: `[{line, start, length, kind}]`, `start` and `length` in UTF-16 code units, `kind` one of `keyword`, `function`, `type`, `string`, `constant`, `comment`, `property`, `operator`, `variable` |
+| `semantic_tokens` | `tokens`: `[{line, start, length, kind}]`, `start` and `length` in UTF-16 code units, `kind` one of `keyword`, `function`, `type`, `string`, `constant`, `comment`, `property`, `operator`, `variable` Also `partial`, set when the tokens are those of the requested `range` alone. |
 | `document_links` | `links`: `[{span, target}]`, `target` one of `{kind: "url", address}`, `{kind: "file", path, position}` with `position` null when the link names none, or `{kind: "unresolved", link}` for a link the server says where it leads only when asked |
 | `link_resolved` | `target`: a link target as in `document_links`, or null |
 | `color_presentations` | `presentations`: `[{label, span, text, additional_edits}]`, `additional_edits` as in `completions` |

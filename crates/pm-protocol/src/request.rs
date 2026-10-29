@@ -1064,6 +1064,9 @@ pub enum Request {
         version: i32,
         /// The stretch.
         span: pm_buffer::Span,
+        /// The kinds of change wanted, such as `source.organizeImports`; every kind when empty or not given.
+        #[serde(default)]
+        only: Option<Vec<String>>,
     },
     /// What each name of an open file is, once the file reaches `version`.
     SemanticTokens {
@@ -1076,6 +1079,9 @@ pub enum Request {
         /// The reader's own rules for what the types of tokens look like, which come before the language's.
         #[serde(default)]
         rules: Vec<pm_lsp::TokenRule>,
+        /// The stretch the names are wanted for first; the whole file when not given.
+        #[serde(default)]
+        range: Option<pm_buffer::Span>,
     },
     /// What to show inside the lines of an open file within a stretch, once the file reaches `version`.
     InlayHints {

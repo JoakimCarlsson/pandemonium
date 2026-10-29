@@ -237,6 +237,7 @@ impl WorkspaceState {
                     document.folds_supported = triggers.folds;
                     document.links_supported = triggers.links;
                     document.semantic_tokens_supported = triggers.semantic_tokens;
+                    document.semantic_ranges_supported = triggers.semantic_ranges;
                     document.inlay_hints_supported = triggers.inlay_hints;
                     document.code_lens_supported = triggers.code_lens;
                     document.document_links_supported = triggers.document_links;
@@ -656,8 +657,16 @@ impl WorkspaceState {
         self
     }
 
-    /// Asks the language server to format the file shown, or only the stretch `range` of it, and writes it to the folder afterwards when `save`; a file no language server reads is written as it is.
+    /// Asks the language server to format the file shown, or only the stretch `range` of it, and writes it to the folder afterwards when `save`, after the changes the settings ask for before saving, such as organizing the imports; a file no language server reads is written as it is.
     pub(crate) fn format_then_save(&mut self, save: bool, range: Option<std::ops::Range<usize>>) {
+        if save && self.sources_before_save() {
+            return;
+        }
+        self.format_and_save(save, range);
+    }
+
+    /// Asks the language server to format the file shown, or only the stretch `range` of it, and writes it to the folder afterwards when `save`; a file no language server reads is written as it is.
+    pub(crate) fn format_and_save(&mut self, save: bool, range: Option<std::ops::Range<usize>>) {
         let Some((session, viewer)) = self.shown_mut() else {
             return;
         };

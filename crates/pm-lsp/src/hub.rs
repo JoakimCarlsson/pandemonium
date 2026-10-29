@@ -33,6 +33,9 @@ const MOST_SHOWN: u64 = 2 * 1024 * 1024;
 /// The most symbols handed back for one search of a project.
 const MOST_SYMBOLS: usize = 200;
 
+/// The most symbols of folders attached to a project that are handed back for one search, each with the text of its file to be shown read only.
+const MOST_ATTACHED_SYMBOLS: usize = 25;
+
 /// The most completions handed back for one question.
 const MOST_COMPLETIONS: usize = 200;
 
@@ -67,6 +70,9 @@ type Latest = (Option<i32>, Vec<Diagnostic>);
 
 /// The changes a server last offered for a file, as it wrote them, with that server.
 type Offered = (Arc<LanguageServer>, Vec<Value>);
+
+/// The folders besides a project's own that its language servers work on, as the project at a folder has them.
+pub type Neighbours = Arc<dyn Fn(&Path) -> Vec<PathBuf> + Send + Sync>;
 
 /// A language server of one project, started once however many files ask for it at the same time.
 type Slot = Arc<OnceLock<Result<Arc<LanguageServer>, String>>>;
@@ -134,6 +140,8 @@ pub struct Hub {
     sink: Sink,
     /// What servers are started with.
     environment: Environment,
+    /// The folders besides a project's own its servers work on.
+    neighbours: Mutex<Neighbours>,
 }
 
 /// How well `filter`, what a completion is matched by, matches the word `typed`: lower is better, nothing when it does not match.
@@ -227,6 +235,56 @@ impl Hub {
             provider: Mutex::new(None),
             sink,
             environment,
+            neighbours: Mutex::new(Arc::new(|_| Vec::new())),
+        })
+    }
+
+    /// The folders `neighbours` names for each project are attached to the workspace of its language servers from now on, and the servers running are told which came and went.
+    pub fn attach_folders(&self, neighbours: Neighbours) {
+        if let Ok(mut held) = self.neighbours.lock() {
+            *held = neighbours;
+        }
+        self.refresh_folders();
+    }
+
+    /// The folders besides the project at `root`'s own that its servers work on.
+    fn neighbours_of(&self, root: &Path) -> Vec<PathBuf> {
+        let resolve = self.neighbours.lock().map(|held| held.clone()).ok();
+        resolve
+            .map(|resolve| resolve(root))
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|folder| folder != root && folder.is_dir())
+            .collect()
+    }
+
+    /// Tells every running server which folders the workspace of its project holds now.
+    pub fn refresh_folders(&self) {
+        let running: Vec<(PathBuf, Arc<LanguageServer>)> = self
+            .servers
+            .lock()
+            .map(|servers| {
+                servers
+                    .iter()
+                    .filter_map(|((root, _), slot)| {
+                        Some((root.clone(), slot.get()?.as_ref().ok()?.clone()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        for (root, server) in running {
+            let _ = server.set_extra_folders(&self.neighbours_of(&root));
+        }
+    }
+
+    /// Whether `file` is inside a folder attached to the workspace of a server running for the project at `root`, besides the project's own.
+    fn attached(&self, root: &Path, file: &Path) -> bool {
+        self.running(root).iter().any(|server| {
+            server
+                .workspace_folders()
+                .iter()
+                .skip(1)
+                .any(|folder| file.starts_with(folder))
         })
     }
 
@@ -560,6 +618,7 @@ impl Hub {
                     LanguageServer::start(
                         &ready,
                         root,
+                        &self.neighbours_of(root),
                         &(self.environment)(root, language, &ready),
                         sink.clone(),
                     )
@@ -705,6 +764,7 @@ impl Hub {
             folds: server.folds(),
             links: server.links(),
             semantic_tokens: server.has_semantic_tokens(),
+            semantic_ranges: server.has_semantic_ranges(),
             inlay_hints: server.has_inlay_hints(),
             code_lens: server.has_code_lens(),
             inline_values: server.has_inline_values(),
@@ -1209,7 +1269,7 @@ impl Hub {
         found
     }
 
-    /// The symbols of the project at `root` whose names match `query`, as the language server of the open file at `path` finds them, defined inside the project, at most a limit of them.
+    /// The symbols of the project at `root` whose names match `query`, as the language server of the open file at `path` finds them, defined inside the project or in a folder attached to its workspace, at most a limit of them; those in attached folders come with their files, to be shown read only.
     pub fn workspace_symbols(
         &self,
         root: &Path,
@@ -1240,12 +1300,26 @@ impl Hub {
             }
         }
         let mut texts: HashMap<PathBuf, Option<String>> = HashMap::new();
-        Ok(found
-            .into_iter()
-            .take(MOST_SYMBOLS)
-            .filter_map(|place| self.location(root, place, Seek::References, &mut texts))
-            .filter(|location| location.inside)
-            .collect())
+        let mut inside = Vec::new();
+        let mut beside = Vec::new();
+        for place in found.into_iter().take(MOST_SYMBOLS) {
+            let in_attached = path_of(&place.0).is_some_and(|file| {
+                relative_to(root, &file).is_none() && self.attached(root, &file)
+            });
+            if in_attached {
+                if beside.len() < MOST_ATTACHED_SYMBOLS
+                    && let Some(location) = self.location(root, place, Seek::Definition, &mut texts)
+                {
+                    beside.push(location);
+                }
+            } else if let Some(location) = self.location(root, place, Seek::References, &mut texts)
+                && location.inside
+            {
+                inside.push(location);
+            }
+        }
+        inside.extend(beside);
+        Ok(inside)
     }
 
     /// The stretches of the open file at `path` of the project at `root` where the thing at `position` is used, once the file reaches `version`.
@@ -1263,17 +1337,18 @@ impl Hub {
         server.highlights(&file_uri(&root.join(path)), position)
     }
 
-    /// What each name of the open file at `path` of the project at `root` is, once the file reaches `version`; none when its language server does not say.
+    /// What each name of the open file at `path` of the project at `root` is, once the file reaches `version`, only those within `range` when it is given and its language server says the names of a stretch, which is told alongside; none when its language server does not say.
     pub fn semantic_tokens(
         &self,
         root: &Path,
         path: &str,
         version: i32,
         user: &[crate::semantic::TokenRule],
-    ) -> Result<Vec<SemanticToken>, String> {
+        range: Option<Span>,
+    ) -> Result<(Vec<SemanticToken>, bool), String> {
         let key = (root.to_path_buf(), path.to_owned());
         let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), false));
         };
         let language = self
             .documents
@@ -1286,7 +1361,7 @@ impl Hub {
             })
             .unwrap_or_default();
         let rules = crate::semantic::rules_for(&language, user);
-        server.semantic_tokens(&file_uri(&root.join(path)), &rules)
+        server.semantic_tokens(&file_uri(&root.join(path)), &rules, range)
     }
 
     /// Which stretches of the open file at `path` of the project at `root` within `range` to show the values of while the program is paused at `stopped` in the debugger's frame `frame`, once the file reaches `version`; none when its language server does not say.
@@ -1532,20 +1607,21 @@ impl Hub {
         }
     }
 
-    /// The changes the language server of the open file at `path` of the project at `root` offers for the stretch `span`, once the file reaches `version`; they are kept to be taken by their place in the list.
+    /// The changes the language server of the open file at `path` of the project at `root` offers for the stretch `span`, once the file reaches `version`, only those of the kinds in `only` when it names any; they are kept to be taken by their place in the list.
     pub fn code_actions(
         &self,
         root: &Path,
         path: &str,
         version: i32,
         span: Span,
+        only: &[String],
     ) -> Result<Vec<CodeAction>, String> {
         let key = (root.to_path_buf(), path.to_owned());
         let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
             return Ok(Vec::new());
         };
         let offered: Vec<Value> = server
-            .code_actions(&file_uri(&root.join(path)), span)?
+            .code_actions(&file_uri(&root.join(path)), span, only)?
             .into_iter()
             .filter(|value| action_of(value).is_some())
             .collect();

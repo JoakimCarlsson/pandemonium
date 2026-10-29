@@ -238,6 +238,9 @@ pub struct Triggers {
     /// Whether it says which stretches of a file spell a colour.
     #[serde(default)]
     pub colors: bool,
+    /// Whether it says what each name of a stretch of a file is, without the rest of the file.
+    #[serde(default)]
+    pub semantic_ranges: bool,
 }
 
 /// What a language server says a stretch of a file shows while the program being debugged is paused.

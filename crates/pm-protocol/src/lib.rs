@@ -29,6 +29,7 @@ pub use history::{ConflictFiles, LocalVersion};
 pub use machine::{
     AgentPreferences, ExtensionPreferences, FETCH_MINUTES, GitPreferences, HISTORY_DAYS,
     HISTORY_MEGABYTES, HistoryPreferences, LanguagePreferences, MachineSettings, ShellPreferences,
+    WorkspacePreferences,
 };
 pub use message::{ClientMessage, ServerMessage};
 pub use pm_agent_library as library;

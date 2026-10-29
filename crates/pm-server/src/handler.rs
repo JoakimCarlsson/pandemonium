@@ -1172,6 +1172,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                     inline_values: triggers.inline_values,
                     document_links: triggers.document_links,
                     colors: triggers.colors,
+                    semantic_ranges: triggers.semantic_ranges,
                 },
                 Err(reason) => failed(reason),
             }
@@ -1401,11 +1402,14 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             path,
             version,
             span,
-        } => match core
-            .documents
-            .hub
-            .code_actions(&place(&directory), &path, version, span)
-        {
+            only,
+        } => match core.documents.hub.code_actions(
+            &place(&directory),
+            &path,
+            version,
+            span,
+            &only.unwrap_or_default(),
+        ) {
             Ok(actions) => Response::CodeActions { actions },
             Err(reason) => failed(reason),
         },
@@ -1414,12 +1418,15 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             path,
             version,
             rules,
-        } => match core
-            .documents
-            .hub
-            .semantic_tokens(&place(&directory), &path, version, &rules)
-        {
-            Ok(tokens) => Response::SemanticTokens { tokens },
+            range,
+        } => match core.documents.hub.semantic_tokens(
+            &place(&directory),
+            &path,
+            version,
+            &rules,
+            range,
+        ) {
+            Ok((tokens, partial)) => Response::SemanticTokens { tokens, partial },
             Err(reason) => failed(reason),
         },
         Request::InlayHints {

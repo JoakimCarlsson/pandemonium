@@ -40,7 +40,7 @@ mod uri;
 pub use candidates::WILDCARD;
 pub use choice::ServerChoice;
 pub use editing::{editing_of, scopes_of, tags_of};
-pub use hub::{Environment, Hub, Published, Sink, rank, score};
+pub use hub::{Environment, Hub, Neighbours, Published, Sink, rank, score};
 pub use index::{Index, Listing, build_index};
 pub use inherit::language_file;
 pub use install::{

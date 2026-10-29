@@ -391,6 +391,9 @@ pub enum Response {
         /// Whether the server says which stretches of a file spell a colour.
         #[serde(default)]
         colors: bool,
+        /// Whether the server says what each name of a stretch of a file is, without the rest of the file.
+        #[serde(default)]
+        semantic_ranges: bool,
     },
     /// What could be written at a place.
     Completions {
@@ -416,6 +419,9 @@ pub enum Response {
     SemanticTokens {
         /// The tokens, in the order of the file.
         tokens: Vec<pm_lsp::SemanticToken>,
+        /// Whether the tokens are only those of the stretch asked for, because the language server says the names of a stretch; the whole file when not set.
+        #[serde(default)]
+        partial: bool,
     },
     /// What to show inside the lines of a file; none when the language server does not say.
     InlayHints {

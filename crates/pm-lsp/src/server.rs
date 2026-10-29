@@ -115,6 +115,24 @@ pub(crate) struct LanguageServer {
     pulled: Mutex<HashMap<String, (u64, Option<String>)>>,
     /// For each file it is asked semantic tokens of, by address: the result id it answered with and the numbers it described the tokens in, to ask for only what changed next time.
     token_data: Mutex<HashMap<String, (String, Vec<u64>)>>,
+    /// The folders of the workspace it works on, the project's own first, as it was last told.
+    folders: Folders,
+}
+
+/// The folders of the workspace a server works on, shared with the handler that answers when it asks for them.
+type Folders = Arc<Mutex<Vec<PathBuf>>>;
+
+/// The workspace folders `folders` as a server is told of them: each by address and name.
+fn folder_values(folders: &[PathBuf]) -> Vec<Value> {
+    folders
+        .iter()
+        .map(|folder| {
+            json!({
+                "uri": file_uri(folder),
+                "name": folder.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default(),
+            })
+        })
+        .collect()
 }
 
 /// The value at the dotted path `section` of `settings`, or nothing.
@@ -293,7 +311,7 @@ fn capabilities() -> Value {
             "callHierarchy": {},
             "typeHierarchy": {},
             "semanticTokens": {
-                "requests": {"range": false, "full": {"delta": true}},
+                "requests": {"range": true, "full": {"delta": true}},
                 "tokenTypes": TOKEN_TYPES,
                 "tokenModifiers": ["declaration", "definition", "readonly", "static", "deprecated", "abstract", "async", "modification", "documentation", "defaultLibrary"],
                 "formats": ["relative"],
@@ -341,18 +359,14 @@ fn capabilities() -> Value {
     })
 }
 
-/// What answers the requests of a server started for `root` with `settings`, hands the diagnostics it publishes to `sink` and keeps them as written in `raw`, and keeps the edits it asks to have made in `applied`.
+/// What answers the requests of a server started with `settings`, tells it the workspace `folders` when it asks, hands the diagnostics it publishes to `sink` and keeps them as written in `raw`, and keeps the edits it asks to have made in `applied`.
 fn handler(
-    root: &Path,
+    folders: Folders,
     settings: Value,
     sink: DiagnosticsSink,
     raw: Raw,
     applied: Applied,
 ) -> Handler {
-    let folders = json!([{
-        "uri": file_uri(root),
-        "name": root.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default(),
-    }]);
     Arc::new(move |method, params| match method {
         "workspace/configuration" => Value::Array(
             params
@@ -368,7 +382,12 @@ fn handler(
                 })
                 .unwrap_or_default(),
         ),
-        "workspace/workspaceFolders" => folders.clone(),
+        "workspace/workspaceFolders" => Value::Array(
+            folders
+                .lock()
+                .map(|held| folder_values(&held))
+                .unwrap_or_default(),
+        ),
         "workspace/applyEdit" => {
             if let (Some(edit), Ok(mut held)) = (params.get("edit"), applied.lock()) {
                 held.push(edit.clone());
@@ -405,29 +424,33 @@ impl LanguageServer {
     pub(crate) fn start(
         spec: &ServerSpec,
         root: &Path,
+        extra: &[PathBuf],
         env: &BTreeMap<String, String>,
         sink: DiagnosticsSink,
     ) -> Result<Self, String> {
         let first_try = match found(spec, Some(root)) {
-            Some(program) => match Self::start_program(&program, spec, root, env, sink.clone()) {
-                Ok(server) => return Ok(server),
-                Err(reason) if spec.install.is_some() => Some(reason),
-                Err(reason) => return Err(reason),
-            },
+            Some(program) => {
+                match Self::start_program(&program, spec, root, extra, env, sink.clone()) {
+                    Ok(server) => return Ok(server),
+                    Err(reason) if spec.install.is_some() => Some(reason),
+                    Err(reason) => return Err(reason),
+                }
+            }
             None => None,
         };
         let program = managed(spec).map_err(|reason| match &first_try {
             Some(before) => format!("{before}; {reason}"),
             None => reason,
         })?;
-        Self::start_program(&program, spec, root, env, sink)
+        Self::start_program(&program, spec, root, extra, env, sink)
     }
 
-    /// Starts `program` as the server of `spec` for the project at `root` and sets it up.
+    /// Starts `program` as the server of `spec` for the project at `root`, with the folders `extra` attached to its workspace, and sets it up.
     fn start_program(
         program: &Path,
         spec: &ServerSpec,
         root: &Path,
+        extra: &[PathBuf],
         env: &BTreeMap<String, String>,
         sink: DiagnosticsSink,
     ) -> Result<Self, String> {
@@ -440,6 +463,11 @@ impl LanguageServer {
         let applied = Applied::default();
         let mut environment = env.clone();
         environment.extend(spec.env.clone());
+        let folders: Folders = Arc::new(Mutex::new(
+            std::iter::once(root.to_path_buf())
+                .chain(extra.iter().cloned())
+                .collect(),
+        ));
         let rpc = Rpc::start(
             program,
             &spec.args,
@@ -447,7 +475,7 @@ impl LanguageServer {
             &first,
             &environment,
             handler(
-                root,
+                folders.clone(),
                 spec.settings.clone(),
                 sink.clone(),
                 raw.clone(),
@@ -459,10 +487,7 @@ impl LanguageServer {
             "clientInfo": {"name": "pandemonium", "version": env!("CARGO_PKG_VERSION")},
             "rootUri": file_uri(root),
             "rootPath": root.to_string_lossy(),
-            "workspaceFolders": [{
-                "uri": file_uri(root),
-                "name": root.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default(),
-            }],
+            "workspaceFolders": folder_values(&folders.lock().map(|held| held.clone()).unwrap_or_default()),
             "capabilities": capabilities(),
         });
         if !spec.init.is_null() {
@@ -513,7 +538,60 @@ impl LanguageServer {
             sink,
             pulled: Mutex::new(HashMap::new()),
             token_data: Mutex::new(HashMap::new()),
+            folders,
         })
+    }
+
+    /// Whether the server takes in workspace folders being added and removed while it runs.
+    fn follows_folders(&self) -> bool {
+        self.abilities
+            .get("workspace")
+            .and_then(|workspace| workspace.get("workspaceFolders"))
+            .is_some_and(|folders| {
+                folders.get("supported").and_then(Value::as_bool) == Some(true)
+                    && folders.get("changeNotifications").is_some_and(|notified| {
+                        !notified.is_null() && notified.as_bool() != Some(false)
+                    })
+            })
+    }
+
+    /// The folders of the workspace the server works on, the project's own first.
+    pub(crate) fn workspace_folders(&self) -> Vec<PathBuf> {
+        self.folders
+            .lock()
+            .map(|held| held.clone())
+            .unwrap_or_default()
+    }
+
+    /// Makes the workspace of the server the project's own folder with `extra` beside it, telling the server which folders came and went; a server that does not follow changes keeps the folders it started with. Returns whether the server was told.
+    pub(crate) fn set_extra_folders(&self, extra: &[PathBuf]) -> Result<bool, String> {
+        let mut held = self
+            .folders
+            .lock()
+            .map_err(|_| "the server is shutting down".to_owned())?;
+        let Some(root) = held.first().cloned() else {
+            return Ok(false);
+        };
+        let wanted: Vec<PathBuf> = std::iter::once(root).chain(extra.iter().cloned()).collect();
+        if *held == wanted || !self.follows_folders() {
+            return Ok(false);
+        }
+        let added: Vec<PathBuf> = wanted
+            .iter()
+            .filter(|folder| !held.contains(folder))
+            .cloned()
+            .collect();
+        let removed: Vec<PathBuf> = held
+            .iter()
+            .filter(|folder| !wanted.contains(folder))
+            .cloned()
+            .collect();
+        self.rpc.notify(
+            "workspace/didChangeWorkspaceFolders",
+            json!({"event": {"added": folder_values(&added), "removed": folder_values(&removed)}}),
+        )?;
+        *held = wanted;
+        Ok(true)
     }
 
     /// Whether the server is still running.
@@ -1194,15 +1272,27 @@ impl LanguageServer {
         }
     }
 
-    /// What each name of the file at `uri` is, as the server says and `rules` read it, one token to a stretch of a line.
+    /// Whether the server says what each name of a stretch of a file is, without the rest of the file.
+    pub(crate) fn has_semantic_ranges(&self) -> bool {
+        self.has_semantic_tokens()
+            && self
+                .abilities
+                .get("semanticTokensProvider")
+                .and_then(|provider| provider.get("range"))
+                .is_some_and(|range| !range.is_null() && range.as_bool() != Some(false))
+    }
+
+    /// What each name of the file at `uri` is, as the server says, one token to a stretch of a line; as `rules` read it; only those within `range` when it is given and the server says what the names of a stretch are.
     pub(crate) fn semantic_tokens(
         &self,
         uri: &str,
         rules: &[crate::semantic::TokenRule],
-    ) -> Result<Vec<SemanticToken>, String> {
+        range: Option<Span>,
+    ) -> Result<(Vec<SemanticToken>, bool), String> {
         if !self.has_semantic_tokens() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), false));
         }
+        let partial = range.is_some() && self.has_semantic_ranges();
         let legend = self
             .abilities
             .get("semanticTokensProvider")
@@ -1217,7 +1307,22 @@ impl LanguageServer {
                 .collect()
         };
         let (types, modifiers) = (names("tokenTypes"), names("tokenModifiers"));
-        let data = self.token_numbers(uri)?;
+        let data: Vec<u64> = match range.filter(|_| partial) {
+            Some(range) => self
+                .rpc
+                .request(
+                    "textDocument/semanticTokens/range",
+                    json!({"textDocument": {"uri": uri}, "range": range_value(range)}),
+                    ANSWERING,
+                )?
+                .get("data")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_u64)
+                .collect(),
+            None => self.token_numbers(uri)?,
+        };
         let (mut line, mut start) = (0u32, 0u32);
         let mut tokens = Vec::with_capacity(data.len() / 5);
         for group in data.as_chunks::<5>().0 {
@@ -1249,7 +1354,7 @@ impl LanguageServer {
                     .unwrap_or_else(|| token_kind(name, has("readonly") || has("static"))),
             });
         }
-        Ok(tokens)
+        Ok((tokens, partial))
     }
 
     /// The stretches of the file at `uri` that lead somewhere when pressed, each with the address the server gives it, or, when it gives none and can say where the link leads when asked, the link as it wrote it; links it can say nothing of are left out.
@@ -1621,7 +1726,12 @@ impl LanguageServer {
     }
 
     /// The changes the server offers for the stretch `span` of the file at `uri`, as it writes them, with what it said is wrong there.
-    pub(crate) fn code_actions(&self, uri: &str, span: Span) -> Result<Vec<Value>, String> {
+    pub(crate) fn code_actions(
+        &self,
+        uri: &str,
+        span: Span,
+        only: &[String],
+    ) -> Result<Vec<Value>, String> {
         let wrong: Vec<Value> = self
             .raw
             .lock()
@@ -1636,12 +1746,16 @@ impl LanguageServer {
                     .is_some_and(|held| held.start <= span.end && span.start <= held.end)
             })
             .collect();
+        let mut context = json!({"diagnostics": wrong, "triggerKind": 1});
+        if !only.is_empty() {
+            context["only"] = json!(only);
+        }
         let answer = self.rpc.request(
             "textDocument/codeAction",
             json!({
                 "textDocument": {"uri": uri},
                 "range": range_value(span),
-                "context": {"diagnostics": wrong, "triggerKind": 1},
+                "context": context,
             }),
             ANSWERING,
         )?;

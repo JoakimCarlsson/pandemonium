@@ -111,6 +111,10 @@ pub(crate) struct Annotations {
     pub(crate) links: Said<Linked>,
     /// The colours, in the order of the text.
     pub(crate) colors: Said<Painted>,
+    /// The stretch of the text the names held come from alone, while the server has not said what every name of the file is: what the answers about stretches covered.
+    pub(crate) covered: Option<Range<usize>>,
+    /// The version of the text and the lines the server was last asked about alone, so the same stretch is not asked twice.
+    pub(crate) range_asked: Option<(i32, Range<usize>)>,
 }
 
 /// The place the byte `offset` moves to when `change` is made, or nothing when `change` replaced the text it stood in.
@@ -186,7 +190,12 @@ impl Document {
                 true
             })
         });
-        if self.annotations.names.answered.is_some() {
+        if let Some(covered) = &mut self.annotations.covered {
+            let start = moved(covered.start, change).unwrap_or(change.range.start);
+            let end = moved(covered.end, change).unwrap_or(change.range.start + change.text.len());
+            *covered = start..end.max(start);
+        }
+        if self.annotations.names.answered.is_some() || self.annotations.covered.is_some() {
             self.repaint();
         }
     }
@@ -206,8 +215,81 @@ impl Document {
             .collect();
         names.sort_by_key(|(range, _)| range.start);
         if self.annotations.names.take(version, self.version, names) {
+            self.annotations.covered = None;
+            self.annotations.range_asked = None;
             self.repaint();
         }
+    }
+
+    /// Takes in `tokens`, what each name within the stretch `span` is as the language server said for the text at `version`, keeping the names held outside it; it is ignored once the server has said what every name of the file is.
+    pub fn take_semantic_range(&mut self, version: i32, span: Span, tokens: Vec<SemanticToken>) {
+        if version != self.version || self.annotations.names.answered.is_some() {
+            return;
+        }
+        let stretch = self.range_of(span);
+        let fresh: Vec<Named> = tokens
+            .into_iter()
+            .map(|token| {
+                let span = Span::new(
+                    Position::new(token.line, token.start),
+                    Position::new(token.line, token.start + token.length),
+                );
+                (self.range_of(span), token.kind)
+            })
+            .filter(|(range, _)| !range.is_empty())
+            .collect();
+        let names = &mut self.annotations.names.items;
+        names.retain(|(range, _)| range.end <= stretch.start || range.start >= stretch.end);
+        names.extend(fresh);
+        names.sort_by_key(|(range, _)| range.start);
+        self.annotations.covered = Some(match self.annotations.covered.take() {
+            Some(held) if held.start <= stretch.end && stretch.start <= held.end => {
+                held.start.min(stretch.start)..held.end.max(stretch.end)
+            }
+            _ => stretch,
+        });
+        self.repaint();
+    }
+
+    /// The stretch to ask the language server about alone, `first` to `last` lines of the text, when it was not asked about it already, the names of the text as it is are not all held and the server says the names of a stretch.
+    pub fn semantic_range_wanted(&self, lines: Range<usize>) -> Option<Span> {
+        let annotations = &self.annotations;
+        if !self.synced
+            || !self.semantic_tokens_supported
+            || !self.semantic_ranges_supported
+            || annotations.names.answered.is_some()
+            || self.lines() == 0
+        {
+            return None;
+        }
+        let last = lines.end.min(self.lines());
+        let first = lines.start.min(last.saturating_sub(1));
+        if first >= last {
+            return None;
+        }
+        let bytes = self.line(first).start..self.line(last - 1).end;
+        let held = annotations
+            .covered
+            .as_ref()
+            .is_some_and(|covered| covered.start <= bytes.start && bytes.end <= covered.end);
+        let asked = annotations
+            .range_asked
+            .as_ref()
+            .is_some_and(|(version, asked)| {
+                *version == self.version && asked.start <= first && last <= asked.end
+            });
+        if held || asked {
+            return None;
+        }
+        Some(Span::new(
+            Position::new(first as u32, 0),
+            self.position_of(bytes.end),
+        ))
+    }
+
+    /// Notes that the language server was asked what each name within the lines `lines` of the text at `version` is.
+    pub fn semantic_range_asked(&mut self, version: i32, lines: Range<usize>) {
+        self.annotations.range_asked = Some((version, lines));
     }
 
     /// Notes that the language server was asked what each name of the text at `version` is.
@@ -226,6 +308,8 @@ impl Document {
     pub fn forget_semantic_tokens(&mut self) {
         if self.annotations.names.answered.is_some() || !self.annotations.names.items.is_empty() {
             self.annotations.names = Said::default();
+            self.annotations.covered = None;
+            self.annotations.range_asked = None;
             self.repaint();
         }
     }

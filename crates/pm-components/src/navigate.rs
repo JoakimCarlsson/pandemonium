@@ -54,7 +54,7 @@ fn is_name(character: char) -> bool {
 
 impl WorkspaceState {
     /// The session the review panel is about and the file it shows, by path, when the file is read by a language server.
-    fn coding_file(&self) -> Option<(usize, String)> {
+    pub(crate) fn coding_file(&self) -> Option<(usize, String)> {
         let session = self.review_index()?;
         let path = self.shown_viewer()?.path.clone();
         self.coding().then_some((session, path))
