@@ -413,7 +413,11 @@ impl App {
             || focused == Some(EDITOR_FIELD)
             || (matches!(
                 action,
-                Action::Find | Action::Replace | Action::FindNext | Action::FindPrevious
+                Action::Find
+                    | Action::Replace
+                    | Action::FindNext
+                    | Action::FindPrevious
+                    | Action::ToggleFindInSelection
             ) && (focused == Some(FIND_FIELD) || focused == Some(REPLACE_FIELD)))
     }
 
@@ -618,6 +622,8 @@ impl App {
             Action::SelectClassBody => Some(LineEdit::SelectObject(TextObject::Class, true)),
             Action::SelectComment => Some(LineEdit::SelectObject(TextObject::Comment, false)),
             Action::NextProblem => Some(LineEdit::NextProblem),
+            Action::NextChange => Some(LineEdit::NextChange),
+            Action::PreviousChange => Some(LineEdit::PreviousChange),
             Action::PreviousProblem => Some(LineEdit::PreviousProblem),
             Action::AddNextOccurrence => Some(LineEdit::AddNextOccurrence),
             Action::SelectAllOccurrences => Some(LineEdit::SelectAllOccurrences),
@@ -669,6 +675,20 @@ impl App {
         match action {
             Action::Hover => self.hover_at_caret(),
             Action::Complete => self.complete_at_caret(),
+            Action::OrganizeImports | Action::FixAll => {
+                let at = self
+                    .editor_caret()
+                    .map_or((48.0, 96.0), |caret| self.hung(caret, LISTING_HEIGHT));
+                self.model.update(|screen| {
+                    let taken = std::mem::take(screen);
+                    *screen = if action == Action::FixAll {
+                        taken.fix_all_requested(at)
+                    } else {
+                        taken.organize_imports_requested(at)
+                    };
+                });
+                self.deliver();
+            }
             Action::SignatureHelp => self
                 .model
                 .update(|screen| *screen = std::mem::take(screen).signature_requested()),
@@ -678,6 +698,12 @@ impl App {
                 let replacing = action == Action::Replace;
                 self.model
                     .update(|screen| *screen = std::mem::take(screen).find_opened(replacing));
+                self.focus.claim(FIND_FIELD);
+                self.show_editor_caret();
+            }
+            Action::ToggleFindInSelection => {
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).find_scope_toggled());
                 self.focus.claim(FIND_FIELD);
                 self.show_editor_caret();
             }
@@ -779,6 +805,27 @@ impl App {
                 self.deliver();
             }
             Action::Save => self.activate(EDITOR_SAVE),
+            Action::CompareWithClipboard => {
+                let text = self
+                    .clipboard()
+                    .and_then(|clipboard| clipboard.get_text().ok())
+                    .unwrap_or_default();
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).compare_with_clipboard(text));
+            }
+            Action::CompareWithSaved => {
+                self.model.update(|screen| {
+                    *screen = std::mem::take(screen).compare_with_saved_requested()
+                });
+                self.deliver();
+            }
+            Action::CompareWithFile => {
+                let at = self.across_top();
+                self.model.update(|screen| {
+                    *screen = std::mem::take(screen).compare_with_file_requested(at)
+                });
+                self.focus_listing();
+            }
             Action::CommandPalette => {
                 let at = self.across_top();
                 self.model
@@ -847,6 +894,16 @@ impl App {
             Action::CopyBranchName => self.session_command(SESSION_MENU_COPY_BRANCH),
             Action::OpenSessionFolder => self.session_command(SESSION_MENU_OPEN_FOLDER),
             Action::FocusPrompt => self.focus.focus(PROMPT),
+            Action::NextTab | Action::PreviousTab => {
+                let delta = if action == Action::NextTab { 1 } else { -1 };
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).tab_stepped(delta));
+            }
+            Action::ReopenTab => {
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).tab_reopened());
+                self.deliver();
+            }
             Action::CloseTab => self.tab_command(TabCommand::Close),
             Action::CloseOtherTabs => self.tab_command(TabCommand::CloseOthers),
             Action::CloseSavedTabs => self.tab_command(TabCommand::CloseClean),

@@ -139,7 +139,9 @@ fn shown(setting: Setting, state: &WorkspaceState) -> bool {
         | Setting::LanguageFormat
         | Setting::LanguageServer
         | Setting::LanguageServerCommand
-        | Setting::LanguageServers => state.settings_language().is_some(),
+        | Setting::LanguageServers
+        | Setting::LanguageOrganize
+        | Setting::LanguageFixAll => state.settings_language().is_some(),
         _ => true,
     }
 }

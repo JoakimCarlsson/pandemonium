@@ -489,6 +489,25 @@ pub enum Outgoing {
         path: String,
         /// The version of the text the names are in.
         version: i32,
+        /// The stretch the names are wanted for first; the whole file when nothing.
+        range: Option<pm_protocol::Span>,
+    },
+    /// Asks the language server for the changes of one kind it offers for the whole of a file of the session at this position, takes the one it prefers, and goes on as the rest of the kinds and saving say.
+    SourceActions {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The version of the text the changes are for.
+        version: i32,
+        /// The whole of the text at that version.
+        span: pm_protocol::Span,
+        /// The kinds of change to take, one after another, the first asked for now.
+        kinds: Vec<String>,
+        /// Whether the file is formatted and written after the last of them.
+        save: bool,
+        /// Whether the reader is told when the server offers nothing.
+        notify: bool,
     },
     /// Asks the language server how a colour can be written in place of a stretch of a file of the session at this position.
     ColorPresentations {
@@ -1458,6 +1477,30 @@ pub enum Outgoing {
         /// What to copy.
         text: String,
     },
+    /// Asks the server for a file of the session at this position as the folder holds it, to compare it with the file `active` as it is being edited.
+    ReadToCompare {
+        /// The session, by position.
+        session: usize,
+        /// The file being edited.
+        active: String,
+        /// The file to read, which is `active` itself to compare it with what was saved of it.
+        path: String,
+        /// Whether `path` is `active` as it was saved.
+        saved: bool,
+    },
+    /// Asks the language server whether it offers changes at the caret of a file of the session at this position, only to mark the line.
+    Lightbulb {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The version of the text the stretch is in.
+        version: i32,
+        /// The line the caret is on.
+        line: usize,
+        /// The stretch.
+        span: pm_protocol::Span,
+    },
 }
 
 /// What a menu over the prompt box is open for.
@@ -1772,6 +1815,8 @@ pub struct WorkspaceState {
     pub recent_commands: Vec<pm_editor::Action>,
     /// The files last opened, by path from the root of the project, the latest first.
     pub recent_files: Vec<String>,
+    /// The file tabs closed last, the latest last, to bring back.
+    pub closed_tabs: Vec<crate::tab_steps::ClosedTab>,
     /// The box giving the thing at the caret a new name, when open.
     pub renaming: Option<crate::navigate::Renaming>,
     /// What modal editing shares between files: its bindings, registers, macros and the last change and search.
@@ -1794,6 +1839,8 @@ pub struct WorkspaceState {
     pub editor_loaded: bool,
     /// How wide the view of the file shown was last drawn and how wide a character of code is in it, in logical pixels, which soft wrap breaks lines by; nothing until it was drawn.
     pub code_view: Option<(f32, f32)>,
+    /// How tall the view of the file shown was last drawn, in logical pixels, which tells the lines in view; nothing until it was drawn.
+    pub code_height: Option<f32>,
     /// Whether the reader asked to close the window and nothing is left to ask first.
     pub quitting: bool,
     /// How far down the notes in the window of an update are scrolled, in logical pixels.
@@ -1949,6 +1996,7 @@ impl WorkspaceState {
             listing: None,
             recent_commands: Vec::new(),
             recent_files: Vec::new(),
+            closed_tabs: Vec::new(),
             renaming: None,
             color_picking: None,
             vim: pm_vim::Vim::default(),
@@ -1960,6 +2008,7 @@ impl WorkspaceState {
             editor: pm_editor::EditorSettings::default(),
             editor_loaded: false,
             code_view: None,
+            code_height: None,
             quitting: false,
             update_scroll: 0.0,
             update_open: false,
@@ -2094,6 +2143,9 @@ impl WorkspaceState {
         }
         if let Some((file, line)) = crate::tasks::run_of(action) {
             self.runnable_run(file, line);
+            return self;
+        }
+        if action == crate::lightbulb::LIGHTBULB {
             return self;
         }
         if let Some(line) = crate::viewer::fold_of(action) {

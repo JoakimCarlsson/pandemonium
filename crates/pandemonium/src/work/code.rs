@@ -504,14 +504,56 @@ impl Work {
                         path,
                         version,
                         span,
+                        only: None,
                     },
                     Pending::CodeActions(session, asked),
+                );
+            }
+            Outgoing::ReadToCompare {
+                session,
+                active,
+                path,
+                saved,
+            } => {
+                let asked = path.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::ReadFile {
+                        directory,
+                        path,
+                        head: false,
+                        revision: None,
+                    },
+                    Pending::Compared(session, active, asked, saved),
+                );
+            }
+            Outgoing::Lightbulb {
+                session,
+                path,
+                version,
+                line,
+                span,
+            } => {
+                let asked = path.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::CodeActions {
+                        directory,
+                        path,
+                        version,
+                        span,
+                        only: None,
+                    },
+                    Pending::Lightbulb(session, asked, version, line),
                 );
             }
             Outgoing::SemanticTokens {
                 session,
                 path,
                 version,
+                range,
             } => {
                 let asked = path.clone();
                 let rules = model.read(|screen| match screen {
@@ -525,8 +567,9 @@ impl Work {
                         path,
                         version,
                         rules,
+                        range,
                     },
-                    Pending::SemanticTokens(session, asked, version),
+                    Pending::SemanticTokens(session, asked, version, range),
                 );
             }
             Outgoing::ResolveLink {
@@ -673,6 +716,36 @@ impl Work {
                 },
                 Pending::LensPressed(session),
             ),
+            Outgoing::SourceActions {
+                session,
+                path,
+                version,
+                span,
+                kinds,
+                save,
+                notify,
+            } => {
+                let step = pm_components::source_actions::SourceStep {
+                    session,
+                    path: path.clone(),
+                    kinds: kinds.clone(),
+                    save,
+                    notify,
+                };
+                let only = kinds.first().cloned().map(|kind| vec![kind]);
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::CodeActions {
+                        directory,
+                        path,
+                        version,
+                        span,
+                        only,
+                    },
+                    Pending::SourceOffered(step),
+                );
+            }
             Outgoing::TakeCodeAction {
                 session,
                 path,
@@ -926,6 +999,7 @@ impl Work {
                         inline_values,
                         document_links,
                         colors,
+                        semantic_ranges,
                     } => Ok(pm_protocol::Triggers {
                         completion: triggers,
                         signature,
@@ -939,6 +1013,7 @@ impl Work {
                         inline_values,
                         document_links,
                         colors,
+                        semantic_ranges,
                     }),
                     other => Err(Self::trouble_of(other)),
                 };
@@ -1038,9 +1113,89 @@ impl Work {
                     *screen = std::mem::take(screen).noted(session, &problem);
                 });
             }
+            (Pending::SourceOffered(step), Response::CodeActions { actions }) => {
+                match pm_components::source_actions::source_action_to_take(&actions) {
+                    Some(index) => {
+                        let (session, path) = (step.session, step.path.clone());
+                        self.ask_in_folder(
+                            model,
+                            session,
+                            |directory| Request::TakeCodeAction {
+                                directory,
+                                path,
+                                index,
+                            },
+                            Pending::SourceTaken(step),
+                        );
+                    }
+                    None => model.update(|screen| {
+                        *screen = std::mem::take(screen).with_source_done(
+                            step,
+                            pm_components::source_actions::SourceOutcome::Nothing,
+                        );
+                    }),
+                }
+            }
+            (Pending::SourceOffered(step), other) => {
+                let problem = Self::trouble_of(other);
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_source_done(
+                        step,
+                        pm_components::source_actions::SourceOutcome::Failed(problem),
+                    );
+                });
+            }
+            (Pending::SourceTaken(step), Response::Edited { files }) => {
+                let outcome = if files.is_empty() {
+                    pm_components::source_actions::SourceOutcome::Nothing
+                } else {
+                    pm_components::source_actions::SourceOutcome::Applied
+                };
+                model.update(|screen| {
+                    let edited = std::mem::take(screen).with_source_edited(step.session, files);
+                    *screen = edited.with_source_done(step, outcome);
+                });
+            }
+            (Pending::SourceTaken(step), other) => {
+                let problem = Self::trouble_of(other);
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_source_done(
+                        step,
+                        pm_components::source_actions::SourceOutcome::Failed(problem),
+                    );
+                });
+            }
             (Pending::CodeActions(session, path), Response::CodeActions { actions }) => {
                 model.update(|screen| {
                     *screen = std::mem::take(screen).with_code_actions(session, &path, actions);
+                });
+            }
+            (
+                Pending::Compared(session, active, path, saved),
+                Response::File {
+                    text: Some(text), ..
+                },
+            ) => {
+                model.update(|screen| {
+                    *screen =
+                        std::mem::take(screen).with_compared(session, &active, &path, saved, &text);
+                });
+            }
+            (Pending::Compared(session, _, path, _), other) => {
+                let problem = format!("{path}: {}", Self::trouble_of(other));
+                model.update(|screen| *screen = std::mem::take(screen).noted(session, &problem));
+            }
+            (Pending::Lightbulb(session, path, version, line), response) => {
+                let offered = match response {
+                    Response::CodeActions { actions } => actions
+                        .iter()
+                        .filter(|action| action.disabled.is_none())
+                        .count(),
+                    _ => 0,
+                };
+                model.update(|screen| {
+                    *screen = std::mem::take(screen)
+                        .with_lightbulb(session, &path, version, line, offered);
                 });
             }
             (Pending::CodeActions(..), other) => {
@@ -1099,14 +1254,19 @@ impl Work {
                         std::mem::take(screen).with_highlights(session, &path, version, spans);
                 });
             }
-            (Pending::SemanticTokens(session, path, version), response) => {
-                let tokens = match response {
-                    Response::SemanticTokens { tokens } => tokens,
-                    _ => Vec::new(),
+            (Pending::SemanticTokens(session, path, version, range), response) => {
+                let (tokens, partial) = match response {
+                    Response::SemanticTokens { tokens, partial } => (tokens, partial),
+                    _ => (Vec::new(), false),
                 };
                 model.update(|screen| {
-                    *screen = std::mem::take(screen)
-                        .with_semantic_tokens(session, &path, version, tokens);
+                    let taken = std::mem::take(screen);
+                    *screen = match range.filter(|_| partial) {
+                        Some(range) => {
+                            taken.with_semantic_range(session, &path, version, range, tokens)
+                        }
+                        None => taken.with_semantic_tokens(session, &path, version, tokens),
+                    };
                 });
             }
             (Pending::LinkResolved(session), Response::LinkResolved { target }) => {

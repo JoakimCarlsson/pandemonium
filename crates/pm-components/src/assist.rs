@@ -803,6 +803,11 @@ fn listing_panel(listing: &Listing) -> Node {
     };
     let filter = match &listing.items {
         Items::Outline { filter, .. } => Some((filter, "Go to an item of this file")),
+        Items::Files {
+            filter,
+            compare: Some(_),
+            ..
+        } => Some((filter, "Compare with a file of this project")),
         Items::Files { filter, .. } => Some((filter, "Open a file of this project")),
         Items::Commands { filter, .. } => Some((filter, "Run a command")),
         Items::Symbols { filter, .. } => Some((filter, "Go to a symbol of this project")),

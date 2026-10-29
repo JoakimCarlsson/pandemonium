@@ -52,6 +52,7 @@ use winit::window::{CursorIcon, Window, WindowId};
 
 mod asides;
 mod code;
+mod editing;
 mod frame;
 mod gesture;
 mod panes;
@@ -243,6 +244,12 @@ pub struct App {
     /// What the press held on selectable text took, so dragging selects the
     /// same amount.
     text_gesture: Gesture<TextPoint>,
+    /// The file, version, caret, other end of the selection and number of problems the language server was last asked about for the marker beside the caret's line.
+    bulb_asked: Option<editing::BulbKey>,
+    /// The same, waiting to settle before the language server is asked, and since when.
+    bulb_wait: Option<(editing::BulbKey, Instant)>,
+    /// The selected text of the file shown that was pressed on, while the button is held.
+    text_drag: Option<editing::TextDrag>,
 }
 
 impl App {
@@ -407,6 +414,9 @@ impl App {
             record_deadline: None,
             highlighted: None,
             highlight_wait: None,
+            bulb_asked: None,
+            bulb_wait: None,
+            text_drag: None,
         }
     }
 }
@@ -639,15 +649,24 @@ impl App {
 
     /// Tells the screen how wide the view of the file shown was drawn and how wide a character of code is, when that changed, so long lines wrap at its edge.
     fn note_code_view(&mut self) {
-        let Some(width) = self
+        let Some((width, height)) = self
             .output
             .regions
             .iter()
             .find(|region| region.id == VIEWER_SCROLL)
-            .map(|region| region.rect.width)
+            .map(|region| (region.rect.width, region.rect.height))
         else {
             return;
         };
+        if self.model.read(Screen::code_height) != Some(height) {
+            self.model
+                .update(|screen| *screen = std::mem::take(screen).with_code_height(height));
+        }
+        if self.model.read(Screen::names_in_view_wanted) {
+            self.model
+                .update(|screen| *screen = std::mem::take(screen).annotations_requested());
+            self.deliver();
+        }
         let Some(font) = self.model.read(|screen| {
             screen
                 .editor_settings()
@@ -689,6 +708,7 @@ impl App {
         }
         match id {
             COMMAND_CENTER => return self.perform(Action::CommandPalette),
+            pm_components::lightbulb::LIGHTBULB => return self.perform(Action::CodeActions),
             GO_BACK => return self.navigate(-1),
             GO_FORWARD => return self.navigate(1),
             _ => {}
@@ -777,6 +797,7 @@ impl App {
 
     /// Writes the editor's settings to disk when they differ from what was last written.
     fn persist_editor(&mut self) {
+        self.follow_ligatures();
         let Some(settings) = self
             .model
             .read(Screen::editor_settings)
@@ -1338,6 +1359,7 @@ impl App {
                 self.terminal_drag((x, y));
                 self.reach_terminal_link();
                 self.text_drag((x, y));
+                self.drag_text_moved(x, y);
                 if let Some(id) = self.dragging
                     && let Some(offset) = self.output.offset_in(id, x, y)
                 {
@@ -1349,6 +1371,7 @@ impl App {
                 self.minimap_drag = false;
                 self.sash_drag = None;
                 self.end_comment_drag();
+                self.drag_text_released();
                 self.dragging = None;
                 self.column_press = None;
                 self.field_gesture.release();
@@ -1636,6 +1659,18 @@ impl App {
             return;
         }
         let reach = Reach::of_clicks(self.clicks.press(id, DOUBLE_CLICK));
+        if id == EDITOR_FIELD
+            && reach == Reach::Point
+            && !self.modifiers.shift
+            && !self.modifiers.control
+            && !self.modifiers.logo
+            && let Some(byte) = self
+                .model
+                .read(|screen| screen.field(id).map(|field| field.to_text(offset)))
+            && self.drag_text_begins(byte, (x, y))
+        {
+            return;
+        }
         self.press_field_at(id, offset, reach, self.modifiers.shift);
     }
 
@@ -2006,6 +2041,7 @@ impl App {
             Key::Escape if self.model.read(|screen| screen.commenting()) => {
                 self.activate(COMMENT_CANCEL)
             }
+            Key::Escape if self.text_drag.is_some() => self.drag_text_cancelled(),
             Key::Escape if self.model.read(|screen| screen.menu().is_some()) => {
                 self.model
                     .update(|state| *state = std::mem::take(state).without_menu());
@@ -2045,6 +2081,7 @@ impl App {
                         );
                     } else if multiline && matches!(event.key, Key::Home | Key::End) {
                         self.move_to_line_edge(id, event.key == Key::End, shift);
+                    } else if id == EDITOR_FIELD && self.move_along_screen(&event) {
                     } else if let Some(action) = keys::clip(&event) {
                         self.clip(id, action);
                     } else if let Some(edit) = keys::edit(&event) {
@@ -2165,6 +2202,7 @@ impl ApplicationHandler for App {
         let hover = [
             self.editor_hover_due(),
             self.editor_highlight_due(),
+            self.editor_bulb_due(),
             self.editor_autosave_due(),
             self.recording_due(),
             self.release_due(),

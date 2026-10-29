@@ -163,6 +163,8 @@ pub enum Items {
         matched: Vec<usize>,
         /// How many of `matched` were opened recently.
         recent: usize,
+        /// The file to compare the one picked with, instead of opening it.
+        compare: Option<String>,
     },
     /// The commands that can be carried out where the keyboard was, narrowed by what is typed, to carry one out.
     Commands {
@@ -592,6 +594,9 @@ impl Items {
     pub fn placeholder(&self) -> &'static str {
         match self {
             Self::Choices { choosing, .. } => choosing.placeholder(),
+            Self::Files {
+                compare: Some(_), ..
+            } => "Compare the file with a file of the project, picked by name",
             items => items.quick().unwrap_or(Quick::Files).placeholder(),
         }
     }
@@ -905,6 +910,7 @@ impl WorkspaceState {
                     filter,
                     matched,
                     recent,
+                    compare: None,
                 }
             }
             Quick::Outline => {
@@ -1184,6 +1190,14 @@ impl WorkspaceState {
                     None => self,
                 }
             }
+            Items::Files {
+                paths,
+                compare: Some(active),
+                ..
+            } => match paths.get(index) {
+                Some(path) => self.compare_file_chosen(active, path.clone()),
+                None => self,
+            },
             Items::Files { paths, .. } => {
                 if let Some(path) = paths.get(index) {
                     self.remember_spot();

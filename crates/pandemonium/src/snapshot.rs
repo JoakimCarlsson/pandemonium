@@ -398,6 +398,30 @@ pub enum Shot {
     Extensions,
     /// The extensions page asking whether to install an extension, with what it asks to be allowed.
     ExtensionInstall,
+    /// The same file with the lines of one function selected and finding limited to them, the matches in them marked.
+    FindInSelection,
+    /// The same, after every match in the selected lines was replaced.
+    FindInSelectionReplaced,
+    /// The same file with a selected line carried over the text, the mark of where it would be dropped in view.
+    DraggingText,
+    /// The same file after the selected line was dropped, moved.
+    DraggedText,
+    /// The same file with the marker beside the line of the caret that the language server offers changes on.
+    Lightbulb,
+    /// A file written with the arrows and comparisons a code font may join, as the code font with ligatures draws them.
+    Ligatures,
+    /// The same file with ligatures switched off.
+    LigaturesOff,
+    /// A file with lines of Hebrew, Arabic and mixed text, a selection and the caret in them.
+    Bidi,
+    /// The file compared with what the clipboard holds.
+    CompareClipboard,
+    /// The file compared with what was last saved of it.
+    CompareSaved,
+    /// The list of files of the project open to pick the one to compare the file with.
+    ComparePicking,
+    /// The file compared with another file of the project.
+    CompareFile,
 }
 
 /// Loads the grammar of the language `id` installed on this machine, if it is, and learns the endings of the files written in it, so a snapshot can highlight with it.
@@ -2256,6 +2280,18 @@ impl Shot {
             Self::Vim => Screen::Workspace(vim()),
             Self::ProjectSearch => Screen::Workspace(project_search()),
             Self::Excerpts => Screen::Workspace(excerpts()),
+            Self::FindInSelection => Screen::Workspace(find_in_selection(false)),
+            Self::FindInSelectionReplaced => Screen::Workspace(find_in_selection(true)),
+            Self::DraggingText => Screen::Workspace(dragging_text(false)),
+            Self::DraggedText => Screen::Workspace(dragging_text(true)),
+            Self::Lightbulb => Screen::Workspace(lightbulb()),
+            Self::Ligatures => Screen::Workspace(ligatures(true)),
+            Self::LigaturesOff => Screen::Workspace(ligatures(false)),
+            Self::Bidi => Screen::Workspace(bidi()),
+            Self::CompareClipboard => Screen::Workspace(compared(Compare::Clipboard)),
+            Self::CompareSaved => Screen::Workspace(compared(Compare::Saved)),
+            Self::ComparePicking => Screen::Workspace(compared(Compare::Picking)),
+            Self::CompareFile => Screen::Workspace(compared(Compare::File)),
             Self::TabMenu => Screen::Workspace(code().with_tab_menu(0, (500.0, 52.0))),
             Self::Finder => {
                 let mut state = code();
@@ -3436,6 +3472,138 @@ fn live(turn: Turn) -> WorkspaceState {
     state
 }
 
+/// The text of the Rust file the code snapshots write in.
+fn code_text(state: &WorkspaceState) -> String {
+    state
+        .shown_document()
+        .map(|document| document.field.text().to_owned())
+        .unwrap_or_default()
+}
+
+/// The Rust file with the lines of `new` selected and the bar for finding open on "names", limited to the selection, where the editor limits finding to a selection of several lines; every match in them replaced when `replaced`.
+fn find_in_selection(replaced: bool) -> WorkspaceState {
+    let mut state = code();
+    state.editor.auto_find_in_selection = pm_editor::FindInSelection::Multiline;
+    let text = code_text(&state);
+    let start = text.find("    /// Makes a session").unwrap_or_default();
+    let end = text.find("    /// How many names").unwrap_or_default();
+    let state = state
+        .edited(EDITOR_FIELD, Edit::Select(start, end))
+        .find_opened(replaced)
+        .find_typed(Edit::Paste("names".to_owned()));
+    if !replaced {
+        return state;
+    }
+    state
+        .replacement_typed(Edit::Paste("labels".to_owned()))
+        .replaced_all()
+}
+
+/// The Rust file with the line that holds `label` selected, picked up, and carried over the line above it; dropped there, moving it, when `dropped`.
+fn dragging_text(dropped: bool) -> WorkspaceState {
+    let mut state = code();
+    let text = code_text(&state);
+    let start = text.find("        let label").unwrap_or_default();
+    let end = start + text[start..].find('\n').map_or(0, |at| at + 1);
+    let target = text.find("        let names").unwrap_or_default();
+    state = state.edited(EDITOR_FIELD, Edit::Select(start, end));
+    state.editor_drag_started(start + 16);
+    state.editor_drag_over(target);
+    if dropped {
+        state.editor_dropped(false);
+    }
+    state
+}
+
+/// The Rust file with the caret on the line that has a problem, where the language server offers two changes, and the marker for that beside the line.
+fn lightbulb() -> WorkspaceState {
+    let state = code();
+    let text = code_text(&state);
+    let at = text.find("label: u32").unwrap_or_default() + 4;
+    let state = state.edited(EDITOR_FIELD, Edit::Place(at, false));
+    let (version, line) = state
+        .shown_document()
+        .map_or((0, 0), |document| (document.version, document.line_of(at)));
+    state.with_lightbulb(0, CODE_PATH, version, line, 2)
+}
+
+/// A file of words with the letter pairs a font joins and of arrows and comparisons, set in a code font that has ligatures for the pairs of letters, joined or not as `joined` says; no code font with ligatures for arrows is installed where the snapshots are made, so the pairs of letters stand for them.
+fn ligatures(joined: bool) -> WorkspaceState {
+    let path = "notes/operators.txt";
+    let mut state = workspace_sample().after(TAB_DIFF);
+    state.editor.ligatures = joined;
+    state.window.appearance.code_font = "DejaVu Sans".to_owned();
+    state.open_viewer(path.to_owned(), false);
+    state.with_file(
+        0,
+        path,
+        false,
+        Ok((
+            Some("office affluent final flow waffle\na -> b => c <- d <= e >= f != g == h === i\nx |> y <|> z :: w ::= v >>= u <<= t\nwww //// /* */ <!-- --> 0xFF .. ... && ||\n".to_owned()),
+            false,
+            None,
+        )),
+    )
+}
+
+/// A file with a line of Hebrew, a line of Arabic and lines of left-to-right text mixed with them, a word of the Hebrew line selected and a stretch of the mixed line from its left-to-right text into the start of its Hebrew.
+fn bidi() -> WorkspaceState {
+    let path = "notes/mixed.txt";
+    let mut state = workspace_sample().after(TAB_DIFF);
+    state.open_viewer(path.to_owned(), false);
+    let text = "Left to right: hello world\nשלום עולם, זה טקסט בעברית\nmixed: abc שלום עולם def 123\nمرحبا بالعالم، هذا نص عربي\nAfter: the end\n";
+    let state = state.with_file(0, path, false, Ok((Some(text.to_owned()), false, None)));
+    let hebrew = text.find("שלום עולם,").unwrap_or_default();
+    let from = text.find("abc").unwrap_or_default() + 2;
+    let to = text.find("שלום עולם def").unwrap_or_default() + 6;
+    state
+        .edited(EDITOR_FIELD, Edit::Select(hebrew, hebrew + 8))
+        .edited(EDITOR_FIELD, Edit::AddSelection(from, to))
+}
+
+/// How the file is compared in a snapshot.
+#[derive(Clone, Copy)]
+enum Compare {
+    /// With what the clipboard holds.
+    Clipboard,
+    /// With what was last saved of it.
+    Saved,
+    /// With the list of files open to pick another.
+    Picking,
+    /// With another file of the project.
+    File,
+}
+
+/// The Rust file compared as `how` says, with an older text standing for the clipboard, the saved file or the other file.
+fn compared(how: Compare) -> WorkspaceState {
+    let mut state = code();
+    let edited = code_text(&state);
+    let older = edited
+        .replace("const LIMIT: usize = 64;", "const LIMIT: usize = 32;")
+        .replace("HashMap::with_capacity(LIMIT)", "HashMap::new()")
+        .replace(
+            "    /// How many names the session knows.\n    pub fn count(&self) -> usize {\n        self.names.len()\n    }\n",
+            "    pub fn len(&self) -> usize {\n        self.names.len()\n    }\n",
+        );
+    let other = "crates/pandemonium/src/session_old.rs";
+    match how {
+        Compare::Clipboard => state.compare_with_clipboard(older),
+        Compare::Saved => state.with_compared(0, CODE_PATH, CODE_PATH, true, &older),
+        Compare::Picking => {
+            state.files = [
+                CODE_PATH,
+                other,
+                "crates/pandemonium/src/main.rs",
+                "Cargo.toml",
+            ]
+            .map(str::to_owned)
+            .to_vec();
+            state.compare_with_file_requested((340.0, 0.0))
+        }
+        Compare::File => state.with_compared(0, CODE_PATH, other, false, &older),
+    }
+}
+
 /// Draws the screen as it looks `elapsed_ms` into the animations, with the
 /// pointer at `pointer` and focus on `focused` if given, in `appearance`, and
 /// writes it to `path` as a PNG. The pointer is taken to have rested where it
@@ -3483,6 +3651,12 @@ pub fn write(
     let family = default_family();
     let theme = family.variant(appearance);
     let screen = shot.screen();
+    let Screen::Workspace(held) = &screen;
+    let looks = &held.window.appearance;
+    if !looks.code_font.is_empty() || !looks.interface_font.is_empty() {
+        scene::set_fonts(&mut shaper, &looks.interface_font, &looks.code_font);
+    }
+    shaper.set_ligatures(held.editor.ligatures);
     let resting = Input {
         elapsed_ms: 0.0,
         ..input

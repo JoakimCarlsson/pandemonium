@@ -385,11 +385,33 @@ pub enum Action {
     TerminalClear,
     /// Ends the shell.
     KillTerminal,
+    /// Sorts and prunes the imports of the file as its language server says.
+    OrganizeImports,
+    /// Applies every fix the language server marks safe to apply at once.
+    FixAll,
+    /// Shows the next tab of the pane.
+    NextTab,
+    /// Shows the tab before in the pane.
+    PreviousTab,
+    /// Opens the file tab closed last again.
+    ReopenTab,
+    /// Goes to the next changed stretch of the file, as the marks beside its lines show.
+    NextChange,
+    /// Goes to the changed stretch of the file before, as the marks beside its lines show.
+    PreviousChange,
+    /// Limits finding to the lines selected, or to the whole file again.
+    ToggleFindInSelection,
+    /// Compares the file with what the clipboard holds.
+    CompareWithClipboard,
+    /// Compares the file with what was last saved of it.
+    CompareWithSaved,
+    /// Compares the file with another file of the project, picked from a list.
+    CompareWithFile,
 }
 
 impl Action {
     /// Every action, in the order the keymap lists them.
-    pub const ALL: [Self; 186] = [
+    pub const ALL: [Self; 197] = [
         Self::CommandPalette,
         Self::OpenSettings,
         Self::GoToSession,
@@ -576,6 +598,17 @@ impl Action {
         Self::TerminalSelectAll,
         Self::TerminalClear,
         Self::KillTerminal,
+        Self::OrganizeImports,
+        Self::FixAll,
+        Self::NextTab,
+        Self::PreviousTab,
+        Self::ReopenTab,
+        Self::NextChange,
+        Self::PreviousChange,
+        Self::ToggleFindInSelection,
+        Self::CompareWithClipboard,
+        Self::CompareWithSaved,
+        Self::CompareWithFile,
     ];
 
     /// The name it is kept under in the settings.
@@ -690,6 +723,8 @@ impl Action {
             Self::Format => "format",
             Self::FormatSelection => "format_selection",
             Self::CodeActions => "code_actions",
+            Self::OrganizeImports => "organize_imports",
+            Self::FixAll => "fix_all",
             Self::Hover => "hover",
             Self::Complete => "complete",
             Self::SignatureHelp => "signature_help",
@@ -767,6 +802,15 @@ impl Action {
             Self::TerminalSelectAll => "terminal_select_all",
             Self::TerminalClear => "terminal_clear",
             Self::KillTerminal => "kill_terminal",
+            Self::NextTab => "next_tab",
+            Self::PreviousTab => "previous_tab",
+            Self::ReopenTab => "reopen_tab",
+            Self::NextChange => "next_change",
+            Self::PreviousChange => "previous_change",
+            Self::ToggleFindInSelection => "toggle_find_in_selection",
+            Self::CompareWithClipboard => "compare_with_clipboard",
+            Self::CompareWithSaved => "compare_with_saved",
+            Self::CompareWithFile => "compare_with_file",
         }
     }
 
@@ -882,6 +926,8 @@ impl Action {
             Self::Format => "Format Buffer",
             Self::FormatSelection => "Format Selection",
             Self::CodeActions => "Show Code Actions",
+            Self::OrganizeImports => "Organize Imports",
+            Self::FixAll => "Fix All",
             Self::Hover => "Show Hover",
             Self::Complete => "Show Completions",
             Self::SignatureHelp => "Show Signature Help",
@@ -959,6 +1005,15 @@ impl Action {
             Self::TerminalSelectAll => "Select All",
             Self::TerminalClear => "Clear",
             Self::KillTerminal => "Kill Terminal",
+            Self::NextTab => "Show Next Tab",
+            Self::PreviousTab => "Show Previous Tab",
+            Self::ReopenTab => "Reopen Closed Tab",
+            Self::NextChange => "Go to Next Change",
+            Self::PreviousChange => "Go to Previous Change",
+            Self::ToggleFindInSelection => "Toggle Find in Selection",
+            Self::CompareWithClipboard => "Compare with Clipboard",
+            Self::CompareWithSaved => "Compare with Saved",
+            Self::CompareWithFile => "Compare Active File With...",
         }
     }
 
@@ -1006,6 +1061,9 @@ impl Action {
             | Self::CloseOtherTabs
             | Self::CloseSavedTabs
             | Self::CloseAllTabs
+            | Self::NextTab
+            | Self::PreviousTab
+            | Self::ReopenTab
             | Self::PinTab
             | Self::ToggleReadOnly
             | Self::CopyPath
@@ -1090,6 +1148,8 @@ impl Action {
             | Self::GoForward
             | Self::NextProblem
             | Self::PreviousProblem
+            | Self::NextChange
+            | Self::PreviousChange
             | Self::MatchingBracket
             | Self::GoToLine
             | Self::Outline
@@ -1100,6 +1160,8 @@ impl Action {
             | Self::Format
             | Self::FormatSelection
             | Self::CodeActions
+            | Self::OrganizeImports
+            | Self::FixAll
             | Self::Hover
             | Self::Complete
             | Self::SignatureHelp => "Code Intelligence",
@@ -1124,8 +1186,13 @@ impl Action {
             | Self::Replace
             | Self::FindNext
             | Self::FindPrevious
+            | Self::ToggleFindInSelection
             | Self::SearchProject => "Search",
-            Self::RevealInFileManager | Self::Save => "File",
+            Self::RevealInFileManager
+            | Self::Save
+            | Self::CompareWithClipboard
+            | Self::CompareWithSaved
+            | Self::CompareWithFile => "File",
             action if action.in_terminal() => "Terminal",
             _ => "Editing",
         }
@@ -1204,6 +1271,9 @@ impl Action {
                 | Self::CloseOtherTabs
                 | Self::CloseSavedTabs
                 | Self::CloseAllTabs
+                | Self::NextTab
+                | Self::PreviousTab
+                | Self::ReopenTab
                 | Self::PinTab
                 | Self::ToggleReadOnly
                 | Self::CopyPath
@@ -1550,6 +1620,17 @@ fn own() -> &'static [(Action, &'static [&'static str])] {
         (TerminalSelectAll, &["ctrl+shift+a"]),
         (TerminalClear, &[]),
         (KillTerminal, &[]),
+        (OrganizeImports, &[]),
+        (FixAll, &[]),
+        (NextTab, &["ctrl+pagedown"]),
+        (PreviousTab, &["ctrl+pageup"]),
+        (ReopenTab, &["ctrl+shift+t"]),
+        (NextChange, &["alt+f5"]),
+        (PreviousChange, &["alt+shift+f5"]),
+        (ToggleFindInSelection, &["alt+l"]),
+        (CompareWithClipboard, &[]),
+        (CompareWithSaved, &[]),
+        (CompareWithFile, &[]),
     ]
 }
 

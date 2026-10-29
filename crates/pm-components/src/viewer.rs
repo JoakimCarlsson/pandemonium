@@ -176,6 +176,11 @@ pub(crate) fn line_marks(
             })
         })
         .collect();
+    marks.extend(clipped(&document.find_scope(), &line).map(|range| Mark {
+        range,
+        color: Role::SurfaceHover.into(),
+        paint: Paint::Fill,
+    }));
     if settings.bracket_colors {
         for (range, depth) in document.brackets_on(index) {
             recolor(&mut marks, range, bracket_role(depth));
@@ -234,6 +239,16 @@ pub(crate) fn line_marks(
             paint: Paint::Fill,
         })
     }));
+    marks.extend(
+        document
+            .drop_mark()
+            .filter(|at| (line.start..=line.end).contains(at))
+            .map(|at| Mark {
+                range: at - line.start..at - line.start,
+                color: Role::Accent.into(),
+                paint: Paint::Drop,
+            }),
+    );
     marks.extend(clipped(&document.reach, &line).map(|range| Mark {
         range,
         color: Role::SyntaxFunction.into(),
@@ -378,6 +393,8 @@ pub(crate) struct Beside {
     pub(crate) blamed: Option<String>,
     /// The cell before the line number.
     pub(crate) breakpoint: Node,
+    /// Whether the marker for the changes the language server offers stands beside the line number.
+    pub(crate) bulb: bool,
     /// Whether a program being debugged is paused on the line.
     pub(crate) paused: bool,
 }
@@ -395,6 +412,7 @@ pub(crate) fn file_line(
     let Beside {
         blamed,
         breakpoint,
+        bulb,
         paused,
     } = beside;
     let line = document.line(index);
@@ -550,6 +568,7 @@ pub(crate) fn file_line(
             .child(
                 node()
                     .styles([flex(), items_center(), justify_end(), h_px(height)])
+                    .children((bulb && settings.line_numbers).then(|| bulb_button(height)))
                     .children(settings.line_numbers.then(|| {
                         text(number.to_string()).styles([
                             code_px(font),
@@ -602,6 +621,22 @@ fn run_lens_row(
                 .enumerate()
                 .map(|(place, lens)| lens_chip(lens, font, lenses.is_empty() && place == 0)),
         )
+}
+
+/// The marker that says the language server offers changes on the line, which opens the list of them when pressed.
+fn bulb_button(height: f32) -> Node {
+    node()
+        .styles([
+            flex(),
+            items_center(),
+            justify_center(),
+            flex_none(),
+            w_px(16.0),
+            h_px(height),
+            cursor_pointer(),
+        ])
+        .focusable(crate::lightbulb::LIGHTBULB)
+        .child(glyph(IconName::Lightbulb, 3.5, Role::Warning))
 }
 
 /// The text of `hint` written inside a line in a smaller, quieter hand than the code around it.
@@ -771,6 +806,8 @@ struct Look<'a> {
     file: usize,
     /// The breakpoints and the paused line of the file.
     gutter: &'a Gutter,
+    /// The line the marker for the changes the language server offers stands beside.
+    bulb: Option<usize>,
 }
 
 /// The lines of `document` that are in or near a view `height` tall scrolled `scroll` down, drawn as `look` says, with a blank for those above and below.
@@ -783,6 +820,7 @@ fn visible(document: &Document, scroll: f32, height: f32, look: &Look) -> Vec<No
         owner,
         file,
         gutter,
+        bulb,
     } = *look;
     let row = settings.row_height();
     let total = document.wrapped_rows(columns);
@@ -831,6 +869,7 @@ fn visible(document: &Document, scroll: f32, height: f32, look: &Look) -> Vec<No
                         Beside {
                             blamed: blamed(index),
                             breakpoint: cell,
+                            bulb: bulb == Some(index),
                             paused: gutter.paused == Some(index),
                         },
                         settings,
@@ -1049,6 +1088,7 @@ pub fn file_view(
                         owner,
                         file: index,
                         gutter: &state.gutter_of(index),
+                        bulb: state.lightbulb_line().filter(|_| live),
                     },
                 ));
             if document.truncated {

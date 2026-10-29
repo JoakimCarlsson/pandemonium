@@ -10,6 +10,7 @@
 //! syntax tree, text found and replaced, the completion picked, the edits that format the file. Nothing here sends anything or draws anything; the window does.
 
 mod annotations;
+mod bulb;
 mod clipboard;
 mod column;
 mod complete;
@@ -18,9 +19,11 @@ mod cursors;
 mod debug_values;
 mod depth;
 mod document;
+mod drag;
 mod edit;
 pub mod emmet;
 mod find;
+mod find_range;
 mod fold;
 mod format;
 mod gutter;
@@ -49,7 +52,10 @@ pub use fold::Fold;
 pub use gutter::LineChange;
 pub use keymap::{Action, Chord, Keymap, Preset, Pressed, shown};
 pub use modal::{ModalPress, ModalView};
-pub use settings::{CursorShape, DiagnosticsShown, EditorSettings, SoftWrap, VimClipboard};
+pub use settings::{
+    CursorShape, DiagnosticsShown, EditorSettings, FindInSelection, LightbulbShown, SoftWrap,
+    VimClipboard,
+};
 pub use snippet::{Expansion, UserSnippet};
 pub use transform::{Case, LineOrder};
 pub use wrap::segments;
