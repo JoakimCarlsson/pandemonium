@@ -55,6 +55,7 @@ pub fn bytes(event: &KeyEvent, application_cursor: bool) -> Option<Vec<u8>> {
     }
     let alt = event.modifiers.alt;
     let control = event.modifiers.control;
+    let word_motion = alt && !control && !event.modifiers.shift;
     let sent = match event.key {
         Key::Enter => b"\r".to_vec(),
         Key::Escape => b"\x1b".to_vec(),
@@ -67,6 +68,8 @@ pub fn bytes(event: &KeyEvent, application_cursor: bool) -> Option<Vec<u8>> {
         Key::PageDown => tilded(event, 6),
         Key::ArrowUp => lettered(event, 'A', application_cursor),
         Key::ArrowDown => lettered(event, 'B', application_cursor),
+        Key::ArrowRight if word_motion => b"\x1bf".to_vec(),
+        Key::ArrowLeft if word_motion => b"\x1bb".to_vec(),
         Key::ArrowRight => lettered(event, 'C', application_cursor),
         Key::ArrowLeft => lettered(event, 'D', application_cursor),
         Key::Home => lettered(event, 'H', application_cursor),

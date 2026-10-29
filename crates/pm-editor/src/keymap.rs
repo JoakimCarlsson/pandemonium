@@ -1435,6 +1435,20 @@ impl Preset {
     }
 }
 
+/// The keys of going back a page: Option+Left is word motion on a Mac, so Control+Option+Page Up goes back there.
+const WORKSPACE_BACK: &[&str] = if cfg!(target_os = "macos") {
+    &["ctrl+alt+pageup"]
+} else {
+    &["alt+left"]
+};
+
+/// The keys of going forward a page: Option+Right is word motion on a Mac, so Control+Option+Page Down goes forward there.
+const WORKSPACE_FORWARD: &[&str] = if cfg!(target_os = "macos") {
+    &["ctrl+alt+pagedown"]
+} else {
+    &["alt+right"]
+};
+
 /// Pandemonium's own bindings.
 fn own() -> &'static [(Action, &'static [&'static str])] {
     use Action::*;
@@ -1446,8 +1460,8 @@ fn own() -> &'static [(Action, &'static [&'static str])] {
         (AddProject, &[]),
         (ShowHistory, &[]),
         (ShowExtensions, &["ctrl+shift+x"]),
-        (WorkspaceBack, &["alt+left"]),
-        (WorkspaceForward, &["alt+right"]),
+        (WorkspaceBack, WORKSPACE_BACK),
+        (WorkspaceForward, WORKSPACE_FORWARD),
         (Quit, &["ctrl+q"]),
         (ShowChat, &[]),
         (ShowDiff, &[]),
