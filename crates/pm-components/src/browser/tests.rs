@@ -1,20 +1,23 @@
-//! Tests of when a page found by a server replaces the one the browser shows.
+//! Tests of what a page found by a server does to the page the browser shows.
 
-use super::browser_free_for;
+use super::{Move, served_move};
 
-/// A browser on nothing, an error or a page of the same server is sent to the page; one on another page is not.
+/// A browser on nothing or an error loads the page, one on a page of the same server loads it again where it is, and one on another page stays.
 #[test]
-fn only_a_browser_not_in_use_is_sent() {
+fn a_page_in_use_is_left_alone() {
     let page = "http://localhost:8766/";
-    assert!(browser_free_for("", page));
-    assert!(browser_free_for("about:blank", page));
-    assert!(browser_free_for("chrome-error://chromewebdata/", page));
-    assert!(browser_free_for("http://localhost:8766/", page));
-    assert!(browser_free_for(
-        "http://localhost:8766/form.html?a=1",
-        page
-    ));
-    assert!(!browser_free_for("http://localhost:8765/", page));
-    assert!(!browser_free_for("http://localhost:87660/", page));
-    assert!(!browser_free_for("https://example.com/", page));
+    assert_eq!(served_move("", page), Move::Load);
+    assert_eq!(served_move("about:blank", page), Move::Load);
+    assert_eq!(
+        served_move("chrome-error://chromewebdata/", page),
+        Move::Load
+    );
+    assert_eq!(served_move("http://localhost:8766/", page), Move::Reload);
+    assert_eq!(
+        served_move("http://localhost:8766/form.html?a=1", page),
+        Move::Reload
+    );
+    assert_eq!(served_move("http://localhost:8765/", page), Move::Stay);
+    assert_eq!(served_move("http://localhost:87660/", page), Move::Stay);
+    assert_eq!(served_move("https://example.com/", page), Move::Stay);
 }

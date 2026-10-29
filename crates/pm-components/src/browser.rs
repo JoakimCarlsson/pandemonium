@@ -168,16 +168,28 @@ impl Browser {
     }
 }
 
-/// Whether a browser showing `current` may be sent to the page at `address`: it shows nothing or an error, or a page of the same server.
-fn browser_free_for(current: &str, address: &str) -> bool {
+/// What a browser showing `current` does when a page is found at `address`.
+#[derive(Debug, PartialEq, Eq)]
+enum Move {
+    /// It is on another page, which the reader or an agent is using, and stays.
+    Stay,
+    /// It shows nothing or an error, and loads the page.
+    Load,
+    /// It shows a page of the same server, which started again, and loads that page again where it is.
+    Reload,
+}
+
+/// What a browser showing `current` does when a page is found at `address`.
+fn served_move(current: &str, address: &str) -> Move {
     let current = current.trim();
     if current.is_empty() || current == "about:blank" || current.starts_with("chrome-error:") {
-        return true;
+        return Move::Load;
     }
     let origin = address.trim_end_matches('/');
-    current
+    let same = current
         .strip_prefix(origin)
-        .is_some_and(|rest| rest.is_empty() || rest.starts_with(['/', '?', '#']))
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(['/', '?', '#']));
+    if same { Move::Reload } else { Move::Stay }
 }
 
 /// The address `typed` names: a web address as it is, a bare host with a scheme in front, and a local host over plain HTTP.
@@ -223,12 +235,18 @@ impl WorkspaceState {
     /// A browser on another page is left on it, since the reader or an agent is using it.
     pub fn open_served_page(&mut self, address: &str, host: Option<String>) {
         match self.browser.as_mut() {
-            Some(browser) if !browser_free_for(browser.address.text(), address) => {}
-            Some(browser) => {
-                browser.host = host;
-                browser.address = Field::new(address);
-                browser.commands.push(Command::Load(address.to_owned()));
-            }
+            Some(browser) => match served_move(browser.address.text(), address) {
+                Move::Stay => return,
+                Move::Load => {
+                    browser.host = host;
+                    browser.address = Field::new(address);
+                    browser.commands.push(Command::Load(address.to_owned()));
+                }
+                Move::Reload => {
+                    browser.host = host;
+                    browser.commands.push(Command::Reload);
+                }
+            },
             None => self.browser = Some(Browser::new(address, host)),
         }
         self.tab = Tab::Browser;

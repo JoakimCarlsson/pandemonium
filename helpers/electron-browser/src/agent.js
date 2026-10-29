@@ -317,7 +317,10 @@ async function settled(page, quiet, most) {
 function arrived(page, since) {
   const answer = page.recorder && page.recorder.document;
   const fresh = answer && answer.url === page.contents.getURL() && answer.at >= since;
-  const status = fresh && answer ? ` (HTTP ${answer.status})` : ' (not fetched again, so the status is not known)';
+  const status =
+    fresh && answer && !answer.cached
+      ? ` (HTTP ${answer.status})`
+      : ' (not fetched again, so the status is not known)';
   return `The page loaded: ${page.contents.getURL()}${status}, titled "${page.contents.getTitle()}".`;
 }
 
@@ -407,7 +410,7 @@ async function run(page, tool, args) {
       if (!element || typeof args.value !== 'string') return failed('give the option as value, and the list by ref or selector');
       const found = await inWorld(
         page,
-        `(() => { const el = ${element}; if (!el) return JSON.stringify({ error: 'no such element; take a new browser_snapshot' }); if (el.tagName !== 'SELECT') return JSON.stringify({ error: 'the element is not a list' }); const want = ${JSON.stringify(args.value)}; const option = [...el.options].find((o) => o.value === want) || [...el.options].find((o) => o.text.trim() === want); if (!option) return JSON.stringify({ error: 'the list has no such option; it has: ' + [...el.options].map((o) => o.value || o.text.trim()).join(', ') }); el.value = option.value; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); return JSON.stringify({ chosen: option.text.trim() || option.value }); })()`,
+        `(() => { const el = ${element}; if (!el) return JSON.stringify({ error: 'no such element; take a new browser_snapshot' }); if (el.tagName !== 'SELECT') return JSON.stringify({ error: 'the element is not a list' }); const want = ${JSON.stringify(args.value)}; const option = [...el.options].find((o) => o.value === want) || [...el.options].find((o) => o.text.trim() === want); if (!option) return JSON.stringify({ error: 'the list has no such option; it has: ' + [...el.options].map((o) => (o.text.trim() && o.text.trim() !== o.value ? o.value + ' (' + o.text.trim() + ')' : o.value)).join(', ') }); el.value = option.value; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); return JSON.stringify({ chosen: option.text.trim() || option.value }); })()`,
       );
       if (found.error) return failed(found.error);
       return done(`Chose ${found.chosen}.`);

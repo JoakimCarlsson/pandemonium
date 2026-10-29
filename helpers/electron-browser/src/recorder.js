@@ -44,7 +44,7 @@ class Recorder {
     this.pending = new Set();
     /** @type {number} When the network last did something, in milliseconds. */
     this.active = Date.now();
-    /** @type {{ url: string, status: number, at: number } | null} The page's own document as last answered, and when. */
+    /** @type {{ url: string, status: number, at: number, cached: boolean } | null} The page's own document as last answered, when, and whether the engine's cache answered. */
     this.document = null;
     cdp.listen((method, params) => this.hear(method, params));
     for (const method of ['Runtime.enable', 'Network.enable', 'Page.enable', 'Log.enable']) {
@@ -97,7 +97,12 @@ class Recorder {
         break;
       case 'Network.responseReceived': {
         if (params.type === 'Document' && params.response) {
-          this.document = { url: params.response.url, status: params.response.status, at: Date.now() };
+          this.document = {
+            url: params.response.url,
+            status: params.response.status,
+            at: Date.now(),
+            cached: params.response.fromDiskCache === true || params.response.fromPrefetchCache === true,
+          };
         }
         const known = this.requests.get(params.requestId);
         if (known) {

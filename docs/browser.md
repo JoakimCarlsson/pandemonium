@@ -60,7 +60,7 @@ it, over the same SSH forward as any other page of that machine. It happens
 once for each address a command prints. A browser that is open on another
 page is left there when a different server starts, since the reader or an agent
 is using it; it goes to a server's page when it shows nothing, an error or a page
-of that same server. It happens only while the embedded browser is on
+of that same server, which it loads again where it is. It happens only while the embedded browser is on
 and installed, and Settings, under General, can turn it off. A shell in a dev
 container is not seen, since its ports are the container's.
 
