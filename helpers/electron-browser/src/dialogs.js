@@ -31,6 +31,18 @@ const PATIENCE = 60000;
 /** How long past `PATIENCE` the native box is held back before it answers by itself, in milliseconds. */
 const NATIVE_GRACE = 5000;
 
+/**
+ * Electron's own `dialog.showMessageBox`, kept before {@link holdNativeBoxes} replaces it, so the reader can be asked.
+ * @type {((options: import('electron').MessageBoxOptions) => Promise<import('electron').MessageBoxReturnValue>) | null}
+ */
+let nativeBox = null;
+
+/** How many boxes may be shown to the reader within `BOX_WINDOW` before the page's further dialogs are dismissed unseen. */
+const BOX_LIMIT = 3;
+
+/** The span, in milliseconds, in which `BOX_LIMIT` boxes may be shown. */
+const BOX_WINDOW = 30000;
+
 /** The most dialogs kept in the list of ones that closed since an agent was last told. */
 const KEPT = 20;
 
@@ -64,6 +76,10 @@ class Dialogs {
     this.busy = 0;
     /** @type {ReturnType<typeof setTimeout> | null} The timer that dismisses an open dialog nobody answered. */
     this.timer = null;
+    /** @type {number[]} When boxes were last shown to the reader, for limiting a page that keeps opening dialogs. */
+    this.boxes = [];
+    /** @type {(() => void) | null} Takes back the native box that asks the reader, while one is open. */
+    this.withdraw = null;
     /** @type {Array<() => void>} Who wants to know when a dialog opens. */
     this.watchers = [];
     if (page.cdp) page.cdp.listen((method, params) => this.hear(method, params));
@@ -87,12 +103,15 @@ class Dialogs {
       };
       if (this.timer) clearTimeout(this.timer);
       this.timer = setTimeout(() => this.giveUp(), PATIENCE);
+      if (!this.page.agentBusy()) this.askReader(this.pending);
       for (const watcher of this.watchers.splice(0)) watcher();
     } else if (method === 'Page.javascriptDialogClosed') {
       const shown = this.pending;
       this.pending = null;
       if (this.timer) clearTimeout(this.timer);
       this.timer = null;
+      if (this.withdraw) this.withdraw();
+      this.withdraw = null;
       if (!shown || this.answering) return;
       this.remember(
         shown.type === 'prompt'
@@ -100,6 +119,49 @@ class Dialogs {
           : `A ${shown.type} "${shown.message}" closed without an answer from here.`,
       );
     }
+  }
+
+  /**
+   * Shows a dialog the reader's own click made a page open, as a native box with no parent window, and gives the page the reader's answer. The box is withdrawn when the dialog closes some other way, such as an agent answering it or the timer giving up. Dialogs opened while an agent's tool runs are the agent's to answer.
+   * @param {OpenDialog} shown The dialog that opened.
+   * @returns {void}
+   */
+  askReader(shown) {
+    if (!nativeBox || shown.type === 'prompt') return;
+    const now = Date.now();
+    this.boxes = this.boxes.filter((at) => now - at < BOX_WINDOW);
+    if (this.boxes.length >= BOX_LIMIT) {
+      this.answer(false, '').then(
+        () => this.remember(`A ${shown.type} "${shown.message}" was dismissed unseen: the page opened more than ${BOX_LIMIT} dialogs in ${BOX_WINDOW / 1000} seconds.`),
+        () => {},
+      );
+      return;
+    }
+    this.boxes.push(now);
+    const ask = new AbortController();
+    this.withdraw = () => ask.abort();
+    let host = 'A page';
+    try {
+      const { protocol, host: name } = new URL(shown.url);
+      if ((protocol === 'http:' || protocol === 'https:') && name) host = name;
+    } catch (_) {
+      /* a page without a normal address keeps the plain title */
+    }
+    nativeBox({
+      type: 'none',
+      title: host,
+      message: shown.message,
+      buttons: shown.type === 'confirm' ? ['OK', 'Cancel'] : ['OK'],
+      defaultId: 0,
+      cancelId: shown.type === 'confirm' ? 1 : 0,
+      noLink: true,
+      signal: ask.signal,
+    }).then(
+      ({ response }) => {
+        if (this.pending === shown) this.answer(response === 0, '').catch(() => {});
+      },
+      () => {},
+    );
   }
 
   /**
@@ -202,12 +264,14 @@ class Dialogs {
   dispose() {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    if (this.withdraw) this.withdraw();
+    this.withdraw = null;
   }
 }
 
 /**
  * Keeps Electron from opening native message boxes for the dialogs of pages: the answer comes from {@link Dialogs}, or, if nobody gives one, from a timer here, so a page never waits on a box nobody sees.
- * A request this does not recognise as a page's dialog goes to Electron's own implementation.
+ * The original is kept for asking the reader about dialogs their own clicks opened. A request this does not recognise as a page's dialog goes to Electron's own implementation.
  * @param {import('electron').Dialog} dialog Electron's `dialog` module.
  * @returns {boolean} Whether the module could be changed; when it could not, native boxes open as Electron meant, and the protocol can still answer them.
  */
@@ -215,6 +279,7 @@ function holdNativeBoxes(dialog) {
   try {
     const target = /** @type {any} */ (dialog);
     const original = target.showMessageBox.bind(dialog);
+    nativeBox = original;
     target.showMessageBox = (/** @type {any[]} */ ...args) => {
       const options = args.find((held) => held && typeof held === 'object' && 'message' in held && held.signal);
       if (!options) return original(...args);

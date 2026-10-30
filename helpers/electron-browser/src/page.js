@@ -6,11 +6,13 @@
  */
 
 const { BrowserWindow } = require('electron');
+const path = require('path');
 const agent = require('./agent');
 const capture = require('./capture');
 const { Cdp } = require('./cdp');
 const { Dialogs } = require('./dialogs');
 const emulation = require('./emulation');
+const { FileChooser } = require('./filechooser');
 const { cursorOf, deliver } = require('./input');
 const origins = require('./origins');
 const pick = require('./pick');
@@ -95,6 +97,7 @@ class Page {
         contextIsolation: true,
         nodeIntegration: false,
         offscreen: true,
+        preload: path.join(__dirname, 'popups-preload.js'),
         backgroundThrottling: false,
       },
     });
@@ -106,6 +109,8 @@ class Page {
     this.recorder = null;
     /** @type {Dialogs | null} The page's dialogs, for pages that are inspectable. */
     this.dialogs = null;
+    /** @type {FileChooser | null} The page's file pickers, for pages that are inspectable. */
+    this.fileChooser = null;
     /** @type {import('./emulation').Emulated | null} The viewport an agent set with `browser_resize` or `browser_emulate`, until it is reset. */
     this.viewport = null;
     /** @type {string | null} The user agent an agent set with `browser_emulate`, until it is reset. */
@@ -143,6 +148,7 @@ class Page {
       this.cdp = new Cdp(this.contents);
       this.recorder = new Recorder(this.cdp);
       this.dialogs = new Dialogs(this);
+      this.fileChooser = new FileChooser(this);
     }
   }
 
