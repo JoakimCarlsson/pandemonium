@@ -252,6 +252,8 @@ pub enum Shot {
     Picking,
     /// A finished conversation scrolled back to its first message, whose files were kept before it.
     Kept,
+    /// A finished conversation whose last message from the reader is one 2000-character line with no spaces.
+    LongLine,
     /// A finished conversation with the offer to put the files back as they were before its first message open.
     Restoring,
     /// A conversation with the details of its steps open.
@@ -3102,6 +3104,7 @@ impl Shot {
             ),
             Self::Queued => Screen::Workspace(queued()),
             Self::Kept => Screen::Workspace(kept()),
+            Self::LongLine => Screen::Workspace(long_line()),
             Self::Restoring => Screen::Workspace(kept().after(FocusId(RESTORE_BASE))),
             Self::Picking => Screen::Workspace(welcome().after(FocusId(4200))),
             Self::Expanded => {
@@ -3720,6 +3723,26 @@ fn kept() -> WorkspaceState {
             },
         )
         .scrolled_chat(-400.0, 400.0)
+}
+
+/// A finished conversation in which the reader sent one 2000-character line with no spaces.
+fn long_line() -> WorkspaceState {
+    let state = live(Turn::Finished);
+    let session = state.open_index().unwrap();
+    let prompted = |text: String| Event::Prompted {
+        text,
+        files: Vec::new(),
+        checkpoint: false,
+    };
+    state
+        .heard(
+            session,
+            prompted("Why does the sidebar lose it?".to_owned()),
+        )
+        .heard(
+            session,
+            prompted("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo".repeat(58)),
+        )
 }
 
 /// A conversation that went through what an agent says in a turn, ending as `turn` says.
