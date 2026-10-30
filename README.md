@@ -1,19 +1,41 @@
-# pandemonium
+<p align="center">
+  <img src="assets/brand/png/pandemonium-256.png" alt="Pandemonium" width="128">
+</p>
 
-A GPU-native editor for conducting agents.
+# Pandemonium
 
-I rarely write code alone anymore. Most days I have a few agents running at
-once, each in its own git worktree, across a couple of repositories, and my job
-is less typing and more reading what they did, steering them, and deciding
-what gets merged. Every editor I tried treated that as a terminal bolted to the
-side of the real work. pandemonium treats it as the real work.
+**A GPU-native editor for conducting agents.**
+
+Pandemonium is a code editor for working with several coding agents at once.
+Each agent gets its own git worktree and branch, and you review its files, its
+diff and its conversation side by side. Your job becomes reading what the
+agents did, steering them and deciding what gets merged. The agents run in a
+server that outlives the window, on your machine or on another one.
+
+Most editors treat agents as a terminal bolted to the side of the real work.
+Pandemonium treats them as the real work.
+
+- **Many agents, one window.** Run agents in parallel across several
+  repositories, each isolated in a worktree of its own.
+- **Review, don't babysit.** Every session is a branch with a diff and a
+  conversation you can read, question and merge.
+- **Bring your own agent.** Anything that speaks the
+  [Agent Client Protocol](https://agentclientprotocol.com) works, with Claude
+  Code, Codex and Grok Build built in.
+- **Agents keep going.** Close the window, sleep the laptop or lose the
+  connection, and the agents carry on. Reconnect and catch up.
+- **Fast and native.** Rendered on the GPU with wgpu. No web view, no Electron.
+
+[Install](#installing) · [How it works](#how-it-works) ·
+[Architecture](docs/architecture.md) · [Releases](https://github.com/JoakimCarlsson/pandemonium/releases)
 
 ## Status
 
-Early, being rewritten from scratch, and built for an audience of one. Most of
-what is described below is the direction, not what runs today. Expect things to
-break and features to appear in the order I need them. Linux is the daily
-driver; macOS and Windows build and should work, but get less love.
+Pandemonium is young and moving fast. It is usable every day, and it is still
+being shaped, so expect rough edges, changes between releases and features that
+land in the order they are needed. Linux is the primary platform; macOS and
+Windows build and should work, but get less testing. Bug reports and ideas are
+welcome as [issues](https://github.com/JoakimCarlsson/pandemonium/issues).
 
 ## How it works
 
@@ -222,6 +244,13 @@ built in `crates/pandemonium/src/snapshot.rs`. Settings sections have
 See [docs/architecture.md](docs/architecture.md) for the client/server model,
 transport options and crate responsibilities. See [AGENTS.md](AGENTS.md) for
 repository rules and verification requirements.
+
+## Contributing
+
+Issues and pull requests are welcome. Read [AGENTS.md](AGENTS.md) first for the
+layering rules and the checks a change has to pass, and
+[docs/architecture.md](docs/architecture.md) to find the crate a change belongs
+in.
 
 ## License
 
