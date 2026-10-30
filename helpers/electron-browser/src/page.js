@@ -6,6 +6,7 @@
  */
 
 const { BrowserWindow } = require('electron');
+const path = require('path');
 const agent = require('./agent');
 const capture = require('./capture');
 const { Cdp } = require('./cdp');
@@ -96,6 +97,7 @@ class Page {
         contextIsolation: true,
         nodeIntegration: false,
         offscreen: true,
+        preload: path.join(__dirname, 'popups-preload.js'),
         backgroundThrottling: false,
       },
     });
