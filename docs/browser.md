@@ -162,6 +162,30 @@ the painted surface, so the page is shown at the emulated size at the top left
 of the pane and the rest of the pane is empty. `reset` gives the size back to
 the pane.
 
+## File pickers
+
+A click on `<input type=file>` makes Electron open a native dialog parented to
+the page's window, which here is hidden and offscreen, so the dialog never
+shows and the input stays empty. `helpers/electron-browser/src/filechooser.js`
+turns on `Page.setInterceptFileChooserDialog`, opens `dialog.showOpenDialog`
+itself with no parent when `Page.fileChooserOpened` arrives, and hands the
+chosen files to the input with `DOM.setFileInputFiles`. The files are the
+reader's own, on the machine the window runs on. Agents still cannot use either
+command (see `cdp-policy.js`).
+
+## Drop-downs and date pickers
+
+Chromium draws the popup of a `<select>` and of a date, time, date-and-time or
+month input as a separate widget, and an offscreen Electron page never paints
+it (checked on Electron 45: no frame arrives after the click). So
+`helpers/electron-browser/src/popups-preload.js`, a preload of every page that
+runs in its isolated world, catches the press and draws a popup of its own in a
+closed shadow root, which is painted with the page. Choosing sets the value and
+fires `input` and `change`. A press on the picker button at the right end of a
+date input opens the picker; the rest of the input still edits by typing. Lists
+with `multiple` or a `size`, and `week` and `color` inputs, are not covered.
+Pages inside frames get no popups, since the preload runs only in the top frame.
+
 ## Dialogs
 
 `alert`, `confirm`, `prompt` and `beforeunload` are handled in
@@ -192,10 +216,15 @@ was last told. A dialog nobody answers is dismissed after 60 seconds. While a
 tool is running, a `beforeunload` prompt is overridden so the tool can leave the
 page; at other times Electron's cancel stands, and the agent is told.
 
+When no tool of an agent runs on the page, the reader's own click made the
+dialog open, so the helper shows it as a native box with no parent window
+(Electron's original `showMessageBox`, kept by `holdNativeBoxes`) and answers
+the page with the button the reader presses. The box is withdrawn if the dialog
+closes another way.
+
 Known limits: `prompt` cannot be answered, since Electron cancels it before the
-protocol sees it, so `prompt_text` has no effect. The pane draws no dialog, so a
-person looking at the pane sees a stopped page until an agent answers or the
-60 seconds pass. The patch of `dialog.showMessageBox` relies on Electron calling
+protocol sees it, so `prompt_text` has no effect. The pane draws no dialog
+itself; the reader's box is a separate window. The patch of `dialog.showMessageBox` relies on Electron calling
 it through the module object, as it does at the time of writing; if it did not
 take, the native box would open and the protocol could still answer it.
 
