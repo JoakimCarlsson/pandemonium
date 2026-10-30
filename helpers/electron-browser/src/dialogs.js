@@ -37,6 +37,12 @@ const NATIVE_GRACE = 5000;
  */
 let nativeBox = null;
 
+/** How many boxes may be shown to the reader within `BOX_WINDOW` before the page's further dialogs are dismissed unseen. */
+const BOX_LIMIT = 3;
+
+/** The span, in milliseconds, in which `BOX_LIMIT` boxes may be shown. */
+const BOX_WINDOW = 30000;
+
 /** The most dialogs kept in the list of ones that closed since an agent was last told. */
 const KEPT = 20;
 
@@ -70,6 +76,8 @@ class Dialogs {
     this.busy = 0;
     /** @type {ReturnType<typeof setTimeout> | null} The timer that dismisses an open dialog nobody answered. */
     this.timer = null;
+    /** @type {number[]} When boxes were last shown to the reader, for limiting a page that keeps opening dialogs. */
+    this.boxes = [];
     /** @type {(() => void) | null} Takes back the native box that asks the reader, while one is open. */
     this.withdraw = null;
     /** @type {Array<() => void>} Who wants to know when a dialog opens. */
@@ -120,13 +128,24 @@ class Dialogs {
    */
   askReader(shown) {
     if (!nativeBox || shown.type === 'prompt') return;
+    const now = Date.now();
+    this.boxes = this.boxes.filter((at) => now - at < BOX_WINDOW);
+    if (this.boxes.length >= BOX_LIMIT) {
+      this.answer(false, '').then(
+        () => this.remember(`A ${shown.type} "${shown.message}" was dismissed unseen: the page opened more than ${BOX_LIMIT} dialogs in ${BOX_WINDOW / 1000} seconds.`),
+        () => {},
+      );
+      return;
+    }
+    this.boxes.push(now);
     const ask = new AbortController();
     this.withdraw = () => ask.abort();
-    let host = shown.url;
+    let host = 'A page';
     try {
-      host = new URL(shown.url).host || shown.url;
+      const { protocol, host: name } = new URL(shown.url);
+      if ((protocol === 'http:' || protocol === 'https:') && name) host = name;
     } catch (_) {
-      /* a page without a normal address keeps it as given */
+      /* a page without a normal address keeps the plain title */
     }
     nativeBox({
       type: 'none',
