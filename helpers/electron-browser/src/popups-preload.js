@@ -53,15 +53,15 @@ const STYLE = `
   .foot { display: flex; justify-content: space-between; padding: 4px 8px 6px; }
 `;
 
-/** @type {{ host: HTMLElement, close: () => void } | null} The popup that is open, if one is. */
-let open = null;
+/** @type {{ host: HTMLElement, close: () => void } | null} The popup that is showing, if one is. */
+let shown = null;
 
 /**
  * Closes the popup that is open.
  * @returns {void}
  */
 function closePopup() {
-  if (open) open.close();
+  if (shown) shown.close();
 }
 
 /**
@@ -126,14 +126,14 @@ function show(anchor, panel, onKey, matchWidth = false) {
     window.removeEventListener('resize', close);
     window.removeEventListener('blur', close);
     host.remove();
-    if (open && open.host === host) open = null;
+    if (shown && shown.host === host) shown = null;
   }
   window.addEventListener('mousedown', away, true);
   window.addEventListener('keydown', typed, true);
   window.addEventListener('scroll', scrolled, true);
   window.addEventListener('resize', close);
   window.addEventListener('blur', close);
-  open = { host, close };
+  shown = { host, close };
 }
 
 /**
@@ -390,12 +390,12 @@ window.addEventListener(
     if (target instanceof HTMLSelectElement && !target.multiple && target.size <= 1 && !target.disabled) {
       event.preventDefault();
       target.focus();
-      if (open) closePopup();
+      if (shown) closePopup();
       else showSelect(target);
     } else if (target instanceof HTMLInputElement && target.type in PICKERS && !target.readOnly && !target.disabled && onButton(target, event)) {
       event.preventDefault();
       target.focus();
-      if (open) closePopup();
+      if (shown) closePopup();
       else showPicker(target);
     }
   },
@@ -406,7 +406,7 @@ window.addEventListener(
   'keydown',
   (event) => {
     const target = event.target;
-    if (open || !(target instanceof HTMLSelectElement) || target.multiple || target.size > 1) return;
+    if (shown || !(target instanceof HTMLSelectElement) || target.multiple || target.size > 1) return;
     if (event.key === ' ' || event.key === 'F4' || (event.altKey && (event.key === 'ArrowDown' || event.key === 'ArrowUp'))) {
       event.preventDefault();
       showSelect(target);
