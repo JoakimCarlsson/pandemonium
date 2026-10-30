@@ -240,6 +240,7 @@ fn main() {
             Some("queued") => Shot::Queued,
             Some("usage") => Shot::Usage,
             Some("kept") => Shot::Kept,
+            Some("long-line") => Shot::LongLine,
             Some("restoring") => Shot::Restoring,
             Some("picking") => Shot::Picking,
             Some("expanded") => Shot::Expanded,

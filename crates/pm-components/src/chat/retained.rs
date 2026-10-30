@@ -277,7 +277,7 @@ pub(super) fn message(
             * std::mem::size_of::<(usize, usize, usize)>();
     if bytes > 1024 * 1024 {
         return if message.from_user {
-            super::user_message(state, session, index, width)
+            super::user_message(state, session, index, width, shaper)
         } else {
             super::agent_message(state, session, index, width, shaper)
         };
@@ -291,7 +291,7 @@ pub(super) fn message(
     ("conversation-message", sequence).hash(&mut hash);
     let node = pm_ui::retained(hash.finish(), width, shaper, |shaper| {
         if message.from_user {
-            super::user_message(state, session, index, width)
+            super::user_message(state, session, index, width, shaper)
         } else {
             super::agent_message(state, session, index, width, shaper)
         }

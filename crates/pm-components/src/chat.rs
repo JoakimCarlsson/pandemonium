@@ -18,7 +18,7 @@ use crate::button::Variant;
 use crate::composer::composer;
 use crate::input;
 use crate::inquiry::{answered, inquiry};
-use crate::parts::{clipped, glyph, line, wrap};
+use crate::parts::{clipped, glyph, line};
 use crate::queued::queued;
 use crate::sample::{Session, Status};
 use crate::sidebar::status_icon;
@@ -43,26 +43,24 @@ const GUTTER: f32 = 24.0;
 
 /// The lines of `content` wrapped to `width`, one text line each, in `tone`, with a gap where it has a blank line.
 ///
-/// A line the wrapping broke keeps the space it was broken at, so that text
-/// selected across it is copied as one line.
-fn paragraph(content: &str, tone: Role, width: f32) -> Node {
-    node()
-        .styles([flex(), flex_col()])
-        .children(content.lines().flat_map(|source| {
-            let pieces = wrap(source, 14, width);
-            if pieces.is_empty() {
-                return vec![node().styles([h(3)])];
-            }
-            let last = pieces.len() - 1;
-            pieces
-                .into_iter()
-                .enumerate()
-                .map(|(at, piece)| match at == last {
-                    true => line(piece, 14, 1.57, tone),
-                    false => line(piece + " ", 14, 1.57, tone),
-                })
-                .collect()
-        }))
+/// Lines break as the shaper measures them, so a word wider than `width` is cut
+/// where it must be. A line the wrapping broke at a space keeps it, so that
+/// text selected across it is copied as one line.
+fn paragraph(content: &str, tone: Role, width: f32, shaper: &mut Shaper) -> Node {
+    let styles = [text_px(14), leading_ratio(1.57)];
+    node().styles([flex(), flex_col(), min_w_px(0)]).children(
+        pm_ui::wrap(shaper, content, styles, width.max(32.0))
+            .into_iter()
+            .map(|part| match part.end == part.start {
+                true => node().styles([h(3)]),
+                false => text(&content[part.start..part.end]).styles([
+                    text_px(14),
+                    leading_ratio(1.57),
+                    text_color(tone),
+                    min_w_px(0),
+                ]),
+            }),
+    )
 }
 
 /// A button that shows under a message while the pointer is over it or it has focus, showing `icon`, saying what it does with `tooltip` and answering to `id`, switched off while `disabled`.
@@ -104,7 +102,13 @@ fn restore_offer() -> Node {
 }
 
 /// A message the reader wrote, at `index` of `session`: a filled bubble at the right, with buttons under it to write it again and to put the files back as they were before it.
-fn user_message(state: &WorkspaceState, session: &Session, index: usize, width: f32) -> Node {
+fn user_message(
+    state: &WorkspaceState,
+    session: &Session,
+    index: usize,
+    width: f32,
+    shaper: &mut Shaper,
+) -> Node {
     let message = &session.messages[index];
     let working = session.status == Status::Working;
     let actions = match state.restoring == Some(index) {
@@ -146,7 +150,7 @@ fn user_message(state: &WorkspaceState, session: &Session, index: usize, width: 
     };
     let bubble = match typed.is_empty() {
         true => bubble,
-        false => bubble.child(paragraph(typed, Role::Text, width * 0.85 - 32.0)),
+        false => bubble.child(paragraph(typed, Role::Text, width * 0.85 - 32.0, shaper)),
     };
     node()
         .styles([flex(), flex_col(), gap(1)])
@@ -276,7 +280,7 @@ fn agent_message(
                         rounded_full(),
                         bg(Role::Subtle),
                     ]))
-                    .child(paragraph(bullet, Role::Muted, width - 14.0))
+                    .child(paragraph(bullet, Role::Muted, width - 14.0, shaper))
             }),
         ));
     }
