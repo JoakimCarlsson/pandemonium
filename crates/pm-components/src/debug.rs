@@ -544,16 +544,19 @@ impl WorkspaceState {
             .find(|process| process.pid == pid)
             .map(|process| process.name.to_lowercase())
             .unwrap_or_default();
-        let wanted = if name.starts_with("python") {
-            "debugpy"
-        } else if name.starts_with("dlv") {
-            "delve"
-        } else {
-            "lldb-dap"
-        };
         let Some(adapter) = adapters
             .iter()
-            .find(|adapter| adapter.id == wanted)
+            .filter_map(|adapter| {
+                adapter
+                    .attach_names
+                    .iter()
+                    .filter(|start| name.starts_with(start.as_str()))
+                    .map(String::len)
+                    .max()
+                    .map(|fit| (fit, adapter))
+            })
+            .max_by_key(|(fit, _)| *fit)
+            .map(|(_, adapter)| adapter)
             .or_else(|| adapters.first())
             .map(|adapter| adapter.id.clone())
         else {

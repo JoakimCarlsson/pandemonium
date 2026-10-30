@@ -3,7 +3,7 @@
 use pm_input::FocusId;
 use pm_style::{
     Role, absolute, border_color, border_t, flex, flex_col, flex_none, left, mt, p, pb, px, py,
-    top, z,
+    top_px, z,
 };
 use pm_ui::{Node, node};
 
@@ -72,6 +72,7 @@ pub fn branch_menu(state: &WorkspaceState) -> Node {
         );
     }
     menu.build()
-        .styles([absolute(), top(TOP / 4.0), left(3), z(60)])
+        .styles([absolute(), top_px(TOP), left(3), z(60)])
+        .keep_in_view()
         .focusable(BRANCH_BODY)
 }

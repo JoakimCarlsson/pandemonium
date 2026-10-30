@@ -6,7 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use cosmic_text::fontdb::Weight;
 use cosmic_text::{
-    Attrs, Buffer, Family, FontSystem, Metrics, Shaping, Style, SwashCache, SwashContent,
+    Attrs, Buffer, Family, FeatureTag, FontFeatures, FontSystem, Metrics, Shaping, Style,
+    SwashCache, SwashContent,
 };
 use pm_typography::{FontFamily, FontSlant, TypographyStyle};
 
@@ -54,6 +55,8 @@ pub struct Shaper {
     shaped_bytes: usize,
     /// Identifies this shaper and its current font stacks across layout caches.
     font_key: u64,
+    /// Whether monospaced text joins characters into the ligatures its font has for them.
+    ligatures: bool,
 }
 
 impl Shaper {
@@ -69,7 +72,26 @@ impl Shaper {
             older: HashMap::new(),
             shaped_bytes: 0,
             font_key: NEXT_FONT_KEY.fetch_add(1, Ordering::Relaxed),
+            ligatures: true,
         }
+    }
+
+    /// Whether monospaced text joins characters into the ligatures its font has for them.
+    pub fn ligatures(&self) -> bool {
+        self.ligatures
+    }
+
+    /// Lets monospaced text join characters such as `->` into the ligatures its font has for them, or sets each character alone when `on` is not set; text shaped before is shaped again.
+    pub fn set_ligatures(&mut self, on: bool) {
+        if self.ligatures == on {
+            return;
+        }
+        self.ligatures = on;
+        self.shaped.clear();
+        self.shaped_count = 0;
+        self.older.clear();
+        self.shaped_bytes = 0;
+        self.font_key = NEXT_FONT_KEY.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Sets sans and monospaced text in the first family of each stack that is
@@ -169,7 +191,18 @@ impl Shaper {
             FontFamily::Serif => Family::Serif,
             FontFamily::Mono => self.mono.as_deref().map_or(Family::Monospace, Family::Name),
         };
+        let mut features = FontFeatures::new();
+        if !self.ligatures && style.family == FontFamily::Mono {
+            for tag in [
+                FeatureTag::STANDARD_LIGATURES,
+                FeatureTag::CONTEXTUAL_LIGATURES,
+                FeatureTag::CONTEXTUAL_ALTERNATES,
+            ] {
+                features.disable(tag);
+            }
+        }
         let attrs = Attrs::new()
+            .font_features(features)
             .family(family)
             .weight(Weight(style.weight))
             .style(match style.slant {

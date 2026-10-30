@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use crate::multirepo;
 use crate::{inside, run};
 
 /// How many commits of a file's history are listed at most.
@@ -30,7 +31,9 @@ pub struct FileCommit {
 
 /// The commits that changed `path` in the repository `directory` is in, newest first, following the file back through moves.
 pub fn file_history(directory: &Path, path: &str) -> Result<Vec<FileCommit>, String> {
-    let path = inside(path)?;
+    let (directory, path) = multirepo::holder(directory, inside(path)?)?;
+    let directory = directory.as_path();
+    let path = path.as_str();
     let count = format!("-{FILE_HISTORY_LIMIT}");
     let said = run(
         directory,
@@ -205,7 +208,9 @@ pub fn permalink(
     lines: Option<(usize, usize)>,
     hosts: &BTreeMap<String, String>,
 ) -> Result<String, String> {
-    let path = inside(path)?;
+    let (directory, path) = multirepo::holder(directory, inside(path)?)?;
+    let directory = directory.as_path();
+    let path = path.as_str();
     let followed = run(
         directory,
         &[
@@ -292,6 +297,18 @@ pub fn search(
     if query.is_empty() {
         return Ok(Vec::new());
     }
+    if let Some(children) = multirepo::children_of(directory) {
+        let mut found = Vec::new();
+        for child in &children {
+            let inside = search(&directory.join(child), query, regex, case)?;
+            found.extend(inside.into_iter().map(|held| Found {
+                path: format!("{child}/{}", held.path),
+                ..held
+            }));
+        }
+        found.truncate(MOST_FOUND);
+        return Ok(found);
+    }
     let mut arguments = vec![
         "grep",
         "-n",
@@ -347,7 +364,9 @@ pub struct Blame {
 
 /// Who last changed line `line`, counted from 1, of `path` in the repository `directory` is in, as the file is on disk.
 pub fn blame(directory: &Path, path: &str, line: usize) -> Result<Blame, String> {
-    let path = inside(path)?;
+    let (directory, path) = multirepo::holder(directory, inside(path)?)?;
+    let directory = directory.as_path();
+    let path = path.as_str();
     let range = format!("{line},{line}");
     let said = run(
         directory,

@@ -1,0 +1,25 @@
+# Sample Server: an extension written in Rust that runs a language server and a
+# debug adapter it does not ship. Its module, built by `make extension-sample`
+# from extensions/sample-server-guest and put beside this file, answers the hooks the
+# host asks: which program starts the language server (found on the path, or the latest
+# release fetched into the extension's storage the first time it is wanted), what the
+# server is told, what its completions and symbols are called, and which program is the
+# debug adapter.
+
+name = "Sample Server"
+version = "0.1.0"
+description = "A sample extension in Rust that provides a language server and a debug adapter."
+api = 2
+wasm = "extension.wasm"
+capabilities = ["process", "download"]
+
+[[languages]]
+folder = "languages/sample-server"
+
+[[debug_adapters]]
+id = "sample-dap"
+name = "Sample"
+programs = ["sample-dap-unprovided"]   # never on a machine: only the module can say which program it is
+connect = "stdio"
+types = ["sample"]
+provided = true

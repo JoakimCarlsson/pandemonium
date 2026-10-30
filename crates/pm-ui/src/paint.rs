@@ -165,6 +165,21 @@ impl Output {
         Some(target.start + target.run.byte_at(x, target.length))
     }
 
+    /// Where the caret at byte `caret` of the field `id` goes when it is moved
+    /// to the right on the screen, or to the left when `right` is not set, along
+    /// a line that holds right-to-left text; nothing for a line that holds none,
+    /// where moving by characters is moving on the screen.
+    pub fn visual_step(&self, id: FocusId, caret: usize, right: bool) -> Option<pm_text::Step> {
+        let lines = self.lines_of(id);
+        let line = lines[Self::line_at(&lines, caret)?];
+        line.run
+            .step(caret - line.start, right)
+            .map(|step| match step {
+                pm_text::Step::To(byte) => pm_text::Step::To(line.start + byte),
+                pm_text::Step::Edge => pm_text::Step::Edge,
+            })
+    }
+
     /// The byte offset at the start, or when `end` is set the end, of the
     /// line of the field `id` that the caret at byte `caret` is on.
     pub fn line_edge(&self, id: FocusId, caret: usize, end: bool) -> Option<usize> {
@@ -290,8 +305,37 @@ struct Frame<'a> {
 }
 
 impl Frame<'_> {
-    /// Paints `node` and its children, drawn through `parent` at `opacity`.
+    /// Paints `node` and its children, drawn through `parent` at `opacity`, moved inside the window first when it asks to be kept there.
     fn node(
+        &mut self,
+        node: &Node,
+        laid: &Placed,
+        parent: Affine,
+        opacity: f32,
+        inherited: Cursor,
+        scrolled: (f32, f32),
+    ) {
+        let outer = self.origin;
+        if node.keep_in_view {
+            let shown = Rect::new(
+                laid.x + outer.0 - scrolled.0,
+                laid.y + outer.1 - scrolled.1,
+                laid.width,
+                laid.height,
+            );
+            let right = (self.width - shown.x - shown.width).min(0.0);
+            let bottom = (self.height - shown.y - shown.height).min(0.0);
+            self.origin = (
+                outer.0 + right + (-(shown.x + right)).max(0.0),
+                outer.1 + bottom + (-(shown.y + bottom)).max(0.0),
+            );
+        }
+        self.node_in_place(node, laid, parent, opacity, inherited, scrolled);
+        self.origin = outer;
+    }
+
+    /// Paints `node` and its children where `laid` and the origin put them.
+    fn node_in_place(
         &mut self,
         node: &Node,
         laid: &Placed,
@@ -494,15 +538,15 @@ impl Frame<'_> {
         at: (f32, f32),
         opacity: f32,
     ) {
-        let left = run.caret_x(range.start);
-        let right = run.caret_x(range.end);
         let tint = Color::from(Role::Focused)
             .resolve(self.theme)
             .alpha(0.45 * opacity);
-        self.list.push(Quad::filled(
-            Rect::new(at.0 + left, at.1, right - left, run.height),
-            tint,
-        ));
+        for (left, right) in run.spans(range) {
+            self.list.push(Quad::filled(
+                Rect::new(at.0 + left, at.1, right - left, run.height),
+                tint,
+            ));
+        }
     }
 
     /// Paints a tooltip saying `words` over everything painted so far, above the box at `over`, or below it where there is no room above, kept inside the viewport.
@@ -897,12 +941,12 @@ impl Frame<'_> {
             }
         }
         for mark in node.marks.iter().filter(|mark| mark.paint == Paint::Fill) {
-            let left = run.caret_x(mark.range.start);
-            let right = run.caret_x(mark.range.end);
-            self.list.push(Quad::filled(
-                Rect::new(x + left, y, (right - left).max(0.0), run.height),
-                mark.color.resolve(self.theme).alpha(opacity),
-            ));
+            for (left, right) in run.spans(mark.range.clone()) {
+                self.list.push(Quad::filled(
+                    Rect::new(x + left, y, (right - left).max(0.0), run.height),
+                    mark.color.resolve(self.theme).alpha(opacity),
+                ));
+            }
         }
         if let Some((range, owner)) = &node.selection
             && self.input.focused == Some(*owner)
@@ -933,18 +977,18 @@ impl Frame<'_> {
         if let Some((range, owner)) = &node.marked
             && self.input.focused == Some(*owner)
         {
-            let left = run.caret_x(range.start);
-            let right = run.caret_x(range.end);
             let thickness = (computed.typography.size / 14.0).max(1.0);
-            self.list.push(Quad::filled(
-                Rect::new(
-                    x + left,
-                    y + run.baseline + computed.typography.size * 0.12,
-                    right - left,
-                    thickness,
-                ),
-                color,
-            ));
+            for (left, right) in run.spans(range.clone()) {
+                self.list.push(Quad::filled(
+                    Rect::new(
+                        x + left,
+                        y + run.baseline + computed.typography.size * 0.12,
+                        right - left,
+                        thickness,
+                    ),
+                    color,
+                ));
+            }
         }
         let mut carets: Vec<usize> = node
             .marks
@@ -979,6 +1023,13 @@ impl Frame<'_> {
                 }
             }
         }
+        for mark in node.marks.iter().filter(|mark| mark.paint == Paint::Drop) {
+            let at = run.caret_x(mark.range.start);
+            self.list.push(Quad::filled(
+                Rect::new(x + at, y, CARET_WIDTH, run.height),
+                mark.color.resolve(self.theme).alpha(opacity),
+            ));
+        }
         self.lines(computed, &run, x, y, color);
         for mark in node.marks.iter().filter(|mark| mark.paint == Paint::Wave) {
             self.wave(&run, mark, (x, y), opacity);
@@ -988,17 +1039,17 @@ impl Frame<'_> {
             .iter()
             .filter(|mark| mark.paint == Paint::Underline)
         {
-            let left = run.caret_x(mark.range.start);
-            let right = run.caret_x(mark.range.end);
-            self.list.push(Quad::filled(
-                Rect::new(
-                    x + left,
-                    y + run.baseline + computed.typography.size * 0.12,
-                    (right - left).max(0.0),
-                    (computed.typography.size / 14.0).max(1.0),
-                ),
-                mark.color.resolve(self.theme).alpha(opacity),
-            ));
+            for (left, right) in run.spans(mark.range.clone()) {
+                self.list.push(Quad::filled(
+                    Rect::new(
+                        x + left,
+                        y + run.baseline + computed.typography.size * 0.12,
+                        (right - left).max(0.0),
+                        (computed.typography.size / 14.0).max(1.0),
+                    ),
+                    mark.color.resolve(self.theme).alpha(opacity),
+                ));
+            }
         }
         let mut inked: Vec<&Mark> = node
             .marks
@@ -1070,25 +1121,27 @@ impl Frame<'_> {
 
     /// Paints the wavy line `mark` asks for under its stretch of `run`, the line drawn with its top-left corner at `at`.
     fn wave(&mut self, run: &Run, mark: &Mark, at: (f32, f32), opacity: f32) {
-        let left = at.0 + run.caret_x(mark.range.start);
-        let right = at.0 + run.caret_x(mark.range.end);
-        let right = if right - left < WAVE_STEP * 2.0 {
-            left + WAVE_STEP * 2.0
-        } else {
-            right
-        };
         let color = mark.color.resolve(self.theme).alpha(opacity);
         let top = at.1 + run.baseline + 2.0;
-        let mut step = 0;
-        let mut from = left;
-        while from < right {
-            let lifted = if step % 2 == 0 { 0.0 } else { 1.0 };
-            self.list.push(Quad::filled(
-                Rect::new(from, top + lifted, WAVE_STEP.min(right - from), 1.0),
-                color,
-            ));
-            from += WAVE_STEP;
-            step += 1;
+        for (left, right) in run.spans(mark.range.clone()) {
+            let left = at.0 + left;
+            let right = at.0 + right;
+            let right = if right - left < WAVE_STEP * 2.0 {
+                left + WAVE_STEP * 2.0
+            } else {
+                right
+            };
+            let mut step = 0;
+            let mut from = left;
+            while from < right {
+                let lifted = if step % 2 == 0 { 0.0 } else { 1.0 };
+                self.list.push(Quad::filled(
+                    Rect::new(from, top + lifted, WAVE_STEP.min(right - from), 1.0),
+                    color,
+                ));
+                from += WAVE_STEP;
+                step += 1;
+            }
         }
     }
 
@@ -1264,13 +1317,13 @@ fn caret_rect(content: &str, run: &Run, byte: usize, shape: CaretShape, size: f3
         .get(byte..)
         .and_then(|rest| rest.chars().next())
         .map(|character| byte + character.len_utf8());
-    let cell = next
-        .map(|next| run.caret_x(next) - at)
-        .filter(|width| *width > 0.5)
-        .unwrap_or(size * 0.6);
+    let (left, cell) = next
+        .map(|next| run.caret_x(next))
+        .filter(|edge| (edge - at).abs() > 0.5)
+        .map_or((at, size * 0.6), |edge| (at.min(edge), (edge - at).abs()));
     match shape {
         CaretShape::Bar => Rect::new(at, 0.0, CARET_WIDTH, run.height),
-        CaretShape::Block => Rect::new(at, 0.0, cell, run.height),
-        CaretShape::Underline => Rect::new(at, run.height - 2.0, cell, 2.0),
+        CaretShape::Block => Rect::new(left, 0.0, cell, run.height),
+        CaretShape::Underline => Rect::new(left, run.height - 2.0, cell, 2.0),
     }
 }

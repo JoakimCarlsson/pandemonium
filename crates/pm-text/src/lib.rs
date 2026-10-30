@@ -14,6 +14,6 @@ mod word;
 
 pub use field::{Edit, Field, Motion};
 pub use reach::{Clicks, Gesture, Reach, Surface};
-pub use run::{Bitmap, GlyphKey, PlacedGlyph, Run};
+pub use run::{Bitmap, GlyphKey, PlacedGlyph, Run, Step};
 pub use shaper::{Extent, Shaper};
-pub use word::word_at;
+pub use word::{word_at, word_at_with};

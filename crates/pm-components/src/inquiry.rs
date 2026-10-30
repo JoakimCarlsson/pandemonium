@@ -229,8 +229,12 @@ pub fn inquiry(draft: &Draft, width: f32, shaper: &mut Shaper) -> Node {
     card
 }
 
-/// The card that records a form of questions the reader answered: each question with its answer, or `[No preference]` when it was skipped.
-pub fn answered(answers: &[(String, Option<String>)]) -> Node {
+/// What the padding and border of the card that records answers take from its width, in logical pixels.
+const ANSWERED_INSET: f32 = 34.0;
+
+/// The card that records a form of questions the reader answered, at most `width` logical pixels wide: each question with its answer, or `[No preference]` when it was skipped, both wrapped to fit.
+pub fn answered(answers: &[(String, Option<String>)], width: f32, shaper: &mut Shaper) -> Node {
+    let room = width - ANSWERED_INSET;
     node()
         .styles([
             flex(),
@@ -247,12 +251,13 @@ pub fn answered(answers: &[(String, Option<String>)]) -> Node {
         .children(answers.iter().map(|(question, answer)| {
             node()
                 .styles([flex(), flex_col(), gap(0.5)])
-                .child(line(question, 15, 1.5, Role::Muted))
-                .child(line(
+                .child(wrapped(question, 15, Role::Muted, room, shaper))
+                .child(wrapped(
                     answer.as_deref().unwrap_or("[No preference]"),
                     15,
-                    1.5,
                     Role::Text,
+                    room,
+                    shaper,
                 ))
         }))
 }

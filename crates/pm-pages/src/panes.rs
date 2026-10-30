@@ -13,6 +13,7 @@ use pm_ui::{Node, node};
 
 use pm_components::Menu;
 use pm_components::Size;
+use pm_components::browser::{self, BROWSER_CLOSE, TAB_BROWSER};
 use pm_components::button::Variant;
 use pm_components::excerpts::{self, EXCERPTS_CLOSE, Source, TAB_EXCERPTS};
 use pm_components::file_icon::file_icon;
@@ -25,6 +26,7 @@ use pm_components::parts::{glyph, line, spacer};
 use pm_components::sash::Sash;
 use pm_components::state::{Page, TAB_CHAT, TAB_DIFF, WorkspaceState};
 use pm_components::title_bar::TITLE_BAR_HEIGHT;
+use pm_components::update_dialog::{TAB_UPDATE, UPDATE_CLOSE};
 use pm_components::{
     Button, Changes, Conflict, chat, diff, input, overview, terminal, viewer, welcome,
 };
@@ -126,6 +128,44 @@ fn excerpts_tab(state: &WorkspaceState, shown: bool) -> Option<Node> {
     )
 }
 
+/// The tab of the browser in a pane's strip, filled while `shown`.
+fn browser_tab(state: &WorkspaceState, shown: bool) -> Option<Node> {
+    let browser = state.browser.as_ref()?;
+    let tone = if shown { Role::Text } else { Role::Muted };
+    let title = if browser.title.is_empty() {
+        "Browser"
+    } else {
+        browser.title.as_str()
+    };
+    Some(
+        node()
+            .styles(tab_styles(shown))
+            .child(glyph(IconName::Globe, 3.5, tone))
+            .child(line(title, 13, 1.4, tone))
+            .child(
+                Button::icon(IconName::Close, BROWSER_CLOSE)
+                    .size(pm_components::Size::Sm)
+                    .build(),
+            )
+            .focusable(TAB_BROWSER),
+    )
+}
+
+/// The tab of the release notes, filled while `shown`.
+fn update_tab(shown: bool) -> Node {
+    let tone = if shown { Role::Text } else { Role::Muted };
+    node()
+        .styles(tab_styles(shown))
+        .child(glyph(IconName::ArrowDown, 3.5, tone))
+        .child(line("Update", 13, 1.4, tone))
+        .child(
+            Button::icon(IconName::Close, UPDATE_CLOSE)
+                .size(pm_components::Size::Sm)
+                .build(),
+        )
+        .focusable(TAB_UPDATE)
+}
+
 /// A square button in the strip of tabs holding only `icon`, filled while `on`, saying `hint` when the pointer rests on it.
 fn strip_button(icon: IconName, id: FocusId, on: bool, hint: &str) -> Node {
     let mut styles = vec![
@@ -204,6 +244,8 @@ fn item_tab(state: &WorkspaceState, item: &Item, shown: bool) -> Option<Node> {
         }
         Item::Diff => Some(tab(IconName::GitCompare, "Diff", TAB_DIFF, shown)),
         Item::Excerpts => excerpts_tab(state, shown),
+        Item::Browser => browser_tab(state, shown),
+        Item::Update => Some(update_tab(shown)),
         Item::File { .. } => {
             viewer_of(state, item).map(|(index, viewer)| viewer_tab(viewer, index, shown))
         }
@@ -274,6 +316,13 @@ fn item_view(
             None => node(),
         },
         (Item::Excerpts, _, _) => excerpts_item(state, width, tall),
+        (Item::Browser, _, _) => {
+            browser::browser_view(state, width, area.height - pm_components::panes::TABS)
+        }
+        (Item::Update, _, _) => match state.settings_page.release.as_ref() {
+            Some(update) => pm_components::update_dialog::page(state, update, width, shaper),
+            None => node(),
+        },
         (Item::File { .. }, _, _) => match viewer_of(state, item) {
             Some((index, _)) => viewer::file_view(state, index, width, tall, shaper),
             None => node(),
@@ -292,9 +341,9 @@ fn excerpts_item(state: &WorkspaceState, width: f32, height: f32) -> Node {
     }
 }
 
-/// What an empty pane at `index` offers: the page and the diff brought into it, the files shown to open one in it, and closing it.
+/// What an empty pane at `index` offers: the page, the diff and the browser brought into it, the files shown to open one in it, and closing it.
 fn empty_pane(state: &WorkspaceState, index: usize) -> Node {
-    let put = |kind: u64| FocusId(PANE_PUT_BASE + index as u64 * 4 + kind);
+    let put = |kind: u64| FocusId(PANE_PUT_BASE + index as u64 * 5 + kind);
     let (icon, label) = page_label(state);
     let mut buttons = node()
         .styles([flex(), flex_col(), items_center(), gap(2)])
@@ -318,6 +367,13 @@ fn empty_pane(state: &WorkspaceState, index: usize) -> Node {
         );
     }
     let buttons = buttons
+        .child(
+            Button::new("Browser", put(4))
+                .with_icon(IconName::Globe)
+                .variant(Variant::Secondary)
+                .size(Size::Sm)
+                .build(),
+        )
         .child(
             Button::new("Open a file", put(2))
                 .with_icon(IconName::File)

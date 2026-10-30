@@ -11,6 +11,7 @@ mod conflict;
 mod file_log;
 mod github;
 mod graph;
+mod multirepo;
 mod operation;
 mod places;
 mod revision;
@@ -22,6 +23,7 @@ pub use conflict::{Sides, sides};
 pub use file_log::{Blame, FileCommit, Found, blame, file_history, permalink, search};
 pub use github::{Owner, Repository, owners, repositories};
 pub use graph::{Edge, Half, Lanes};
+pub use multirepo::{Layout, child_repositories, layout};
 pub use operation::{Operation, operation, step};
 pub use places::{clone, folders};
 pub use revision::revision_changes;
@@ -32,7 +34,7 @@ pub use words::{Words, words};
 const WORKTREES: &str = ".pandemonium/worktrees";
 
 /// The most lines of a file's diff that are read.
-const DIFF_LINES: usize = 2000;
+pub const DIFF_LINES: usize = 2000;
 
 /// The longest a folder name made from a title is, in characters.
 const SLUG_LENGTH: usize = 40;
@@ -40,7 +42,7 @@ const SLUG_LENGTH: usize = 40;
 /// A file that differs from the last commit.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Change {
-    /// Where the file is, from the root of the repository.
+    /// Where the file is, from the root of the folder asked about.
     pub path: String,
     /// The lines of its diff, from the first hunk on, each starting with `@`, `+`, `-` or a space.
     pub diff: String,
@@ -64,12 +66,36 @@ pub struct Change {
     /// Where the file was before it was renamed, when it was.
     #[serde(default)]
     pub from: Option<String>,
-    /// The submodule the file is in, from the root of the repository, or nothing when it is in the repository itself.
+    /// The submodule the file is in, from the root of the folder asked about, or nothing when it is in a repository itself.
     #[serde(default)]
     pub submodule: Option<String>,
+    /// The repository the file is in, as its folder name, when the folder asked about holds several repositories side by side, or nothing when it is one repository.
+    #[serde(default)]
+    pub repository: Option<String>,
     /// What a submodule checked out at another commit than the one recorded moved through, when the change is that.
     #[serde(default)]
     pub moved: Option<Moved>,
+    /// How many lines the change puts in, counted over the whole file.
+    #[serde(default)]
+    pub added: usize,
+    /// How many lines the change takes out, counted over the whole file.
+    #[serde(default)]
+    pub removed: usize,
+    /// Whether `diff` and `words` are left out, to be asked for with [`diffs`] when the file is shown.
+    #[serde(default)]
+    pub lazy: bool,
+}
+
+/// The diff of one file, as [`diffs`] answers.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct FileDiff {
+    /// Where the file is, from the root of the folder asked about.
+    pub path: String,
+    /// The lines of its diff, from the first hunk on.
+    pub diff: String,
+    /// The words that changed inside its removed and added lines.
+    #[serde(default)]
+    pub words: Vec<Words>,
 }
 
 /// A submodule checked out at another commit than the one its repository records.
@@ -198,7 +224,7 @@ pub fn git_folders(directory: &Path) -> Option<(PathBuf, PathBuf)> {
     Some((lines.next()?, lines.next()?))
 }
 
-/// Whether `directory` is inside a Git repository.
+/// Whether `directory` is inside a Git repository. A folder that only holds repositories is not; [`layout`] tells those apart.
 pub fn is_repository(directory: &Path) -> bool {
     directory.is_dir() && run(directory, &["rev-parse", "--git-dir"]).is_ok()
 }
@@ -234,14 +260,20 @@ fn walk(root: &Path, directory: &Path, limit: usize, found: &mut Vec<String>) {
     }
 }
 
-/// The files of the folder `directory`, as paths from it, at most `limit` of them: those a repository and its submodules track or do not ignore, or, in a folder that is not a repository, every file but those in hidden and bulky folders.
+/// The files of the folder `directory`, as paths from it, at most `limit` of them: those a repository and its submodules track or do not ignore, those of each repository in a folder that holds repositories, or, in a folder with none, every file but those in hidden and bulky folders.
 pub fn files(directory: &Path, limit: usize) -> Vec<String> {
-    if !is_repository(directory) {
-        let mut found = Vec::new();
-        walk(directory, directory, limit, &mut found);
-        return found;
+    match layout(directory) {
+        Layout::Repositories(children) => {
+            return multirepo::gathered(directory, &children, limit, files);
+        }
+        Layout::Neither => {
+            let mut found = Vec::new();
+            walk(directory, directory, limit, &mut found);
+            return found;
+        }
+        Layout::Repository => {}
     }
-    let submodules = submodule::submodules(directory);
+    let submodules = submodule::own_submodules(directory);
     let listed = |folder: &Path, arguments: &[&str]| -> Vec<String> {
         run(folder, arguments)
             .map(|listed| listed.lines().map(str::to_owned).collect())
@@ -267,8 +299,12 @@ pub fn files(directory: &Path, limit: usize) -> Vec<String> {
 
 /// The untracked folders of the repository `directory` is in, as paths from it, at most `limit` of them: those that hold no tracked file, which is how a folder with nothing in it yet is told of.
 pub fn untracked_folders(directory: &Path, limit: usize) -> Vec<String> {
-    if !is_repository(directory) {
-        return Vec::new();
+    match layout(directory) {
+        Layout::Repositories(children) => {
+            return multirepo::gathered(directory, &children, limit, untracked_folders);
+        }
+        Layout::Neither => return Vec::new(),
+        Layout::Repository => {}
     }
     run(
         directory,
@@ -287,8 +323,12 @@ pub fn untracked_folders(directory: &Path, limit: usize) -> Vec<String> {
 
 /// The ignored files of the repository `directory` is in, as paths from it, at most `limit` of them.
 pub fn ignored(directory: &Path, limit: usize) -> Vec<String> {
-    if !is_repository(directory) {
-        return Vec::new();
+    match layout(directory) {
+        Layout::Repositories(children) => {
+            return multirepo::gathered(directory, &children, limit, ignored);
+        }
+        Layout::Neither => return Vec::new(),
+        Layout::Repository => {}
     }
     run(
         directory,
@@ -300,8 +340,12 @@ pub fn ignored(directory: &Path, limit: usize) -> Vec<String> {
 
 /// The top-level ignored folders of the repository `directory` is in, including empty ones.
 pub fn ignored_folders(directory: &Path, limit: usize) -> Vec<String> {
-    if !is_repository(directory) {
-        return Vec::new();
+    match layout(directory) {
+        Layout::Repositories(children) => {
+            return multirepo::gathered(directory, &children, limit, ignored_folders);
+        }
+        Layout::Neither => return Vec::new(),
+        Layout::Repository => {}
     }
     run(
         directory,
@@ -324,8 +368,20 @@ pub fn ignored_folders(directory: &Path, limit: usize) -> Vec<String> {
     .unwrap_or_default()
 }
 
-/// The branch `directory` has checked out, or nothing when it has none or is not a repository.
+/// The branch `directory` has checked out, or nothing when it has none or is not a repository. Of a folder of repositories, the one branch they are all on, or the branches they are on, each named once and told apart by a dot.
 pub fn current_branch(directory: &Path) -> Option<String> {
+    if let Layout::Repositories(children) = layout(directory) {
+        let mut names: Vec<String> = Vec::new();
+        for name in children
+            .iter()
+            .filter_map(|child| current_branch(&directory.join(child)))
+        {
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        return (!names.is_empty()).then(|| names.join(" · "));
+    }
     let name = run(directory, &["rev-parse", "--abbrev-ref", "HEAD"]).ok()?;
     let name = name.trim();
     (!name.is_empty() && name != "HEAD").then(|| name.to_owned())
@@ -344,8 +400,22 @@ fn references(directory: &Path, prefix: &str) -> Vec<String> {
     .collect()
 }
 
-/// The branches of the repository `directory` is in as it has them now: the local ones, the current one first, then those of its remotes.
+/// The branches of the repository `directory` is in as it has them now: the local ones, the current one first, then those of its remotes. Of a folder of repositories, those every one of them has, then those only some have.
 pub fn branches(directory: &Path) -> Vec<String> {
+    if let Layout::Repositories(children) = layout(directory) {
+        let lists: Vec<Vec<String>> = children
+            .iter()
+            .map(|child| branches(&directory.join(child)))
+            .collect();
+        let mut names: Vec<String> = lists.iter().flatten().fold(Vec::new(), |mut names, name| {
+            if !names.contains(name) {
+                names.push(name.clone());
+            }
+            names
+        });
+        names.sort_by_key(|name| !lists.iter().all(|list| list.contains(name)));
+        return names;
+    }
     let mut names = references(directory, "refs/heads");
     if let Some(current) = current_branch(directory)
         && let Some(at) = names.iter().position(|name| *name == current)
@@ -356,8 +426,13 @@ pub fn branches(directory: &Path) -> Vec<String> {
     names
 }
 
-/// The commit `reference` names in the repository `directory` is in, abbreviated, or nothing when it names none.
+/// The commit `reference` names in the repository `directory` is in, abbreviated, or nothing when it names none. Of a folder of repositories, the one it names in the first that has it.
 pub fn resolve(directory: &Path, reference: &str) -> Option<String> {
+    if let Layout::Repositories(children) = layout(directory) {
+        return children
+            .iter()
+            .find_map(|child| resolve(&directory.join(child), reference));
+    }
     let commit = format!("{reference}^{{commit}}");
     run(
         directory,
@@ -410,17 +485,53 @@ fn exclude_worktrees(repository: &Path) -> Result<(), String> {
     writeln!(file, "{separator}.pandemonium/").map_err(|error| error.to_string())
 }
 
+/// The repositories a worktree of `repository` is made of: the empty name for a repository, which is made into the worktree itself, or each repository of a folder of them by its folder name, each made into a folder of that name inside the worktree.
+fn members(repository: &Path) -> Result<Vec<String>, String> {
+    match layout(repository) {
+        Layout::Repository => Ok(vec![String::new()]),
+        Layout::Repositories(children) => Ok(children),
+        Layout::Neither => Err(format!("{} holds no git repository", repository.display())),
+    }
+}
+
+/// The folder of `member`, one of [`members`], inside `root`.
+fn folder_in(root: &Path, member: &str) -> PathBuf {
+    if member.is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(member)
+    }
+}
+
+/// `text` said of `member`: by its name when it is one repository of several, as it is when it is the only one.
+fn named(member: &str, text: &str) -> String {
+    if member.is_empty() {
+        text.to_owned()
+    } else {
+        format!("{member}: {text}")
+    }
+}
+
 /// Makes a worktree of its own of `repository`, named from `title`, with `base` checked out, where `placement` says and on the branch it names or a detached head, checks out its submodules, each on that branch too, and copies into it the ignored files `placement` lists.
 ///
-/// `base` is looked up in the repository now, so a branch deleted a moment ago is refused rather than assumed.
+/// For a folder that holds several repositories the worktree is a folder, and each repository gets a worktree of its own in it under the repository's name, all on the one branch. When one of them cannot be made, those made before it are removed again and the one that failed is named.
+///
+/// `base` is looked up in each repository now, so a branch deleted a moment ago is refused rather than assumed.
 pub fn add_worktree(
     repository: &Path,
     title: &str,
     base: &str,
     placement: &Placement,
 ) -> Result<Worktree, String> {
-    let head = resolve(repository, base).ok_or_else(|| format!("{base} does not exist"))?;
-    if placement.root.is_none() {
+    let members = members(repository)?;
+    let mut heads = members
+        .iter()
+        .map(|member| {
+            resolve(&folder_in(repository, member), base)
+                .ok_or_else(|| named(member, &format!("{base} does not exist")))
+        })
+        .collect::<Result<Vec<String>, String>>()?;
+    if placement.root.is_none() && members.len() == 1 && members[0].is_empty() {
         exclude_worktrees(repository)?;
     }
     let slug = slug(title);
@@ -435,43 +546,115 @@ pub fn add_worktree(
         };
         let path = root.join(&name);
         let branch = placement.branch_for(&name);
-        let taken = branch
-            .as_deref()
-            .is_some_and(|branch| has_branch(repository, branch));
+        let taken = branch.as_deref().is_some_and(|branch| {
+            members
+                .iter()
+                .any(|member| has_branch(&folder_in(repository, member), branch))
+        });
         if !path.exists() && !taken {
             break (path, branch);
         }
         attempt += 1;
     };
-    let place = path.to_string_lossy().into_owned();
-    match &branch {
-        Some(branch) => run(
-            repository,
-            &["worktree", "add", "-b", branch, &place, &head],
-        )?,
-        None => run(repository, &["worktree", "add", "--detach", &place, &head])?,
-    };
-    let mut skipped = submodule::populate(&path);
-    if let Some(branch) = &branch {
-        skipped.extend(submodule::branch_all(&path, branch));
+    for (at, member) in members.iter().enumerate() {
+        let place = folder_in(&path, member).to_string_lossy().into_owned();
+        let source = folder_in(repository, member);
+        let added = match &branch {
+            Some(branch) => run(
+                &source,
+                &["worktree", "add", "-b", branch, &place, &heads[at]],
+            ),
+            None => run(
+                &source,
+                &["worktree", "add", "--detach", &place, &heads[at]],
+            ),
+        };
+        if let Err(reason) = added {
+            return Err(undone(
+                repository,
+                &path,
+                &members[..at],
+                &heads,
+                branch.as_deref(),
+                named(member, &reason),
+            ));
+        }
     }
-    skipped.extend(carry::carry_ignored(repository, &path, &placement.include));
+    let mut skipped = Vec::new();
+    for member in &members {
+        let place = folder_in(&path, member);
+        let mut inside = submodule::populate(&place);
+        if let Some(branch) = &branch {
+            inside.extend(submodule::branch_all(&place, branch));
+        }
+        inside.extend(carry::carry_ignored(
+            &folder_in(repository, member),
+            &place,
+            &placement.include,
+        ));
+        skipped.extend(inside.into_iter().map(|(what, why)| {
+            let what = if member.is_empty() {
+                what
+            } else {
+                format!("{member}/{what}")
+            };
+            (what, why)
+        }));
+    }
     Ok(Worktree {
         path,
-        head,
+        head: heads.swap_remove(0),
         branch,
         skipped,
     })
 }
 
+/// `failure` with what became of the worktrees `made` of the repositories of `repository`: they are removed again, with the folder `path` they were made in, and any that cannot be is named.
+fn undone(
+    repository: &Path,
+    path: &Path,
+    made: &[String],
+    heads: &[String],
+    branch: Option<&str>,
+    failure: String,
+) -> String {
+    let stuck: Vec<String> = made
+        .iter()
+        .zip(heads)
+        .filter_map(|(member, head)| {
+            remove_in(
+                &folder_in(repository, member),
+                &folder_in(path, member),
+                branch,
+                Some(head),
+                false,
+            )
+            .err()
+            .map(|reason| named(member, &reason))
+        })
+        .collect();
+    if made.iter().all(|member| !member.is_empty()) && stuck.is_empty() {
+        let _ = fs::remove_dir_all(path);
+    }
+    match (made.is_empty(), stuck.is_empty()) {
+        (true, _) => failure,
+        (false, true) => format!("{failure}; the worktrees made before it were removed again"),
+        (false, false) => format!(
+            "{failure}; the worktrees made before it could not all be removed: {}",
+            stuck.join("; ")
+        ),
+    }
+}
+
 /// Removes the worktree at `path` of `repository` with every file in it, and forgets it, then deletes `branch`, the branch it was made on from `base`, when every commit on it is also on `base` or a remote.
 ///
-/// A folder that is already gone is only forgotten, and a branch with commits of its own is kept.
-pub fn remove_worktree(
+/// A folder that is already gone is only forgotten, and a branch with commits of its own is kept unless `whole` is set.
+fn remove_in(
     repository: &Path,
     path: &Path,
     branch: Option<&str>,
     base: Option<&str>,
+    whole: bool,
 ) -> Result<(), String> {
     let place = path.to_string_lossy().into_owned();
     if path.exists() {
@@ -480,9 +663,42 @@ pub fn remove_worktree(
     run(repository, &["worktree", "prune"])?;
     if let (Some(branch), Some(base)) = (branch, base)
         && has_branch(repository, branch)
-        && merged(repository, branch, base)
+        && (whole || merged(repository, branch, base))
     {
         let _ = run(repository, &["branch", "-D", branch]);
+    }
+    Ok(())
+}
+
+/// Removes the worktree at `path` of `repository` with every file in it, and forgets it, then deletes `branch`, the branch it was made on from `base`, when every commit on it is also on `base` or a remote.
+///
+/// A folder that is already gone is only forgotten, and a branch with commits of its own is kept. For a folder that holds several repositories every repository's worktree and its branch are removed, whatever commits the branch has, one that fails does not stop the rest and is named in the error, and the folder they were in goes when all are removed.
+pub fn remove_worktree(
+    repository: &Path,
+    path: &Path,
+    branch: Option<&str>,
+    base: Option<&str>,
+) -> Result<(), String> {
+    let members = members(repository)?;
+    let failures: Vec<String> = members
+        .iter()
+        .filter_map(|member| {
+            remove_in(
+                &folder_in(repository, member),
+                &folder_in(path, member),
+                branch,
+                base,
+                !members[0].is_empty(),
+            )
+            .err()
+            .map(|reason| named(member, &reason))
+        })
+        .collect();
+    if !failures.is_empty() {
+        return Err(failures.join("; "));
+    }
+    if members.iter().all(|member| !member.is_empty()) && path.exists() {
+        fs::remove_dir_all(path).map_err(|error| error.to_string())?;
     }
     Ok(())
 }
@@ -532,21 +748,50 @@ fn unmerged(index: char, tree: char) -> bool {
     index == 'U' || tree == 'U' || matches!((index, tree), ('A', 'A') | ('D', 'D'))
 }
 
-/// Every file of the repository `directory` is in that differs from the last commit, those inside its submodules included under their paths from its root, and each submodule checked out at another commit than the one recorded.
+/// Every file of the repository `directory` is in that differs from the last commit, those inside its submodules included under their paths from its root, and each submodule checked out at another commit than the one recorded. Of a folder of repositories, those of every repository in it, under their paths from the folder and each naming its repository.
 pub fn changes(directory: &Path) -> Vec<Change> {
+    match layout(directory) {
+        Layout::Repositories(children) => children
+            .iter()
+            .flat_map(|child| {
+                repository_changes(&directory.join(child))
+                    .into_iter()
+                    .map(move |change| in_repository(change, child))
+            })
+            .collect(),
+        Layout::Repository => repository_changes(directory),
+        Layout::Neither => Vec::new(),
+    }
+}
+
+/// `change`, of a file of the repository `child` of a folder of repositories, as one of the folder.
+fn in_repository(mut change: Change, child: &str) -> Change {
+    change.path = format!("{child}/{}", change.path);
+    change.from = change.from.map(|from| format!("{child}/{from}"));
+    change.submodule = change.submodule.map(|inner| format!("{child}/{inner}"));
+    change.repository = Some(child.to_owned());
+    change
+}
+
+/// Every file of the one repository `directory` is in that differs from the last commit, submodules included, the files themselves without their diffs.
+fn repository_changes(directory: &Path) -> Vec<Change> {
     let direct = submodule::direct(directory);
     let mut found = Vec::new();
-    for change in own_changes(directory) {
+    for mut change in own_changes(directory) {
         if !direct.contains(&change.path) {
             found.push(change);
             continue;
         }
         let path = change.path.clone();
         let inner = directory.join(&path);
+        change.diff = file_diff(directory, &path);
+        change.words = words(&change.diff);
+        (change.added, change.removed) = tally(&change.diff);
+        change.lazy = false;
         found.extend(submodule::moved(directory, change));
         if submodule::populated(&inner) {
             found.extend(
-                changes(&inner)
+                repository_changes(&inner)
                     .into_iter()
                     .map(|change| submodule::within(change, &path)),
             );
@@ -555,11 +800,12 @@ pub fn changes(directory: &Path) -> Vec<Change> {
     found
 }
 
-/// The files of the repository `directory` is in itself that differ from its last commit, a submodule as one entry.
+/// The files of the repository `directory` is in itself that differ from its last commit, a submodule as one entry, each with how many lines it changes and without its diff.
 fn own_changes(directory: &Path) -> Vec<Change> {
     let Ok(status) = run(directory, &["status", "--porcelain=v1", "-z", "-uall"]) else {
         return Vec::new();
     };
+    let counted = counts(directory);
     let mut found = Vec::new();
     let mut entries = status.split('\0').filter(|entry| entry.len() > 3);
     while let Some(entry) = entries.next() {
@@ -573,14 +819,10 @@ fn own_changes(directory: &Path) -> Vec<Change> {
         };
         let untracked = index == '?';
         let conflicted = unmerged(index, tree);
-        let diff = if untracked {
-            added(directory, path)
+        let (added, removed) = if untracked {
+            (lines_of(&directory.join(path)), 0)
         } else {
-            let against_head = run(directory, &["diff", "HEAD", "--no-color", "--", path]);
-            let shown = against_head
-                .or_else(|_| run(directory, &["diff", "--cached", "--no-color", "--", path]))
-                .unwrap_or_default();
-            hunks(&shown)
+            counted.get(path).copied().unwrap_or_default()
         };
         let side = |mark: char| (!matches!(mark, ' ' | '!')).then_some(mark);
         let (index_side, worktree_side) = if untracked {
@@ -590,8 +832,8 @@ fn own_changes(directory: &Path) -> Vec<Change> {
         };
         found.push(Change {
             path: path.to_owned(),
-            words: words(&diff),
-            diff,
+            words: Vec::new(),
+            diff: String::new(),
             staged: !untracked && !conflicted && index != ' ' && tree == ' ',
             untracked,
             index: index_side,
@@ -599,10 +841,133 @@ fn own_changes(directory: &Path) -> Vec<Change> {
             conflicted,
             from,
             submodule: None,
+            repository: None,
             moved: None,
+            added,
+            removed,
+            lazy: true,
         });
     }
     found
+}
+
+/// How many lines each file of the repository `directory` is in has put in and taken out since the last commit, by path, as one run of git tells it; a file git does not track is not in it.
+fn counts(directory: &Path) -> std::collections::HashMap<String, (usize, usize)> {
+    let said = run(
+        directory,
+        &["diff", "HEAD", "--numstat", "-z", "--no-renames"],
+    )
+    .or_else(|_| {
+        run(
+            directory,
+            &["diff", "--cached", "--numstat", "-z", "--no-renames"],
+        )
+    })
+    .unwrap_or_default();
+    said.split('\0')
+        .filter_map(|entry| {
+            let mut parts = entry.splitn(3, '\t');
+            let added = parts.next()?;
+            let removed = parts.next()?;
+            let path = parts.next()?;
+            Some((
+                path.to_owned(),
+                (added.parse().unwrap_or(0), removed.parse().unwrap_or(0)),
+            ))
+        })
+        .collect()
+}
+
+/// How many lines the file at `path` has, or none when it is not text.
+fn lines_of(path: &Path) -> usize {
+    let Ok(held) = fs::read(path) else {
+        return 0;
+    };
+    if held.iter().take(8000).any(|byte| *byte == 0) {
+        return 0;
+    }
+    let breaks = held.iter().filter(|byte| **byte == b'\n').count();
+    breaks + usize::from(held.last().is_some_and(|last| *last != b'\n'))
+}
+
+/// How many lines `diff` puts in and takes out.
+fn tally(diff: &str) -> (usize, usize) {
+    diff.lines().fold((0, 0), |(added, removed), line| {
+        match line.as_bytes().first() {
+            Some(b'+') => (added + 1, removed),
+            Some(b'-') => (added, removed + 1),
+            _ => (added, removed),
+        }
+    })
+}
+
+/// The diff of the file at `path` of the repository `directory` is in against the last commit, from its first hunk on, or all of it as added when git does not track it.
+fn file_diff(directory: &Path, path: &str) -> String {
+    let shown = run(directory, &["diff", "HEAD", "--no-color", "--", path])
+        .or_else(|_| run(directory, &["diff", "--cached", "--no-color", "--", path]))
+        .unwrap_or_default();
+    let diff = hunks(&shown);
+    if diff.is_empty() && run(directory, &["ls-files", "--error-unmatch", "--", path]).is_err() {
+        return added(directory, path);
+    }
+    diff
+}
+
+/// How many files of one request have their diffs read at the same time, each by its own `git`.
+const DIFF_WORKERS: usize = 8;
+
+/// The diffs of `paths` of the folder `directory`, each file's from the repository it is in: one of a folder that holds several, or a submodule. A path no repository of the folder holds is left out.
+pub fn diffs(directory: &Path, paths: &[String]) -> Vec<FileDiff> {
+    let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+    let Ok(owners) = submodule::by_owner(directory, &paths) else {
+        return Vec::new();
+    };
+    let jobs: Vec<(PathBuf, String, String)> = owners
+        .into_iter()
+        .flat_map(|(folder, inner)| {
+            let from_root = folder.strip_prefix(directory).unwrap_or(Path::new(""));
+            inner
+                .into_iter()
+                .map(|path| {
+                    let shown = from_root.join(&path).to_string_lossy().replace('\\', "/");
+                    (folder.clone(), path, shown)
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let done: std::sync::Mutex<Vec<Option<FileDiff>>> =
+        std::sync::Mutex::new((0..jobs.len()).map(|_| None).collect());
+    let workers = std::thread::available_parallelism()
+        .map_or(4, usize::from)
+        .clamp(1, DIFF_WORKERS)
+        .min(jobs.len());
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| {
+                loop {
+                    let at = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some((folder, path, shown)) = jobs.get(at) else {
+                        break;
+                    };
+                    let diff = file_diff(folder, path);
+                    let read = FileDiff {
+                        words: words(&diff),
+                        path: shown.clone(),
+                        diff,
+                    };
+                    if let Ok(mut held) = done.lock() {
+                        held[at] = Some(read);
+                    }
+                }
+            });
+        }
+    });
+    done.into_inner()
+        .unwrap_or_default()
+        .into_iter()
+        .flatten()
+        .collect()
 }
 
 /// `path` when it names a file inside the repository and nothing else: not empty, not absolute, never stepping out with `..`, and free of line breaks and NUL.
@@ -621,9 +986,9 @@ fn all_inside(paths: &[String]) -> Result<Vec<&str>, String> {
     paths.iter().map(|path| inside(path)).collect()
 }
 
-/// Runs `git` with `command` and then `paths` in each repository `paths` of `directory` are in, the repository itself or one of its submodules, each path as it is from there.
+/// Runs `git` with `command` and then `paths` in each repository `paths` of `directory` are in, a repository of a folder that holds several, the repository itself or one of their submodules, each path as it is from there.
 fn run_by_owner(directory: &Path, command: &[&str], paths: &[String]) -> Result<(), String> {
-    for (folder, inner) in submodule::by_owner(directory, &all_inside(paths)?) {
+    for (folder, inner) in submodule::by_owner(directory, &all_inside(paths)?)? {
         let mut arguments = command.to_vec();
         arguments.extend(inner.iter().map(String::as_str));
         run(&folder, &arguments)?;
@@ -631,7 +996,7 @@ fn run_by_owner(directory: &Path, command: &[&str], paths: &[String]) -> Result<
     Ok(())
 }
 
-/// Stages `paths`, each in the repository it is in: a file inside a submodule in the submodule, a submodule itself at the commit it is at in the repository around it.
+/// Stages `paths`, each in the repository it is in: a file inside a submodule in the submodule, a submodule itself at the commit it is at in the repository around it, a file of a folder that holds several repositories in the one it is in.
 pub fn stage(directory: &Path, paths: &[String]) -> Result<(), String> {
     run_by_owner(directory, &["add", "--"], paths)
 }
@@ -641,10 +1006,34 @@ pub fn unstage(directory: &Path, paths: &[String]) -> Result<(), String> {
     run_by_owner(directory, &["reset", "--quiet", "--"], paths)
 }
 
-/// Commits what is staged, under `message`; with nothing staged, `tracked` takes the changes of every tracked file instead, and `amend` rewrites the last commit in place of making another.
+/// Whether the repository `directory` is in has anything a commit would take: what is staged, or, when `tracked`, a change to a tracked file.
+fn has_to_commit(directory: &Path, tracked: bool) -> bool {
+    let staged = run(directory, &["diff", "--cached", "--quiet"]).is_err();
+    staged
+        || (tracked
+            && run(
+                directory,
+                &["status", "--porcelain", "--untracked-files=no"],
+            )
+            .is_ok_and(|said| !said.trim().is_empty()))
+}
+
+/// Commits what is staged, under `message`; with nothing staged, `tracked` takes the changes of every tracked file instead, and `amend` rewrites the last commit in place of making another. In a folder that holds several repositories, each repository that has something to commit commits it and the rest are left as they are.
 pub fn commit(directory: &Path, message: &str, tracked: bool, amend: bool) -> Result<(), String> {
     if message.trim().is_empty() {
         return Err("A commit needs a message".to_owned());
+    }
+    if let Layout::Repositories(children) = layout(directory) {
+        let ready: Vec<String> = children
+            .into_iter()
+            .filter(|child| has_to_commit(&directory.join(child), tracked))
+            .collect();
+        if ready.is_empty() {
+            return Err("Nothing to commit in any repository".to_owned());
+        }
+        return multirepo::each(directory, &ready, |child| {
+            commit(child, message, tracked, amend)
+        });
     }
     let mut arguments = vec!["commit", "--quiet"];
     if amend {
@@ -753,8 +1142,23 @@ pub struct Tracking {
     pub behind: usize,
 }
 
-/// What the checked out branch of the repository `directory` is in follows, and how far apart they are.
+/// What the checked out branch of the repository `directory` is in follows, and how far apart they are. Of a folder of repositories, how far apart they are all together, following something only when every one of them does.
 pub fn tracking(directory: &Path) -> Tracking {
+    if let Layout::Repositories(children) = layout(directory) {
+        let each: Vec<Tracking> = children
+            .iter()
+            .map(|child| tracking(&directory.join(child)))
+            .collect();
+        return Tracking {
+            upstream: each
+                .iter()
+                .all(|held| held.upstream.is_some())
+                .then(|| each.first().and_then(|held| held.upstream.clone()))
+                .flatten(),
+            ahead: each.iter().map(|held| held.ahead).sum(),
+            behind: each.iter().map(|held| held.behind).sum(),
+        };
+    }
     let Ok(upstream) = run(
         directory,
         &[
@@ -781,8 +1185,40 @@ pub fn tracking(directory: &Path) -> Tracking {
     }
 }
 
-/// Talks to the remote of the repository `directory` is in: `fetch` from all of them, `pull`, `pull_rebase`, `push` the branch, publishing it when it follows nothing, `force_push` without overwriting what was not seen, or `sync` by pulling and then pushing.
+/// Where one repository of a folder that holds several stands.
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Standing {
+    /// The repository's folder name.
+    pub path: String,
+    /// The branch it has checked out, when it is on one.
+    pub branch: Option<String>,
+    /// The commit it is at, abbreviated.
+    pub head: Option<String>,
+    /// What its branch follows and how far apart they are.
+    pub tracking: Tracking,
+}
+
+/// Where each repository of the folder `directory` stands, in the order of their names; nothing when the folder is a repository itself or holds none.
+pub fn standings(directory: &Path) -> Vec<Standing> {
+    child_repositories(directory)
+        .into_iter()
+        .map(|path| {
+            let folder = directory.join(&path);
+            Standing {
+                branch: current_branch(&folder),
+                head: resolve(&folder, "HEAD"),
+                tracking: tracking(&folder),
+                path,
+            }
+        })
+        .collect()
+}
+
+/// Talks to the remote of the repository `directory` is in, or of each repository in a folder that holds several, naming those that fail: `fetch` from all of them, `pull`, `pull_rebase`, `push` the branch, publishing it when it follows nothing, `force_push` without overwriting what was not seen, or `sync` by pulling and then pushing.
 pub fn remote(directory: &Path, operation: &str) -> Result<(), String> {
+    if let Layout::Repositories(children) = layout(directory) {
+        return multirepo::each(directory, &children, |child| remote(child, operation));
+    }
     match operation {
         "fetch" => run(directory, &["fetch", "--all", "--prune"]).map(|_| ()),
         "pull" => run(directory, &["pull", "--prune"]).map(|_| ()),
@@ -814,6 +1250,12 @@ fn push(directory: &Path) -> Result<(), String> {
 
 /// The messages of the commits `directory`'s branch has that `base` has not, oldest first.
 pub fn commits_since(directory: &Path, base: &str) -> Vec<String> {
+    if let Layout::Repositories(children) = layout(directory) {
+        return children
+            .iter()
+            .flat_map(|child| commits_since(&directory.join(child), base))
+            .collect();
+    }
     run(
         directory,
         &["log", "--reverse", "--format=%s", &format!("{base}..HEAD")],
@@ -829,7 +1271,7 @@ fn in_head(directory: &Path, path: &str) -> bool {
 
 /// Puts `paths` back as they are in the last commit of the repository each is in and takes them out of the next one: a file that is new is deleted, and a submodule is checked out at the commit recorded.
 pub fn discard(directory: &Path, paths: &[String]) -> Result<(), String> {
-    for (folder, inner) in submodule::by_owner(directory, &all_inside(paths)?) {
+    for (folder, inner) in submodule::by_owner(directory, &all_inside(paths)?)? {
         discard_in(&folder, &inner)?;
     }
     Ok(())
@@ -901,6 +1343,23 @@ fn ignore_pattern(path: &str) -> String {
 /// Adds `paths` to the `.gitignore` at the root of the repository `directory` is in, one line each, unless they are in it already.
 pub fn ignore(directory: &Path, paths: &[String]) -> Result<(), String> {
     let paths = all_inside(paths)?;
+    let children = multirepo::children_of(directory);
+    let mut groups: Vec<(PathBuf, Vec<String>)> = Vec::new();
+    for path in paths {
+        let (folder, inner) = multirepo::split(directory, children.as_deref(), path)?;
+        match groups.iter_mut().find(|(known, _)| *known == folder) {
+            Some((_, group)) => group.push(inner),
+            None => groups.push((folder, vec![inner])),
+        }
+    }
+    for (folder, inner) in groups {
+        ignore_in(&folder, &inner)?;
+    }
+    Ok(())
+}
+
+/// Adds `paths` to the `.gitignore` at the root of the repository `directory` is in.
+fn ignore_in(directory: &Path, paths: &[String]) -> Result<(), String> {
     let root = run(directory, &["rev-parse", "--show-toplevel"])?;
     let file = Path::new(root.trim()).join(".gitignore");
     let mut text = fs::read_to_string(&file).unwrap_or_default();
@@ -918,8 +1377,11 @@ pub fn ignore(directory: &Path, paths: &[String]) -> Result<(), String> {
     fs::write(&file, text).map_err(|error| format!("could not write .gitignore: {error}"))
 }
 
-/// Checks out the branch `name`; one of a remote's gets the local branch of its name, made to follow it when there is none yet.
+/// Checks out the branch `name`, in every repository of a folder that holds several; one of a remote's gets the local branch of its name, made to follow it when there is none yet.
 pub fn checkout(directory: &Path, name: &str) -> Result<(), String> {
+    if let Layout::Repositories(children) = layout(directory) {
+        return multirepo::each(directory, &children, |child| checkout(child, name));
+    }
     run(directory, &["switch", "--quiet", name])
         .or_else(|first| {
             let Some((_, local)) = name.split_once('/') else {
@@ -937,8 +1399,11 @@ pub fn checkout(directory: &Path, name: &str) -> Result<(), String> {
         .map(|_| ())
 }
 
-/// Makes the branch `name` at the commit the folder is at and checks it out.
+/// Makes the branch `name` at the commit the folder is at and checks it out, in every repository of a folder that holds several.
 pub fn create_branch(directory: &Path, name: &str) -> Result<(), String> {
+    if let Layout::Repositories(children) = layout(directory) {
+        return multirepo::each(directory, &children, |child| create_branch(child, name));
+    }
     run(directory, &["switch", "--quiet", "--create", name]).map(|_| ())
 }
 
@@ -989,7 +1454,7 @@ fn read_raw(
             return Err(format!("{revision:?} does not name a commit"));
         }
         let (folder, inner) = if revision == "HEAD" {
-            submodule::owner_of(directory, path)
+            submodule::owner_of(directory, path)?
         } else {
             (directory.to_path_buf(), path.to_owned())
         };

@@ -48,7 +48,12 @@ pub fn run_command(
             .filter(|_| grants.allows(Capability::ReadProject))
             .map(|folder| folder.to_string_lossy().into_owned()),
     };
-    let gate = Arc::new(Gate::new(grants.clone(), project.map(Path::to_path_buf)));
+    let gate = Arc::new(Gate::new(
+        grants.clone(),
+        project.map(Path::to_path_buf),
+        crate::package::storage(&package.id)?,
+        None,
+    ));
     let reply = sandbox.command(
         &serde_json::to_vec(&call).map_err(|error| error.to_string())?,
         gate,

@@ -120,14 +120,72 @@ pub struct LanguagePreferences {
     pub hard_tabs: Option<bool>,
     /// Whether saving formats the file.
     pub format_on_save: Option<bool>,
+    /// Whether saving first organizes the imports of the file, as its language server says.
+    pub organize_imports_on_save: Option<bool>,
+    /// Whether saving first applies every fix of the language server that is safe to apply at once.
+    pub fix_all_on_save: Option<bool>,
     /// Whether no language server reads its files.
     pub server_off: bool,
     /// The command started as its language server in place of the one it comes with, written as on a command line; empty for the one it comes with.
     pub server_command: String,
+    /// Exactly the language servers that read its files, by id and in this order: the first is the language's server and the rest run beside it. `...` stands for the servers that run when nothing is chosen, and a server the language does not start by itself runs only when it is named. Empty leaves the language as it comes.
+    pub servers: Vec<String>,
 }
 
 impl LanguagePreferences {
     /// Whether nothing is set, so the language is as it comes.
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Which folders besides a project's own are attached to the workspace its language servers work on, so that one server reads the files of all of them.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WorkspacePreferences {
+    /// Whether the repositories kept inside a project and the submodules of its repository are attached by themselves.
+    pub attach_repositories: bool,
+    /// The folders attached to the projects named, each written as `project=folder` or as `folder` alone for every project; a project is named by its folder or by that folder's name, and a folder not given in full is taken from the root of the project.
+    pub folders: Vec<String>,
+}
+
+impl WorkspacePreferences {
+    /// The folders written as lines, one to a line.
+    pub fn folders_text(&self) -> String {
+        self.folders.join(", ")
+    }
+
+    /// Replaces the folders with those `text` names, separated by commas or lines; blanks are left out.
+    pub fn set_folders_text(&mut self, text: &str) {
+        self.folders = text
+            .split([',', '\n'])
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .map(str::to_owned)
+            .collect();
+    }
+
+    /// The folders written for the project at `root`, as paths: the ones written for every project and the ones written for this one, those not given in full taken from `root`.
+    pub fn folders_for(&self, root: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let name = root
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned());
+        self.folders
+            .iter()
+            .filter_map(|line| {
+                let (project, folder) = match line.split_once('=') {
+                    Some((project, folder)) => (Some(project.trim()), folder.trim()),
+                    None => (None, line.as_str()),
+                };
+                let named = project.is_none_or(|project| {
+                    std::path::Path::new(project) == root || name.as_deref() == Some(project)
+                });
+                (named && !folder.is_empty()).then(|| root.join(folder))
+            })
+            .collect()
+    }
+
+    /// Whether nothing is set, so projects have only their own folder.
     pub fn is_default(&self) -> bool {
         *self == Self::default()
     }
@@ -155,8 +213,12 @@ pub struct MachineSettings {
     pub shell: ShellPreferences,
     /// How each language is handled, by the language's id; a language not named is as it comes.
     pub languages: BTreeMap<String, LanguagePreferences>,
+    /// Which folders besides a project's own its language servers work on.
+    pub workspace: WorkspacePreferences,
     /// What each extension is allowed to do, by the extension's folder name; an extension not named is allowed nothing.
     pub extensions: BTreeMap<String, ExtensionPreferences>,
+    /// What is set for each language server, by the server's id, whichever language it reads; a server not named is as its language starts it.
+    pub servers: BTreeMap<String, pm_lsp::ServerOverride>,
 }
 
 impl MachineSettings {

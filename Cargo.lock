@@ -912,6 +912,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "filetime"
+version = "0.2.29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5c287a33c7f0a620c38e641e7f60827713987b3c0f26e8ddc9462cc69cf75759"
+dependencies = [
+ "cfg-if",
+ "libc",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2292,7 +2302,7 @@ dependencies = [
 
 [[package]]
 name = "pandemonium"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "arboard",
  "image",
@@ -2300,6 +2310,7 @@ dependencies = [
  "mac-notification-sys",
  "mermaid-svg",
  "pm-acp",
+ "pm-browser",
  "pm-client",
  "pm-color",
  "pm-components",
@@ -2321,6 +2332,8 @@ dependencies = [
  "pm-transport",
  "pm-treesitter",
  "pm-ui",
+ "pm-update",
+ "pm-vim",
  "resvg",
  "rfd",
  "serde",
@@ -2414,7 +2427,7 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
 name = "pm-acp"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "base64",
  "pm-agent-library",
@@ -2427,7 +2440,7 @@ dependencies = [
 
 [[package]]
 name = "pm-agent-library"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -2436,36 +2449,52 @@ dependencies = [
 
 [[package]]
 name = "pm-animation"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "pm-primitives",
 ]
 
 [[package]]
+name = "pm-browser"
+version = "0.14.0-rc.4"
+dependencies = [
+ "flate2",
+ "getrandom 0.4.3",
+ "memmap2",
+ "pm-store",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tar",
+ "ureq",
+]
+
+[[package]]
 name = "pm-buffer"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "pm-client"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "pm-acp",
  "pm-protocol",
  "pm-store",
+ "pm-update",
  "serde_json",
  "tungstenite",
 ]
 
 [[package]]
 name = "pm-color"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 
 [[package]]
 name = "pm-components"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "chrono",
  "pm-acp",
@@ -2483,13 +2512,15 @@ dependencies = [
  "pm-theme",
  "pm-treesitter",
  "pm-ui",
+ "pm-vim",
+ "serde",
  "serde_json",
  "similar",
 ]
 
 [[package]]
 name = "pm-config"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "pm-protocol",
  "serde",
@@ -2498,7 +2529,7 @@ dependencies = [
 
 [[package]]
 name = "pm-dap"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "pm-tools",
  "serde",
@@ -2507,7 +2538,7 @@ dependencies = [
 
 [[package]]
 name = "pm-decoration"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "pm-color",
  "pm-primitives",
@@ -2515,13 +2546,14 @@ dependencies = [
 
 [[package]]
 name = "pm-editor"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "pm-buffer",
  "pm-lsp",
  "pm-protocol",
  "pm-text",
  "pm-treesitter",
+ "pm-vim",
  "regex",
  "serde",
  "serde_json",
@@ -2530,7 +2562,7 @@ dependencies = [
 
 [[package]]
 name = "pm-git"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "pm-tools",
  "reflink-copy",
@@ -2541,18 +2573,18 @@ dependencies = [
 
 [[package]]
 name = "pm-icon"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "resvg",
 ]
 
 [[package]]
 name = "pm-input"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 
 [[package]]
 name = "pm-layout"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "pm-primitives",
  "taffy",
@@ -2560,12 +2592,15 @@ dependencies = [
 
 [[package]]
 name = "pm-lsp"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "flate2",
  "pm-buffer",
  "pm-store",
+ "pm-task",
  "pm-tools",
+ "pm-treesitter",
+ "regex",
  "serde",
  "serde_json",
  "sha2 0.11.1",
@@ -2576,14 +2611,14 @@ dependencies = [
 
 [[package]]
 name = "pm-markdown"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "pulldown-cmark",
 ]
 
 [[package]]
 name = "pm-mcp"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "pm-tools",
  "serde_json",
@@ -2592,7 +2627,7 @@ dependencies = [
 
 [[package]]
 name = "pm-pages"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "pm-acp",
  "pm-components",
@@ -2606,26 +2641,29 @@ dependencies = [
  "pm-terminal",
  "pm-text",
  "pm-ui",
+ "pm-vim",
 ]
 
 [[package]]
 name = "pm-plugin"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "pm-lsp",
  "pm-plugin-api",
  "pm-policy",
  "pm-store",
+ "pm-tools",
  "pm-wasm",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
  "toml",
  "ureq",
 ]
 
 [[package]]
 name = "pm-plugin-api"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -2633,18 +2671,18 @@ dependencies = [
 
 [[package]]
 name = "pm-policy"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "pm-primitives"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 
 [[package]]
 name = "pm-protocol"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "base64",
  "pm-acp",
@@ -2660,7 +2698,7 @@ dependencies = [
 
 [[package]]
 name = "pm-renderer"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "bytemuck",
  "pm-color",
@@ -2673,25 +2711,30 @@ dependencies = [
 
 [[package]]
 name = "pm-review"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 
 [[package]]
 name = "pm-server"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "getrandom 0.4.3",
  "notify",
  "pm-acp",
  "pm-agent-library",
+ "pm-buffer",
  "pm-dap",
  "pm-git",
  "pm-lsp",
  "pm-mcp",
  "pm-plugin",
+ "pm-plugin-api",
  "pm-policy",
  "pm-protocol",
  "pm-store",
  "pm-task",
+ "pm-transport",
+ "pm-treesitter",
+ "pm-update",
  "portable-pty",
  "serde",
  "serde_json",
@@ -2701,15 +2744,15 @@ dependencies = [
 
 [[package]]
 name = "pm-session"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 
 [[package]]
 name = "pm-shaders"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 
 [[package]]
 name = "pm-ssh"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "pm-protocol",
  "pm-transport",
@@ -2718,18 +2761,18 @@ dependencies = [
 
 [[package]]
 name = "pm-state"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 
 [[package]]
 name = "pm-store"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "dirs",
 ]
 
 [[package]]
 name = "pm-style"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "pm-animation",
  "pm-color",
@@ -2741,7 +2784,7 @@ dependencies = [
 
 [[package]]
 name = "pm-task"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -2750,7 +2793,7 @@ dependencies = [
 
 [[package]]
 name = "pm-terminal"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "pm-text",
  "vte",
@@ -2758,7 +2801,7 @@ dependencies = [
 
 [[package]]
 name = "pm-text"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "cosmic-text",
  "pm-typography",
@@ -2766,34 +2809,36 @@ dependencies = [
 
 [[package]]
 name = "pm-theme"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "pm-color",
 ]
 
 [[package]]
 name = "pm-tools"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 
 [[package]]
 name = "pm-transport"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "pm-protocol",
  "serde_json",
+ "sha2 0.11.1",
 ]
 
 [[package]]
 name = "pm-treesitter"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "pm-buffer",
+ "regex",
  "tree-sitter",
 ]
 
 [[package]]
 name = "pm-typography"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "pm-color",
  "pm-primitives",
@@ -2801,7 +2846,7 @@ dependencies = [
 
 [[package]]
 name = "pm-ui"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "pm-icon",
  "pm-input",
@@ -2813,8 +2858,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "pm-update"
+version = "0.14.0-rc.4"
+dependencies = [
+ "flate2",
+ "pm-store",
+ "sha2 0.11.1",
+ "tar",
+ "ureq",
+ "zip",
+]
+
+[[package]]
+name = "pm-vim"
+version = "0.14.0-rc.4"
+dependencies = [
+ "regex",
+ "ropey",
+]
+
+[[package]]
 name = "pm-wasm"
-version = "0.13.1"
+version = "0.14.0-rc.4"
 dependencies = [
  "pm-plugin-api",
  "serde_json",
@@ -3266,6 +3331,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ropey"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93411e420bcd1a75ddd1dc3caf18c23155eda2c090631a85af21ba19e97093b5"
+dependencies = [
+ "smallvec",
+ "str_indices",
+]
+
+[[package]]
 name = "roxmltree"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3696,6 +3771,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
 
 [[package]]
+name = "str_indices"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d08889ec5408683408db66ad89e0e1f93dff55c73a4ccc71c427d5b277ee47e6"
+
+[[package]]
 name = "streaming-iterator"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3777,6 +3858,17 @@ dependencies = [
  "serde",
  "slotmap",
  "smallvec",
+]
+
+[[package]]
+name = "tar"
+version = "0.4.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f6221d9a6003c78398e3b239969f352578258df48c8eb051caadae0015bc840"
+dependencies = [
+ "filetime",
+ "libc",
+ "xattr",
 ]
 
 [[package]]
@@ -5265,6 +5357,16 @@ name = "x11rb-protocol"
 version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ea6fc2961e4ef194dcbfe56bb845534d0dc8098940c7e5c012a258bfec6701bd"
+
+[[package]]
+name = "xattr"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
+dependencies = [
+ "libc",
+ "rustix 1.1.5",
+]
 
 [[package]]
 name = "xcursor"

@@ -232,6 +232,9 @@ pub const SIDEBAR_TOGGLE: FocusId = FocusId(20_200_004);
 /// The dock's tab showing the shells.
 pub const BOTTOM_TERMINAL: FocusId = FocusId(20_200_001);
 
+/// A folder of a machine, which the problems of the dock are about: the machine the folder is on, when it is not this one, and the folder.
+pub type ProblemsKey = (Option<String>, String);
+
 /// The list of problems in the dock, which scrolls.
 pub const PROBLEMS_SCROLL: FocusId = FocusId(20_200_002);
 
@@ -354,6 +357,15 @@ pub enum Outgoing {
         /// The file.
         path: String,
     },
+    /// Asks the language server of a file of the session at this position what it adds to one of the completions it listed.
+    ResolveCompletion {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The item as its server wrote it.
+        item: String,
+    },
     /// Asks the language server what could be written at a place of a file of the session at this position.
     Completion {
         /// The session, by position.
@@ -366,6 +378,8 @@ pub enum Outgoing {
         position: pm_protocol::Position,
         /// The character typed that asked, when one did.
         trigger: Option<String>,
+        /// The name of the scope of the language the place is in, when it is in one.
+        scope: Option<String>,
     },
     /// Asks the language server for the edits that format a file of the session at this position.
     Format {
@@ -475,6 +489,65 @@ pub enum Outgoing {
         path: String,
         /// The version of the text the names are in.
         version: i32,
+        /// The stretch the names are wanted for first; the whole file when nothing.
+        range: Option<pm_protocol::Span>,
+    },
+    /// Asks the language server for the changes of one kind it offers for the whole of a file of the session at this position, takes the one it prefers, and goes on as the rest of the kinds and saving say.
+    SourceActions {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The version of the text the changes are for.
+        version: i32,
+        /// The whole of the text at that version.
+        span: pm_protocol::Span,
+        /// The kinds of change to take, one after another, the first asked for now.
+        kinds: Vec<String>,
+        /// Whether the file is formatted and written after the last of them.
+        save: bool,
+        /// Whether the reader is told when the server offers nothing.
+        notify: bool,
+    },
+    /// Asks the language server how a colour can be written in place of a stretch of a file of the session at this position.
+    ColorPresentations {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The version of the text the stretch is in.
+        version: i32,
+        /// The stretch that spells the colour.
+        span: pm_protocol::Span,
+        /// The colour, as red, green, blue and opacity from 0 to 255.
+        color: [u8; 4],
+    },
+    /// Asks the language server where a link of a file of the session at this position leads, when it gave no address.
+    ResolveLink {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The link as its server wrote it.
+        link: String,
+    },
+    /// Asks the language server which stretches of a file of the session at this position lead somewhere when pressed.
+    DocumentLinks {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The version of the text the links are about.
+        version: i32,
+    },
+    /// Asks the language server which stretches of a file of the session at this position spell a colour.
+    Colors {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The version of the text the colours are about.
+        version: i32,
     },
     /// Asks the language server what to show inside the lines of a file of the session at this position.
     InlayHints {
@@ -510,6 +583,8 @@ pub enum Outgoing {
         path: String,
         /// The version of the text the lenses are about.
         version: i32,
+        /// Whether the newest versions of the dependencies the file lists are looked up.
+        dependencies: bool,
     },
     /// Presses one of the lenses the language server last gave for a file of the session at this position.
     PressCodeLens {
@@ -533,6 +608,17 @@ pub enum Outgoing {
     },
     /// Asks the language server what the call a place of a file of the session at this position is in looks like.
     Signature {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The version of the text the place is in.
+        version: i32,
+        /// The place.
+        position: pm_protocol::Position,
+    },
+    /// Asks the language server what can be renamed at a place of a file of the session at this position.
+    PrepareRename {
         /// The session, by position.
         session: usize,
         /// The file.
@@ -574,6 +660,13 @@ pub enum Outgoing {
         path: String,
         /// The change, by its place in the list offered.
         index: usize,
+    },
+    /// Asks the server of the session at this position for the diffs of changed files it listed without them.
+    Diffs {
+        /// The session, by position.
+        session: usize,
+        /// The files, as the changes name them.
+        paths: Vec<String>,
     },
     /// Reads a file of the session at this position as the last commit holds it, to mark how the open file differs from it.
     ReadBase {
@@ -793,6 +886,15 @@ pub enum Outgoing {
         /// How they are told.
         how: pm_config::Notification,
     },
+    /// Asks the server on this machine to download the release `version` on `channel`, and installs it and restarts into it.
+    DownloadUpdate {
+        /// The channel the window follows.
+        channel: pm_config::Channel,
+        /// The version to install.
+        version: String,
+    },
+    /// Stops the download of the update.
+    CancelUpdate,
     /// Asks the server on this machine for the newest release on `channel`.
     LatestRelease {
         /// The channel the window follows.
@@ -846,6 +948,19 @@ pub enum Outgoing {
         /// The session, by position.
         session: usize,
     },
+    /// Asks the machine of the session at this position which tasks can run a place of a file that its language marks as runnable.
+    RunnableTasks {
+        /// The session, by position.
+        session: usize,
+        /// The file, from the root of the session's folder.
+        path: String,
+        /// What its language tagged it with.
+        tags: Vec<String>,
+        /// What each of its captures matched, by the capture's name.
+        variables: std::collections::BTreeMap<String, String>,
+        /// Its line and its column, from zero.
+        position: (usize, usize),
+    },
     /// Runs a task in the shell of a tab, in the folder of the session at this position.
     RunTask {
         /// The session, by position.
@@ -865,10 +980,14 @@ pub enum Outgoing {
         session: usize,
         /// The file, from the root of the session's folder.
         path: String,
-        /// What kind of place it is.
-        kind: String,
-        /// What it is called.
-        name: String,
+        /// What its language tagged it with.
+        tags: Vec<String>,
+        /// What each of its captures matched, by the capture's name.
+        variables: std::collections::BTreeMap<String, String>,
+        /// Its line and its column, from zero.
+        position: (usize, usize),
+        /// The name of the task tied to it that is run in place of the first, when one was chosen.
+        task: Option<String>,
         /// The tab, by the name this window knows it by.
         tab: u64,
         /// How many columns wide its window is.
@@ -957,6 +1076,17 @@ pub enum Outgoing {
         settings: Vec<(String, String)>,
         /// The branch to make the session's worktree from, when it works in one of its own.
         base: Option<String>,
+        /// Whether its agent and terminals run in a dev container.
+        container: bool,
+    },
+    /// Asks whether the folder of a project holds a `devcontainer.json`.
+    DevContainer {
+        /// The project, by position.
+        project: usize,
+        /// The machine it is on, when not this one.
+        host: Option<String>,
+        /// Its folder.
+        directory: String,
     },
     /// Saves the named logins and the one in use for each agent, and points the agents at them.
     Accounts {
@@ -1019,17 +1149,19 @@ pub enum Outgoing {
         /// The machine, or nothing for this one.
         host: Option<String>,
     },
-    /// Asks who the agent at `agent` is signed in as, for naming the login in use after it when `naming`.
+    /// Asks who the agent at `agent` is signed in as, under the login `naming` and naming it after the answer, or under the login in use when there is none.
     Identity {
         /// The agent, by position.
         agent: usize,
-        /// Whether the answer names the login in use.
-        naming: bool,
+        /// The login the answer names, by id.
+        naming: Option<String>,
     },
-    /// Signs the agent, by its position, in under the login now in use.
+    /// Signs the agent, by its position, in under the login `login`, or the one now in use when there is none.
     SignIn {
         /// The agent, by position.
         agent: usize,
+        /// The login's id.
+        login: Option<String>,
     },
     /// Signs in again as the account of the open session.
     SignInSession {
@@ -1345,7 +1477,39 @@ pub enum Outgoing {
         /// What to copy.
         text: String,
     },
+    /// Asks the server for a file of the session at this position as the folder holds it, to compare it with the file `active` as it is being edited.
+    ReadToCompare {
+        /// The session, by position.
+        session: usize,
+        /// The file being edited.
+        active: String,
+        /// The file to read, which is `active` itself to compare it with what was saved of it.
+        path: String,
+        /// Whether `path` is `active` as it was saved.
+        saved: bool,
+    },
+    /// Asks the language server whether it offers changes at the caret of a file of the session at this position, only to mark the line.
+    Lightbulb {
+        /// The session, by position.
+        session: usize,
+        /// The file.
+        path: String,
+        /// The version of the text the stretch is in.
+        version: i32,
+        /// The line the caret is on.
+        line: usize,
+        /// The stretch.
+        span: pm_protocol::Span,
+    },
 }
+
+/// A prompt put aside while another session is worked in: what was typed, the files attached, the elements picked and the captures held.
+pub type StashedPrompt = (
+    Field,
+    Vec<String>,
+    Vec<crate::elements::Element>,
+    Vec<crate::captures::Capture>,
+);
 
 /// What a menu over the prompt box is open for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1356,6 +1520,10 @@ pub enum Picker {
     Location,
     /// Which login of the agent is used.
     Account,
+    /// An element of a web page picked for the prompt, by position among those picked.
+    Element(usize),
+    /// A screenshot or the console of a web page held for the prompt, by position among those held.
+    Capture(usize),
 }
 
 /// Where new work is done.
@@ -1406,10 +1574,14 @@ pub enum Tab {
     File,
     /// The lines around the hits of a search, from every file, edited in place.
     Excerpts,
+    /// A page of the web.
+    Browser,
+    /// The notes of the newer release, and the button that installs it.
+    Update,
 }
 
 /// About how wide the diff is, in logical pixels, when scrolling it to a file, which only the height of the notes on the files above depends on.
-const DIFF_WIDTH: f32 = 900.0;
+pub(crate) const DIFF_WIDTH: f32 = 900.0;
 
 /// What the review panel lists.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1461,6 +1633,8 @@ pub struct WorkspaceState {
     pub project_search: crate::project_search::ProjectSearch,
     /// The hits of a search shown as one document, while they are.
     pub excerpts: Option<crate::excerpts::Excerpts>,
+    /// The page of the web beside the work, while one is open.
+    pub browser: Option<crate::browser::Browser>,
     /// The folders of the project's files that are unfolded, by path.
     pub open_tree: std::collections::HashSet<String>,
     /// The folders of the changed files that are folded away, by group and path.
@@ -1473,6 +1647,8 @@ pub struct WorkspaceState {
     pub comment_text: Field,
     /// How far down the diff is scrolled, in logical pixels.
     pub diff_scroll: f32,
+    /// The files, by session and path, whose diffs were asked of the server and have not come.
+    pub(crate) asking_diffs: std::collections::HashSet<(usize, String)>,
     /// How far down the review panel's list is scrolled, in logical pixels.
     pub tree_scroll: f32,
     /// The project whose folder the review panel was last asked to read while no session was open.
@@ -1493,10 +1669,12 @@ pub struct WorkspaceState {
     pub sidebar_open: bool,
     /// Which tab of the dock is showing.
     pub bottom: crate::dock::BottomTab,
-    /// What is wrong with the files of the project of the session the dock is about, as the server last said.
+    /// What is wrong with the files of the folder `problems_of` names, as the server last said.
     pub problems: Vec<pm_protocol::Problem>,
-    /// Whether the server was asked what is wrong with the files and has not answered.
-    pub problems_asked: bool,
+    /// The folder, and the machine it is on, that `problems` is about.
+    pub problems_of: Option<ProblemsKey>,
+    /// The folder, and the machine it is on, the server was asked about and has not answered.
+    pub problems_asked: Option<ProblemsKey>,
     /// How far down the list of problems is scrolled, in logical pixels.
     pub problems_scroll: f32,
     /// The problem of the list the reader pressed, whose place is to be shown.
@@ -1515,6 +1693,10 @@ pub struct WorkspaceState {
     pub prompt: Field,
     /// The files attached to the prompt, by path.
     pub attachments: Vec<String>,
+    /// The elements of web pages picked for the prompt.
+    pub elements: Vec<crate::elements::Element>,
+    /// The screenshots and consoles of web pages held for the prompt.
+    pub captures: Vec<crate::captures::Capture>,
     /// The machine, by destination, that the settings and commands held belong to; nothing for this one.
     pub discovery_host: Option<String>,
     /// What other machines said about the agents, by destination, while the settings of one machine are showing.
@@ -1559,6 +1741,8 @@ pub struct WorkspaceState {
     pub message_menu: Option<MessageMenu>,
     /// The menu open over the window of the shell showing, and where, if one is.
     pub terminal_menu: Option<crate::terminal_menu::TerminalMenu>,
+    /// The menu open over the page of the browser, if any.
+    pub browser_menu: Option<crate::browser_menu::BrowserMenu>,
     /// The project being dragged to another place, if one is.
     pub project_drag: Option<ProjectDrag>,
     /// What the agents have yet to be told.
@@ -1575,7 +1759,7 @@ pub struct WorkspaceState {
     /// The panes of each session other than the one whose files are open now, by its position.
     pub pane_stash: std::collections::HashMap<usize, crate::panes::Panes>,
     /// What was typed in the prompt, and the files attached to it, for every session but the one being worked in, by session, so that coming back to one finds its message as it was left.
-    pub prompt_stash: std::collections::HashMap<usize, (Field, Vec<String>)>,
+    pub prompt_stash: std::collections::HashMap<usize, StashedPrompt>,
     /// The search of the review panel of every session but the one being worked in, by session.
     pub search_stash: std::collections::HashMap<usize, crate::project_search::ProjectSearch>,
     /// The tab being dragged to another pane, if one is.
@@ -1596,6 +1780,8 @@ pub struct WorkspaceState {
     pub choices: Vec<(String, String, String)>,
     /// Where new work is done.
     pub location: Location,
+    /// Whether new work runs in a dev container, which only a project with a `devcontainer.json` offers.
+    pub container: bool,
     /// The branch new work is made from, when the reader picked one; otherwise the one checked out.
     pub base: Option<String>,
     /// The branches of the project being started in, the one checked out first; none when it is not a repository.
@@ -1645,16 +1831,20 @@ pub struct WorkspaceState {
     pub extensions_page: crate::extensions::ExtensionsPage,
     /// What the extensions of each machine bring that the window uses itself, by machine; nothing for this one.
     pub extension_assets: std::collections::BTreeMap<Option<String>, pm_protocol::ExtensionAssets>,
-    /// Where the caret was before each jump to a definition, to go back to.
-    pub jumps: pm_editor::Jumps,
     /// The list hanging over the file shown, when one is open.
     pub listing: Option<crate::listing::Listing>,
     /// The commands last carried out from the quick input, the latest first.
     pub recent_commands: Vec<pm_editor::Action>,
     /// The files last opened, by path from the root of the project, the latest first.
     pub recent_files: Vec<String>,
+    /// The file tabs closed last, the latest last, to bring back.
+    pub closed_tabs: Vec<crate::tab_steps::ClosedTab>,
     /// The box giving the thing at the caret a new name, when open.
     pub renaming: Option<crate::navigate::Renaming>,
+    /// What modal editing shares between files: its bindings, registers, macros and the last change and search.
+    pub vim: pm_vim::Vim,
+    /// The colour of the file shown being changed, when the box for it is open.
+    pub color_picking: Option<crate::color_picker::ColorPicking>,
     /// The box for going to a line of the file shown by its number, when open.
     pub going_to: Option<crate::line_edits::GoingTo>,
     /// Where the signature of the call the caret is in hangs, in logical pixels of the window.
@@ -1671,8 +1861,16 @@ pub struct WorkspaceState {
     pub editor_loaded: bool,
     /// How wide the view of the file shown was last drawn and how wide a character of code is in it, in logical pixels, which soft wrap breaks lines by; nothing until it was drawn.
     pub code_view: Option<(f32, f32)>,
+    /// How tall the view of the file shown was last drawn, in logical pixels, which tells the lines in view; nothing until it was drawn.
+    pub code_height: Option<f32>,
     /// Whether the reader asked to close the window and nothing is left to ask first.
     pub quitting: bool,
+    /// How far down the notes in the window of an update are scrolled, in logical pixels.
+    pub update_scroll: f32,
+    /// Whether the release notes of the newer release are open as a tab.
+    pub update_open: bool,
+    /// How far the update the reader asked for has got.
+    pub update_run: crate::update_dialog::UpdateRun,
     /// The breakpoints and the program being debugged.
     pub debug: crate::debug::DebugState,
     /// What the project can be built, tested and run with.
@@ -1720,12 +1918,14 @@ impl WorkspaceState {
             review_tab: ReviewTab::Changes,
             project_search: crate::project_search::ProjectSearch::default(),
             excerpts: None,
+            browser: None,
             open_tree: std::collections::HashSet::new(),
             closed_folders: std::collections::HashSet::new(),
             closed_diffs: std::collections::HashSet::new(),
             comment_target: None,
             comment_text: Field::default(),
             diff_scroll: 0.0,
+            asking_diffs: std::collections::HashSet::new(),
             tree_scroll: 0.0,
             homed: None,
             plan_open: false,
@@ -1737,7 +1937,8 @@ impl WorkspaceState {
             sidebar_open: true,
             bottom: crate::dock::BottomTab::default(),
             problems: Vec::new(),
-            problems_asked: false,
+            problems_of: None,
+            problems_asked: None,
             problems_scroll: 0.0,
             problem_picked: None,
             terminal_height: crate::terminal::HEIGHT,
@@ -1767,6 +1968,7 @@ impl WorkspaceState {
             session_menu: None,
             message_menu: None,
             terminal_menu: None,
+            browser_menu: None,
             project_drag: None,
             outbox: Vec::new(),
             files_owner: None,
@@ -1784,6 +1986,7 @@ impl WorkspaceState {
             touched: Vec::new(),
             choices: Vec::new(),
             location: Location::Local,
+            container: false,
             base: None,
             branches: Vec::new(),
             branches_of: None,
@@ -1793,6 +1996,8 @@ impl WorkspaceState {
             skills_of: None,
             skill_names: std::collections::HashSet::new(),
             attachments: Vec::new(),
+            elements: Vec::new(),
+            captures: Vec::new(),
             previews: std::collections::HashMap::new(),
             figures: crate::figures::Figures::new(),
             figures_asked: std::collections::HashSet::new(),
@@ -1814,11 +2019,13 @@ impl WorkspaceState {
             extensions: Vec::new(),
             extensions_page: crate::extensions::ExtensionsPage::default(),
             extension_assets: std::collections::BTreeMap::new(),
-            jumps: pm_editor::Jumps::default(),
             listing: None,
             recent_commands: Vec::new(),
             recent_files: Vec::new(),
+            closed_tabs: Vec::new(),
             renaming: None,
+            color_picking: None,
+            vim: pm_vim::Vim::default(),
             going_to: None,
             signature_at: (0.0, 0.0),
             finding: None,
@@ -1827,7 +2034,11 @@ impl WorkspaceState {
             editor: pm_editor::EditorSettings::default(),
             editor_loaded: false,
             code_view: None,
+            code_height: None,
             quitting: false,
+            update_scroll: 0.0,
+            update_open: false,
+            update_run: crate::update_dialog::UpdateRun::Idle,
             debug: crate::debug::DebugState::default(),
             tasks: crate::tasks::TaskState::default(),
             window: pm_config::WindowSettings::default(),
@@ -1952,8 +2163,15 @@ impl WorkspaceState {
             self.toggle_breakpoint(file, line);
             return self;
         }
+        if let Some(index) = crate::tasks::run_lens_of(action) {
+            self.run_lens_pressed(index);
+            return self;
+        }
         if let Some((file, line)) = crate::tasks::run_of(action) {
             self.runnable_run(file, line);
+            return self;
+        }
+        if action == crate::lightbulb::LIGHTBULB {
             return self;
         }
         if let Some(line) = crate::viewer::fold_of(action) {
@@ -1972,8 +2190,16 @@ impl WorkspaceState {
             || action == crate::listing::LISTING_BODY
             || action == crate::navigate::RENAME_BOX
             || action == crate::navigate::RENAME_SYMBOL
+            || action == crate::color_picker::COLOR_BOX
+            || action == crate::color_picker::COLOR_HEX
         {
             return self;
+        }
+        if action == crate::color_picker::COLOR_HEX_SUBMIT {
+            return self.color_format_taken(None);
+        }
+        if let Some(row) = crate::color_picker::color_format_of(action) {
+            return self.color_format_taken(Some(row));
         }
         if action == crate::navigate::RENAME_SYMBOL_SUBMIT {
             return self.rename_submitted();
@@ -1989,6 +2215,9 @@ impl WorkspaceState {
         }
         if crate::excerpts::is_excerpt_part(action) {
             return self.excerpts_pressed(action);
+        }
+        if crate::browser::is_browser_part(action) {
+            return self.browser_pressed(action);
         }
         if crate::project_search::is_search_part(action) {
             return self.project_search_pressed(action);
@@ -2038,6 +2267,8 @@ impl WorkspaceState {
             ADD_PROJECT => return self.with_adder(),
             SETTINGS => return self.with_settings(),
             crate::title_bar::UPDATE => self.open_release(),
+            crate::title_bar::LANGUAGE_UPDATE => return self.with_extensions_page(),
+            update if self.press_update(update) => {}
             action if crate::settings::is_settings(action) => {
                 return self.settings_pressed(action);
             }
@@ -2083,7 +2314,6 @@ impl WorkspaceState {
             }
         }
         self.sync_context();
-        self.fill_terminal_dock();
         self.refresh_files();
         self.ask_log_once();
         self.debug_revealed().problem_revealed()
@@ -2111,6 +2341,7 @@ impl WorkspaceState {
                     renaming.problem = None;
                 }
             }
+            crate::color_picker::COLOR_HEX => self.color_hex_edited(edit),
             crate::line_edits::GO_TO_LINE => {
                 if let Some(going) = self.going_to.as_mut() {
                     going.field.apply(edit);
@@ -2124,6 +2355,12 @@ impl WorkspaceState {
             crate::debug::DEBUG_CONSOLE_FIELD | crate::debug::DEBUG_WATCH_FIELD => {
                 self.debug_field_edited(id, edit)
             }
+            crate::browser::BROWSER_ADDRESS => {
+                if let Some(browser) = self.browser.as_mut() {
+                    browser.address.apply(edit);
+                }
+            }
+            crate::browser::BROWSER_FIND_FIELD => self.browser_find_edited(edit),
             crate::find::REPLACE_FIELD => return self.replacement_typed(edit),
             ENTRY_FIELD => {
                 if let Some((_, field)) = self.git.naming.as_mut() {
@@ -2177,7 +2414,18 @@ impl WorkspaceState {
             crate::navigate::RENAME_SYMBOL => {
                 self.renaming.as_ref().map(|renaming| &renaming.field)
             }
+            crate::color_picker::COLOR_HEX => {
+                self.color_picking.as_ref().map(|picking| &picking.hex)
+            }
             crate::line_edits::GO_TO_LINE => self.going_to.as_ref().map(|going| &going.field),
+            crate::browser::BROWSER_ADDRESS => {
+                self.browser.as_ref().map(|browser| &browser.address)
+            }
+            crate::browser::BROWSER_FIND_FIELD => self
+                .browser
+                .as_ref()
+                .and_then(|browser| browser.search.as_ref())
+                .map(|search| &search.query),
             crate::find::FIND_FIELD => self.finding.as_ref().map(|finding| &finding.query),
             crate::project_search::PROJECT_SEARCH_FIELD => Some(&self.project_search.query),
             crate::listing::LISTING_FILTER => self.listing_filter(),
@@ -2209,7 +2457,10 @@ impl WorkspaceState {
             || id == ENTRY_FIELD
             || id == EDITOR_FIELD
             || id == crate::navigate::RENAME_SYMBOL
+            || id == crate::color_picker::COLOR_HEX
             || id == crate::line_edits::GO_TO_LINE
+            || id == crate::browser::BROWSER_ADDRESS
+            || id == crate::browser::BROWSER_FIND_FIELD
             || id == crate::find::FIND_FIELD
             || id == crate::project_search::PROJECT_SEARCH_FIELD
             || id == crate::listing::LISTING_FILTER
@@ -2238,7 +2489,10 @@ impl WorkspaceState {
             ENTRY_FIELD => crate::tree_actions::TREE_NAME_SUBMIT,
             EDITOR_FIELD => crate::open_files::EDITOR_SAVE,
             crate::navigate::RENAME_SYMBOL => crate::navigate::RENAME_SYMBOL_SUBMIT,
+            crate::color_picker::COLOR_HEX => crate::color_picker::COLOR_HEX_SUBMIT,
             crate::line_edits::GO_TO_LINE => crate::line_edits::GO_TO_LINE_SUBMIT,
+            crate::browser::BROWSER_ADDRESS => crate::browser::BROWSER_GO,
+            crate::browser::BROWSER_FIND_FIELD => crate::browser::BROWSER_FIND_NEXT,
             crate::find::FIND_FIELD => crate::find::FIND_NEXT,
             crate::project_search::PROJECT_SEARCH_FIELD => crate::project_search::PROJECT_SEARCH_GO,
             crate::listing::LISTING_FILTER => crate::listing::LISTING_TAKE,
@@ -2287,6 +2541,7 @@ impl WorkspaceState {
         self.session_menu = None;
         self.message_menu = None;
         self.terminal_menu = None;
+        self.browser_menu = None;
         self.git.menu = None;
         self.settings_servers.menu = None;
         self.tab_menu = None;
@@ -2313,6 +2568,8 @@ impl WorkspaceState {
 
     /// Takes what the agents have yet to be told off the state.
     pub fn take_outbox(&mut self) -> Vec<Outgoing> {
+        self.ensure_terminal();
+        self.ask_problems_again();
         std::mem::take(&mut self.outbox)
     }
 
@@ -2752,8 +3009,23 @@ impl WorkspaceState {
     /// the server queues it, or, `now`, stops the turn and hands it over in
     /// its place.
     fn send(&mut self, now: bool) {
-        let text = self.prompt.text().trim().to_owned();
-        if text.is_empty() && self.attachments.is_empty() {
+        let mut text = self.prompt.text().trim().to_owned();
+        if !self.elements.is_empty() {
+            if !text.is_empty() {
+                text.push_str("\n\n");
+            }
+            text.push_str(&crate::elements::message(&self.elements));
+        }
+        let captured = crate::captures::message(&self.captures);
+        if !captured.is_empty() {
+            if !text.is_empty() {
+                text.truncate(text.trim_end().len());
+                text.push_str("\n\n");
+            }
+            text.push_str(&captured);
+        }
+        let sent_files = self.prompt_files();
+        if text.is_empty() && sent_files.is_empty() {
             return;
         }
         let starting = matches!(self.page, Page::New(_));
@@ -2771,9 +3043,8 @@ impl WorkspaceState {
                 }
                 session.echoes += 1;
                 session.closed = false;
-                let files = self.attachments.clone();
                 let mut message = Message::user(&text);
-                message.attachments = files.clone();
+                message.attachments = sent_files;
                 session.messages.push(message);
                 index
             }
@@ -2787,6 +3058,7 @@ impl WorkspaceState {
                     .to_string_lossy()
                     .into_owned();
                 session.base = self.base_for_new_work();
+                session.in_container = self.container_for_new_work();
                 session.submodule = self.new_in.take();
                 session.directory = session.folder_in(&session.directory);
                 session.branch = if session.base.is_some() {
@@ -2795,8 +3067,10 @@ impl WorkspaceState {
                     self.branches.first().cloned().unwrap_or_default()
                 };
                 session.skills = self.skills.clone();
-                session.messages[0].attachments = self.attachments.clone();
+                session.messages[0].attachments = sent_files;
                 self.sessions.push(session);
+                self.pane_stash
+                    .insert(self.sessions.len() - 1, self.panes.clone());
                 self.page = Page::Session(self.sessions.len() - 1);
                 self.tab = Tab::Chat;
                 self.sessions.len() - 1
@@ -2815,6 +3089,7 @@ impl WorkspaceState {
                 files,
                 settings: self.settings_changed(),
                 base: self.sessions[session].base.clone(),
+                container: self.sessions[session].in_container,
             }
         } else {
             Outgoing::Prompt {
@@ -2842,13 +3117,31 @@ impl WorkspaceState {
 
     /// Empties the prompt box for the next message and returns the files that were attached.
     fn take_prompt(&mut self) -> Vec<String> {
+        let files = self.prompt_files();
         self.prompt = prompt_field("");
         self.chat_back = 0.0;
         if let Some(index) = self.open_index() {
             self.sessions[index].chat_back = 0.0;
         }
         self.slash = 0;
-        std::mem::take(&mut self.attachments)
+        self.elements.clear();
+        self.captures.clear();
+        if matches!(self.picker, Some(Picker::Element(_) | Picker::Capture(_))) {
+            self.picker = None;
+        }
+        self.attachments.clear();
+        files
+    }
+
+    /// The files that go with the prompt: those attached and the screenshots of the captures held, each once.
+    fn prompt_files(&self) -> Vec<String> {
+        let mut files = self.attachments.clone();
+        for path in self.capture_files() {
+            if !files.contains(&path) {
+                files.push(path);
+            }
+        }
+        files
     }
 
     /// Stages every change of the session the review panel is about, or unstages them all when all are staged.
@@ -3041,9 +3334,11 @@ impl WorkspaceState {
         session.comments.clear();
         let draft = std::mem::replace(&mut self.prompt, prompt_field(&message));
         let attachments = std::mem::take(&mut self.attachments);
+        let captures = std::mem::take(&mut self.captures);
         self.send(false);
         self.prompt = draft;
         self.attachments = attachments;
+        self.captures = captures;
         self.comment_target = None;
         self.tab = Tab::Chat;
     }
@@ -3221,6 +3516,14 @@ impl WorkspaceState {
         self
     }
 
+    /// The state after the folder of the session at `session` was seen to hold repositories that stand as `standings` say, none when it is one repository.
+    pub fn with_standings(mut self, session: usize, standings: Vec<pm_git::Standing>) -> Self {
+        if let Some(held) = self.sessions.get_mut(session) {
+            held.standings = standings;
+        }
+        self
+    }
+
     /// The state after the project at `project` was seen to hold the submodules at `paths`.
     pub fn with_submodules(mut self, project: usize, paths: Vec<String>) -> Self {
         if let Some(held) = self.projects.get_mut(project) {
@@ -3237,13 +3540,28 @@ impl WorkspaceState {
         self
     }
 
+    /// The state after the project at `project` was seen to have, or lack, a `devcontainer.json`.
+    pub fn with_devcontainer(mut self, project: usize, configured: bool) -> Self {
+        if let Some(held) = self.projects.get_mut(project) {
+            held.devcontainer = configured;
+        }
+        self
+    }
+
     /// Asks the machine of the project at `project` for its submodules.
     pub(crate) fn ask_submodules(&mut self, project: usize) {
         if let Some(held) = self.projects.get(project) {
+            let host = held.host();
+            let directory = held.directory().to_string_lossy().into_owned();
+            self.outbox.push(Outgoing::DevContainer {
+                project,
+                host: host.clone(),
+                directory: directory.clone(),
+            });
             self.outbox.push(Outgoing::Submodules {
                 project,
-                host: held.host(),
-                directory: held.directory().to_string_lossy().into_owned(),
+                host,
+                directory,
             });
         }
     }
@@ -3269,10 +3587,20 @@ impl WorkspaceState {
     ) -> Self {
         let marked = self.marked_by_path();
         if let Some(held) = self.sessions.get_mut(session) {
-            held.changes = changes
+            held.unknown = false;
+            let before: std::collections::HashMap<&str, &Change> = held
+                .changes
+                .iter()
+                .map(|change| (change.path.as_str(), change))
+                .collect();
+            let now: Vec<Change> = changes
                 .iter()
                 .map(|found| {
-                    let mut change = Change::new(&found.path, &found.diff);
+                    let mut change = if found.lazy {
+                        Change::listed(&found.path, found.added, found.removed)
+                    } else {
+                        Change::new(&found.path, &found.diff)
+                    };
                     change.words.clone_from(&found.words);
                     change.staged = found.index.is_some() || found.staged;
                     change.unstaged = found.worktree.is_some() || !found.staged;
@@ -3282,14 +3610,20 @@ impl WorkspaceState {
                     change.worktree = found.worktree;
                     change.from = found.from.clone();
                     change.submodule = found.submodule.clone();
+                    change.repository = found.repository.clone();
                     change.moved = found.moved.clone();
-                    change.viewed = held
-                        .changes
-                        .iter()
-                        .any(|before| before.path == found.path && before.viewed);
+                    let known = before.get(found.path.as_str());
+                    change.viewed = known.is_some_and(|known| known.viewed);
+                    if let Some(read) = known.filter(|known| found.lazy && known.loaded) {
+                        change.diff.clone_from(&read.diff);
+                        change.words.clone_from(&read.words);
+                        change.loaded = true;
+                        change.stale = true;
+                    }
                     change
                 })
                 .collect();
+            held.changes = now;
             if let Some(commits) = commits {
                 held.commits = commits;
             }
@@ -3344,6 +3678,25 @@ mod tests {
         assert_eq!(state.new_in, None);
         assert_eq!(state.sessions.len(), sessions);
         assert_eq!(state.projects[0].submodules, ["vendor/other"]);
+    }
+
+    /// An open dock on the shells never shows an empty window: a session with none gets a first shell once it is in view.
+    #[test]
+    fn open_dock_starts_a_shell_for_a_session_with_none() {
+        let mut state = WorkspaceState::sample();
+        state.terminal = true;
+        state.bottom = crate::dock::BottomTab::Terminal;
+        let index = state.review_index().unwrap();
+        state.sessions[index].terminals.clear();
+        let outbox = state.take_outbox();
+        assert_eq!(state.sessions[index].terminals.len(), 1);
+        assert!(
+            outbox
+                .iter()
+                .any(|out| matches!(out, Outgoing::OpenTerminal { .. }))
+        );
+        state.take_outbox();
+        assert_eq!(state.sessions[index].terminals.len(), 1);
     }
 
     /// Opening, folding, picking, staging and committing use the folder being reviewed on every page.

@@ -31,6 +31,8 @@ pub struct Completions {
     pub asked: i32,
     /// Whether the language server has yet to answer.
     pub loading: bool,
+    /// The item the language server was last asked to resolve, as it wrote it, so that it is asked once.
+    pub resolving: Option<String>,
 }
 
 /// What is said about the place the pointer rests on or the caret is at.
@@ -120,10 +122,16 @@ pub struct Document {
     pub links_supported: bool,
     /// Whether the language server says what each name of the file is.
     pub semantic_tokens_supported: bool,
+    /// Whether the language server says what each name of a stretch of the file is, without the rest of it.
+    pub semantic_ranges_supported: bool,
     /// Whether the language server says what to show inside the lines of the file.
     pub inlay_hints_supported: bool,
     /// Whether the language server says what to show above the lines of the file.
     pub code_lens_supported: bool,
+    /// Whether the language server says which stretches of the file lead somewhere when pressed.
+    pub document_links_supported: bool,
+    /// Whether the language server says which stretches of the file spell a colour.
+    pub colors_supported: bool,
     /// Whether the language server says which names of the file to show the values of while a program is paused.
     pub inline_values_supported: bool,
     /// Why the language server could not read the file, when it could not.
@@ -152,6 +160,18 @@ pub struct Document {
     pub(crate) server_folds: (i32, Vec<pm_protocol::FoldRange>),
     /// The stretches that are edited together with the one the caret is in, as bytes of the text, while the caret is in one.
     pub(crate) linked: Option<Vec<Range<usize>>>,
+    /// The rectangle being selected with the keys, while one is.
+    pub(crate) column: Option<crate::column::ColumnBox>,
+    /// What modal editing is in the middle of in this document: its mode, the keys gathered towards a command and its marks.
+    pub(crate) vim: pm_vim::State,
+    /// Where undo stood when modal editing began typing, until it ends.
+    pub(crate) vim_typing_from: Option<usize>,
+    /// The functions, classes and comments of the syntax tree as of the parse numbered first, which modal editing's objects and motions go by.
+    pub(crate) vim_nodes: Option<(u64, Arc<Vec<pm_vim::SyntaxNode>>)>,
+    /// Where the carets were before each move that changed nothing else, the latest last, to take back.
+    pub(crate) cursor_past: Vec<crate::cursor_history::Carets>,
+    /// Where the carets were before each move that was taken back, the latest last, to make again.
+    pub(crate) cursor_future: Vec<crate::cursor_history::Carets>,
     /// The snippet whose blanks are being filled in, while one is.
     pub(crate) snippet: Option<crate::snippet::Session>,
     /// What the language server said to show in and beside the text.
@@ -160,10 +180,18 @@ pub struct Document {
     pub(crate) depths: crate::depth::DepthCache,
     /// The runnable places worked out last.
     pub(crate) runs: crate::runs::RunCache,
+    /// The private values worked out last.
+    pub(crate) redacts: crate::redact::RedactCache,
     /// The highlights worked out last.
     painted: HighlightCache,
     /// The highlights worked out last for the minimap.
     mapped: HighlightCache,
+    /// The stretch finding is limited to, when it is.
+    pub(crate) find_scope: Option<Range<usize>>,
+    /// What the language server offered at the caret last.
+    pub(crate) bulb: Option<crate::bulb::Bulb>,
+    /// The selected text being carried to another place, while it is.
+    pub(crate) drag: Option<crate::drag::Carried>,
 }
 
 /// The kind of highlight a name a language server calls `kind` is drawn as.
@@ -223,8 +251,11 @@ impl Document {
             folds_supported: false,
             links_supported: false,
             semantic_tokens_supported: false,
+            semantic_ranges_supported: false,
             inlay_hints_supported: false,
             code_lens_supported: false,
+            document_links_supported: false,
+            colors_supported: false,
             inline_values_supported: false,
             server_problem: None,
             diagnostics: Vec::new(),
@@ -239,12 +270,22 @@ impl Document {
             folds: Vec::new(),
             server_folds: (0, Vec::new()),
             linked: None,
+            column: None,
+            vim: pm_vim::State::default(),
+            vim_typing_from: None,
+            vim_nodes: None,
+            cursor_past: Vec::new(),
+            cursor_future: Vec::new(),
             snippet: None,
             annotations: crate::annotations::Annotations::default(),
             depths: crate::depth::DepthCache::default(),
             runs: crate::runs::RunCache::default(),
+            redacts: crate::redact::RedactCache::default(),
             painted: HighlightCache::default(),
             mapped: HighlightCache::default(),
+            find_scope: None,
+            bulb: None,
+            drag: None,
         }
     }
 
@@ -261,6 +302,7 @@ impl Document {
             syntax.edit(&change, before_lines, self.field.text(), &self.lines);
         }
         self.carry_annotations(&change);
+        self.carry_find_scope(&change);
         if self.base.is_some() {
             self.compare_with_base();
         }
@@ -352,6 +394,7 @@ impl Document {
         if let Some(tabs) = tabs {
             editing.tabs = tabs;
         }
+        self.field.set_word_characters(&editing.word_characters);
         self.editing = editing;
     }
 

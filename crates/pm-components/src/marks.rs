@@ -201,6 +201,25 @@ impl WorkspaceState {
         self
     }
 
+    /// Reads again the files of the session at `session` that are open as the folder holds them and show text without unsaved changes, since something other than this window, such as an agent, may have changed them.
+    pub fn open_files_wanted(mut self, session: usize) -> Self {
+        let paths: Vec<String> = self
+            .every_viewer()
+            .into_iter()
+            .filter(|(owner, viewer)| *owner == session && !viewer.head && !viewer.is_dirty())
+            .filter(|(_, viewer)| matches!(viewer.contents, crate::open_files::Contents::Text(_)))
+            .map(|(_, viewer)| viewer.path.clone())
+            .collect();
+        for path in paths {
+            self.outbox.push(Outgoing::ReadFile {
+                session,
+                path,
+                head: false,
+            });
+        }
+        self
+    }
+
     /// Whether the caret's line says who last changed it: as the editor's setting says, unless git's settings turn it off.
     pub(crate) fn shows_blame(&self) -> bool {
         self.window.git.blame.shows(self.editor.inline_blame)

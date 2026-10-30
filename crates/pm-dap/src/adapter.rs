@@ -2,12 +2,15 @@
 //! means.
 //!
 //! An adapter is named by the scenario that wants it, in whatever words the
-//! editor that wrote the scenario used: VS Code's `cppdbg` and `lldb`, Zed's
-//! `CodeLLDB` and `GDB`. Each adapter here answers to every name it can stand
+//! editor that wrote the scenario used: VS Code's `cppdbg` and `lldb`, `debug.json`'s
+//! `CodeLLDB` and `GDB`. Each adapter answers to every name it can stand
 //! in for, so a `launch.json` written for another editor debugs here too.
+//! The adapters come from the [`Catalog`] a server registers: those the
+//! installed languages declare and those extensions bring.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 use serde_json::{Map, Value};
 
@@ -42,93 +45,86 @@ pub struct Adapter {
     pub types: Vec<String>,
     /// Why it may not be run, for an adapter an extension brings that the reader has not allowed to run programs.
     pub denied: Option<String>,
+    /// Whether the extension that brings it says which program it is, in place of `programs`.
+    pub provided: bool,
+    /// The starts of the names of the programs it attaches to; an empty one stands for any program, and the longest that fits a name picks the adapter.
+    pub attach_names: Vec<String>,
+    /// What it is always told besides what a scenario says, by key.
+    pub set: Map<String, Value>,
+    /// What it is told when a scenario says nothing, or `auto`, for the key.
+    pub default: Map<String, Value>,
 }
 
-/// The adapters extensions bring, which are looked for after the ones the editor knows.
-static EXTENSION_ADAPTERS: RwLock<Vec<Adapter>> = RwLock::new(Vec::new());
+/// A program an extension says is a debug adapter, with what it is started with.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Binary {
+    /// The program.
+    pub program: PathBuf,
+    /// What it is started with, in place of the adapter's arguments; `{port}` stands for the port it listens on.
+    pub arguments: Vec<String>,
+    /// Variables added to its environment.
+    pub env: BTreeMap<String, String>,
+}
 
-/// Puts together an adapter the editor knows from its parts.
-fn known(
-    id: &str,
-    name: &str,
-    programs: &[&str],
-    arguments: &[&str],
-    connect: Connect,
-    types: &[&str],
-) -> Adapter {
-    let owned = |words: &[&str]| words.iter().map(|word| (*word).to_owned()).collect();
-    Adapter {
-        id: id.to_owned(),
-        name: name.to_owned(),
-        programs: owned(programs),
-        arguments: owned(arguments),
-        connect,
-        types: owned(types),
-        denied: None,
+/// Whoever knows which program an extension's debug adapter is, who may fetch it.
+pub trait BinaryProvider: Send + Sync {
+    /// The program of the adapter `adapter`: where it is, fetching it first when `install` and the machine does not have it; nothing when it is not anywhere. Fails with the reason when the extension cannot say, or is not allowed to.
+    fn binary(&self, adapter: &str, install: bool) -> Result<Option<Binary>, String>;
+}
+
+/// Who says which program the adapters extensions bring are.
+static BINARIES: RwLock<Option<Arc<dyn BinaryProvider>>> = RwLock::new(None);
+
+/// Has `provider` say which program the adapters that extensions provide are.
+pub fn set_binary_provider(provider: Arc<dyn BinaryProvider>) {
+    if let Ok(mut held) = BINARIES.write() {
+        *held = Some(provider);
     }
 }
 
-/// Every adapter the editor can run, in the order they are offered: those it knows, then those extensions brought.
+/// Whoever knows which adapters there are and what a file in front can be debugged as: the server of a machine, from the languages and extensions installed on it.
+pub trait Catalog: Send + Sync {
+    /// Every adapter, the one to prefer first.
+    fn adapters(&self) -> Vec<Adapter>;
+
+    /// What a file named `name` can be debugged as without a word written down.
+    fn offers(&self, name: &str) -> Vec<Offer>;
+}
+
+/// A way to debug a file with no configuration written: a language says it for the files it reads.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Offer {
+    /// What a reader calls it.
+    pub label: String,
+    /// The name of the adapter that runs it, as a scenario would call it.
+    pub kind: String,
+    /// What the adapter is told, with `${file}`, `${fileDirname}` and `${workspaceFolder}` filled in.
+    pub config: Value,
+}
+
+/// Who knows the adapters and the offers.
+static CATALOG: RwLock<Option<Arc<dyn Catalog>>> = RwLock::new(None);
+
+/// Has `catalog` say which adapters there are and what files can be debugged as.
+pub fn set_catalog(catalog: Arc<dyn Catalog>) {
+    if let Ok(mut held) = CATALOG.write() {
+        *held = Some(catalog);
+    }
+}
+
+/// The catalog, when there is one.
+fn catalog() -> Option<Arc<dyn Catalog>> {
+    CATALOG.read().ok().and_then(|held| held.clone())
+}
+
+/// What the file named `name` can be debugged as without a word written down.
+pub(crate) fn offers(name: &str) -> Vec<Offer> {
+    catalog().map(|held| held.offers(name)).unwrap_or_default()
+}
+
+/// Every adapter the editor can run, in the order they are offered.
 pub fn adapters() -> Vec<Adapter> {
-    let mut every = vec![
-        known(
-            "gdb",
-            "GDB",
-            &["gdb"],
-            &["--interpreter=dap", "--quiet"],
-            Connect::Stdio,
-            &["gdb", "cppdbg"],
-        ),
-        known(
-            "lldb-dap",
-            "LLDB",
-            &["lldb-dap", "lldb-vscode"],
-            &[],
-            Connect::Stdio,
-            &["lldb", "lldb-dap", "codelldb"],
-        ),
-        known(
-            "debugpy",
-            "Debugpy",
-            &["python3", "python"],
-            &["-m", "debugpy.adapter"],
-            Connect::Stdio,
-            &["debugpy", "python"],
-        ),
-        known(
-            "delve",
-            "Delve",
-            &["dlv"],
-            &["dap", "--listen", "127.0.0.1:{port}"],
-            Connect::Tcp,
-            &["go", "delve"],
-        ),
-    ];
-    if let Ok(held) = EXTENSION_ADAPTERS.read() {
-        every.extend(held.iter().cloned());
-    }
-    every
-}
-
-/// Replaces the adapters extensions bring with `adapters`, an adapter whose id or names one the editor knows being left out so that an extension adds adapters and never takes one over.
-pub fn set_extension_adapters(adapters: Vec<Adapter>) {
-    let own = self::adapters_known();
-    let kept = adapters
-        .into_iter()
-        .filter(|adapter| {
-            !own.iter().any(|held| {
-                held.id == adapter.id || held.types.iter().any(|name| adapter.types.contains(name))
-            })
-        })
-        .collect();
-    if let Ok(mut held) = EXTENSION_ADAPTERS.write() {
-        *held = kept;
-    }
-}
-
-/// The adapters the editor knows, without those extensions bring.
-fn adapters_known() -> Vec<Adapter> {
-    adapters().into_iter().take(4).collect()
+    catalog().map(|held| held.adapters()).unwrap_or_default()
 }
 
 impl Adapter {
@@ -145,11 +141,53 @@ impl Adapter {
         adapters().into_iter().find(|adapter| adapter.id == id)
     }
 
-    /// The program this adapter is installed as, where it is installed.
+    /// The program this adapter is installed as, where it is installed; for an adapter an extension provides, where the extension says it is without having it fetched.
     pub fn program(&self) -> Option<PathBuf> {
+        if self.provided {
+            return self.binary(false).ok().flatten().map(|held| held.program);
+        }
         self.programs
             .iter()
             .find_map(|program| pm_tools::installed(program))
+    }
+
+    /// The program of an adapter an extension provides, as the extension says, fetching it first when `install` and the machine does not have it.
+    fn binary(&self, install: bool) -> Result<Option<Binary>, String> {
+        let provider = BINARIES.read().ok().and_then(|held| held.clone());
+        match provider {
+            Some(provider) => provider.binary(&self.id, install),
+            None => Ok(None),
+        }
+    }
+
+    /// The program to start for this adapter, fetched first when the extension that provides it says to, with what it is started with when `port` is where it listens and what is added to its environment.
+    pub(crate) fn launch(&self, port: u16) -> Result<Binary, String> {
+        if self.provided {
+            let held = self
+                .binary(true)?
+                .ok_or_else(|| format!("{} is not installed", self.name))?;
+            let arguments = if held.arguments.is_empty() {
+                self.arguments_for(port)
+            } else {
+                held.arguments
+                    .iter()
+                    .map(|argument| argument.replace(PORT, &port.to_string()))
+                    .collect()
+            };
+            return Ok(Binary {
+                program: held.program,
+                arguments,
+                env: held.env,
+            });
+        }
+        let program = self
+            .program()
+            .ok_or_else(|| format!("{} is not installed", self.name))?;
+        Ok(Binary {
+            program,
+            arguments: self.arguments_for(port),
+            env: BTreeMap::new(),
+        })
     }
 
     /// Whether this adapter is installed.
@@ -169,22 +207,18 @@ impl Adapter {
     /// Settles what a scenario asks for into what this adapter takes.
     ///
     /// A scenario is written for the editor that wrote it, and a few of its
-    /// words mean something this editor does not do: a Python program run in
-    /// a terminal the editor would have to open, a Go program whose mode the
-    /// other editor's extension guessed before delve ever heard of it. Those
-    /// are turned into what this adapter does on its own.
+    /// words mean something this editor does not do. What the adapter's
+    /// declaration says to set, and to default, turns those into what this
+    /// adapter does on its own.
     pub(crate) fn prepare(&self, config: &mut Map<String, Value>) {
-        match self.id.as_str() {
-            "debugpy" => {
-                config.insert("console".into(), "internalConsole".into());
+        for (key, value) in &self.default {
+            let guessed = config.get(key).is_none_or(|held| held == "auto");
+            if guessed {
+                config.insert(key.clone(), value.clone());
             }
-            "delve" => {
-                let guessed = config.get("mode").is_none_or(|mode| mode == "auto");
-                if guessed {
-                    config.insert("mode".into(), "debug".into());
-                }
-            }
-            _ => {}
+        }
+        for (key, value) in &self.set {
+            config.insert(key.clone(), value.clone());
         }
     }
 }

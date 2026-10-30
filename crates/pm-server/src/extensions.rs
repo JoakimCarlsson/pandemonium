@@ -93,7 +93,7 @@ pub(crate) fn describe(package: &Package, installed: bool) -> ExtensionInfo {
 }
 
 /// The debug adapters the installed extensions bring, each refused unless its extension may run programs.
-fn adapters() -> Vec<pm_dap::Adapter> {
+pub(crate) fn adapters() -> Vec<pm_dap::Adapter> {
     pm_plugin::installed()
         .into_iter()
         .flat_map(|package| {
@@ -117,6 +117,10 @@ fn adapters() -> Vec<pm_dap::Adapter> {
                     },
                     types: entry.types.iter().map(|name| name.to_lowercase()).collect(),
                     denied: denied.clone(),
+                    provided: entry.provided,
+                    attach_names: Vec::new(),
+                    set: Default::default(),
+                    default: Default::default(),
                 })
         })
         .collect()
@@ -234,7 +238,6 @@ pub(crate) fn refused_servers() -> HashMap<String, pm_lsp::ServerChoice> {
 impl Core {
     /// Takes in what changed about extensions: the adapters and language servers they bring are refused or allowed as the grants say, and every client is told how the extensions stand.
     pub(crate) fn extensions_changed(&self) {
-        pm_dap::set_extension_adapters(adapters());
         self.documents.settings_changed(&crate::machine::settings());
         self.tell_extensions();
     }

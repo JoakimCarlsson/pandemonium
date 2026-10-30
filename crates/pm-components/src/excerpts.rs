@@ -705,6 +705,7 @@ impl Drawing<'_> {
                     Beside {
                         blamed: None,
                         breakpoint: cell,
+                        bulb: false,
                         paused: gutter.paused == Some(*line),
                     },
                     self.settings,

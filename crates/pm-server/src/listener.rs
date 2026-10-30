@@ -41,11 +41,16 @@ pub fn run(settings: Settings) -> std::io::Result<()> {
         build: Build::current(),
     })?;
     let core = Core::new();
+    let extensions = crate::provider::Extensions::new(&core);
+    core.documents.hub.set_provider(extensions.clone());
+    pm_dap::set_binary_provider(extensions);
+    pm_dap::set_catalog(std::sync::Arc::new(crate::debugs::Installed));
     core.load();
     crate::machine::start_fetching(core.clone());
     core.extensions_changed();
     crate::machine::start_sweeping(core.clone());
     crate::folders::start(core.clone());
+    crate::session_servers::start(core.clone());
     let watching = core.clone();
     std::thread::spawn(move || {
         loop {

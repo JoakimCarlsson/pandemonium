@@ -45,6 +45,26 @@ pub fn left(steps: impl Number) -> Utility {
     inset_length(Sides::Left, Length::steps(steps))
 }
 
+/// Inset from the top edge, in logical pixels, whatever the spacing scale is.
+pub fn top_px(pixels: f32) -> Utility {
+    inset_length(Sides::Top, Length::Px(pixels))
+}
+
+/// Inset from the right edge, in logical pixels, whatever the spacing scale is.
+pub fn right_px(pixels: f32) -> Utility {
+    inset_length(Sides::Right, Length::Px(pixels))
+}
+
+/// Inset from the bottom edge, in logical pixels, whatever the spacing scale is.
+pub fn bottom_px(pixels: f32) -> Utility {
+    inset_length(Sides::Bottom, Length::Px(pixels))
+}
+
+/// Inset from the left edge, in logical pixels, whatever the spacing scale is.
+pub fn left_px(pixels: f32) -> Utility {
+    inset_length(Sides::Left, Length::Px(pixels))
+}
+
 /// Stacking layer; higher is nearer.
 pub fn z(layer: i32) -> Utility {
     PositioningRule::ZIndex(ZIndex::Layer(layer)).into()

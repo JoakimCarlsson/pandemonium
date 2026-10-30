@@ -1,19 +1,54 @@
 # TSX: how files are told to be TSX, how they are edited and the language
-# server that reads them. A project's own TypeScript is used before the one
-# installed with the server.
+# server that reads them. The server is the one TypeScript installs, and a
+# project's own TypeScript is used before the one installed with it, so plugins
+# a project's tsconfig.json names, such as Next.js's, are loaded.
 
 name = "TSX"
 version = "0.1.0"
-description = "TSX, installed with TypeScript."
+description = "TSX, React and Next.js components with typescript-language-server."
 icon = "icon.svg"
 color = "#5aa9e6"
 grammar = "tsx"
 suffixes = ["tsx"]
 aliases = ["typescriptreact"]
+requires = ["json"]
 line_comment = "//"
 indent = 2
+toolchain = "javascript"
+toolchain_name = "Node.js"
+emmet_dialect = "markup"
 pairs = ["()", "[]", "{}", "\"\"", "''", "``"]
-hidden = true
+
+# Quotes are not closed inside strings and comments, which overrides.scm names.
+brackets = [
+  { start = "\"", end = "\"", close = true, not_in = ["string", "comment"] },
+  { start = "'", end = "'", close = true, not_in = ["string", "comment"] },
+  { start = "`", end = "`", close = true, not_in = ["string", "comment"] },
+]
+
+# Parts of a file that are edited differently. Inside the children of a JSX
+# element, comments are written {/* */} and there are no line comments, and
+# Emmet abbreviations expand. Inside a tag's attributes and the braces of an
+# expression the language's own rules hold.
+[scope.jsx]
+nodes = ["jsx_element"]
+line_comment = ""
+block_comment = ["{/*", "*/}"]
+emmet = true
+
+[scope.jsx-code]
+nodes = ["jsx_opening_element", "jsx_closing_element", "jsx_self_closing_element", "jsx_expression"]
+
+[scope.string]
+nodes = ["string", "template_string"]
+
+# The nodes that make up a tag, so that typing the `>` of an opening tag writes
+# its closing tag after it.
+[tags]
+element = "jsx_element"
+open = "jsx_opening_element"
+close = "jsx_closing_element"
+names = ["identifier", "member_expression", "jsx_namespace_name"]
 
 [grammar_file]
 url = "https://github.com/tree-sitter/tree-sitter-typescript/releases/download/v0.23.2/tree-sitter-tsx.wasm"
@@ -27,6 +62,41 @@ args = ["--stdio"]
 project = ["node_modules/.bin"]
 
 [server.install]
-kind = "npm"
+kind = "command"
+tool = "npm"
+needs = "Node.js and npm"
+steps = [["ci", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"]]
+copy = ["package.json", "package-lock.json"]
+bin = "node_modules/.bin"
 version = "6.0.2"
 packages = ["typescript-language-server@6.0.2", "typescript@6.0.3"]
+
+# Tailwind CSS class names, read alongside the main server in projects that use
+# Tailwind. Completions are offered only inside strings and template strings, where class names are written.
+[[companion]]
+scopes = ["string"]
+
+[companion.detect]
+dependencies = ["tailwindcss"]
+files = ["tailwind.config.*"]
+
+[companion.server]
+id = "tailwindcss-language-server"
+language_id = "typescriptreact"
+command = "tailwindcss-language-server"
+args = ["--stdio"]
+project = ["node_modules/.bin"]
+
+[companion.server.settings.tailwindCSS]
+classAttributes = ["class", "className", "ngClass", "class:list"]
+
+[companion.server.install]
+kind = "command"
+tool = "npm"
+needs = "Node.js and npm"
+steps = [["ci", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"]]
+copy = ["package.json", "package-lock.json"]
+bin = "node_modules/.bin"
+version = "0.16.0"
+packages = ["@tailwindcss/language-server@0.16.0"]
+pin = "tailwindcss"

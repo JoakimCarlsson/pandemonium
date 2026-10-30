@@ -41,12 +41,17 @@ fn copy_folder(from: &Path, to: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Whether installing the language in `folder` fetches anything from the network: its grammar when it does not carry one, and its language server when it brings an install.
+/// Whether installing the language in `folder` fetches anything from the network: its grammar when it does not carry one and does not build on another language's, and its language server when it brings an install.
 fn fetches(folder: &Path) -> bool {
-    let Ok(manifest) = pm_lsp::Manifest::read(folder) else {
+    let Ok(manifest) = std::fs::read_to_string(folder.join("config.toml"))
+        .map_err(|error| error.to_string())
+        .and_then(|text| pm_lsp::Manifest::parse(&text))
+    else {
         return false;
     };
-    let grammar = !folder.join("grammar.wasm").is_file() && !manifest.grammar_file.url.is_empty();
+    let grammar = !folder.join("grammar.wasm").is_file()
+        && manifest.inherits.is_none()
+        && !manifest.grammar_file.url.is_empty();
     grammar
         || manifest
             .server

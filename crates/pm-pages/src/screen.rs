@@ -293,7 +293,7 @@ impl Screen {
 
     /// Whether a menu is open over a project, a session or a message, so that a press elsewhere has to close it.
     pub fn list_menu_open(&self) -> bool {
-        matches!(self, Self::Workspace(state) if state.project_menu.is_some() || state.session_menu.is_some() || state.message_menu.is_some() || state.terminal_menu.is_some() || state.git.menu.is_some() || state.settings_servers.menu.is_some() || state.tab_menu.is_some() || state.pane_menu.is_some())
+        matches!(self, Self::Workspace(state) if state.project_menu.is_some() || state.session_menu.is_some() || state.message_menu.is_some() || state.terminal_menu.is_some() || state.browser_menu.is_some() || state.git.menu.is_some() || state.settings_servers.menu.is_some() || state.tab_menu.is_some() || state.pane_menu.is_some())
     }
 
     /// Which session the row `id` of the sidebar opens, while the workspace is showing.
@@ -318,6 +318,49 @@ impl Screen {
     pub fn with_terminal_menu(self, at: (f32, f32)) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_terminal_menu(at)),
+        }
+    }
+
+    /// The screen with the menu over the page of the browser open at `at`, while the workspace is showing.
+    pub fn with_browser_menu(self, at: (f32, f32)) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_browser_menu(at)),
+        }
+    }
+
+    /// The screen after the mode of picking an element of the page of tab `tab` of the browser ended, with the pick held for the prompt when there was one.
+    pub fn browser_picked(
+        self,
+        tab: u32,
+        element: Option<pm_components::elements::Element>,
+    ) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.browser_picked(tab, element)),
+        }
+    }
+
+    /// The screen with the menu of what can be added to the prompt from the browser's page open at `at`, while the workspace is showing.
+    pub fn with_browser_capture_menu(self, at: (f32, f32)) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_browser_capture_menu(at)),
+        }
+    }
+
+    /// The screen after the helper reported a screenshot or the console of the browser's page for the prompt, or the end of choosing an area without one.
+    pub fn browser_captured(
+        self,
+        tab: u32,
+        capture: Option<pm_components::captures::Capture>,
+    ) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.browser_captured(tab, capture)),
+        }
+    }
+
+    /// The screen after `command` was carried out on the page of the browser, which closes the menu over it.
+    pub fn browser_command(self, command: pm_components::browser_menu::BrowserCommand) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.browser_command(command)),
         }
     }
 
@@ -416,6 +459,13 @@ impl Screen {
     pub fn scrolled_menu(self, delta: f32, room: f32) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.scrolled_menu(delta, room)),
+        }
+    }
+
+    /// The screen after the notes of an update are scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
+    pub fn scrolled_update(self, delta: f32, room: f32) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.scrolled_update(delta, room)),
         }
     }
 
@@ -585,6 +635,13 @@ impl Screen {
         }
     }
 
+    /// The screen asking again for the open files of the session at `session`, which may have changed in the folder.
+    pub fn open_files_wanted(self, session: usize) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.open_files_wanted(session)),
+        }
+    }
+
     /// The screen after the server answered for the file at `path` of the session at `session`.
     pub fn with_file(
         self,
@@ -661,6 +718,18 @@ impl Screen {
         matches!(self, Self::Workspace(state) if state.is_menu_row(id))
     }
 
+    /// The point at which the menu `kind`, opened from the control occupying `trigger` as `(x, y, width, height)`, lies below it or above it inside a window `window` wide and tall.
+    pub fn git_menu_below(
+        &self,
+        kind: MenuKind,
+        trigger: (f32, f32, f32, f32),
+        window: (f32, f32),
+    ) -> (f32, f32) {
+        match self {
+            Self::Workspace(state) => state.git_menu_below(kind, trigger, window),
+        }
+    }
+
     /// The screen with the menu `kind` open at `at`.
     pub fn with_git_menu(self, kind: MenuKind, at: (f32, f32)) -> Self {
         match self {
@@ -701,6 +770,13 @@ impl Screen {
             Self::Workspace(state) => {
                 Self::Workspace(state.tracked(session, branch, tracking, operation))
             }
+        }
+    }
+
+    /// The screen after the folder of the session at `session` was seen to hold repositories that stand as `standings` say.
+    pub fn with_standings(self, session: usize, standings: Vec<pm_git::Standing>) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_standings(session, standings)),
         }
     }
 
@@ -894,12 +970,12 @@ impl Screen {
         }
     }
 
-    /// The screen after the agent at `agent` signed in, which may have changed who it is.
-    pub fn signed_in(self, agent: usize) -> Self {
+    /// The screen after the agent at `agent` signed in under the login `login`, which may have changed who it is.
+    pub fn signed_in(self, agent: usize, login: Option<String>) -> Self {
         match self {
             Self::Workspace(mut state) => {
                 state.forget_identity(agent);
-                state.outbox_identity(agent);
+                state.outbox_identity(agent, login);
                 Self::Workspace(state)
             }
         }
@@ -986,7 +1062,7 @@ impl Screen {
         agent: usize,
         default: Option<String>,
         selected: Option<String>,
-        naming: bool,
+        naming: Option<String>,
     ) -> Self {
         match self {
             Self::Workspace(state) => {
@@ -1037,6 +1113,13 @@ impl Screen {
         }
     }
 
+    /// The screen after the project at `project` was seen to have, or lack, a `devcontainer.json`.
+    pub fn with_devcontainer(self, project: usize, configured: bool) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_devcontainer(project, configured)),
+        }
+    }
+
     /// The screen after the folder of the session at `session` was seen to have `branch` checked out, or a detached `head`.
     pub fn checked_out(self, session: usize, branch: Option<&str>, head: Option<&str>) -> Self {
         match self {
@@ -1065,6 +1148,13 @@ impl Screen {
     pub fn take_outbox(&mut self) -> Vec<Outgoing> {
         match self {
             Self::Workspace(state) => state.take_outbox(),
+        }
+    }
+
+    /// Asks for the diffs of the changed files in or near the view of the diff that the server listed without them.
+    pub fn diffs_wanted(&mut self) {
+        match self {
+            Self::Workspace(state) => state.diffs_wanted(),
         }
     }
 
@@ -1143,12 +1233,6 @@ impl Screen {
         match self {
             Self::Workspace(state) => state.adopt_terminal(session, columns, rows),
         }
-    }
-
-    /// Starts a shell in the open session when it is on the machine `host` and the dock shows none.
-    pub fn revive_terminal(&mut self, host: &Option<String>) {
-        let Self::Workspace(state) = self;
-        state.revive_terminal(host);
     }
 
     /// The position of the session on the machine `host` whose folder holds `directory`, the innermost when several do.

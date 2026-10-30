@@ -32,19 +32,38 @@ pub fn segments(text: &str, columns: usize, tab: usize) -> Vec<Range<usize>> {
     rows
 }
 
+/// How many characters a row holds when a file whose lines do not wrap still has rows above some of its lines, which the rows of wrapped lines are counted for.
+const UNWRAPPED: usize = usize::MAX / 4;
+
 impl Document {
+    /// `columns`, or room for any line when lines do not wrap but the language puts links on rows of their own above some lines.
+    fn with_lens_rows(&self, columns: Option<usize>) -> Option<usize> {
+        match columns {
+            None if self.has_lens_rows() => Some(UNWRAPPED),
+            other => other,
+        }
+    }
+
     /// The bytes of the text each row of the line at `index` holds, from the start of the line, when a row has room for `columns` characters, or the whole line when lines do not wrap.
+    ///
+    /// A line that has links above it starts with an empty row of its own, which holds them.
     pub fn line_segments(&self, index: usize, columns: Option<usize>) -> Vec<Range<usize>> {
+        let columns = self.with_lens_rows(columns);
         let line = self.line(index);
         let text = &self.field.text()[line.clone()];
-        match columns {
+        let mut rows: Vec<Range<usize>> = match columns {
             Some(columns) => segments(text, columns, self.editing.indent),
             None => std::iter::once(0..text.len()).collect(),
+        };
+        if self.lens_row_at(index) {
+            rows.insert(0, 0..0);
         }
+        rows
     }
 
     /// How many rows the line at `index` takes when a row has room for `columns` characters.
     pub fn line_rows(&self, index: usize, columns: Option<usize>) -> usize {
+        let columns = self.with_lens_rows(columns);
         match columns {
             Some(_) => self.line_segments(index, columns).len(),
             None => 1,
@@ -58,6 +77,7 @@ impl Document {
 
     /// How many rows the lines that show take when a row has room for `columns` characters.
     pub fn wrapped_rows(&self, columns: Option<usize>) -> usize {
+        let columns = self.with_lens_rows(columns);
         match columns {
             Some(_) => self
                 .every_shown_line()
@@ -70,6 +90,7 @@ impl Document {
 
     /// The first row the line at `index` is drawn in when a row has room for `columns` characters; a hidden line is drawn in the rows of the line that stands for it.
     pub fn wrapped_row_of_line(&self, index: usize, columns: Option<usize>) -> usize {
+        let columns = self.with_lens_rows(columns);
         if columns.is_none() {
             return self.row_of_line(index);
         }
@@ -91,6 +112,7 @@ impl Document {
 
     /// The row the caret is drawn in when a row has room for `columns` characters.
     pub fn caret_row(&self, columns: Option<usize>) -> usize {
+        let columns = self.with_lens_rows(columns);
         let caret = self.field.caret();
         let index = self.line_of(caret);
         let within = caret - self.line(index).start;
@@ -110,6 +132,7 @@ impl Document {
         count: usize,
         columns: Option<usize>,
     ) -> (Vec<usize>, usize) {
+        let columns = self.with_lens_rows(columns);
         if columns.is_none() {
             return (self.shown_lines(first, count), first.min(self.rows()));
         }

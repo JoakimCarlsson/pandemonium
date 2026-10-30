@@ -158,12 +158,16 @@ pub enum Section {
     EditorIntelligence,
     /// Finding and scrolling.
     EditorSearch,
+    /// Editing with vim's keys.
+    EditorVim,
     /// How each language is edited, and the languages installed and offered.
     Languages,
     /// The keys that work the editor.
     Keymap,
     /// The shell the terminal starts and how it is drawn.
     Terminal,
+    /// The embedded browser: turning it on, opening dev servers in it and what agents may do with it.
+    Browser,
     /// How git is run and what it marks.
     Git,
     /// How sessions get their branches and worktrees.
@@ -194,7 +198,7 @@ pub enum Section {
 
 impl Section {
     /// Every section, in the order the list shows them, each followed by the ones inside it.
-    pub const ALL: [Section; 23] = [
+    pub const ALL: [Section; 25] = [
         Section::General,
         Section::Appearance,
         Section::Editor,
@@ -203,9 +207,11 @@ impl Section {
         Section::EditorSaving,
         Section::EditorIntelligence,
         Section::EditorSearch,
+        Section::EditorVim,
         Section::Languages,
         Section::Keymap,
         Section::Terminal,
+        Section::Browser,
         Section::Git,
         Section::Worktrees,
         Section::Agents,
@@ -227,6 +233,7 @@ impl Section {
             Self::Appearance => "Appearance",
             Self::Languages => "Languages",
             Self::Terminal => "Terminal",
+            Self::Browser => "Browser",
             Self::Git => "Git",
             Self::Worktrees => "Worktrees",
             Self::Servers => "Servers",
@@ -237,6 +244,7 @@ impl Section {
             Self::EditorSaving => "Saving",
             Self::EditorIntelligence => "Code Intelligence",
             Self::EditorSearch => "Search & Scrolling",
+            Self::EditorVim => "Vim",
             Self::Keymap => "Keymap",
             Self::Agents => "Agents",
             Self::AgentServers => "Agent Servers",
@@ -257,6 +265,7 @@ impl Section {
             Self::Appearance => IconName::Pencil,
             Self::Languages => IconName::File,
             Self::Terminal => IconName::Terminal,
+            Self::Browser => IconName::Globe,
             Self::Git | Self::Worktrees => IconName::Git,
             Self::Servers => IconName::Plug,
             Self::Editor
@@ -264,7 +273,8 @@ impl Section {
             | Self::EditorEditing
             | Self::EditorSaving
             | Self::EditorIntelligence
-            | Self::EditorSearch => IconName::FileCode,
+            | Self::EditorSearch
+            | Self::EditorVim => IconName::FileCode,
             Self::Keymap => IconName::SquareSlash,
             Self::Agents => IconName::Sparkles,
             Self::AgentServers => IconName::Folder,
@@ -293,12 +303,14 @@ impl Section {
             | Self::EditorEditing
             | Self::EditorSaving
             | Self::EditorIntelligence
-            | Self::EditorSearch => Some(Self::Editor),
+            | Self::EditorSearch
+            | Self::EditorVim => Some(Self::Editor),
             Self::Worktrees => Some(Self::Git),
             Self::General
             | Self::Appearance
             | Self::Languages
             | Self::Terminal
+            | Self::Browser
             | Self::Git
             | Self::Servers
             | Self::Results
@@ -378,7 +390,10 @@ impl WorkspaceState {
                 self.settings_page.server_form = None;
             }
             SETTINGS_CLOSE => return self.without_settings(),
-            SETTINGS_RELEASE => self.open_release(),
+            SETTINGS_RELEASE => {
+                self.open_release();
+                return self.without_settings();
+            }
             SETTINGS_FIND_CLEAR => {
                 self.settings_page.find = pm_text::Field::default();
                 self.settings_servers.scroll = 0.0;
@@ -402,6 +417,9 @@ impl WorkspaceState {
                     self.settings_page.picker = None;
                     self.recording = None;
                     self.section_changed();
+                    if section == Section::AgentServers {
+                        self.ask_default_accounts();
+                    }
                     if crate::settings_library::lists(section) {
                         self.read_library();
                     }

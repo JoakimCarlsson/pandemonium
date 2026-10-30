@@ -1,0 +1,26 @@
+[
+  {
+    "label": "Run go work sync",
+    "command": "go work sync",
+    "folder": "$PM_DIRNAME",
+    "group": "build",
+    "language": "go",
+    "source": "$PM_RELATIVE_FILE",
+    "lens": true,
+    "tags": [
+      "go-work-file"
+    ]
+  },
+  {
+    "label": "Create vendor directory",
+    "command": "go work vendor",
+    "folder": "$PM_DIRNAME",
+    "group": "build",
+    "language": "go",
+    "source": "$PM_RELATIVE_FILE",
+    "lens": true,
+    "tags": [
+      "go-work-file"
+    ]
+  }
+]

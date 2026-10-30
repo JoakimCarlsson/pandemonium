@@ -24,6 +24,16 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all --check
 
+  browser-helper:
+    name: browser helper
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: cd helpers/electron-browser && npm ci --ignore-scripts --no-audit --no-fund && npx tsc -p tsconfig.json
+
   lint:
     name: clippy (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.13.1"
+version = "0.14.0-rc.4"
 edition = "2024"
 license = "MIT"
 
@@ -24,6 +24,7 @@ pm-icon = { path = "crates/pm-icon" }
 pm-state = { path = "crates/pm-state" }
 pm-input = { path = "crates/pm-input" }
 pm-text = { path = "crates/pm-text" }
+pm-vim = { path = "crates/pm-vim" }
 pm-theme = { path = "crates/pm-theme" }
 pm-protocol = { path = "crates/pm-protocol" }
 pm-git = { path = "crates/pm-git" }
@@ -49,6 +50,7 @@ pm-wasm = { path = "crates/pm-wasm" }
 pm-plugin = { path = "crates/pm-plugin" }
 pm-agent-library = { path = "crates/pm-agent-library" }
 pm-mcp = { path = "crates/pm-mcp" }
+pm-update = { path = "crates/pm-update" }
 
 [profile.dist]
 inherits = "release"

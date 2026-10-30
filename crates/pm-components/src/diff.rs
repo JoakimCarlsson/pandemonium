@@ -4,9 +4,9 @@ use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
     Color, Radius, Role, bg, border, border_b, border_color, border_l, cursor_pointer, flex,
-    flex_1, flex_col, flex_none, font_medium, font_mono, gap, h, items_center, justify_end,
-    leading_ratio, min_h, min_w_px, mt, mx, overflow_hidden, p, pb, pr, px, py, rounded,
-    rounded_full, text_color, text_px, truncate, w, w_full,
+    flex_1, flex_col, flex_none, font_medium, font_mono, gap, h, items_center, items_start,
+    justify_end, leading_ratio, min_h, min_w_px, mt, mx, overflow_hidden, p, pb, pr, px, py,
+    rounded, rounded_full, text_color, text_px, truncate, w, w_full,
 };
 use pm_ui::{Mark, Node, node, text};
 
@@ -24,6 +24,23 @@ use crate::{Button, Input, Tally};
 
 /// How tall a line of a diff is, in logical pixels.
 const ROW: f32 = 20.0;
+
+/// How many pixels one logical pixel of the sizes below comes to: the rows, headers and notes are set in steps that follow the interface size, while the view and the scroll are counted in pixels.
+fn pixels() -> f32 {
+    pm_style::step_scale()
+}
+
+/// The width of what is beside a pair of columns of code: the margins and rules of a file, in logical pixels.
+const SECTION_SIDES: f32 = 34.0;
+
+/// The width of a line number and the padding around the code beside it, in logical pixels.
+const GUTTER_AND_PADDING: f32 = 44.0 + 24.0 + 1.0;
+
+/// How tall the type of code is, in logical pixels.
+const CODE_PIXELS: f32 = 12.0;
+
+/// How wide a character of code is as a share of how tall the type is, on the wide side so that a line wraps before it would be cut.
+const CODE_CHARACTER: f32 = 0.6;
 
 /// How tall the header of a file is, in logical pixels.
 const HEADER: f32 = 40.0;
@@ -187,21 +204,84 @@ fn rows(change: &Change) -> Vec<Row<'_>> {
     rows
 }
 
-/// How many rows the diff of `change` shows, counted without building them.
-fn row_count(change: &Change) -> usize {
-    let (mut rows, mut removed, mut added) = (0, 0, 0);
+/// How many characters of code one side of a row holds on a line, in a view `width` wide.
+fn columns(width: f32) -> usize {
+    let side = (width - SECTION_SIDES * pixels()) / 2.0 - GUTTER_AND_PADDING * pixels();
+    let character = CODE_PIXELS * pm_style::text_scale() * CODE_CHARACTER;
+    ((side / character) as usize).max(8)
+}
+
+/// How many lines `content` takes when each holds `columns` characters, a tab counting four.
+fn lines_of(content: &str, columns: usize) -> usize {
+    let width: usize = content
+        .chars()
+        .map(|character| if character == '\t' { 4 } else { 1 })
+        .sum();
+    width.div_ceil(columns).max(1)
+}
+
+/// The stretches of `shown`, text as it is shown, that each fill one line of `columns` characters.
+fn pieces(shown: &str, columns: usize) -> Vec<std::ops::Range<usize>> {
+    let mut ranges = Vec::new();
+    let (mut start, mut count) = (0, 0);
+    for (at, _) in shown.char_indices() {
+        if count == columns {
+            ranges.push(start..at);
+            start = at;
+            count = 0;
+        }
+        count += 1;
+    }
+    ranges.push(start..shown.len());
+    ranges
+}
+
+/// How many lines the rows made of the runs of removed and added lines, whose lines each take the numbers of lines in `removed` and `added`, come to when they stand side by side.
+fn paired(removed: &[usize], added: &[usize]) -> usize {
+    (0..removed.len().max(added.len()))
+        .map(|at| {
+            let side = |run: &[usize]| run.get(at).copied().unwrap_or(1);
+            side(removed).max(side(added))
+        })
+        .sum()
+}
+
+/// How many lines of `columns` characters the rows of `change` come to, counted without building them.
+fn row_lines(change: &Change, columns: usize) -> usize {
+    if !change.loaded {
+        return change.expected_rows();
+    }
+    let (mut total, mut removed, mut added) = (0, Vec::new(), Vec::new());
     for line in &change.diff {
         match line.kind {
-            Kind::Remove => removed += 1,
-            Kind::Add => added += 1,
+            Kind::Remove => removed.push(lines_of(&line.text, columns)),
+            Kind::Add => added.push(lines_of(&line.text, columns)),
             Kind::Hunk | Kind::Context => {
-                rows += removed.max(added) + 1;
-                removed = 0;
-                added = 0;
+                total += paired(&removed, &added);
+                removed.clear();
+                added.clear();
+                total += if line.kind == Kind::Hunk {
+                    1
+                } else {
+                    lines_of(&line.text, columns)
+                };
             }
         }
     }
-    rows + removed.max(added)
+    total + paired(&removed, &added)
+}
+
+/// How many lines of `columns` characters `row` takes.
+fn row_height(row: &Row, columns: usize) -> usize {
+    match row {
+        Row::Hunk(_) => 1,
+        Row::Pair(old, new) => [old, new]
+            .into_iter()
+            .flatten()
+            .map(|entry| lines_of(&entry.line.text, columns))
+            .max()
+            .unwrap_or(1),
+    }
 }
 
 /// About how tall the notes of `session` on the file at `index` are, in logical pixels, for a column `column` wide; the box for writing one counts as well.
@@ -220,16 +300,22 @@ fn notes_height(state: &WorkspaceState, session: &Session, index: usize, column:
 }
 
 /// About how tall the file at `index` is with its header, its rows and its notes, in logical pixels, folded away or not.
-fn section_height(state: &WorkspaceState, session: &Session, index: usize, width: f32) -> f32 {
+pub(crate) fn section_height(
+    state: &WorkspaceState,
+    session: &Session,
+    index: usize,
+    width: f32,
+) -> f32 {
     let change = &session.changes[index];
     if state.closed_diffs.contains(&change.path) {
-        return SECTION_CHROME + HEADER;
+        return (SECTION_CHROME + HEADER) * pixels();
     }
     let column = ((width - 34.0) / 2.0 - 46.0).max(80.0);
-    SECTION_CHROME
+    (SECTION_CHROME
         + HEADER
-        + row_count(change) as f32 * ROW
-        + notes_height(state, session, index, column)
+        + row_lines(change, columns(width)) as f32 * ROW
+        + notes_height(state, session, index, column))
+        * pixels()
 }
 
 /// How far down the diff the file at `index` starts, in logical pixels, for the files folded away in `state` and a view `width` wide.
@@ -303,7 +389,7 @@ fn gutter(number: Option<usize>, kind: Option<Kind>, id: Option<FocusId>) -> Nod
     let (_, tint, tone) = tints(kind);
     let mut cell = node().styles([
         flex(),
-        items_center(),
+        items_start(),
         justify_end(),
         flex_none(),
         w(11),
@@ -317,31 +403,54 @@ fn gutter(number: Option<usize>, kind: Option<Kind>, id: Option<FocusId>) -> Nod
             .styles([cursor_pointer(), bg(Role::Accent).hover()])
             .focusable(id);
     }
-    cell.child(
+    cell.child(node().styles([flex(), items_center(), h(5)]).child(
         text(number.map(|number| number.to_string()).unwrap_or_default()).styles([
             text_px(12),
             leading_ratio(1.4),
             font_mono(),
             text_color(tone),
         ]),
-    )
+    ))
 }
 
-/// The cell that holds the text of a line, coloured by `marks` and cut short at its edge.
-fn code(content: &str, marks: Vec<Mark>) -> Node {
-    node()
-        .styles([flex_1(), min_w_px(0), overflow_hidden(), px(3)])
-        .child(
-            text(shown(content))
-                .styles([
-                    text_px(12),
-                    leading_ratio(1.4),
-                    font_mono(),
-                    text_color(Role::Text),
-                    truncate(),
-                ])
-                .marks(marks),
-        )
+/// The cell that holds the text of a line, coloured by `marks` and broken into lines of `columns` characters, each on a row of its own.
+fn code(content: &str, marks: Vec<Mark>, columns: usize) -> Node {
+    let content = shown(content);
+    let mut cell = node().styles([
+        flex(),
+        flex_col(),
+        flex_1(),
+        min_w_px(0),
+        overflow_hidden(),
+        px(3),
+    ]);
+    for piece in pieces(&content, columns) {
+        let within: Vec<Mark> = marks
+            .iter()
+            .filter(|mark| mark.range.start < piece.end && mark.range.end > piece.start)
+            .map(|mark| Mark {
+                range: mark.range.start.max(piece.start) - piece.start
+                    ..mark.range.end.min(piece.end) - piece.start,
+                ..mark.clone()
+            })
+            .collect();
+        cell = cell.child(
+            node()
+                .styles([flex(), items_center(), h(5), flex_none()])
+                .child(
+                    text(content[piece].to_owned())
+                        .styles([
+                            text_px(12),
+                            leading_ratio(1.4),
+                            font_mono(),
+                            text_color(Role::Text),
+                            truncate(),
+                        ])
+                        .marks(within),
+                ),
+        );
+    }
+    cell
 }
 
 /// One half of a row: the line that is on that side, coloured as `colours` says, or a blank where there is none, lit while it is among the lines being commented on.
@@ -351,6 +460,8 @@ fn half(
     change: usize,
     new: bool,
     selected: Option<Range>,
+    columns: usize,
+    lines: usize,
 ) -> Node {
     let (number, kind, content, marks) = match entry {
         Some(entry) => (
@@ -366,7 +477,13 @@ fn half(
     });
     let (fill, _, _) = tints(kind);
     let mut side = node()
-        .styles([flex(), flex_1(), min_w_px(0), h(5), overflow_hidden()])
+        .styles([
+            flex(),
+            flex_1(),
+            min_w_px(0),
+            h(5.0 * lines as f32),
+            overflow_hidden(),
+        ])
         .child(gutter(
             number,
             kind,
@@ -381,7 +498,7 @@ fn half(
     if new {
         side = side.styles([border_l(), border_color(Role::Border)]);
     }
-    side.child(code(content, marks))
+    side.child(code(content, marks, columns))
 }
 
 /// The row of a hunk header.
@@ -406,13 +523,36 @@ fn hunk_row(header: &str) -> Node {
 }
 
 /// A diff row of the change at `change` as a node, its code coloured as `colours` says.
-fn row_node(row: &Row, colours: &DiffColours, change: usize, selected: Option<Range>) -> Node {
+fn row_node(
+    row: &Row,
+    colours: &DiffColours,
+    change: usize,
+    selected: Option<Range>,
+    columns: usize,
+) -> Node {
+    let lines = row_height(row, columns);
     match row {
         Row::Hunk(header) => hunk_row(header),
         Row::Pair(old, new) => node()
-            .styles([flex(), w_full(), h(5), flex_none()])
-            .child(half(old.as_ref(), colours, change, false, selected))
-            .child(half(new.as_ref(), colours, change, true, selected)),
+            .styles([flex(), w_full(), h(5.0 * lines as f32), flex_none()])
+            .child(half(
+                old.as_ref(),
+                colours,
+                change,
+                false,
+                selected,
+                columns,
+                lines,
+            ))
+            .child(half(
+                new.as_ref(),
+                colours,
+                change,
+                true,
+                selected,
+                columns,
+                lines,
+            )),
     }
 }
 
@@ -537,7 +677,7 @@ fn file(
 ) -> Node {
     let height = section_height(state, session, index, width);
     if top + height < window.0 || top > window.1 {
-        return node().styles([h(height / 4.0), flex_none()]);
+        return node().styles([h(height / (4.0 * pixels())), flex_none()]);
     }
     let change = &session.changes[index];
     let open = !state.closed_diffs.contains(&change.path);
@@ -630,6 +770,14 @@ fn file(
     if !open {
         return section;
     }
+    if !change.loaded {
+        return section.child(
+            node()
+                .styles([flex(), px(3), py(2), flex_none()])
+                .styles([h(change.expected_rows() as f32 * ROW / 4.0)])
+                .child(line("Reading the diff…", 12, 1.4, Role::Subtle)),
+        );
+    }
     if let Some(target) = target.filter(|target| target.range.is_none() && !target.dragging) {
         section = section.child(comment_box(state, target));
     }
@@ -641,7 +789,9 @@ fn file(
     if state.window.git.word_diff {
         colours = colours.with_words(&change.diff, &change.words);
     }
-    let mut at = top + SECTION_CHROME + HEADER;
+    let scale = pixels();
+    let columns = columns(width);
+    let mut at = top + (SECTION_CHROME + HEADER) * scale;
     let mut skipped = 0;
     for row in rows(change) {
         let mut blocks = Vec::new();
@@ -669,24 +819,25 @@ fn file(
                 }
             }
         }
-        let near = at + ROW >= window.0 && at <= window.1;
+        let lines = row_height(&row, columns);
+        let near = at + lines as f32 * ROW * scale >= window.0 && at <= window.1;
         if blocks.is_empty() && !near {
-            skipped += 1;
-            at += ROW;
+            skipped += lines;
+            at += lines as f32 * ROW * scale;
             continue;
         }
         section = skip(section, &mut skipped);
-        section = section.child(row_node(&row, &colours, index, selected));
-        at += ROW;
+        section = section.child(row_node(&row, &colours, index, selected, columns));
+        at += lines as f32 * ROW * scale;
         for (block, tall) in blocks {
             section = section.child(block);
-            at += tall;
+            at += tall * scale;
         }
     }
     skip(section, &mut skipped)
 }
 
-/// `section` with a blank as tall as the `rows` rows left out since the last one built, which are taken as counted.
+/// `section` with a blank as tall as the `rows` lines left out since the last row built, which are taken as counted.
 fn skip(section: Node, rows: &mut usize) -> Node {
     let blank = std::mem::take(rows);
     if blank == 0 {
@@ -754,10 +905,10 @@ pub fn diff(state: &WorkspaceState, session: &Session, width: f32, height: f32) 
         .map(|index| section_height(state, session, index, width))
         .collect();
     let total: f32 = heights.iter().sum();
-    let view = (height - CHROME).max(0.0);
+    let view = (height - CHROME * pixels()).max(0.0);
     let window = (
-        state.diff_scroll.min(total - view) - OVERSCAN,
-        state.diff_scroll.min(total) + view + OVERSCAN,
+        state.diff_scroll.min(total - view) - OVERSCAN * pixels(),
+        state.diff_scroll.min(total) + view + OVERSCAN * pixels(),
     );
     let mut top = 0.0;
     let files: Vec<Node> = heights

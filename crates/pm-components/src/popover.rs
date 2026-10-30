@@ -109,6 +109,7 @@ fn placed_above(body: Node) -> Node {
         mb(2),
         z(40),
     ])
+    .keep_in_view()
 }
 
 /// `body` hanging above the box it is a child of, with their right edges together.
@@ -120,6 +121,7 @@ fn placed_above_end(body: Node) -> Node {
         mb(2),
         z(40),
     ])
+    .keep_in_view()
 }
 
 /// `button` with `popover`, if there is one, hanging above it.

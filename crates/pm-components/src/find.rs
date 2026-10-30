@@ -55,8 +55,11 @@ pub const FIND_BAR: FocusId = FocusId(7_402_110);
 /// Shows and hides the row for replacing.
 pub const FIND_TOGGLE_REPLACE: FocusId = FocusId(7_402_111);
 
+/// Limits finding to the lines that were selected, and lifts the limit again.
+pub const FIND_IN_SELECTION: FocusId = FocusId(7_402_112);
+
 /// The shadow under the bar.
-const SHADOW: [ShadowLayer; 1] = [ShadowLayer::new(0.0, 8.0, 28.0, 0.0, 0.3, false)];
+pub(crate) const SHADOW: [ShadowLayer; 1] = [ShadowLayer::new(0.0, 8.0, 28.0, 0.0, 0.3, false)];
 
 /// The stretches a query finds, or why it cannot be used.
 type Matches = Result<Vec<Range<usize>>, String>;
@@ -76,9 +79,16 @@ pub struct Finding {
     pub word: bool,
     /// Whether the text is a regular expression.
     pub regex: bool,
+    /// Whether finding is limited to the stretch the file shown keeps for it.
+    pub scoped: bool,
 }
 
 impl Finding {
+    /// The stretch of `document` finding is limited to, when it is limited.
+    pub fn scope(&self, document: &Document) -> Option<Range<usize>> {
+        self.scoped.then(|| document.find_scope()).flatten()
+    }
+
     /// What the bar looks for; case matters when it is switched on, or with `smartcase` when what is typed holds a capital letter.
     pub fn query(&self, smartcase: bool) -> Query {
         let capital = self.query.text().chars().any(char::is_uppercase);
@@ -93,7 +103,7 @@ impl Finding {
 
 /// Whether `id` is one of the fields or buttons of the bar.
 pub fn is_find_part(id: FocusId) -> bool {
-    (FIND_FIELD.0..=FIND_TOGGLE_REPLACE.0).contains(&id.0)
+    (FIND_FIELD.0..=FIND_IN_SELECTION.0).contains(&id.0)
 }
 
 impl WorkspaceState {
@@ -102,7 +112,10 @@ impl WorkspaceState {
         let finding = self.finding.as_ref()?;
         let document = self.shown_document()?;
         let query = finding.query(self.editor.smartcase);
-        Some((document.find_all(&query), query))
+        Some((
+            document.find_all_within(&query, finding.scope(document)),
+            query,
+        ))
     }
 
     /// Opens the bar, with the row for replacing when `replacing`, looking for what is selected in the file shown when that is part of one line.
@@ -119,14 +132,46 @@ impl WorkspaceState {
             case: false,
             word: false,
             regex: false,
+            scoped: false,
         });
         finding.replacing |= replacing;
         if let Some(selected) = selected {
             finding.query = Field::new(selected);
         }
         finding.query.apply(Edit::SelectAll);
+        let mode = self.editor.auto_find_in_selection;
+        if let Some(document) = self.shown_text() {
+            let selected = document.field.selected().to_owned();
+            if mode.limits_to(&selected) {
+                document.set_find_scope(document.selection_scope());
+            }
+            finding.scoped = document.find_scope().is_some();
+        }
         self.finding = Some(finding);
         self
+    }
+
+    /// Limits finding to the stretch selected in the file shown when it is not limited, opening the bar when it is closed, and lifts the limit when it is; nothing is limited while nothing is selected.
+    pub fn find_scope_toggled(mut self) -> Self {
+        if self.finding.is_none() {
+            self = self.find_opened(false);
+            if self.finding.as_ref().is_some_and(|finding| finding.scoped) {
+                return self.select_first_match();
+            }
+        }
+        let scoped = self.finding.as_ref().is_some_and(|finding| finding.scoped);
+        let limited = self.shown_text().map(|document| {
+            if scoped {
+                document.set_find_scope(None);
+            } else {
+                document.set_find_scope(document.selection_scope());
+            }
+            document.find_scope().is_some()
+        });
+        if let (Some(limited), Some(finding)) = (limited, self.finding.as_mut()) {
+            finding.scoped = limited;
+        }
+        self.select_first_match()
     }
 
     /// Whether the bar is open.
@@ -137,6 +182,9 @@ impl WorkspaceState {
     /// Closes the bar.
     pub fn find_closed(mut self) -> Self {
         self.finding = None;
+        if let Some(document) = self.shown_text() {
+            document.set_find_scope(None);
+        }
         self
     }
 
@@ -193,6 +241,7 @@ impl WorkspaceState {
                 FIND_WORD => finding.word = !finding.word,
                 FIND_REGEX => finding.regex = !finding.regex,
                 FIND_TOGGLE_REPLACE => finding.replacing = !finding.replacing,
+                FIND_IN_SELECTION => return self.find_scope_toggled(),
                 _ => {}
             }
         }
@@ -217,7 +266,7 @@ impl WorkspaceState {
             .and_then(|document| document.replace_edit(&query, &matches, &replacement))
             .filter(|_| !read_only);
         if let Some(edit) = edit {
-            self.file_edited(edit);
+            self.file_edited_inside_scope(edit);
         }
         self.find_stepped(false)
     }
@@ -240,9 +289,29 @@ impl WorkspaceState {
             .and_then(|document| document.replace_all_edit(&query, &matches, &replacement))
             .filter(|_| !read_only);
         if let Some(edit) = edit {
-            self.file_edited(edit);
+            self.file_edited_inside_scope(edit);
         }
         self
+    }
+
+    /// Makes `edit`, a replacement of a stretch inside the limit of finding, to the file shown, and has the limit take in the whole of what was written, which it cannot tell from the text alone where the replacement ends where the limit does.
+    fn file_edited_inside_scope(&mut self, edit: Edit) {
+        let scope = self
+            .shown_document()
+            .zip(self.finding.as_ref())
+            .and_then(|(document, finding)| finding.scope(document));
+        let grown = match (&edit, &scope) {
+            (Edit::Replace(range, written, _), Some(scope))
+                if scope.start <= range.start && range.end <= scope.end =>
+            {
+                Some(scope.start..scope.end + written.len() - range.len())
+            }
+            _ => None,
+        };
+        self.file_edited(edit);
+        if let (Some(grown), Some(document)) = (grown, self.shown_text()) {
+            document.set_find_scope(Some(grown));
+        }
     }
 
     /// Carries out what pressing the part `id` of the bar does.
@@ -251,7 +320,9 @@ impl WorkspaceState {
             FIND_NEXT => self.find_stepped(false),
             FIND_PREVIOUS => self.find_stepped(true),
             FIND_CLOSE => self.find_closed(),
-            FIND_CASE | FIND_WORD | FIND_REGEX | FIND_TOGGLE_REPLACE => self.find_toggled(id),
+            FIND_CASE | FIND_WORD | FIND_REGEX | FIND_TOGGLE_REPLACE | FIND_IN_SELECTION => {
+                self.find_toggled(id)
+            }
             REPLACE_ONE => self.replaced_one(),
             REPLACE_ALL => self.replaced_all(),
             _ => self,
@@ -317,7 +388,7 @@ fn tally(found: &Matches, selected: Option<usize>, empty: bool) -> (String, Role
 /// The bar for finding and replacing in `document`, over the top right corner of the file.
 pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) -> Node {
     let query = finding.query(smartcase);
-    let found = document.find_all(&query);
+    let found = document.find_all_within(&query, finding.scope(document));
     let selected = found
         .as_ref()
         .ok()
@@ -332,7 +403,7 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) -> Node
         .styles([flex(), items_center(), gap(1)])
         .child(Button::icon(toggle, FIND_TOGGLE_REPLACE).build())
         .child(
-            node().styles([w_px(220.0), flex_none()]).child(
+            node().styles([w_px(194.0), flex_none()]).child(
                 Input::new(&finding.query, FIND_FIELD)
                     .size(Size::Sm)
                     .placeholder("Find")
@@ -343,6 +414,7 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) -> Node
         .child(switch("Aa", FIND_CASE, finding.case))
         .child(switch("ab", FIND_WORD, finding.word))
         .child(switch(".*", FIND_REGEX, finding.regex))
+        .child(switch("sel", FIND_IN_SELECTION, finding.scoped))
         .child(
             node()
                 .styles([w_px(84.0), flex_none(), px(1)])
@@ -375,7 +447,7 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) -> Node
                 .styles([flex(), items_center(), gap(1)])
                 .child(node().styles([w(7), flex_none()]))
                 .child(
-                    node().styles([w_px(220.0), flex_none()]).child(
+                    node().styles([w_px(194.0), flex_none()]).child(
                         Input::new(&finding.replacement, REPLACE_FIELD)
                             .size(Size::Sm)
                             .placeholder("Replace")

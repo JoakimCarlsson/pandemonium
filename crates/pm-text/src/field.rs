@@ -116,6 +116,8 @@ pub struct Field {
     /// The other selections, besides the one the caret is in, each as the
     /// end that does not move and the end that does.
     others: Vec<(usize, usize)>,
+    /// The characters besides letters, digits and the underscore that are part of a word.
+    word_extra: String,
 }
 
 /// What a field held at one moment, for undoing back to it.
@@ -138,6 +140,16 @@ const MASK: char = '•';
 const HISTORY: usize = 200;
 
 impl Field {
+    /// Makes the characters of `extra`, besides letters, digits and the underscore, part of a word for a double click and for moving by words.
+    pub fn set_word_characters(&mut self, extra: &str) {
+        self.word_extra = extra.to_owned();
+    }
+
+    /// The byte range of the word at byte `byte`, as moving by words sees it.
+    pub fn word_range_at(&self, byte: usize) -> std::ops::Range<usize> {
+        crate::word::word_at_with(&self.text, byte, &self.word_extra)
+    }
+
     /// A field holding `text`, with the caret at its end and nothing selected.
     pub fn new(text: impl Into<String>) -> Self {
         let text = text.into();
@@ -187,6 +199,19 @@ impl Field {
     /// Whether there is a change to take back.
     pub fn can_undo(&self) -> bool {
         !self.past.is_empty()
+    }
+
+    /// How many changes undo remembers now, for [`Field::squash_undo_since`].
+    pub fn undo_depth(&self) -> usize {
+        self.past.len()
+    }
+
+    /// Makes every change since undo remembered `depth` changes one, so that taking it back is one step; what began it is the change that was first.
+    pub fn squash_undo_since(&mut self, depth: usize) {
+        if self.past.len() > depth + 1 {
+            self.past.truncate(depth + 1);
+        }
+        self.typing = false;
     }
 
     /// Whether there is a change that was taken back to make again.
@@ -761,7 +786,7 @@ impl Field {
         let mut at = from;
         let mut class = None;
         for (start, character) in self.text[..from].char_indices().rev() {
-            let this = Class::of(character);
+            let this = Class::of(character, &self.word_extra);
             match class {
                 None if this == Class::Space => {}
                 None => class = Some(this),
@@ -779,7 +804,7 @@ impl Field {
         let mut at = from;
         let mut class = None;
         for (start, character) in self.text[from..].char_indices() {
-            let this = Class::of(character);
+            let this = Class::of(character, &self.word_extra);
             match class {
                 None if this == Class::Space => {}
                 None => class = Some(this),

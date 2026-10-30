@@ -1,5 +1,6 @@
 //! Carrying out what a client asks.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -236,22 +237,23 @@ fn start_session(
     text: &str,
     attachments: &[Attachment],
     submodule: Option<&str>,
+    container: bool,
 ) -> Response {
     let Some(agent) = agent_named(agent) else {
         return failed(format!("no agent is called {agent}"));
     };
     let mut skipped = Vec::new();
     let (folder, head) = match base {
-        Some(_) if !pm_git::is_repository(&place(repository)) => {
+        Some(_) if pm_git::layout(&place(repository)) == pm_git::Layout::Neither => {
             return failed(format!(
-                "{repository} is not a git repository, so it has no worktrees"
+                "{repository} holds no git repository, so it has no worktrees"
             ));
         }
         Some(base) => match pm_git::add_worktree(
             &place(repository),
             title,
             base,
-            &crate::machine::placement(),
+            &crate::machine::placement_for(container),
         ) {
             Ok(made) => {
                 skipped = made.skipped;
@@ -267,6 +269,12 @@ fn start_session(
             (folder, None)
         }
     };
+    if container && !pm_transport::configured(&folder) {
+        return failed(format!(
+            "{} has no devcontainer.json to run the agent in",
+            folder.display()
+        ));
+    }
     let (head, branch) = head.map_or((None, None), |(head, branch)| (Some(head), branch));
     let meta = Meta {
         agent: agent.id.to_owned(),
@@ -280,6 +288,7 @@ fn start_session(
         updated: now(),
         login: login_for_new_work(agent.id),
         submodule: submodule.map(str::to_owned),
+        container,
     };
     let mut session = Session::new(agent, meta.agent_folder(), Vec::new(), meta);
     session.start_agent(&crate::machine::with_mode(settings));
@@ -300,7 +309,7 @@ fn start_session(
 ///
 /// A worktree with changes that are not committed is kept and the request answered with `Uncommitted`, unless `discard` is set.
 fn close_session(core: &Core, number: u64, discard: bool) -> Response {
-    let (chat, removal) = {
+    let (chat, removal, enclosed) = {
         let Ok(mut sessions) = core.sessions.lock() else {
             return failed("the server is shutting down");
         };
@@ -314,6 +323,7 @@ fn close_session(core: &Core, number: u64, discard: bool) -> Response {
                 && session.meta.directory == held.meta.directory
         });
         let worktree = held.meta.head.is_some() && !shared;
+        let container = held.meta.container && !shared;
         if worktree && !discard && !pm_git::changes(&folder).is_empty() {
             return Response::Uncommitted;
         }
@@ -329,10 +339,19 @@ fn close_session(core: &Core, number: u64, discard: bool) -> Response {
                 held.meta.base.clone(),
             )
         });
-        (held.chat.take(), removal)
+        (
+            held.chat.take(),
+            removal,
+            container.then(|| held.meta.directory.clone()),
+        )
     };
     if let Some(chat) = chat {
         chat.stop();
+    }
+    if let Some(folder) = enclosed
+        && let Err(reason) = pm_transport::remove_session_container(&folder)
+    {
+        return failed(format!("could not remove the dev container: {reason}"));
     }
     if let Some((repository, folder, branch, base)) = removal {
         if !discard && !pm_git::changes(&folder).is_empty() {
@@ -523,12 +542,15 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             expanded: _,
         } => {
             let place = place(&directory);
+            let children = pm_git::child_repositories(&place);
             let mut paths = pm_git::files(&place, limit);
             let mut folders = pm_git::untracked_folders(&place, limit);
             let mut ignored = Vec::new();
             for entry in pm_git::ignored(&place, limit) {
                 for (index, _) in entry.match_indices('/') {
-                    ignored.push(entry[..index].to_owned());
+                    if !children.iter().any(|child| *child == entry[..index]) {
+                        ignored.push(entry[..index].to_owned());
+                    }
                 }
                 paths.push(entry.clone());
                 ignored.push(entry);
@@ -549,13 +571,21 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
         Request::Submodules { directory } => Response::Submodules {
             paths: pm_git::submodules(&place(&directory)),
         },
+        Request::DevContainer { directory } => Response::DevContainer {
+            configured: pm_transport::configured(&place(&directory)),
+        },
         Request::SubmoduleHeads { directory } => Response::SubmoduleHeads {
             heads: pm_git::submodule_heads(&place(&directory)),
         },
-        Request::Identity { agent } => match agent_named(&agent) {
+        Request::Identity { agent, login } => match agent_named(&agent) {
             Some(agent) => Response::Identity {
                 default: pm_acp::default_account(agent),
-                selected: pm_acp::account(agent),
+                selected: match login {
+                    Some(login) => login_folder(agent.id, Some(&login))
+                        .or_else(|| pm_store::account_directory(agent.id, &login).ok())
+                        .and_then(|home| pm_acp::account_in_folder(agent, home)),
+                    None => pm_acp::account(agent),
+                },
             },
             None => failed(format!("no agent is called {agent}")),
         },
@@ -690,6 +720,13 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             answer
         }
         Request::LatestRelease { channel } => crate::releases::latest(&channel),
+        Request::DownloadUpdate { channel, version } => {
+            crate::releases::download(connection, &channel, &version)
+        }
+        Request::CancelUpdate => {
+            crate::releases::cancel();
+            Response::Done
+        }
         Request::Sessions => Response::Sessions {
             sessions: core.infos(),
         },
@@ -698,8 +735,8 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             sessions::save_meta(session, &held.meta);
         }),
         Request::SignInSession { session } => sign_in_session(core, session),
-        Request::SignIn { agent } => match agent_named(&agent) {
-            Some(agent) => match agent.sign_in() {
+        Request::SignIn { agent, login } => match agent_named(&agent) {
+            Some(agent) => match sign_in_login(agent, login.as_deref()) {
                 Ok(()) => Response::Done,
                 Err(reason) => failed(reason),
             },
@@ -715,6 +752,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             text,
             attachments,
             submodule,
+            container,
         } => start_session(
             core,
             connection,
@@ -727,6 +765,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             &text,
             &attachments,
             submodule.as_deref(),
+            container,
         ),
         Request::CloseSession { session, discard } => {
             let closed = close_session(core, session, discard);
@@ -829,7 +868,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
         Request::Inspect { directory, base } => {
             let directory = place(&directory);
             let directory = directory.as_path();
-            if !pm_git::is_repository(directory) {
+            if pm_git::layout(directory) == pm_git::Layout::Neither {
                 return Response::Inspected {
                     changes: Vec::new(),
                     commits: None,
@@ -837,6 +876,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                     head: None,
                     tracking: pm_git::Tracking::default(),
                     operation: None,
+                    repositories: Vec::new(),
                 };
             }
             Response::Inspected {
@@ -846,8 +886,24 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                 head: pm_git::resolve(directory, "HEAD"),
                 tracking: pm_git::tracking(directory),
                 operation: pm_git::operation(directory),
+                repositories: pm_git::standings(directory),
             }
         }
+        Request::Standing { directory } => {
+            let directory = place(&directory);
+            let directory = directory.as_path();
+            Response::Standing {
+                branch: pm_git::current_branch(directory),
+                head: pm_git::resolve(directory, "HEAD"),
+                tracking: pm_git::tracking(directory),
+                operation: pm_git::operation(directory),
+                repositories: pm_git::standings(directory),
+                repository: pm_git::layout(directory) != pm_git::Layout::Neither,
+            }
+        }
+        Request::Diffs { directory, paths } => Response::Diffs {
+            files: pm_git::diffs(&place(&directory), &paths),
+        },
         Request::Stage {
             directory,
             paths,
@@ -933,9 +989,9 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             revision.as_deref().or(head.then_some("HEAD")),
         ) {
             Ok(pm_git::Contents::Text { text, truncated }) => Response::File {
+                language: pm_lsp::language_of_text(&path, &text),
                 text: Some(text),
                 truncated,
-                language: pm_lsp::language_of(&path),
             },
             Ok(pm_git::Contents::Binary) => Response::File {
                 text: None,
@@ -987,9 +1043,9 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             version,
         } => match crate::local_history::read(&place(&directory), &path, version) {
             Ok(text) => Response::File {
+                language: pm_lsp::language_of_text(&path, &text),
                 text: Some(text),
                 truncated: false,
-                language: pm_lsp::language_of(&path),
             },
             Err(reason) => failed(reason),
         },
@@ -1038,6 +1094,19 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             Ok(changes) => Response::RevisionChanges { changes },
             Err(reason) => failed(reason),
         },
+        Request::BrowserAvailable { available } => {
+            crate::browser_tools::set_available(connection, available);
+            Response::Done
+        }
+        Request::BrowserResult {
+            call,
+            ok,
+            text,
+            image,
+        } => {
+            crate::browser_tools::answer(call, crate::browser_tools::Reply { ok, text, image });
+            Response::Done
+        }
         Request::Extensions => Response::Extensions {
             extensions: core.extension_infos(true),
         },
@@ -1112,8 +1181,11 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                     links: triggers.links,
                     semantic_tokens: triggers.semantic_tokens,
                     inlay_hints: triggers.inlay_hints,
-                    code_lens: triggers.code_lens,
+                    code_lens: triggers.code_lens || crate::dependencies::applies(&language, &path),
                     inline_values: triggers.inline_values,
+                    document_links: triggers.document_links,
+                    colors: triggers.colors,
+                    semantic_ranges: triggers.semantic_ranges,
                 },
                 Err(reason) => failed(reason),
             }
@@ -1138,14 +1210,28 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             version,
             position,
             trigger,
+            scope,
         } => match core.documents.hub.completion(
             &place(&directory),
             &path,
             version,
             position,
             trigger.as_deref(),
+            scope.as_deref(),
         ) {
             Ok(items) => Response::Completions { items },
+            Err(reason) => failed(reason),
+        },
+        Request::ResolveCompletion {
+            directory,
+            path,
+            item,
+        } => match core
+            .documents
+            .hub
+            .resolve_completion(&place(&directory), &path, &item)
+        {
+            Ok(item) => Response::CompletionResolved { item },
             Err(reason) => failed(reason),
         },
         Request::Format {
@@ -1297,6 +1383,19 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             Ok(signature) => Response::Signature { signature },
             Err(reason) => failed(reason),
         },
+        Request::PrepareRename {
+            directory,
+            path,
+            version,
+            position,
+        } => match core
+            .documents
+            .hub
+            .prepare_rename(&place(&directory), &path, version, position)
+        {
+            Ok(target) => Response::RenameTarget { target },
+            Err(reason) => failed(reason),
+        },
         Request::Rename {
             directory,
             path,
@@ -1316,11 +1415,14 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             path,
             version,
             span,
-        } => match core
-            .documents
-            .hub
-            .code_actions(&place(&directory), &path, version, span)
-        {
+            only,
+        } => match core.documents.hub.code_actions(
+            &place(&directory),
+            &path,
+            version,
+            span,
+            &only.unwrap_or_default(),
+        ) {
             Ok(actions) => Response::CodeActions { actions },
             Err(reason) => failed(reason),
         },
@@ -1328,12 +1430,16 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             directory,
             path,
             version,
-        } => match core
-            .documents
-            .hub
-            .semantic_tokens(&place(&directory), &path, version)
-        {
-            Ok(tokens) => Response::SemanticTokens { tokens },
+            rules,
+            range,
+        } => match core.documents.hub.semantic_tokens(
+            &place(&directory),
+            &path,
+            version,
+            &rules,
+            range,
+        ) {
+            Ok((tokens, partial)) => Response::SemanticTokens { tokens, partial },
             Err(reason) => failed(reason),
         },
         Request::InlayHints {
@@ -1347,6 +1453,58 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             .inlay_hints(&place(&directory), &path, version, span)
         {
             Ok(hints) => Response::InlayHints { hints },
+            Err(reason) => failed(reason),
+        },
+        Request::DocumentLinks {
+            directory,
+            path,
+            version,
+        } => match core
+            .documents
+            .hub
+            .document_links(&place(&directory), &path, version)
+        {
+            Ok(links) => Response::DocumentLinks { links },
+            Err(reason) => failed(reason),
+        },
+        Request::ResolveLink {
+            directory,
+            path,
+            link,
+        } => match core
+            .documents
+            .hub
+            .resolve_link(&place(&directory), &path, &link)
+        {
+            Ok(target) => Response::LinkResolved { target },
+            Err(reason) => failed(reason),
+        },
+        Request::ColorPresentations {
+            directory,
+            path,
+            version,
+            span,
+            color,
+        } => match core.documents.hub.color_presentations(
+            &place(&directory),
+            &path,
+            version,
+            span,
+            color,
+        ) {
+            Ok(presentations) => Response::ColorPresentations { presentations },
+            Err(reason) => failed(reason),
+        },
+        Request::Colors {
+            directory,
+            path,
+            version,
+        } => match core
+            .documents
+            .hub
+            .colors(&place(&directory), &path, version)
+        {
+            Ok(colors) => Response::Colors { colors },
             Err(reason) => failed(reason),
         },
         Request::InlineValues {
@@ -1371,26 +1529,64 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             directory,
             path,
             version,
-        } => match core
-            .documents
-            .hub
-            .code_lenses(&place(&directory), &path, version)
-        {
-            Ok(lenses) => Response::CodeLenses { lenses },
-            Err(reason) => failed(reason),
-        },
+            dependencies,
+        } => {
+            let root = place(&directory);
+            match core.documents.hub.code_lenses(&root, &path, version) {
+                Ok(mut lenses) => {
+                    let after = lenses.len();
+                    crate::dependencies::forget(&root, &path);
+                    let listed = dependencies
+                        .then(|| {
+                            core.documents
+                                .hub
+                                .read_open(&root, &path, version, |language, buffer| {
+                                    (
+                                        language.to_owned(),
+                                        crate::dependencies::listed(language, &path, buffer),
+                                    )
+                                })
+                                .ok()
+                        })
+                        .flatten();
+                    if let Some((language, found)) = listed {
+                        lenses.extend(crate::dependencies::lenses(
+                            &root, &path, &language, found, after,
+                        ));
+                    }
+                    Response::CodeLenses { lenses }
+                }
+                Err(reason) => failed(reason),
+            }
+        }
         Request::PressCodeLens {
             directory,
             path,
             index,
-        } => match core
-            .documents
-            .hub
-            .press_lens(&place(&directory), &path, index)
-        {
-            Ok((places, files)) => Response::LensPressed { places, files },
-            Err(reason) => failed(reason),
-        },
+        } => {
+            let root = place(&directory);
+            let own = crate::dependencies::press(&root, &path, index, |span| {
+                core.documents
+                    .hub
+                    .read_open(&root, &path, 0, |_, buffer| {
+                        let range = buffer.offset_of(span.start)..buffer.offset_of(span.end);
+                        buffer.text().get(range).map(str::to_owned)
+                    })
+                    .ok()
+                    .flatten()
+            });
+            match own {
+                Some(Ok(edit)) => Response::LensPressed {
+                    places: Vec::new(),
+                    files: vec![edit],
+                },
+                Some(Err(reason)) => failed(reason),
+                None => match core.documents.hub.press_lens(&root, &path, index) {
+                    Ok((places, files)) => Response::LensPressed { places, files },
+                    Err(reason) => failed(reason),
+                },
+            }
+        }
         Request::TakeCodeAction {
             directory,
             path,
@@ -1400,7 +1596,8 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             .hub
             .take_action(&place(&directory), &path, index)
         {
-            Ok(files) => Response::Edited { files },
+            Ok((files, shown)) if shown.is_empty() => Response::Edited { files },
+            Ok((files, shown)) => Response::ActionTaken { files, shown },
             Err(reason) => failed(reason),
         },
         Request::Hover {
@@ -1474,11 +1671,24 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             path,
             kind,
             name,
+            tags,
+            variables,
+            position,
+            task,
             columns,
             rows,
         } => {
             let root = place(&directory);
-            match tasks::runnable(&root, &path, &kind, &name) {
+            let found = tasks::Place {
+                tags: if tags.is_empty() { vec![kind] } else { tags },
+                variables: if variables.is_empty() && !name.is_empty() {
+                    BTreeMap::from([("name".to_owned(), name)])
+                } else {
+                    variables
+                },
+                position,
+            };
+            match tasks::runnable(&root, &path, &found, task.as_deref()) {
                 Ok(task) => run_started(
                     core.run_task(
                         &root,
@@ -1491,6 +1701,29 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                     core,
                 ),
                 Err(reason) => failed(reason),
+            }
+        }
+        Request::RunnableTasks {
+            directory,
+            path,
+            tags,
+            variables,
+            position,
+            ..
+        } => {
+            let found = tasks::Place {
+                tags,
+                variables,
+                position,
+            };
+            Response::RunnableTasks {
+                tasks: tasks::runnable_tasks(&place(&directory), &path, &found)
+                    .into_iter()
+                    .map(|task| pm_protocol::RunnableTask {
+                        name: task.name,
+                        command: task.command,
+                    })
+                    .collect(),
             }
         }
         Request::Toolchains { directory, project } => {
@@ -1589,6 +1822,17 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             directory,
             operation,
         } => done(pm_git::remote(&place(&directory), &operation)),
+    }
+}
+
+/// Signs `agent` in under the folder of the login `login`, so that the sign-in does not depend on which folder other requests have set; the folder in use when there is no login.
+fn sign_in_login(agent: Agent, login: Option<&str>) -> Result<(), String> {
+    match login {
+        Some(login) => {
+            let home = pm_store::account_directory(agent.id, login).map_err(|e| e.to_string())?;
+            agent.sign_in_folder(home)
+        }
+        None => agent.sign_in(),
     }
 }
 

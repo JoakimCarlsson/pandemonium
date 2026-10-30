@@ -1,0 +1,143 @@
+[
+  {
+    "label": "Run Service",
+    "command": "docker compose -f $PM_FILE up $PM_CUSTOM_service",
+    "folder": "$PM_DIRNAME",
+    "group": "run",
+    "source": "$PM_RELATIVE_FILE",
+    "lens": true,
+    "tags": [
+      "docker-compose-service"
+    ]
+  },
+  {
+    "label": "Run All Services",
+    "command": "docker compose -f $PM_FILE up",
+    "folder": "$PM_DIRNAME",
+    "group": "run",
+    "source": "$PM_RELATIVE_FILE",
+    "lens": true,
+    "tags": [
+      "docker-compose-services"
+    ]
+  },
+  {
+    "label": "Stop All Services",
+    "command": "docker compose -f $PM_FILE down",
+    "folder": "$PM_DIRNAME",
+    "group": "run",
+    "source": "$PM_RELATIVE_FILE",
+    "lens": true,
+    "tags": [
+      "docker-compose-services"
+    ]
+  },
+  {
+    "label": "docker compose up $PM_CUSTOM_service",
+    "command": "docker compose -f $PM_FILE up $PM_CUSTOM_service",
+    "group": "run",
+    "source": "$PM_RELATIVE_FILE",
+    "tags": [
+      "docker-compose-service"
+    ]
+  },
+  {
+    "label": "docker compose run $PM_CUSTOM_service",
+    "command": "docker compose -f $PM_FILE run --rm $PM_CUSTOM_service",
+    "group": "run",
+    "source": "$PM_RELATIVE_FILE",
+    "tags": [
+      "docker-compose-service"
+    ]
+  },
+  {
+    "label": "docker compose down",
+    "command": "docker compose -f $PM_FILE down",
+    "group": "run",
+    "source": "$PM_RELATIVE_FILE",
+    "tags": [
+      "docker-compose-service"
+    ]
+  },
+  {
+    "label": "docker-compose up $PM_CUSTOM_service",
+    "command": "docker-compose -f $PM_FILE up $PM_CUSTOM_service",
+    "group": "run",
+    "source": "$PM_RELATIVE_FILE",
+    "tags": [
+      "docker-compose-service"
+    ]
+  },
+  {
+    "label": "docker-compose run $PM_CUSTOM_service",
+    "command": "docker-compose -f $PM_FILE run --rm $PM_CUSTOM_service",
+    "group": "run",
+    "source": "$PM_RELATIVE_FILE",
+    "tags": [
+      "docker-compose-service"
+    ]
+  },
+  {
+    "label": "docker-compose down",
+    "command": "docker-compose -f $PM_FILE down",
+    "group": "run",
+    "source": "$PM_RELATIVE_FILE",
+    "tags": [
+      "docker-compose-service"
+    ]
+  },
+  {
+    "label": "podman compose up $PM_CUSTOM_service",
+    "command": "podman compose -f $PM_FILE up $PM_CUSTOM_service",
+    "group": "run",
+    "source": "$PM_RELATIVE_FILE",
+    "tags": [
+      "docker-compose-service"
+    ]
+  },
+  {
+    "label": "podman compose run $PM_CUSTOM_service",
+    "command": "podman compose -f $PM_FILE run --rm $PM_CUSTOM_service",
+    "group": "run",
+    "source": "$PM_RELATIVE_FILE",
+    "tags": [
+      "docker-compose-service"
+    ]
+  },
+  {
+    "label": "podman compose down",
+    "command": "podman compose -f $PM_FILE down",
+    "group": "run",
+    "source": "$PM_RELATIVE_FILE",
+    "tags": [
+      "docker-compose-service"
+    ]
+  },
+  {
+    "label": "podman-compose up $PM_CUSTOM_service",
+    "command": "podman-compose -f $PM_FILE up $PM_CUSTOM_service",
+    "group": "run",
+    "source": "$PM_RELATIVE_FILE",
+    "tags": [
+      "docker-compose-service"
+    ]
+  },
+  {
+    "label": "podman-compose run $PM_CUSTOM_service",
+    "command": "podman-compose -f $PM_FILE run --rm $PM_CUSTOM_service",
+    "group": "run",
+    "source": "$PM_RELATIVE_FILE",
+    "tags": [
+      "docker-compose-service"
+    ]
+  },
+  {
+    "label": "podman-compose down",
+    "command": "podman-compose -f $PM_FILE down",
+    "group": "run",
+    "source": "$PM_RELATIVE_FILE",
+    "tags": [
+      "docker-compose-service"
+    ]
+  }
+]

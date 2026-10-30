@@ -2,6 +2,7 @@
 
 use std::time::{Duration, Instant};
 
+use pm_text::Edit;
 use similar::{Algorithm, DiffOp, capture_diff_deadline};
 
 use crate::document::Document;
@@ -66,6 +67,25 @@ impl Document {
         }
         changes.truncate(new.len());
         self.line_changes = changes;
+    }
+
+    /// The edit that takes the caret to the start of the first line of the next stretch of changed lines after the caret's line, or of the one before when `back`, going round the end of the file.
+    pub fn next_change_edit(&self, back: bool) -> Option<Edit> {
+        let changed = |row: usize| self.line_change(row).is_some();
+        let starts: Vec<usize> = (0..self.lines())
+            .filter(|row| changed(*row) && (*row == 0 || !changed(*row - 1)))
+            .collect();
+        let row = self.line_of(self.field.caret());
+        let found = if back {
+            starts
+                .iter()
+                .rev()
+                .find(|start| **start < row)
+                .or(starts.last())
+        } else {
+            starts.iter().find(|start| **start > row).or(starts.first())
+        };
+        found.map(|start| Edit::Place(self.line(*start).start, false))
     }
 
     /// How the line at `index` differs from the last commit, when it does.

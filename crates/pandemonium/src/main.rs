@@ -15,7 +15,7 @@ use std::path::Path;
 use winit::event_loop::{ControlFlow, EventLoop};
 
 use app::App;
-use snapshot::Shot;
+use snapshot::{Shot, Trigger};
 
 /// Opens the window and runs the event loop until it is closed, or, given `--version`, prints the version
 /// and leaves, or, given `--server`, runs the server
@@ -33,6 +33,21 @@ fn main() {
             arguments.into_iter().skip(1),
         ));
     }
+    if arguments.first().map(String::as_str) == Some("--snapshot-browser") {
+        let (Some(path), Some(url)) = (arguments.get(1), arguments.get(2)) else {
+            eprintln!("pandemonium: --snapshot-browser needs a path and an address");
+            std::process::exit(2);
+        };
+        let flag = |name: &str| arguments.iter().skip(3).any(|argument| argument == name);
+        if let Err(error) =
+            snapshot::write_browser(Path::new(path), url, flag("tools"), flag("input"))
+        {
+            eprintln!("pandemonium: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
+    pm_update::forget_previous();
     if arguments.first().map(String::as_str) == Some("--snapshot") {
         let Some(path) = arguments.get(1) else {
             eprintln!("pandemonium: --snapshot needs a path");
@@ -56,6 +71,17 @@ fn main() {
         };
         let shot = match arguments.get(7).map(String::as_str) {
             Some("code") => Shot::Code,
+            Some("codetsx") => Shot::CodeTsx,
+            Some("codemdx") => Shot::CodeMdx,
+            Some("codeenv") => Shot::CodeEnv,
+            Some("codejs") => Shot::CodeJs,
+            Some("codeshell") => Shot::CodeShell,
+            Some("runcompose") => Shot::RunCompose,
+            Some("rundockerfile") => Shot::RunDockerfile,
+            Some("rungomod") => Shot::RunGoMod,
+            Some("runpackage") => Shot::RunPackageJson,
+            Some("codesample") => Shot::CodeSample,
+            Some("redacted") => Shot::Redacted,
             Some("languageoffer") => Shot::LanguageOffer,
             Some("markdownpreview") => Shot::MarkdownPreview,
             Some("vectorpreview") => Shot::VectorPreview,
@@ -71,19 +97,37 @@ fn main() {
             Some("renaming") => Shot::Renaming,
             Some("codeactions") => Shot::CodeActions,
             Some("filehistory") => Shot::FileHistory,
+            Some("find-in-selection") => Shot::FindInSelection,
+            Some("find-in-selection-replaced") => Shot::FindInSelectionReplaced,
+            Some("dragging-text") => Shot::DraggingText,
+            Some("dragged-text") => Shot::DraggedText,
+            Some("lightbulb") => Shot::Lightbulb,
+            Some("ligatures") => Shot::Ligatures,
+            Some("ligatures-off") => Shot::LigaturesOff,
+            Some("bidi") => Shot::Bidi,
+            Some("compare-clipboard") => Shot::CompareClipboard,
+            Some("compare-saved") => Shot::CompareSaved,
+            Some("compare-picking") => Shot::ComparePicking,
+            Some("compare-file") => Shot::CompareFile,
             Some("timeline") => Shot::Timeline,
             Some("conflict") => Shot::Conflict,
             Some("diffsubmodule") => Shot::DiffSubmodule,
+            Some("changesrepositories") => Shot::ChangesRepositories(false),
+            Some("changesrepositoriespicked") => Shot::ChangesRepositories(true),
             Some("branchessubmodule") => Shot::BranchesSubmodule(false),
             Some("branchessubmoduleinside") => Shot::BranchesSubmodule(true),
             Some("signing") => Shot::Signing,
             Some("annotated") => Shot::Annotated,
+            Some("color-swatches") => Shot::ColorSwatches,
+            Some("color-picker") => Shot::ColorPicker,
+            Some("vim") => Shot::Vim,
             Some("project-search") => Shot::ProjectSearch,
             Some("excerpts") => Shot::Excerpts,
             Some("finding") => Shot::Finding,
             Some("find-reopened") => Shot::FindReopened,
             Some("outline") => Shot::Outline,
             Some("cursors") => Shot::Cursors,
+            Some("column-selection") => Shot::ColumnSelection,
             Some("folded") => Shot::Folded,
             Some("sticky") => Shot::Sticky,
             Some("finder") => Shot::Finder,
@@ -107,6 +151,8 @@ fn main() {
             Some("update") => Shot::Update,
             Some("diff") => Shot::Diff,
             Some("worddiff") => Shot::WordDiff,
+            Some("diff-listed") => Shot::DiffListed,
+            Some("diff-compact") => Shot::DiffCompact,
             Some("commenting") => Shot::Commenting,
             Some("files") => Shot::Files,
             Some("files-large") => Shot::FilesLarge,
@@ -117,7 +163,9 @@ fn main() {
             Some("ignored-files") => Shot::IgnoredFiles,
             Some("source") => Shot::Source,
             Some("refused") => Shot::Refused,
-            Some("sourcemenu") => Shot::SourceMenu,
+            Some("sourcemenu") => Shot::SourceMenu(Trigger::Changes),
+            Some("sourcemenu-compact") => Shot::SourceMenu(Trigger::ChangesCompact),
+            Some("refsmenu") => Shot::SourceMenu(Trigger::Refs),
             Some("historymenu") => Shot::HistoryMenu,
             Some("stashing") => Shot::Stashing,
             Some("changemenu") => Shot::ChangeMenu,
@@ -132,6 +180,27 @@ fn main() {
             Some("terminal") => Shot::Terminal,
             Some("terminallink") => Shot::TerminalLink,
             Some("terminalmenu") => Shot::TerminalMenu,
+            Some("browsermenu") => Shot::BrowserMenu,
+            Some("browser-find") => Shot::BrowserFind(false),
+            Some("browser-find-narrow") => Shot::BrowserFind(true),
+            Some("browser-find-tools") => Shot::BrowserFindTools,
+            Some("browser-tabs") => Shot::BrowserTabs(false),
+            Some("browser-tabs-many") => Shot::BrowserTabs(true),
+            Some("browser-clear") => Shot::BrowserClear,
+            Some("browser-permission") => Shot::BrowserPermission,
+            Some("browser-certificate") => Shot::BrowserCertificate,
+            Some("browser-certificate-confirm") => Shot::BrowserCertificateConfirm,
+            Some("browser-download") => Shot::BrowserDownload,
+            Some("elements") => Shot::Elements,
+            Some("element-details") => Shot::ElementDetails,
+            Some("element-scrolled") => Shot::ElementScrolled,
+            Some("elements-sent") => Shot::ElementsSent,
+            Some("captures") => Shot::Captures,
+            Some("capture-preview") => Shot::CapturePreview,
+            Some("capture-console") => Shot::CaptureConsole,
+            Some("capture-menu") => Shot::CaptureMenu,
+            Some("captures-sent") => Shot::CapturesSent,
+            Some("split-started") => Shot::SplitStarted,
             Some("overview") => Shot::Overview,
             Some("submodules") => Shot::Submodules,
             Some("overviewdiff") => Shot::OverviewDiff,
@@ -149,6 +218,7 @@ fn main() {
             Some("panes-dragging") => Shot::PanesDragging,
             Some("pane-menu") => Shot::PaneMenu,
             Some("pane-split") => Shot::PaneSplit,
+            Some("pane-browser") => Shot::PaneBrowser,
             Some("pane-split-file") => Shot::PaneSplitFile,
             Some("wrapped") => Shot::Wrapped,
             Some("slashed") => Shot::Slashed,
@@ -178,6 +248,7 @@ fn main() {
             Some("attached") => Shot::Attached,
             Some("unfolded") => Shot::Unfolded,
             Some("composing") => Shot::Composing,
+            Some("devcontainer") => Shot::DevContainer,
             Some("terminalcomposing") => Shot::TerminalComposing,
             Some("selecting") => Shot::Selecting,
             Some("sessionaccount") => Shot::SessionAccount,

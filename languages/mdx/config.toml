@@ -1,0 +1,21 @@
+# MDX: Markdown with JSX. No MDX grammar is released as WebAssembly like the
+# other grammars are, so a file is read with the Markdown grammar and the
+# stretches that are JSX are injected as TSX: `import` and `export` lines and
+# the blocks that open with a tag. The text inside each block is inline
+# markdown. MDX has no language server.
+
+name = "MDX"
+version = "0.1.0"
+description = "MDX: Markdown grammar with its JSX, import and export lines highlighted as TSX."
+icon = "icon.svg"
+color = "#f0b66a"
+grammar = "markdown"
+suffixes = ["mdx"]
+aliases = ["mdx"]
+requires = ["markdown-inline", "tsx"]
+indent = 2
+pairs = ["()", "[]", "{}", "``"]
+
+[grammar_file]
+url = "https://github.com/tree-sitter-grammars/tree-sitter-markdown/releases/download/v0.5.3/tree-sitter-markdown.wasm"
+sha256 = "dd9fc12ac2804d7c7da787e4774125b32e4fb3c244e5e7031a77cb7dd8036020"

@@ -1,0 +1,38 @@
+[
+  {
+    "label": "go build",
+    "command": "go build ./...",
+    "group": "build",
+    "language": "go",
+    "source": "go.mod",
+    "order": 40,
+    "when": { "exists": "go.mod" }
+  },
+  {
+    "label": "go test",
+    "command": "go test ./...",
+    "group": "test",
+    "language": "go",
+    "source": "go.mod",
+    "order": 40,
+    "when": { "exists": "go.mod" }
+  },
+  {
+    "label": "go vet",
+    "command": "go vet ./...",
+    "group": "test",
+    "language": "go",
+    "source": "go.mod",
+    "order": 40,
+    "when": { "exists": "go.mod" }
+  },
+  {
+    "label": "go run",
+    "command": "go run .",
+    "group": "run",
+    "language": "go",
+    "source": "go.mod",
+    "order": 40,
+    "when": { "all": [{ "exists": "go.mod" }, { "exists": "main.go" }] }
+  }
+]

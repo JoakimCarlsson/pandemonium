@@ -152,6 +152,11 @@ pub enum Request {
         /// The folder.
         directory: String,
     },
+    /// Whether a folder holds a `devcontainer.json`, so that a session in it can run in a dev container.
+    DevContainer {
+        /// The folder.
+        directory: String,
+    },
     /// What each checked out submodule of the repository a folder is has checked out.
     SubmoduleHeads {
         /// The folder.
@@ -161,6 +166,9 @@ pub enum Request {
     Identity {
         /// The agent, by its id.
         agent: String,
+        /// The login whose folder answers `selected`, instead of the one in use; nothing for the one in use.
+        #[serde(default)]
+        login: Option<String>,
     },
     /// Saves the logins and points each agent at the folder of the login in use for it.
     SetAccounts {
@@ -176,10 +184,13 @@ pub enum Request {
         /// The login's id, or nothing for the agent's own.
         login: Option<String>,
     },
-    /// Signs the agent in under the login now in use.
+    /// Signs the agent in under the login `login`, or the one now in use when there is none.
     SignIn {
         /// The agent, by its id.
         agent: String,
+        /// The login's id; its own folder is signed in to whatever else is set.
+        #[serde(default)]
+        login: Option<String>,
     },
     /// Signs in again as the account of an existing session, on its server.
     SignInSession {
@@ -207,6 +218,9 @@ pub enum Request {
         /// The submodule the agent works in, from the root of the project, or nothing for the project itself.
         #[serde(default)]
         submodule: Option<String>,
+        /// Whether the agent runs in the dev container of the folder it works in, which is built and started first.
+        #[serde(default)]
+        container: bool,
     },
     /// Closes a session: stops its agent and marks it finished. Its log is kept; a worktree it made is removed, and without `discard` that is refused while the worktree has changes that are not committed.
     CloseSession {
@@ -322,6 +336,18 @@ pub enum Request {
         directory: String,
         /// The branch the session's worktree was made from, when it has one.
         base: Option<String>,
+    },
+    /// Where a folder stands: its branch, head, what the branch follows and the operation it is stopped in, answered without looking at its files.
+    Standing {
+        /// The folder.
+        directory: String,
+    },
+    /// The diffs of some files of a folder that `inspect` listed without them.
+    Diffs {
+        /// The folder.
+        directory: String,
+        /// The files, each as `inspect` named it.
+        paths: Vec<String>,
     },
     /// Stages or unstages files in a folder.
     Stage {
@@ -560,6 +586,15 @@ pub enum Request {
         /// `stable` for the releases made for everyone, `preview` for the pre-releases; `nightly`, which a client from before the rename sends, means `preview`.
         channel: String,
     },
+    /// Downloads the build of the release `version` on `channel` made for the server's platform, checks it against the release's `SHA256SUMS` and unpacks it into the server's cache folder; answered with `update_staged` once it is ready, with `done` when [`Request::CancelUpdate`] stopped it, and with progress told as `update_progress` messages meanwhile.
+    DownloadUpdate {
+        /// `stable` or `preview`, which decides the names of the files.
+        channel: String,
+        /// The version to fetch, as `0.14.0` or `0.15.0-rc.1`.
+        version: String,
+    },
+    /// Stops the download of an update, leaving nothing of it behind.
+    CancelUpdate,
     /// The named logins and the one in use for each agent.
     Accounts,
     /// Every session the server holds, running or not.
@@ -694,14 +729,46 @@ pub enum Request {
         project: Option<String>,
         /// The file, from the root of the folder.
         path: String,
-        /// What the language calls it: `main`, `test` or `module`.
+        /// What the language calls it: `main`, `test` or `module`. A client that sends `tags` may leave it empty; one that does not is taken to mean this tag.
+        #[serde(default)]
         kind: String,
-        /// Its name in the file.
+        /// Its name in the file. A client that sends `variables` may leave it empty; one that does not is taken to mean the variable `name`.
+        #[serde(default)]
         name: String,
+        /// Every tag its language marked the place with; the tasks tied to any of them can run it.
+        #[serde(default)]
+        tags: Vec<String>,
+        /// What each capture of its place matched, by the capture's name, which a task reads as `$PM_CUSTOM_<name>`.
+        #[serde(default)]
+        variables: std::collections::BTreeMap<String, String>,
+        /// The line of the place, from zero, and the column of its start.
+        #[serde(default)]
+        position: Option<(usize, usize)>,
+        /// The name of the one task tied to the place that is run, when it is not the first.
+        #[serde(default)]
+        task: Option<String>,
         /// How many characters wide the window of the shell is.
         columns: u16,
         /// How many lines tall the window of the shell is.
         rows: u16,
+    },
+    /// The tasks that can run a place of a file that a language marks as runnable, the one `run_runnable` runs by default first.
+    RunnableTasks {
+        /// The folder.
+        directory: String,
+        /// The project the folder is part of, as for `run_task`.
+        #[serde(default)]
+        project: Option<String>,
+        /// The file, from the root of the folder.
+        path: String,
+        /// Every tag its language marked the place with.
+        tags: Vec<String>,
+        /// What each capture of its place matched, by the capture's name.
+        #[serde(default)]
+        variables: std::collections::BTreeMap<String, String>,
+        /// The line of the place, from zero, and the column of its start.
+        #[serde(default)]
+        position: Option<(usize, usize)>,
     },
     /// The toolchains installed on the server's machine and those the project keeps, and which each language of the project is set to use.
     Toolchains {
@@ -820,6 +887,15 @@ pub enum Request {
         /// The file, from the root of the folder.
         path: String,
     },
+    /// What the language server of an open file adds to one of the completions it offered: the item as it was listed in `resolve`, answered with the same item with its documentation, detail and the edits choosing it makes.
+    ResolveCompletion {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// What the item's `resolve` held.
+        item: String,
+    },
     /// What could be written at a place of an open file, once the file reaches `version`.
     Completion {
         /// The folder.
@@ -833,6 +909,9 @@ pub enum Request {
         /// The character typed that asked for completions, when one did.
         #[serde(default)]
         trigger: Option<String>,
+        /// The name of the scope of the language the place is in, when it is in one, which limits the servers that read the file besides its own to those that offer completions there.
+        #[serde(default)]
+        scope: Option<String>,
     },
     /// The edits that format an open file as its language says, or only a stretch of it, once the file reaches `version`.
     Format {
@@ -951,6 +1030,17 @@ pub enum Request {
         /// The place.
         position: pm_buffer::Position,
     },
+    /// What can be renamed at a place of an open file, once the file reaches `version`.
+    PrepareRename {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The version of the text the place is in.
+        version: i32,
+        /// The place.
+        position: pm_buffer::Position,
+    },
     /// Renames the thing at a place of an open file across its project, once the file reaches `version`.
     Rename {
         /// The folder.
@@ -974,6 +1064,9 @@ pub enum Request {
         version: i32,
         /// The stretch.
         span: pm_buffer::Span,
+        /// The kinds of change wanted, such as `source.organizeImports`; every kind when empty or not given.
+        #[serde(default)]
+        only: Option<Vec<String>>,
     },
     /// What each name of an open file is, once the file reaches `version`.
     SemanticTokens {
@@ -983,6 +1076,12 @@ pub enum Request {
         path: String,
         /// The version of the text the names are in.
         version: i32,
+        /// The reader's own rules for what the types of tokens look like, which come before the language's.
+        #[serde(default)]
+        rules: Vec<pm_lsp::TokenRule>,
+        /// The stretch the names are wanted for first; the whole file when not given.
+        #[serde(default)]
+        range: Option<pm_buffer::Span>,
     },
     /// What to show inside the lines of an open file within a stretch, once the file reaches `version`.
     InlayHints {
@@ -994,6 +1093,46 @@ pub enum Request {
         version: i32,
         /// The stretch the hints are wanted for.
         span: pm_buffer::Span,
+    },
+    /// Which stretches of an open file lead somewhere when pressed, once the file reaches `version`.
+    DocumentLinks {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The version of the text the links are about.
+        version: i32,
+    },
+    /// Where a link of an open file that the language server gave without an address leads.
+    ResolveLink {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The link as the server wrote it, from the target `unresolved`.
+        link: String,
+    },
+    /// The ways the language server offers to write a colour in place of a stretch of an open file, once the file reaches `version`.
+    ColorPresentations {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The version of the text the stretch is in.
+        version: i32,
+        /// The stretch the colour is written in.
+        span: pm_buffer::Span,
+        /// The colour, as red, green, blue and opacity from 0 to 255.
+        color: [u8; 4],
+    },
+    /// Which stretches of an open file spell a colour, once the file reaches `version`.
+    Colors {
+        /// The folder.
+        directory: String,
+        /// The file, from the root of the folder.
+        path: String,
+        /// The version of the text the colours are about.
+        version: i32,
     },
     /// Which stretches of an open file to show the values of while a program is paused, once the file reaches `version`.
     InlineValues {
@@ -1018,6 +1157,9 @@ pub enum Request {
         path: String,
         /// The version of the text the lenses are about.
         version: i32,
+        /// Whether the newest versions of the dependencies the file lists are looked up in their registry, and offered as lenses.
+        #[serde(default)]
+        dependencies: bool,
     },
     /// Presses one of the lenses last offered for an open file.
     PressCodeLens {
@@ -1107,5 +1249,22 @@ pub enum Request {
         /// The folder to put it in, made when it is not there; the usual folder for clones when nothing.
         #[serde(default)]
         under: Option<String>,
+    },
+    /// Tells the server whether this client can run the browser's tools for agents; the server sends an agent's call to a client that can.
+    BrowserAvailable {
+        /// Whether it can.
+        available: bool,
+    },
+    /// What a call the server sent with `browser_call` came to.
+    BrowserResult {
+        /// The call.
+        call: u64,
+        /// Whether the tool worked.
+        ok: bool,
+        /// What it says: the result, or why it failed.
+        text: String,
+        /// A picture the tool took as PNG, or nothing when it took none.
+        #[serde(default, with = "crate::bytes")]
+        image: Vec<u8>,
     },
 }

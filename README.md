@@ -103,9 +103,13 @@ Keymap starts the keys from Pandemonium's own, VS Code's, JetBrains' or
 Sublime Text's, and any action can be given keys of your own by pressing them.
 
 A language is a folder in [`languages/`](languages): a `config.toml` manifest,
-five queries (`highlights`, `indents`, `outline`, `injections`, `brackets`)
-and the icon its files are shown with, so no file icon ships with the app
-either. The manifest pins the grammar and says how the language server is
+tree-sitter queries (`highlights`, `indents`, `outline`, `injections`,
+`brackets`, and `runnables`, `overrides`, `redactions`, `textobjects` and
+`debugger` where it has them), `tasks.json` for the tasks its run buttons and
+its projects get, and the icon its files are shown with, so no file icon ships
+with the app either. A language can build on another with `inherits`, and its
+language servers, and what you set for them, are data too; see
+[docs/extensions.md](docs/extensions.md) for every file and key. The manifest pins the grammar and says how the language server is
 found and installed: a program you already have is used first, in the project
 (`.venv/bin`, `node_modules/.bin`) and then on your path; otherwise it is
 downloaded, built with `go install` or installed with `npm ci`, into a folder
@@ -113,7 +117,7 @@ per version. `languages/languages.json` lists the folders with a checksum for
 every file, every download is checked against the checksum it is pinned to,
 an npm install is pinned by the lockfile in the language's folder and a Go one
 by Go's checksum database. A
-release build reads the list from this repository at its own release tag, and a debug build such as `make run` from the checkout it was built from; point
+release build reads the list from this repository at its own release tag, and a debug build such as `make run`, or the preview that `make install` builds, from the checkout it was built from; point
 `PANDEMONIUM_LANGUAGES` at a folder or address to read it from elsewhere, and
 run `make languages` after changing a folder.
 
@@ -170,7 +174,9 @@ $env:PANDEMONIUM_CHANNEL = "preview"; irm https://raw.githubusercontent.com/Joak
 ## Building
 
 You need a recent stable Rust toolchain (edition 2024) and a GPU that wgpu is
-happy with. Agents are fetched with `npx` on first run, so Node helps too.
+happy with. Agents are fetched with `npx` on first run, so Node helps too. The
+embedded browser's helper is an Electron app, so `make run` and `make install`
+use `npm` to fetch it; see [docs/browser.md](docs/browser.md).
 
 ```sh
 git clone https://github.com/JoakimCarlsson/pandemonium.git
@@ -186,9 +192,10 @@ make fmt                     # cargo fmt --all
 make lint                    # cargo clippy --workspace --all-targets -- -D warnings
 make install                 # build this checkout and install it as pandemonium-preview
 make install-server          # build and install only pandemonium-server
+make uninstall               # remove pandemonium-preview and everything it keeps; the stable app is left alone
 make release VERSION=0.2.0   # bump, tag and push; CI builds and publishes
 make languages              # regenerate the language index after changing a language folder
-make extension-sample       # build the sample extension into build/extensions/hello
+make extension-sample       # build the sample extensions into build/extensions/hello and build/extensions/sample-server
 ```
 
 Build output and snapshots go in the git-ignored `build/` directory. For direct

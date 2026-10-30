@@ -4,10 +4,11 @@ use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
     Color, Radius, Role, animate_spin, bg, border, border_color, cursor_not_allowed,
-    cursor_pointer, flex, flex_1, flex_none, font_medium, font_mono, gap, h, items_center,
-    justify_between, justify_center, leading_ratio, min_w_px, opacity, px, ring, ring_color,
-    rounded, rounded_full, size, text_color, text_px, underline, w_px,
+    cursor_pointer, flex, flex_1, flex_col, flex_none, font_medium, font_mono, gap, h,
+    items_center, justify_between, justify_center, leading_ratio, min_h, min_w_px, opacity, px, py,
+    ring, ring_color, rounded, rounded_full, size, text_color, text_px, underline, w_px,
 };
+use pm_text::Shaper;
 use pm_ui::{Node, node, text};
 
 use crate::parts::{clipped, glyph};
@@ -79,6 +80,8 @@ pub struct Button {
     tone: Option<Role>,
     /// How far it reaches across its row.
     reach: Reach,
+    /// The lines its label is broken into when it is set to wrap, one text line each.
+    lines: Vec<String>,
 }
 
 impl Button {
@@ -99,6 +102,7 @@ impl Button {
             selected: false,
             tone: None,
             reach: Reach::Content,
+            lines: Vec::new(),
         }
     }
 
@@ -119,6 +123,7 @@ impl Button {
             selected: false,
             tone: None,
             reach: Reach::Content,
+            lines: Vec::new(),
         }
     }
 
@@ -201,15 +206,35 @@ impl Button {
         self
     }
 
-    /// The node that draws the button.
-    pub fn build(self) -> Node {
-        let ink = self.ink();
-        let (height, side, font, square) = match self.size {
+    /// The height, the side padding, the type size and the side of a square button at this size, all but the type size in steps.
+    fn measure(&self) -> (f32, f32, u32, f32) {
+        match self.size {
             Size::Xs => (7.0, 2.5, 12, 6.0),
             Size::Sm => (8.0, 3.0, 12, 7.0),
             Size::Md => (9.0, 4.0, 13, 8.0),
             Size::Lg => (10.0, 5.0, 13, 9.0),
+        }
+    }
+
+    /// The button with its label broken into lines that fit `width` logical pixels, so that a long label grows the button taller instead of running out of it.
+    pub fn wrapped(mut self, width: f32, shaper: &mut Shaper) -> Self {
+        let Some(label) = self.label.as_deref() else {
+            return self;
         };
+        let (_, side, font, _) = self.measure();
+        let inner = (width - 2.0 * side * 4.0).max(32.0);
+        let styles = [text_px(font), leading_ratio(1.4), font_medium()];
+        self.lines = pm_ui::wrap(shaper, label, styles, inner)
+            .into_iter()
+            .map(|part| label[part.start..part.end].trim_end().to_owned())
+            .collect();
+        self
+    }
+
+    /// The node that draws the button.
+    pub fn build(self) -> Node {
+        let ink = self.ink();
+        let (height, side, font, square) = self.measure();
         let spread = self.reach != Reach::Content;
         let mut styles = vec![
             flex(),
@@ -230,6 +255,8 @@ impl Button {
         ];
         if self.label.is_none() {
             styles.push(size(square));
+        } else if self.lines.len() > 1 {
+            styles.extend([min_h(height), px(side), py(1.5)]);
         } else {
             styles.extend([h(height), px(side)]);
         }
@@ -262,7 +289,14 @@ impl Button {
             if self.monospace {
                 words.push(font_mono());
             }
-            button = button.child(if spread {
+            button = button.child(if self.lines.len() > 1 {
+                words.extend([text_px(font), leading_ratio(1.4), text_color(ink)]);
+                node().styles([flex(), flex_col(), min_w_px(0)]).children(
+                    self.lines
+                        .iter()
+                        .map(|part| text(part).styles(words.clone())),
+                )
+            } else if spread {
                 clipped(label, font, ink).styles(words)
             } else {
                 words.extend([text_px(font), leading_ratio(1.4), text_color(ink)]);

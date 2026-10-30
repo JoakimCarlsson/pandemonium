@@ -35,6 +35,8 @@ pub struct SettingsPage {
     pub mono_fonts: Vec<String>,
     /// What looking for a newer release on the channel followed found, once it was looked for.
     pub release: Option<crate::update::Update>,
+    /// What the embedded browser's install is doing, or has done, said in a line.
+    pub browser: Option<String>,
     /// The form for adding or changing a server of the servers page, while it is open.
     pub server_form: Option<crate::settings_machines::MachineForm>,
     /// What the pages of what agents are given hold.
@@ -88,6 +90,7 @@ impl WorkspaceState {
             | Setting::LanguageTabSize
             | Setting::LanguageIndent => self.apply_indentation(),
             Setting::Scrollback => self.apply_scrollback(),
+            Setting::VimMode | Setting::VimClipboard | Setting::VimBindings => self.apply_vim(),
             Setting::Channel | Setting::CheckUpdates => {
                 self.settings_page.release = None;
                 if self.window.general.check_updates {
@@ -153,6 +156,11 @@ impl WorkspaceState {
         self
     }
 
+    /// Records what the embedded browser's install is doing, or has done, for the General page to say.
+    pub fn set_browser_status(&mut self, status: Option<String>) {
+        self.settings_page.browser = status;
+    }
+
     /// Whether a newer release than the running build is out.
     pub fn update_available(&self) -> bool {
         matches!(
@@ -161,13 +169,11 @@ impl WorkspaceState {
         )
     }
 
-    /// Opens the page of the newer release found, when one was.
-    pub(crate) fn open_release(&mut self) {
-        if let Some(crate::update::Update::Newer { url, .. }) = &self.settings_page.release {
-            self.outbox.push(Outgoing::Open {
-                address: url.clone(),
-            });
-        }
+    /// Whether an installed language or language server has a newer version than the machine has.
+    pub fn language_update_available(&self) -> bool {
+        self.extensions
+            .iter()
+            .any(|extension| extension.installed && extension.update.is_some())
     }
 
     /// The language whose settings the languages page shows, by id, when any is installed.

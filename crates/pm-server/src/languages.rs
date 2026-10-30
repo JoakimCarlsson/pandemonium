@@ -17,6 +17,8 @@ pub(crate) struct Installs {
     busy: Mutex<HashMap<String, String>>,
     /// Why installing each language last went wrong, by folder name.
     problems: Mutex<HashMap<String, String>>,
+    /// What the code of each extension last said it was doing, by the extension's folder name.
+    statuses: Mutex<HashMap<String, String>>,
 }
 
 /// The installed language whose folder name, or one of whose other names, is `name`, with its manifest.
@@ -36,8 +38,11 @@ pub(crate) fn installed_named(name: &str) -> Option<(String, Manifest)> {
 pub(crate) fn grammar(name: &str) -> Result<GrammarBundle, String> {
     let (id, manifest) =
         installed_named(name).ok_or_else(|| format!("no installed language is called {name}"))?;
-    let folder = pm_lsp::language_folder(&id)?;
-    let query = |file: &str| std::fs::read_to_string(folder.join(file)).unwrap_or_default();
+    let query = |file: &str| {
+        pm_lsp::language_file(&id, file)
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .unwrap_or_default()
+    };
     Ok(GrammarBundle {
         wasm: std::fs::read(pm_lsp::grammar_file(&id)?)
             .map_err(|error| format!("could not read the grammar of {id}: {error}"))?,
@@ -47,12 +52,28 @@ pub(crate) fn grammar(name: &str) -> Result<GrammarBundle, String> {
         injections: query("injections.scm"),
         brackets: query("brackets.scm"),
         runnables: query("runnables.scm"),
+        more: Box::new(pm_protocol::GrammarMore {
+            lenses: pm_lsp::run_lenses_of(&id),
+            emmet_dialect: manifest.emmet_dialect,
+            overrides: query("overrides.scm"),
+            redactions: query("redactions.scm"),
+            textobjects: query("textobjects.scm"),
+            debugger: query("debugger.scm"),
+            dependencies: query("dependencies.scm"),
+            word_characters: manifest.word_characters,
+            bracket_pairs: manifest.brackets,
+            increase_indent_pattern: manifest.increase_indent_pattern,
+            decrease_indent_pattern: manifest.decrease_indent_pattern,
+            decrease_indent_patterns: manifest.decrease_indent_patterns,
+        }),
         symbol: manifest.grammar,
         aliases: manifest.aliases,
         indent: manifest.indent,
         tabs: manifest.tabs,
         line_comment: manifest.line_comment,
         pairs: Some(manifest.pairs),
+        scopes: manifest.scopes,
+        tags: manifest.tags,
         id,
     })
 }
@@ -115,6 +136,7 @@ impl Core {
                 hidden: listing.hidden,
                 suffixes: listing.suffixes.clone(),
                 names: listing.names.clone(),
+                patterns: listing.patterns.clone(),
                 installed: false,
                 busy: None,
                 problem: None,
@@ -134,6 +156,7 @@ impl Core {
                     hidden: manifest.hidden,
                     suffixes: manifest.suffixes.clone(),
                     names: manifest.names.clone(),
+                    patterns: manifest.patterns.clone(),
                     ..ExtensionInfo::default()
                 });
             }
@@ -143,13 +166,26 @@ impl Core {
             infos.retain(|info| info.id != package.id);
             infos.push(crate::extensions::describe(&package, true));
         }
+        let index_now = installs
+            .index
+            .lock()
+            .ok()
+            .and_then(|held| held.clone())
+            .unwrap_or_default();
+        let statuses = installs
+            .statuses
+            .lock()
+            .map(|held| held.clone())
+            .unwrap_or_default();
         for info in &mut infos {
+            info.status = statuses.get(&info.id).cloned();
             info.owner = owners.get(&info.id).map(|package| package.id.clone());
             let mut server_ready = false;
             if let Some(manifest) = installed.get(&info.id) {
                 info.installed = true;
                 info.server = manifest.server.as_ref().map(pm_lsp::server_state);
                 server_ready = manifest.server.as_ref().is_none_or(pm_lsp::server_ready);
+                info.update = pm_lsp::update_for(&index_now, &info.id);
                 info.icon = icon_of(&info.id, manifest);
                 info.color = manifest.color.clone();
             }
@@ -164,6 +200,18 @@ impl Core {
     pub(crate) fn tell_extensions(&self) {
         let extensions = self.extension_infos(false);
         self.broadcast(&ServerMessage::ExtensionsChanged { extensions }, None);
+    }
+
+    /// Notes what the code of the extension `id` says it is doing, or that it says nothing when `text` is empty, and tells every client.
+    pub(crate) fn set_extension_status(&self, id: &str, text: &str) {
+        if let Ok(mut statuses) = self.installs.statuses.lock() {
+            if text.trim().is_empty() {
+                statuses.remove(id);
+            } else {
+                statuses.insert(id.to_owned(), text.trim().to_owned());
+            }
+        }
+        self.tell_extensions();
     }
 
     /// Notes that installing `id` is doing `step`, or nothing once it is over, and tells every client.

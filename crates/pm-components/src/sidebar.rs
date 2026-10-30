@@ -5,8 +5,8 @@ use pm_input::FocusId;
 use pm_style::{
     Radius, Role, absolute, animate_spin, bg, border, border_color, border_l, border_r, flex,
     flex_col, flex_none, gap, h, h_full, items_center, justify_center, left, mb, min_h, ml,
-    opacity, overflow_hidden, p, pl, pr, pt, px, rounded, rounded_full, shadow_md, size, top, w_px,
-    z,
+    opacity, overflow_hidden, p, pl, pr, pt, px, rounded, rounded_full, shadow_md, size, top_px,
+    w_px, z,
 };
 use pm_ui::{Node, node};
 
@@ -363,7 +363,7 @@ pub fn drag_ghost(state: &WorkspaceState) -> Option<Node> {
             .styles([
                 absolute(),
                 left(2),
-                top((drag.at.1 - ROW / 2.0) / 4.0),
+                top_px(drag.at.1 - ROW / 2.0),
                 z(60),
                 flex(),
                 items_center(),

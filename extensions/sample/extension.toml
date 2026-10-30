@@ -1,0 +1,13 @@
+# Sample: an extension that is only a language. The language builds on Python
+# and shows every file a language folder may hold beyond the usual queries:
+# overrides, redactions, text objects, debugger names, semantic token rules,
+# and the config.toml keys for line patterns, word characters and brackets.
+
+name = "Sample"
+version = "0.1.0"
+description = "A sample language that uses every editing query and key a language folder has."
+api = 1
+capabilities = ["process"]   # its language reads files with the Python language server
+
+[[languages]]
+folder = "languages/sample"

@@ -6,7 +6,10 @@ document says what they mean and how a client behaves.
 
 - **Version:** `1` (`pm_protocol::VERSION`).
 - **Transport:** a WebSocket on a TCP connection. Every message is one text
-  frame holding one JSON object. Binary frames are not used.
+  message holding one JSON object. Server messages larger than 16 MiB use
+  continuation frames, each carrying at most 16 MiB. Clients reassemble them
+  before decoding JSON, with the existing 64 MiB message limit. Binary frames
+  are not used.
 - **Direction:** the client sends `ClientMessage`s, the server sends
   `ServerMessage`s.
 
@@ -22,6 +25,7 @@ is the same in each: only the way to the server's port differs.
 | ssh    | Reads the remote `server.json` with `ssh <host> cat …`, opens a local port, and for each connection runs `ssh -W 127.0.0.1:<port> <host>` and pipes the bytes through. The server must already be running.      |
 | WSL    | On Windows, runs `wsl.exe -d <distro> --exec sh -c …` to read the distribution's `server.json`. When no server answers there, installs `pandemonium-server` with the installer if it is missing, starts it as a `wsl.exe` process of its own with `--listen 127.0.0.1:0`, so that it and the distribution outlive the client, and connects to `ws://127.0.0.1:<port>/` through WSL's localhost forwarding. |
 | Dev container | Reads the folder's `devcontainer.json` (`image`, `build`, `workspaceFolder`, `containerEnv`, `mounts`, `runArgs`, `postCreateCommand`), builds or pulls the image, and runs one container per folder, found again by its `pandemonium.folder` label, with the folder mounted at the workspace folder and port 6868 published on `127.0.0.1`. Installs and starts the server in it with `docker exec -d … --listen 0.0.0.0:6868`, reads its `server.json` with `docker exec`, and connects to the published port. Progress is reported step by step while this happens. |
+| Session container | A session started with `container` runs its agent and terminals through `docker exec` in the container of its worktree, made as above. The `devcontainer.json` is refused unless `runArgs` holds only `--init`, `--hostname` and `--env`, the workspace folder is an absolute path without `,`, `=`, quotes or control characters, a Dockerfile build reads only paths inside the worktree, and every entry of `mounts` is a volume, a tmpfs or a bind of a path inside the worktree after links are resolved, with no key besides `type`, `source`, `src`, `target`, `dst`, `destination` and `readonly`. The container is not a security boundary. |
 | Tunnel | Opens a local port and, for each connection, runs `cloudflared access tcp --hostname <hostname>` and pipes the bytes through it. The server's machine runs a named tunnel that points at the port the server listens on, so it only connects outward and opens no port. The token is the one the server was started with, kept by the client. |
 
 A project on another machine is addressed `ssh://<destination>/<folder>` for
@@ -105,13 +109,14 @@ request with exactly one `response` carrying the same `id`.
 | `files`        | `directory`, `limit`, `expanded` (optional)                                                      | `files`         |
 | `branches`     | `directory`                                                                                      | `branches`      |
 | `submodules`   | `directory`                                                                                      | `submodules`    |
+| `dev_container` | `directory`                                                                                    | `dev_container` |
 | `submodule_heads` | `directory`                                                                                   | `submodule_heads` |
-| `identity`     | `agent`                                                                                          | `identity`      |
+| `identity`     | `agent`, `login` (optional): a login id whose folder answers `selected`, instead of the one in use | `identity`      |
 | `set_accounts` | `logins`: `[{agent, id, name}]`, `in_use`: `[[agent, id]]`                                       | `done`          |
 | `set_session_account` | `session`, `login` (a login id, or `null` for the agent's own)                            | `done`          |
-| `sign_in`      | `agent`                                                                                          | `done`          |
+| `sign_in`      | `agent`, `login` (optional): a login id, signed in under its own folder and never the agent's default one | `done`          |
 | `sign_in_session` | `session` | `done` |
-| `start_session`| `agent`, `repository`, `directory`, `title`, `base`, `settings`, `text`, `attachments`, `submodule` | `started`       |
+| `start_session`| `agent`, `repository`, `directory`, `title`, `base`, `settings`, `text`, `attachments`, `submodule`, `container` | `started`       |
 | `prompt`       | `session`, `text`, `attachments`, `now` (optional, `false` by default)                           | `done`          |
 | `remove_queued` | `session`, `queued`                                                                            | `done`          |
 | `hurry`        | `session`, `queued`                                                                              | `done`          |
@@ -127,6 +132,8 @@ request with exactly one `response` carrying the same `id`.
 | `set`          | `session`, `setting`, `value`                                                                    | `done`          |
 | `attach`       | `session`, `after`                                                                               | `done`          |
 | `inspect`      | `directory`, `base`                                                                              | `inspected`     |
+| `standing`     | `directory`                                                                                      | `standing`      |
+| `diffs`        | `directory`, `paths`                                                                             | `diffs`         |
 | `projects`     | none                                                                                             | `projects`      |
 | `save_projects`| `paths`                                                                                          | `done`          |
 | `choices`      | none                                                                                             | `choices`       |
@@ -140,8 +147,10 @@ request with exactly one `response` carrying the same `id`.
 | `save_withheld`| `keys`: `[string]`                                                                               | `done`          |
 | `watch_folders`| `directories`: `[string]`                                                                       | `done`          |
 | `machine_settings`| none                                                                                          | `machine_settings` |
-| `save_machine_settings`| `settings`: `{git, history, agents, shell, languages, extensions}`                       | `done`          |
+| `save_machine_settings`| `settings`: `{git, history, agents, shell, languages, workspace, extensions, servers}`              | `done`          |
 | `latest_release`| `channel`: `stable` or `preview`                                                                 | `latest_release` |
+| `download_update`| `channel`, `version`                                                                            | `update_staged` |
+| `cancel_update`| none                                                                                              | `done`          |
 | `registry_agents`| none                                                                                             | `registry_agents`|
 | `search_tools` | `query`                                                                                          | `tool_listings` |
 | `accounts`     | none                                                                                             | `accounts`      |
@@ -174,7 +183,8 @@ request with exactly one `response` carrying the same `id`.
 | `terminals`    | none                                                                                             | `terminals`     |
 | `tasks`        | `directory`                                                                                      | `tasks`         |
 | `run_task`     | `directory`, `project` (optional), `task`: a [task](#tasks), `columns`, `rows`                   | `terminal`      |
-| `run_runnable` | `directory`, `project` (optional), `path`, `kind`, `name`, `columns`, `rows`                     | `terminal`      |
+| `runnable_tasks` | `directory`, `project` (optional), `path`, `tags`, `variables`, `position` (optional)       | `runnable_tasks` |
+| `run_runnable` | `directory`, `project` (optional), `path`, `kind` and `name` (optional, for clients that predate tags), `tags`, `variables`, `position` (optional), `task` (optional), `columns`, `rows` | `terminal`      |
 | `toolchains`   | `directory`, `project` (optional)                                                                | `toolchains`    |
 | `select_toolchain`| `project`, `language`, `toolchain` (optional)                                                 | `done`          |
 | `debug_scenarios`| `directory`, `file` (optional)                                                                 | `debug_scenarios` |
@@ -188,6 +198,8 @@ request with exactly one `response` carrying the same `id`.
 | `repositories` | `owner`, `organization`                                                                          | `repositories`  |
 | `folders`      | `path`                                                                                           | `folders`       |
 | `clone`        | `url`, `under` (optional)                                                                        | `directory`     |
+| `browser_available` | `available`                                                                                  | `done`          |
+| `browser_result` | `call`, `ok`, `text`, `image` (PNG bytes, optional)                                              | `done`          |
 | `extensions`   | none                                                                                             | `extensions`    |
 | `install_extensions` | `ids`                                                                                       | `done`          |
 | `remove_extension` | `id`                                                                                          | `done`          |
@@ -200,14 +212,19 @@ request with exactly one `response` carrying the same `id`.
 | `open_document`| `directory`, `path`, `language`, `version`, `text`                                               | `opened`        |
 | `change_document` | `directory`, `path`, `version`, `changes`: `[{span, text}]`                                   | `done`          |
 | `close_document` | `directory`, `path`                                                                            | `done`          |
-| `completion`   | `directory`, `path`, `version`, `position`, `trigger` (optional)                                 | `completions`   |
+| `completion`   | `directory`, `path`, `version`, `position`, `trigger` (optional), `scope` (optional)             | `completions`   |
+| `resolve_completion` | `directory`, `path`, `item`: a completion's `resolve`                                      | `completion_resolved` |
 | `hover`        | `directory`, `path`, `version`, `position`                                                       | `hovered`       |
 | `format`       | `directory`, `path`, `version`, `range` (optional)                                               | `formatted`     |
 | `format_on_type` | `directory`, `path`, `version`, `position`, `character`                                        | `formatted`     |
 | `folding_ranges` | `directory`, `path`, `version`                                                                 | `folding_ranges` |
 | `linked_ranges` | `directory`, `path`, `version`, `position`                                                      | `linked_ranges` |
-| `semantic_tokens` | `directory`, `path`, `version`                                                                | `semantic_tokens` |
+| `semantic_tokens` | `directory`, `path`, `version`, `rules`, `range` (optional)                                          | `semantic_tokens` |
 | `inlay_hints`  | `directory`, `path`, `version`, `span`                                                           | `inlay_hints`   |
+| `document_links` | `directory`, `path`, `version`                                                                 | `document_links` |
+| `colors`       | `directory`, `path`, `version`                                                                   | `colors`        |
+| `resolve_link` | `directory`, `path`, `link`: a link's `unresolved` target                                       | `link_resolved` |
+| `color_presentations` | `directory`, `path`, `version`, `span`, `color`: `[red, green, blue, alpha]`, each 0 to 255 | `color_presentations` |
 | `inline_values` | `directory`, `path`, `version`, `span`, `frame`, `stopped`                                      | `inline_values` |
 | `code_lenses`  | `directory`, `path`, `version`                                                                   | `code_lenses`   |
 | `press_code_lens` | `directory`, `path`, `index`                                                                  | `lens_pressed`  |
@@ -218,9 +235,10 @@ request with exactly one `response` carrying the same `id`.
 | `blame`        | `directory`, `path`, `line`                                                                      | `blamed`        |
 | `highlights`   | `directory`, `path`, `version`, `position`                                                       | `highlights`    |
 | `signature`    | `directory`, `path`, `version`, `position`                                                       | `signature`     |
+| `prepare_rename` | `directory`, `path`, `version`, `position`                                                     | `rename_target` |
 | `rename`       | `directory`, `path`, `version`, `position`, `name`                                               | `edited`        |
-| `code_actions` | `directory`, `path`, `version`, `span`                                                           | `code_actions`  |
-| `take_code_action` | `directory`, `path`, `index`                                                                 | `edited`        |
+| `code_actions` | `directory`, `path`, `version`, `span`, `only` (optional)                                        | `code_actions`  |
+| `take_code_action` | `directory`, `path`, `index`                                                                 | `edited`, or `action_taken` |
 | `file_history` | `directory`, `path`                                                                              | `file_history`  |
 | `local_history`| `directory`, `path`                                                                              | `local_history` |
 | `read_version` | `directory`, `path`, `version`                                                                   | `file`          |
@@ -235,6 +253,25 @@ request with exactly one `response` carrying the same `id`.
 each listing. Ignored paths are marked in the `ignored` response field so the
 tree can dim them. The optional `expanded` array is accepted for older clients
 and has no effect. Clients list again when notified of changes.
+
+A `directory` that is no repository but has repositories as direct children
+(each with a `.git` entry, hidden and bulky folders such as `node_modules`,
+`target`, `build` and `dist` not looked into) is a **folder of repositories**,
+and every request that works on a repository works across them. Paths stay
+relative to `directory`, so `api/src/main.rs` is `src/main.rs` of the child
+`api`. A path is acted on by the child that holds it: `stage`, `discard`,
+`ignore`, `read` of the last commit, `file_history`, `blame`, `permalink` and
+`read_conflict` run there, and fail for a path in none of them (a file that
+sits directly in the folder). `files` and `search_files` list the children's
+files under their paths from `directory`. `branches` lists the branches every
+child has before those only some have; `checkout`, `create_branch`, `commit`
+(only in children with something to commit, as staged or, with `tracked`,
+changed) and every `sync` operation run in each child, all of them even when
+one fails, and the `failed` message names each child that did, as `name: why`.
+`log` and `stashes` list nothing, and `stash`, `cherry_pick` and
+`revision_changes` fail, for such a folder: they need one repository. Such a folder is one even when it sits inside another
+repository; a folder with a `.git` entry of its own is a repository. A child that has submodules keeps
+everything said of them, its submodules' paths written from `directory`.
 
 - **`discover`:** starts the agent briefly and returns what it lets the reader
   change (models, modes, effort) and the commands it offers behind a slash.
@@ -267,6 +304,24 @@ and has no effect. Clients list again when notified of changes.
   of the worktree (or of `directory`). When the worktree has a branch, every
   submodule it checked out is put on a branch of the same name; one that cannot
   be is named in `skipped` too.
+  With `container`, set only for a folder that holds a `devcontainer.json`
+  (`dev_container` answers `configured`), the agent and the session's
+  terminals run in a dev container of their own for that session, started
+  before the agent: the same container path as a dev container machine, but
+  owned by the session's folder instead of the project folder, so two such
+  sessions of one project have two containers. The session's worktree gets a
+  copy of the git-ignored `.devcontainer` configuration, is mounted at the
+  workspace folder, and the container is removed with the session. Build and
+  start steps arrive as `Container` events; the agent keeps running when the
+  client disconnects. A folder without a `devcontainer.json` fails the request.
+  For a folder of repositories the worktree is a folder holding one worktree
+  per child, laid out under the child's name (`<worktree>/api`,
+  `<worktree>/web`), all checked out from `base` and, when the settings give a
+  branch, all on the same new branch; the agent works in the folder, and files
+  that sit directly in the project are not copied. `head` is the first child's.
+  When a child cannot be made the request fails naming it (`web: <why>`) and
+  the worktrees made before it are removed again, or named when they cannot
+  be; `skipped` names a child's submodules and files as `<child>/<path>`.
 - **`close_session`:** stops the session's agent and waits for its process to exit, drops its queued prompts and marks it `closed`. The
   log is kept, so the session still shows in `sessions` (with `closed: true`)
   and can be opened with `attach`. A session that has a worktree of its own
@@ -274,7 +329,10 @@ and has no effect. Clients list again when notified of changes.
   folder; while the worktree has changes that are not committed the request
   is answered `uncommitted` and the session stays open, unless `discard` is `true`.
   The branch the worktree was made on is deleted with it when every commit on
-  it is also on the session's base or a remote, and kept otherwise. A later `prompt` opens a closed session
+  it is also on the session's base or a remote, and kept otherwise. For a
+  folder of repositories every child's worktree and its branch are removed,
+  whatever commits the branch has, a child that fails does not stop the rest and is named in the
+  failure, and the folder goes when they are all removed. A later `prompt` opens a closed session
   again, and fails when its folder was removed. Other clients are told with `session_closed`.
 - **`rename_session`:** keeps `title` as the session's title, trimmed, and fails when it is empty.
   Every client watching the session is told with a `Titled` event, the one that asked included. The
@@ -342,9 +400,18 @@ and has no effect. Clients list again when notified of changes.
   so that it runs the hooks trusted. Nothing is trusted without this request.
 - **`attach`:** subscribes the connection to a session and replays the events
   numbered after `after`. See [Events](#events).
-- **`inspect`:** the files that differ from the last commit, with their diffs,
-  and, when `base` is given, the messages of the commits the branch has that
-  `base` has not, plus the branch and abbreviated head commit the folder is on.
+- **`standing`:** where a folder stands, answered from git's refs alone and so
+  at once however many files differ: the branch, the abbreviated head, what the
+  branch follows, the operation it is stopped in, and whether the folder is a
+  repository or holds some. A client asks for it beside `inspect` and shows the
+  branch from it without waiting for the files.
+- **`diffs`:** the diffs of the files `paths` names, each as `inspect` named it,
+  for a client to show only the files in view. Each answer is `{path, diff,
+  words}`, a file's lines from its first hunk on, at most 2000 of them, and for a
+  file git does not track all its lines as added.
+- **`inspect`:** the files that differ from the last commit, listed with the
+  lines they change but without their diffs (`lazy`), and, when `base` is
+  given, the messages of the commits the branch has that `base` has not, plus the branch and abbreviated head commit the folder is on.
   Each change's `words` is `[{line, ranges}]`: for a removed or added line of its
   diff, counted from 0 among the lines of `diff`, the `[start, end]` bytes of the
   line, without its marker, that differ from the line paired with it in the same
@@ -423,16 +490,48 @@ and has no effect. Clients list again when notified of changes.
   empty. `extensions` maps an extension's folder name to `{granted}`, the
   capabilities it was allowed; `save_machine_settings` does not change it, only
   `install_extension` and `grant_extension` do. `languages` maps a language's id to `{tab_size, hard_tabs,
-  format_on_save, server_off, server_command}`: the first three are for clients
-  to edit with and are optional; `server_off` keeps the language server from
-  reading the language, and a `server_command` is started in place of the one
-  the language comes with. Files already open move to the new server at once.
+  format_on_save, server_off, server_command, servers}`: the first three are for
+  clients to edit with and are optional; `server_off` keeps the language server
+  from reading the language, and a `server_command` is started in place of the
+  one the language comes with. `servers` lists the language servers that read
+  the language, by id and in order: the first is the language's server and the
+  rest run beside it, `...` stands for the servers that run when nothing is
+  chosen, and a server that is opt-in for the language is started only when it
+  is named. `servers` at the top maps a server's id to what is set for it,
+  whichever language it reads: `{binary, arguments, env, initialization_options,
+  workspace_configuration}`, each over what the language says. Files already
+  open move to the new servers at once, and a server whose settings changed is
+  stopped and started again.
+  `organize_imports_on_save` and `fix_all_on_save` are optional too, for
+  clients to decide whether saving first asks the language server for the
+  `source.organizeImports` and `source.fixAll` changes.
+  `workspace` is `{attach_repositories, folders}`: the folders besides a
+  project's own that its language servers work on. The server sends a language
+  server all of them as `workspaceFolders` when it starts it, the project's
+  folder first, and tells a running server which came and went with
+  `workspace/didChangeWorkspaceFolders` when the settings change, for a server
+  that says it follows them. `folders` are written `folder` for every project
+  or `project=folder` for one, a project named by its folder or that folder's
+  name, a folder that is not a full path taken from the project's root.
+  `attach_repositories` adds the folders inside the project that are
+  repositories of their own and the submodules of its repository. All of it is
+  resolved on the machine that holds the project, so a project on another
+  machine takes the folders of that machine's settings. A definition in an
+  attached folder comes as a file outside the project, with its text, and
+  `workspace_symbols` lists up to 25 symbols of attached folders in the same
+  way after those inside the project.
   The window sends the settings the server on its own machine keeps to every
   other server it reaches, as it reaches it and whenever they change, so a
   project on another machine works by the same settings.
 - **`latest_release`:** the newest release of the app on `channel`, looked up
   on the project's releases: the latest made for everyone for `stable`, the
   newest pre-release for `preview` (`nightly`, from a client older than the rename, is read as `preview`).
+- **`download_update`:** downloads the build of `version` made for the
+  server's platform from the release on `channel`, checks it against the
+  release's `SHA256SUMS` and unpacks it into the server's cache folder.
+  Progress is told to the asking client as `update_progress` messages
+  (`received` and `total` bytes, `total` zero when unknown); the answer is
+  `update_staged`, or `done` when `cancel_update` stopped it.
 - **`open_terminal`:** starts the user's shell (`$SHELL`, with `TERM=xterm-256color`)
   in a pseudo-terminal in `directory`, with a window of `columns` by `rows`. The
   connection is attached to the shell already. The shell keeps running when no
@@ -534,22 +633,28 @@ and has no effect. Clients list again when notified of changes.
   branches.
 - **`read_file`:** reads `path` from the working folder or, when `head`, from
   the last commit, or from the commit `revision` names by its object name. The response holds no text for a file that is not text, and
-  names the installed language the file is written in, by the endings and names
-  of files its manifest lists.
+  names the installed language the file is written in, by the endings, names
+  and name patterns of files its manifest lists.
 - **`extensions`:** every extension the list offers, then those
   installed on the server's machine that it does not, each as `{id, name,
-  kind, version, description, icon, color, hidden, suffixes, names, installed,
-  busy, problem, server, local}`. `kind` is what the extension is; `language` is the
+  kind, version, description, icon, color, hidden, suffixes, names, patterns,
+  installed, busy, problem, server, local}`. `kind` is what the extension is; `language` is the
   only kind so far. `icon` is the SVG an installed language's files are shown
   with and `color` its tint as `#rrggbb`; a client shows a file of no installed
   language as a plain file. `hidden` languages are
   installed only as part of another and left out of what a reader picks from;
   `busy` says what installing it is doing now, `problem` why installing it or
   its language server last failed, and `server` what the machine has of its
-  language server, in words. The list is `languages.json` read from
+  language server, in words. `update` says what is newer than what is
+  installed, the language as the list now has it or its language server, and
+  installing the language again, which a failed download leaves as it was,
+  brings it up to date. An extension package's `status` is what its
+  module last said it was doing, such as the release of a language server it
+  fetched, and its `problem` includes why its module was refused something. The
+  list is `languages.json` read from
   `https://raw.githubusercontent.com/JoakimCarlsson/pandemonium/<tag>/languages`,
   where the tag is the server's own release (`v<version>`); a debug
-  build reads the `languages` folder of its checkout instead, and
+  build, and the preview channel, read the `languages` folder of their checkout instead, and
   `PANDEMONIUM_LANGUAGES` names another folder or address for either. It is fetched again only
   when it changed, and the copy kept is used when it cannot be fetched. The
   language folders in `local-languages` in the server's data folder are listed
@@ -608,11 +713,29 @@ and has no effect. Clients list again when notified of changes.
   other languages that use it.
 - **`grammar`:** the grammar and queries of an installed language, found by its
   folder name or a name a code fence calls it, as `{id, symbol, aliases, wasm,
-  highlights, indents, outline, injections, brackets, indent, tabs,
-  line_comment, pairs}`. `wasm` is the tree-sitter grammar compiled to
+  highlights, indents, outline, injections, brackets, runnables, overrides,
+  redactions, textobjects, debugger, indent, tabs, line_comment, pairs,
+  scopes, tags, word_characters, bracket_pairs, increase_indent_pattern,
+  decrease_indent_pattern, decrease_indent_patterns}`. A language that builds on
+  another (`inherits`) is sent with the queries and grammar it takes from it.
+  `wasm` is the tree-sitter grammar compiled to
   WebAssembly, in base64; a client parses and highlights with it itself.
   `pairs` lists what the editor closes as it is opened, each the opening and
-  the closing character, such as `"()"`.
+  the closing character, such as `"()"`. `scopes` names parts of a file that are
+  edited differently, each as `{nodes, line_comment, block_comment, emmet}`:
+  `nodes` are the grammar's node kinds the scope is made of, the caret is in the
+  scope of the innermost of them it is strictly inside, `line_comment` replaces
+  the language's (an empty one means there are none inside), `block_comment` is
+  the `[open, close]` marks used when there is no line comment, and `emmet`
+  says whether abbreviations expand there; a language that sets `emmet` in any
+  scope expands them only in those that set it true; a scope the language's
+  `overrides` query captures is one without `nodes`. `word_characters` are the
+  characters besides letters, digits and the underscore that are part of a
+  word, `bracket_pairs` are `{start, end, close, not_in}` for the pairs that
+  are not closed in some scopes, and the three `*_indent_pattern*` keys are the
+  language's line patterns for indentation. `tags` names the node kinds
+  of `element`, `open`, `close` and tag `names`, with which the editor writes
+  the closing tag when the `>` of an opening tag is typed.
 - **`open_document`:** opens `path` of the folder `directory` for the language
   server of `language`, holding `text` at `version`, and starts that server for
   the folder when it is not running, which can take a while. The response gives
@@ -628,11 +751,25 @@ and has no effect. Clients list again when notified of changes.
   server once no open file of the folder uses it. A connection that goes away
   closes what it had open.
 - **`completion`, `hover`:** wait until the open file reaches `version`, then
-  ask its language server. `completions` holds `[{label, detail, kind, text,
+  ask its language server, and the companion servers the language names for the
+  project, whose answers are added to its own: a language's `[[companion]]` is a
+  second server that reads the same file, started only where its `detect` finds
+  a dependency in the root `package.json` or a file at the root, such as the
+  Tailwind CSS server for a project with `tailwindcss`. `scope` is the name of
+  the scope of the language the place is in; a companion that names `scopes` is
+  asked for completions only inside those. Companion servers' diagnostics are
+  not published. `completions` holds `[{label, detail, kind, text,
   span, filter, sort, documentation}]`, the best match for the word before
   `position` first, with snippets made plain text; `span`, when given, is what
   choosing it replaces, and `documentation` is markdown when the server sent
-  it with the list. `hovered` holds `{text, span}` in markdown, or null.
+  it with the list. Each item also holds `additional_edits`, `[{span, text}]`
+  that choosing it makes besides writing its text, such as the line that
+  imports it, and `resolve`, the item as its own server wrote it, set while
+  that server has more to say about it and never on a companion's items.
+  `resolve_completion` hands `resolve` back to the server that listed the item
+  and answers `completion_resolved` with the item completed: its
+  documentation, detail and `additional_edits`. `hovered` holds `{text, span}`
+  in markdown, or null.
 - **`format`:** the edits that format the open file at `version`, as its
   language server gives them; only the stretch `range` of it when that is
   given, and none when the server formats whole files only.
@@ -646,7 +783,28 @@ and has no effect. Clients list again when notified of changes.
   them, as the language server gives them; none when it knows of none.
 - **`semantic_tokens`:** what each name of the open file at `version` is, as
   the language server says, one token to a stretch of a line; none when it
-  does not say.
+  does not say. `rules` are the reader's own rules for what the types of tokens
+  look like, `{token_type, token_modifiers, style}`, which come before those of
+  the language's `semantic_token_rules.json`.
+  With a `range` (a span of whole lines) the server asks the
+  language server only for the names within it when the language server says
+  it can (`opened` tells `semantic_ranges`), and the answer has `partial` set;
+  otherwise, or without a `range`, the answer holds every name of the file and
+  `partial` is not set. A client with a long file asks for the lines in view
+  first and for the whole file after, and asks for a further `range` while the
+  whole file has not arrived and the view moves past the lines it holds.
+- **`document_links`:** which stretches of the open file at `version` lead
+  somewhere when pressed, as the language server says: web addresses, and
+  files inside the folder with the place they name. Links to anywhere else are
+  left out, and so are links the server gives no address for.
+- **`resolve_link`:** where a link the server gave without an address leads,
+  asked of the server that listed it when the link is pressed. `link_resolved`
+  holds `target`, a link target as in `document_links`, or null.
+- **`color_presentations`:** the ways the language server offers to write
+  `color` in place of `span`, such as `#rrggbb` or `rgb(…)`; `span` is the
+  stretch the colour is written in.
+- **`colors`:** which stretches of the open file at `version` spell a colour, as
+  the language server says; none when it does not say.
 - **`inlay_hints`:** what to show inside the lines of the open file at
   `version` within `span`, as the language server says; none when it does not
   say.
@@ -657,7 +815,11 @@ and has no effect. Clients list again when notified of changes.
 - **`code_lenses`:** what to show with stretches of the open file at
   `version`, as the language server says, each already filled in by the
   server. The server keeps the list as given, and `press_code_lens` takes one
-  by its place in it.
+  by its place in it. With `dependencies` set, the lenses of the language
+  server are followed by one for each dependency the file lists, when its
+  language says how and the registry names a newer release; pressing one
+  answers with the change that writes the version, and the lookups are
+  cached on the server. A client that does not send it gets none of these.
 - **`press_code_lens`:** presses one of the lenses last given for the open
   file: the places it points to when it counts uses, and otherwise the
   changes the language server made carrying out its command, as for
@@ -667,19 +829,28 @@ and has no effect. Clients list again when notified of changes.
   `references`, `incoming_calls`, `outgoing_calls`, `supertypes` or `subtypes`. A file inside the folder
   is named by its path from the root; one outside it by its absolute path, with
   the whole text it holds for the first four, to be shown read only.
+- **`prepare_rename`:** asks the language server what can be renamed at
+  `position`. `rename_target` holds `target`: `{span, placeholder}`, each null
+  when the server leaves it to the word at the place, or null when nothing
+  there can be renamed.
 - **`rename`, `take_code_action`:** carry out an edit across the folder. Files
   no connection has open are changed on disk by the server; the changes to the
   open ones come back in `edited` for the client to make, each a stretch of
   the file as it is before any of them. `code_actions` lists what the language
   server offers for `span`, and `take_code_action` takes one by its place in
-  the latest list for that file.
+  the latest list for that file. `only` limits the list to the kinds of change
+  named, such as `source.organizeImports` or `source.fixAll`, which the
+  language server is asked for in `context.only`; every kind when it is empty
+  or not given. A client organizes the imports of a file by asking for that
+  kind over the whole file and taking the one the server prefers.
 - **`search_files`:** the lines of the files of the folder's repository,
   tracked or not but not ignored, that hold `query`, as typed or as a regular
   expression when `regex`, matching case only when `case`; as `definitions`
   with `line` holding each line, at most 500 of them.
 - **`workspace_symbols`:** the symbols of the folder whose names match
   `query`, as the language server of the open file `path` finds them, those
-  defined inside the folder only, as `definitions` with `name` naming each.
+  defined inside the folder, or in a folder attached to its language server's
+  workspace (see `machine_settings`), as `definitions` with `name` naming each.
 
 A **position** is `{line, character}`, counted from 0, `character` in UTF-16
 code units as language servers count; a **span** is `{start, end}`.
@@ -699,24 +870,27 @@ embedded context, and anything else as a link to the stored file.
 | `discovery`  | `settings`, `commands`                                    |
 | `skills`     | `skills` (`[{name, description}]`), `names` (`[string]`)  |
 | `files`      | `paths`: repository-relative tracked, untracked and ignored files, `folders` (optional): untracked and ignored folders that may hold no file yet, `ignored` (optional): which paths and folders git ignores, listed so a tree can dim them |
-| `branches`   | `names`: local branches, the current one first, then remote ones such as `origin/main`; read from git at each request |
-| `submodules` | `paths`: every submodule's path from the root of the repository, nested ones included, initialised or not |
-| `submodule_heads` | `heads`: `[[path, head]]` for each checked out submodule, nested ones included: its branch, or `@ <commit>` on a detached head. `branches`, `checkout` and `create_branch` on a submodule's folder act on the submodule |
+| `branches`   | `names`: local branches, the current one first, then remote ones such as `origin/main`; read from git at each request. Of a folder of repositories, those every child has, then the rest |
+| `submodules` | `paths`: every submodule's path from the root of the repository, nested ones included, initialised or not; in a folder of repositories, each child followed by its submodules, from the folder, so a child is listed like a submodule |
+| `submodule_heads` | `heads`: `[[path, head]]` for each checked out submodule, nested ones included (in a folder of repositories each child first, then its submodules): its branch, or `@ <commit>` on a detached head. `branches`, `checkout` and `create_branch` on a submodule's or a child's folder act on that repository alone |
 | `stashes`    | `stashes`: `[{index, message, when}]`, newest first |
 | `log`        | `commits`: `[{id, refs, summary, lanes}]`, newest first |
 | `file`       | `text`: string or null for a file that is not text, `truncated`: whether it was cut short, `language` (optional): the installed language it is written in |
 | `bytes`      | `bytes` (base64): what a file holds, `truncated`: whether it was cut short |
 | `identity`   | `default`, `selected`: who the agent is signed in as, or null |
 | `started`    | `session`, `directory`, `branch` (always null for now), `head` (null without a worktree), `skipped`: `[[path, reason]]` for submodules the worktree could not check out |
-| `inspected`  | `changes`: `[{path, diff, words, staged, untracked, index, worktree, conflicted, from, submodule, moved}]`, files inside submodules listed under their paths from the root with `submodule` the submodule's path, and a submodule checked out at another commit than the one recorded as its own path with `moved`: `{from, to, commits, back}` (abbreviated commits, the subjects between them oldest first, `back` when it went back past them) and an empty `diff`, `commits`: `[string]` or null, `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind}`, `operation`: `Merge`, `Rebase` or `CherryPick` with what git prepared, or null |
+| `standing`   | `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind}`, `operation`: as in `inspected`, `repositories`: `[{path, branch, head, tracking}]`, `repository`: whether the folder is a repository or holds some |
+| `diffs`      | `files`: `[{path, diff, words}]`, one for each of the files asked for that a repository of the folder holds |
+| `inspected`  | `changes`: `[{path, diff, words, staged, untracked, index, worktree, conflicted, from, submodule, repository, moved, added, removed, lazy}]`, `added` and `removed` the lines the file puts in and takes out, counted over the whole file, and `lazy` true when `diff` and `words` are left out because the file's diff is asked for with `diffs` (an older server leaves `lazy` false and sends them), files inside submodules listed under their paths from the root with `submodule` the submodule's path, files of a folder of repositories listed under their paths from the folder with `repository` the child's folder name and null for one repository, and a submodule checked out at another commit than the one recorded as its own path with `moved`: `{from, to, commits, back}` (abbreviated commits, the subjects between them oldest first, `back` when it went back past them) and an empty `diff`, `commits`: `[string]` or null, `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind}`, `operation`: `Merge`, `Rebase` or `CherryPick` with what git prepared, or null, `repositories` (optional): `[{path, branch, head, tracking}]` for each child of a folder of repositories, empty for one repository; `branch`, `head` and `tracking` then sum up the children: the one branch they are all on or the branches joined by ` · `, the first child's commit, and the commits ahead and behind added up, following something only when every child does |
 | `projects`   | `paths`, `saved`                                          |
 | `choices`    | `choices`: `[[agent, setting, value]]`                    |
 | `agent_servers` | `servers`: `[{id, name, command, env, package, installer, home}]`                |
 | `mcp_servers` | `servers`: `[{name, target, env, description, website, enabled, extension}]`          |
 | `library`    | `product`, `items`, `withheld`, as described under `library` above |
 | `tool_sets`  | `product`, `sets`, `withheld`, as described under `library` above |
-| `machine_settings` | `settings`: `{git, history, agents, shell, languages, extensions}`, as `save_machine_settings` takes them |
-| `latest_release` | `version`: the version, or null when none was found; `url`: its page |
+| `machine_settings` | `settings`: `{git, history, agents, shell, languages, extensions, servers}`, as `save_machine_settings` takes them |
+| `latest_release` | `version`: the version, or null when none was found; `url`: its page; `name`, `published`, `body` (markdown notes): each null when absent; `assets`: `[{name, url, size}]` |
+| `update_staged` | `path`: where the checked and unpacked update is, to install from |
 | `registry_agents` | `agents`: `[{id, name, version, description, website, command, env}]` |
 | `tool_listings` | `listings`: `[{id, title, description, name, target, env, inputs, asks, website}]` |
 | `accounts`   | `logins`: `[{agent, id, name}]`, `in_use`: `[[agent, id]]` |
@@ -724,27 +898,33 @@ embedded context, and anything else as a link to the stored file.
 | `terminal`   | `terminal`: the number of the shell that was started      |
 | `terminals`  | `terminals`: `[{terminal, directory, columns, rows}]`, oldest first; `directory` is the address `open_terminal` was given |
 | `tasks`      | `tasks`: `[Task]`, those the project writes first; `problem`: why its own file could not be read, when it could not |
-| `toolchains` | `toolchains`: `[{language, id, name, detail, selected}]`, grouped by language |
+| `runnable_tasks` | `tasks`: `[{name, command}]` that can run the place, the one `run_runnable` runs by default first |
+| `toolchains` | `toolchains`: `[{language, id, name, detail, selected, language_name}]`, grouped by language; `language_name` is what the manifest of a language of the family calls it, such as `Node.js` |
 | `debug_scenarios` | `scenarios`: `[{label, adapter, installed, attach, source, task}]`, the order `debug_start` chooses by; `task` is the task the scenario names to run first |
-| `debug_processes` | `adapters`: `[{id, name}]` installed, `processes`: `[{pid, name, command}]`, newest first |
+| `debug_processes` | `adapters`: `[{id, name, attach_names}]` installed, where `attach_names` are the starts of the names of the programs an adapter attaches to, an empty one standing for any, `processes`: `[{pid, name, command}]`, newest first |
 | `debug`      | `debug`: the number of the session, `view`: the [view](#debugging) of it now |
 | `debugs`     | `debugs`: `[{debug, directory, label}]`, oldest first      |
 | `owners`     | `owners`: `[{login, organization}]`                       |
 | `repositories` | `repositories`: `[{name, description, private, url}]`   |
 | `folders`    | `path`: absolute, `names`: the folders inside it           |
 | `directory`  | `path`: a `clone` made   |
-| `extensions` | `extensions`: `[{id, name, kind, version, description, icon, color, hidden, suffixes, names, installed, busy, problem, server, local, owner, provides, requests, granted}]` |
+| `extensions` | `extensions`: `[{id, name, kind, version, description, icon, color, hidden, suffixes, names, patterns, installed, busy, problem, server, local, owner, provides, requests, granted, status}]` |
 | `extension_preview` | `extension`: one entry as `extensions` lists them, not installed, with what it `provides` and `requests` |
 | `extension_assets` | `themes`: `[{extension, name, dark, light}]`, `icon_themes`: `[{extension, name, icons: [{suffix, svg, color}]}]`, `commands`: `[{extension, id, title, description}]` |
 | `extension_command` | `prompt`: the text to put in the prompt box, `message`: a line to tell the reader; each is optional |
-| `grammar`    | `{id, symbol, aliases, wasm, highlights, indents, outline, injections, brackets, indent, tabs, line_comment}` |
-| `opened`     | `triggers`: the characters after which the server offers completions; `signature`: those after which it tells what the call the caret is in looks like; `format`: those after which it formats what was typed; `formats_ranges`, `folds`, `links`, `semantic_tokens`, `inlay_hints`, `code_lens`, `inline_values`: whether it formats a stretch, says what can be folded, says what is edited together, says what each name is, says what to show inside lines, says what to show with stretches and says which names to show the values of while a program is paused |
-| `completions`| `items`: `[{label, detail, kind, text, span, filter, sort, documentation}]`, `kind` one of `function`, `variable`, `type`, `module`, `keyword`, `constant`, `snippet`, `other` |
+| `grammar`    | `{id, symbol, aliases, wasm, highlights, indents, outline, injections, brackets, runnables, overrides, redactions, textobjects, debugger, indent, tabs, line_comment, pairs, scopes, tags, word_characters, bracket_pairs, increase_indent_pattern, decrease_indent_pattern, decrease_indent_patterns}` |
+| `opened`     | `triggers`: the characters after which the server offers completions; `signature`: those after which it tells what the call the caret is in looks like; `format`: those after which it formats what was typed; `formats_ranges`, `folds`, `links`, `semantic_tokens`, `inlay_hints`, `code_lens`, `inline_values`, `document_links`, `colors`, `semantic_ranges`: whether it formats a stretch, says what can be folded, says what is edited together, says what each name is, says what to show inside lines, says what to show with stretches and says which names to show the values of while a program is paused, says which stretches lead somewhere when pressed and says which stretches spell a colour and says what the names of a stretch are |
+| `completion_resolved` | `item`: a completion, as in `completions`, with what its server added when asked |
+| `completions`| `items`: `[{label, detail, kind, text, span, filter, sort, documentation, additional_edits, resolve}]`, `kind` one of `function`, `variable`, `type`, `module`, `keyword`, `constant`, `snippet`, `other` |
 | `hovered`    | `hover`: `{text, span}` or null |
 | `formatted`  | `edits`: `[{span, text}]` |
 | `folding_ranges` | `ranges`: `[{start, end}]`, the first and last line of each block, counted from 0 |
 | `linked_ranges` | `spans`: the stretches edited together |
-| `semantic_tokens` | `tokens`: `[{line, start, length, kind}]`, `start` and `length` in UTF-16 code units, `kind` one of `keyword`, `function`, `type`, `string`, `constant`, `comment`, `property`, `operator`, `variable` |
+| `semantic_tokens` | `tokens`: `[{line, start, length, kind}]`, `start` and `length` in UTF-16 code units, `kind` one of `keyword`, `function`, `type`, `string`, `constant`, `comment`, `property`, `operator`, `variable` Also `partial`, set when the tokens are those of the requested `range` alone. |
+| `document_links` | `links`: `[{span, target}]`, `target` one of `{kind: "url", address}`, `{kind: "file", path, position}` with `position` null when the link names none, or `{kind: "unresolved", link}` for a link the server says where it leads only when asked |
+| `link_resolved` | `target`: a link target as in `document_links`, or null |
+| `color_presentations` | `presentations`: `[{label, span, text, additional_edits}]`, `additional_edits` as in `completions` |
+| `colors` | `colors`: `[{span, red, green, blue, alpha}]`, each channel from 0 to 255 |
 | `inlay_hints` | `hints`: `[{position, label, kind, pad_left, pad_right}]`, `kind` one of `type`, `parameter`, `other`, `value` |
 | `inline_values` | `values`: `[{span, kind, text}]`, `kind` one of `text` (`text` is the text), `variable` (`text` the name, or none for the one the span spells), `expression` (`text` the expression, or none for the one the span spells) |
 | `code_lenses` | `lenses`: `[{span, title, pressable}]` |
@@ -756,6 +936,7 @@ embedded context, and anything else as a link to the stored file.
 | `problems`   | `problems`: `[{path, diagnostic}]`, what the language servers last said is wrong with each file of the folder, open or not, the worst first |
 | `signature`  | `signature`: `{label, active, documentation, others}` or null; `active` is the byte range of `label` naming the parameter the place is at, `others` how many more signatures there are |
 | `edited`     | `files`: `[{path, changes: [{span, text}]}]` |
+| `action_taken` | `files`: as of `edited`; `shown`: the documents the language server asked to have shown while it carried the change out, each a link target as in `document_links`, a web address to open or a file to go to; sent instead of `edited` when there are any, such as the page of documentation a command opens. A page the server serves on its own machine is only reachable from a client on that machine |
 | `file_history` | `commits`: `[{object, id, author, when, time, summary, path}]`, newest first, following the file back through moves; `path` is what it was called in that commit and `time` when it was written, in seconds since the Unix epoch |
 | `local_history` | `versions`: `[{id, size}]`, the states the file was kept in each time it was saved, newest first; `id` is when it was kept, in milliseconds since the Unix epoch, and `size` how many bytes it held |
 | `conflict`   | `files`: `{ours, theirs, base, merged, language}`: what each side of a conflicted file holds, each text or null for a side that has no such file, `merged` the file as the working folder holds it with the markers git wrote, `language` as of `file` |
@@ -851,6 +1032,7 @@ Events use serde's default form, one key naming the type.
 | `{"SignedOut": {"reason", "account"}}` | The turn ended because the session account needs signing in again. Send `sign_in_session`; do not append the reason as an assistant reply. |
 | `"SignedIn"` | The session account was signed in again. Clear its sign-in notice. |
 | `{"Failed": "reason"}`        | The agent could not be started or stopped. The next `prompt` starts it again.                             |
+| `{"Container": "step"}`       | The dev container of the session is coming up: what it is doing now. Cleared when the agent starts.      |
 | `{"Titled": "text"}`          | The agent named the session, or named it again. The server keeps it as the session's `title`.            |
 | `{"Hooks": [Hook]}`           | The hooks the session's Codex holds back until the reader trusts them, all of them as they stand now. Replaces the earlier list; empty when none is held back. Told when a Codex session starts and again when a file the hooks are read from changes. Trust them with `trust_hooks`. |
 | `{"Prompted": {text, files, checkpoint}}` | A client handed the agent a turn. Sent to every client watching the session, the one that sent it included. `files` are names. `checkpoint` (absent means `false`) says the files were kept before the turn, so `restore` can put them back. |
@@ -893,6 +1075,8 @@ keeps its own emulator for them.
 ```json
 { "type": "terminal_output", "terminal": 1, "offset": 0, "data": "<base64>" }
 { "type": "terminal_exited", "terminal": 1 }
+{ "type": "terminal_serving", "terminal": 1, "url": "http://localhost:5173/" }
+{ "type": "session_serving", "session": 3, "url": "http://localhost:5173/" }
 ```
 
 - `terminal_output`: bytes the shell printed. `offset` is how many bytes it had
@@ -906,6 +1090,25 @@ keeps its own emulator for them.
   with `after: 0` for each shell `terminals` lists.
 - `terminal_exited` is sent to every client when the shell's process ends, and
   the shell is forgotten.
+- `terminal_serving` is sent to the connections attached to a shell when a
+  program started in it serves a web page. The server finds one when a line of
+  output holds a bare `http://` address of a local port (`localhost`,
+  `127.0.0.1`, `0.0.0.0` or `[::1]`, with no path), the port was not listening
+  when the reader last pressed Enter in that shell and is now, and a request for
+  `/` on it answers with an HTML document that is not a redirect, a 404 or the
+  discovery endpoint of a browser's debugger. It is sent once for each address a
+  command prints. `url` is the address on the server's machine, so a client
+  carries it to that machine's port as it does for any page. A shell in a dev
+  container is not seen, since its ports are the container's.
+- `session_serving` is sent to every client when a program that works in the
+  folder of a session starts to listen on a port and the port answers with a web page as above. This finds what an agent
+  starts with its own tools, which no shell shows the server. The server looks
+  at the listening ports once a second and ignores what listened when it
+  started; a program that works elsewhere is not the session's, even when a
+  shell of the session started it. A port that stops listening is forgotten, so the page is announced
+  again when a program listens on it again. A page is announced once, whether a
+  shell or this found it first. The program is matched to a session on Linux
+  through the sockets of `/proc`, elsewhere through `lsof`.
 - `terminal_input` carries what a terminal sends the shell for a key or a paste
   (`"\r"` for Enter, `"\u001b[A"` for the up arrow), and the answers an
   emulator gives to the shell's queries.
@@ -927,13 +1130,18 @@ one.
   shell's environment. `group` is `build`, `test`, `run` or empty. `language` is
   the family of the toolchain it runs with (`rust`, `javascript`, `python`,
   `go`) or empty. `source` is where it was found. Only `name` and `command` are
-  required when a client sends one.
+  required when a client sends one. `tags` are the tags of the places of a file
+  the task is run from; a task of the project with a tag is run from a place
+  with it in place of the tasks the languages ship for the tag.
 - `tasks` lists them: those written in `.pandemonium.tasks.json` in the root of
   the folder, `{"tasks": [{"name", "command", …}]}`, then those its manifests
-  imply: Cargo (`build`, `check`, `test`, `clippy`, `run`), the scripts of a
-  `package.json` run with the package manager its lockfile names, the targets of
+  imply, which the `tasks.json` of each installed language makes of them:
+  Cargo (`build`, `check`, `test`, `clippy`, `run`), the scripts of a
+  `package.json` run with the package manager its lockfile names (a Next.js
+  app lists its `dev`, `build`, `start` and `lint` scripts), the targets of
   a Makefile, Go modules and Python projects. A detected task a written one has
-  the name of is left out.
+  the name of is left out, and so is a written task that reads a variable of a
+  place in a file.
 - `run_task` starts the user's shell in the task's folder with the task's
   environment and the toolchain chosen for its language, types the command into
   it, and answers `terminal` as `open_terminal` does: the connection is attached
@@ -942,23 +1150,29 @@ one.
   choice is kept for; the repository the folder is a worktree of when it is
   missing, and the folder itself when it is not in one.
 - `run_runnable` does the same for a place a language marks as runnable in the
-  file `path`, such as a `main` or a test function. The language's
-  `config.toml` says what running each `kind` is, with `{name}` standing for
-  `name`, and the nearest folder above the file that holds the `marker` file it
-  names is the folder the command runs in. A language marks places with its
-  `runnables.scm`, whose captures `@run.<kind>` and `@name` clients read.
+  file `path`, such as a `main`, a test function or a service of a compose
+  file. The client sends what its copy of the language's `runnables.scm` found:
+  the place's `tags` (`kind` is the one tag of a client that sends none, as it was when kinds were fixed),
+  what each of its captures matched as `variables` (`name` is the one
+  `name` variable of a client that sends none) and its `position`, a line and a
+  column from zero. The server runs the first task tied to any of the tags: the
+  project's own task with a tag, when it has one, or else a template of an
+  installed language's `tasks.json`; `task` names another of those tied to the
+  place. The command has the variables of the file, the place and its captures
+  put in, and its shell is started with them in its environment as
+  `PM_CUSTOM_<name>` and the `PM_` variables of the extensions document. The
+  nearest folder above the file that holds a template's `marker` file is the
+  folder the command runs in.
+- `runnable_tasks` lists the tasks that can run a place, as `run_runnable` would pick them, so that a client can let the reader choose one; the name of the chosen one is `run_runnable`'s `task`.
 - `toolchains` lists what is installed on the server's machine, and the virtual
-  environments the project keeps, for each language: the toolchains of rustup,
-  the Node.js versions nvm and fnm keep, Python found on the path, in the
-  project's `.venv` and in pyenv, and Go found on the path, in `/usr/local/go`
-  and in `~/sdk`. `system` is the one the machine's own path finds. `selected`
+  environments the project keeps, for each language, in the places the
+  `toolchain_source` tables of its installed language folders name. `system` is the one the machine's own path finds. `selected`
   marks the one the project's language is set to, which is `system` until one is
   chosen. `select_toolchain` chooses `toolchain` for `language` in `project`, or
   clears the choice when it is missing. The choice is kept by the server and used
   for the tasks it runs, including the one a debug scenario names, and for the
   language servers it starts for the project.
-- A debug scenario that names a task, `preLaunchTask` in a `launch.json` or
-  `build` in `.zed/debug.json`, shows it as `task` in `debug_scenarios`. `debug_start`
+- A debug scenario that names a task, `preLaunchTask` in a `launch.json`, shows it as `task` in `debug_scenarios`. `debug_start`
   runs that task to its end first and fails, with what the task printed last,
   without starting the adapter when the task is not one of the project's or does
   not succeed.
@@ -968,14 +1182,17 @@ one.
 A program is debugged by a debug adapter the server runs beside the folder, over
 the Debug Adapter Protocol. The server keeps the session going when no client is
 attached, and tells the connections watching it what it looks like after it
-moves on.
+moves on. Which adapters there are, and what a file can be debugged as with
+nothing written, is the `debug_adapter` and `debug_scenario` tables of the
+installed languages' `config.toml` and the `debug_adapters` of the installed
+extensions, described in [`docs/extensions.md`](extensions.md).
 
 ```json
 { "type": "debug", "debug": 1, "view": { "label": "Python: Current File", "standing": "stopped", "reason": "breakpoint", "threads": [], "thread": 1, "frames": [], "frame": 7, "scopes": [], "variables": [], "watches": [], "watched": [], "lines": [], "line_count": 0, "placed": [] }, "events": [{ "paused": { "id": 7, "name": "main", "path": "/home/me/app/main.py", "line": 11, "column": 0 } }] }
 ```
 
 - `debug_scenarios` lists what a folder can be debugged as: the configurations
-  of `.pandemonium.launch.json`, `.vscode/launch.json` and `.zed/debug.json`, and what the file in front can
+  of `.pandemonium.launch.json`, and `.vscode/launch.json`, and what the file in front can
   be run as without any written. `debug_start` chooses one by its place in that
   list, with `file` the same as it was asked for, and sets `files` as the
   breakpoints, lines counted from zero, before the program runs.
@@ -999,6 +1216,65 @@ moves on.
   `standing: "ended"` and the server forgets it.
 - `debugs` lists the sessions the server holds, for a client that attaches after
   a restart of the window; `debug_watch` subscribes to one and answers its view.
+
+## Browser tools
+
+A window that has the embedded browser turned on lets the agents of a server
+look at and use its browser. Agents reach the tools as an MCP server the
+server hosts on its loopback address; the server hands each call to a window.
+
+```json
+{ "type": "browser_call", "call": 7, "tool": "browser_screenshot", "arguments": "{}" }
+```
+
+- `browser_available` tells the server whether this connection can run the
+  tools. Send it with `available: true` after connecting and again from time
+  to time; the server uses the connection that said so most recently, and
+  forgets it when the connection ends.
+- An agent is given the tools when it starts, once any connection has said it
+  can run them, and keeps them while no connection can: a call then fails with
+  a message saying so. An agent that was started before any window could run
+  them does not have them until it is started again.
+- `browser_call` is sent to that connection when an agent calls a tool. The
+  tools are `browser_navigate`, `browser_snapshot`, `browser_screenshot`,
+  `browser_click`, `browser_type`, `browser_select_option`, `browser_press_key`, `browser_scroll`,
+  `browser_back`, `browser_forward`, `browser_reload`, `browser_evaluate`,
+  `browser_console`, `browser_network`, `browser_wait`, `browser_handle_dialog`,
+  `browser_hover`, `browser_drag`, `browser_fill_form`, `browser_highlight`,
+  `browser_get_bounding_box` and `browser_resize`; `arguments` is the JSON the
+  agent gave. `browser_screenshot` also takes `full_page`, or `ref` or
+  `selector` for one element. The schema of each tool is in
+  `crates/pm-server/src/browser_tools.rs`; how the helper runs them is in
+  [browser.md](browser.md#what-agents-can-do-with-a-page). The tools add no
+  message: they travel in `browser_call` and `browser_result` as before.
+- Tabs add a tool and an argument, not a message. `browser_tabs` (`action` is
+  `list`, `open`, `select` or `close`, with `url` and `tab`) and an optional
+  integer `tab` on every other tool travel in `arguments` of `browser_call` as
+  before; the window resolves the tab, refuses the tools that change a tab the
+  reader locked with `browser_result` `ok` false, and answers `browser_tabs`
+  itself. A window that predates tabs ignores `tab` and fails `browser_tabs` as an
+  unknown tool. See [browser.md](browser.md#tabs).
+- `browser_result` answers a call with the text the tool produced and, for
+  `browser_screenshot`, the PNG it took. The server answers the agent with it,
+  or with an error when no connection answers within a minute and a half or
+  none can run the tools.
+- The window may refuse where a tool takes the page. With Settings, General,
+  "Restrict agent browsing" on, `browser_navigate`, `browser_back`,
+  `browser_forward` and `browser_reload`, and any move the page makes by itself
+  or by a redirect while a call runs, are limited to `localhost`, `127.0.0.1`,
+  `[::1]` and the origins the reader listed. The refusal comes back as a
+  `browser_result` with `ok` false whose `text` names the origin and says why;
+  a call that only clicked appends the same sentence when the click was
+  kept from moving the page. The setting belongs to the window and is enforced
+  by its browser helper, so it adds nothing to the messages above and the server
+  does not know of it. See [browser.md](browser.md#keeping-the-reader-safe).
+
+What the reader adds to a prompt from the browser pane, screenshots of the page
+and its console, adds nothing to this protocol. The window carries the pictures
+in the `attachments` of `start_session` and `prompt`, as it carries a pasted
+picture, and writes the console lines into `text`, as a fenced block under a
+sentence that says the page wrote it. The messages between the window and the
+browser helper that take them are in [browser.md](browser.md#adding-screenshots-and-the-console-to-the-prompt).
 
 ## Extensions
 

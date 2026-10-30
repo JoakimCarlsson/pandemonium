@@ -54,7 +54,14 @@ impl Folder {
     fn find(directory: &str) -> Self {
         let root = crate::handler::place(directory);
         let mut git = Vec::new();
-        if let Some((own, common)) = pm_git::git_folders(&root) {
+        let repositories = match pm_git::child_repositories(&root).as_slice() {
+            [] => vec![root.clone()],
+            children => children.iter().map(|child| root.join(child)).collect(),
+        };
+        for repository in repositories {
+            let Some((own, common)) = pm_git::git_folders(&repository) else {
+                continue;
+            };
             if !own.starts_with(&root) {
                 git.push((own, RecursiveMode::NonRecursive));
             }

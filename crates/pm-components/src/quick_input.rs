@@ -3,9 +3,9 @@
 use pm_input::FocusId;
 use pm_style::{
     Radius, Role, ShadowLayer, absolute, bg, border, border_color, border_t, cursor_pointer, flex,
-    flex_1, flex_col, flex_none, font_semibold, gap, h_px, items_center, leading_ratio, left,
-    min_w_px, overflow_hidden, pb, pt, px, rounded, shadow_layers, text_color, text_px, top, w_px,
-    z,
+    flex_1, flex_col, flex_none, font_semibold, gap, h_px, items_center, leading_ratio, left_px,
+    min_w_px, overflow_hidden, pb, pt, px, rounded, shadow_layers, text_color, text_px, top_px,
+    w_px, z,
 };
 use pm_ui::{Node, node, text};
 
@@ -59,8 +59,8 @@ pub fn quick_input(listing: &Listing) -> Node {
     node()
         .styles([
             absolute(),
-            left(listing.at.0 / 4.0),
-            top(listing.at.1 / 4.0),
+            left_px(listing.at.0),
+            top_px(listing.at.1),
             z(60),
             flex(),
             flex_col(),

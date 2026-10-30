@@ -139,9 +139,14 @@ fn user_message(state: &WorkspaceState, session: &Session, index: usize, width: 
         true => bubble,
         false => bubble.child(crate::composer::sent_files(state, &message.attachments)),
     };
-    let bubble = match message.text.is_empty() {
+    let (typed, elements) = crate::elements::split(&message.text);
+    let bubble = match elements.is_empty() {
         true => bubble,
-        false => bubble.child(paragraph(&message.text, Role::Text, width * 0.85 - 32.0)),
+        false => bubble.child(crate::elements::sent_chips(&elements)),
+    };
+    let bubble = match typed.is_empty() {
+        true => bubble,
+        false => bubble.child(paragraph(typed, Role::Text, width * 0.85 - 32.0)),
     };
     node()
         .styles([flex(), flex_col(), gap(1)])
@@ -235,7 +240,7 @@ fn agent_message(
             .get(recorded)
             .filter(|(at, _)| *at <= before)
         {
-            reply = reply.child(answered(answers));
+            reply = reply.child(answered(answers, width, shaper));
             recorded += 1;
         }
         let base = number * FOLDS_PER_PIECE;
@@ -257,7 +262,7 @@ fn agent_message(
         reply = reply.child(run(shown, message.steps.len()));
     }
     for (_, answers) in &message.answers[recorded..] {
-        reply = reply.child(answered(answers));
+        reply = reply.child(answered(answers, width, shaper));
     }
     if !message.bullets.is_empty() {
         reply = reply.child(node().styles([flex(), flex_col(), gap(1.5)]).children(
@@ -393,7 +398,9 @@ pub fn chat(
     if let Some(ask) = asking.filter(|ask| ask.plan.is_none()) {
         messages = messages.child(question(ask, column, shaper));
     } else if asking.is_none() && session.inquiry.is_none() && session.status == Status::Working {
-        let label = if session.echoes > 0 {
+        let label = if let Some(step) = &session.container {
+            step.as_str()
+        } else if session.echoes > 0 {
             "Sending prompt…"
         } else {
             "Thinking…"

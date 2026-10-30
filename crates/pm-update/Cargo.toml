@@ -1,0 +1,13 @@
+[package]
+name = "pm-update"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+flate2 = "1.1.10"
+pm-store.workspace = true
+sha2 = "0.11.1"
+tar = { version = "0.4.46", default-features = false }
+ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
+zip = { version = "9.0.3", default-features = false, features = ["deflate"] }

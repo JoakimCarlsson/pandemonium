@@ -56,3 +56,64 @@ impl Document {
         held.1.clone()
     }
 }
+
+/// A link at the end of a line that runs a place of the file with one task of its language.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RunLensItem {
+    /// The line the place starts on.
+    pub line: usize,
+    /// What the link says, and what the task is called.
+    pub label: String,
+    /// The place it runs.
+    pub place: Runnable,
+}
+
+impl Document {
+    /// Whether the language shows `place` as links at the end of its line instead of a run button.
+    pub fn is_lens_place(&self, place: &Runnable) -> bool {
+        self.editing
+            .run_lenses
+            .iter()
+            .any(|(tags, _)| tags.iter().any(|tag| place.tags.contains(tag)))
+    }
+
+    /// Whether the language puts links on a row of their own above any line of the file, or a language server gave lenses, which go there too.
+    pub fn has_lens_rows(&self) -> bool {
+        self.has_code_lenses()
+            || (!self.editing.run_lenses.is_empty()
+                && self
+                    .runnables()
+                    .iter()
+                    .any(|(_, place)| self.is_lens_place(place)))
+    }
+
+    /// Whether the line at `index` has links on a row of its own above it: those that run its place, and the lenses a language server gave for it.
+    pub fn lens_row_at(&self, index: usize) -> bool {
+        !self.lenses_on(index).is_empty()
+            || (!self.editing.run_lenses.is_empty()
+                && self
+                    .runnables()
+                    .iter()
+                    .any(|(line, place)| *line == index && self.is_lens_place(place)))
+    }
+
+    /// The links the language shows above lines, in order of the text; the place of a link in this list is what names it when it is pressed.
+    pub fn run_lens_items(&self) -> Vec<RunLensItem> {
+        if self.editing.run_lenses.is_empty() {
+            return Vec::new();
+        }
+        let mut found = Vec::new();
+        for (line, place) in self.runnables().iter() {
+            for (tags, label) in &self.editing.run_lenses {
+                if tags.iter().any(|tag| place.tags.contains(tag)) {
+                    found.push(RunLensItem {
+                        line: *line,
+                        label: label.clone(),
+                        place: place.clone(),
+                    });
+                }
+            }
+        }
+        found
+    }
+}

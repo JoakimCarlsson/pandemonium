@@ -76,6 +76,16 @@ pub enum Setting {
     Channel,
     /// Whether a file in a language that is not installed offers to install it.
     OfferLanguages,
+    /// Whether the embedded browser is turned on.
+    EmbeddedBrowser,
+    /// Whether the embedded browser opens on a dev server a shell started.
+    OpenDevServers,
+    /// Whether links to local pages open in the embedded browser.
+    OpenLocalLinks,
+    /// Whether agents may open only local addresses and the origins listed.
+    RestrictAgentBrowsing,
+    /// The origins agents may open besides local addresses.
+    AgentOrigins,
     /// Whether the window is light, dark or as the desktop says.
     ThemeMode,
     /// The theme drawn while it is light.
@@ -114,6 +124,10 @@ pub enum Setting {
     Occurrences,
     /// Whether brackets that pair are coloured by their depth.
     BracketColors,
+    /// Whether the values a language marks as private are hidden behind blocks.
+    RedactPrivateValues,
+    /// Whether the newest versions of the dependencies a manifest lists are looked up and offered.
+    DependencyHints,
     /// Whether names are coloured by what the language server says they are.
     SemanticHighlighting,
     /// Whether the language server's hints are written inside the lines.
@@ -194,6 +208,8 @@ pub enum Setting {
     LanguageServer,
     /// The command started as the language's server.
     LanguageServerCommand,
+    /// Which language servers read the language, by id and in order.
+    LanguageServers,
     /// The bindings the keymap starts from.
     BaseKeymap,
     /// The program the terminal starts.
@@ -242,16 +258,59 @@ pub enum Setting {
     Notification,
     /// The server new projects are added on.
     DefaultServer,
+    /// Whether files are edited with vim's keys.
+    VimMode,
+    /// How much vim's unnamed register shares with the system clipboard.
+    VimClipboard,
+    /// The reader's own vim bindings, laid over the ones that come with it.
+    VimBindings,
+    /// Whether saving organizes the imports of the file first.
+    OrganizeOnSave,
+    /// Whether saving applies the fixes of the language server that are safe first.
+    FixAllOnSave,
+    /// How long a file is before the names in view are asked of the language server first.
+    SemanticRangeLines,
+    /// How many lines around the view are asked for with it.
+    SemanticRangeMargin,
+    /// Whether the repositories inside a project and its submodules join the workspace of its language servers.
+    WorkspaceRepositories,
+    /// The folders besides a project's own that join the workspace of its language servers.
+    WorkspaceFolders,
+    /// Whether saving a file of the language organizes its imports first.
+    LanguageOrganize,
+    /// Whether saving a file of the language applies the safe fixes first.
+    LanguageFixAll,
+    /// Whether typing replayed by vim is typed with pairs and indentation.
+    VimReplayTyping,
+    /// Whether vim's function, class and comment objects and motions use the syntax tree.
+    VimSyntaxObjects,
+    /// When finding looks only in the lines that were selected.
+    AutoFindInSelection,
+    /// Whether selected text is moved by dragging it.
+    DragAndDrop,
+    /// Where the marker for the changes the language server offers shows.
+    Lightbulb,
+    /// Whether the code font joins characters into ligatures.
+    Ligatures,
+    /// Whether the caret follows the arrow keys across right-to-left text.
+    VisualCaret,
+    /// Whether comparing two texts ignores white space.
+    CompareIgnoreWhitespace,
 }
 
 impl Setting {
     /// Every setting, in the order the pages show them.
-    pub const ALL: [Self; 88] = [
+    pub const ALL: [Self; 115] = [
         Self::Launch,
         Self::ConfirmClose,
         Self::CheckUpdates,
         Self::Channel,
         Self::OfferLanguages,
+        Self::EmbeddedBrowser,
+        Self::OpenDevServers,
+        Self::OpenLocalLinks,
+        Self::RestrictAgentBrowsing,
+        Self::AgentOrigins,
         Self::ThemeMode,
         Self::LightTheme,
         Self::DarkTheme,
@@ -271,6 +330,8 @@ impl Setting {
         Self::InlineBlame,
         Self::Occurrences,
         Self::BracketColors,
+        Self::RedactPrivateValues,
+        Self::DependencyHints,
         Self::SemanticHighlighting,
         Self::InlayHints,
         Self::CodeLens,
@@ -311,6 +372,7 @@ impl Setting {
         Self::LanguageFormat,
         Self::LanguageServer,
         Self::LanguageServerCommand,
+        Self::LanguageServers,
         Self::BaseKeymap,
         Self::Shell,
         Self::ShellArguments,
@@ -335,6 +397,25 @@ impl Setting {
         Self::OnFinish,
         Self::Notification,
         Self::DefaultServer,
+        Self::VimMode,
+        Self::VimClipboard,
+        Self::VimBindings,
+        Self::OrganizeOnSave,
+        Self::FixAllOnSave,
+        Self::SemanticRangeLines,
+        Self::SemanticRangeMargin,
+        Self::WorkspaceRepositories,
+        Self::WorkspaceFolders,
+        Self::LanguageOrganize,
+        Self::LanguageFixAll,
+        Self::VimReplayTyping,
+        Self::VimSyntaxObjects,
+        Self::AutoFindInSelection,
+        Self::DragAndDrop,
+        Self::Lightbulb,
+        Self::Ligatures,
+        Self::VisualCaret,
+        Self::CompareIgnoreWhitespace,
     ];
 
     /// The page it is on.
@@ -345,6 +426,11 @@ impl Setting {
             | Self::CheckUpdates
             | Self::Channel
             | Self::OfferLanguages => Section::General,
+            Self::EmbeddedBrowser
+            | Self::OpenDevServers
+            | Self::OpenLocalLinks
+            | Self::RestrictAgentBrowsing
+            | Self::AgentOrigins => Section::Browser,
             Self::ThemeMode
             | Self::LightTheme
             | Self::DarkTheme
@@ -364,13 +450,16 @@ impl Setting {
             | Self::InlineBlame
             | Self::Occurrences
             | Self::BracketColors
+            | Self::RedactPrivateValues
+            | Self::DependencyHints
             | Self::SemanticHighlighting
             | Self::InlayHints
             | Self::CodeLens
             | Self::Minimap
             | Self::StickyScroll
             | Self::CursorShape
-            | Self::CursorBlink => Section::EditorAppearance,
+            | Self::CursorBlink
+            | Self::Ligatures => Section::EditorAppearance,
             Self::SoftWrap
             | Self::TabSize
             | Self::HardTabs
@@ -381,28 +470,43 @@ impl Setting {
             | Self::FormatOnType
             | Self::LinkedEditing
             | Self::SnippetsOnTab
-            | Self::Emmet => Section::EditorEditing,
-            Self::FormatOnSave | Self::TrimWhitespace | Self::FinalNewline | Self::Autosave => {
-                Section::EditorSaving
-            }
+            | Self::Emmet
+            | Self::DragAndDrop
+            | Self::VisualCaret => Section::EditorEditing,
+            Self::FormatOnSave
+            | Self::TrimWhitespace
+            | Self::FinalNewline
+            | Self::Autosave
+            | Self::OrganizeOnSave
+            | Self::FixAllOnSave => Section::EditorSaving,
             Self::CompletionsOnInput
             | Self::CompletionDocs
             | Self::Hover
             | Self::HoverDelay
             | Self::SignatureHelp
-            | Self::Diagnostics => Section::EditorIntelligence,
+            | Self::Diagnostics
+            | Self::SemanticRangeLines
+            | Self::SemanticRangeMargin
+            | Self::WorkspaceRepositories
+            | Self::WorkspaceFolders
+            | Self::Lightbulb => Section::EditorIntelligence,
             Self::SearchWrap
             | Self::SeedSearch
             | Self::Smartcase
             | Self::ScrollBeyond
             | Self::ScrollMargin
-            | Self::ScrollbarMarks => Section::EditorSearch,
+            | Self::ScrollbarMarks
+            | Self::AutoFindInSelection
+            | Self::CompareIgnoreWhitespace => Section::EditorSearch,
             Self::Language
             | Self::LanguageTabSize
             | Self::LanguageIndent
             | Self::LanguageFormat
             | Self::LanguageServer
-            | Self::LanguageServerCommand => Section::Languages,
+            | Self::LanguageServerCommand
+            | Self::LanguageServers
+            | Self::LanguageOrganize
+            | Self::LanguageFixAll => Section::Languages,
             Self::BaseKeymap => Section::Keymap,
             Self::Shell
             | Self::ShellArguments
@@ -426,6 +530,11 @@ impl Setting {
                 Section::Agents
             }
             Self::DefaultServer => Section::Servers,
+            Self::VimMode
+            | Self::VimClipboard
+            | Self::VimBindings
+            | Self::VimReplayTyping
+            | Self::VimSyntaxObjects => Section::EditorVim,
         }
     }
 
@@ -437,6 +546,11 @@ impl Setting {
             | Self::LanguageFormat
             | Self::LanguageServer
             | Self::LanguageServerCommand
+            | Self::LanguageServers
+            | Self::LanguageOrganize
+            | Self::LanguageFixAll
+            | Self::WorkspaceRepositories
+            | Self::WorkspaceFolders
             | Self::Shell
             | Self::ShellArguments
             | Self::AutoFetch
@@ -476,6 +590,26 @@ impl Setting {
             Self::OfferLanguages => (
                 "Offer to install languages",
                 "Offer to install a language when a file is opened that is written in one that is not installed.",
+            ),
+            Self::EmbeddedBrowser => (
+                "Embedded browser",
+                "Show web pages, such as a dev server, in a pane beside the work. Turning it on downloads the browser once, about 120 MB.",
+            ),
+            Self::OpenDevServers => (
+                "Open dev servers in the browser",
+                "Open the embedded browser on the web page a program started in a terminal serves, such as a dev server. Needs the embedded browser.",
+            ),
+            Self::OpenLocalLinks => (
+                "Open local links in the browser",
+                "Open links to localhost, 127.0.0.1, [::1] and 0.0.0.0 in the embedded browser instead of the system browser. Other links always open in the system browser. Needs the embedded browser.",
+            ),
+            Self::RestrictAgentBrowsing => (
+                "Restrict agent browsing",
+                "Let agents open only localhost, 127.0.0.1, [::1] and the origins listed below. Pages the reader opens are not affected. Needs the embedded browser.",
+            ),
+            Self::AgentOrigins => (
+                "Origins agents may open",
+                "Besides local addresses, while agent browsing is restricted. Write an origin such as https://example.com; a host alone, such as example.com, means http and https on their usual ports.",
             ),
             Self::ThemeMode => (
                 "Theme mode",
@@ -537,6 +671,14 @@ impl Setting {
             Self::BracketColors => (
                 "Colour brackets by depth",
                 "Colour each pair of brackets by how many pairs enclose it, so matching ones are easy to see.",
+            ),
+            Self::RedactPrivateValues => (
+                "Hide private values",
+                "Cover the values a language marks as private, such as the secrets of an environment file, with blocks, so sharing the screen does not give them away.",
+            ),
+            Self::DependencyHints => (
+                "Dependency updates",
+                "Look up the newest version of each dependency a manifest lists, such as in package.json, Cargo.toml or go.mod, and offer a link that updates it. Turn it off to stop looking versions up on the web.",
             ),
             Self::SemanticHighlighting => (
                 "Semantic highlighting",
@@ -610,6 +752,38 @@ impl Setting {
             Self::FormatOnSave => (
                 "Format on save",
                 "Format the file as its language says when it is saved.",
+            ),
+            Self::OrganizeOnSave => (
+                "Organize imports on save",
+                "Sort and prune the imports of the file as its language server says, before it is saved.",
+            ),
+            Self::FixAllOnSave => (
+                "Fix all on save",
+                "Apply every fix the language server marks safe to apply at once, before the file is saved.",
+            ),
+            Self::SemanticRangeLines => (
+                "Names in view first, lines",
+                "In a file with at least this many lines, the language server is asked for the names in view first and for the rest after; 0 always asks for the whole file at once.",
+            ),
+            Self::SemanticRangeMargin => (
+                "Names around the view",
+                "How many lines above and below the view are asked for with the names in view, counted in lines.",
+            ),
+            Self::WorkspaceRepositories => (
+                "Attach nested repositories",
+                "Have each language server of a project also work on the repositories kept inside the project and on the submodules of its repository.",
+            ),
+            Self::WorkspaceFolders => (
+                "Extra workspace folders",
+                "Folders added to the workspace of a project's language servers, written as a folder or as project=folder, separated by commas; a folder that is not a full path is taken from the root of the project, and a project is named by its folder or the name of that folder.",
+            ),
+            Self::LanguageOrganize => (
+                "Organize imports on save",
+                "Organize the imports of its files before they are saved; Editor follows the editor's setting.",
+            ),
+            Self::LanguageFixAll => (
+                "Fix all on save",
+                "Apply the safe fixes of the language server to its files before they are saved; Editor follows the editor's setting.",
             ),
             Self::TrimWhitespace => (
                 "Remove trailing whitespace",
@@ -688,6 +862,10 @@ impl Setting {
             Self::LanguageServerCommand => (
                 "Language server command",
                 "Started in place of the server the language comes with; empty keeps that one.",
+            ),
+            Self::LanguageServers => (
+                "Language servers",
+                "The servers that read its files, by id and in order; `...` stands for the ones that start by themselves, and a server that waits to be named starts only when it is listed.",
             ),
             Self::BaseKeymap => (
                 "Base keymap",
@@ -776,6 +954,50 @@ impl Setting {
                 "How you are told an agent finished: a sound, a desktop notification, or neither.",
             ),
             Self::DefaultServer => ("Default server", "The server new projects are added on."),
+            Self::VimMode => (
+                "Vim mode",
+                "Edit files with vim's keys: normal, insert, visual and replace modes, motions, operators, text objects, registers, macros and the command line.",
+            ),
+            Self::VimClipboard => (
+                "Share the clipboard",
+                "Whether vim's unnamed register is the system clipboard: for every yank and delete, for yanks only, or never.",
+            ),
+            Self::VimBindings => (
+                "Your bindings",
+                "Keys written as keys => Action, with @ and a context after to hold only there, such as gh => Hover or jk => NormalBefore @ insert. They come after vim's own, so yours win; a line that cannot be read is not added.",
+            ),
+            Self::VimReplayTyping => (
+                "Replay typing with pairs and indentation",
+                "Text vim types again, for a count such as 3ihello, for . and for macros, closes brackets and quotes, types over a closer and indents new lines as typing it yourself does; off, it is put in as plain text. Follows Auto-close and Auto-indent.",
+            ),
+            Self::VimSyntaxObjects => (
+                "Syntax objects and motions",
+                "Let vim's function, class and comment objects (af, if, ac, ic) and motions (]], [[, ]m, [m) go by the file's syntax tree; off, they do nothing where only the tree knows the answer.",
+            ),
+            Self::AutoFindInSelection => (
+                "Find in selection",
+                "Limit finding and replacing to the selected lines as the bar opens: never, whenever something is selected, or when the selection runs over several lines.",
+            ),
+            Self::DragAndDrop => (
+                "Drag and drop",
+                "Move selected text by pressing on it and dragging it; hold Ctrl as you let go to copy it instead; Ctrl held as you press goes to the definition instead.",
+            ),
+            Self::Lightbulb => (
+                "Code action marker",
+                "Show a marker beside the line number of the caret's line where the language server offers changes: on that line always, or only while it has a problem. Needs line numbers.",
+            ),
+            Self::Ligatures => (
+                "Font ligatures",
+                "Join characters such as -> and != into one glyph where the code font has ligatures for them.",
+            ),
+            Self::VisualCaret => (
+                "Caret follows the arrow keys in right-to-left text",
+                "In a line with right-to-left text the arrow keys move the caret the way they point on screen, not through the text in reading order.",
+            ),
+            Self::CompareIgnoreWhitespace => (
+                "Compare ignores white space",
+                "Leave out lines that differ only in white space when comparing a file with the clipboard, with what was saved or with another file.",
+            ),
         }
     }
 

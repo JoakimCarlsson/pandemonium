@@ -4,12 +4,13 @@ use crate::settings::Section;
 use crate::state::WorkspaceState;
 
 /// The pages of the editor's settings, in the order the list of sections shows them.
-pub(crate) const PAGES: [Section; 5] = [
+pub(crate) const PAGES: [Section; 6] = [
     Section::EditorAppearance,
     Section::EditorEditing,
     Section::EditorSaving,
     Section::EditorIntelligence,
     Section::EditorSearch,
+    Section::EditorVim,
 ];
 
 impl WorkspaceState {
@@ -18,6 +19,7 @@ impl WorkspaceState {
         self.editor = settings;
         self.editor_loaded = true;
         self.apply_indentation();
+        self.apply_vim();
         self
     }
 
@@ -46,6 +48,22 @@ impl WorkspaceState {
     }
 }
 
+impl WorkspaceState {
+    /// Whether saving the file written in `language` organizes its imports first, as the language's settings say, then as the editor's do.
+    pub(crate) fn organizes_on_save(&self, language: Option<&str>) -> bool {
+        language
+            .and_then(|id| self.machine.language(id).organize_imports_on_save)
+            .unwrap_or(self.editor.organize_imports_on_save)
+    }
+
+    /// Whether saving the file written in `language` applies the safe fixes of its language server first, as the language's settings say, then as the editor's do.
+    pub(crate) fn fixes_on_save(&self, language: Option<&str>) -> bool {
+        language
+            .and_then(|id| self.machine.language(id).fix_all_on_save)
+            .unwrap_or(self.editor.fix_all_on_save)
+    }
+}
+
 /// What a page of the editor's settings says about itself under its heading.
 pub(crate) fn summary(section: Section) -> &'static str {
     match section {
@@ -63,6 +81,9 @@ pub(crate) fn summary(section: Section) -> &'static str {
             "Completions, hovers, signatures and the problems the language server finds."
         }
         Section::EditorSearch => "Finding in a file, and how the view and its scrollbar follow it.",
+        Section::EditorVim => {
+            "Modal editing with vim's keys: whether it is on, what it shares with the clipboard, the bindings you add, and how replayed typing and syntax objects behave."
+        }
         _ => "",
     }
 }

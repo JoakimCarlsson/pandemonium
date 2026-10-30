@@ -9,6 +9,28 @@ use pm_treesitter::{Editing, Grammar, Queries};
 
 use super::{Host, Job, Pending, Work};
 
+/// The manifest of the language `bundle` was made from, as far as it says how the language is edited.
+fn manifest_of(bundle: &GrammarBundle) -> pm_lsp::Manifest {
+    pm_lsp::Manifest {
+        indent: bundle.indent,
+        tabs: bundle.tabs,
+        line_comment: bundle.line_comment.clone(),
+        pairs: bundle
+            .pairs
+            .clone()
+            .unwrap_or_else(pm_treesitter::default_pairs),
+        scopes: bundle.scopes.clone(),
+        tags: bundle.tags.clone(),
+        emmet_dialect: bundle.more.emmet_dialect.clone(),
+        word_characters: bundle.more.word_characters.clone(),
+        brackets: bundle.more.bracket_pairs.clone(),
+        increase_indent_pattern: bundle.more.increase_indent_pattern.clone(),
+        decrease_indent_pattern: bundle.more.decrease_indent_pattern.clone(),
+        decrease_indent_patterns: bundle.more.decrease_indent_patterns.clone(),
+        ..pm_lsp::Manifest::default()
+    }
+}
+
 /// The grammar of `bundle`, compiled.
 fn compile(bundle: &GrammarBundle) -> Result<Arc<Grammar>, String> {
     Grammar::load(
@@ -22,17 +44,20 @@ fn compile(bundle: &GrammarBundle) -> Result<Arc<Grammar>, String> {
             injections: bundle.injections.clone(),
             brackets: bundle.brackets.clone(),
             runnables: bundle.runnables.clone(),
+            overrides: bundle.more.overrides.clone(),
+            redactions: bundle.more.redactions.clone(),
+            textobjects: bundle.more.textobjects.clone(),
+            debugger: bundle.more.debugger.clone(),
+            dependencies: String::new(),
         },
         Editing {
-            indent: bundle.indent,
-            tabs: bundle.tabs,
-            line_comment: bundle.line_comment.clone(),
-            pairs: Editing::pairs_of(
-                &bundle
-                    .pairs
-                    .clone()
-                    .unwrap_or_else(pm_treesitter::default_pairs),
-            ),
+            run_lenses: bundle
+                .more
+                .lenses
+                .iter()
+                .map(|lens| (lens.tags.clone(), lens.label.clone()))
+                .collect(),
+            ..pm_lsp::editing_of(&manifest_of(bundle))
         },
     )
 }
@@ -151,12 +176,30 @@ impl Work {
                 |directory| Request::CloseDocument { directory, path },
                 Pending::Nothing,
             ),
+            Outgoing::ResolveCompletion {
+                session,
+                path,
+                item,
+            } => {
+                let asked = path.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::ResolveCompletion {
+                        directory,
+                        path,
+                        item,
+                    },
+                    Pending::CompletionResolved(session, asked),
+                );
+            }
             Outgoing::Completion {
                 session,
                 path,
                 version,
                 position,
                 trigger,
+                scope,
             } => {
                 let asked = path.clone();
                 self.ask_in_folder(
@@ -168,6 +211,7 @@ impl Work {
                         version,
                         position,
                         trigger,
+                        scope,
                     },
                     Pending::Completions(session, asked, version),
                 );
@@ -411,6 +455,22 @@ impl Work {
                     Pending::Signature(session, asked, version),
                 );
             }
+            Outgoing::PrepareRename {
+                session,
+                path,
+                version,
+                position,
+            } => self.ask_in_folder(
+                model,
+                session,
+                |directory| Request::PrepareRename {
+                    directory,
+                    path,
+                    version,
+                    position,
+                },
+                Pending::RenameTarget(session),
+            ),
             Outgoing::RenameSymbol {
                 session,
                 path,
@@ -444,11 +504,110 @@ impl Work {
                         path,
                         version,
                         span,
+                        only: None,
                     },
                     Pending::CodeActions(session, asked),
                 );
             }
+            Outgoing::ReadToCompare {
+                session,
+                active,
+                path,
+                saved,
+            } => {
+                let asked = path.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::ReadFile {
+                        directory,
+                        path,
+                        head: false,
+                        revision: None,
+                    },
+                    Pending::Compared(session, active, asked, saved),
+                );
+            }
+            Outgoing::Lightbulb {
+                session,
+                path,
+                version,
+                line,
+                span,
+            } => {
+                let asked = path.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::CodeActions {
+                        directory,
+                        path,
+                        version,
+                        span,
+                        only: None,
+                    },
+                    Pending::Lightbulb(session, asked, version, line),
+                );
+            }
             Outgoing::SemanticTokens {
+                session,
+                path,
+                version,
+                range,
+            } => {
+                let asked = path.clone();
+                let rules = model.read(|screen| match screen {
+                    Screen::Workspace(state) => state.editor.semantic_token_rules.clone(),
+                });
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::SemanticTokens {
+                        directory,
+                        path,
+                        version,
+                        rules,
+                        range,
+                    },
+                    Pending::SemanticTokens(session, asked, version, range),
+                );
+            }
+            Outgoing::ResolveLink {
+                session,
+                path,
+                link,
+            } => self.ask_in_folder(
+                model,
+                session,
+                |directory| Request::ResolveLink {
+                    directory,
+                    path,
+                    link,
+                },
+                Pending::LinkResolved(session),
+            ),
+            Outgoing::ColorPresentations {
+                session,
+                path,
+                version,
+                span,
+                color,
+            } => {
+                let asked = path.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::ColorPresentations {
+                        directory,
+                        path,
+                        version,
+                        span,
+                        color,
+                    },
+                    Pending::ColorPresentations(session, asked, color),
+                );
+            }
+            Outgoing::DocumentLinks {
                 session,
                 path,
                 version,
@@ -457,12 +616,29 @@ impl Work {
                 self.ask_in_folder(
                     model,
                     session,
-                    |directory| Request::SemanticTokens {
+                    |directory| Request::DocumentLinks {
                         directory,
                         path,
                         version,
                     },
-                    Pending::SemanticTokens(session, asked, version),
+                    Pending::DocumentLinks(session, asked, version),
+                );
+            }
+            Outgoing::Colors {
+                session,
+                path,
+                version,
+            } => {
+                let asked = path.clone();
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::Colors {
+                        directory,
+                        path,
+                        version,
+                    },
+                    Pending::Colors(session, asked, version),
                 );
             }
             Outgoing::InlayHints {
@@ -511,6 +687,7 @@ impl Work {
                 session,
                 path,
                 version,
+                dependencies,
             } => {
                 let asked = path.clone();
                 self.ask_in_folder(
@@ -520,6 +697,7 @@ impl Work {
                         directory,
                         path,
                         version,
+                        dependencies,
                     },
                     Pending::CodeLenses(session, asked, version),
                 );
@@ -538,6 +716,36 @@ impl Work {
                 },
                 Pending::LensPressed(session),
             ),
+            Outgoing::SourceActions {
+                session,
+                path,
+                version,
+                span,
+                kinds,
+                save,
+                notify,
+            } => {
+                let step = pm_components::source_actions::SourceStep {
+                    session,
+                    path: path.clone(),
+                    kinds: kinds.clone(),
+                    save,
+                    notify,
+                };
+                let only = kinds.first().cloned().map(|kind| vec![kind]);
+                self.ask_in_folder(
+                    model,
+                    session,
+                    |directory| Request::CodeActions {
+                        directory,
+                        path,
+                        version,
+                        span,
+                        only,
+                    },
+                    Pending::SourceOffered(step),
+                );
+            }
             Outgoing::TakeCodeAction {
                 session,
                 path,
@@ -757,7 +965,7 @@ impl Work {
     ) {
         match (pending, response) {
             (Pending::Grammar(_), Response::Grammar(bundle)) => {
-                if pm_treesitter::registry::loaded(&bundle.id).is_some() {
+                if pm_treesitter::registry::called(&bundle.id).is_some() {
                     let id = bundle.id.clone();
                     model.update(|screen| *screen = std::mem::take(screen).with_grammar(&id));
                     return;
@@ -789,6 +997,9 @@ impl Work {
                         inlay_hints,
                         code_lens,
                         inline_values,
+                        document_links,
+                        colors,
+                        semantic_ranges,
                     } => Ok(pm_protocol::Triggers {
                         completion: triggers,
                         signature,
@@ -800,6 +1011,9 @@ impl Work {
                         inlay_hints,
                         code_lens,
                         inline_values,
+                        document_links,
+                        colors,
+                        semantic_ranges,
                     }),
                     other => Err(Self::trouble_of(other)),
                 };
@@ -813,6 +1027,12 @@ impl Work {
                         std::mem::take(screen).with_completions(session, &path, version, items);
                 });
             }
+            (Pending::CompletionResolved(session, path), Response::CompletionResolved { item }) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_completion_resolved(session, &path, item);
+                });
+            }
+            (Pending::CompletionResolved(..), _) => {}
             (Pending::Completions(session, path, version), _) => {
                 model.update(|screen| {
                     *screen = std::mem::take(screen).with_completions(
@@ -874,6 +1094,20 @@ impl Work {
                     *screen = std::mem::take(screen).with_edited_files(session, files);
                 });
             }
+            (Pending::TookAction(session), Response::ActionTaken { files, shown }) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_action_shown(session, files, shown);
+                });
+            }
+            (Pending::RenameTarget(session), Response::RenameTarget { target }) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_rename_target(session, target);
+                });
+            }
+            (Pending::RenameTarget(_), other) => {
+                let problem = Self::trouble_of(other);
+                model.update(|screen| *screen = std::mem::take(screen).rename_unprepared(problem));
+            }
             (Pending::Renamed(_), other) => {
                 let problem = Self::trouble_of(other);
                 model.update(|screen| *screen = std::mem::take(screen).rename_failed(problem));
@@ -884,9 +1118,89 @@ impl Work {
                     *screen = std::mem::take(screen).noted(session, &problem);
                 });
             }
+            (Pending::SourceOffered(step), Response::CodeActions { actions }) => {
+                match pm_components::source_actions::source_action_to_take(&actions) {
+                    Some(index) => {
+                        let (session, path) = (step.session, step.path.clone());
+                        self.ask_in_folder(
+                            model,
+                            session,
+                            |directory| Request::TakeCodeAction {
+                                directory,
+                                path,
+                                index,
+                            },
+                            Pending::SourceTaken(step),
+                        );
+                    }
+                    None => model.update(|screen| {
+                        *screen = std::mem::take(screen).with_source_done(
+                            step,
+                            pm_components::source_actions::SourceOutcome::Nothing,
+                        );
+                    }),
+                }
+            }
+            (Pending::SourceOffered(step), other) => {
+                let problem = Self::trouble_of(other);
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_source_done(
+                        step,
+                        pm_components::source_actions::SourceOutcome::Failed(problem),
+                    );
+                });
+            }
+            (Pending::SourceTaken(step), Response::Edited { files }) => {
+                let outcome = if files.is_empty() {
+                    pm_components::source_actions::SourceOutcome::Nothing
+                } else {
+                    pm_components::source_actions::SourceOutcome::Applied
+                };
+                model.update(|screen| {
+                    let edited = std::mem::take(screen).with_source_edited(step.session, files);
+                    *screen = edited.with_source_done(step, outcome);
+                });
+            }
+            (Pending::SourceTaken(step), other) => {
+                let problem = Self::trouble_of(other);
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_source_done(
+                        step,
+                        pm_components::source_actions::SourceOutcome::Failed(problem),
+                    );
+                });
+            }
             (Pending::CodeActions(session, path), Response::CodeActions { actions }) => {
                 model.update(|screen| {
                     *screen = std::mem::take(screen).with_code_actions(session, &path, actions);
+                });
+            }
+            (
+                Pending::Compared(session, active, path, saved),
+                Response::File {
+                    text: Some(text), ..
+                },
+            ) => {
+                model.update(|screen| {
+                    *screen =
+                        std::mem::take(screen).with_compared(session, &active, &path, saved, &text);
+                });
+            }
+            (Pending::Compared(session, _, path, _), other) => {
+                let problem = format!("{path}: {}", Self::trouble_of(other));
+                model.update(|screen| *screen = std::mem::take(screen).noted(session, &problem));
+            }
+            (Pending::Lightbulb(session, path, version, line), response) => {
+                let offered = match response {
+                    Response::CodeActions { actions } => actions
+                        .iter()
+                        .filter(|action| action.disabled.is_none())
+                        .count(),
+                    _ => 0,
+                };
+                model.update(|screen| {
+                    *screen = std::mem::take(screen)
+                        .with_lightbulb(session, &path, version, line, offered);
                 });
             }
             (Pending::CodeActions(..), other) => {
@@ -945,14 +1259,67 @@ impl Work {
                         std::mem::take(screen).with_highlights(session, &path, version, spans);
                 });
             }
-            (Pending::SemanticTokens(session, path, version), response) => {
-                let tokens = match response {
-                    Response::SemanticTokens { tokens } => tokens,
+            (Pending::SemanticTokens(session, path, version, range), response) => {
+                let (tokens, partial) = match response {
+                    Response::SemanticTokens { tokens, partial } => (tokens, partial),
+                    _ => (Vec::new(), false),
+                };
+                model.update(|screen| {
+                    let taken = std::mem::take(screen);
+                    *screen = match range.filter(|_| partial) {
+                        Some(range) => {
+                            taken.with_semantic_range(session, &path, version, range, tokens)
+                        }
+                        None => taken.with_semantic_tokens(session, &path, version, tokens),
+                    };
+                });
+            }
+            (Pending::LinkResolved(session), Response::LinkResolved { target }) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_link_resolved(session, target);
+                });
+            }
+            (Pending::LinkResolved(session), other) => {
+                let problem = Self::trouble_of(other);
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).noted(session, &problem);
+                });
+            }
+            (
+                Pending::ColorPresentations(session, path, color),
+                Response::ColorPresentations { presentations },
+            ) => {
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_color_presentations(
+                        session,
+                        &path,
+                        color,
+                        presentations,
+                    );
+                });
+            }
+            (Pending::ColorPresentations(..), other) => {
+                let problem = Self::trouble_of(other);
+                model
+                    .update(|screen| *screen = std::mem::take(screen).color_picker_failed(problem));
+            }
+            (Pending::DocumentLinks(session, path, version), response) => {
+                let links = match response {
+                    Response::DocumentLinks { links } => links,
                     _ => Vec::new(),
                 };
                 model.update(|screen| {
-                    *screen = std::mem::take(screen)
-                        .with_semantic_tokens(session, &path, version, tokens);
+                    *screen =
+                        std::mem::take(screen).with_document_links(session, &path, version, links);
+                });
+            }
+            (Pending::Colors(session, path, version), response) => {
+                let colors = match response {
+                    Response::Colors { colors } => colors,
+                    _ => Vec::new(),
+                };
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_colors(session, &path, version, colors);
                 });
             }
             (Pending::InlayHints(session, path, version), response) => {

@@ -12,6 +12,43 @@ use crate::core::Connection;
 /// The clients that have one file open: the folder as they named it, and their connections.
 type Openers = (String, Vec<Arc<Connection>>);
 
+/// The folders besides the project at `root`'s own that its language servers work on: the ones `workspace` names and, when it says so, the repositories kept inside the project and the submodules of its repository, each once and none inside another.
+fn workspace_folders(
+    workspace: &pm_protocol::WorkspacePreferences,
+    root: &std::path::Path,
+) -> Vec<PathBuf> {
+    let mut folders = workspace.folders_for(root);
+    if workspace.attach_repositories {
+        if let Ok(entries) = std::fs::read_dir(root) {
+            let mut nested: Vec<PathBuf> = entries
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|folder| {
+                    folder.is_dir()
+                        && !folder
+                            .file_name()
+                            .is_some_and(|name| name.to_string_lossy().starts_with('.'))
+                        && folder.join(".git").exists()
+                })
+                .collect();
+            nested.sort();
+            folders.extend(nested);
+        }
+        folders.extend(
+            pm_git::submodules(root)
+                .into_iter()
+                .map(|path| root.join(path)),
+        );
+    }
+    let mut kept: Vec<PathBuf> = Vec::new();
+    for folder in folders {
+        if folder != root && !kept.contains(&folder) {
+            kept.push(folder);
+        }
+    }
+    kept
+}
+
 /// The open files and the hub that runs their language servers.
 pub(crate) struct Documents {
     /// The hub.
@@ -43,9 +80,11 @@ impl Documents {
                     let _ = connection.outbox.send(message.clone());
                 }
             }),
-            Arc::new(|root: &std::path::Path, spec: &pm_lsp::ServerSpec| {
-                crate::tasks::server_environment(root, spec)
-            }),
+            Arc::new(
+                |root: &std::path::Path, language: &str, _: &pm_lsp::ServerSpec| {
+                    crate::tasks::server_environment(root, language)
+                },
+            ),
         );
         let documents = Self { hub, openers };
         documents.settings_changed(&crate::machine::settings());
@@ -63,6 +102,8 @@ impl Documents {
                     pm_lsp::ServerChoice::Off
                 } else if !command.is_empty() {
                     pm_lsp::ServerChoice::Command(command.to_owned())
+                } else if !preferences.servers.is_empty() {
+                    pm_lsp::ServerChoice::Servers(preferences.servers.clone())
                 } else {
                     return None;
                 };
@@ -71,7 +112,12 @@ impl Documents {
             .collect();
         let mut choices: HashMap<String, pm_lsp::ServerChoice> = choices;
         choices.extend(crate::extensions::refused_servers());
+        self.hub
+            .set_overrides(settings.servers.clone().into_iter().collect());
         self.hub.choose_servers(choices);
+        let workspace = settings.workspace.clone();
+        self.hub
+            .attach_folders(Arc::new(move |root| workspace_folders(&workspace, root)));
     }
 
     /// Notes that `connection` has the file at `path` of the project at `root`, which it calls `directory`, open.

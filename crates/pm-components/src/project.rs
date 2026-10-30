@@ -23,6 +23,8 @@ pub struct Project {
     pub path: String,
     /// Where each of its submodules is, nested ones included, from its root, as its server last said.
     pub submodules: Vec<String>,
+    /// Whether its folder holds a `devcontainer.json`, as its server last said.
+    pub devcontainer: bool,
 }
 
 impl Project {
@@ -35,6 +37,7 @@ impl Project {
             name: name.to_owned(),
             path: path.to_owned(),
             submodules: Vec::new(),
+            devcontainer: false,
         })
     }
 

@@ -52,6 +52,20 @@ install_app_bundle() {
     echo "installed $MAC_APPS_DIR/Pandemonium Preview.app"
 }
 
+# Installs the browser helper on Linux: the bundle the window would download goes to the lib folder, and a link named pandemonium-browser to its launcher goes beside the window, where the window looks for it.
+install_browser() {
+    [ "$(uname -s)" = Linux ] || return 0
+    command -v npm >/dev/null 2>&1 || { echo "note: npm was not found, so the embedded browser was not installed"; return 0; }
+    lib="${PANDEMONIUM_LIB_DIR:-$HOME/.local/lib}/pandemonium-browser"
+    archive="build/dist/pandemonium-browser-linux-x86_64.tar.gz"
+    scripts/bundle-browser.sh "$archive" || { echo "note: the embedded browser could not be bundled, so it was not installed"; return 0; }
+    rm -rf "$lib"
+    mkdir -p "$lib"
+    tar -xzf "$archive" -C "$lib"
+    rm -f "$BIN_DIR/pandemonium-browser"
+    ln -s "$lib/pandemonium-browser" "$BIN_DIR/pandemonium-browser"
+}
+
 # Builds and installs the window, which carries the local server in its `--server` mode.
 install_editor() {
     revision="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
@@ -59,6 +73,7 @@ install_editor() {
     PANDEMONIUM_CHANNEL=preview cargo build --release --locked -p pandemonium
     mkdir -p "$BIN_DIR"
     install -m 0755 target/release/pandemonium "$BIN_DIR/$NAME"
+    install_browser
     case "$(uname -s)" in
         Linux)
             install_icons assets/brand/png assets/brand/pandemonium.svg

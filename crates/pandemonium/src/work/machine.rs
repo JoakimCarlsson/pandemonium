@@ -4,7 +4,7 @@ use pm_components::update::Update;
 use pm_protocol::{MachineSettings, Request, Response};
 use pm_state::State;
 
-use super::{Host, Pending, Work};
+use super::{Host, Job, Pending, Work};
 use pm_pages::Screen;
 
 impl Work {
@@ -51,6 +51,31 @@ impl Work {
         );
     }
 
+    /// Asks the server on this machine to download the release `version` on `channel`.
+    pub(super) fn download_update(&mut self, channel: pm_config::Channel, version: String) {
+        let channel = match channel {
+            pm_config::Channel::Stable => "stable",
+            pm_config::Channel::Preview => "preview",
+        };
+        self.ask(
+            &None,
+            Request::DownloadUpdate {
+                channel: channel.to_owned(),
+                version,
+            },
+            Pending::Update,
+        );
+    }
+
+    /// Puts the update unpacked at `path` in place of this program and starts it, away from the window.
+    fn install_update(&self, path: String) {
+        self.spawn(move |reporter| {
+            let outcome = pm_update::install(std::path::Path::new(&path))
+                .and_then(|installed| pm_update::relaunch(&installed));
+            let _ = reporter.send(Job::Installed(outcome));
+        });
+    }
+
     /// Hands the workspace what looking for a newer release last found, when anything was.
     pub fn show_release(&self, model: &State<Screen>) {
         if let Some(update) = self.release.clone() {
@@ -91,13 +116,31 @@ impl Work {
                 }
                 Self::in_workspace(model, |state| state.with_machine_settings(settings));
             }
-            (Pending::LatestRelease, Response::LatestRelease { version, url }) => {
-                self.release = Some(Update::judged(version, url));
+            (
+                Pending::LatestRelease,
+                Response::LatestRelease {
+                    version,
+                    url,
+                    published,
+                    body,
+                    ..
+                },
+            ) => {
+                self.release = Some(
+                    Update::judged(version, url, published, body).blocked_by(pm_update::blocker()),
+                );
                 self.show_release(model);
             }
             (Pending::LatestRelease, _) => {
                 self.release = Some(Update::Unknown);
                 self.show_release(model);
+            }
+            (Pending::Update, Response::UpdateStaged { path }) => {
+                Self::in_workspace(model, |state| state.with_update_installing());
+                self.install_update(path);
+            }
+            (Pending::Update, Response::Failed { message }) => {
+                Self::in_workspace(model, |state| state.with_update_failed(message));
             }
             _ => {}
         }

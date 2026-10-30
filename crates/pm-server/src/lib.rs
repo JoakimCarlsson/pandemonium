@@ -4,12 +4,14 @@
 //! with [`pm_protocol::Request`] and are told what the agents do through
 //! numbered events. An agent keeps running when every client has gone.
 
+mod browser_tools;
 mod cli;
 mod connection;
 mod conversation;
 mod core;
 mod credential;
 mod debugs;
+mod dependencies;
 mod documents;
 mod entries;
 mod extensions;
@@ -21,9 +23,13 @@ mod library;
 mod listener;
 mod local_history;
 mod machine;
+mod provider;
 mod queue;
 mod releases;
 mod rewind;
+mod scan;
+mod serving;
+mod session_servers;
 mod sessions;
 mod tasks;
 mod terminals;

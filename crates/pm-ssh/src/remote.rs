@@ -25,6 +25,28 @@ fn options() -> Vec<String> {
     ]
 }
 
+/// A local port that carries each connection made to it to `port` on the machine `destination`, over ssh, so that a page there, such as a dev server, can be opened here.
+pub fn forward(destination: &str, port: u16) -> Result<u16, String> {
+    if !is_destination(destination) {
+        return Err(format!(
+            "{destination} is not a destination ssh can be given"
+        ));
+    }
+    let destination = destination.to_owned();
+    let address = pm_transport::bridge(move || {
+        let mut command = Command::new("ssh");
+        command
+            .args(options())
+            .args(["-W", &format!("127.0.0.1:{port}"), "--", &destination]);
+        command
+    })?;
+    address
+        .rsplit(':')
+        .next()
+        .and_then(|local| local.parse().ok())
+        .ok_or_else(|| format!("could not read the local port from {address}"))
+}
+
 /// The credential of the server running on `destination`, read over ssh.
 fn credential(destination: &str) -> Result<Credential, String> {
     let output = Command::new("ssh")

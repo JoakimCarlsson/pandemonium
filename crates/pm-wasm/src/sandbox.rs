@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use pm_plugin_api::{
-    EXPORT_ALLOC, EXPORT_COMMAND, EXPORT_MEMORY, HOST_IMPORT, HOST_MODULE, Host, HostCall,
-    HostReply, pack, unpack,
+    EXPORT_ALLOC, EXPORT_COMMAND, EXPORT_HOOK, EXPORT_MEMORY, HOST_IMPORT, HOST_MODULE, Host,
+    HostCall, HostReply, pack, unpack,
 };
 use wasmtime::{
     Caller, Config, Engine, Linker, Memory, Module, Store, StoreLimits, StoreLimitsBuilder,
@@ -124,8 +124,25 @@ impl Sandbox {
             .all(|name| self.module.get_export(name).is_some())
     }
 
+    /// Whether the module exports what answers hooks: the memory, the allocator and [`EXPORT_HOOK`].
+    pub fn exports_hooks(&self) -> bool {
+        [EXPORT_MEMORY, EXPORT_ALLOC, EXPORT_HOOK]
+            .into_iter()
+            .all(|name| self.module.get_export(name).is_some())
+    }
+
     /// Runs the module's command export on `input`, answering what it asks of the host through `host`, and returns what it wrote back.
     pub fn command(&self, input: &[u8], host: Arc<dyn Host>) -> Result<Vec<u8>, String> {
+        self.call(EXPORT_COMMAND, input, host)
+    }
+
+    /// Runs the module's hook export on `input`, answering what it asks of the host through `host`, and returns what it wrote back.
+    pub fn hook(&self, input: &[u8], host: Arc<dyn Host>) -> Result<Vec<u8>, String> {
+        self.call(EXPORT_HOOK, input, host)
+    }
+
+    /// Runs the module's export `export` on `input`, answering what it asks of the host through `host`, and returns what it wrote back.
+    fn call(&self, export: &str, input: &[u8], host: Arc<dyn Host>) -> Result<Vec<u8>, String> {
         let mut store = Store::new(
             &self.engine,
             Running {
@@ -165,7 +182,7 @@ impl Sandbox {
             .get_typed_func::<i32, i32>(&mut store, EXPORT_ALLOC)
             .map_err(|error| error.to_string())?;
         let run = instance
-            .get_typed_func::<(i32, i32), i64>(&mut store, EXPORT_COMMAND)
+            .get_typed_func::<(i32, i32), i64>(&mut store, export)
             .map_err(|error| error.to_string())?;
         let pointer = alloc
             .call(&mut store, input.len() as i32)

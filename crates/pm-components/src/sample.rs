@@ -131,8 +131,16 @@ pub struct Change {
     pub from: Option<String>,
     /// The submodule it is in, from the root of the project, or nothing when it is in the project itself.
     pub submodule: Option<String>,
+    /// The repository it is in, as its folder name, when the project holds several repositories side by side, or nothing when it is one.
+    pub repository: Option<String>,
     /// What a submodule checked out at another commit than the one recorded moved through, when the change is that.
     pub moved: Option<pm_git::Moved>,
+    /// How many lines it puts in and takes out, counted over the whole file, when the server told; the diff is counted otherwise.
+    pub counts: Option<(usize, usize)>,
+    /// Whether the diff has been read: not while the server has only listed the file.
+    pub loaded: bool,
+    /// Whether the diff is from before the folder was looked at again and is to be read again.
+    pub stale: bool,
 }
 
 /// What a file's status comes to once its letter is read: how loudly it asks to be noticed, and the letter it is written with.
@@ -181,8 +189,26 @@ impl Change {
             worktree: Some('M'),
             from: None,
             submodule: None,
+            repository: None,
             moved: None,
+            counts: None,
+            loaded: true,
+            stale: false,
         }
+    }
+
+    /// A change to `path` of which the server told only how many lines it puts in and takes out, its diff yet to be read.
+    pub fn listed(path: &str, added: usize, removed: usize) -> Self {
+        let mut change = Self::new(path, "");
+        change.counts = Some((added, removed));
+        change.loaded = false;
+        change
+    }
+
+    /// About how many rows the diff will have once it is read, from how many lines it changes.
+    pub fn expected_rows(&self) -> usize {
+        let (added, removed) = self.counts.unwrap_or_default();
+        (added + removed).min(pm_git::DIFF_LINES) + 1
     }
 
     /// What a submodule moved to another commit is called in the lists: the commit recorded and the one checked out.
@@ -193,6 +219,19 @@ impl Change {
             moved.from.as_deref().unwrap_or("new"),
             moved.to
         ))
+    }
+
+    /// The repository it is in, innermost first: the submodule when it is in one, otherwise the repository of a project that holds several, or nothing for the project itself.
+    pub fn holder(&self) -> Option<&str> {
+        self.submodule.as_deref().or(self.repository.as_deref())
+    }
+
+    /// Whether the list of the repository `picked`, a submodule or a repository of the project or nothing for all of the project's own, shows it: all those not in a submodule when nothing is picked.
+    pub fn is_listed_in(&self, picked: Option<&str>) -> bool {
+        match picked {
+            Some(picked) => self.holder() == Some(picked),
+            None => self.submodule.is_none(),
+        }
     }
 
     /// Whether all of it is in the index.
@@ -220,16 +259,27 @@ impl Change {
 
     /// How many lines the change puts in.
     pub fn added(&self) -> usize {
-        self.count(Kind::Add)
+        self.counts
+            .map_or_else(|| self.count(Kind::Add), |(added, _)| added)
     }
 
     /// How many lines the change takes out.
     pub fn removed(&self) -> usize {
-        self.count(Kind::Remove)
+        self.counts
+            .map_or_else(|| self.count(Kind::Remove), |(_, removed)| removed)
     }
 
     /// Whether the file is new, gone or has other contents, as its first hunk says.
     pub fn fate(&self) -> Fate {
+        if !self.loaded {
+            return if self.is_created() {
+                Fate::Added
+            } else if self.mark() == "D" {
+                Fate::Deleted
+            } else {
+                Fate::Modified
+            };
+        }
         let header = self
             .diff
             .first()
@@ -465,12 +515,16 @@ pub struct Session {
     pub on_branch: bool,
     /// What the branch follows and how far apart they are.
     pub tracking: pm_git::Tracking,
+    /// Where each repository stands when the folder holds several side by side, and nothing when it is one.
+    pub standings: Vec<pm_git::Standing>,
     /// The folder the agent works in.
     pub directory: String,
     /// The submodule of `directory` the agent works in, from its root, or nothing for the project itself.
     pub submodule: Option<String>,
     /// The branch its worktree was made from, when it has one of its own.
     pub base: Option<String>,
+    /// Whether its agent and terminals run in a dev container.
+    pub in_container: bool,
     /// Which agent, by position in the list of agents, runs it.
     pub agent: usize,
     /// Where it stands.
@@ -507,6 +561,8 @@ pub struct Session {
     pub login: Option<String>,
     /// Why this session needs signing in again and its account's name on its server, when named.
     pub signed_out: Option<(String, Option<String>)>,
+    /// The step the session's dev container is on while it is built and started, and nothing once the agent is up.
+    pub container: Option<String>,
     /// The question the agent waits on the reader to answer, if it waits on one.
     pub ask: Option<Permission>,
     /// The form of questions the agent waits on the reader to answer, if it waits on one.
@@ -525,6 +581,8 @@ pub struct Session {
     pub closed: bool,
     /// Whether it stands for the project's own folder rather than for work an agent does: it is never listed, and holds what the git panel shows while no session is open.
     pub home: bool,
+    /// Whether the server has yet to say what the folder is, so that an empty branch means nothing is known rather than that it is no repository.
+    pub unknown: bool,
     /// The shells in its terminal dock.
     pub terminals: Vec<TerminalTab>,
     /// Which of the shells shows, by position.
@@ -551,9 +609,11 @@ impl Session {
             branch: branch.to_owned(),
             on_branch: !branch.is_empty(),
             tracking: pm_git::Tracking::default(),
+            standings: Vec::new(),
             directory: String::new(),
             submodule: None,
             base: None,
+            in_container: false,
             agent: 0,
             status: if status == Status::Unread {
                 Status::Idle
@@ -577,6 +637,7 @@ impl Session {
             skills: Vec::new(),
             login: None,
             signed_out: None,
+            container: None,
             ask: None,
             inquiry: None,
             held_hooks: Vec::new(),
@@ -586,6 +647,7 @@ impl Session {
             queued: Vec::new(),
             closed: false,
             home: false,
+            unknown: false,
             terminals: Vec::new(),
             terminal_active: 0,
             shells: Vec::new(),
@@ -625,6 +687,7 @@ impl Session {
         let mut session = Self::new("", project, "", Status::Idle, 0, Vec::new());
         session.closed = true;
         session.home = true;
+        session.unknown = true;
         session.directory = directory.to_owned();
         session
     }
@@ -748,6 +811,7 @@ pub fn projects() -> Vec<Project> {
             name: name.to_owned(),
             path: format!("~/{name}"),
             submodules: Vec::new(),
+            devcontainer: false,
         })
         .collect()
 }

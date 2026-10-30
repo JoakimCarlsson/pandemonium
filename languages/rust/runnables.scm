@@ -1,37 +1,41 @@
-; Rust: the places that can be run. @run.<kind> is the whole place and @name
-; what it is called.
+; Rust: the places that can be run. @run is the whole place, its tag says what
+; kind of place it is and @name, read as $PM_CUSTOM_name, what it is called.
 
 ((function_item
-  name: (identifier) @name) @run.main
-  (#eq? @name "main"))
+  name: (identifier) @name) @run
+  (#eq? @name "main")
+  (#set! tag rust-main))
 
 (
   (attribute_item
     (attribute
-      (identifier) @attribute
-      (#any-of? @attribute "test" "rstest")))
+      (identifier) @_attribute
+      (#any-of? @_attribute "test" "rstest")))
   .
   (function_item
-    name: (identifier) @name) @run.test)
+    name: (identifier) @name) @run
+  (#set! tag rust-test))
 
 (
   (attribute_item
     (attribute
       (scoped_identifier
-        name: (identifier) @attribute
-        (#eq? @attribute "test"))))
+        name: (identifier) @_attribute
+        (#eq? @_attribute "test"))))
   .
   (function_item
-    name: (identifier) @name) @run.test)
+    name: (identifier) @name) @run
+  (#set! tag rust-test))
 
 (
   (attribute_item
     (attribute
-      (identifier) @attribute
+      (identifier) @_attribute
       arguments: (token_tree
-        (identifier) @condition)
-      (#eq? @attribute "cfg")
-      (#eq? @condition "test")))
+        (identifier) @_condition)
+      (#eq? @_attribute "cfg")
+      (#eq? @_condition "test")))
   .
   (mod_item
-    name: (identifier) @name) @run.module)
+    name: (identifier) @name) @run
+  (#set! tag rust-module))

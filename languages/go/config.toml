@@ -9,10 +9,37 @@ color = "#6fc7d9"
 grammar = "go"
 suffixes = ["go"]
 aliases = ["golang"]
+requires = ["gomod", "gosum", "gowork"]
 line_comment = "//"
+toolchain_name = "Go"
 indent = 4
 tabs = true
 pairs = ["()", "[]", "{}", "\"\"", "''", "``"]
+
+# Quotes are not closed inside strings and comments, which overrides.scm names.
+brackets = [
+  { start = "\"", end = "\"", close = true, not_in = ["string", "comment"] },
+  { start = "`", end = "`", close = true, not_in = ["string", "comment"] },
+]
+
+# Debug adapter, and what a Go file offers to be debugged as.
+[[debug_adapter]]
+id = "delve"
+name = "Delve"
+programs = ["dlv"]
+arguments = ["dap", "--listen", "127.0.0.1:{port}"]
+connect = "tcp"
+types = ["go", "delve"]
+attach_names = ["dlv"]
+
+[debug_adapter.default]
+mode = "debug"
+
+[[debug_scenario]]
+suffixes = ["go"]
+label = "Go: Current Package"
+adapter = "go"
+config = { mode = "debug", program = "${fileDirname}", cwd = "${workspaceFolder}" }
 
 [grammar_file]
 url = "https://github.com/tree-sitter/tree-sitter-go/releases/download/v0.25.0/tree-sitter-go.wasm"
@@ -21,10 +48,37 @@ sha256 = "9504573f352b20be7f2f1911754d710622aedc15afff16d5ed8fb5645681aee7"
 [server]
 id = "gopls"
 language_id = "go"
+languages = ["gomod", "gosum", "gowork"]
 command = "gopls"
 check = ["version"]
 
+[server.language_ids]
+gomod = "go.mod"
+gosum = "go.sum"
+gowork = "go.work"
+
 [server.install]
-kind = "go"
+kind = "command"
+tool = "go"
+needs = "Go"
+steps = [["install", "golang.org/x/tools/gopls@v0.24.0"]]
+env = { GOBIN = "{folder}", GOSUMDB = "sum.golang.org", GOFLAGS = "-mod=readonly" }
+env_remove = ["GONOSUMDB", "GONOSUMCHECK", "GOPRIVATE", "GOINSECURE"]
 version = "v0.24.0"
-package = "golang.org/x/tools/gopls@v0.24.0"
+
+# Where Go toolchains are kept: the system's, /usr/local/go and those ~/sdk holds.
+[[toolchain_source]]
+kind = "system"
+programs = ["go"]
+argument = "version"
+
+[[toolchain_source]]
+kind = "folder"
+folder = "/usr/local/go"
+label = "usr/local/go"
+programs = ["go"]
+
+[[toolchain_source]]
+kind = "children"
+folder = "~/sdk"
+programs = ["go"]

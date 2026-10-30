@@ -1,0 +1,15 @@
+{
+  "name": "pandemonium-browser-electron",
+  "version": "1.0.0",
+  "description": "The browser helper of the Pandemonium window, built on Electron.",
+  "main": "main.js",
+  "type": "commonjs",
+  "dependencies": {
+    "electron": "^45.0.0"
+  },
+  "private": true,
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2"
+  }
+}

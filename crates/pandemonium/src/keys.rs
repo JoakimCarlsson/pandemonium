@@ -82,10 +82,17 @@ fn unspent(event: &WindowKeyEvent, modifiers: Modifiers) -> Modifiers {
 /// not edit text or is a shortcut the window handles itself, such as copy.
 pub fn edit(event: &KeyEvent) -> Option<Edit> {
     let modifiers = event.modifiers;
-    if !event.pressed || modifiers.alt {
+    let option = cfg!(target_os = "macos")
+        && modifiers.alt
+        && matches!(
+            event.key,
+            Key::Backspace | Key::Delete | Key::ArrowLeft | Key::ArrowRight
+        );
+    if !event.pressed || (modifiers.alt && !option) {
         return None;
     }
     let command = modifiers.control || modifiers.logo;
+    let word = command || option;
     let shift = modifiers.shift;
     match event.key {
         Key::Character(character) if command => match character.to_ascii_lowercase() {
@@ -97,14 +104,14 @@ pub fn edit(event: &KeyEvent) -> Option<Edit> {
         },
         Key::Character(character) => Some(Edit::Insert(character)),
         Key::Space if !command => Some(Edit::Insert(' ')),
-        Key::Backspace => Some(by_word(command, Edit::Backspace, Edit::BackspaceWord)),
-        Key::Delete => Some(by_word(command, Edit::Delete, Edit::DeleteWord)),
+        Key::Backspace => Some(by_word(word, Edit::Backspace, Edit::BackspaceWord)),
+        Key::Delete => Some(by_word(word, Edit::Delete, Edit::DeleteWord)),
         Key::ArrowLeft => Some(Edit::Move(
-            by_word(command, Motion::Left, Motion::WordLeft),
+            by_word(word, Motion::Left, Motion::WordLeft),
             shift,
         )),
         Key::ArrowRight => Some(Edit::Move(
-            by_word(command, Motion::Right, Motion::WordRight),
+            by_word(word, Motion::Right, Motion::WordRight),
             shift,
         )),
         Key::Home => Some(Edit::Move(Motion::Home, shift)),
@@ -113,9 +120,9 @@ pub fn edit(event: &KeyEvent) -> Option<Edit> {
     }
 }
 
-/// `by_word` while the command key is held, `plain` otherwise.
-fn by_word<T>(command: bool, plain: T, by_word: T) -> T {
-    if command { by_word } else { plain }
+/// `by_word` while a word modifier is held, `plain` otherwise.
+fn by_word<T>(word: bool, plain: T, by_word: T) -> T {
+    if word { by_word } else { plain }
 }
 
 /// What a shortcut asks of the clipboard.

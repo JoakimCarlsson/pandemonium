@@ -1,6 +1,7 @@
 //! The panes of the main area: tab groups laid side by side or one above the other, each tab dragged to another group or to the edge of one to split it.
 
 use pm_input::FocusId;
+use serde::{Deserialize, Serialize};
 
 use crate::open_files::FILE_TAB_BASE;
 use crate::sash::Grows;
@@ -31,7 +32,7 @@ pub const SPLIT_UP: FocusId = FocusId(7099);
 /// The row of the menu of panes that splits the pane worked in with its tab below.
 pub const SPLIT_DOWN: FocusId = FocusId(7100);
 
-/// The first of the buttons of empty panes; each pane has four, by its position: bring the page in, bring the diff in, show the files, close it.
+/// The first of the buttons of empty panes; each pane has five, by its position: bring the page in, bring the diff in, show the files, close it, bring the browser in.
 pub const PANE_PUT_BASE: u64 = 4_800_000;
 
 /// How many ids each range above holds.
@@ -47,7 +48,7 @@ const SMALLEST: f32 = 160.0;
 const EDGE: f32 = 0.25;
 
 /// What a tab of a pane shows.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Item {
     /// The page itself: the conversation of a session, the page for starting work or a project's overview.
     Page,
@@ -55,6 +56,10 @@ pub enum Item {
     Diff,
     /// The lines around the hits of a search.
     Excerpts,
+    /// A page of the web.
+    Browser,
+    /// The notes of the newer release.
+    Update,
     /// An open file, read from the last commit when `head`.
     File {
         /// The file, from the root of the repository.
@@ -65,7 +70,7 @@ pub enum Item {
 }
 
 /// A pane: the tabs it holds and the one it shows.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Group {
     /// Its tabs, in the order they are drawn.
     pub items: Vec<Item>,
@@ -74,7 +79,7 @@ pub struct Group {
 }
 
 /// Which way the two sides of a split lie.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Axis {
     /// Side by side.
     Row,
@@ -83,7 +88,7 @@ pub enum Axis {
 }
 
 /// How the main area is cut into panes.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Layout {
     /// One pane over the whole of its space.
     Group(Group),
@@ -627,7 +632,7 @@ impl Layout {
         };
         for item in missing {
             let to = match item {
-                Item::Page | Item::Diff | Item::Excerpts => home,
+                Item::Page | Item::Diff | Item::Excerpts | Item::Browser | Item::Update => home,
                 Item::File { .. } => files,
             };
             if let Some(group) = layout.groups_mut().into_iter().nth(to) {
@@ -741,6 +746,12 @@ impl WorkspaceState {
         if self.excerpts.is_some() {
             items.push(Item::Excerpts);
         }
+        if self.browser.is_some() {
+            items.push(Item::Browser);
+        }
+        if self.update_open {
+            items.push(Item::Update);
+        }
         items.extend(
             self.git
                 .viewers
@@ -763,6 +774,8 @@ impl WorkspaceState {
             }),
             Tab::Diff if self.pane_items().contains(&Item::Diff) => Item::Diff,
             Tab::Excerpts if self.excerpts.is_some() => Item::Excerpts,
+            Tab::Browser if self.browser.is_some() => Item::Browser,
+            Tab::Update if self.update_open => Item::Update,
             _ => Item::Page,
         }
     }
@@ -833,6 +846,8 @@ impl WorkspaceState {
             TAB_CHAT => Some(Item::Page),
             TAB_DIFF => Some(Item::Diff),
             crate::excerpts::TAB_EXCERPTS => Some(Item::Excerpts),
+            crate::browser::TAB_BROWSER => Some(Item::Browser),
+            crate::update_dialog::TAB_UPDATE => Some(Item::Update),
             _ => {
                 let index = id.0.checked_sub(FILE_TAB_BASE)? as usize;
                 let viewer = self.git.viewers.get(index)?;
@@ -846,11 +861,13 @@ impl WorkspaceState {
     }
 
     /// Shows `item` in its pane and makes that pane the one being worked in.
-    fn show_item(&mut self, item: &Item) {
+    pub(crate) fn show_item(&mut self, item: &Item) {
         match item {
             Item::Page => self.tab = Tab::Chat,
             Item::Diff => self.tab = Tab::Diff,
             Item::Excerpts => self.tab = Tab::Excerpts,
+            Item::Browser => self.tab = Tab::Browser,
+            Item::Update => self.tab = Tab::Update,
             Item::File { .. } => {
                 if let Some(index) = self.viewer_index(item) {
                     self.git.shown = Some(index);
@@ -879,7 +896,7 @@ impl WorkspaceState {
         }
     }
 
-    /// Carries out the button `id` of an empty pane, if it is one: brings the page or the diff into it, shows the files to open one in it, or closes it.
+    /// Carries out the button `id` of an empty pane, if it is one: brings the page, the diff or the browser into it, shows the files to open one in it, or closes it.
     pub(crate) fn press_empty_pane(&mut self, id: FocusId) -> bool {
         let Some(offset) =
             id.0.checked_sub(PANE_PUT_BASE)
@@ -887,7 +904,7 @@ impl WorkspaceState {
         else {
             return false;
         };
-        let (pane, put) = ((offset / 4) as usize, offset % 4);
+        let (pane, put) = ((offset / 5) as usize, offset % 5);
         match put {
             0 | 1 => {
                 let item = if put == 0 { Item::Page } else { Item::Diff };
@@ -898,6 +915,19 @@ impl WorkspaceState {
                     parked: None,
                 };
                 self.show_item(&item);
+                self.settle_panes();
+            }
+            4 => {
+                if self.browser.is_none() {
+                    self.open_browser(crate::browser::HOME);
+                }
+                let panes = self.panes();
+                self.panes = Panes {
+                    layout: panes.layout.moved(&Item::Browser, pane, Side::Center),
+                    focused: pane,
+                    parked: None,
+                };
+                self.show_item(&Item::Browser);
                 self.settle_panes();
             }
             2 => {

@@ -334,6 +334,9 @@ fn trouble(said: &str, width: f32) -> Node {
 
 /// The changes of `session`: the commit message and its button, then the files in groups, and the graph under them.
 fn changes(state: &WorkspaceState, session: &Session, shaper: &mut Shaper) -> Node {
+    if session.unknown {
+        return nothing("Reading the folder…");
+    }
     if !session.on_branch
         && session.branch.is_empty()
         && session.changes.is_empty()
@@ -401,7 +404,7 @@ fn repositories(state: &WorkspaceState, session: &Session) -> Option<Node> {
             let changed = session
                 .changes
                 .iter()
-                .filter(|change| change.submodule == *repository)
+                .filter(|change| change.is_listed_in(repository.as_deref()))
                 .count();
             let head = state.head_of(repository.as_deref()).unwrap_or_default();
             Tile::new(FocusId(REPOSITORY_BASE + row as u64))
@@ -457,7 +460,12 @@ fn repositories(state: &WorkspaceState, session: &Session) -> Option<Node> {
 /// The button that shows the branch the repository the panel works on is on and opens the list of branches, or, outside a repository, only says so.
 fn branch_button(state: &WorkspaceState, session: &Session, working: bool) -> Node {
     if session.branch.is_empty() {
-        return clipped("Not a Git repository", 12, Role::Subtle);
+        let said = if session.unknown {
+            "Reading the folder…"
+        } else {
+            "Not a Git repository"
+        };
+        return clipped(said, 12, Role::Subtle);
     }
     let head = state
         .head_of(state.git.repository.as_deref())

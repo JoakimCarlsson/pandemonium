@@ -100,6 +100,9 @@ pub enum IconName {
     History,
     /// Two arrows chasing each other: refresh.
     Refresh,
+    /// A cursor inside a dashed box: pick an element on a page.
+    Pick,
+    Globe,
     /// An arrow turning back on itself: undo.
     Undo,
     /// A speech bubble: a chat message.
@@ -154,6 +157,16 @@ pub enum IconName {
     StepOut,
     /// An arc over a dot: step over a line.
     StepOver,
+    /// A bulb: the language server offers changes here.
+    Lightbulb,
+    /// A camera: a screenshot.
+    Camera,
+    /// The corners of a frame: an area of a page.
+    Scan,
+    /// A closed padlock: locked.
+    Lock,
+    /// An open padlock: not locked.
+    LockOpen,
 }
 
 impl IconName {
@@ -206,6 +219,8 @@ impl IconName {
             Self::GitFork => Svg::new("git_fork", include_icon!("git_fork")),
             Self::History => Svg::new("history", include_icon!("history")),
             Self::Refresh => Svg::new("refresh", include_icon!("refresh")),
+            Self::Globe => Svg::new("globe", include_icon!("globe")),
+            Self::Pick => Svg::new("pick", include_icon!("pick")),
             Self::Undo => Svg::new("undo", include_icon!("undo")),
             Self::Message => Svg::new("message", include_icon!("message")),
             Self::CircleUser => Svg::new("circle_user", include_icon!("circle_user")),
@@ -233,6 +248,11 @@ impl IconName {
             Self::StepInto => Svg::new("step_into", include_icon!("step_into")),
             Self::StepOut => Svg::new("step_out", include_icon!("step_out")),
             Self::StepOver => Svg::new("step_over", include_icon!("step_over")),
+            Self::Lightbulb => Svg::new("lightbulb", include_icon!("lightbulb")),
+            Self::Camera => Svg::new("camera", include_icon!("camera")),
+            Self::Scan => Svg::new("scan", include_icon!("scan")),
+            Self::Lock => Svg::new("lock", include_icon!("lock")),
+            Self::LockOpen => Svg::new("lock_open", include_icon!("lock_open")),
         }
     }
 }
