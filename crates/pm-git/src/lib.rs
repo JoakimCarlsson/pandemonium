@@ -208,6 +208,15 @@ fn run_indexed(
     }
 }
 
+/// The paths `git ls-files` lists in `directory` for `arguments`, each exactly as named on disk: the listing is nul separated, so no name is quoted, escaped or split, whatever it holds. Nothing when git fails.
+fn ls_files(directory: &Path, arguments: &[&str]) -> Vec<String> {
+    let mut command = vec!["ls-files", "-z"];
+    command.extend_from_slice(arguments);
+    run(directory, &command)
+        .map(|listing| checkpoint::listed(&listing))
+        .unwrap_or_default()
+}
+
 /// The folder git keeps the state of the worktree at `directory` in, and the one it shares with every worktree of the repository, as full paths; the same folder twice for a repository's own worktree.
 pub fn git_folders(directory: &Path) -> Option<(PathBuf, PathBuf)> {
     let said = run(
@@ -274,21 +283,15 @@ pub fn files(directory: &Path, limit: usize) -> Vec<String> {
         Layout::Repository => {}
     }
     let submodules = submodule::own_submodules(directory);
-    let listed = |folder: &Path, arguments: &[&str]| -> Vec<String> {
-        run(folder, arguments)
-            .map(|listed| listed.lines().map(str::to_owned).collect())
-            .unwrap_or_default()
-    };
-    let untracked = ["ls-files", "--others", "--exclude-standard"];
-    let mut found: Vec<String> =
-        listed(directory, &["ls-files", "--cached", "--recurse-submodules"])
-            .into_iter()
-            .filter(|path| !submodules.contains(path))
-            .chain(listed(directory, &untracked))
-            .collect();
+    let untracked = ["--others", "--exclude-standard"];
+    let mut found: Vec<String> = ls_files(directory, &["--cached", "--recurse-submodules"])
+        .into_iter()
+        .filter(|path| !submodules.contains(path))
+        .chain(ls_files(directory, &untracked))
+        .collect();
     for path in &submodules {
         found.extend(
-            listed(&directory.join(path), &untracked)
+            ls_files(&directory.join(path), &untracked)
                 .into_iter()
                 .map(|file| format!("{path}/{file}")),
         );
@@ -306,19 +309,15 @@ pub fn untracked_folders(directory: &Path, limit: usize) -> Vec<String> {
         Layout::Neither => return Vec::new(),
         Layout::Repository => {}
     }
-    run(
+    ls_files(
         directory,
-        &["ls-files", "--others", "--directory", "--exclude-standard"],
+        &["--others", "--directory", "--exclude-standard"],
     )
-    .map(|listed| {
-        listed
-            .lines()
-            .filter_map(|line| line.strip_suffix('/'))
-            .take(limit)
-            .map(str::to_owned)
-            .collect()
-    })
-    .unwrap_or_default()
+    .iter()
+    .filter_map(|line| line.strip_suffix('/'))
+    .take(limit)
+    .map(str::to_owned)
+    .collect()
 }
 
 /// The ignored files of the repository `directory` is in, as paths from it, at most `limit` of them.
@@ -330,12 +329,9 @@ pub fn ignored(directory: &Path, limit: usize) -> Vec<String> {
         Layout::Neither => return Vec::new(),
         Layout::Repository => {}
     }
-    run(
-        directory,
-        &["ls-files", "--others", "--ignored", "--exclude-standard"],
-    )
-    .map(|listed| listed.lines().take(limit).map(str::to_owned).collect())
-    .unwrap_or_default()
+    let mut found = ls_files(directory, &["--others", "--ignored", "--exclude-standard"]);
+    found.truncate(limit);
+    found
 }
 
 /// The top-level ignored folders of the repository `directory` is in, including empty ones.
@@ -347,25 +343,15 @@ pub fn ignored_folders(directory: &Path, limit: usize) -> Vec<String> {
         Layout::Neither => return Vec::new(),
         Layout::Repository => {}
     }
-    run(
+    ls_files(
         directory,
-        &[
-            "ls-files",
-            "--others",
-            "--ignored",
-            "--directory",
-            "--exclude-standard",
-        ],
+        &["--others", "--ignored", "--directory", "--exclude-standard"],
     )
-    .map(|listed| {
-        listed
-            .lines()
-            .filter_map(|line| line.strip_suffix('/'))
-            .take(limit)
-            .map(str::to_owned)
-            .collect()
-    })
-    .unwrap_or_default()
+    .iter()
+    .filter_map(|line| line.strip_suffix('/'))
+    .take(limit)
+    .map(str::to_owned)
+    .collect()
 }
 
 /// The branch `directory` has checked out, or nothing when it has none or is not a repository. Of a folder of repositories, the one branch they are all on, or the branches they are on, each named once and told apart by a dot.
@@ -1585,3 +1571,6 @@ pub fn stash(
 pub fn cherry_pick(directory: &Path, commit: &str) -> Result<(), String> {
     run(directory, &["cherry-pick", commit]).map(|_| ())
 }
+
+#[cfg(test)]
+mod listing_tests;

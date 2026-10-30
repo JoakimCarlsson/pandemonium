@@ -27,7 +27,7 @@ fn git_path(directory: &Path, name: &str) -> Result<PathBuf, String> {
 }
 
 /// The paths of `listing`, which separates them with nul characters.
-fn listed(listing: &str) -> Vec<String> {
+pub(crate) fn listed(listing: &str) -> Vec<String> {
     listing
         .split('\0')
         .filter(|path| !path.is_empty())
