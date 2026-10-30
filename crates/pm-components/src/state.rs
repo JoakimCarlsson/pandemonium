@@ -2568,6 +2568,7 @@ impl WorkspaceState {
 
     /// Takes what the agents have yet to be told off the state.
     pub fn take_outbox(&mut self) -> Vec<Outgoing> {
+        self.ensure_terminal();
         self.ask_problems_again();
         std::mem::take(&mut self.outbox)
     }
@@ -3677,6 +3678,25 @@ mod tests {
         assert_eq!(state.new_in, None);
         assert_eq!(state.sessions.len(), sessions);
         assert_eq!(state.projects[0].submodules, ["vendor/other"]);
+    }
+
+    /// An open dock on the shells never shows an empty window: a session with none gets a first shell once it is in view.
+    #[test]
+    fn open_dock_starts_a_shell_for_a_session_with_none() {
+        let mut state = WorkspaceState::sample();
+        state.terminal = true;
+        state.bottom = crate::dock::BottomTab::Terminal;
+        let index = state.review_index().unwrap();
+        state.sessions[index].terminals.clear();
+        let outbox = state.take_outbox();
+        assert_eq!(state.sessions[index].terminals.len(), 1);
+        assert!(
+            outbox
+                .iter()
+                .any(|out| matches!(out, Outgoing::OpenTerminal { .. }))
+        );
+        state.take_outbox();
+        assert_eq!(state.sessions[index].terminals.len(), 1);
     }
 
     /// Opening, folding, picking, staging and committing use the folder being reviewed on every page.

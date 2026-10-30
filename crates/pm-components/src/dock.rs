@@ -231,6 +231,18 @@ impl WorkspaceState {
         }
     }
 
+    /// Starts a first shell when the dock is open on the shells of a session that has none, as after another session was brought into view, so that it never shows an empty window.
+    pub(crate) fn ensure_terminal(&mut self) {
+        if !self.terminal || self.bottom_tab() != BottomTab::Terminal {
+            return;
+        }
+        if let Some(position) = self.docked_position()
+            && self.sessions[position].terminals.is_empty()
+        {
+            self.open_terminal_in(position, String::new());
+        }
+    }
+
     /// Shows the dock with the list of problems in it, asking the server what is wrong.
     pub fn show_problems(&mut self) {
         self.bottom = BottomTab::Problems;
