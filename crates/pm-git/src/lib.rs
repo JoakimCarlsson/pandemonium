@@ -241,8 +241,8 @@ pub fn is_repository(directory: &Path) -> bool {
 /// The folders a plain folder's listing does not go into.
 const SKIPPED: [&str; 4] = ["node_modules", "target", "build", "dist"];
 
-/// The files under `directory`, as paths from `root`, at most `limit` of them, leaving out hidden and bulky folders.
-fn walk(root: &Path, directory: &Path, limit: usize, found: &mut Vec<String>) {
+/// The files under `directory`, as paths from `root`, at most `limit` of them, leaving out hidden and bulky folders and the folders of `apart` directly in `root`.
+fn walk(root: &Path, directory: &Path, apart: &[String], limit: usize, found: &mut Vec<String>) {
     let Ok(entries) = fs::read_dir(directory) else {
         return;
     };
@@ -258,8 +258,9 @@ fn walk(root: &Path, directory: &Path, limit: usize, found: &mut Vec<String>) {
             continue;
         };
         if kind.is_dir() {
-            if !name.starts_with('.') && !SKIPPED.contains(&name.as_str()) {
-                walk(root, &path, limit, found);
+            let held = directory == root && apart.contains(&name);
+            if !held && !name.starts_with('.') && !SKIPPED.contains(&name.as_str()) {
+                walk(root, &path, apart, limit, found);
             }
         } else if kind.is_file()
             && let Ok(relative) = path.strip_prefix(root)
@@ -269,15 +270,17 @@ fn walk(root: &Path, directory: &Path, limit: usize, found: &mut Vec<String>) {
     }
 }
 
-/// The files of the folder `directory`, as paths from it, at most `limit` of them: those a repository and its submodules track or do not ignore, those of each repository in a folder that holds repositories, or, in a folder with none, every file but those in hidden and bulky folders.
+/// The files of the folder `directory`, as paths from it, at most `limit` of them: those a repository and its submodules track or do not ignore, those of each repository in a folder that holds repositories together with the files lying outside them, or, in a folder with none, every file but those in hidden and bulky folders.
 pub fn files(directory: &Path, limit: usize) -> Vec<String> {
     match layout(directory) {
         Layout::Repositories(children) => {
-            return multirepo::gathered(directory, &children, limit, files);
+            let mut found = multirepo::gathered(directory, &children, limit, files);
+            walk(directory, directory, &children, limit, &mut found);
+            return found;
         }
         Layout::Neither => {
             let mut found = Vec::new();
-            walk(directory, directory, limit, &mut found);
+            walk(directory, directory, &[], limit, &mut found);
             return found;
         }
         Layout::Repository => {}
