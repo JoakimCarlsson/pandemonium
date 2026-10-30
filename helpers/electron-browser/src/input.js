@@ -51,11 +51,13 @@ const NAMED_KEYS = {
 };
 
 /**
- * How the pointer looks for each cursor type the engine reports.
+ * How the pointer looks for each cursor type the engine reports. The engine names cursors as Chromium does, not as CSS
+ * does: its `pointer` is the ordinary arrow and its `hand` is the hand over a link. Types not listed, such as `pointer`
+ * and `null`, are the arrow.
  * @type {Readonly<Record<string, Cursor>>}
  */
 const CURSORS = {
-  pointer: 'Hand',
+  hand: 'Hand',
   text: 'Text',
   'vertical-text': 'Text',
   crosshair: 'Cross',
@@ -118,7 +120,7 @@ function keyEvents(key) {
 
 /**
  * How the window should draw the pointer for the engine's cursor `type`.
- * @param {string} type The engine's name for the cursor, such as `pointer`.
+ * @param {string} type The engine's name for the cursor, such as `hand`.
  * @returns {Cursor} The look the window knows.
  */
 function cursorOf(type) {

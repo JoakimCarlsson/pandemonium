@@ -1997,6 +1997,7 @@ impl App {
     /// element, Escape lets go of focus.
     fn key(&mut self, event: KeyEvent) {
         if !event.pressed {
+            self.browser_key_released(event);
             return;
         }
         if self.recording_key(event)

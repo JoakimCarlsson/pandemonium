@@ -701,6 +701,23 @@ impl App {
         true
     }
 
+    /// Tells the page that holds the keyboard a key came up, as pages that listen for `keyup` or track held keys expect, unless the browser took the press for itself.
+    pub(super) fn browser_key_released(&mut self, event: KeyEvent) {
+        if self.browser_clearing() {
+            return;
+        }
+        let Some(id) = self.browser_focused() else {
+            return;
+        };
+        if id == BROWSER_BODY && shortcut_of(&event).is_some() {
+            return;
+        }
+        let key = typed(event, held(event.modifiers, self.pointer));
+        if let Some(view) = self.browser_view_of(id) {
+            view.key(&key);
+        }
+    }
+
     /// How the pointer looks while it is over a page, as the page asks.
     pub(super) fn browser_cursor(&self) -> Option<Cursor> {
         let at = self.pointer.position?;
