@@ -162,6 +162,17 @@ the painted surface, so the page is shown at the emulated size at the top left
 of the pane and the rest of the pane is empty. `reset` gives the size back to
 the pane.
 
+## File pickers
+
+A click on `<input type=file>` makes Electron open a native dialog parented to
+the page's window, which here is hidden and offscreen, so the dialog never
+shows and the input stays empty. `helpers/electron-browser/src/filechooser.js`
+turns on `Page.setInterceptFileChooserDialog`, opens `dialog.showOpenDialog`
+itself with no parent when `Page.fileChooserOpened` arrives, and hands the
+chosen files to the input with `DOM.setFileInputFiles`. The files are the
+reader's own, on the machine the window runs on. Agents still cannot use either
+command (see `cdp-policy.js`).
+
 ## Dialogs
 
 `alert`, `confirm`, `prompt` and `beforeunload` are handled in
