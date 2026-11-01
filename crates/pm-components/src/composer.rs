@@ -13,6 +13,7 @@ use pm_text::Shaper;
 use pm_ui::{Node, node, text};
 
 use crate::Popover;
+use crate::choices::{LIST_ROW_HEIGHT, LIST_ROWS, PRESSABLE_LIST_ROWS};
 use crate::parts::{line, spacer};
 use crate::plan::proposal;
 use crate::popover::{anchored, heading, row};
@@ -31,12 +32,6 @@ const COMPOSER_SHADOW: [ShadowLayer; 1] = [ShadowLayer::new(0.0, 8.0, 30.0, 0.0,
 
 /// How many branches the menu of where work is done lists.
 const BRANCH_ROWS: usize = 8;
-
-/// How many commands the list behind a slash shows at once.
-const SLASH_ROWS: usize = 8;
-
-/// The height in logical pixels of one row of the list of files.
-const MENTION_ROW_HEIGHT: f32 = 34.0;
 
 /// How tall a line of the prompt is, in logical pixels.
 const LINE: f32 = 22.0;
@@ -287,7 +282,7 @@ fn mention_list(state: &WorkspaceState) -> Option<Node> {
                     .styles([
                         flex(),
                         flex_col(),
-                        max_h(MENTION_ROW_HEIGHT * SLASH_ROWS as f32 / 4.0),
+                        max_h(LIST_ROW_HEIGHT * LIST_ROWS as f32 / 4.0),
                         overflow_hidden(),
                     ])
                     .scroll_from_start(MENU_SCROLL, state.menu_scroll)
@@ -339,52 +334,69 @@ fn slash_list(state: &WorkspaceState) -> Option<Node> {
                 },
                 None,
             )
-            .children(matches.iter().take(SLASH_ROWS).enumerate().map(
-                |(position, (prefix, command))| {
-                    let mut styles = vec![
+            .child(
+                node()
+                    .styles([
                         flex(),
-                        items_baseline(),
-                        gap(3),
-                        px(2.5),
-                        py(2),
-                        rounded(Radius::Lg),
-                        cursor_pointer(),
-                        bg(Role::SurfaceHover).hover(),
-                    ];
-                    if position == chosen {
-                        styles.push(bg(Role::SurfaceHover));
-                    }
-                    node()
-                        .styles(styles)
-                        .child(text(format!("{prefix}{}", command.name)).styles([
-                            text_px(13),
-                            leading_ratio(1.4),
-                            font_mono(),
-                            text_color(Role::Text),
-                        ]))
-                        .child(
-                            node()
-                                .styles([flex_1(), min_w_px(0), overflow_hidden()])
-                                .child(
-                                    line(&command.description, 12, 1.4, Role::Subtle)
-                                        .styles([truncate()]),
-                                ),
-                        )
-                        .children((!state.has_skills() && *prefix == '/').then(|| {
-                            line(
-                                if state.is_skill(&command.name) {
-                                    "skill"
+                        flex_col(),
+                        max_h(LIST_ROW_HEIGHT * LIST_ROWS as f32 / 4.0),
+                        overflow_hidden(),
+                    ])
+                    .scroll_from_start(MENU_SCROLL, state.menu_scroll)
+                    .children(
+                        matches
+                            .iter()
+                            .enumerate()
+                            .map(|(position, (prefix, command))| {
+                                let mut styles = vec![
+                                    flex(),
+                                    items_baseline(),
+                                    gap(3),
+                                    px(2.5),
+                                    py(2),
+                                    rounded(Radius::Lg),
+                                    cursor_pointer(),
+                                    bg(Role::SurfaceHover).hover(),
+                                ];
+                                if position == chosen {
+                                    styles.push(bg(Role::SurfaceHover));
+                                }
+                                let row = node()
+                                    .styles(styles)
+                                    .child(text(format!("{prefix}{}", command.name)).styles([
+                                        text_px(13),
+                                        leading_ratio(1.4),
+                                        font_mono(),
+                                        text_color(Role::Text),
+                                    ]))
+                                    .child(
+                                        node()
+                                            .styles([flex_1(), min_w_px(0), overflow_hidden()])
+                                            .child(
+                                                line(&command.description, 12, 1.4, Role::Subtle)
+                                                    .styles([truncate()]),
+                                            ),
+                                    )
+                                    .children((!state.has_skills() && *prefix == '/').then(|| {
+                                        line(
+                                            if state.is_skill(&command.name) {
+                                                "skill"
+                                            } else {
+                                                "command"
+                                            },
+                                            11,
+                                            1.4,
+                                            Role::Subtle,
+                                        )
+                                    }));
+                                if position < PRESSABLE_LIST_ROWS {
+                                    row.focusable(FocusId(SLASH_BASE + position as u64))
                                 } else {
-                                    "command"
-                                },
-                                11,
-                                1.4,
-                                Role::Subtle,
-                            )
-                        }))
-                        .focusable(FocusId(SLASH_BASE + position as u64))
-                },
-            ))
+                                    row
+                                }
+                            }),
+                    ),
+            )
             .above_box(),
     )
 }
