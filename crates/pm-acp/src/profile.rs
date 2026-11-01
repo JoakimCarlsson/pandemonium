@@ -204,8 +204,12 @@ fn is_account_folder(folder: &Path) -> bool {
 
 /// Links what an agent's own folder shares into the account folder `home`, leaving what is already there.
 pub(crate) fn share_setup(agent: Agent, home: &Path) {
-    let source = own_folder(agent);
-    seed(agent, home, source.as_deref());
+    share_from(agent, home, own_folder(agent).as_deref());
+}
+
+/// Links what the folder `source` shares into the account folder `home`, leaving what is already there.
+fn share_from(agent: Agent, home: &Path, source: Option<&Path>) {
+    seed(agent, home, source);
     if agent.home.is_none() {
         crate::overlay::build(agent, home);
         return;
@@ -224,5 +228,59 @@ pub(crate) fn share_setup(agent: Agent, home: &Path) {
         }
         #[cfg(unix)]
         let _ = std::os::unix::fs::symlink(&from, &to);
+    }
+}
+
+#[cfg(test)]
+/// Tests for linking an agent's own setup into an account folder.
+mod tests {
+    use std::path::PathBuf;
+
+    use super::share_from;
+    use crate::agent::AGENTS;
+
+    /// An empty folder of its own for the test `name`, under the git-ignored build folder.
+    fn folder(name: &str) -> PathBuf {
+        let folder = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../build/pm-acp-tests")
+            .join(name);
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(&folder).unwrap();
+        folder
+    }
+
+    /// A skill added to the user's folder after the account folder was first set up is linked by the next run, and what the account folder holds is left alone.
+    #[test]
+    fn later_skills_are_linked() {
+        let agent = AGENTS[0];
+        let root = folder("later-skills");
+        let user = root.join("user");
+        let account = root.join("account");
+        std::fs::create_dir_all(&account).unwrap();
+        std::fs::create_dir_all(&user).unwrap();
+        std::fs::write(account.join("CLAUDE.md"), "kept").unwrap();
+
+        share_from(agent, &account, Some(&user));
+        assert!(account.join("skills").symlink_metadata().is_err());
+
+        std::fs::create_dir_all(user.join("skills/fresh")).unwrap();
+        std::fs::write(
+            user.join("skills/fresh/SKILL.md"),
+            "---\nname: fresh\ndescription: new\n---\n",
+        )
+        .unwrap();
+        share_from(agent, &account, Some(&user));
+        share_from(agent, &account, Some(&user));
+
+        let skills = pm_agent_library::skills(agent.product(), &root, Some(&account));
+        assert_eq!(
+            skills.iter().filter(|skill| skill.name == "fresh").count(),
+            1
+        );
+        assert_eq!(
+            std::fs::read_to_string(account.join("CLAUDE.md")).unwrap(),
+            "kept"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
