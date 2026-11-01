@@ -171,6 +171,7 @@ fn main() {
             Some("historymenu") => Shot::HistoryMenu,
             Some("stashing") => Shot::Stashing,
             Some("changemenu") => Shot::ChangeMenu,
+            Some("changemenumany") => Shot::ChangeMenuMany,
             Some("treemenu") => Shot::TreeMenu,
             Some("treepicked") => Shot::TreePicked,
             Some("naming") => Shot::Naming,
