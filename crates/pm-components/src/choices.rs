@@ -582,17 +582,41 @@ impl WorkspaceState {
         self
     }
 
+    /// The agent and project the prompt is for, when the page shown has a prompt.
+    fn prompt_agent_project(&self) -> Option<(usize, usize)> {
+        match self.page {
+            Page::New(project) => Some((self.agent, project)),
+            Page::Session(index) => {
+                let session = self.sessions.get(index)?;
+                Some((session.agent, session.project))
+            }
+            _ => None,
+        }
+    }
+
+    /// Asks again for the skills of the prompt's agent and project, keeping those held until the answer comes, so that a skill added since they were read shows when the list behind a slash or a dollar sign opens.
+    pub(crate) fn refresh_skills(&mut self) {
+        let Some((agent, project)) = self.prompt_agent_project() else {
+            return;
+        };
+        if self.skills_of != Some((agent, project)) {
+            return;
+        }
+        let Some(held) = self.projects.get(project) else {
+            return;
+        };
+        self.outbox.push(Outgoing::Skills {
+            agent,
+            project,
+            host: held.host(),
+            directory: held.directory().to_string_lossy().into_owned(),
+        });
+    }
+
     /// Reads skills for the prompt's agent and project, also hydrating restored conversations from the cache.
     fn sync_skills(&mut self) {
-        let (agent, project) = match self.page {
-            Page::New(project) => (self.agent, project),
-            Page::Session(index) => {
-                let Some(session) = self.sessions.get(index) else {
-                    return;
-                };
-                (session.agent, session.project)
-            }
-            _ => return,
+        let Some((agent, project)) = self.prompt_agent_project() else {
+            return;
         };
         if self.skills_of == Some((agent, project)) {
             if let Page::Session(index) = self.page {
@@ -1340,6 +1364,21 @@ mod tests {
         state = state.with_skills(agent, 0, skills(), Default::default());
         state.press_choice(SKILL_BUTTON.0);
         assert_eq!(state.slash_matches(), vec![('$', skills().remove(0))]);
+    }
+
+    /// Typing a dollar sign or a slash asks for the skills again, so that one added since they were read shows, and the answer replaces what was held.
+    #[test]
+    fn opening_the_skill_list_reads_skills_again() {
+        let mut state = conversation();
+        let agent = state.sessions[0].agent;
+        state.sync_context();
+        state = state.with_skills(agent, 0, Vec::new(), Default::default());
+        state.outbox.clear();
+        state.prompt = prompt_field("");
+        state = state.edited(crate::state::PROMPT, pm_text::Edit::Insert('$'));
+        assert!(state.outbox.iter().any(|request| matches!(request, Outgoing::Skills { agent: found, project: 0, .. } if *found == agent)));
+        state = state.with_skills(agent, 0, skills(), Default::default());
+        assert_eq!(state.open().unwrap().skills.len(), skills().len());
     }
 
     /// Discovery that finishes after the first message still reaches the conversation.

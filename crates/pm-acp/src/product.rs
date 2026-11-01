@@ -20,10 +20,17 @@ impl Agent {
         ))
     }
 
-    /// The folder the agent keeps its config in: the account folder in use, or the product's own when there is none; nothing for a product the app does not know.
+    /// The folder the agent keeps its config in: the account folder in use, or the product's own when there is none; nothing for a product the app does not know; an account folder in use is first brought up to date with the user's own folder, so what is read from it is what the agent would load now.
     pub fn config_folder(self) -> Option<PathBuf> {
-        self.home
-            .and_then(|_| self.home())
-            .or_else(|| self.product()?.default_folder())
+        let home = self.home.and_then(|_| self.home());
+        if let Some(home) = &home {
+            crate::profile::share_setup(self, home);
+        }
+        home.or_else(|| self.product()?.default_folder())
+    }
+
+    /// Whether the agent can be told to read its skills again while a conversation is open, which the Claude and Grok agents can, by the same command.
+    pub fn reloads_skills(self) -> bool {
+        matches!(self.product(), Some(Product::Claude | Product::Grok))
     }
 }

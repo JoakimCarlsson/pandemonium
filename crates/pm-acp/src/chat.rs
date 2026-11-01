@@ -303,6 +303,9 @@ pub enum Event {
     },
 }
 
+/// The command that has a Claude or Grok agent read its skills, plugins and agents again.
+const RELOAD: &str = "/reload-plugins";
+
 /// What the reader hands an agent.
 enum Command {
     /// Starts a turn with these words and these files.
@@ -335,6 +338,8 @@ enum Command {
         /// The value.
         value: String,
     },
+    /// Has the agent read its skills again, quietly, when it is between turns.
+    Reload,
 }
 
 /// The agent's process once it is started, and whether the chat was stopped, shared by a chat and its driver thread.
@@ -463,6 +468,11 @@ impl Chat {
     /// Answers the form of questions under `ticket` with `replies`, or abandons it.
     pub fn answer(&self, ticket: u64, replies: Option<Vec<Reply>>) {
         let _ = self.commands.send(Command::Answer { ticket, replies });
+    }
+
+    /// Has the agent read its skills again when it is between turns, so that a skill added since it started can be used in this conversation; what it says about it stays out of the conversation. Only for an agent that has the command, which `Agent::reloads_skills` says.
+    pub fn reload_skills(&self) {
+        let _ = self.commands.send(Command::Reload);
     }
 
     /// Stops the turn that is running.
@@ -787,6 +797,8 @@ struct Waiting {
     subagents: Subagents,
     /// Whether the reader stopped the turn that is running.
     cancelled: bool,
+    /// The id of the request that has the agent read its skills again, while it is out; what the agent says meanwhile is kept from the conversation.
+    reload: Option<u64>,
     /// The commands the agent has the app run in the container of its session.
     terminals: Terminals,
 }
@@ -815,6 +827,7 @@ fn converse(
         running: Shells::new(),
         subagents: Subagents::default(),
         cancelled: false,
+        reload: None,
     };
     loop {
         loop {
@@ -886,6 +899,15 @@ fn command_agent(
             }
             client.notify("session/cancel", &json!({ "sessionId": session }))?;
         }
+        Command::Reload => {
+            if waiting.turn.is_none() && waiting.reload.is_none() {
+                let params = json!({
+                    "sessionId": session,
+                    "prompt": [{ "type": "text", "text": RELOAD }],
+                });
+                waiting.reload = Some(client.request("session/prompt", &params)?);
+            }
+        }
         Command::Set { setting, value } => {
             let id = if configurable {
                 client.request(
@@ -939,14 +961,19 @@ fn hear_agent(
         }
         (Some(_), Some(id)) => client.refuse(id, NO_SUCH_METHOD, "not supported")?,
         (Some("session/update"), None) => {
+            let reloading = waiting.reload.is_some() && waiting.turn.is_none();
             for event in updated(session, waiting, &message["params"]) {
-                let _ = events.send(event);
+                if !reloading || matches!(event, Event::Commands(_)) {
+                    let _ = events.send(event);
+                }
             }
         }
         (Some(_), None) => {}
         (None, Some(id)) => {
             let id = id.as_u64();
-            if id.is_some() && id == waiting.turn {
+            if id.is_some() && id == waiting.reload {
+                waiting.reload = None;
+            } else if id.is_some() && id == waiting.turn {
                 waiting.turn = None;
                 let (finished, stopped) = match answer(message) {
                     Answer::Result(result) => (

@@ -2327,6 +2327,9 @@ impl WorkspaceState {
                 self.prompt.apply(edit);
                 if self.prompt.revision() != before {
                     self.reset_slash();
+                    if matches!(self.prompt.text(), "/" | "$") {
+                        self.refresh_skills();
+                    }
                 }
             }
             COMMIT_MESSAGE => self.message.apply(edit),
