@@ -29,7 +29,7 @@ fn announces_a_page_a_shell_serves() {
         .expect("shell");
     let (outbox, inbox) = channel();
     let connection = Arc::new(Connection {
-        outbox,
+        outbox: crate::core::Outbox::new(outbox),
         attached: Mutex::new(HashSet::new()),
     });
     assert!(core.attach_terminal(&connection, number, 0));

@@ -58,10 +58,50 @@ impl Bell {
 /// The bell the agents ring for the pump of the server.
 pub(crate) static BELL: Bell = Bell::new();
 
+/// The client a message was meant for is gone.
+#[derive(Debug)]
+pub(crate) struct Gone;
+
+/// Where messages for one client go: a queue the connection's thread empties, which is woken as each message is queued so that it is sent at once.
+pub(crate) struct Outbox {
+    /// The queue.
+    sender: Sender<ServerMessage>,
+    /// What wakes the connection's thread, once it sleeps waiting for something to send.
+    waker: Mutex<Option<Arc<mio::Waker>>>,
+}
+
+impl Outbox {
+    /// An outbox that queues on `sender` and has nothing to wake yet.
+    pub(crate) fn new(sender: Sender<ServerMessage>) -> Self {
+        Self {
+            sender,
+            waker: Mutex::new(None),
+        }
+    }
+
+    /// Has `waker` rung whenever a message is queued from now on.
+    pub(crate) fn wake_with(&self, waker: Arc<mio::Waker>) {
+        if let Ok(mut held) = self.waker.lock() {
+            *held = Some(waker);
+        }
+    }
+
+    /// Queues `message` for the client and wakes the thread that sends it, failing when the client is gone.
+    pub(crate) fn send(&self, message: ServerMessage) -> Result<(), Gone> {
+        self.sender.send(message).map_err(|_| Gone)?;
+        if let Ok(held) = self.waker.lock()
+            && let Some(waker) = held.as_ref()
+        {
+            let _ = waker.wake();
+        }
+        Ok(())
+    }
+}
+
 /// One client connected to the server.
 pub(crate) struct Connection {
     /// Where messages for the client go.
-    pub(crate) outbox: Sender<ServerMessage>,
+    pub(crate) outbox: Outbox,
     /// The sessions the client watches.
     pub(crate) attached: Mutex<HashSet<u64>>,
 }

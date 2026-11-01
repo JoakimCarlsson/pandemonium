@@ -37,7 +37,7 @@ fn saved_list<T: serde::Serialize>(name: &str, list: &[T]) -> Response {
 }
 
 /// Every agent the server can start: the ones saved, or the ones the app ships and those saved by an earlier version when none were.
-pub(crate) fn saved_agents() -> Vec<pm_protocol::AgentServer> {
+pub fn saved_agents() -> Vec<pm_protocol::AgentServer> {
     match stored_list("agents") {
         Ok(agents) if pm_store::load_text("agents").is_some() => agents,
         _ => {

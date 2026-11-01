@@ -4324,6 +4324,97 @@ mod offer_tests {
 #[cfg(test)]
 mod performance_tests {
     use super::*;
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// The bytes handed out and not yet returned, and the bytes handed out in total.
+    static LIVE: AtomicUsize = AtomicUsize::new(0);
+    /// The bytes handed out in total, never reduced.
+    static TOTAL: AtomicUsize = AtomicUsize::new(0);
+
+    /// An allocator that counts what it hands out, so a benchmark can say where memory goes.
+    struct Counting;
+
+    // SAFETY: every call is forwarded unchanged to the system allocator.
+    unsafe impl GlobalAlloc for Counting {
+        /// Allocates from the system and counts the bytes.
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            LIVE.fetch_add(layout.size(), Ordering::Relaxed);
+            TOTAL.fetch_add(layout.size(), Ordering::Relaxed);
+            unsafe { System.alloc(layout) }
+        }
+
+        /// Returns the memory to the system and counts the bytes back.
+        unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
+            LIVE.fetch_sub(layout.size(), Ordering::Relaxed);
+            unsafe { System.dealloc(pointer, layout) }
+        }
+    }
+
+    #[global_allocator]
+    static ALLOCATOR: Counting = Counting;
+
+    /// Measures a long conversation while an agent streams into it: each frame hears one chunk, then builds, lays out and paints.
+    #[test]
+    #[ignore = "manual CPU benchmark: cargo test -p pandemonium benchmark_streaming -- --ignored --nocapture --test-threads=1"]
+    fn benchmark_streaming() {
+        for (long_chat, paragraphs) in [(false, false), (true, false), (false, true)] {
+            let state = input_stress(false, long_chat);
+            let mut screen = Screen::Workspace(state);
+            let mut shaper = scene::shaper();
+            let mut cached = scene::Cached::default();
+            let theme = default_family().dark;
+            let mut list = DrawList::new();
+            let (mut heard, mut painted) = (Vec::new(), Vec::new());
+            let live_start = LIVE.load(Ordering::Relaxed);
+            let mut live_before = 0;
+            let mut total_before = 0;
+            for version in 0..301u64 {
+                if version == 1 {
+                    eprintln!(
+                        "streaming long_chat={long_chat} paragraphs={paragraphs}: first frame retains {} KiB",
+                        (LIVE.load(Ordering::Relaxed) as i64 - live_start as i64) / 1024
+                    );
+                    live_before = LIVE.load(Ordering::Relaxed);
+                    total_before = TOTAL.load(Ordering::Relaxed);
+                }
+                let started = std::time::Instant::now();
+                screen = screen.heard(
+                    0,
+                    pm_acp::Event::Said(format!(
+                        "chunk {version} of **streamed** words and `code`. "
+                    )),
+                );
+                let heard_at = started.elapsed();
+                std::hint::black_box(cached.paint(
+                    version,
+                    WIDTH as f32,
+                    HEIGHT as f32,
+                    &screen,
+                    &Input::default(),
+                    &theme,
+                    &mut shaper,
+                    &mut list,
+                ));
+                if version > 0 {
+                    heard.push(heard_at.as_secs_f64() * 1000.0);
+                    painted.push((started.elapsed() - heard_at).as_secs_f64() * 1000.0);
+                }
+            }
+            let live = (LIVE.load(Ordering::Relaxed) as i64 - live_before as i64) / 1024;
+            let total = (TOTAL.load(Ordering::Relaxed) - total_before) / 1024 / 300;
+            for (name, samples) in [("hear", &mut heard), ("paint", &mut painted)] {
+                samples.sort_by(f64::total_cmp);
+                eprintln!(
+                    "streaming long_chat={long_chat} paragraphs={paragraphs} {name}: p50={:.2} p95={:.2} p99={:.2} max={:.2} ms",
+                    samples[150], samples[285], samples[297], samples[299]
+                );
+            }
+            eprintln!(
+                "streaming long_chat={long_chat} paragraphs={paragraphs}: live +{live} KiB, {total} KiB allocated per frame"
+            );
+        }
+    }
 
     /// Measures rebuilding the same screen against repainting retained geometry, without GPU submission.
     #[test]
