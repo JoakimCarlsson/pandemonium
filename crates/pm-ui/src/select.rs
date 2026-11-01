@@ -189,6 +189,11 @@ impl Pieces {
 }
 
 impl Output {
+    /// Asks for a frame when the clock reaches `at_ms` milliseconds, unless one is already wanted sooner.
+    pub fn wake_at(&mut self, at_ms: f32) {
+        self.next_frame_ms = Some(self.next_frame_ms.map_or(at_ms, |held| held.min(at_ms)));
+    }
+
     /// Every line of selectable text, in tree order, those off screen included.
     pub fn pieces(&self) -> &[TextPiece] {
         self.pieces.all()

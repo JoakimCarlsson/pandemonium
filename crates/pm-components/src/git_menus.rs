@@ -9,6 +9,9 @@ use crate::git_prompts::{Prompt, StashAction};
 use crate::state::{ADD_PROJECT, Outgoing, WorkspaceState};
 use crate::tree_actions::TreeTarget;
 
+/// How wide the menus of source control are, in style units, so that the longest row, such as the one that discards changes to many files, keeps its padding.
+const MENU_WIDTH: f32 = 68.0;
+
 /// The first of the rows of the menu that is open; the rest follow it.
 pub const MENU_ROW_BASE: u64 = 9000;
 
@@ -433,7 +436,7 @@ impl WorkspaceState {
 
     /// The menu `kind` with its rows, its corner at `at`.
     fn git_menu(&self, kind: MenuKind, at: (f32, f32)) -> Menu {
-        let mut menu = Menu::new(at.0, at.1);
+        let mut menu = Menu::new(at.0, at.1).width(MENU_WIDTH);
         let mut position = 0;
         for entry in self.menu_entries(kind) {
             match entry {

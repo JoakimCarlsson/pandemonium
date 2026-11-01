@@ -193,6 +193,12 @@ pub struct App {
     view_writer: crate::view::Writer,
     /// The next debounced capture of the window state.
     view_save_due: Option<Instant>,
+    /// The GPU being opened on another thread, until the window takes it.
+    opening: Option<pm_renderer::Opening>,
+    /// Where the input method was last told the caret is, as x, y, width and height in logical pixels, so that it is told again only when the caret moves.
+    ime_area: Option<(f32, f32, f32, f32)>,
+    /// When the last frame drawn asked for another although nothing was animating, such as a caret that changes between lit and dark.
+    frame_due: Option<Instant>,
     /// The start of the current burst, limiting how long continuous typing delays saving.
     view_save_started: Option<Instant>,
     /// The field the reader was typing in when the window last closed, which takes the keyboard once it is drawn.
@@ -259,30 +265,15 @@ pub struct App {
 }
 
 impl App {
-    /// An application with no window yet, whose clock starts now, and whose event loop `wake` brings out of its sleep.
-    pub fn new(wake: pm_client::Wake) -> Self {
+    /// An application with no window yet, whose clock starts now, whose event loop `wake` brings out of its sleep, and whose GPU is being opened as `opening`.
+    pub fn new(wake: pm_client::Wake, opening: pm_renderer::Opening) -> Self {
         let mut work = Work::new(wake);
-        let opened = work.bootstrap();
-        let connected = opened.is_some();
-        let (saved, choices, logins, in_use, agents) = match opened {
-            Some(held) => (
-                held.projects,
-                held.choices,
-                held.logins,
-                held.in_use,
-                held.agents,
-            ),
-            None => {
-                let (logins, in_use) = pm_store::load_accounts();
-                (
-                    pm_store::load_projects(),
-                    pm_store::load_choices(),
-                    logins,
-                    in_use,
-                    pm_protocol::builtin_agents(),
-                )
-            }
-        };
+        crate::startup::mark("app-new-begin");
+        let saved = pm_store::load_projects();
+        let choices = pm_store::load_choices();
+        let (logins, in_use) = pm_store::load_accounts();
+        let agents = pm_server::saved_agents();
+        work.know_agents(&agents);
         work.set_accounts(&logins, &in_use);
         let screen = saved
             .as_deref()
@@ -314,22 +305,18 @@ impl App {
             (Some(view), Screen::Workspace(state)) => Screen::Workspace(view.apply(state)),
             (_, screen) => screen,
         };
-        if let Some(view) = saved_view
-            .clone()
-            .filter(|view| connected && view.home().is_none())
-        {
+        if let Some(view) = saved_view.clone().filter(|view| view.home().is_none()) {
             work.resume(view);
         }
         let editor = pm_store::load_text(EDITOR_SETTINGS)
             .map(|text| pm_editor::EditorSettings::read(&text))
             .unwrap_or_default();
         work.set_servers(&window_settings.servers);
-        if !connected {
-            work.ask_machine_settings();
-        }
+        work.ask_machine_settings();
         if window_settings.general.check_updates {
             work.ask_release(window_settings.general.channel);
         }
+        crate::startup::mark("settings-loaded");
         let mut shaper = scene::shaper();
         let (all_fonts, mono_fonts) = shaper.families();
         scene::set_fonts(
@@ -343,6 +330,7 @@ impl App {
                 .with_window_settings(window_settings.clone())
                 .with_fonts(all_fonts, mono_fonts),
         );
+        crate::startup::mark("fonts-model-ready");
         let dirty = Rc::new(Cell::new(false));
         let flag = Rc::clone(&dirty);
         model.subscribe(move |_| flag.set(true));
@@ -390,6 +378,9 @@ impl App {
             saved_view,
             view_writer: crate::view::Writer::default(),
             view_save_due: None,
+            frame_due: None,
+            opening: Some(opening),
+            ime_area: None,
             view_save_started: None,
             project_press: None,
             project_dragging: false,
@@ -577,10 +568,14 @@ impl App {
                     .rfind(|held| held.id == id && held.start <= caret)
                 {
                     let caret_x = held.run.caret_x(caret - held.start);
-                    window.set_ime_cursor_area(
-                        LogicalPosition::new(held.x + caret_x, held.y),
-                        LogicalSize::new(1.0, held.height),
-                    );
+                    let area = (held.x + caret_x, held.y, 1.0, held.height);
+                    if self.ime_area != Some(area) {
+                        self.ime_area = Some(area);
+                        window.set_ime_cursor_area(
+                            LogicalPosition::new(area.0, area.1),
+                            LogicalSize::new(area.2, area.3),
+                        );
+                    }
                 }
             } else if let Some(id) = self.focus.current()
                 && let Some(field) = state.field(id)
@@ -592,10 +587,14 @@ impl App {
                 if (want - field.scroll()).abs() > 0.5 {
                     scroll_to = Some((id, want));
                 }
-                window.set_ime_cursor_area(
-                    LogicalPosition::new(held.x + caret_x, view.y),
-                    LogicalSize::new(1.0, view.height),
-                );
+                let area = (held.x + caret_x, view.y, 1.0, view.height);
+                if self.ime_area != Some(area) {
+                    self.ime_area = Some(area);
+                    window.set_ime_cursor_area(
+                        LogicalPosition::new(area.0, area.1),
+                        LogicalSize::new(area.2, area.3),
+                    );
+                }
             }
             scroll_to
         });
@@ -618,11 +617,16 @@ impl App {
             self.edge_cursor = edge;
             window.set_cursor(edge.map_or_else(|| cursor_icon(cursor), frame::edge_icon));
         }
+        crate::startup::scene_painted();
         let painted = self.timings.start();
         let presented = renderer.render(&self.list, &mut self.shaper, scene::ground(theme), || {
             window.pre_present_notify()
         });
         self.timings.frame(started, painted, presented);
+        self.frame_due = Self::frame_due_after(self.output.next_frame_ms, input.elapsed_ms);
+        if presented {
+            crate::startup::frame_presented();
+        }
         if self.output.animating || !presented {
             window.request_redraw();
         }
@@ -844,6 +848,48 @@ impl App {
         self.work.set_servers(&settings.servers);
         self.saved_window = settings;
         self.apply_appearance();
+    }
+
+    /// Builds and lays out the scene for a window of `size` physical pixels at `scale`, so that the first frame only paints it, and the GPU, which is still opening, is not waited for to do it.
+    fn warm_scene(&mut self, size: winit::dpi::PhysicalSize<u32>, scale: f32) {
+        let input = Input {
+            elapsed_ms: self.started.elapsed().as_secs_f32() * 1000.0,
+            ..Input::default()
+        };
+        let theme = self.family.variant(self.appearance);
+        let model = self.model.clone();
+        model.read(|state| {
+            self.scene.paint(
+                model.version(),
+                size.width as f32 / scale,
+                size.height as f32 / scale,
+                state,
+                &input,
+                theme,
+                &mut self.shaper,
+                &mut self.list,
+            )
+        });
+    }
+
+    /// When a frame that asked for another at `next_ms` on the clock, having been drawn at `elapsed_ms`, is due.
+    fn frame_due_after(next_ms: Option<f32>, elapsed_ms: f32) -> Option<Instant> {
+        next_ms
+            .map(|at| Instant::now() + Duration::from_secs_f32((at - elapsed_ms).max(0.0) / 1000.0))
+    }
+
+    /// When the next frame is due although nothing is animating, drawing it now once that time has come.
+    fn frame_deadline(&mut self) -> Option<Instant> {
+        let due = self.frame_due?;
+        if due > Instant::now() {
+            return Some(due);
+        }
+        self.frame_due = None;
+        if let Some(window) = self.window.as_ref() {
+            window.request_redraw();
+        }
+        self.redraw_asides();
+        None
     }
 
     /// When the window looks for a newer release again while updates are looked for, asking now once that time has come.
@@ -1812,6 +1858,9 @@ impl App {
     /// Shows `text` an input method is composing in the field or shell holding
     /// the keyboard, taking it away from the one that showed it before.
     fn compose(&mut self, text: String) {
+        if text.is_empty() && self.composing_in.is_none() {
+            return;
+        }
         let target = self
             .focus
             .current()
@@ -2193,7 +2242,7 @@ impl ApplicationHandler for App {
         self.browser_shutdown();
     }
 
-    /// Opens the window and builds its renderer once the platform is ready.
+    /// Opens the window and builds its renderer once the platform is ready, building the first scene while the GPU finishes opening.
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
@@ -2203,16 +2252,26 @@ impl ApplicationHandler for App {
                 Ok(window) => Arc::new(window),
                 Err(error) => fail_to_start(&format!("could not open a window: {error}")),
             };
+        crate::startup::mark("window-created");
         let size = window.inner_size();
         let scale = window.scale_factor() as f32;
-        match Renderer::new(window.clone(), size.width, size.height, scale) {
+        self.system_appearance = appearance(window.theme());
+        window.set_ime_allowed(true);
+        self.window = Some(window.clone());
+        self.apply_appearance();
+        self.warm_scene(size, scale);
+        crate::startup::mark("scene-warmed");
+        let made = match self.opening.take() {
+            Some(opening) => {
+                Renderer::from_opening(opening, window, size.width, size.height, scale)
+            }
+            None => Renderer::new(window, size.width, size.height, scale),
+        };
+        match made {
             Ok(renderer) => self.renderer = Some(renderer),
             Err(error) => fail_to_start(&error.to_string()),
         }
-        self.system_appearance = appearance(window.theme());
-        window.set_ime_allowed(true);
-        self.window = Some(window);
-        self.apply_appearance();
+        crate::startup::mark("renderer-ready");
     }
 
     /// Draws again when the model changed while no event asked for it.
@@ -2253,6 +2312,7 @@ impl ApplicationHandler for App {
             self.recording_due(),
             self.release_due(),
             self.view_save_deadline(),
+            self.frame_deadline(),
         ]
         .into_iter()
         .flatten()

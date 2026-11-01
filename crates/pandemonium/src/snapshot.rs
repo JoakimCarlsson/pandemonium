@@ -138,6 +138,8 @@ pub enum Shot {
     Stashing,
     /// The workspace on the diff with two changed files picked and the menu on them open.
     ChangeMenu,
+    /// The workspace with sixty-eight changed files all picked and the menu on them open, whose longest row names them all.
+    ChangeMenuMany,
     TreeMenu,
     /// The project's files with three rows picked, two as a range, and the menu on them open.
     TreePicked,
@@ -218,6 +220,8 @@ pub enum Shot {
     Dollar,
     /// A Codex conversation with messages and its skills menu open.
     DollarSession,
+    /// The page for starting work with Codex and more skills than rows, the last one highlighted.
+    DollarScrolled,
     /// The page for starting work with the list of models scrolled to its end.
     Scrolling,
     /// The page for starting work with the menu of where it is done open.
@@ -1995,6 +1999,25 @@ fn picked() -> WorkspaceState {
         .change_picked(2, Choosing::Toggle)
 }
 
+/// The workspace on the diff with sixty-eight changed files, every one of them picked.
+fn many_changes() -> WorkspaceState {
+    let mut state = workspace_sample();
+    if let Some(session) = state.sessions.first_mut() {
+        session.changes = (0..68)
+            .map(|index| {
+                pm_components::sample::Change::new(
+                    &format!("src/module_{index}.rs"),
+                    "@@ -1,3 +1,4 @@\n fn handler() {\n-    todo!()\n+    let body = read();\n+    respond(body)\n }",
+                )
+            })
+            .collect();
+    }
+    state
+        .after(TAB_DIFF)
+        .after(FocusId(FILE_BASE))
+        .changes_all_picked()
+}
+
 /// The workspace with the list of branches open and `feat` typed in its box.
 fn branching() -> WorkspaceState {
     let names = [
@@ -2811,6 +2834,7 @@ impl Shot {
                 source().git_failed("Could not switch branch: fatal: a branch named 'main' already exists"),
             ),
             Self::ChangeMenu => Screen::Workspace(picked().with_change_menu(0, (1000.0, 250.0))),
+            Self::ChangeMenuMany => Screen::Workspace(many_changes().with_change_menu(0, (1000.0, 250.0))),
             Self::TreeMenu => Screen::Workspace(files().with_tree_menu(
                 TreeTarget {
                     path: "crates/pandemonium/src/session.rs".to_owned(),
@@ -3007,6 +3031,23 @@ impl Shot {
                     .edited(PROMPT, Edit::Paste("/c".to_owned()))
                     .after(FocusId(4401)),
             ),
+            Self::DollarScrolled => {
+                let mut state = welcome().after(FocusId(AGENT_BASE + 1));
+                state.sync_context();
+                let skills = (1..=14)
+                    .map(|number| Slash {
+                        name: format!("skill-{number:02}"),
+                        description: format!("Description of the skill numbered {number}"),
+                    })
+                    .collect();
+                state = state
+                    .with_skills(1, 0, skills, Default::default())
+                    .after(pm_components::state::SKILL_BUTTON);
+                for _ in 0..13 {
+                    state = state.slash_moved(1);
+                }
+                Screen::Workspace(state)
+            }
             Self::Dollar | Self::DollarSession => {
                 let mut state = if matches!(self, Self::DollarSession) {
                     let mut state = WorkspaceState::sample();
@@ -4324,6 +4365,97 @@ mod offer_tests {
 #[cfg(test)]
 mod performance_tests {
     use super::*;
+    use std::alloc::{GlobalAlloc, Layout, System};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// The bytes handed out and not yet returned, and the bytes handed out in total.
+    static LIVE: AtomicUsize = AtomicUsize::new(0);
+    /// The bytes handed out in total, never reduced.
+    static TOTAL: AtomicUsize = AtomicUsize::new(0);
+
+    /// An allocator that counts what it hands out, so a benchmark can say where memory goes.
+    struct Counting;
+
+    // SAFETY: every call is forwarded unchanged to the system allocator.
+    unsafe impl GlobalAlloc for Counting {
+        /// Allocates from the system and counts the bytes.
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            LIVE.fetch_add(layout.size(), Ordering::Relaxed);
+            TOTAL.fetch_add(layout.size(), Ordering::Relaxed);
+            unsafe { System.alloc(layout) }
+        }
+
+        /// Returns the memory to the system and counts the bytes back.
+        unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
+            LIVE.fetch_sub(layout.size(), Ordering::Relaxed);
+            unsafe { System.dealloc(pointer, layout) }
+        }
+    }
+
+    #[global_allocator]
+    static ALLOCATOR: Counting = Counting;
+
+    /// Measures a long conversation while an agent streams into it: each frame hears one chunk, then builds, lays out and paints.
+    #[test]
+    #[ignore = "manual CPU benchmark: cargo test -p pandemonium benchmark_streaming -- --ignored --nocapture --test-threads=1"]
+    fn benchmark_streaming() {
+        for (long_chat, paragraphs) in [(false, false), (true, false), (false, true)] {
+            let state = input_stress(false, long_chat);
+            let mut screen = Screen::Workspace(state);
+            let mut shaper = scene::shaper();
+            let mut cached = scene::Cached::default();
+            let theme = default_family().dark;
+            let mut list = DrawList::new();
+            let (mut heard, mut painted) = (Vec::new(), Vec::new());
+            let live_start = LIVE.load(Ordering::Relaxed);
+            let mut live_before = 0;
+            let mut total_before = 0;
+            for version in 0..301u64 {
+                if version == 1 {
+                    eprintln!(
+                        "streaming long_chat={long_chat} paragraphs={paragraphs}: first frame retains {} KiB",
+                        (LIVE.load(Ordering::Relaxed) as i64 - live_start as i64) / 1024
+                    );
+                    live_before = LIVE.load(Ordering::Relaxed);
+                    total_before = TOTAL.load(Ordering::Relaxed);
+                }
+                let started = std::time::Instant::now();
+                screen = screen.heard(
+                    0,
+                    pm_acp::Event::Said(format!(
+                        "chunk {version} of **streamed** words and `code`. "
+                    )),
+                );
+                let heard_at = started.elapsed();
+                std::hint::black_box(cached.paint(
+                    version,
+                    WIDTH as f32,
+                    HEIGHT as f32,
+                    &screen,
+                    &Input::default(),
+                    &theme,
+                    &mut shaper,
+                    &mut list,
+                ));
+                if version > 0 {
+                    heard.push(heard_at.as_secs_f64() * 1000.0);
+                    painted.push((started.elapsed() - heard_at).as_secs_f64() * 1000.0);
+                }
+            }
+            let live = (LIVE.load(Ordering::Relaxed) as i64 - live_before as i64) / 1024;
+            let total = (TOTAL.load(Ordering::Relaxed) - total_before) / 1024 / 300;
+            for (name, samples) in [("hear", &mut heard), ("paint", &mut painted)] {
+                samples.sort_by(f64::total_cmp);
+                eprintln!(
+                    "streaming long_chat={long_chat} paragraphs={paragraphs} {name}: p50={:.2} p95={:.2} p99={:.2} max={:.2} ms",
+                    samples[150], samples[285], samples[297], samples[299]
+                );
+            }
+            eprintln!(
+                "streaming long_chat={long_chat} paragraphs={paragraphs}: live +{live} KiB, {total} KiB allocated per frame"
+            );
+        }
+    }
 
     /// Measures rebuilding the same screen against repainting retained geometry, without GPU submission.
     #[test]

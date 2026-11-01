@@ -10,20 +10,23 @@ use tungstenite::protocol::frame::Frame;
 use tungstenite::protocol::frame::coding::{Data, OpCode};
 use tungstenite::{Message, WebSocket};
 
-use crate::core::{Connection, Core};
+use crate::core::{Connection, Core, Outbox};
 use crate::handler::handle;
 
 /// How long a client has to say hello after connecting.
 const HELLO_WAIT: Duration = Duration::from_secs(5);
 
-/// How long the connection waits for a message before it looks at what is to be sent.
+/// How long the connection waits for a message before it looks at what is to be sent, while the client is greeting and has not yet been handed over to being woken.
 const TICK: Duration = Duration::from_millis(25);
 
-/// How long the connection waits for a message while it has been sending, so what comes next leaves at once.
-const BRISK: Duration = Duration::from_millis(1);
+/// How long the connection waits before it tries again to write what the network would not take at once.
+const FLUSH_RETRY: Duration = Duration::from_millis(2);
 
-/// How long after its last message the connection keeps waiting [`BRISK`]ly.
-const BRISK_FOR: Duration = Duration::from_secs(1);
+/// The poll token of the client's socket becoming readable.
+const SOCKET: mio::Token = mio::Token(0);
+
+/// The poll token of a message being queued for the client.
+const QUEUED: mio::Token = mio::Token(1);
 
 /// The most bytes sent in one frame, within the client's default 16 MiB frame limit.
 const FRAME_BYTES: usize = 16 * 1024 * 1024;
@@ -34,7 +37,7 @@ fn send(socket: &mut WebSocket<TcpStream>, message: &ServerMessage) -> bool {
         return false;
     };
     if text.len() <= FRAME_BYTES {
-        return socket.send(Message::text(text)).is_ok();
+        return accepted(socket.send(Message::text(text)));
     }
     let bytes = tungstenite::Bytes::from(text);
     for start in (0..bytes.len()).step_by(FRAME_BYTES) {
@@ -49,11 +52,19 @@ fn send(socket: &mut WebSocket<TcpStream>, message: &ServerMessage) -> bool {
             OpCode::Data(opcode),
             end == bytes.len(),
         );
-        if socket.send(Message::Frame(frame)).is_err() {
+        if !accepted(socket.send(Message::Frame(frame))) {
             return false;
         }
     }
     true
+}
+
+/// Whether sending went well: a network that will not take all of it yet is not a failure, since the rest is kept and written by the next flush.
+fn accepted(sent: Result<(), tungstenite::Error>) -> bool {
+    match sent {
+        Ok(()) => true,
+        Err(error) => is_quiet(&error),
+    }
 }
 
 /// Whether `error` only says that nothing arrived in time.
@@ -121,7 +132,19 @@ fn greet(socket: &mut WebSocket<TcpStream>, token: &str) -> bool {
     }
 }
 
-/// Serves the client on `stream` until it goes away.
+/// Makes the socket of `socket` take no waiting, and gives the poll that wakes when the client has sent something, with the handle the poll watches, which must be kept for as long as the poll is.
+fn prepare(socket: &WebSocket<TcpStream>) -> Option<(mio::Poll, mio::net::TcpStream)> {
+    let stream = socket.get_ref();
+    stream.set_nonblocking(true).ok()?;
+    let mut watched = mio::net::TcpStream::from_std(stream.try_clone().ok()?);
+    let poll = mio::Poll::new().ok()?;
+    poll.registry()
+        .register(&mut watched, SOCKET, mio::Interest::READABLE)
+        .ok()?;
+    Some((poll, watched))
+}
+
+/// Serves the client on `stream` until it goes away. The thread sleeps until the client says something or a message is queued for it.
 pub(crate) fn serve(core: &Arc<Core>, stream: TcpStream, token: &str) {
     let _ = stream.set_read_timeout(Some(TICK));
     let _ = stream.set_nodelay(true);
@@ -132,26 +155,26 @@ pub(crate) fn serve(core: &Arc<Core>, stream: TcpStream, token: &str) {
         return;
     }
     let (outbox, pending) = mpsc::channel::<ServerMessage>();
+    let Some((mut poll, _watched)) = prepare(&socket) else {
+        return;
+    };
     let connection = Arc::new(Connection {
-        outbox,
+        outbox: Outbox::new(outbox),
         attached: Mutex::new(std::collections::HashSet::new()),
     });
+    if let Ok(waker) = mio::Waker::new(poll.registry(), QUEUED) {
+        connection.outbox.wake_with(Arc::new(waker));
+    }
     if let Ok(mut connections) = core.connections.lock() {
         connections.push(connection.clone());
     }
-    let mut last_sent: Option<Instant> = None;
+    let mut events = mio::Events::with_capacity(4);
     'serving: loop {
         while let Ok(message) = pending.try_recv() {
             if !send(&mut socket, &message) {
                 break 'serving;
             }
-            last_sent = Some(Instant::now());
         }
-        let wait = match last_sent {
-            Some(sent) if sent.elapsed() < BRISK_FOR => BRISK,
-            _ => TICK,
-        };
-        let _ = socket.get_ref().set_read_timeout(Some(wait));
         match socket.read() {
             Ok(Message::Text(text)) => {
                 if let Ok(ClientMessage::Request { id, request }) =
@@ -171,7 +194,10 @@ pub(crate) fn serve(core: &Arc<Core>, stream: TcpStream, token: &str) {
             }
             Ok(Message::Close(_)) => break,
             Ok(_) => {}
-            Err(error) if is_quiet(&error) => {}
+            Err(error) if is_quiet(&error) => {
+                let unsent = matches!(socket.flush(), Err(ref error) if is_quiet(error));
+                let _ = poll.poll(&mut events, unsent.then_some(FLUSH_RETRY));
+            }
             Err(_) => break,
         }
     }
@@ -242,5 +268,48 @@ mod tests {
             ServerMessage::ProjectsChanged { paths: Vec::new() }
         );
         server.join().unwrap();
+    }
+
+    /// A request sent after a quiet spell is answered by the real connection without either side waiting for a tick.
+    #[test]
+    fn answers_a_request_after_a_quiet_spell_quickly() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        let core = Core::new();
+        std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            serve(&core, stream, "token");
+        });
+        let client = pm_client::Client::connect(
+            pm_protocol::Target {
+                address,
+                token: "token".to_owned(),
+            },
+            Arc::new(|| {}),
+        );
+        let mut times = Vec::new();
+        for round in 0..41 {
+            std::thread::sleep(Duration::from_millis(37));
+            let started = Instant::now();
+            let id = client.request(pm_protocol::Request::Choices);
+            'waiting: loop {
+                for item in client.incoming() {
+                    if matches!(item, pm_client::Incoming::Response { id: held, .. } if held == id)
+                    {
+                        break 'waiting;
+                    }
+                }
+                std::thread::sleep(Duration::from_micros(50));
+            }
+            if round > 0 {
+                times.push(started.elapsed().as_secs_f64() * 1000.0);
+            }
+        }
+        times.sort_by(f64::total_cmp);
+        eprintln!(
+            "request to answer through the server: p50={:.2} p95={:.2} max={:.2} ms",
+            times[20], times[37], times[39]
+        );
+        assert!(times[20] < 5.0, "the median was {:.2} ms", times[20]);
     }
 }

@@ -16,8 +16,14 @@ use crate::state::{
 /// How tall one value of a menu is, in logical pixels.
 pub const ROW_HEIGHT: f32 = 47.0;
 
-/// The height in logical pixels of one row of the list of files.
-const MENTION_ROW_HEIGHT: f32 = 34.0;
+/// The height in logical pixels of one row of the lists of files, commands and skills.
+pub const LIST_ROW_HEIGHT: f32 = 34.0;
+
+/// How many rows of the lists of files, commands and skills show at once.
+pub const LIST_ROWS: usize = 8;
+
+/// How many rows of the list behind a slash can be pressed with the pointer.
+pub const PRESSABLE_LIST_ROWS: usize = 50;
 
 /// The categories of settings shown as buttons in the prompt box, in the order they are shown.
 const SHOWN: [&str; 2] = ["model", "mode"];
@@ -391,18 +397,21 @@ impl WorkspaceState {
         !self.slash_matches().is_empty() || !self.mention_matches().is_empty()
     }
 
-    /// Scrolls the list of files just far enough for the highlighted file to show.
-    fn keep_mention_in_view(&mut self) {
-        if !self.slash_matches().is_empty() {
-            return;
-        }
-        let top = self.slash as f32 * MENTION_ROW_HEIGHT;
-        let window = MENTION_ROW_HEIGHT * 8.0;
+    /// Scrolls the list of files, commands or skills just far enough for the highlighted row to show.
+    fn keep_slash_in_view(&mut self) {
+        let top = self.slash as f32 * LIST_ROW_HEIGHT;
+        let window = LIST_ROW_HEIGHT * LIST_ROWS as f32;
         if top < self.menu_scroll {
             self.menu_scroll = top;
-        } else if top + MENTION_ROW_HEIGHT > self.menu_scroll + window {
-            self.menu_scroll = top + MENTION_ROW_HEIGHT - window;
+        } else if top + LIST_ROW_HEIGHT > self.menu_scroll + window {
+            self.menu_scroll = top + LIST_ROW_HEIGHT - window;
         }
+    }
+
+    /// Puts the highlight and the scroll offset of the list of files, commands or skills back at the first row.
+    pub(crate) fn reset_slash(&mut self) {
+        self.slash = 0;
+        self.menu_scroll = 0.0;
     }
 
     /// The state with the highlight in the list of commands moved by `delta` rows, wrapping round.
@@ -410,7 +419,7 @@ impl WorkspaceState {
         let count = self.slash_matches().len().max(self.mention_matches().len()) as isize;
         if count > 0 {
             self.slash = (self.slash as isize + delta).rem_euclid(count) as usize;
-            self.keep_mention_in_view();
+            self.keep_slash_in_view();
         }
         self
     }
@@ -435,7 +444,7 @@ impl WorkspaceState {
                     at + typed[at..].chars().next().map_or(1, char::len_utf8)
                 });
                 self.prompt = prompt_field(&format!("{}@{path} ", &typed[..start]));
-                self.slash = 0;
+                self.reset_slash();
             }
             return;
         }
@@ -444,14 +453,14 @@ impl WorkspaceState {
             && let Some((host, brought)) = self.extension_command_named(&command.name)
         {
             self.prompt = prompt_field("");
-            self.slash = 0;
+            self.reset_slash();
             self.run_extension_command(host, brought);
             return;
         }
         let chosen = taken.map(|(prefix, command)| format!("{prefix}{} ", command.name));
         if let Some(typed) = chosen {
             self.prompt = prompt_field(&typed);
-            self.slash = 0;
+            self.reset_slash();
         }
     }
 
@@ -573,17 +582,41 @@ impl WorkspaceState {
         self
     }
 
+    /// The agent and project the prompt is for, when the page shown has a prompt.
+    fn prompt_agent_project(&self) -> Option<(usize, usize)> {
+        match self.page {
+            Page::New(project) => Some((self.agent, project)),
+            Page::Session(index) => {
+                let session = self.sessions.get(index)?;
+                Some((session.agent, session.project))
+            }
+            _ => None,
+        }
+    }
+
+    /// Asks again for the skills of the prompt's agent and project, keeping those held until the answer comes, so that a skill added since they were read shows when the list behind a slash or a dollar sign opens.
+    pub(crate) fn refresh_skills(&mut self) {
+        let Some((agent, project)) = self.prompt_agent_project() else {
+            return;
+        };
+        if self.skills_of != Some((agent, project)) {
+            return;
+        }
+        let Some(held) = self.projects.get(project) else {
+            return;
+        };
+        self.outbox.push(Outgoing::Skills {
+            agent,
+            project,
+            host: held.host(),
+            directory: held.directory().to_string_lossy().into_owned(),
+        });
+    }
+
     /// Reads skills for the prompt's agent and project, also hydrating restored conversations from the cache.
     fn sync_skills(&mut self) {
-        let (agent, project) = match self.page {
-            Page::New(project) => (self.agent, project),
-            Page::Session(index) => {
-                let Some(session) = self.sessions.get(index) else {
-                    return;
-                };
-                (session.agent, session.project)
-            }
-            _ => return,
+        let Some((agent, project)) = self.prompt_agent_project() else {
+            return;
         };
         if self.skills_of == Some((agent, project)) {
             if let Page::Session(index) = self.page {
@@ -740,7 +773,7 @@ impl WorkspaceState {
             self.remove_capture(index);
         } else if id == SLASH_BUTTON.0 {
             self.prompt = prompt_field("/");
-            self.slash = 0;
+            self.reset_slash();
         } else if id == MENTION.0 {
             let mut typed = self.prompt.text().to_owned();
             if !typed.is_empty() && !typed.ends_with(char::is_whitespace) {
@@ -748,10 +781,10 @@ impl WorkspaceState {
             }
             typed.push('@');
             self.prompt = prompt_field(&typed);
-            self.slash = 0;
+            self.reset_slash();
         } else if id == SKILL_BUTTON.0 {
             self.prompt = prompt_field("$");
-            self.slash = 0;
+            self.reset_slash();
         } else if id == LOCATION.0 {
             self.picker = (self.picker != Some(Picker::Location)).then_some(Picker::Location);
             if self.picker.is_some() {
@@ -797,7 +830,7 @@ impl WorkspaceState {
             self.base = Some(self.branches[index].clone());
             self.location = Location::Worktree;
             self.picker = None;
-        } else if let Some(index) = within(SLASH_BASE, 50) {
+        } else if let Some(index) = within(SLASH_BASE, PRESSABLE_LIST_ROWS) {
             self.take_slash(index);
         } else {
             return false;
@@ -1155,7 +1188,7 @@ impl WorkspaceState {
     /// The box to give keyboard focus after `id` was pressed, when that is the prompt or the field for an answer of the reader's own.
     pub fn refocus(id: FocusId) -> Option<FocusId> {
         let FocusId(number) = id;
-        let slash_row = (SLASH_BASE..SLASH_BASE + 50).contains(&number);
+        let slash_row = (SLASH_BASE..SLASH_BASE + PRESSABLE_LIST_ROWS as u64).contains(&number);
         if id == crate::draft::TYPE_OWN {
             return Some(crate::draft::OTHER);
         }
@@ -1333,6 +1366,21 @@ mod tests {
         assert_eq!(state.slash_matches(), vec![('$', skills().remove(0))]);
     }
 
+    /// Typing a dollar sign or a slash asks for the skills again, so that one added since they were read shows, and the answer replaces what was held.
+    #[test]
+    fn opening_the_skill_list_reads_skills_again() {
+        let mut state = conversation();
+        let agent = state.sessions[0].agent;
+        state.sync_context();
+        state = state.with_skills(agent, 0, Vec::new(), Default::default());
+        state.outbox.clear();
+        state.prompt = prompt_field("");
+        state = state.edited(crate::state::PROMPT, pm_text::Edit::Insert('$'));
+        assert!(state.outbox.iter().any(|request| matches!(request, Outgoing::Skills { agent: found, project: 0, .. } if *found == agent)));
+        state = state.with_skills(agent, 0, skills(), Default::default());
+        assert_eq!(state.open().unwrap().skills.len(), skills().len());
+    }
+
     /// Discovery that finishes after the first message still reaches the conversation.
     #[test]
     fn late_discovery_populates_existing_conversation() {
@@ -1365,5 +1413,67 @@ mod tests {
         );
         state.press_choice(SKILL_BUTTON.0);
         assert_eq!(state.slash_matches().len(), 1);
+    }
+
+    /// A state offering `count` skills behind the dollar button, with the list open.
+    fn many_skills(count: usize) -> WorkspaceState {
+        let mut state = conversation();
+        let agent = state.sessions[0].agent;
+        let skills = (0..count)
+            .map(|number| Slash {
+                name: format!("skill-{number:02}"),
+                description: String::new(),
+            })
+            .collect();
+        state = state.with_skills(agent, 0, skills, Default::default());
+        state.press_choice(SKILL_BUTTON.0);
+        state
+    }
+
+    /// Moving the highlight past the last visible row scrolls the list so the highlighted row stays in the window.
+    #[test]
+    fn skill_list_scrolls_with_the_arrow_keys() {
+        let window = LIST_ROW_HEIGHT * LIST_ROWS as f32;
+        let mut state = many_skills(20);
+        for _ in 0..19 {
+            state = state.slash_moved(1);
+            let top = state.slash as f32 * LIST_ROW_HEIGHT;
+            assert!(state.menu_scroll <= top);
+            assert!(top + LIST_ROW_HEIGHT <= state.menu_scroll + window);
+        }
+        assert_eq!(state.slash, 19);
+        assert_eq!(state.menu_scroll, 20.0 * LIST_ROW_HEIGHT - window);
+        state = state.slash_moved(-1);
+        assert_eq!(state.slash, 18);
+        state = state.slash_moved(2);
+        assert_eq!(state.slash, 0);
+        assert_eq!(state.menu_scroll, 0.0);
+    }
+
+    /// Opening the list again after choosing from a scrolled one starts at the first row.
+    #[test]
+    fn reopening_the_list_starts_at_the_top() {
+        let mut state = many_skills(20);
+        for _ in 0..15 {
+            state = state.slash_moved(1);
+        }
+        state = state.slash_taken();
+        state.press_choice(SKILL_BUTTON.0);
+        assert_eq!(state.slash, 0);
+        assert_eq!(state.menu_scroll, 0.0);
+    }
+
+    /// Narrowing the list by typing puts the highlight and the scroll offset back at the first match.
+    #[test]
+    fn typing_resets_the_list_selection() {
+        let mut state = many_skills(20);
+        for _ in 0..15 {
+            state = state.slash_moved(1);
+        }
+        assert!(state.menu_scroll > 0.0);
+        state = state.edited(crate::state::PROMPT, pm_text::Edit::Insert('1'));
+        assert_eq!(state.slash, 0);
+        assert_eq!(state.menu_scroll, 0.0);
+        assert!(state.slash_matches().len() < 20);
     }
 }

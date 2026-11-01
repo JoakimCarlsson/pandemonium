@@ -37,7 +37,7 @@ fn saved_list<T: serde::Serialize>(name: &str, list: &[T]) -> Response {
 }
 
 /// Every agent the server can start: the ones saved, or the ones the app ships and those saved by an earlier version when none were.
-pub(crate) fn saved_agents() -> Vec<pm_protocol::AgentServer> {
+pub fn saved_agents() -> Vec<pm_protocol::AgentServer> {
     match stored_list("agents") {
         Ok(agents) if pm_store::load_text("agents").is_some() => agents,
         _ => {
@@ -204,6 +204,24 @@ fn telling(core: &Core, number: u64, action: impl FnOnce(&mut Session) -> Told) 
     let response = with_session(core, number, |held| told = action(held));
     core.tell_all(told);
     response
+}
+
+/// Has the running agents of every session of `agent` that is between turns read their skills again, so that a skill added since they started can be used in the conversations already open.
+fn reload_skills(core: &Core, agent: Agent) {
+    if !agent.reloads_skills() {
+        return;
+    }
+    let Ok(sessions) = core.sessions.lock() else {
+        return;
+    };
+    for session in sessions.values() {
+        if session.agent.id == agent.id
+            && !session.busy
+            && let Some(chat) = &session.chat
+        {
+            chat.reload_skills();
+        }
+    }
 }
 
 /// Runs `action` on the session numbered `number` and tells the clients what it noted, or says why it could not be done.
@@ -510,6 +528,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
         Request::Skills { agent, directory } => match agent_named(&agent) {
             Some(agent) => {
                 let withheld = crate::library::withheld();
+                reload_skills(core, agent);
                 Response::Skills {
                     skills: pm_acp::skills(agent, &place(&directory), &withheld),
                     names: pm_acp::skill_names(agent, &place(&directory), &withheld)

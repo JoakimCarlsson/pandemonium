@@ -2,9 +2,9 @@
 
 use std::collections::{HashMap, HashSet};
 use std::net::{TcpStream, ToSocketAddrs};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use pm_protocol::{ClientMessage, Request, Response, ServerMessage, Target, VERSION};
@@ -13,8 +13,20 @@ use tungstenite::{Message, WebSocket};
 /// How long a dial may take.
 const DIAL: Duration = Duration::from_secs(5);
 
-/// How long the connection waits for a message before it looks at what is to be sent.
+/// How long the connection waits for a message while it has no more than that to look at, when the dial has not yet handed it over to being woken by orders.
 const TICK: Duration = Duration::from_millis(25);
+
+/// How long the connection waits before it tries again to write what the network would not take at once.
+const FLUSH_RETRY: Duration = Duration::from_millis(2);
+
+/// The poll token of the connection's socket becoming readable.
+const SOCKET: mio::Token = mio::Token(0);
+
+/// The poll token of an order being queued.
+const ORDERED: mio::Token = mio::Token(1);
+
+/// What wakes the connection thread when an order is queued, once it has made one for the connection it holds.
+type Bell = Arc<Mutex<Option<Arc<mio::Waker>>>>;
 
 /// How long to wait before dialling again.
 const RETRY: Duration = Duration::from_secs(1);
@@ -164,6 +176,8 @@ pub struct Client {
     incoming: Receiver<Incoming>,
     /// The id the next request gets.
     next: AtomicU64,
+    /// Wakes the connection thread when an order is queued, so that it is sent at once.
+    bell: Bell,
 }
 
 impl Client {
@@ -172,11 +186,23 @@ impl Client {
         let (orders, ordered) = mpsc::channel();
         let (sender, incoming) = mpsc::channel();
         let reporter = Reporter { sender, wake };
-        std::thread::spawn(move || keep(&target, &ordered, &reporter));
+        let bell = Bell::default();
+        let ringer = bell.clone();
+        std::thread::spawn(move || keep(&target, &ordered, &reporter, &ringer));
         Self {
             orders,
             incoming,
             next: AtomicU64::new(1),
+            bell,
+        }
+    }
+
+    /// Wakes the connection thread, if it holds a connection, so that it looks at its orders now.
+    fn ring(&self) {
+        if let Ok(held) = self.bell.lock()
+            && let Some(waker) = held.as_ref()
+        {
+            let _ = waker.wake();
         }
     }
 
@@ -184,17 +210,20 @@ impl Client {
     pub fn request(&self, request: Request) -> u64 {
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let _ = self.orders.send(Order::Send(id, Box::new(request)));
+        self.ring();
         id
     }
 
     /// Watches `session`, whose events up to `after` the caller already has, across reconnections.
     pub fn watch(&self, session: u64, after: u64) {
         let _ = self.orders.send(Order::Watch(session, after));
+        self.ring();
     }
 
     /// Watches the shell `terminal`, whose output up to the byte `after` the caller already has, across reconnections.
     pub fn watch_terminal(&self, terminal: u64, after: u64) {
         let _ = self.orders.send(Order::WatchTerminal(terminal, after));
+        self.ring();
     }
 
     /// What the connection has reported since the last look.
@@ -208,11 +237,14 @@ impl Client {
 }
 
 /// Sends `message` to the server as one frame of text.
+///
+/// A network that will not take all of it yet is not a failure: the rest is kept and written by the next flush.
 fn send(socket: &mut WebSocket<TcpStream>, message: &ClientMessage) -> Result<(), String> {
     let text = serde_json::to_string(message).map_err(|error| error.to_string())?;
-    socket
-        .send(Message::text(text))
-        .map_err(|error| error.to_string())
+    match socket.send(Message::text(text)) {
+        Err(error) if !is_quiet(&error) => Err(error.to_string()),
+        _ => Ok(()),
+    }
 }
 
 /// Whether `error` only says that nothing arrived in time.
@@ -262,14 +294,17 @@ fn dial(target: &Target) -> Result<WebSocket<TcpStream>, String> {
     }
 }
 
-/// Keeps a connection to `target`, passing orders to the server and what it says to `reporter`, until the client is dropped.
-fn keep(target: &Target, ordered: &Receiver<Order>, reporter: &Reporter) {
+/// Keeps a connection to `target`, passing orders to the server and what it says to `reporter`, until the client is dropped; `bell` is where the woken thread's waker is left for each connection.
+fn keep(target: &Target, ordered: &Receiver<Order>, reporter: &Reporter, bell: &Bell) {
     let mut memory = Memory::default();
     loop {
         match dial(target) {
             Ok(mut socket) => {
                 let _ = reporter.send(Incoming::Connected);
-                let gone = converse(&mut socket, ordered, reporter, &mut memory);
+                let gone = converse(&mut socket, ordered, reporter, &mut memory, bell);
+                if let Ok(mut held) = bell.lock() {
+                    *held = None;
+                }
                 match gone {
                     Some(reason) => {
                         for (id, _) in memory.waiting.drain(..) {
@@ -339,13 +374,41 @@ fn fresh_output(heard: u64, offset: u64, data: Vec<u8>) -> Option<(Vec<u8>, u64)
     Some((data[skipped..].to_vec(), end))
 }
 
-/// Carries orders to the server and what it says back, until the connection fails, giving the reason, or the client is dropped, giving nothing.
+/// Makes the socket of `socket` take no waiting, and gives the poll that wakes when it has something to read or when the waker left in `bell` is rung, with the handle the poll watches, which must be kept for as long as the poll is.
+fn prepare(
+    socket: &WebSocket<TcpStream>,
+    bell: &Bell,
+) -> Result<(mio::Poll, mio::net::TcpStream), String> {
+    let stream = socket.get_ref();
+    stream
+        .set_nonblocking(true)
+        .map_err(|error| error.to_string())?;
+    let watched = stream.try_clone().map_err(|error| error.to_string())?;
+    let mut watched = mio::net::TcpStream::from_std(watched);
+    let poll = mio::Poll::new().map_err(|error| error.to_string())?;
+    poll.registry()
+        .register(&mut watched, SOCKET, mio::Interest::READABLE)
+        .map_err(|error| error.to_string())?;
+    let waker = mio::Waker::new(poll.registry(), ORDERED).map_err(|error| error.to_string())?;
+    if let Ok(mut held) = bell.lock() {
+        *held = Some(Arc::new(waker));
+    }
+    Ok((poll, watched))
+}
+
+/// Carries orders to the server and what it says back, until the connection fails, giving the reason, or the client is dropped, giving nothing. The thread sleeps until the server says something or an order is queued and rings `bell`.
 fn converse(
     socket: &mut WebSocket<TcpStream>,
     ordered: &Receiver<Order>,
     reporter: &Reporter,
     memory: &mut Memory,
+    bell: &Bell,
 ) -> Option<String> {
+    let (mut poll, _watched) = match prepare(socket, bell) {
+        Ok(held) => held,
+        Err(reason) => return Some(reason),
+    };
+    let mut events = mio::Events::with_capacity(4);
     for terminal in memory.shells.iter() {
         let after = memory.heard.get(terminal).copied().unwrap_or(0);
         if let Err(reason) = attach_terminal(socket, *terminal, after) {
@@ -514,7 +577,10 @@ fn converse(
             }
             Ok(Message::Close(_)) => return Some("the server closed the connection".to_owned()),
             Ok(_) => {}
-            Err(error) if is_quiet(&error) => {}
+            Err(error) if is_quiet(&error) => {
+                let unsent = matches!(socket.flush(), Err(ref error) if is_quiet(error));
+                let _ = poll.poll(&mut events, unsent.then_some(FLUSH_RETRY));
+            }
             Err(error) => return Some(error.to_string()),
         }
     }

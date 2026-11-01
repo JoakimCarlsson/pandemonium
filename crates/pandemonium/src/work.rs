@@ -62,23 +62,6 @@ fn entry_request(change: EntryChange, directory: String) -> Request {
     }
 }
 
-/// What the window opens with, as the server on this machine keeps it.
-pub struct Bootstrap {
-    /// The projects the reader added, or nothing when they were never saved.
-    pub projects: Option<Vec<String>>,
-    /// What the reader chose for each agent's settings.
-    pub choices: Vec<(String, String, String)>,
-    /// The named logins.
-    pub logins: Vec<(String, String, String)>,
-    /// The login in use for each agent.
-    pub in_use: Vec<(String, String)>,
-    /// The agents the server can start.
-    pub agents: Vec<pm_protocol::AgentServer>,
-}
-
-/// How long the window waits for the server on this machine to say what it keeps.
-const BOOTSTRAP_WAIT: std::time::Duration = std::time::Duration::from_secs(4);
-
 /// A machine the servers run on: nothing for this one, or how a project's address names another.
 type Host = Option<String>;
 
@@ -505,71 +488,9 @@ impl Work {
         }
     }
 
-    /// Asks the server on this machine what the window opens with, starting the server first when it is not running.
-    ///
-    /// Nothing is returned when the server cannot be reached in time; the window then opens with what is saved on this machine.
-    pub fn bootstrap(&mut self) -> Option<Bootstrap> {
-        let target = pm_client::local().ok()?;
-        let client = Client::connect(target, self.wake.clone());
-        let projects_id = client.request(Request::Projects);
-        let choices_id = client.request(Request::Choices);
-        let accounts_id = client.request(Request::Accounts);
-        let agents_id = client.request(Request::AgentServers);
-        let mut projects = None;
-        let mut choices = None;
-        let mut accounts = None;
-        let mut agents = None;
-        let started = std::time::Instant::now();
-        while started.elapsed() < BOOTSTRAP_WAIT
-            && (projects.is_none() || choices.is_none() || accounts.is_none() || agents.is_none())
-        {
-            for item in client.incoming() {
-                let Incoming::Response { id, response } = item else {
-                    continue;
-                };
-                if id == projects_id
-                    && let Response::Projects { paths, saved } = response
-                {
-                    projects = Some(saved.then_some(paths));
-                } else if id == choices_id
-                    && let Response::Choices { choices: held } = response
-                {
-                    choices = Some(held);
-                } else if id == accounts_id
-                    && let Response::Accounts { logins, in_use } = response
-                {
-                    accounts = Some((logins, in_use));
-                } else if id == agents_id
-                    && let Response::AgentServers { servers } = response
-                {
-                    agents = Some(servers);
-                }
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        let (projects, choices, (logins, in_use), agents) =
-            (projects?, choices?, accounts?, agents?);
+    /// Takes `agents` as the ones the server on this machine can start, before it has been asked.
+    pub fn know_agents(&mut self, agents: &[pm_protocol::AgentServer]) {
         self.agents = agents.iter().map(|agent| agent.id.clone()).collect();
-        self.links.insert(
-            None,
-            Link {
-                client: Some(client),
-                ..Link::default()
-            },
-        );
-        self.ask(&None, Request::Sessions, Pending::Sessions(None));
-        self.ask(&None, Request::Extensions, Pending::Extensions);
-        self.ask_machine_settings();
-        Some(Bootstrap {
-            projects,
-            choices,
-            logins: logins
-                .into_iter()
-                .map(|login| (login.agent, login.id, login.name))
-                .collect(),
-            in_use,
-            agents,
-        })
     }
 
     /// Has the window finish opening on `view` once the sessions it needs are listed.
@@ -1567,6 +1488,9 @@ impl Work {
                     }
                     Incoming::Disconnected(reason) => {
                         eprintln!("the server on {host:?} is out of reach: {reason}");
+                        if host.is_none() {
+                            self.resume = None;
+                        }
                         model.update(|screen| {
                             *screen = std::mem::take(screen).with_git_working(false);
                         });
@@ -1770,6 +1694,9 @@ impl Work {
             }
             Job::Server(host, Err(reason)) => {
                 eprintln!("{reason}");
+                if host.is_none() {
+                    self.resume = None;
+                }
                 let Some(link) = self.links.remove(&host) else {
                     return;
                 };
@@ -1899,11 +1826,16 @@ impl Work {
             Pending::Sessions(origin) => {
                 if let Response::Sessions { sessions } = response {
                     self.adopt(model, &origin, sessions);
+                    if origin.is_none() {
+                        crate::startup::sessions_listed();
+                    }
                     self.ask(
                         &origin,
                         Request::Terminals,
                         Pending::Terminals(origin.clone()),
                     );
+                } else if origin.is_none() {
+                    self.resume = None;
                 }
             }
             Pending::OpenTerminal(tab) => match response {

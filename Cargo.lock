@@ -2480,6 +2480,7 @@ dependencies = [
 name = "pm-client"
 version = "0.14.2"
 dependencies = [
+ "mio",
  "pm-acp",
  "pm-protocol",
  "pm-store",
@@ -2718,10 +2719,12 @@ name = "pm-server"
 version = "0.14.2"
 dependencies = [
  "getrandom 0.4.3",
+ "mio",
  "notify",
  "pm-acp",
  "pm-agent-library",
  "pm-buffer",
+ "pm-client",
  "pm-dap",
  "pm-git",
  "pm-lsp",

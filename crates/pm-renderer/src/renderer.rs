@@ -164,7 +164,93 @@ fn upload(
     }
 }
 
+/// What opening a GPU needs before a window exists: the instance, the adapter, the device and its queue.
+struct Opened {
+    /// The wgpu instance the device was found through.
+    instance: wgpu::Instance,
+    /// The GPU adapter the device was opened on.
+    adapter: wgpu::Adapter,
+    /// The opened GPU device.
+    device: wgpu::Device,
+    /// The queue frames are submitted to.
+    queue: wgpu::Queue,
+}
+
+/// A GPU being opened on another thread while the program does other work, handed to [`Renderer::from_opening`] once there is a window to draw into.
+pub struct Opening(std::thread::JoinHandle<Option<Opened>>);
+
+impl Opening {
+    /// Starts finding a GPU and opening a device on it, without waiting for the result.
+    pub fn start() -> Self {
+        Self(std::thread::spawn(|| {
+            pollster::block_on(async {
+                let instance = Renderer::instance();
+                let adapter = instance
+                    .request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: wgpu::PowerPreference::HighPerformance,
+                        force_fallback_adapter: false,
+                        compatible_surface: None,
+                        ..Default::default()
+                    })
+                    .await
+                    .ok()?;
+                let (device, queue) = adapter
+                    .request_device(&wgpu::DeviceDescriptor {
+                        label: Some("pandemonium"),
+                        ..Default::default()
+                    })
+                    .await
+                    .ok()?;
+                Some(Opened {
+                    instance,
+                    adapter,
+                    device,
+                    queue,
+                })
+            })
+        }))
+    }
+}
+
 impl Renderer {
+    /// The wgpu instance every renderer is made through, over the primary graphics interfaces only so that no other driver is loaded.
+    fn instance() -> wgpu::Instance {
+        wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::PRIMARY,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        })
+    }
+
+    /// Opens a renderer for a window on the GPU `opening` found while the program did other work, and configures its surface at the given physical size.
+    ///
+    /// When the opening failed, or its adapter cannot present to the window, the GPU is found again with the window's surface in mind, as [`Renderer::new`] does.
+    pub fn from_opening(
+        opening: Opening,
+        target: impl Into<wgpu::SurfaceTarget<'static>> + Clone,
+        width: u32,
+        height: u32,
+        scale: f32,
+    ) -> Result<Self, RendererError> {
+        if let Ok(Some(opened)) = opening.0.join() {
+            let surface = opened
+                .instance
+                .create_surface(target.clone().into())
+                .map_err(RendererError::Surface)?;
+            if opened.adapter.is_surface_supported(&surface) {
+                return Ok(Self::build(
+                    opened.instance,
+                    opened.adapter,
+                    opened.device,
+                    opened.queue,
+                    Some(surface),
+                    (width, height),
+                    scale,
+                ));
+            }
+        }
+        Self::new(target, width, height, scale)
+    }
+
     /// Opens a device for a window and configures its surface at the given
     /// physical size.
     pub fn new(
@@ -213,7 +299,7 @@ impl Renderer {
         height: u32,
         scale: f32,
     ) -> Result<Self, RendererError> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let instance = Self::instance();
         let surface = window
             .map(|window| instance.create_surface(window))
             .transpose()

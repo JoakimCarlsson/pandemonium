@@ -18,6 +18,9 @@ pub(crate) use hidden::{Hidden, HiddenMark};
 /// frame before it becomes the older one and the oldest are let go.
 const GENERATION: usize = 256;
 
+/// The bytes the newer generation of the cache may estimate it holds at the end of a frame before it becomes the older one.
+const GENERATION_BYTES: usize = 8 * 1024 * 1024;
+
 /// What a kept subtree is found by: the caller's key and the width as bits.
 type Key = (u64, u32, u64, u32, u32);
 
@@ -30,6 +33,26 @@ pub(crate) struct Retained {
     pub(crate) placed: Placed,
     /// Offscreen metadata avoids traversing every node of old conversation replies.
     pub(crate) hidden: Option<Hidden>,
+    /// What the subtree, its boxes and its offscreen metadata are estimated to take, in bytes.
+    bytes: usize,
+}
+
+/// How many boxes `placed` and the boxes inside it make.
+fn boxes(placed: &Placed) -> usize {
+    1 + placed.children.iter().map(boxes).sum::<usize>()
+}
+
+/// What a subtree laid out as `placed` with the offscreen metadata `hidden` is estimated to take, in bytes.
+fn estimate(placed: &Placed, hidden: Option<&Hidden>) -> usize {
+    let hidden = hidden.map_or(0, |hidden| {
+        hidden.marks.len() * std::mem::size_of::<HiddenMark>()
+            + hidden
+                .texts
+                .iter()
+                .map(|text| std::mem::size_of::<hidden::HiddenText>() + text.content.len())
+                .sum::<usize>()
+    });
+    boxes(placed) * (std::mem::size_of::<Node>() + std::mem::size_of::<Placed>()) + hidden
 }
 
 /// The subtrees drawn lately, in two generations: one found in the older is
@@ -39,6 +62,8 @@ pub(crate) struct Retained {
 struct Cache {
     /// The subtrees built or found since the generations last turned over.
     newer: HashMap<Key, Arc<Retained>>,
+    /// What the subtrees in `newer` are estimated to take, in bytes.
+    newer_bytes: usize,
     /// The subtrees from the generation before.
     older: HashMap<Key, Arc<Retained>>,
 }
@@ -56,13 +81,15 @@ impl Cache {
 
     /// Keeps `retained` under `key`.
     fn keep(&mut self, key: Key, retained: Arc<Retained>) {
+        self.newer_bytes += retained.bytes;
         self.newer.insert(key, retained);
     }
 
-    /// Lets the older generation go and starts a new one when the newer is full.
+    /// Lets the older generation go and starts a new one when the newer is full, by count or by the bytes it is estimated to take, so that a reply that grows by a word at a time cannot keep every version of itself.
     fn turn_over(&mut self) {
-        if self.newer.len() >= GENERATION {
+        if self.newer.len() >= GENERATION || self.newer_bytes >= GENERATION_BYTES {
             self.older = std::mem::take(&mut self.newer);
+            self.newer_bytes = 0;
         }
     }
 }
@@ -98,10 +125,12 @@ pub fn retained(
         let root = build(shaper);
         let placed = fit(&root.item(shaper), width);
         let hidden = hidden::collect(&root, &placed);
+        let bytes = estimate(&placed, hidden.as_ref());
         let made = Arc::new(Retained {
             root,
             placed,
             hidden,
+            bytes,
         });
         CACHE.with_borrow_mut(|cache| cache.keep(key, made.clone()));
         made

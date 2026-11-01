@@ -340,6 +340,7 @@ impl App {
         let presented = renderer.render(&self.list, &mut self.shaper, scene::ground(theme), || {
             window.pre_present_notify()
         });
+        self.frame_due = Self::frame_due_after(self.output.next_frame_ms, input.elapsed_ms);
         if self.output.animating || !presented {
             window.request_redraw();
         }

@@ -8,9 +8,10 @@ use super::{Host, Job, Pending, Work};
 use pm_pages::Screen;
 
 impl Work {
-    /// Asks the server on this machine what it keeps for the work the servers do.
+    /// Asks the server on this machine what it keeps for the work the servers do, and which extensions it has.
     pub fn ask_machine_settings(&mut self) {
         self.ask(&None, Request::MachineSettings, Pending::MachineSettings);
+        self.ask(&None, Request::Extensions, Pending::Extensions);
     }
 
     /// Keeps `settings` as what every server is to work by, and sends them to each server the window reaches.
