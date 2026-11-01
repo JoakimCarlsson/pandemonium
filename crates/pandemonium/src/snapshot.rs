@@ -220,6 +220,8 @@ pub enum Shot {
     Dollar,
     /// A Codex conversation with messages and its skills menu open.
     DollarSession,
+    /// The page for starting work with Codex and more skills than rows, the last one highlighted.
+    DollarScrolled,
     /// The page for starting work with the list of models scrolled to its end.
     Scrolling,
     /// The page for starting work with the menu of where it is done open.
@@ -3029,6 +3031,23 @@ impl Shot {
                     .edited(PROMPT, Edit::Paste("/c".to_owned()))
                     .after(FocusId(4401)),
             ),
+            Self::DollarScrolled => {
+                let mut state = welcome().after(FocusId(AGENT_BASE + 1));
+                state.sync_context();
+                let skills = (1..=14)
+                    .map(|number| Slash {
+                        name: format!("skill-{number:02}"),
+                        description: format!("Description of the skill numbered {number}"),
+                    })
+                    .collect();
+                state = state
+                    .with_skills(1, 0, skills, Default::default())
+                    .after(pm_components::state::SKILL_BUTTON);
+                for _ in 0..13 {
+                    state = state.slash_moved(1);
+                }
+                Screen::Workspace(state)
+            }
             Self::Dollar | Self::DollarSession => {
                 let mut state = if matches!(self, Self::DollarSession) {
                     let mut state = WorkspaceState::sample();

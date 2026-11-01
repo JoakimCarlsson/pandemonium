@@ -227,6 +227,7 @@ fn main() {
             Some("slashed") => Shot::Slashed,
             Some("dollar") => Shot::Dollar,
             Some("dollar-session") => Shot::DollarSession,
+            Some("dollar-scrolled") => Shot::DollarScrolled,
             Some("scrolling") => Shot::Scrolling,
             Some("placing") => Shot::Placing,
             Some("live") => Shot::Live,

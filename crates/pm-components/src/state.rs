@@ -2326,7 +2326,7 @@ impl WorkspaceState {
                 let before = self.prompt.revision();
                 self.prompt.apply(edit);
                 if self.prompt.revision() != before {
-                    self.menu_scroll = 0.0;
+                    self.reset_slash();
                 }
             }
             COMMIT_MESSAGE => self.message.apply(edit),
@@ -3123,7 +3123,7 @@ impl WorkspaceState {
         if let Some(index) = self.open_index() {
             self.sessions[index].chat_back = 0.0;
         }
-        self.slash = 0;
+        self.reset_slash();
         self.elements.clear();
         self.captures.clear();
         if matches!(self.picker, Some(Picker::Element(_) | Picker::Capture(_))) {
