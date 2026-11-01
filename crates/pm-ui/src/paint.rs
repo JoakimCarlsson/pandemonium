@@ -73,6 +73,8 @@ pub struct Region {
 pub struct Output {
     /// Whether anything painted is animating, so another frame is wanted.
     pub animating: bool,
+    /// The clock reading, in milliseconds as [`Input::elapsed_ms`] counts them, at which the next frame is wanted even though nothing is animating, such as when a caret next changes between lit and dark.
+    pub next_frame_ms: Option<f32>,
     /// The boxes that answer to the user, in tree order, which is the order
     /// Tab walks them in.
     pub regions: Vec<Region>,
@@ -1006,7 +1008,9 @@ impl Frame<'_> {
             let lit =
                 look.steady || ((self.input.elapsed_ms / CARET_BLINK_MS) as u32).is_multiple_of(2);
             if !look.steady {
-                self.output.animating = true;
+                self.output.wake_at(
+                    ((self.input.elapsed_ms / CARET_BLINK_MS).floor() + 1.0) * CARET_BLINK_MS,
+                );
             }
             if lit {
                 let size = computed.typography.size;

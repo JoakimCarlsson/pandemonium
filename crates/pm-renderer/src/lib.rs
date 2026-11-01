@@ -13,4 +13,4 @@ mod renderer;
 
 pub use draw::{DrawList, Icon, Image, Picture, Primitive, Quad, Text};
 pub use geometry::{Affine, Rect};
-pub use renderer::{Renderer, RendererError};
+pub use renderer::{Opening, Renderer, RendererError};

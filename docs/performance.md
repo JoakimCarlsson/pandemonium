@@ -52,12 +52,13 @@ and compositor. Headless snapshots cannot establish this tradeoff.
 
 Agent output reaches the window without timers. The agent's threads ring the
 server's bell as soon as they queue an event, and the pump runs on the ring; its
-500 ms wait is only a backstop. A connection that has sent something in the
-last second waits 1 ms instead of 25 ms for the client before sending the next
-message. The client's connection thread calls a wake function after each
-report, which the window turns into an event loop user event, so incoming
-events are applied at once instead of at the next 50 ms tick while an agent
-works.
+500 ms wait is only a backstop. Each connection sleeps in a poll on its socket
+and on a waker, on the server's side and on the client's. Queueing a message
+for the client, or a request for the server, rings that waker, so it is written
+at once instead of at the next 25 ms read timeout. The client's connection
+thread calls a wake function after each report, which the window turns into an
+event loop user event, so incoming events are applied at once instead of at the
+next 50 ms tick while an agent works.
 
 Measured over a loopback WebSocket with an agent streaming one chunk every
 10 ms, the delay from the agent's write to the client's read fell from p50 13 ms,
@@ -180,5 +181,41 @@ projects, milliseconds from process start (three runs each):
 | First frame presented | 381-443 | 210-272 | 286-358 | 241-251 |
 
 With two unreachable `ssh://` projects added, the warm first frame was 252-337
-before and 231-246 after. What remains is mostly creating the GPU device and
-surface (about 130-180 ms) and the first frame (about 55 ms).
+before and 231-246 after.
+
+The GPU opens on its own thread, started before the event loop. The window
+builds its first scene while it opens, so the device is ready by the time the
+scene is. The instance asks only for the primary graphics interfaces (Vulkan,
+Metal, DX12), so no OpenGL, Mesa or LLVM driver is loaded. Together these took
+the first frame from about 215 ms to 105-127 ms and resident memory from about
+353 MB to about 212 MB on the test machine, where 77 MB of what remains is the
+GPU vendor's shader compiler.
+
+## Idle and streaming
+
+An idle window draws nothing. A blinking caret asks for a frame at its next
+change, not for continuous frames, and the input method is told where the caret
+is only when it moves. Telling it every frame made the desktop answer with an
+empty composition each time, which dirtied the model and drew another frame, at
+about 210 frames and 520 wakeups a second with 49% of a core in use. Idle now
+uses about 1% of a core and draws no frames.
+
+Retained subtrees are released by an estimate of their bytes as well as their
+count. A reply that grows by a word at a time builds a new subtree for each
+word, and the old ones used to stay until 256 had piled up: 220 MB for 300
+words of one reply, 15 MB now. Layout allocates its tree once.
+
+```sh
+CARGO_TARGET_DIR=build cargo test -p pandemonium benchmark_streaming -- --ignored --nocapture --test-threads=1
+```
+
+The benchmark streams 300 chunks into a short chat, a 40-reply chat and a chat
+with paragraph breaks, and prints build-to-paint p50/p95/p99, the bytes
+allocated per frame, and what the frames left retained.
+
+A request sent after a quiet spell and its answer, measured over loopback, took
+a median of 14.95 ms (up to 17 ms) while the client looked at its orders every
+25 ms. It takes 0.11 ms against a stub server and 0.32 ms through the real
+connection code. The tests are `a_request_after_a_quiet_spell_is_answered_quickly`
+in `pm-client` and `answers_a_request_after_a_quiet_spell_quickly` in
+`pm-server`.

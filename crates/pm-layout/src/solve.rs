@@ -55,7 +55,7 @@ pub fn fit(root: &Item, width: f32) -> Placed {
 /// Lays `root` out `width` logical pixels wide and `height` tall, or as tall
 /// as its contents make it when no height is given.
 fn lay_out(root: &Item, width: f32, height: Option<f32>) -> Placed {
-    let mut tree: TaffyTree<(f32, f32)> = TaffyTree::new();
+    let mut tree: TaffyTree<(f32, f32)> = TaffyTree::with_capacity(count_items(root));
     let id = build(&mut tree, root, Some((width, height)));
     let _ = tree.compute_layout_with_measure(
         id,
@@ -79,6 +79,11 @@ fn lay_out(root: &Item, width: f32, height: Option<f32>) -> Placed {
         },
     );
     collect(&tree, id, 0.0, 0.0)
+}
+
+/// How many items `item` and the items inside it make, so that the layout tree is allocated once instead of growing as it is built.
+fn count_items(item: &Item) -> usize {
+    1 + item.children.iter().map(count_items).sum::<usize>()
 }
 
 /// Adds `item` and its children to `tree`, the root pinned to the viewport,

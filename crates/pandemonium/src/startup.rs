@@ -55,3 +55,13 @@ pub fn sessions_listed() {
         mark("sessions-listed");
     }
 }
+
+/// Whether the first scene has been reported.
+static SCENE_REPORTED: AtomicBool = AtomicBool::new(false);
+
+/// Reports the first scene built and painted into the draw list, before it is submitted, and ignores every later one.
+pub fn scene_painted() {
+    if !SCENE_REPORTED.swap(true, Ordering::Relaxed) {
+        mark("first-scene-built");
+    }
+}

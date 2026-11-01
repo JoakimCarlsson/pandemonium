@@ -281,6 +281,7 @@ fn main() {
     }
 
     startup::mark("arguments-read");
+    let opening = pm_renderer::Opening::start();
     let event_loop = match EventLoop::new() {
         Ok(event_loop) => event_loop,
         Err(error) => {
@@ -294,7 +295,7 @@ fn main() {
     let wake: pm_client::Wake = std::sync::Arc::new(move || {
         let _ = proxy.send_event(());
     });
-    if let Err(error) = event_loop.run_app(&mut App::new(wake)) {
+    if let Err(error) = event_loop.run_app(&mut App::new(wake, opening)) {
         eprintln!("pandemonium: the event loop failed: {error}");
         std::process::exit(1);
     }
