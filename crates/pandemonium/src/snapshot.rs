@@ -138,6 +138,8 @@ pub enum Shot {
     Stashing,
     /// The workspace on the diff with two changed files picked and the menu on them open.
     ChangeMenu,
+    /// The workspace with sixty-eight changed files all picked and the menu on them open, whose longest row names them all.
+    ChangeMenuMany,
     TreeMenu,
     /// The project's files with three rows picked, two as a range, and the menu on them open.
     TreePicked,
@@ -1995,6 +1997,25 @@ fn picked() -> WorkspaceState {
         .change_picked(2, Choosing::Toggle)
 }
 
+/// The workspace on the diff with sixty-eight changed files, every one of them picked.
+fn many_changes() -> WorkspaceState {
+    let mut state = workspace_sample();
+    if let Some(session) = state.sessions.first_mut() {
+        session.changes = (0..68)
+            .map(|index| {
+                pm_components::sample::Change::new(
+                    &format!("src/module_{index}.rs"),
+                    "@@ -1,3 +1,4 @@\n fn handler() {\n-    todo!()\n+    let body = read();\n+    respond(body)\n }",
+                )
+            })
+            .collect();
+    }
+    state
+        .after(TAB_DIFF)
+        .after(FocusId(FILE_BASE))
+        .changes_all_picked()
+}
+
 /// The workspace with the list of branches open and `feat` typed in its box.
 fn branching() -> WorkspaceState {
     let names = [
@@ -2811,6 +2832,7 @@ impl Shot {
                 source().git_failed("Could not switch branch: fatal: a branch named 'main' already exists"),
             ),
             Self::ChangeMenu => Screen::Workspace(picked().with_change_menu(0, (1000.0, 250.0))),
+            Self::ChangeMenuMany => Screen::Workspace(many_changes().with_change_menu(0, (1000.0, 250.0))),
             Self::TreeMenu => Screen::Workspace(files().with_tree_menu(
                 TreeTarget {
                     path: "crates/pandemonium/src/session.rs".to_owned(),
