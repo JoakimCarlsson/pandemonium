@@ -37,4 +37,5 @@ mod uploads;
 
 pub use cli::run_with_arguments;
 pub use credential::FILE as CREDENTIAL_FILE;
+pub use handler::saved_agents;
 pub use listener::{Settings, run};

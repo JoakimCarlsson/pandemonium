@@ -7,6 +7,7 @@ mod keys;
 mod notify;
 mod scene;
 mod snapshot;
+mod startup;
 mod view;
 mod work;
 
@@ -22,6 +23,7 @@ use snapshot::{Shot, Trigger};
 /// on this machine with the options that follow, or, given
 /// `--snapshot <path> [elapsed_ms [x y [focus [light [screen]]]]]`, writes one frame to a PNG and leaves.
 fn main() {
+    startup::begin();
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     if arguments.first().map(String::as_str) == Some("--version") {
         println!("pandemonium {}", env!("CARGO_PKG_VERSION"));
@@ -278,6 +280,7 @@ fn main() {
         return;
     }
 
+    startup::mark("arguments-read");
     let event_loop = match EventLoop::new() {
         Ok(event_loop) => event_loop,
         Err(error) => {
@@ -285,6 +288,7 @@ fn main() {
             std::process::exit(1);
         }
     };
+    startup::mark("event-loop-created");
     event_loop.set_control_flow(ControlFlow::Wait);
     let proxy = event_loop.create_proxy();
     let wake: pm_client::Wake = std::sync::Arc::new(move || {

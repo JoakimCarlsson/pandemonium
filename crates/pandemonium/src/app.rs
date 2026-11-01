@@ -262,27 +262,12 @@ impl App {
     /// An application with no window yet, whose clock starts now, and whose event loop `wake` brings out of its sleep.
     pub fn new(wake: pm_client::Wake) -> Self {
         let mut work = Work::new(wake);
-        let opened = work.bootstrap();
-        let connected = opened.is_some();
-        let (saved, choices, logins, in_use, agents) = match opened {
-            Some(held) => (
-                held.projects,
-                held.choices,
-                held.logins,
-                held.in_use,
-                held.agents,
-            ),
-            None => {
-                let (logins, in_use) = pm_store::load_accounts();
-                (
-                    pm_store::load_projects(),
-                    pm_store::load_choices(),
-                    logins,
-                    in_use,
-                    pm_protocol::builtin_agents(),
-                )
-            }
-        };
+        crate::startup::mark("app-new-begin");
+        let saved = pm_store::load_projects();
+        let choices = pm_store::load_choices();
+        let (logins, in_use) = pm_store::load_accounts();
+        let agents = pm_server::saved_agents();
+        work.know_agents(&agents);
         work.set_accounts(&logins, &in_use);
         let screen = saved
             .as_deref()
@@ -314,22 +299,18 @@ impl App {
             (Some(view), Screen::Workspace(state)) => Screen::Workspace(view.apply(state)),
             (_, screen) => screen,
         };
-        if let Some(view) = saved_view
-            .clone()
-            .filter(|view| connected && view.home().is_none())
-        {
+        if let Some(view) = saved_view.clone().filter(|view| view.home().is_none()) {
             work.resume(view);
         }
         let editor = pm_store::load_text(EDITOR_SETTINGS)
             .map(|text| pm_editor::EditorSettings::read(&text))
             .unwrap_or_default();
         work.set_servers(&window_settings.servers);
-        if !connected {
-            work.ask_machine_settings();
-        }
+        work.ask_machine_settings();
         if window_settings.general.check_updates {
             work.ask_release(window_settings.general.channel);
         }
+        crate::startup::mark("settings-loaded");
         let mut shaper = scene::shaper();
         let (all_fonts, mono_fonts) = shaper.families();
         scene::set_fonts(
@@ -343,6 +324,7 @@ impl App {
                 .with_window_settings(window_settings.clone())
                 .with_fonts(all_fonts, mono_fonts),
         );
+        crate::startup::mark("fonts-model-ready");
         let dirty = Rc::new(Cell::new(false));
         let flag = Rc::clone(&dirty);
         model.subscribe(move |_| flag.set(true));
@@ -623,6 +605,9 @@ impl App {
             window.pre_present_notify()
         });
         self.timings.frame(started, painted, presented);
+        if presented {
+            crate::startup::frame_presented();
+        }
         if self.output.animating || !presented {
             window.request_redraw();
         }
@@ -2203,12 +2188,14 @@ impl ApplicationHandler for App {
                 Ok(window) => Arc::new(window),
                 Err(error) => fail_to_start(&format!("could not open a window: {error}")),
             };
+        crate::startup::mark("window-created");
         let size = window.inner_size();
         let scale = window.scale_factor() as f32;
         match Renderer::new(window.clone(), size.width, size.height, scale) {
             Ok(renderer) => self.renderer = Some(renderer),
             Err(error) => fail_to_start(&error.to_string()),
         }
+        crate::startup::mark("renderer-ready");
         self.system_appearance = appearance(window.theme());
         window.set_ime_allowed(true);
         self.window = Some(window);

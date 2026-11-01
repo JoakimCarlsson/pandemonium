@@ -149,3 +149,36 @@ build/debug/pandemonium --snapshot build/performance-input/input-stress.png 100 
 build/debug/pandemonium --snapshot build/performance-input/input-scrolled.png 100 700 600 320 dark input-stress-scrolled
 build/debug/pandemonium --snapshot build/performance-input/input-composing.png 100 700 600 320 dark input-stress-composing
 ```
+
+## Startup
+
+```sh
+PANDEMONIUM_STARTUP_TIMINGS=1 CARGO_TARGET_DIR=build cargo run --release -p pandemonium
+```
+
+Stderr reports the milliseconds since the process began at each phase: the
+event loop, the saved settings, fonts and the model, the window, the renderer,
+the first presented frame and the first listing of this machine's sessions.
+
+The window opens on what this machine has saved (projects, choices, accounts,
+the view it was left on). It no longer waits for the server on this machine.
+The connection, starting the server when it is not running, the session
+listing, the extension list and the agent list are all requests that run in
+the background and update the window as they are answered. A server that cannot
+be reached leaves the window as it opened. Projects on other machines are
+reached only when something asks them for work, so an unreachable `ssh://`
+project cannot delay the window.
+
+Measured on a local release build with an isolated data folder, two local
+projects, milliseconds from process start (three runs each):
+
+| Phase | Before, cold server | After, cold server | Before, warm server | After, warm server |
+| --- | --- | --- | --- | --- |
+| Server answered | 122-147 | in background | 22-122 | in background |
+| Window created | 150-193 | 31-46 | 72-152 | 34-47 |
+| Renderer ready | 328-389 | 154-214 | 231-291 | 180-196 |
+| First frame presented | 381-443 | 210-272 | 286-358 | 241-251 |
+
+With two unreachable `ssh://` projects added, the warm first frame was 252-337
+before and 231-246 after. What remains is mostly creating the GPU device and
+surface (about 130-180 ms) and the first frame (about 55 ms).
