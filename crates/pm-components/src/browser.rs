@@ -288,13 +288,31 @@ enum Move {
     Reload,
 }
 
+/// `address` with a loopback host written as `localhost`, so a page opened by one name of this machine is the page of the others.
+fn loopback_as_localhost(address: &str) -> String {
+    let address = address.trim();
+    let Some((scheme, rest)) = address.split_once("://") else {
+        return address.to_owned();
+    };
+    for name in ["127.0.0.1", "[::1]"] {
+        if let Some(after) = rest.strip_prefix(name)
+            && (after.is_empty() || after.starts_with([':', '/', '?', '#']))
+        {
+            return format!("{scheme}://localhost{}", &rest[name.len()..]);
+        }
+    }
+    address.to_owned()
+}
+
 /// What a tab showing `current` does when a page is found at `address`.
 fn served_move(current: &str, address: &str) -> Move {
     let current = current.trim();
     if current.is_empty() || current == "about:blank" || current.starts_with("chrome-error:") {
         return Move::Load;
     }
-    let origin = address.trim_end_matches('/');
+    let current = loopback_as_localhost(current);
+    let origin = loopback_as_localhost(address);
+    let origin = origin.trim_end_matches('/');
     let same = current
         .strip_prefix(origin)
         .is_some_and(|rest| rest.is_empty() || rest.starts_with(['/', '?', '#']));
@@ -327,12 +345,13 @@ impl WorkspaceState {
             Some(browser) => {
                 let again: Vec<usize> = (0..browser.tabs.len())
                     .filter(|index| {
-                        served_move(browser.tabs[*index].address.text(), address) == Move::Reload
+                        browser.tabs[*index].host == host
+                            && served_move(browser.tabs[*index].address.text(), address)
+                                == Move::Reload
                     })
                     .collect();
                 if !again.is_empty() {
                     for index in again {
-                        browser.tabs[index].host.clone_from(&host);
                         browser.tabs[index].commands.push(Command::Reload);
                     }
                 } else if served_move(browser.address.text(), address) == Move::Load {

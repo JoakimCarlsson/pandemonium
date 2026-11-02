@@ -769,12 +769,18 @@ impl App {
         }
     }
 
-    /// How the page shows its address: a local port that carries a remote one is shown as the remote port on `localhost`, so the address typed and the address shown are the same.
-    fn browser_unresolve(&self, address: &str) -> String {
-        let Some(cut) = parts(address).filter(|cut| is_local(cut.host)) else {
+    /// How the page shows its address: a local port that carries a remote one is shown as the remote port on `localhost`, and a page of the machine `host` reached directly is shown on `localhost` too, so the address typed, the address shown and the address a server reports are the same.
+    fn browser_unresolve(&self, address: &str, host: Option<&str>) -> String {
+        let Some(cut) = parts(address) else {
             return address.to_owned();
         };
-        let Some(local) = cut.port else {
+        if let pm_protocol::Route::Direct(target) = pm_protocol::route_of(host) {
+            let machine = target.rsplit_once(':').map_or(target, |(name, _)| name);
+            if let Some(port) = cut.port.filter(|_| cut.host == machine) {
+                return format!("{}localhost:{port}{}", cut.before, cut.after);
+            }
+        }
+        let Some(local) = cut.port.filter(|_| is_local(cut.host)) else {
             return address.to_owned();
         };
         match self
@@ -786,6 +792,18 @@ impl App {
             Some(((_, remote), _)) => format!("{}localhost:{remote}{}", cut.before, cut.after),
             None => address.to_owned(),
         }
+    }
+
+    /// The machine the page of the tab numbered `id` is on, when it is not this one.
+    fn browser_tab_host(&self, id: u32) -> Option<String> {
+        self.model.read(|screen| {
+            let Screen::Workspace(state) = screen;
+            state
+                .browser
+                .as_ref()
+                .and_then(|browser| browser.tab(id))
+                .and_then(|tab| tab.host.clone())
+        })
     }
 
     /// Tells the helper which origins agents may open when that is not what it was last told; the helper enforces it, so it is sent as soon as the helper starts, before any page or tool.
@@ -1132,14 +1150,10 @@ impl App {
                 });
             }
             for (url, agent) in opened {
-                let address = self.browser_unresolve(&url);
+                let host = self.browser_tab_host(*id);
+                let address = self.browser_unresolve(&url, host.as_deref());
                 self.model.update(|screen| {
                     let Screen::Workspace(state) = screen;
-                    let host = state
-                        .browser
-                        .as_ref()
-                        .and_then(|browser| browser.tab(*id))
-                        .and_then(|tab| tab.host.clone());
                     state.browser_tab_opened(&address, host, agent, !agent);
                 });
             }
@@ -1171,11 +1185,12 @@ impl App {
         let typing = self.focus.current() == Some(pm_components::browser::BROWSER_ADDRESS);
         let mut reports = Vec::new();
         for id in self.web.pages.keys().copied().collect::<Vec<_>>() {
+            let host = self.browser_tab_host(id);
             let address = self
                 .web
                 .pages
                 .get(&id)
-                .map(|shown| self.browser_unresolve(&shown.view.address()))
+                .map(|shown| self.browser_unresolve(&shown.view.address(), host.as_deref()))
                 .unwrap_or_default();
             let Some(shown) = self.web.pages.get_mut(&id) else {
                 continue;
