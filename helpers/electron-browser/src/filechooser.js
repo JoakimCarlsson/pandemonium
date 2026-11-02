@@ -7,12 +7,26 @@
  * hidden and offscreen, so the dialog never appears or cannot be reached, and the input stays empty.
  * This file asks the protocol to hand the request over instead (`Page.setInterceptFileChooserDialog`),
  * opens the dialog itself with no parent, and gives the chosen files to the input.
+ *
+ * On macOS the helper hides its Dock icon, which makes it a background app, and a background app's dialog
+ * opens behind every other window or not at all. The app is brought to the front before the dialog opens.
  */
 
-const { dialog } = require('electron');
+const { app, dialog } = require('electron');
 
 /** @typedef {import('./page').Page} Page */
 /** @typedef {import('./types').Json} Json */
+
+/**
+ * Brings the helper to the front on macOS, where a background app's open dialog would not show.
+ * @returns {void}
+ */
+function raiseApp() {
+  if (process.platform !== 'darwin') return;
+  try {
+    app.focus({ steal: true });
+  } catch (_) {}
+}
 
 /**
  * Takes over the file pickers of a page.
@@ -56,6 +70,7 @@ class FileChooser {
   async choose(backendNodeId, multiple) {
     this.open = true;
     try {
+      raiseApp();
       const result = await dialog.showOpenDialog({
         properties: multiple ? ['openFile', 'multiSelections'] : ['openFile'],
       });
