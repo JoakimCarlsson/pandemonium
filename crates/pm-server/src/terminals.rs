@@ -477,6 +477,23 @@ impl Core {
         }
     }
 
+    /// Ends, with [`Core::close_terminal`], every shell whose label is exactly `directory`, the folder a client opened it in, and returns how many it ended.
+    pub(crate) fn close_terminals_in(&self, directory: &str) -> usize {
+        let numbers: Vec<u64> = self.terminals.lock().map_or_else(
+            |_| Vec::new(),
+            |held| {
+                held.iter()
+                    .filter(|(_, terminal)| terminal.directory == directory)
+                    .map(|(number, _)| *number)
+                    .collect()
+            },
+        );
+        numbers
+            .into_iter()
+            .filter(|number| self.close_terminal(*number))
+            .count()
+    }
+
     /// What the server knows about each shell, oldest first.
     pub(crate) fn terminal_infos(&self) -> Vec<TerminalInfo> {
         let Ok(held) = self.terminals.lock() else {

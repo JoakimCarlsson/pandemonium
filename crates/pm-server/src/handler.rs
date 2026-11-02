@@ -323,10 +323,10 @@ fn start_session(
     }
 }
 
-/// Stops the agent of session `number` and waits for it to exit, removes the worktree it made when no other open session works in it, deletes the branch it made there when nothing would be lost, and marks it closed.
+/// Stops the agent of session `number` and waits for it to exit, ends the shells that work in its worktree, removes the worktree it made when no other open session works in it, deletes the branch it made there when nothing would be lost, and marks it closed.
 ///
 /// A worktree with changes that are not committed is kept and the request answered with `Uncommitted`, unless `discard` is set.
-fn close_session(core: &Core, number: u64, discard: bool) -> Response {
+pub(crate) fn close_session(core: &Core, number: u64, discard: bool) -> Response {
     let (chat, removal, enclosed) = {
         let Ok(mut sessions) = core.sessions.lock() else {
             return failed("the server is shutting down");
@@ -355,6 +355,7 @@ fn close_session(core: &Core, number: u64, discard: bool) -> Response {
                 folder,
                 held.meta.branch.clone(),
                 held.meta.base.clone(),
+                held.meta.directory.clone(),
             )
         });
         (
@@ -371,10 +372,11 @@ fn close_session(core: &Core, number: u64, discard: bool) -> Response {
     {
         return failed(format!("could not remove the dev container: {reason}"));
     }
-    if let Some((repository, folder, branch, base)) = removal {
+    if let Some((repository, folder, branch, base, directory)) = removal {
         if !discard && !pm_git::changes(&folder).is_empty() {
             return Response::Uncommitted;
         }
+        core.close_terminals_in(&directory);
         if let Err(reason) =
             pm_git::remove_worktree(&repository, &folder, branch.as_deref(), base.as_deref())
         {
@@ -1890,3 +1892,6 @@ fn sign_in_session(core: &Core, number: u64) -> Response {
         Err(reason) => failed(reason),
     }
 }
+
+#[cfg(test)]
+mod tests;
