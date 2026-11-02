@@ -68,7 +68,7 @@ page is left there when a different server starts, since the reader or an agent
 is using it, and the server's page opens in a new tab behind it (see
 [Tabs](#tabs)); the tab shown goes to a server's page when it shows nothing or
 an error, and every tab on a page of that same server loads it again where it
-is (`served_move` in `pm-components/src/browser.rs`). It happens only while the embedded browser is on
+is (`served_move` in `pm-components/src/browser.rs`). A page is the same server's by the address the server reports, so `127.0.0.1` and `[::1]` count as `localhost`, and a tab on a remote machine, whether carried over SSH or reached directly, is compared by the remote address it shows, not the local one that carries it. It happens only while the embedded browser is on
 and installed, and Settings, under Browser, can turn it off. A shell in a dev
 container is not seen, since its ports are the container's.
 
