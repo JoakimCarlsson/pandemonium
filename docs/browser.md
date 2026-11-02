@@ -169,7 +169,9 @@ the page's window, which here is hidden and offscreen, so the dialog never
 shows and the input stays empty. `helpers/electron-browser/src/filechooser.js`
 turns on `Page.setInterceptFileChooserDialog`, opens `dialog.showOpenDialog`
 itself with no parent when `Page.fileChooserOpened` arrives, and hands the
-chosen files to the input with `DOM.setFileInputFiles`. The files are the
+chosen files to the input with `DOM.setFileInputFiles`. On macOS the helper has
+no Dock icon and so counts as a background app, whose dialog opens behind other
+windows or not at all, so it calls `app.focus({ steal: true })` first. The files are the
 reader's own, on the machine the window runs on. Agents still cannot use either
 command (see `cdp-policy.js`).
 
