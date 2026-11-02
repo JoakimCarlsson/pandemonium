@@ -152,9 +152,9 @@ impl Session {
         }
     }
 
-    /// Starts the agent in the session's folder as the session's login, without what the reader turned off, and gives it the settings the reader chose.
-    pub(crate) fn start_agent(&mut self, settings: &[(String, String)]) {
-        let (tools, launch) = crate::library::given(self.agent, &self.directory);
+    /// Starts the agent of the session numbered `number` in the session's folder as the session's login, without what the reader turned off, and gives it the settings the reader chose.
+    pub(crate) fn start_agent(&mut self, number: u64, settings: &[(String, String)]) {
+        let (tools, launch) = crate::library::given(self.agent, &self.directory, number);
         let home = crate::handler::login_folder(&self.meta.agent, self.meta.login.as_deref());
         let enclosure = self.meta.container.then(|| {
             let folder = self.directory.to_string_lossy().into_owned();

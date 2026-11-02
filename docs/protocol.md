@@ -1224,7 +1224,7 @@ look at and use its browser. Agents reach the tools as an MCP server the
 server hosts on its loopback address; the server hands each call to a window.
 
 ```json
-{ "type": "browser_call", "call": 7, "tool": "browser_screenshot", "arguments": "{}" }
+{ "type": "browser_call", "call": 7, "session": 3, "tool": "browser_screenshot", "arguments": "{}" }
 ```
 
 - `browser_available` tells the server whether this connection can run the
@@ -1235,7 +1235,13 @@ server hosts on its loopback address; the server hands each call to a window.
   can run them, and keeps them while no connection can: a call then fails with
   a message saying so. An agent that was started before any window could run
   them does not have them until it is started again.
-- `browser_call` is sent to that connection when an agent calls a tool. The
+- `browser_call` is sent to that connection when an agent calls a tool.
+  `session` is the number of the session whose agent made the call. The server
+  gives each session its own token for the tools, so a call is always known to
+  come from one session and an agent cannot name another; the window runs the
+  tool on the tabs of that session only, and refuses a `tab` that belongs to
+  another. `session` is zero from a server that predates it, and a window then
+  refuses the call. The
   tools are `browser_navigate`, `browser_snapshot`, `browser_screenshot`,
   `browser_click`, `browser_type`, `browser_select_option`, `browser_press_key`, `browser_scroll`,
   `browser_back`, `browser_forward`, `browser_reload`, `browser_evaluate`,

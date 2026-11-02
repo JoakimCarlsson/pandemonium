@@ -309,8 +309,9 @@ fn start_session(
         container,
     };
     let mut session = Session::new(agent, meta.agent_folder(), Vec::new(), meta);
-    session.start_agent(&crate::machine::with_mode(settings));
-    let number = hold_session(core, connection, session);
+    let number = core.next_session();
+    session.start_agent(number, &crate::machine::with_mode(settings));
+    hold_session_as(core, connection, number, session);
     let first = prompt(number, text, attachments);
     telling(core, number, |held| held.submit(number, first, false));
     announce(core, connection, number);
@@ -435,6 +436,12 @@ fn fork_session(core: &Core, connection: &Arc<Connection>, source: u64, turn: u6
 /// Holds `session` under a new number, keeps it and its log on disk, has `connection` watch it and returns the number.
 fn hold_session(core: &Core, connection: &Arc<Connection>, session: Session) -> u64 {
     let number = core.next_session();
+    hold_session_as(core, connection, number, session);
+    number
+}
+
+/// Holds `session` under `number`, which the caller took from the core, keeps it and its log on disk and has `connection` watch it.
+fn hold_session_as(core: &Core, connection: &Arc<Connection>, number: u64, session: Session) {
     sessions::save_meta(number, &session.meta);
     for (seq, event) in &session.log {
         sessions::append(number, *seq, event);
@@ -445,7 +452,6 @@ fn hold_session(core: &Core, connection: &Arc<Connection>, session: Session) -> 
     if let Ok(mut attached) = connection.attached.lock() {
         attached.insert(number);
     }
-    number
 }
 
 /// Tells every client but `connection` of the session numbered `number`.

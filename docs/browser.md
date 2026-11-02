@@ -15,8 +15,10 @@ downloads the engine once, about 120 MB.
 - `pm-components` draws the pane, and `crates/pandemonium/src/app/browser.rs`
   carries what the pane asks for to the helper.
 - `pm-server` hosts the MCP endpoint that gives agents the `browser_*` tools;
-  the tools run in the helper of the window that announced the browser. See
-  [protocol.md](protocol.md#browser-tools).
+  the tools run in the helper of the window that announced the browser, on the
+  tabs of the session whose agent called them. See
+  [protocol.md](protocol.md#browser-tools) and
+  [Tabs belong to a session](#tabs-belong-to-a-session).
 
 ## How the window and the helper talk
 
@@ -99,9 +101,42 @@ For a remote project a tab keeps the machine its page is on, so its address is
 resolved over the same SSH forward as before, and a window that restores a
 saved browser opens every tab on its own machine.
 
-The tabs are kept in the window's saved state: each with address, machine, the
+The tabs are kept in the window's saved state, for each session: each with address, machine, the
 agent mark and the lock, and the one shown. State saved before tabs, which has
 one address, restores as one tab.
+
+### Tabs belong to a session
+
+Every session has a browser of its own: its tabs, the tab shown, its developer
+tools and the width they were given. One helper serves the whole window, with a
+page for each tab of every session, so a page kept by a session you left is still
+there, with its history, when you come back. Tab numbers are unique in the window,
+which is how the pages of different sessions are told apart.
+
+The browser of the session shown is `WorkspaceState::browser`, which the rest of
+the window reads and changes; the browsers of the other sessions wait in
+`WorkspaceState::browsers`, by the `scope` of the session that owns them, a
+number that stays with a session however the sessions are renumbered
+(`pm-components/src/browser_scope.rs`). Opening another session, or a page that
+is no session's, swaps them, and a browser whose session is gone is dropped.
+
+Work on the tabs of a session the reader is not looking at, such as an agent's
+tool call or a dev server found for it, enters that session's browser and leaves
+it again, with the page the reader is on unchanged (`browser_scope_enter` and
+`browser_scope_leave`).
+
+An agent can only reach its own session's tabs. The server gives each session its
+own token for the tools endpoint when its agent starts, so every call says which
+session made it (`browser_call`, see [protocol.md](protocol.md#browser-tools)).
+The window runs `browser_tabs` and every other tool on that session's tabs, and
+`tab` names a tab among them: a number from another session is the same as a
+number that does not exist. A dev server found for a session, from a shell of
+the session or by watching the ports, opens in that session's browser only.
+
+The saved state keeps the browser of the session that was shown, and in
+`session_browsers` the others by machine and the server's number for the session;
+a window restores each as the server lists its sessions. State saved when one
+browser belonged to the whole window restores into the session that was shown.
 
 ### Locking a tab against agents
 

@@ -136,6 +136,9 @@ pub enum ServerMessage {
     BrowserCall {
         /// The call, to be given back with the answer.
         call: u64,
+        /// The session whose agent made the call; the tool acts on that session's tabs only. Zero from a server that predates it.
+        #[serde(default)]
+        session: u64,
         /// The tool, such as `browser_screenshot`.
         tool: String,
         /// What the agent gave it, as JSON text.
