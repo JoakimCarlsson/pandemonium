@@ -96,7 +96,7 @@ impl Default for HistoryPreferences {
 pub struct AgentPreferences {
     /// The agent new work is given to, by id, or the first one listed when nothing.
     pub default_agent: Option<String>,
-    /// The mode an agent starts in, by the id agents give it, such as `acceptEdits` or `plan`, or the agent's own when nothing.
+    /// The mode an agent starts in, by the id agents give it, such as `default`, `plan` or `yolo`, or the agent's own when nothing.
     pub permission_mode: Option<String>,
 }
 

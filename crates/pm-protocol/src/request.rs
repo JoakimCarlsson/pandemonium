@@ -12,28 +12,6 @@ pub struct Attachment {
     pub data: Vec<u8>,
 }
 
-/// An agent the server can start: how to start it, how to fetch it when it is missing and how it keeps logins apart. The ones the app ships are in the list from the start and can be changed or removed like any other.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct AgentServer {
-    /// What the app keeps it under.
-    pub id: String,
-    /// What a row calls it.
-    pub name: String,
-    /// The command that starts it in protocol mode, program and arguments.
-    pub command: String,
-    /// The environment it is started with, over the one it inherits.
-    pub env: Vec<(String, String)>,
-    /// The package the runner fetches when the program is not installed.
-    #[serde(default)]
-    pub package: Option<String>,
-    /// The shell pipeline that installs the program when it is missing.
-    #[serde(default)]
-    pub installer: Option<String>,
-    /// The variable that moves its config and login to another folder, for an agent that can keep more than one login.
-    #[serde(default)]
-    pub home: Option<String>,
-}
-
 /// A tool server every agent is started with.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct McpServer {
@@ -60,25 +38,6 @@ pub struct McpServer {
 /// Servers are given to agents unless they were switched off.
 fn enabled() -> bool {
     true
-}
-
-/// An agent the public registry offers, as the command that runs it.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct RegistryAgent {
-    /// What the registry knows it by.
-    pub id: String,
-    /// What a row calls it.
-    pub name: String,
-    /// The version the registry lists.
-    pub version: String,
-    /// What it is, as its publisher says.
-    pub description: String,
-    /// Where its publisher describes it.
-    pub website: String,
-    /// The command that runs it, program and arguments.
-    pub command: String,
-    /// The environment it is started in, over the one it inherits.
-    pub env: Vec<(String, String)>,
 }
 
 /// A tool server the public registry offers.
@@ -124,13 +83,6 @@ pub enum Request {
     Discover {
         /// The agent, by its id.
         agent: String,
-    },
-    /// The skills the agent has in the project folder, and their names.
-    Skills {
-        /// The agent, by its id.
-        agent: String,
-        /// The project's folder on the server's machine.
-        directory: String,
     },
     /// The files of a folder, including ignored entries.
     Files {
@@ -301,13 +253,6 @@ pub enum Request {
         ticket: u64,
         /// What was answered to each question, in order, or nothing to abandon the form.
         replies: Option<Vec<pm_harness::Reply>>,
-    },
-    /// Trusts hooks that a session's Codex holds back, as they were shown, so that the session's next turn and every later session run them.
-    TrustHooks {
-        /// The session.
-        session: u64,
-        /// The hooks to trust, as a `Hooks` event of the session showed them.
-        hooks: Vec<pm_harness::Hook>,
     },
     /// Stops the turn a session's agent is on and drops the prompts queued behind it.
     Cancel {
@@ -531,15 +476,6 @@ pub enum Request {
         /// Each choice as agent, setting and value.
         choices: Vec<(String, String, String)>,
     },
-    /// The agents the server can start.
-    AgentServers,
-    /// Replaces the agents the server can start.
-    SaveAgentServers {
-        /// Every agent, in the order they are kept.
-        servers: Vec<AgentServer>,
-    },
-    /// The agents the public registry offers that are run from a package.
-    RegistryAgents,
     /// The tool servers of the public registry that match `query`, or the well known ones when it is blank.
     SearchTools {
         /// What to look for.
