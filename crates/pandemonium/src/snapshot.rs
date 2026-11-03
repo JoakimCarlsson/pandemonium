@@ -253,6 +253,10 @@ pub enum Shot {
     Kept,
     /// A finished conversation whose last message from the reader is one 2000-character line with no spaces.
     LongLine,
+    /// A conversation the server rebuilt from what the harness saved, as its events come back after a restart: a turn with a tool, a diff and the context meter, a stopped turn and a failed one.
+    Restored,
+    /// The same conversation scrolled back to its first turn.
+    RestoredTop,
     /// A finished conversation with the offer to put the files back as they were before its first message open.
     Restoring,
     /// A conversation with the details of its steps open.
@@ -3160,6 +3164,8 @@ impl Shot {
             Self::Queued => Screen::Workspace(queued()),
             Self::Kept => Screen::Workspace(kept()),
             Self::LongLine => Screen::Workspace(long_line()),
+            Self::Restored => Screen::Workspace(restored()),
+            Self::RestoredTop => Screen::Workspace(restored().scrolled_chat(-2000.0, 2000.0)),
             Self::Restoring => Screen::Workspace(kept().after(FocusId(RESTORE_BASE))),
             Self::Picking => Screen::Workspace(welcome().after(FocusId(4200))),
             Self::Expanded => {
@@ -3748,6 +3754,99 @@ fn queued() -> WorkspaceState {
     )
 }
 
+/// A conversation told as the server tells it after a restart, from what the harness saved: the offer first, then each turn with its tools, its context meter and its end, the stopped and the failed turns among them.
+fn restored() -> WorkspaceState {
+    let state = WorkspaceState::new(&projects()).edited(
+        PROMPT,
+        Edit::Paste("Why does the sidebar lose its scroll position?".to_owned()),
+    );
+    let state = state.after(SEND);
+    let session = state.open_index().unwrap();
+    let tool = |id: &str, title: &str, kind, target: &str, state| Tool {
+        id: id.to_owned(),
+        title: Some(title.to_owned()),
+        kind: Some(kind),
+        state: Some(state),
+        target: Some(target.to_owned()),
+        diff: None,
+        output: None,
+        parent: None,
+        agent: None,
+    };
+    let done = |id: &str, output: &str, diff: Option<Diff>| {
+        Event::Tool(Tool {
+            id: id.to_owned(),
+            title: None,
+            kind: None,
+            state: Some(ToolState::Done),
+            target: None,
+            diff,
+            output: Some(output.to_owned()),
+            parent: None,
+            agent: None,
+        })
+    };
+    let prompted = |text: &str, turn: u64| Event::Prompted {
+        text: text.to_owned(),
+        files: Vec::new(),
+        checkpoint: false,
+        turn,
+    };
+    [
+        Event::Settings(claude_settings()),
+        Event::Commands(vec![Slash {
+            name: "compact".to_owned(),
+            description: "Summarise the conversation to free up context".to_owned(),
+        }]),
+        prompted("Why does the sidebar lose its scroll position?", 1),
+        Event::Tool(tool(
+            "r1",
+            "read",
+            Kind::Read,
+            "crates/pm-components/src/state.rs",
+            ToolState::Running,
+        )),
+        Event::Used(pm_harness::Usage {
+            used: 9466,
+            size: 1_000_000,
+        }),
+        done("r1", "pub struct WorkspaceState { .. }", None),
+        Event::Tool(tool(
+            "e1",
+            "edit",
+            Kind::Edit,
+            "crates/pm-components/src/state.rs",
+            ToolState::Running,
+        )),
+        Event::Used(pm_harness::Usage {
+            used: 9667,
+            size: 1_000_000,
+        }),
+        done(
+            "e1",
+            "edited state.rs",
+            Some(Diff {
+                path: "crates/pm-components/src/state.rs".to_owned(),
+                old: Some("fn a() {}\nfn b() {}\nfn c() {}\n".to_owned()),
+                new: "fn a() {}\nfn d() {}\nfn c() {}\n".to_owned(),
+            }),
+        ),
+        Event::Said("The offset is clamped against a stale height, so I changed it.".to_owned()),
+        Event::Used(pm_harness::Usage {
+            used: 9791,
+            size: 1_000_000,
+        }),
+        Event::Finished(None),
+        prompted("Now count to a thousand out loud.", 5),
+        Event::Halted,
+        Event::Finished(None),
+        prompted("Run the whole test suite again.", 8),
+        Event::Finished(Some("the model was overloaded".to_owned())),
+    ]
+    .into_iter()
+    .fold(state, |state, event| state.heard(session, event))
+}
+
 /// A finished conversation whose files were kept before its first message, scrolled back to it.
 fn kept() -> WorkspaceState {
     live(Turn::Finished)
@@ -3757,6 +3856,7 @@ fn kept() -> WorkspaceState {
                 text: "Why does the sidebar lose its scroll position?".to_owned(),
                 files: Vec::new(),
                 checkpoint: true,
+                turn: 0,
             },
         )
         .scrolled_chat(-400.0, 400.0)
@@ -3770,6 +3870,7 @@ fn long_line() -> WorkspaceState {
         text,
         files: Vec::new(),
         checkpoint: false,
+        turn: 0,
     };
     state
         .heard(

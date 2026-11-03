@@ -243,6 +243,8 @@ fn main() {
             Some("usage") => Shot::Usage,
             Some("kept") => Shot::Kept,
             Some("long-line") => Shot::LongLine,
+            Some("restored") => Shot::Restored,
+            Some("restored-top") => Shot::RestoredTop,
             Some("restoring") => Shot::Restoring,
             Some("picking") => Shot::Picking,
             Some("expanded") => Shot::Expanded,
