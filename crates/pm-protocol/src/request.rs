@@ -300,14 +300,14 @@ pub enum Request {
         /// The form, by the number the agent put it under.
         ticket: u64,
         /// What was answered to each question, in order, or nothing to abandon the form.
-        replies: Option<Vec<pm_acp::Reply>>,
+        replies: Option<Vec<pm_harness::Reply>>,
     },
     /// Trusts hooks that a session's Codex holds back, as they were shown, so that the session's next turn and every later session run them.
     TrustHooks {
         /// The session.
         session: u64,
         /// The hooks to trust, as a `Hooks` event of the session showed them.
-        hooks: Vec<pm_acp::Hook>,
+        hooks: Vec<pm_harness::Hook>,
     },
     /// Stops the turn a session's agent is on and drops the prompts queued behind it.
     Cancel {

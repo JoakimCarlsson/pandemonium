@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-use pm_acp::{Event, Kind as ToolKind, Tool, ToolState};
+use pm_harness::{Event, Kind as ToolKind, Tool, ToolState};
 
 use crate::draft::Draft;
 use crate::sample::{Message, Queued, Session, Shell, Status, Step, Thought, ToolUse};
@@ -71,7 +71,7 @@ impl Session {
     }
 
     /// Takes in a command or task left running starting, or ending.
-    fn background(&mut self, background: pm_acp::Background) {
+    fn background(&mut self, background: pm_harness::Background) {
         let known = self.shells.iter().position(|held| held.id == background.id);
         if background.running {
             if known.is_none() {
@@ -308,7 +308,7 @@ impl Session {
     }
 
     /// Replaces the plan the reply keeps, or starts one.
-    fn plan(&mut self, plan: Vec<pm_acp::PlanStep>) {
+    fn plan(&mut self, plan: Vec<pm_harness::PlanStep>) {
         let reply = self.reply();
         match reply
             .steps

@@ -3,7 +3,7 @@
 use std::io::Write;
 use std::path::PathBuf;
 
-use pm_acp::Event;
+use pm_harness::Event;
 use serde::{Deserialize, Serialize};
 
 /// The folder under the app's data folder that sessions are kept in.

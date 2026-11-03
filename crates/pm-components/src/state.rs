@@ -1,6 +1,6 @@
 //! What the workspace remembers: the page on screen, the panels that are open and what was typed.
 
-use pm_acp::{Event, Setting, Slash};
+use pm_harness::{Event, Setting, Slash};
 use pm_input::FocusId;
 use pm_text::{Edit, Field};
 
@@ -1209,14 +1209,14 @@ pub enum Outgoing {
         /// The form, by the number the agent put it under.
         ticket: u64,
         /// What was answered to each question, or nothing to abandon the form.
-        replies: Option<Vec<pm_acp::Reply>>,
+        replies: Option<Vec<pm_harness::Reply>>,
     },
     /// Trusts hooks the Codex of a session holds back, as they were shown.
     TrustHooks {
         /// The session, by position.
         session: usize,
         /// The hooks to trust.
-        hooks: Vec<pm_acp::Hook>,
+        hooks: Vec<pm_harness::Hook>,
     },
     /// Takes the conversation of a session back to before one of the reader's turns, dropping it and all after it.
     Rewind {
@@ -2240,7 +2240,7 @@ impl WorkspaceState {
             .and_then(|card| card.text.as_deref())
             .and_then(|said| crate::assist::hover_link(said, action))
         {
-            if pm_acp::is_web_address(&address) {
+            if pm_harness::is_web_address(&address) {
                 self.outbox.push(Outgoing::Open { address });
             }
             return self;
@@ -2654,7 +2654,7 @@ impl WorkspaceState {
             .and_then(|ask| {
                 ask.choices
                     .iter()
-                    .position(|choice| choice.verdict == pm_acp::Verdict::Reject)
+                    .position(|choice| choice.verdict == pm_harness::Verdict::Reject)
             });
         if let Some(index) = refusal {
             self.choose(index);
@@ -2829,7 +2829,7 @@ impl WorkspaceState {
                 let (_, piece) = *message.chunks().get(piece as usize)?;
                 pm_markdown::links(piece).into_iter().nth(link as usize)
             })
-            .filter(|address| pm_acp::is_web_address(address));
+            .filter(|address| pm_harness::is_web_address(address));
         if let Some(address) = address {
             self.outbox.push(Outgoing::Open { address });
         }

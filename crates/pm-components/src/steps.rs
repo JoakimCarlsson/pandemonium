@@ -1,6 +1,6 @@
 //! What an agent did on the way to a reply: the steps it took, its plan and its questions.
 
-use pm_acp::{Diff, Kind as ToolKind, Permission, PlanStep, Progress, ToolState, Verdict};
+use pm_harness::{Diff, Kind as ToolKind, Permission, PlanStep, Progress, ToolState, Verdict};
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
@@ -656,7 +656,7 @@ fn answers(ask: &Permission, width: f32, shaper: &mut Shaper) -> Node {
         Verdict::Allow => 1,
         Verdict::Always => 2,
     };
-    let mut choices: Vec<(usize, &pm_acp::Choice)> = ask.choices.iter().enumerate().collect();
+    let mut choices: Vec<(usize, &pm_harness::Choice)> = ask.choices.iter().enumerate().collect();
     choices.sort_by_key(|(_, choice)| order(&choice.verdict));
     node()
         .styles([

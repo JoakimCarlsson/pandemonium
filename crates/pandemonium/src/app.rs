@@ -290,7 +290,7 @@ impl App {
                     "discovery-{}",
                     agent.id
                 ))
-                .and_then(|text| pm_acp::Discovery::from_text(&text))
+                .and_then(|text| pm_harness::Discovery::from_text(&text))
                 {
                     Some(found) => screen.with_discovery(index, found),
                     None => screen,

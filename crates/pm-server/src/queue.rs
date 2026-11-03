@@ -1,6 +1,6 @@
 //! Prompts that wait for the agent's turn to end, and the one place a prompt is handed to an agent.
 
-use pm_acp::Event;
+use pm_harness::Event;
 
 use crate::conversation;
 use crate::core::{Session, Told};

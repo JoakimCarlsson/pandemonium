@@ -84,7 +84,7 @@ One crate per layer, each depending only on the layers below it.
   after a folder changes; a release build reads the folders from the repository
   at its own release tag, a debug build from its checkout, and either from
   `PANDEMONIUM_LANGUAGES` when it is set.
-- **Domain:** `pm-acp` (agents over the Agent Client Protocol),
+- **Domain:** `pm-harness` (agents over the Agent Client Protocol),
   `pm-agent-library` (the skills, instructions, agent definitions, hooks and
   tools each agent product is given, read from the folders it keeps them in,
   and how an agent is started without the ones turned off), `pm-mcp` (a client

@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use pm_acp::Agent;
+use pm_harness::Agent;
 use pm_protocol::{Attachment, Request, Response, ServerMessage};
 
 use crate::conversation;
@@ -476,7 +476,7 @@ fn with_session(core: &Core, number: u64, action: impl FnOnce(&mut Session)) -> 
 }
 
 /// Trusts those of `hooks` the Codex of session `number` still holds back as they were shown, tells the clients which it holds back after that, and has the session's next turn start its agent again so that it runs them.
-fn trust_hooks(core: &Core, number: u64, hooks: &[pm_acp::Hook]) -> Response {
+fn trust_hooks(core: &Core, number: u64, hooks: &[pm_harness::Hook]) -> Response {
     let found = core.sessions.lock().ok().and_then(|sessions| {
         sessions.get(&number).map(|held| {
             (
@@ -489,10 +489,10 @@ fn trust_hooks(core: &Core, number: u64, hooks: &[pm_acp::Hook]) -> Response {
     let Some((agent, directory, home)) = found else {
         return failed(format!("no session is numbered {number}"));
     };
-    match pm_acp::trust_hooks(agent, &directory, home.as_deref(), hooks) {
+    match pm_harness::trust_hooks(agent, &directory, home.as_deref(), hooks) {
         Ok(held_back) => telling(core, number, |held| {
             held.hooks_trusted = true;
-            let event = pm_acp::Event::Hooks(held_back);
+            let event = pm_harness::Event::Hooks(held_back);
             if held.repeats(&event) {
                 return Told::new();
             }
@@ -527,7 +527,7 @@ fn attach(core: &Core, connection: &Arc<Connection>, number: u64, after: u64) ->
 pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Request) -> Response {
     match request {
         Request::Discover { agent } => match agent_named(&agent) {
-            Some(agent) => match pm_acp::discover(agent) {
+            Some(agent) => match pm_harness::discover(agent) {
                 Ok(found) => Response::Discovery(found),
                 Err(reason) => failed(reason),
             },
@@ -538,8 +538,8 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                 let withheld = crate::library::withheld();
                 reload_skills(core, agent);
                 Response::Skills {
-                    skills: pm_acp::skills(agent, &place(&directory), &withheld),
-                    names: pm_acp::skill_names(agent, &place(&directory), &withheld)
+                    skills: pm_harness::skills(agent, &place(&directory), &withheld),
+                    names: pm_harness::skill_names(agent, &place(&directory), &withheld)
                         .into_iter()
                         .collect(),
                 }
@@ -606,12 +606,12 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
         },
         Request::Identity { agent, login } => match agent_named(&agent) {
             Some(agent) => Response::Identity {
-                default: pm_acp::default_account(agent),
+                default: pm_harness::default_account(agent),
                 selected: match login {
                     Some(login) => login_folder(agent.id, Some(&login))
                         .or_else(|| pm_store::account_directory(agent.id, &login).ok())
-                        .and_then(|home| pm_acp::account_in_folder(agent, home)),
-                    None => pm_acp::account(agent),
+                        .and_then(|home| pm_harness::account_in_folder(agent, home)),
+                    None => pm_harness::account(agent),
                 },
             },
             None => failed(format!("no agent is called {agent}")),
@@ -685,7 +685,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             Err(reason) => failed(reason),
         },
         Request::SaveAgentServers { servers } => saved_list("agents", &servers),
-        Request::RegistryAgents => match pm_acp::registry_agents() {
+        Request::RegistryAgents => match pm_harness::registry_agents() {
             Ok(agents) => Response::RegistryAgents {
                 agents: agents
                     .into_iter()
@@ -702,7 +702,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             },
             Err(reason) => failed(reason),
         },
-        Request::SearchTools { query } => match pm_acp::search_tools(&query) {
+        Request::SearchTools { query } => match pm_harness::search_tools(&query) {
             Ok(listings) => Response::ToolListings {
                 listings: listings
                     .into_iter()
@@ -807,7 +807,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                 if title.is_empty() {
                     return Err("a session needs a title".to_owned());
                 }
-                let event = pm_acp::Event::Titled(title);
+                let event = pm_harness::Event::Titled(title);
                 Ok(vec![(session, held.note(session, &event), event)])
             })
         }
@@ -1879,8 +1879,8 @@ fn sign_in_session(core: &Core, number: u64) -> Response {
         agent.sign_in_in(home)
     };
     let event = match &result {
-        Ok(()) => pm_acp::Event::SignedIn,
-        Err(reason) => pm_acp::Event::SignedOut {
+        Ok(()) => pm_harness::Event::SignedIn,
+        Err(reason) => pm_harness::Event::SignedOut {
             reason: reason.clone(),
             account: login_name(&id, login.as_deref()),
         },

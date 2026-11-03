@@ -1,6 +1,6 @@
 //! What the server answers.
 
-use pm_acp::{Discovery, Slash};
+use pm_harness::{Discovery, Slash};
 use pm_git::{Change, Owner, Repository};
 use serde::{Deserialize, Serialize};
 

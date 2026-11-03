@@ -1,6 +1,6 @@
 //! The card that puts the agent's questions to the reader one at a time, each with the answers it offers and a box for an answer of the reader's own.
 
-use pm_acp::Alternative;
+use pm_harness::Alternative;
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{

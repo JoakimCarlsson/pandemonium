@@ -123,7 +123,7 @@ pub enum Incoming {
         /// The number.
         seq: u64,
         /// What happened.
-        event: pm_acp::Event,
+        event: pm_harness::Event,
     },
 }
 

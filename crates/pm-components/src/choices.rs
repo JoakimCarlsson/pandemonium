@@ -1,6 +1,6 @@
 //! What the reader picks around the prompt box: the agent's settings, a command behind a slash, and where new work is done.
 
-use pm_acp::{Discovery, Setting, Slash};
+use pm_harness::{Discovery, Setting, Slash};
 use pm_input::FocusId;
 use pm_protocol::ExtensionCommand;
 
@@ -279,7 +279,7 @@ impl WorkspaceState {
         mut self,
         agent: usize,
         project: usize,
-        skills: Vec<pm_acp::Slash>,
+        skills: Vec<pm_harness::Slash>,
         names: std::collections::HashSet<String>,
     ) -> Self {
         for session in &mut self.sessions {

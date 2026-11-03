@@ -2,7 +2,7 @@
 
 use std::time::Instant;
 
-use pm_acp::{Diff, Kind as ToolKind, Permission, PlanStep, Setting, Slash, ToolState};
+use pm_harness::{Diff, Kind as ToolKind, Permission, PlanStep, Setting, Slash, ToolState};
 
 use crate::dock::TerminalTab;
 use crate::draft::Draft;
@@ -570,7 +570,7 @@ pub struct Session {
     /// The form of questions the agent waits on the reader to answer, if it waits on one.
     pub inquiry: Option<Draft>,
     /// The hooks the agent's Codex holds back until the reader trusts them.
-    pub held_hooks: Vec<pm_acp::Hook>,
+    pub held_hooks: Vec<pm_harness::Hook>,
     /// How the prompt about the held-back hooks shows.
     pub hooks_prompt: crate::hooks_prompt::HooksPrompt,
     /// When the turn that is running began, if one is.
@@ -592,7 +592,7 @@ pub struct Session {
     /// The commands and tasks the agent left running beyond its turn.
     pub shells: Vec<Shell>,
     /// How full the context is, once the agent has said.
-    pub context: Option<pm_acp::Usage>,
+    pub context: Option<pm_harness::Usage>,
 }
 
 impl Session {

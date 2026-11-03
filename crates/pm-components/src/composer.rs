@@ -1,6 +1,6 @@
 //! The prompt box where work is handed to an agent.
 
-use pm_acp::Setting;
+use pm_harness::Setting;
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{

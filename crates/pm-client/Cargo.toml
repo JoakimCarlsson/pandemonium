@@ -6,7 +6,7 @@ license.workspace = true
 
 [dependencies]
 mio = { version = "1.2.4", features = ["os-poll", "net"] }
-pm-acp.workspace = true
+pm-harness.workspace = true
 pm-protocol.workspace = true
 pm-store.workspace = true
 pm-update.workspace = true

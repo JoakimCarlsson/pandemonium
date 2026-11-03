@@ -16,13 +16,13 @@ pub struct AgentLook {
 
 /// The glyph an agent is drawn with: the one of a product the app knows, or a terminal for any other.
 pub fn agent_icon(agent: &AgentServer) -> IconName {
-    match pm_acp::Product::of(&format!(
+    match pm_harness::Product::of(&format!(
         "{} {}",
         agent.command,
         agent.package.as_deref().unwrap_or_default()
     )) {
-        Some(pm_acp::Product::Claude) => IconName::Sparkles,
-        Some(pm_acp::Product::Grok) => IconName::Zap,
+        Some(pm_harness::Product::Claude) => IconName::Sparkles,
+        Some(pm_harness::Product::Grok) => IconName::Zap,
         _ => IconName::Terminal,
     }
 }
@@ -103,11 +103,11 @@ impl WorkspaceState {
     /// Whether the agent at `index` is asked for skills behind a dollar sign.
     pub fn agent_has_skills(&self, index: usize) -> bool {
         self.agent_record(index).is_some_and(|agent| {
-            pm_acp::Product::of(&format!(
+            pm_harness::Product::of(&format!(
                 "{} {}",
                 agent.command,
                 agent.package.as_deref().unwrap_or_default()
-            )) == Some(pm_acp::Product::Codex)
+            )) == Some(pm_harness::Product::Codex)
         })
     }
 

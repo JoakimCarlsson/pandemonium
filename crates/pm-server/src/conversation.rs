@@ -1,6 +1,6 @@
 //! The conversation a session's log tells, as its agent knows it: the reader's turns since the last rewind, what an agent started afresh is told of them, and the log a branch of them starts from.
 
-use pm_acp::Event;
+use pm_harness::Event;
 
 /// One of the reader's turns and what the agent did in it.
 pub(crate) struct Turn {

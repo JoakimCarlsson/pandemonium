@@ -1,6 +1,6 @@
 //! The workspace screen and the actions and auxiliary windows it exposes.
 
-use pm_acp::Event;
+use pm_harness::Event;
 use pm_input::FocusId;
 use pm_text::{Edit, Field, Shaper};
 use pm_ui::Node;
@@ -939,7 +939,7 @@ impl Screen {
     }
 
     /// The screen after the agent at `agent` told what it lets the reader change and what commands it offers.
-    pub fn with_discovery(self, agent: usize, found: pm_acp::Discovery) -> Self {
+    pub fn with_discovery(self, agent: usize, found: pm_harness::Discovery) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_discovery(agent, found)),
         }
@@ -986,7 +986,7 @@ impl Screen {
         self,
         host: Option<String>,
         agent: usize,
-        found: pm_acp::Discovery,
+        found: pm_harness::Discovery,
     ) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_discovery_for(host, agent, found)),
@@ -998,7 +998,7 @@ impl Screen {
         self,
         host: Option<String>,
         id: &str,
-        found: pm_acp::Discovery,
+        found: pm_harness::Discovery,
     ) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_discovery_of(host, id, found)),
@@ -1046,7 +1046,7 @@ impl Screen {
         self,
         agent: usize,
         project: usize,
-        skills: Vec<pm_acp::Slash>,
+        skills: Vec<pm_harness::Slash>,
         names: std::collections::HashSet<String>,
     ) -> Self {
         match self {

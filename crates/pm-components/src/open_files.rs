@@ -533,7 +533,7 @@ impl WorkspaceState {
         else {
             return;
         };
-        if pm_acp::is_web_address(&address) {
+        if pm_harness::is_web_address(&address) {
             self.outbox.push(Outgoing::Open { address });
         } else if let Some(path) = crate::preview::linked_path(&viewer.path, &address) {
             let head = viewer.head;

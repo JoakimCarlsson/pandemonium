@@ -628,7 +628,7 @@ fn configuration_of(tool: &McpServer) -> String {
     let entry = if tool.target.starts_with("http://") || tool.target.starts_with("https://") {
         serde_json::json!({ "type": "http", "url": tool.target, "headers": table(&tool.env) })
     } else {
-        let mut words = pm_acp::command_words(&tool.target).into_iter();
+        let mut words = pm_harness::command_words(&tool.target).into_iter();
         serde_json::json!({
             "command": words.next().unwrap_or_default(),
             "args": words.collect::<Vec<_>>(),
@@ -1373,7 +1373,7 @@ fn offer(
 
 /// What an agent of the registry is, and how it is run, in a few words: its version and the program that runs it.
 fn how_run(offered: &RegistryAgent) -> String {
-    let program = pm_acp::command_words(&offered.command)
+    let program = pm_harness::command_words(&offered.command)
         .into_iter()
         .next()
         .unwrap_or_default();
@@ -1538,7 +1538,7 @@ fn optional(text: &str) -> Option<String> {
 
 /// The variable that moves the login folder of the product that `command` and `package` start, when it is one the app knows.
 fn known_home(command: &str, package: &Option<String>) -> Option<String> {
-    pm_acp::Product::of(&format!(
+    pm_harness::Product::of(&format!(
         "{command} {}",
         package.as_deref().unwrap_or_default()
     ))

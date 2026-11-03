@@ -1,6 +1,6 @@
 //! The card in a session's conversation that asks the reader to review and trust the hooks its Codex holds back.
 
-use pm_acp::Hook;
+use pm_harness::Hook;
 use pm_input::FocusId;
 use pm_style::{
     Radius, Role, bg, border, border_color, border_t, flex, flex_1, flex_col, flex_wrap, font_mono,

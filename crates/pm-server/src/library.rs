@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 
-use pm_acp::Agent;
+use pm_harness::Agent;
 use pm_agent_library::{Item, Launch, Source, ToolEntry, ToolSet};
 use pm_protocol::McpServer;
 
@@ -57,7 +57,7 @@ fn reached(server: &McpServer) -> Option<pm_mcp::Server> {
             headers: server.env.clone(),
         });
     }
-    let mut words = pm_acp::command_words(&server.target).into_iter();
+    let mut words = pm_harness::command_words(&server.target).into_iter();
     Some(pm_mcp::Server::Command {
         program: words.next()?,
         args: words.collect(),
@@ -145,7 +145,7 @@ pub(crate) fn given(
         .into_iter()
         .filter(|item| !item.enabled(&withheld))
         .collect();
-    let mut servers = pm_acp::mcp_servers(&serde_json::to_string(&kept).unwrap_or_default());
+    let mut servers = pm_harness::mcp_servers(&serde_json::to_string(&kept).unwrap_or_default());
     if let Some((url, token)) = crate::browser_tools::offered(session) {
         servers.push(serde_json::json!({
             "type": "http",

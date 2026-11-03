@@ -1,6 +1,6 @@
 //! The chips above the prompt box that sum up what the agent is doing, each opening its details.
 
-use pm_acp::Progress;
+use pm_harness::Progress;
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::primitives::{Length, Sides};
@@ -33,7 +33,7 @@ fn chip(label: impl Into<String>, id: FocusId) -> Button {
 }
 
 /// The plan the agent keeps, the latest one of its replies, if it keeps one.
-fn latest_plan(session: &Session) -> Option<&[pm_acp::PlanStep]> {
+fn latest_plan(session: &Session) -> Option<&[pm_harness::PlanStep]> {
     session
         .messages
         .iter()

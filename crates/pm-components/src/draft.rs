@@ -1,6 +1,6 @@
 //! The answers being given to a form of questions the agent asked, and what pressing its buttons does.
 
-use pm_acp::{Inquiry, Question, Reply};
+use pm_harness::{Inquiry, Question, Reply};
 use pm_input::FocusId;
 use pm_text::Field;
 

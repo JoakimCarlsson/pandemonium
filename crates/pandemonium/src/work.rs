@@ -4,7 +4,7 @@ use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{self, Receiver, Sender};
 
-use pm_acp::{Discovery, Event};
+use pm_harness::{Discovery, Event};
 use pm_client::{Client, Incoming};
 use pm_components::adder::{Found, Kind};
 use pm_components::figures::Drawing;

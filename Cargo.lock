@@ -2309,7 +2309,6 @@ dependencies = [
  "latex-rust",
  "mac-notification-sys",
  "mermaid-svg",
- "pm-acp",
  "pm-browser",
  "pm-client",
  "pm-color",
@@ -2317,6 +2316,7 @@ dependencies = [
  "pm-config",
  "pm-editor",
  "pm-git",
+ "pm-harness",
  "pm-input",
  "pm-lsp",
  "pm-pages",
@@ -2426,19 +2426,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 
 [[package]]
-name = "pm-acp"
-version = "0.14.4"
-dependencies = [
- "base64",
- "pm-agent-library",
- "pm-tools",
- "serde",
- "serde_json",
- "toml",
- "ureq",
-]
-
-[[package]]
 name = "pm-agent-library"
 version = "0.14.4"
 dependencies = [
@@ -2481,7 +2468,7 @@ name = "pm-client"
 version = "0.14.4"
 dependencies = [
  "mio",
- "pm-acp",
+ "pm-harness",
  "pm-protocol",
  "pm-store",
  "pm-update",
@@ -2498,10 +2485,10 @@ name = "pm-components"
 version = "0.14.4"
 dependencies = [
  "chrono",
- "pm-acp",
  "pm-config",
  "pm-editor",
  "pm-git",
+ "pm-harness",
  "pm-icon",
  "pm-input",
  "pm-markdown",
@@ -2573,6 +2560,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "pm-harness"
+version = "0.14.4"
+dependencies = [
+ "base64",
+ "pm-agent-library",
+ "pm-tools",
+ "serde",
+ "serde_json",
+ "toml",
+ "ureq",
+]
+
+[[package]]
 name = "pm-icon"
 version = "0.14.4"
 dependencies = [
@@ -2630,11 +2630,11 @@ dependencies = [
 name = "pm-pages"
 version = "0.14.4"
 dependencies = [
- "pm-acp",
  "pm-components",
  "pm-config",
  "pm-editor",
  "pm-git",
+ "pm-harness",
  "pm-icon",
  "pm-input",
  "pm-protocol",
@@ -2686,11 +2686,11 @@ name = "pm-protocol"
 version = "0.14.4"
 dependencies = [
  "base64",
- "pm-acp",
  "pm-agent-library",
  "pm-buffer",
  "pm-dap",
  "pm-git",
+ "pm-harness",
  "pm-lsp",
  "pm-task",
  "serde",
@@ -2721,12 +2721,12 @@ dependencies = [
  "getrandom 0.4.3",
  "mio",
  "notify",
- "pm-acp",
  "pm-agent-library",
  "pm-buffer",
  "pm-client",
  "pm-dap",
  "pm-git",
+ "pm-harness",
  "pm-lsp",
  "pm-mcp",
  "pm-plugin",

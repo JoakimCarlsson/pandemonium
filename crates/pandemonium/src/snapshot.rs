@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use pm_acp::{
+use pm_harness::{
     Alternative, Background, Choice, Diff, Discovery, Event, Hook, Inquiry, Kind, Permission, Pick,
     PlanStep, Progress, Question, Setting, Slash, Tool, ToolState, Verdict,
 };
@@ -3173,7 +3173,7 @@ impl Shot {
                 live(Turn::Finished)
                     .heard(
                         0,
-                        Event::Used(pm_acp::Usage {
+                        Event::Used(pm_harness::Usage {
                             used: 84_000,
                             size: 200_000,
                         }),
@@ -4458,7 +4458,7 @@ mod performance_tests {
                 let started = std::time::Instant::now();
                 screen = screen.heard(
                     0,
-                    pm_acp::Event::Said(format!(
+                    pm_harness::Event::Said(format!(
                         "chunk {version} of **streamed** words and `code`. "
                     )),
                 );

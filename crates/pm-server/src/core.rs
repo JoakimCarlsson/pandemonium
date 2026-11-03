@@ -7,7 +7,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-use pm_acp::{Agent, Chat, Event};
+use pm_harness::{Agent, Chat, Event};
 use pm_protocol::{ServerMessage, SessionInfo};
 
 use crate::debugs::Debugging;
@@ -161,10 +161,10 @@ impl Session {
             Box::new(move |progress: &dyn Fn(&str)| {
                 let enclosed = pm_transport::session_container(&folder, progress)?;
                 let workspace = std::path::PathBuf::from(&enclosed.workspace);
-                let enclose: pm_acp::Enclose =
+                let enclose: pm_harness::Enclose =
                     Arc::new(move |command| enclosed.wrap(&command, false));
                 Ok((workspace, enclose))
-            }) as pm_acp::Enclosure
+            }) as pm_harness::Enclosure
         });
         let chat = Chat::start(
             self.agent,

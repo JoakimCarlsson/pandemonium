@@ -1,6 +1,6 @@
 //! What goes over the connection, each message one JSON text message, possibly split across frames.
 
-use pm_acp::Event;
+use pm_harness::Event;
 use serde::{Deserialize, Serialize};
 
 use crate::{Request, Response, SessionInfo};

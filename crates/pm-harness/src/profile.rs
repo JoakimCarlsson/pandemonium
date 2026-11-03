@@ -242,7 +242,7 @@ mod tests {
     /// An empty folder of its own for the test `name`, under the git-ignored build folder.
     fn folder(name: &str) -> PathBuf {
         let folder = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../build/pm-acp-tests")
+            .join("../../build/pm-harness-tests")
             .join(name);
         let _ = std::fs::remove_dir_all(&folder);
         std::fs::create_dir_all(&folder).unwrap();

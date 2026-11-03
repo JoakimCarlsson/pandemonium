@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use pm_acp::Verdict;
+use pm_harness::Verdict;
 use pm_components::EditorCommand;
 use pm_components::arrange::{
     SESSION_MENU_CLOSE, SESSION_MENU_COPY_BRANCH, SESSION_MENU_COPY_PATH, SESSION_MENU_OPEN_FOLDER,

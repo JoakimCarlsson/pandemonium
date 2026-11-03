@@ -519,7 +519,7 @@ impl WorkspaceState {
         let line = emulator.first_line(tab.back) + at.0;
         emulator
             .link_at((line, at.1), pm_markdown::bare_address)
-            .filter(|link| pm_acp::is_web_address(&link.target))
+            .filter(|link| pm_harness::is_web_address(&link.target))
     }
 
     /// Underlines the web address at `at` of the window of the shell showing, or none when `at` is nothing or holds none.

@@ -44,7 +44,7 @@ mod tests {
     use crate::arrange::SESSION_MENU_READ;
     use crate::sample::{Session, Status};
     use crate::state::{Page, SESSION_BASE};
-    use pm_acp::{Event, Permission};
+    use pm_harness::{Event, Permission};
     use pm_input::FocusId;
 
     /// A fresh session whose server events can be replayed deterministically.

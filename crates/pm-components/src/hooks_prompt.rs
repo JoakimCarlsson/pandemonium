@@ -1,6 +1,6 @@
 //! The hooks a session's Codex holds back until the reader trusts them, how the prompt about them shows, and what pressing its buttons does.
 
-use pm_acp::Hook;
+use pm_harness::Hook;
 use pm_input::FocusId;
 
 use crate::sample::Session;
