@@ -158,9 +158,12 @@ pub struct View {
     /// The field the reader was typing in, if one had the keyboard.
     #[serde(default)]
     typing: Option<Typing>,
-    /// The browser, when it was open.
+    /// The browser of the session that was open, when it had one. Versions that kept one browser for the whole window saved it here, and it is put back into the session that was open.
     #[serde(default)]
     browser: Option<SavedBrowser>,
+    /// The browsers of the other sessions, each by its machine and the server's number.
+    #[serde(default)]
+    session_browsers: Vec<SavedSessionBrowser>,
     /// How the main area was cut into panes, and the pane worked in.
     #[serde(default)]
     panes: Option<SavedPanes>,
@@ -186,6 +189,77 @@ struct SavedBrowser {
     tools_width: f32,
     /// Whether the browser was what the main area showed.
     shown: bool,
+}
+
+/// The browser of one session as it was left.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct SavedSessionBrowser {
+    /// The machine of the session, by destination; nothing for this one.
+    pub host: Option<String>,
+    /// The server's number for the session.
+    pub number: u64,
+    /// Its browser.
+    browser: SavedBrowser,
+}
+
+impl SavedSessionBrowser {
+    /// The tabs of the browser, the index of the one shown, whether the developer tools were open and how wide they were.
+    pub(crate) fn tabs(&self) -> (Vec<SavedTab>, usize, bool, f32) {
+        let (tabs, active) = self.browser.saved_tabs();
+        (tabs, active, self.browser.tools, self.browser.tools_width)
+    }
+}
+
+/// `parts` as a saved browser, with `shown` saying whether it was what the main area showed.
+fn saved_browser(
+    (tabs, active, tools, tools_width): (Vec<SavedTab>, usize, bool, f32),
+    shown: bool,
+) -> SavedBrowser {
+    SavedBrowser {
+        address: tabs
+            .get(active)
+            .map(|tab| tab.address.clone())
+            .unwrap_or_default(),
+        host: tabs.get(active).and_then(|tab| tab.host.clone()),
+        tabs: tabs
+            .into_iter()
+            .map(|tab| SavedBrowserTab {
+                address: tab.address,
+                host: tab.host,
+                agent: tab.agent,
+                locked: tab.locked,
+            })
+            .collect(),
+        active,
+        tools,
+        tools_width,
+        shown,
+    }
+}
+
+impl SavedBrowser {
+    /// The tabs to put back and the index of the one shown: the one tab of `address` when saved by a version without tabs.
+    fn saved_tabs(&self) -> (Vec<SavedTab>, usize) {
+        let tabs = if self.tabs.is_empty() {
+            vec![SavedTab {
+                address: self.address.clone(),
+                host: self.host.clone(),
+                agent: false,
+                locked: false,
+            }]
+        } else {
+            self.tabs
+                .iter()
+                .map(|tab| SavedTab {
+                    address: tab.address.clone(),
+                    host: tab.host.clone(),
+                    agent: tab.agent,
+                    locked: tab.locked,
+                })
+                .collect()
+        };
+        (tabs, self.active)
+    }
 }
 
 /// One tab of the browser as it was left.
@@ -219,6 +293,11 @@ fn open() -> bool {
 }
 
 impl View {
+    /// The browsers of the sessions other than the one that was open, by machine and server number.
+    pub(crate) fn session_browsers(&self) -> &[SavedSessionBrowser] {
+        &self.session_browsers
+    }
+
     /// The saved acknowledgements for conversations, including remote ones.
     pub(crate) fn receipts(&self) -> &[ReadReceipt] {
         &self.receipts
@@ -346,26 +425,22 @@ impl View {
             typing,
             browser: state
                 .browser_saved()
-                .map(|(tabs, active, tools, tools_width)| SavedBrowser {
-                    address: tabs
-                        .get(active)
-                        .map(|tab| tab.address.clone())
-                        .unwrap_or_default(),
-                    host: tabs.get(active).and_then(|tab| tab.host.clone()),
-                    tabs: tabs
-                        .into_iter()
-                        .map(|tab| SavedBrowserTab {
-                            address: tab.address,
-                            host: tab.host,
-                            agent: tab.agent,
-                            locked: tab.locked,
-                        })
-                        .collect(),
-                    active,
-                    tools,
-                    tools_width,
-                    shown: state.tab == Tab::Browser,
-                }),
+                .map(|parts| saved_browser(parts, state.tab == Tab::Browser)),
+            session_browsers: state
+                .sessions
+                .iter()
+                .enumerate()
+                .filter(|(_, session)| session.scope != state.browser_scope)
+                .filter_map(|(index, _)| {
+                    let (host, number) = server_number(index)?;
+                    let parts = state.session_browser_saved(index)?;
+                    Some(SavedSessionBrowser {
+                        host,
+                        number,
+                        browser: saved_browser(parts, false),
+                    })
+                })
+                .collect(),
             panes: Some(SavedPanes {
                 layout: state.panes.layout.clone(),
                 focused: state.panes.focused,
@@ -440,10 +515,11 @@ impl View {
     }
 
     /// `state` open on the session at `position`, on the tab it was left on, unless it was closed since, or on the page for starting work with the files that were open there, with the sidebar scrolled as it was.
-    pub fn reopen(&self, state: WorkspaceState, position: Option<usize>) -> WorkspaceState {
+    pub fn reopen(&self, mut state: WorkspaceState, position: Option<usize>) -> WorkspaceState {
         let open = position.filter(|at| state.sessions.get(*at).is_some_and(|held| !held.closed));
         let mut state = match (open, state.page) {
             (Some(position), _) => {
+                state.browser_adopted_by(position);
                 let mut opened = state.after(FocusId(SESSION_BASE + position as u64));
                 opened.tab = if self.diff { Tab::Diff } else { Tab::Chat };
                 opened.sync_context();
@@ -477,28 +553,10 @@ impl View {
             };
         }
         if let Some(browser) = &self.browser {
-            let tabs: Vec<SavedTab> = if browser.tabs.is_empty() {
-                vec![SavedTab {
-                    address: browser.address.clone(),
-                    host: browser.host.clone(),
-                    agent: false,
-                    locked: false,
-                }]
-            } else {
-                browser
-                    .tabs
-                    .iter()
-                    .map(|tab| SavedTab {
-                        address: tab.address.clone(),
-                        host: tab.host.clone(),
-                        agent: tab.agent,
-                        locked: tab.locked,
-                    })
-                    .collect()
-            };
+            let (tabs, active) = browser.saved_tabs();
             state.restore_browser(
                 &tabs,
-                browser.active,
+                active,
                 browser.tools,
                 browser.tools_width,
                 browser.shown,
@@ -575,5 +633,35 @@ mod tests {
         legacy.as_object_mut().unwrap().remove("receipts");
         let restored: View = serde_json::from_value(legacy).unwrap();
         assert!(restored.receipts().is_empty());
+    }
+
+    /// Each session's browser is saved with its session, and a view saved with one browser for the window restores into the session that was open.
+    #[test]
+    fn browsers_are_saved_per_session() {
+        let mut state = WorkspaceState::sample().after(FocusId(SESSION_BASE));
+        state.open_browser("http://localhost:3000");
+        state = state.after(FocusId(SESSION_BASE + 1));
+        state.open_browser("http://localhost:4000");
+        state = state.after(FocusId(SESSION_BASE));
+        let view = View::capture(&state, None, |index| Some((None, index as u64 + 1)));
+        assert_eq!(view.session_browsers().len(), 1);
+        assert_eq!(view.session_browsers()[0].number, 2);
+        assert_eq!(
+            view.session_browsers()[0].tabs().0[0].address,
+            "http://localhost:4000"
+        );
+        let text = serde_json::to_string(&view).unwrap();
+        let restored: View = serde_json::from_str(&text).unwrap();
+        assert_eq!(restored.session_browsers(), view.session_browsers());
+        let mut legacy = serde_json::to_value(&view).unwrap();
+        legacy.as_object_mut().unwrap().remove("session_browsers");
+        let legacy: View = serde_json::from_value(legacy).unwrap();
+        assert!(legacy.session_browsers().is_empty());
+        let reopened = legacy.reopen(legacy.apply(WorkspaceState::sample()), Some(0));
+        assert_eq!(
+            reopened.browser_saved().unwrap().0[0].address,
+            "http://localhost:3000"
+        );
+        assert_eq!(reopened.page, Page::Session(0));
     }
 }

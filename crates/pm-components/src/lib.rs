@@ -24,6 +24,7 @@ pub mod browser_keys;
 pub mod browser_links;
 pub mod browser_menu;
 pub mod browser_safety;
+pub mod browser_scope;
 pub mod browser_tabs;
 pub mod button;
 pub mod captures;

@@ -189,6 +189,7 @@ fn main() {
             Some("browser-find-tools") => Shot::BrowserFindTools,
             Some("browser-tabs") => Shot::BrowserTabs(false),
             Some("browser-tabs-many") => Shot::BrowserTabs(true),
+            Some("browser-sessions") => Shot::BrowserSessions,
             Some("browser-clear") => Shot::BrowserClear,
             Some("browser-permission") => Shot::BrowserPermission,
             Some("browser-certificate") => Shot::BrowserCertificate,

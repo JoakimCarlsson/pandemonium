@@ -116,8 +116,12 @@ pub(crate) fn tool_sets(agent: Agent) -> Vec<ToolSet> {
         .collect()
 }
 
-/// What `agent` is started with in `directory`: the tool servers it is given, and what leaves out the customizations and tools the reader turned off.
-pub(crate) fn given(agent: Agent, directory: &Path) -> (Vec<serde_json::Value>, Launch) {
+/// What `agent` of the session numbered `session` is started with in `directory`: the tool servers it is given, and what leaves out the customizations and tools the reader turned off.
+pub(crate) fn given(
+    agent: Agent,
+    directory: &Path,
+    session: u64,
+) -> (Vec<serde_json::Value>, Launch) {
     let withheld = withheld();
     let product = agent.product();
     let kept: Vec<McpServer> = servers()
@@ -142,7 +146,7 @@ pub(crate) fn given(agent: Agent, directory: &Path) -> (Vec<serde_json::Value>, 
         .filter(|item| !item.enabled(&withheld))
         .collect();
     let mut servers = pm_acp::mcp_servers(&serde_json::to_string(&kept).unwrap_or_default());
-    if let Some((url, token)) = crate::browser_tools::offered() {
+    if let Some((url, token)) = crate::browser_tools::offered(session) {
         servers.push(serde_json::json!({
             "type": "http",
             "name": "pandemonium-browser",

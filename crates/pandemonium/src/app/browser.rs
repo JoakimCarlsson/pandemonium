@@ -769,12 +769,18 @@ impl App {
         }
     }
 
-    /// How the page shows its address: a local port that carries a remote one is shown as the remote port on `localhost`, so the address typed and the address shown are the same.
-    fn browser_unresolve(&self, address: &str) -> String {
-        let Some(cut) = parts(address).filter(|cut| is_local(cut.host)) else {
+    /// How the page shows its address: a local port that carries a remote one is shown as the remote port on `localhost`, and a page of the machine `host` reached directly is shown on `localhost` too, so the address typed, the address shown and the address a server reports are the same.
+    fn browser_unresolve(&self, address: &str, host: Option<&str>) -> String {
+        let Some(cut) = parts(address) else {
             return address.to_owned();
         };
-        let Some(local) = cut.port else {
+        if let pm_protocol::Route::Direct(target) = pm_protocol::route_of(host) {
+            let machine = target.rsplit_once(':').map_or(target, |(name, _)| name);
+            if let Some(port) = cut.port.filter(|_| cut.host == machine) {
+                return format!("{}localhost:{port}{}", cut.before, cut.after);
+            }
+        }
+        let Some(local) = cut.port.filter(|_| is_local(cut.host)) else {
             return address.to_owned();
         };
         match self
@@ -786,6 +792,18 @@ impl App {
             Some(((_, remote), _)) => format!("{}localhost:{remote}{}", cut.before, cut.after),
             None => address.to_owned(),
         }
+    }
+
+    /// The machine the page of the tab numbered `id` is on, when it is not this one.
+    fn browser_tab_host(&self, id: u32) -> Option<String> {
+        self.model.read(|screen| {
+            let Screen::Workspace(state) = screen;
+            state
+                .browser
+                .as_ref()
+                .and_then(|browser| browser.tab(id))
+                .and_then(|tab| tab.host.clone())
+        })
     }
 
     /// Tells the helper which origins agents may open when that is not what it was last told; the helper enforces it, so it is sent as soon as the helper starts, before any page or tool.
@@ -816,14 +834,18 @@ impl App {
         if !notices.is_empty() {
             self.model.update(|screen| {
                 let Screen::Workspace(state) = screen;
-                if let Some(browser) = state.browser.as_mut() {
-                    for (id, notices) in notices {
-                        if let Some(tab) = browser.tab_mut(id) {
+                for (id, notices) in notices {
+                    state.browser_scoped_to_tab(id, |state| {
+                        if let Some(tab) = state
+                            .browser
+                            .as_mut()
+                            .and_then(|browser| browser.tab_mut(id))
+                        {
                             for notice in notices {
                                 apply_notice(&mut tab.safety, notice);
                             }
                         }
-                    }
+                    });
                 }
             });
         }
@@ -1041,14 +1063,10 @@ impl App {
 
     /// Closes the pages of tabs that were closed, and all of them when the browser was.
     fn browser_sync_tabs(&mut self) {
-        let open: Option<Vec<u32>> = self.model.read(|screen| {
+        let open: Vec<u32> = self.model.read(|screen| {
             let Screen::Workspace(state) = screen;
-            state
-                .browser
-                .as_ref()
-                .map(|browser| browser.tabs.iter().map(|tab| tab.id).collect())
+            state.browser_tab_numbers()
         });
-        let open = open.unwrap_or_default();
         self.web.pages.retain(|id, _| open.contains(id));
         if self
             .web
@@ -1123,24 +1141,24 @@ impl App {
             if found.is_some() || zoom.is_some() {
                 self.model.update(|screen| {
                     let Screen::Workspace(state) = screen;
-                    if let Some((active, total)) = found {
-                        state.browser_found(*id, active, total);
-                    }
-                    if let Some(zoom) = zoom {
-                        state.browser_zoomed(*id, zoom);
-                    }
+                    state.browser_scoped_to_tab(*id, |state| {
+                        if let Some((active, total)) = found {
+                            state.browser_found(*id, active, total);
+                        }
+                        if let Some(zoom) = zoom {
+                            state.browser_zoomed(*id, zoom);
+                        }
+                    });
                 });
             }
             for (url, agent) in opened {
-                let address = self.browser_unresolve(&url);
+                let host = self.browser_tab_host(*id);
+                let address = self.browser_unresolve(&url, host.as_deref());
                 self.model.update(|screen| {
                     let Screen::Workspace(state) = screen;
-                    let host = state
-                        .browser
-                        .as_ref()
-                        .and_then(|browser| browser.tab(*id))
-                        .and_then(|tab| tab.host.clone());
-                    state.browser_tab_opened(&address, host, agent, !agent);
+                    state.browser_scoped_to_tab(*id, |state| {
+                        state.browser_tab_opened(&address, host, agent, !agent);
+                    });
                 });
             }
         }
@@ -1171,11 +1189,12 @@ impl App {
         let typing = self.focus.current() == Some(pm_components::browser::BROWSER_ADDRESS);
         let mut reports = Vec::new();
         for id in self.web.pages.keys().copied().collect::<Vec<_>>() {
+            let host = self.browser_tab_host(id);
             let address = self
                 .web
                 .pages
                 .get(&id)
-                .map(|shown| self.browser_unresolve(&shown.view.address()))
+                .map(|shown| self.browser_unresolve(&shown.view.address(), host.as_deref()))
                 .unwrap_or_default();
             let Some(shown) = self.web.pages.get_mut(&id) else {
                 continue;
@@ -1200,17 +1219,15 @@ impl App {
             .and_then(|(_, view)| picture(view, TOOLS_SURFACE, &mut self.web.tools_shown));
         let changed = self.model.read(|screen| {
             let Screen::Workspace(state) = screen;
-            state.browser.as_ref().is_some_and(|browser| {
-                reports.iter().any(|(id, page, title, address, pointer)| {
-                    page.is_some()
-                        || browser.tab(*id).is_some_and(|tab| {
-                            tab.title != *title
-                                || tab.pointer != *pointer
-                                || (!(typing && Some(*id) == active)
-                                    && !address.is_empty()
-                                    && tab.address.text() != address)
-                        })
-                })
+            reports.iter().any(|(id, page, title, address, pointer)| {
+                page.is_some()
+                    || state.browser_tab_anywhere(*id).is_some_and(|tab| {
+                        tab.title != *title
+                            || tab.pointer != *pointer
+                            || (!(typing && Some(*id) == active)
+                                && !address.is_empty()
+                                && tab.address.text() != address)
+                    })
             })
         });
         if !changed && tools.is_none() {
@@ -1219,7 +1236,9 @@ impl App {
         self.model.update(|screen| {
             let Screen::Workspace(state) = screen;
             for (id, page, title, address, pointer) in reports {
-                state.browser_tab_painted(id, page, &title, &address, pointer, typing);
+                state.browser_scoped_to_tab(id, |state| {
+                    state.browser_tab_painted(id, page, &title, &address, pointer, typing);
+                });
             }
             if let Some(tools) = tools {
                 state.browser_tools_painted(tools);
@@ -1334,11 +1353,41 @@ impl App {
             self.web.announced = usable;
             self.work.announce_browser(usable);
         }
-        for (host, server_call, tool, arguments) in self.work.take_browser_calls() {
+        for made in self.work.take_browser_calls() {
+            let host = made.host;
             self.web.next_call += 1;
             let local = self.web.next_call;
-            self.web.calls.insert(local, (host.clone(), server_call));
-            if !self.browser_tool(&host, local, &tool, &arguments, scale) {
+            self.web.calls.insert(local, (host.clone(), made.call));
+            let Some(position) = made.session else {
+                self.browser_answer(
+                    local,
+                    false,
+                    "This window does not know the session that made the call.".to_owned(),
+                    Vec::new(),
+                );
+                continue;
+            };
+            let mut entered = None;
+            self.model.update(|screen| {
+                let Screen::Workspace(state) = screen;
+                entered = state.browser_scope_enter(position);
+            });
+            let Some(entered) = entered else {
+                self.browser_answer(
+                    local,
+                    false,
+                    "This window does not know the session that made the call.".to_owned(),
+                    Vec::new(),
+                );
+                continue;
+            };
+            let started = self.browser_tool(&host, local, &made.tool, &made.arguments, scale);
+            self.browser_commands(scale);
+            self.model.update(|screen| {
+                let Screen::Workspace(state) = screen;
+                state.browser_scope_leave(entered);
+            });
+            if !started {
                 self.browser_answer(
                     local,
                     false,
@@ -1660,11 +1709,24 @@ impl App {
         {
             return;
         }
-        for (host, url) in pages {
+        let scale = self
+            .window
+            .as_ref()
+            .map_or(1.0, |window| window.scale_factor() as f32);
+        for (host, url, owner) in pages {
+            let mut entered = None;
             self.model.update(|screen| {
                 let Screen::Workspace(state) = screen;
+                entered = owner.and_then(|position| state.browser_scope_enter(position));
                 state.open_served_page(&url, host);
             });
+            self.browser_commands(scale);
+            if let Some(entered) = entered {
+                self.model.update(|screen| {
+                    let Screen::Workspace(state) = screen;
+                    state.browser_scope_leave(entered);
+                });
+            }
         }
     }
 
@@ -1674,6 +1736,15 @@ impl App {
             .window
             .as_ref()
             .map_or(1.0, |window| window.scale_factor() as f32);
+        if self.model.read(|screen| {
+            let Screen::Workspace(state) = screen;
+            state.browser_rescope_needed()
+        }) {
+            self.model.update(|screen| {
+                let Screen::Workspace(state) = screen;
+                state.rescope_browser();
+            });
+        }
         let downloading = self.browser_install();
         self.browser_origins();
         let calling = self.browser_agent(scale);

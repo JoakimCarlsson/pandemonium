@@ -166,6 +166,8 @@ pub enum Shot {
     BrowserFindTools,
     /// The workspace with the browser open on several tabs: one shown, one opened by an agent, one locked against agents; with so many tabs that the strip scrolls when the flag is set.
     BrowserTabs(bool),
+    /// The workspace on a second session, whose browser holds one tab of its own while the first session keeps the tabs of the browser-tabs picture.
+    BrowserSessions,
     /// The workspace with the browser open and the question about clearing cookies and site data asked.
     BrowserClear,
     /// The workspace with the browser open and a page asking to use the camera and microphone, with a second question waiting.
@@ -1703,6 +1705,10 @@ fn workspace_sample() -> WorkspaceState {
 fn browser_finding(tools: bool) -> WorkspaceState {
     let mut state = workspace_sample();
     state.open_browser("http://localhost:5173/docs/routing");
+    let first = state
+        .browser
+        .as_ref()
+        .map_or(1, |browser| browser.active_id());
     let (width, height) = (640_u32, 400_u32);
     let mut pixels = Vec::with_capacity((width * height * 4) as usize);
     for y in 0..height {
@@ -1719,20 +1725,20 @@ fn browser_finding(tools: bool) -> WorkspaceState {
         pixels: std::sync::Arc::new(pixels),
     };
     state.browser_tab_painted(
-        1,
+        first,
         Some(page),
         "Routing",
         "http://localhost:5173/docs/routing",
         pm_components::browser::Pointer::Arrow,
         false,
     );
-    state.browser_zoomed(1, 1.25);
+    state.browser_zoomed(first, 1.25);
     state.browser_find_opened();
     let mut state = state.edited(
         pm_components::browser::BROWSER_FIND_FIELD,
         Edit::Paste("route".to_owned()),
     );
-    state.browser_found(1, 2, 7);
+    state.browser_found(first, 2, 7);
     if tools {
         state = state.browser_tools_shown();
         if let Some(browser) = state.browser.as_mut() {
@@ -1742,11 +1748,40 @@ fn browser_finding(tools: bool) -> WorkspaceState {
     state
 }
 
+/// The workspace on the second session, whose browser holds one tab, after the first session was left with several tabs open.
+fn browser_sessions() -> WorkspaceState {
+    let mut state = workspace_sample().after(FocusId(pm_components::state::SESSION_BASE));
+    state.open_browser("http://localhost:3000/");
+    for address in [
+        "http://localhost:5173/checkout",
+        "http://localhost:8080/health",
+    ] {
+        state.browser_tab_opened(address, None, false, false);
+    }
+    let mut state = state.after(FocusId(pm_components::state::SESSION_BASE + 1));
+    state.open_browser("http://localhost:4173/preview");
+    if let Some(id) = state.browser.as_ref().map(|browser| browser.active_id()) {
+        state.browser_tab_painted(
+            id,
+            None,
+            "Preview - Second session",
+            "http://localhost:4173/preview",
+            pm_components::browser::Pointer::Arrow,
+            false,
+        );
+    }
+    state
+}
+
 /// The workspace with the browser on tabs: the shown one, one an agent opened, one locked, and, when `many`, enough more for the strip to scroll.
 fn browser_tabs(many: bool) -> WorkspaceState {
     let mut state = browser_finding(false);
     state.browser_find_closed();
-    state.browser_zoomed(1, 1.0);
+    let first = state
+        .browser
+        .as_ref()
+        .map_or(1, |browser| browser.active_id());
+    state.browser_zoomed(first, 1.0);
     let pages = [
         ("Pandemonium - Dashboard", "http://localhost:3000/", false),
         ("Checkout flow", "http://localhost:5173/checkout", true),
@@ -2909,6 +2944,7 @@ impl Shot {
             }
             Self::BrowserFindTools => Screen::Workspace(browser_finding(true)),
             Self::BrowserTabs(many) => Screen::Workspace(browser_tabs(many)),
+            Self::BrowserSessions => Screen::Workspace(browser_sessions()),
             Self::BrowserClear => {
                 let mut state = browser_finding(false);
                 state.browser_find_closed();

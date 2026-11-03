@@ -15,8 +15,10 @@ downloads the engine once, about 120 MB.
 - `pm-components` draws the pane, and `crates/pandemonium/src/app/browser.rs`
   carries what the pane asks for to the helper.
 - `pm-server` hosts the MCP endpoint that gives agents the `browser_*` tools;
-  the tools run in the helper of the window that announced the browser. See
-  [protocol.md](protocol.md#browser-tools).
+  the tools run in the helper of the window that announced the browser, on the
+  tabs of the session whose agent called them. See
+  [protocol.md](protocol.md#browser-tools) and
+  [Tabs belong to a session](#tabs-belong-to-a-session).
 
 ## How the window and the helper talk
 
@@ -68,7 +70,7 @@ page is left there when a different server starts, since the reader or an agent
 is using it, and the server's page opens in a new tab behind it (see
 [Tabs](#tabs)); the tab shown goes to a server's page when it shows nothing or
 an error, and every tab on a page of that same server loads it again where it
-is (`served_move` in `pm-components/src/browser.rs`). It happens only while the embedded browser is on
+is (`served_move` in `pm-components/src/browser.rs`). A page is the same server's by the address the server reports, so `127.0.0.1` and `[::1]` count as `localhost`, and a tab on a remote machine, whether carried over SSH or reached directly, is compared by the remote address it shows, not the local one that carries it. It happens only while the embedded browser is on
 and installed, and Settings, under Browser, can turn it off. A shell in a dev
 container is not seen, since its ports are the container's.
 
@@ -99,9 +101,42 @@ For a remote project a tab keeps the machine its page is on, so its address is
 resolved over the same SSH forward as before, and a window that restores a
 saved browser opens every tab on its own machine.
 
-The tabs are kept in the window's saved state: each with address, machine, the
+The tabs are kept in the window's saved state, for each session: each with address, machine, the
 agent mark and the lock, and the one shown. State saved before tabs, which has
 one address, restores as one tab.
+
+### Tabs belong to a session
+
+Every session has a browser of its own: its tabs, the tab shown, its developer
+tools and the width they were given. One helper serves the whole window, with a
+page for each tab of every session, so a page kept by a session you left is still
+there, with its history, when you come back. Tab numbers are unique in the window,
+which is how the pages of different sessions are told apart.
+
+The browser of the session shown is `WorkspaceState::browser`, which the rest of
+the window reads and changes; the browsers of the other sessions wait in
+`WorkspaceState::browsers`, by the `scope` of the session that owns them, a
+number that stays with a session however the sessions are renumbered
+(`pm-components/src/browser_scope.rs`). Opening another session, or a page that
+is no session's, swaps them, and a browser whose session is gone is dropped.
+
+Work on the tabs of a session the reader is not looking at, such as an agent's
+tool call or a dev server found for it, enters that session's browser and leaves
+it again, with the page the reader is on unchanged (`browser_scope_enter` and
+`browser_scope_leave`).
+
+An agent can only reach its own session's tabs. The server gives each session its
+own token for the tools endpoint when its agent starts, so every call says which
+session made it (`browser_call`, see [protocol.md](protocol.md#browser-tools)).
+The window runs `browser_tabs` and every other tool on that session's tabs, and
+`tab` names a tab among them: a number from another session is the same as a
+number that does not exist. A dev server found for a session, from a shell of
+the session or by watching the ports, opens in that session's browser only.
+
+The saved state keeps the browser of the session that was shown, and in
+`session_browsers` the others by machine and the server's number for the session;
+a window restores each as the server lists its sessions. State saved when one
+browser belonged to the whole window restores into the session that was shown.
 
 ### Locking a tab against agents
 
@@ -169,7 +204,9 @@ the page's window, which here is hidden and offscreen, so the dialog never
 shows and the input stays empty. `helpers/electron-browser/src/filechooser.js`
 turns on `Page.setInterceptFileChooserDialog`, opens `dialog.showOpenDialog`
 itself with no parent when `Page.fileChooserOpened` arrives, and hands the
-chosen files to the input with `DOM.setFileInputFiles`. The files are the
+chosen files to the input with `DOM.setFileInputFiles`. On macOS the helper has
+no Dock icon and so counts as a background app, whose dialog opens behind other
+windows or not at all, so it calls `app.focus({ steal: true })` first. The files are the
 reader's own, on the machine the window runs on. Agents still cannot use either
 command (see `cdp-policy.js`).
 

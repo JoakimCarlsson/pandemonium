@@ -309,8 +309,9 @@ fn start_session(
         container,
     };
     let mut session = Session::new(agent, meta.agent_folder(), Vec::new(), meta);
-    session.start_agent(&crate::machine::with_mode(settings));
-    let number = hold_session(core, connection, session);
+    let number = core.next_session();
+    session.start_agent(number, &crate::machine::with_mode(settings));
+    hold_session_as(core, connection, number, session);
     let first = prompt(number, text, attachments);
     telling(core, number, |held| held.submit(number, first, false));
     announce(core, connection, number);
@@ -323,10 +324,10 @@ fn start_session(
     }
 }
 
-/// Stops the agent of session `number` and waits for it to exit, removes the worktree it made when no other open session works in it, deletes the branch it made there when nothing would be lost, and marks it closed.
+/// Stops the agent of session `number` and waits for it to exit, ends the shells that work in its worktree, removes the worktree it made when no other open session works in it, deletes the branch it made there when nothing would be lost, and marks it closed.
 ///
 /// A worktree with changes that are not committed is kept and the request answered with `Uncommitted`, unless `discard` is set.
-fn close_session(core: &Core, number: u64, discard: bool) -> Response {
+pub(crate) fn close_session(core: &Core, number: u64, discard: bool) -> Response {
     let (chat, removal, enclosed) = {
         let Ok(mut sessions) = core.sessions.lock() else {
             return failed("the server is shutting down");
@@ -355,6 +356,7 @@ fn close_session(core: &Core, number: u64, discard: bool) -> Response {
                 folder,
                 held.meta.branch.clone(),
                 held.meta.base.clone(),
+                held.meta.directory.clone(),
             )
         });
         (
@@ -371,10 +373,11 @@ fn close_session(core: &Core, number: u64, discard: bool) -> Response {
     {
         return failed(format!("could not remove the dev container: {reason}"));
     }
-    if let Some((repository, folder, branch, base)) = removal {
+    if let Some((repository, folder, branch, base, directory)) = removal {
         if !discard && !pm_git::changes(&folder).is_empty() {
             return Response::Uncommitted;
         }
+        core.close_terminals_in(&directory);
         if let Err(reason) =
             pm_git::remove_worktree(&repository, &folder, branch.as_deref(), base.as_deref())
         {
@@ -433,6 +436,12 @@ fn fork_session(core: &Core, connection: &Arc<Connection>, source: u64, turn: u6
 /// Holds `session` under a new number, keeps it and its log on disk, has `connection` watch it and returns the number.
 fn hold_session(core: &Core, connection: &Arc<Connection>, session: Session) -> u64 {
     let number = core.next_session();
+    hold_session_as(core, connection, number, session);
+    number
+}
+
+/// Holds `session` under `number`, which the caller took from the core, keeps it and its log on disk and has `connection` watch it.
+fn hold_session_as(core: &Core, connection: &Arc<Connection>, number: u64, session: Session) {
     sessions::save_meta(number, &session.meta);
     for (seq, event) in &session.log {
         sessions::append(number, *seq, event);
@@ -443,7 +452,6 @@ fn hold_session(core: &Core, connection: &Arc<Connection>, session: Session) -> 
     if let Ok(mut attached) = connection.attached.lock() {
         attached.insert(number);
     }
-    number
 }
 
 /// Tells every client but `connection` of the session numbered `number`.
@@ -1890,3 +1898,6 @@ fn sign_in_session(core: &Core, number: u64) -> Response {
         Err(reason) => failed(reason),
     }
 }
+
+#[cfg(test)]
+mod tests;

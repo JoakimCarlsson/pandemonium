@@ -346,6 +346,20 @@ enum Held {
     Close,
 }
 
+/// A browser tool an agent called, to be run on the tabs of its own session.
+pub struct BrowserCall {
+    /// The machine whose server the agent is on.
+    pub host: Host,
+    /// The server's number for the call.
+    pub call: u64,
+    /// The position of the session whose agent made it, or nothing when the window does not know the session, in which case the call is refused.
+    pub session: Option<usize>,
+    /// The tool, such as `browser_screenshot`.
+    pub tool: String,
+    /// What the agent gave it, as JSON text.
+    pub arguments: String,
+}
+
 /// Where a session works and what it is made of.
 struct Placement {
     /// The machine it is on.
@@ -410,9 +424,9 @@ pub struct Work {
     /// Whether this window can run the browser's tools, which each server is told as it connects.
     browser_available: bool,
     /// The browser tool calls agents made that the window has not taken yet, each with the machine, the call and the tool with its arguments.
-    browser_calls: Vec<(Host, u64, String, String)>,
+    browser_calls: Vec<BrowserCall>,
     /// The web pages that programs started in shells serve and the window has not taken yet, each with the machine and the address on it.
-    served: Vec<(Host, String)>,
+    served: Vec<(Host, String, Option<usize>)>,
     /// The web links the reader followed, which the window sends to the embedded browser or the system browser.
     followed: Vec<String>,
     /// What the threads report.
@@ -435,6 +449,8 @@ pub struct Work {
     resume: Option<View>,
     /// Saved read positions awaiting the sessions listed by each machine.
     read_receipts: Vec<crate::view::ReadReceipt>,
+    /// The browsers the previous window left for sessions it has yet to list, by machine and number.
+    saved_browsers: Vec<crate::view::SavedSessionBrowser>,
     /// How many threads have yet to report.
     pending: Cell<usize>,
     /// The grammars asked for of each machine, by the name they were asked by, so each is asked for once.
@@ -480,6 +496,7 @@ impl Work {
                 .collect(),
             resume: None,
             read_receipts: Vec::new(),
+            saved_browsers: Vec::new(),
             pending: Cell::new(0),
             grammars: HashSet::new(),
             palette: picture::Palette::default(),
@@ -496,6 +513,7 @@ impl Work {
     /// Has the window finish opening on `view` once the sessions it needs are listed.
     pub fn resume(&mut self, view: View) {
         self.read_receipts = view.receipts().to_vec();
+        self.saved_browsers = view.session_browsers().to_vec();
         self.resume = Some(view);
     }
 
@@ -521,7 +539,7 @@ impl Work {
 
     /// Sends `request` to the server on `host`, or keeps it until that server is reached, and remembers what to do with the answer.
     /// The browser tool calls agents made since this was last called.
-    pub fn take_browser_calls(&mut self) -> Vec<(Host, u64, String, String)> {
+    pub fn take_browser_calls(&mut self) -> Vec<BrowserCall> {
         std::mem::take(&mut self.browser_calls)
     }
 
@@ -530,8 +548,8 @@ impl Work {
         std::mem::take(&mut self.followed)
     }
 
-    /// The web pages programs started in shells served since this was last called, each with the machine and the address on it.
-    pub fn take_served(&mut self) -> Vec<(Host, String)> {
+    /// The web pages programs started in shells served since this was last called, each with the machine, the address on it and the position of the session that started it, when the window knows it.
+    pub fn take_served(&mut self) -> Vec<(Host, String, Option<usize>)> {
         std::mem::take(&mut self.served)
     }
 
@@ -1528,9 +1546,25 @@ impl Work {
                             model.update(|screen| screen.terminal_exited(tab));
                         }
                     }
-                    Incoming::TerminalServing { url, .. } | Incoming::SessionServing { url } => {
+                    Incoming::TerminalServing { terminal, url } => {
                         if is_served_address(&url) {
-                            self.served.push((host.clone(), url));
+                            let owner = self
+                                .shells
+                                .get(&(host.clone(), terminal))
+                                .copied()
+                                .and_then(|tab| {
+                                    model.read(|screen| {
+                                        let Screen::Workspace(state) = screen;
+                                        state.session_of_terminal(tab)
+                                    })
+                                });
+                            self.served.push((host.clone(), url, owner));
+                        }
+                    }
+                    Incoming::SessionServing { session, url } => {
+                        if is_served_address(&url) {
+                            let owner = self.positions.get(&(host.clone(), session)).copied();
+                            self.served.push((host.clone(), url, owner));
                         }
                     }
                     Incoming::Debug {
@@ -1569,11 +1603,16 @@ impl Work {
                     }),
                     Incoming::BrowserCall {
                         call,
+                        session,
                         tool,
                         arguments,
-                    } => self
-                        .browser_calls
-                        .push((host.clone(), call, tool, arguments)),
+                    } => self.browser_calls.push(BrowserCall {
+                        host: host.clone(),
+                        call,
+                        session: self.positions.get(&(host.clone(), session)).copied(),
+                        tool,
+                        arguments,
+                    }),
                     Incoming::FolderChanged(directory) => {
                         self.folder_changed(model, &host, &directory);
                     }
@@ -2479,6 +2518,17 @@ impl Work {
                     session.read_through = receipt.through;
                     session.marked_unread = receipt.marked;
                     session.hold_unread = receipt.marked;
+                });
+            }
+            if let Some(saved) = self
+                .saved_browsers
+                .iter()
+                .find(|saved| saved.host == *origin && saved.number == number)
+            {
+                let (tabs, active, tools, width) = saved.tabs();
+                model.update(|screen| {
+                    let Screen::Workspace(state) = screen;
+                    state.restore_session_browser(position, &tabs, active, tools, width);
                 });
             }
             self.forgotten.remove(&(origin.clone(), number));
