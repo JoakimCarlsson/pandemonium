@@ -19,9 +19,8 @@ Pandemonium treats them as the real work.
   repositories, each isolated in a worktree of its own.
 - **Review, don't babysit.** Every session is a branch with a diff and a
   conversation you can read, question and merge.
-- **Bring your own agent.** Anything that speaks the
-  [Agent Client Protocol](https://agentclientprotocol.com) works, with Claude
-  Code, Codex and Grok Build built in.
+- **One harness, many agents.** A harness of our own runs the agent loop and
+  the tools, with Claude and Codex built in and more agents to follow.
 - **Agents keep going.** Close the window, sleep the laptop or lose the
   connection, and the agents carry on. Reconnect and catch up.
 - **Fast and native.** Rendered on the GPU with wgpu. No web view, no Electron.
@@ -44,9 +43,10 @@ welcome as [issues](https://github.com/JoakimCarlsson/pandemonium/issues).
 - **A session is a worktree you review.** Starting an agent cuts a fresh
   worktree and branch. Its files, its diff and its conversation are shown in
   panes, not in a terminal beside the editor.
-- **Agents speak ACP.** They are driven over the
-  [Agent Client Protocol](https://agentclientprotocol.com) and confined to
-  their own worktree.
+- **Agents run in a harness.** The harness is a program of its own, `crab`,
+  that runs the agent loop and the tools for one conversation and speaks a
+  small JSON-lines protocol on its standard streams. It works in the
+  session's worktree.
 - **A server owns the agents.** `pandemonium-server` starts the agents, makes
   their worktrees and runs git. The window is a client of it, so an agent keeps
   working when the window is closed, the laptop sleeps or the connection drops,
@@ -62,36 +62,19 @@ The protocol between clients and a server is in [docs/protocol.md](docs/protocol
 
 ## Agents and accounts
 
-Any agent that speaks ACP can be added under Settings, Agents, Agent Servers:
-a name and the command that starts it in protocol mode. Claude Code, Codex and
-Grok Build are in the list from the start and can be edited or removed like any
-other. Model and mode pickers, slash commands and sign-in come from what the
-agent reports over ACP, so they need nothing from pandemonium.
+Claude and Codex are the agents that ship. Model and mode pickers come from
+what the harness reports. Sign in from Settings, Agents and accounts: the
+harness opens the provider's login page and keeps the credentials in the
+account's folder.
 
-Every agent can keep more than one login. An agent that has a variable for its
-login folder, such as `CLAUDE_CONFIG_DIR` or `CODEX_HOME`, is started with that
-variable pointing at the account's folder; the add form takes it as an optional
-box. Any other agent is started with `HOME` set to a folder of its own for the
-account. That folder links to everything in your home folder except the agent's
-own folders, which are found by matching words from its name and command, so
-the agent starts signed out while git, ssh and npm keep working. Skills, rules
-and agents from the agent's own folder are linked in.
+Every agent can keep more than one login. Each account is a folder under the
+data directory that holds that account's credentials, and the harness is
+started with it.
 
 Limits:
 
-- Showing who an agent is signed in as, and sharing a new account's setup,
-  work only for the agents whose files pandemonium knows: Claude Code, Codex,
-  Grok Build and, for sharing only, Copilot. Other agents show "Account N".
-- An agent that keeps its config under a name unrelated to its own name will
-  see your normal login folder. Give it its login folder variable in the add
-  form.
-- Separate accounts for agents without a login folder variable work on Linux
-  and macOS only. On Windows they need `USERPROFILE` and `AppData` instead of
-  `HOME`, junctions instead of symlinks and a Windows terminal for logins that
-  need one, none of which is built. There the agents run, but every account
-  shares the one login.
-- Logins that need a terminal look for a Linux terminal emulator, so they do
-  not open on macOS or Windows.
+- Showing who an agent is signed in as reads the files of the agent's own
+  product and does not yet know the harness's logins.
 
 ## Extensions and languages
 

@@ -84,10 +84,13 @@ One crate per layer, each depending only on the layers below it.
   after a folder changes; a release build reads the folders from the repository
   at its own release tag, a debug build from its checkout, and either from
   `PANDEMONIUM_LANGUAGES` when it is set.
-- **Domain:** `pm-harness` (agents over the Agent Client Protocol),
+- **Domain:** `pm-harness` (the app's side of the harness: the agents it ships,
+  the conversation held with one over the harness's wire protocol, and its
+  sign-in; the harness is its own program in the `oh-my-crab` repository, and
+  `PANDEMONIUM_HARNESS` points at a build of it),
   `pm-agent-library` (the skills, instructions, agent definitions, hooks and
   tools each agent product is given, read from the folders it keeps them in,
-  and how an agent is started without the ones turned off), `pm-mcp` (a client
+  and which of them the reader turned off), `pm-mcp` (a client
   of tool servers, which lists the tools they offer), `pm-dap`
   (programs debugged through debug adapters over the Debug Adapter Protocol:
   the adapters, what a folder can be debugged as, and a running session),
