@@ -68,6 +68,31 @@ fn folder(number: u64) -> Option<PathBuf> {
     pm_store::data_directory().map(|root| root.join(FOLDER).join(number.to_string()))
 }
 
+/// The id the harness keeps a session's saved history under, which makes its file `history.jsonl` in the session's folder.
+pub(crate) const HISTORY: &str = "history";
+
+/// The folder the harness keeps the saved history of the session numbered `number` in, which is the session's own folder.
+pub(crate) fn history_folder(number: u64) -> Option<PathBuf> {
+    folder(number)
+}
+
+/// Whether the harness has a saved history for the session numbered `number`.
+pub(crate) fn has_history(number: u64) -> bool {
+    folder(number).is_some_and(|folder| folder.join(format!("{HISTORY}.jsonl")).is_file())
+}
+
+/// Copies the saved history of the session numbered `from` to the session numbered `to`, so that the one continues from where the other was without sharing it afterwards; nothing happens when there is none.
+pub(crate) fn copy_history(from: u64, to: u64) {
+    let (Some(source), Some(target)) = (folder(from), folder(to)) else {
+        return;
+    };
+    if pm_store::create_private_directory(&target).is_err() {
+        return;
+    }
+    let name = format!("{HISTORY}.jsonl");
+    let _ = std::fs::copy(source.join(&name), target.join(&name));
+}
+
 /// Writes `meta` as the description of the session numbered `number`.
 pub(crate) fn save_meta(number: u64, meta: &Meta) {
     let Some(folder) = folder(number) else {

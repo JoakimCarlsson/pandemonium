@@ -32,6 +32,7 @@ impl Session {
         let mut told = self.drop_queue(number);
         let event = Event::Rewound { turn };
         told.push((number, self.note(number, &event), event));
+        self.resume_keep = Some(conversation::kept_by_harness(&self.log));
         Ok(told)
     }
 

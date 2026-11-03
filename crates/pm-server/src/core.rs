@@ -126,6 +126,8 @@ pub(crate) struct Session {
     pub(crate) next_queued: u64,
     /// The id of the login the running agent was started as, or nothing for the agent's own.
     pub(crate) running_as: Option<String>,
+    /// How many turns of the saved history the next start continues from, after a rewind or a branch; all of it when there is none.
+    pub(crate) resume_keep: Option<usize>,
 }
 
 impl Session {
@@ -146,17 +148,22 @@ impl Session {
             queue: VecDeque::new(),
             next_queued: 1,
             running_as: None,
+            resume_keep: None,
         }
     }
 
     /// Starts the agent of the session in the session's folder as the session's login, without what the reader turned off, and gives it the settings the reader chose.
     pub(crate) fn start_agent(&mut self, number: u64, settings: &[(String, String)]) {
         let home = crate::handler::login_folder(&self.meta.agent, self.meta.login.as_deref());
+        let mut given = crate::library::given(self.agent, &self.directory, number);
+        given.conversation = Some(crate::sessions::HISTORY.to_owned());
+        given.history = crate::sessions::history_folder(number);
+        given.keep = self.resume_keep.take();
         let chat = Chat::start(
             self.agent,
             self.directory.clone(),
             home,
-            crate::library::given(self.agent, &self.directory, number),
+            given,
             Arc::new(|| BELL.ring()),
         );
         self.running_as = self.meta.login.clone();

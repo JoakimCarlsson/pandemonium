@@ -378,9 +378,13 @@ fn fork_session(core: &Core, connection: &Arc<Connection>, source: u64, turn: u6
             updated: now(),
             ..held.meta.clone()
         };
-        Session::new(held.agent, held.directory.clone(), log, meta)
+        let mut branch = Session::new(held.agent, held.directory.clone(), log, meta);
+        branch.resume_keep = Some(conversation::kept_by_harness(&branch.log));
+        branch
     };
-    let number = hold_session(core, connection, branch);
+    let number = core.next_session();
+    crate::sessions::copy_history(source, number);
+    hold_session_as(core, connection, number, branch);
     announce(core, connection, number);
     match core.info(number) {
         Some(info) => Response::Sessions {
@@ -388,13 +392,6 @@ fn fork_session(core: &Core, connection: &Arc<Connection>, source: u64, turn: u6
         },
         None => failed(format!("session {number} went away as it was made")),
     }
-}
-
-/// Holds `session` under a new number, keeps it and its log on disk, has `connection` watch it and returns the number.
-fn hold_session(core: &Core, connection: &Arc<Connection>, session: Session) -> u64 {
-    let number = core.next_session();
-    hold_session_as(core, connection, number, session);
-    number
 }
 
 /// Holds `session` under `number`, which the caller took from the core, keeps it and its log on disk and has `connection` watch it.

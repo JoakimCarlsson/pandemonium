@@ -130,7 +130,8 @@ impl Session {
             self.chat = None;
         }
         let afresh = self.chat.is_none();
-        let preface = conversation::preface(&self.log, afresh);
+        let preface =
+            conversation::preface(&self.log, afresh && !crate::sessions::has_history(number));
         let event = Event::Prompted {
             text: prompt.text.clone(),
             files: prompt.names,

@@ -56,12 +56,31 @@ fn conversational(event: &Event) -> bool {
     matches!(
         event,
         Event::Said(_)
+            | Event::Halted
             | Event::Thought(_)
             | Event::Tool(_)
             | Event::Plan(_)
             | Event::Finished(_)
             | Event::Failed(_)
     )
+}
+
+/// How many of the reader's turns in `log` the harness keeps in its saved history: the ones that ran to the end, since it drops a turn that was stopped or failed.
+pub(crate) fn kept_by_harness(log: &[(u64, Event)]) -> usize {
+    turns(log)
+        .iter()
+        .filter(|turn| {
+            let stopped = turn
+                .events
+                .iter()
+                .any(|event| matches!(event, Event::Halted));
+            let finished = turn
+                .events
+                .iter()
+                .any(|event| matches!(event, Event::Finished(None)));
+            finished && !stopped
+        })
+        .count()
 }
 
 /// The reader's turns the log `log` tells, those a rewind dropped left out, oldest first.
@@ -165,4 +184,40 @@ pub(crate) fn settings(log: &[(u64, Event)]) -> Vec<(String, String)> {
             _ => None,
         })
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+/// Tests for which turns the harness keeps in its saved history.
+mod tests {
+    use super::*;
+
+    /// A turn the reader prompted, as the log holds it.
+    fn prompted(text: &str) -> Event {
+        Event::Prompted {
+            text: text.to_owned(),
+            files: Vec::new(),
+            checkpoint: false,
+        }
+    }
+
+    /// Turns that ran to the end count; one that was stopped or failed does not, and a rewind drops the turns it went back over.
+    #[test]
+    fn only_finished_turns_are_kept() {
+        let events = [
+            prompted("one"),
+            Event::Finished(None),
+            prompted("two"),
+            Event::Halted,
+            Event::Finished(None),
+            prompted("three"),
+            Event::Finished(Some("failed".to_owned())),
+            prompted("four"),
+            Event::Finished(None),
+        ];
+        let log: Vec<(u64, Event)> = (1..).zip(events).collect();
+        assert_eq!(kept_by_harness(&log), 2);
+        let mut rewound = log;
+        rewound.push((10, Event::Rewound { turn: 1 }));
+        assert_eq!(kept_by_harness(&rewound), 1);
+    }
 }

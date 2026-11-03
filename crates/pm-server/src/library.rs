@@ -178,6 +178,7 @@ pub(crate) fn given(agent: Agent, directory: &Path, session: u64) -> pm_harness:
         denied,
         disabled: disabled(agent, directory, &withheld),
         blocked,
+        ..pm_harness::Given::default()
     }
 }
 
