@@ -31,6 +31,8 @@ pub fn discover(agent: Agent) -> Result<Discovery, String> {
         conversation: None,
         history: None,
         keep: None,
+        before: None,
+        defaults: Vec::new(),
     }))?;
     let deadline = Instant::now() + PATIENCE;
     while let Some(left) = deadline.checked_duration_since(Instant::now()) {

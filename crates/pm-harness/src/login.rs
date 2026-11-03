@@ -38,6 +38,8 @@ impl Agent {
             conversation: None,
             history: None,
             keep: None,
+            before: None,
+            defaults: Vec::new(),
         }))?;
         harness.send(&Command::Login {
             provider: self.provider.to_owned(),

@@ -60,6 +60,9 @@ pub enum Event {
         /// Whether the files of the session's folder were kept as they were before the turn, so they can be put back.
         #[serde(default)]
         checkpoint: bool,
+        /// The id the harness saves the turn under, and the name the files kept before it go by; nought for a turn from before turns had one, which goes by the number of this event in the log.
+        #[serde(default)]
+        turn: u64,
     },
     /// A reader wrote while the agent was on a turn, so their words wait for it, under `id`.
     Queued {
@@ -183,7 +186,7 @@ impl Event {
             Wire::Finished(failure) => Some(Self::Finished(failure)),
             Wire::SignedOut { reason, account } => Some(Self::SignedOut { reason, account }),
             Wire::SignedIn => Some(Self::SignedIn),
-            Wire::LoginUrl(_) | Wire::LoginCode { .. } => None,
+            Wire::LoginUrl(_) | Wire::LoginCode { .. } | Wire::Resumed(_) => None,
             Wire::Failed(reason) => Some(Self::Failed(reason)),
             Wire::Titled(title) => Some(Self::Titled(title)),
         }

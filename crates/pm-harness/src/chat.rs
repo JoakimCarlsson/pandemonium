@@ -23,6 +23,10 @@ enum Request {
         text: String,
         /// The files attached, by path.
         files: Vec<PathBuf>,
+        /// The id the turn is saved under.
+        turn: Option<String>,
+        /// Words the agent is told before the reader's, which are not saved as theirs.
+        context: Option<String>,
     },
     /// Answers the question under `ticket` with the choice `option`, or declines it.
     Choose {
@@ -37,6 +41,11 @@ enum Request {
         ticket: u64,
         /// What the reader answered, or nothing to abandon the form.
         replies: Option<Vec<Reply>>,
+    },
+    /// Names the conversation.
+    Rename {
+        /// The new name.
+        title: String,
     },
     /// Stops the turn that is running.
     Cancel,
@@ -53,9 +62,20 @@ impl Request {
     /// The command that carries out the request.
     fn command(self) -> Command {
         match self {
-            Self::Prompt { text, files } => Command::Prompt { text, files },
+            Self::Prompt {
+                text,
+                files,
+                turn,
+                context,
+            } => Command::Prompt {
+                text,
+                files,
+                turn,
+                context,
+            },
             Self::Choose { ticket, option } => Command::Choose { ticket, option },
             Self::Answer { ticket, replies } => Command::Answer { ticket, replies },
+            Self::Rename { title } => Command::Rename { title },
             Self::Cancel => Command::Cancel,
             Self::Set { setting, value } => Command::Set { setting, value },
         }
@@ -89,8 +109,10 @@ pub struct Given {
     pub conversation: Option<String>,
     /// The folder the harness keeps saved histories in, or its own when there is none.
     pub history: Option<PathBuf>,
-    /// How many turns of the saved history to continue from, or all of it when there is none.
-    pub keep: Option<usize>,
+    /// The id of the turn to go back to before when the saved history is loaded, or all of it when there is none.
+    pub before: Option<String>,
+    /// The values to give settings the saved conversation has no choice for.
+    pub defaults: Vec<(String, String)>,
 }
 
 /// A running agent and the conversation held with it.
@@ -152,11 +174,13 @@ impl Chat {
         let _ = self.driver.join();
     }
 
-    /// Hands the agent `text` and the files at `files` as the next turn.
-    pub fn prompt(&self, text: &str, files: &[String]) {
+    /// Hands the agent `text` and the files at `files` as the next turn, which is saved under the id `turn`; `context` is what the agent is told first and is not saved as the reader's words.
+    pub fn prompt(&self, text: &str, files: &[String], turn: u64, context: &str) {
         let _ = self.requests.send(Request::Prompt {
             text: text.to_owned(),
             files: files.iter().map(PathBuf::from).collect(),
+            turn: Some(turn.to_string()),
+            context: Some(context.to_owned()).filter(|context| !context.is_empty()),
         });
     }
 
@@ -168,6 +192,13 @@ impl Chat {
     /// Answers the form of questions under `ticket` with `replies`, or abandons it.
     pub fn answer(&self, ticket: u64, replies: Option<Vec<Reply>>) {
         let _ = self.requests.send(Request::Answer { ticket, replies });
+    }
+
+    /// Names the conversation, which the harness saves with it and tells back as a title.
+    pub fn rename(&self, title: &str) {
+        let _ = self.requests.send(Request::Rename {
+            title: title.to_owned(),
+        });
     }
 
     /// Stops the turn that is running.
@@ -235,7 +266,9 @@ fn drive(
         disabled: given.disabled,
         conversation: given.conversation,
         history: given.history,
-        keep: given.keep,
+        keep: None,
+        before: given.before,
+        defaults: given.defaults,
     }))?;
     loop {
         loop {
@@ -282,6 +315,8 @@ mod tests {
         chat.prompt(
             "Run the bash command `echo hi`, then reply with just: done",
             &[],
+            1,
+            "",
         );
         let mut seen = Vec::new();
         let deadline = std::time::Instant::now() + Duration::from_secs(90);
