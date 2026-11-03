@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 
+use pm_agent_library::{Item, Kind, Source, ToolEntry, ToolSet};
 use pm_harness::Agent;
-use pm_agent_library::{Item, Launch, Source, ToolEntry, ToolSet};
 use pm_protocol::McpServer;
 
 /// What the keys of everything turned off are kept under.
@@ -116,43 +116,52 @@ pub(crate) fn tool_sets(agent: Agent) -> Vec<ToolSet> {
         .collect()
 }
 
-/// What `agent` of the session numbered `session` is started with in `directory`: the tool servers it is given, and what leaves out the customizations and tools the reader turned off.
-pub(crate) fn given(
-    agent: Agent,
-    directory: &Path,
-    session: u64,
-) -> (Vec<serde_json::Value>, Launch) {
+/// The instruction files (by path), skills and agent definitions (by name) of the project at `directory` that the reader turned off in `withheld`.
+fn disabled(agent: Agent, directory: &Path, withheld: &[String]) -> Vec<String> {
+    items(agent, directory)
+        .into_iter()
+        .filter(|item| item.kind.switchable(agent.product()) && !item.enabled(withheld))
+        .filter_map(|item| match item.kind {
+            Kind::Instruction => Some(item.path),
+            Kind::Skill | Kind::Agent => Some(item.name),
+            Kind::Hook => None,
+        })
+        .collect()
+}
+
+/// What `agent` of the session numbered `session` working in `directory` is given: the tool servers the reader keeps on and the browser of the session, and the names of the tools the reader turned off.
+pub(crate) fn given(agent: Agent, directory: &Path, session: u64) -> pm_harness::Given {
     let withheld = withheld();
-    let product = agent.product();
     let kept: Vec<McpServer> = servers()
         .into_iter()
         .filter(|server| !set_of(server).off(&withheld))
         .collect();
-    let mut tools: Vec<String> = ToolSet::built_in(product)
+    let mut denied: Vec<String> = ToolSet::built_in(agent.product())
         .map(|set| set.withheld_names(&withheld))
         .unwrap_or_default();
     for server in &kept {
         let set = set_of(server);
         let prefix = format!("tool/{}/", set.id);
-        tools.extend(
+        denied.extend(
             withheld
                 .iter()
                 .filter_map(|key| key.strip_prefix(&prefix))
                 .map(|tool| set.agent_name(tool)),
         );
     }
-    let off: Vec<Item> = items(agent, directory)
-        .into_iter()
-        .filter(|item| !item.enabled(&withheld))
-        .collect();
-    let mut servers = pm_harness::mcp_servers(&serde_json::to_string(&kept).unwrap_or_default());
+    let mut tools = pm_harness::mcp_servers(&serde_json::to_string(&kept).unwrap_or_default());
     if let Some((url, token)) = crate::browser_tools::offered(session) {
-        servers.push(serde_json::json!({
-            "type": "http",
-            "name": "pandemonium-browser",
-            "url": url,
-            "headers": [{ "name": "Authorization", "value": format!("Bearer {token}") }],
-        }));
+        tools.push(pm_harness::ToolServer {
+            name: "pandemonium-browser".to_owned(),
+            reach: pm_harness::Reach::Http {
+                url,
+                headers: vec![("Authorization".to_owned(), format!("Bearer {token}"))],
+            },
+        });
     }
-    (servers, Launch::without(product, &off, &tools))
+    pm_harness::Given {
+        tools,
+        denied,
+        disabled: disabled(agent, directory, &withheld),
+    }
 }

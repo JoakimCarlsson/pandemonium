@@ -36,31 +36,9 @@ fn saved_list<T: serde::Serialize>(name: &str, list: &[T]) -> Response {
     }
 }
 
-/// Every agent the server can start: the ones saved, or the ones the app ships and those saved by an earlier version when none were.
-pub fn saved_agents() -> Vec<pm_protocol::AgentServer> {
-    match stored_list("agents") {
-        Ok(agents) if pm_store::load_text("agents").is_some() => agents,
-        _ => {
-            let mut agents = pm_protocol::builtin_agents();
-            agents.extend(stored_list("agent-servers").unwrap_or_default());
-            agents
-        }
-    }
-}
-
-/// The agent whose id is `id`: one in the list, or one the app ships that was taken out of it, so that sessions it ran keep running.
+/// The agent whose id is `id`, when the app ships one by that name.
 pub(crate) fn agent_named(id: &str) -> Option<Agent> {
-    let agents = saved_agents();
-    let record = agents
-        .iter()
-        .find(|record| record.id == id)
-        .cloned()
-        .or_else(|| {
-            pm_protocol::builtin_agents()
-                .into_iter()
-                .find(|record| record.id == id)
-        })?;
-    record.agent()
+    pm_harness::AGENTS.into_iter().find(|agent| agent.id == id)
 }
 
 /// The folder `path` names on this machine, with a leading `~` taken to be the reader's home folder.
@@ -139,10 +117,7 @@ fn debug_done(found: bool, debug: u64) -> Response {
 
 /// Points every agent at the folder of the login in use for it, or at its own when none is.
 fn apply_accounts(logins: &[pm_protocol::Login], in_use: &[(String, String)]) {
-    for agent in saved_agents()
-        .iter()
-        .filter_map(|record| agent_named(&record.id))
-    {
+    for agent in pm_harness::AGENTS {
         let home = in_use
             .iter()
             .find(|(owner, _)| owner == agent.id)
@@ -204,24 +179,6 @@ fn telling(core: &Core, number: u64, action: impl FnOnce(&mut Session) -> Told) 
     let response = with_session(core, number, |held| told = action(held));
     core.tell_all(told);
     response
-}
-
-/// Has the running agents of every session of `agent` that is between turns read their skills again, so that a skill added since they started can be used in the conversations already open.
-fn reload_skills(core: &Core, agent: Agent) {
-    if !agent.reloads_skills() {
-        return;
-    }
-    let Ok(sessions) = core.sessions.lock() else {
-        return;
-    };
-    for session in sessions.values() {
-        if session.agent.id == agent.id
-            && !session.busy
-            && let Some(chat) = &session.chat
-        {
-            chat.reload_skills();
-        }
-    }
 }
 
 /// Runs `action` on the session numbered `number` and tells the clients what it noted, or says why it could not be done.
@@ -475,33 +432,6 @@ fn with_session(core: &Core, number: u64, action: impl FnOnce(&mut Session)) -> 
     }
 }
 
-/// Trusts those of `hooks` the Codex of session `number` still holds back as they were shown, tells the clients which it holds back after that, and has the session's next turn start its agent again so that it runs them.
-fn trust_hooks(core: &Core, number: u64, hooks: &[pm_harness::Hook]) -> Response {
-    let found = core.sessions.lock().ok().and_then(|sessions| {
-        sessions.get(&number).map(|held| {
-            (
-                held.agent,
-                held.directory.clone(),
-                login_folder(&held.meta.agent, held.meta.login.as_deref()),
-            )
-        })
-    });
-    let Some((agent, directory, home)) = found else {
-        return failed(format!("no session is numbered {number}"));
-    };
-    match pm_harness::trust_hooks(agent, &directory, home.as_deref(), hooks) {
-        Ok(held_back) => telling(core, number, |held| {
-            held.hooks_trusted = true;
-            let event = pm_harness::Event::Hooks(held_back);
-            if held.repeats(&event) {
-                return Told::new();
-            }
-            vec![(number, held.note(number, &event), event)]
-        }),
-        Err(reason) => failed(format!("could not trust the hooks: {reason}")),
-    }
-}
-
 /// Subscribes `connection` to a session and replays what it missed after `after`.
 fn attach(core: &Core, connection: &Arc<Connection>, number: u64, after: u64) -> Response {
     let Ok(sessions) = core.sessions.lock() else {
@@ -531,19 +461,6 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                 Ok(found) => Response::Discovery(found),
                 Err(reason) => failed(reason),
             },
-            None => failed(format!("no agent is called {agent}")),
-        },
-        Request::Skills { agent, directory } => match agent_named(&agent) {
-            Some(agent) => {
-                let withheld = crate::library::withheld();
-                reload_skills(core, agent);
-                Response::Skills {
-                    skills: pm_harness::skills(agent, &place(&directory), &withheld),
-                    names: pm_harness::skill_names(agent, &place(&directory), &withheld)
-                        .into_iter()
-                        .collect(),
-                }
-            }
             None => failed(format!("no agent is called {agent}")),
         },
         Request::Library { agent, directory } => match agent_named(&agent) {
@@ -679,28 +596,6 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
         Request::SaveChoices { choices } => match pm_store::save_choices(&choices) {
             Ok(()) => Response::Done,
             Err(error) => failed(error.to_string()),
-        },
-        Request::AgentServers => match Ok::<_, String>(saved_agents()) {
-            Ok(servers) => Response::AgentServers { servers },
-            Err(reason) => failed(reason),
-        },
-        Request::SaveAgentServers { servers } => saved_list("agents", &servers),
-        Request::RegistryAgents => match pm_harness::registry_agents() {
-            Ok(agents) => Response::RegistryAgents {
-                agents: agents
-                    .into_iter()
-                    .map(|agent| pm_protocol::RegistryAgent {
-                        id: agent.id,
-                        name: agent.name,
-                        version: agent.version,
-                        description: agent.description,
-                        website: agent.website,
-                        command: agent.command,
-                        env: agent.env,
-                    })
-                    .collect(),
-            },
-            Err(reason) => failed(reason),
         },
         Request::SearchTools { query } => match pm_harness::search_tools(&query) {
             Ok(listings) => Response::ToolListings {
@@ -870,7 +765,6 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                 chat.answer(ticket, replies);
             }
         }),
-        Request::TrustHooks { session, hooks } => trust_hooks(core, session, &hooks),
         Request::Cancel { session } => telling(core, session, |held| {
             let mut told = match &held.chat {
                 Some(chat) => {

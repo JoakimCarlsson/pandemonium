@@ -9,9 +9,8 @@ use std::path::{Path, PathBuf};
 /// A window started from a desktop session inherits the path that session was
 /// given, which is not the one a shell has: npm, bun, cargo and go each put
 /// their programs somewhere only a shell profile hears about.
-const TOOL_DIRECTORIES: [&str; 10] = [
+const TOOL_DIRECTORIES: [&str; 9] = [
     ".local/bin",
-    ".grok/bin",
     ".bun/bin",
     ".deno/bin",
     ".npm-global/bin",

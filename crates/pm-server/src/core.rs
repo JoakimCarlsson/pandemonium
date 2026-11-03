@@ -126,8 +126,6 @@ pub(crate) struct Session {
     pub(crate) next_queued: u64,
     /// The id of the login the running agent was started as, or nothing for the agent's own.
     pub(crate) running_as: Option<String>,
-    /// Whether the reader trusted hooks since the running agent started, so that the next turn starts it again to run them.
-    pub(crate) hooks_trusted: bool,
 }
 
 impl Session {
@@ -148,35 +146,20 @@ impl Session {
             queue: VecDeque::new(),
             next_queued: 1,
             running_as: None,
-            hooks_trusted: false,
         }
     }
 
-    /// Starts the agent of the session numbered `number` in the session's folder as the session's login, without what the reader turned off, and gives it the settings the reader chose.
+    /// Starts the agent of the session in the session's folder as the session's login, without what the reader turned off, and gives it the settings the reader chose.
     pub(crate) fn start_agent(&mut self, number: u64, settings: &[(String, String)]) {
-        let (tools, launch) = crate::library::given(self.agent, &self.directory, number);
         let home = crate::handler::login_folder(&self.meta.agent, self.meta.login.as_deref());
-        let enclosure = self.meta.container.then(|| {
-            let folder = self.directory.to_string_lossy().into_owned();
-            Box::new(move |progress: &dyn Fn(&str)| {
-                let enclosed = pm_transport::session_container(&folder, progress)?;
-                let workspace = std::path::PathBuf::from(&enclosed.workspace);
-                let enclose: pm_harness::Enclose =
-                    Arc::new(move |command| enclosed.wrap(&command, false));
-                Ok((workspace, enclose))
-            }) as pm_harness::Enclosure
-        });
         let chat = Chat::start(
             self.agent,
             self.directory.clone(),
             home,
-            tools,
-            launch,
-            enclosure,
+            crate::library::given(self.agent, &self.directory, number),
             Arc::new(|| BELL.ring()),
         );
         self.running_as = self.meta.login.clone();
-        self.hooks_trusted = false;
         for (setting, value) in settings {
             chat.set(setting, value);
         }
@@ -209,7 +192,7 @@ impl Session {
             .collect()
     }
 
-    /// Whether `event` only says again what the last context usage or the last held-back hooks in the log said; no hooks held back is what a log without any says.
+    /// Whether `event` only says again what the last context usage in the log said.
     pub(crate) fn repeats(&self, event: &Event) -> bool {
         let last = |kind: fn(&Event) -> bool| {
             self.log
@@ -220,10 +203,6 @@ impl Session {
         };
         match event {
             Event::Used(_) => last(|held| matches!(held, Event::Used(_))) == Some(event),
-            Event::Hooks(hooks) => match last(|held| matches!(held, Event::Hooks(_))) {
-                Some(held) => held == event,
-                None => hooks.is_empty(),
-            },
             _ => false,
         }
     }

@@ -53,7 +53,12 @@ fn session_in(repository: &Path, worktree: &Path) -> Session {
         submodule: None,
         container: false,
     };
-    Session::new(pm_harness::AGENTS[0], worktree.to_path_buf(), Vec::new(), meta)
+    Session::new(
+        pm_harness::AGENTS[0],
+        worktree.to_path_buf(),
+        Vec::new(),
+        meta,
+    )
 }
 
 /// Opens a shell in `folder` that the server knows by the same name.
