@@ -110,10 +110,16 @@ pub(crate) fn tool_sets(agent: Agent) -> Vec<ToolSet> {
             })
             .collect()
     });
-    ToolSet::built_in(agent.product())
+    ToolSet::built_in(agent.product(), pm_harness::harness_tools())
         .into_iter()
         .chain(listed)
         .collect()
+}
+
+/// Whether the reader turned off the built-in set or any tool of it, which the harness can only be told by name once it has listed its tools.
+fn keeps_built_in_off(set: &ToolSet, withheld: &[String]) -> bool {
+    let prefix = format!("tool/{}/", set.id);
+    set.off(withheld) || withheld.iter().any(|key| key.starts_with(&prefix))
 }
 
 /// The instruction files (by path), skills and agent definitions (by name) of the project at `directory` that the reader turned off in `withheld`.
@@ -136,7 +142,15 @@ pub(crate) fn given(agent: Agent, directory: &Path, session: u64) -> pm_harness:
         .into_iter()
         .filter(|server| !set_of(server).off(&withheld))
         .collect();
-    let mut denied: Vec<String> = ToolSet::built_in(agent.product())
+    let listed = pm_harness::harness_tools();
+    let built_in = ToolSet::built_in(agent.product(), listed.clone());
+    let blocked = match (&listed, built_in.as_ref()) {
+        (Err(reason), Some(set)) if keeps_built_in_off(set, &withheld) => Some(format!(
+            "the agent was not started because the harness could not list its tools, so what you turned off could not be kept off: {reason}"
+        )),
+        _ => None,
+    };
+    let mut denied: Vec<String> = built_in
         .map(|set| set.withheld_names(&withheld))
         .unwrap_or_default();
     for server in &kept {
@@ -163,5 +177,26 @@ pub(crate) fn given(agent: Agent, directory: &Path, session: u64) -> pm_harness:
         tools,
         denied,
         disabled: disabled(agent, directory, &withheld),
+        blocked,
+    }
+}
+
+#[cfg(test)]
+/// Tests for what an agent is kept from when the harness cannot list its tools.
+mod tests {
+    use super::*;
+    use pm_agent_library::Product;
+
+    /// Turning off the built-in set or one of its tools means the listing is needed; turning off another set's tool does not.
+    #[test]
+    fn built_in_switches_need_the_listing() {
+        let set = ToolSet::built_in(Some(Product::Claude), Err("down".to_owned())).unwrap();
+        assert!(!keeps_built_in_off(&set, &[]));
+        assert!(!keeps_built_in_off(
+            &set,
+            &["tool/github/search".to_owned()]
+        ));
+        assert!(keeps_built_in_off(&set, &["tool/built-in/bash".to_owned()]));
+        assert!(keeps_built_in_off(&set, &["tools/built-in".to_owned()]));
     }
 }

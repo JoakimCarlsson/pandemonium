@@ -50,66 +50,27 @@ pub struct ToolSet {
 /// What the set of an agent's own tools is kept under.
 pub const BUILT_IN: &str = "built-in";
 
-/// How much of the machine a tool reaches, which decides when the harness asks before running it.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Tier {
-    /// It only reads.
-    Read,
-    /// It changes files.
-    Write,
-    /// It runs programs or other agents.
-    Exec,
-    /// It touches nothing; it talks to the reader or leaves a mode.
-    Neither,
-}
-
-/// The harness's own tools, each with what it does and the tier it needs.
-const HARNESS_TOOLS: [(&str, &str, Tier); 11] = [
-    ("read", "Reads files", Tier::Read),
-    ("grep", "Searches the contents of files", Tier::Read),
-    ("glob", "Finds files by pattern", Tier::Read),
-    ("bash", "Runs shell commands", Tier::Exec),
-    ("edit", "Changes part of a file", Tier::Write),
-    ("write", "Writes whole files", Tier::Write),
-    ("todo", "Keeps a list of the steps of a task", Tier::Read),
-    ("ask", "Asks the reader a question", Tier::Neither),
-    ("task", "Hands a task to a subagent", Tier::Exec),
-    ("skill", "Loads a skill", Tier::Read),
-    (
-        "exit_plan_mode",
-        "Presents a plan and leaves plan mode",
-        Tier::Neither,
-    ),
-];
-
-/// The tier the harness's own tool `name` needs, when it is one of them.
-pub fn tier(name: &str) -> Option<Tier> {
-    HARNESS_TOOLS
-        .iter()
-        .find(|(tool, _, _)| *tool == name)
-        .map(|(_, _, tier)| *tier)
-}
-
 /// The longest name a tool may have for the providers.
 const NAME_LIMIT: usize = 64;
 
 impl ToolSet {
-    /// The set of the harness's own tools, which every product runs on.
-    pub fn built_in(product: Option<Product>) -> Option<Self> {
+    /// The set of the harness's own tools, which every product runs on; `listed` is what the harness reported, or why it could not.
+    pub fn built_in(
+        product: Option<Product>,
+        listed: Result<Vec<ToolEntry>, String>,
+    ) -> Option<Self> {
         product?;
+        let (tools, error) = match listed {
+            Ok(tools) => (tools, None),
+            Err(reason) => (Vec::new(), Some(reason)),
+        };
         Some(Self {
             id: BUILT_IN.to_owned(),
             name: "Built-in tools".to_owned(),
             source: Source::BuiltIn,
             plugin: None,
-            tools: HARNESS_TOOLS
-                .iter()
-                .map(|(name, description, _)| ToolEntry {
-                    name: (*name).to_owned(),
-                    description: (*description).to_owned(),
-                })
-                .collect(),
-            error: None,
+            tools,
+            error,
         })
     }
 
@@ -240,15 +201,21 @@ mod tests {
         assert_eq!(set.agent_name(&"x".repeat(100)).len(), 64);
     }
 
-    /// The built-in set is the harness's tools, and the same for both products.
+    /// The built-in set is whatever the harness reported, and carries the reason when it could not.
     #[test]
-    fn built_in_is_the_harness_set() {
-        let claude = ToolSet::built_in(Some(Product::Claude)).unwrap();
-        let codex = ToolSet::built_in(Some(Product::Codex)).unwrap();
-        assert_eq!(claude.tools, codex.tools);
-        assert_eq!(claude.tools.len(), 11);
-        assert_eq!(claude.agent_name("bash"), "bash");
-        assert_eq!(tier("edit"), Some(Tier::Write));
-        assert_eq!(tier("ask"), Some(Tier::Neither));
+    fn built_in_is_what_the_harness_reported() {
+        let listed = vec![ToolEntry {
+            name: "bash".to_owned(),
+            description: "Runs commands".to_owned(),
+        }];
+        let set = ToolSet::built_in(Some(Product::Claude), Ok(listed.clone())).unwrap();
+        assert_eq!(set.tools, listed);
+        assert_eq!(set.error, None);
+        assert_eq!(set.agent_name("bash"), "bash");
+        let failed =
+            ToolSet::built_in(Some(Product::Codex), Err("not installed".to_owned())).unwrap();
+        assert!(failed.tools.is_empty());
+        assert_eq!(failed.error.as_deref(), Some("not installed"));
+        assert!(ToolSet::built_in(None, Ok(Vec::new())).is_none());
     }
 }

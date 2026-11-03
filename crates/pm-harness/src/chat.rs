@@ -83,6 +83,8 @@ pub struct Given {
     pub denied: Vec<String>,
     /// The instruction files (by path), skills and agent definitions (by name) the reader turned off.
     pub disabled: Vec<String>,
+    /// Why the agent must not be started, when what the reader turned off cannot be kept off; the chat then fails with this instead of starting it.
+    pub blocked: Option<String>,
 }
 
 /// A running agent and the conversation held with it.
@@ -203,6 +205,9 @@ fn drive(
 ) -> Result<(), String> {
     if !directory.is_dir() {
         return Err(format!("{} is not a folder", directory.display()));
+    }
+    if let Some(reason) = given.blocked {
+        return Err(reason);
     }
     let command = agent.command().ok_or("the harness is not installed")?;
     let mut harness = Harness::start(command)?;

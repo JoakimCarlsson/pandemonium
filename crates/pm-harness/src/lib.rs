@@ -11,6 +11,7 @@ mod agent;
 mod chat;
 mod discover;
 mod event;
+mod listing;
 mod login;
 mod mcp;
 mod product;
@@ -26,6 +27,7 @@ pub use event::{
     Alternative, Background, Choice, Diff, Discovery, Event, Inquiry, Kind, Permission, Pick,
     PlanStep, Progress, Question, Reply, Setting, Slash, Tool, ToolState, Usage, Verdict,
 };
+pub use listing::harness_tools;
 pub use mcp::{command_line, command_words, mcp_servers};
 pub use omc_wire::{Reach, ToolServer};
 pub use product::Product;

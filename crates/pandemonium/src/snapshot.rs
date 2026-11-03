@@ -3564,39 +3564,47 @@ fn with_library_sample(state: WorkspaceState) -> WorkspaceState {
         name: name.to_owned(),
         description: description.to_owned(),
     };
-    let sets = ToolSet::built_in(Some(Product::Claude))
-        .into_iter()
-        .chain([
-            ToolSet {
-                id: "github".to_owned(),
-                name: "github".to_owned(),
-                source: Source::Server,
-                plugin: None,
-                tools: vec![
-                    tool("create_issue", "Open a new issue in a repository"),
-                    tool("get_issue", "Read an issue and its comments"),
-                    tool(
-                        "list_pull_requests",
-                        "List the pull requests of a repository",
-                    ),
-                    tool("search_code", "Search code across repositories"),
-                    tool("add_issue_comment", "Comment on an issue"),
-                ],
-                error: None,
-            },
-            ToolSet {
-                id: "context7".to_owned(),
-                name: "context7".to_owned(),
-                source: Source::Plugin,
-                plugin: Some("docs".to_owned()),
-                tools: vec![
-                    tool("resolve-library-id", "Find the id of a library"),
-                    tool("get-library-docs", "Read the documentation of a library"),
-                ],
-                error: None,
-            },
-        ])
-        .collect();
+    let sets = ToolSet::built_in(
+        Some(Product::Claude),
+        Ok(vec![
+            tool("read", "Read a text file and return its lines."),
+            tool("grep", "Search file contents with a regular expression."),
+            tool("edit", "Edit a file by replacing one exact piece of text."),
+            tool("bash", "Run a shell command in the working directory."),
+        ]),
+    )
+    .into_iter()
+    .chain([
+        ToolSet {
+            id: "github".to_owned(),
+            name: "github".to_owned(),
+            source: Source::Server,
+            plugin: None,
+            tools: vec![
+                tool("create_issue", "Open a new issue in a repository"),
+                tool("get_issue", "Read an issue and its comments"),
+                tool(
+                    "list_pull_requests",
+                    "List the pull requests of a repository",
+                ),
+                tool("search_code", "Search code across repositories"),
+                tool("add_issue_comment", "Comment on an issue"),
+            ],
+            error: None,
+        },
+        ToolSet {
+            id: "context7".to_owned(),
+            name: "context7".to_owned(),
+            source: Source::Plugin,
+            plugin: Some("docs".to_owned()),
+            tools: vec![
+                tool("resolve-library-id", "Find the id of a library"),
+                tool("get-library-docs", "Read the documentation of a library"),
+            ],
+            error: None,
+        },
+    ])
+    .collect();
     let withheld = vec![
         "skill/user/commit".to_owned(),
         "tool/github/create_issue".to_owned(),

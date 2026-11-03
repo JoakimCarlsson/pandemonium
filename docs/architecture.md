@@ -87,7 +87,8 @@ One crate per layer, each depending only on the layers below it.
 - **Domain:** `pm-harness` (the app's side of the harness: the agents it ships,
   the conversation held with one over the harness's wire protocol, and its
   sign-in; the harness is its own program in the `oh-my-crab` repository, and
-  `PANDEMONIUM_HARNESS` points at a build of it),
+  `PANDEMONIUM_HARNESS` points at a build of it, and the tools it offers are
+  listed by running `crab tools`),
   `pm-agent-library` (the skills, instructions, agent definitions, hooks and
   tools each agent product is given, read from the folders it keeps them in,
   and which of them the reader turned off), `pm-mcp` (a client
