@@ -331,7 +331,9 @@ everything said of them, its submodules' paths written from `directory`.
   again, and fails when its folder was removed. Other clients are told with `session_closed`.
 - **`rename_session`:** keeps `title` as the session's title, trimmed, and fails when it is empty.
   Every client watching the session is told with a `Titled` event, the one that asked included. The
-  agent may name the session again later.
+  title belongs to the conversation: the server hands it to the harness, which saves it with the
+  conversation, and reads it back from there when it starts. An agent that finds its conversation
+  unnamed may name it once; a name the reader gave always wins.
 - **`prompt`:** hands the agent its next turn. If the agent has stopped (after
   a `failed` event) the server starts it again first. A prompt sent while a
   turn is running waits in the session's queue, which the server keeps, and is
@@ -1017,8 +1019,8 @@ Events use serde's default form, one key naming the type.
 | `"SignedIn"` | The session account was signed in again. Clear its sign-in notice. |
 | `{"Failed": "reason"}`        | The agent could not be started or stopped. The next `prompt` starts it again.                             |
 | `{"Container": "step"}`       | The dev container of the session is coming up: what it is doing now. Cleared when the agent starts.      |
-| `{"Titled": "text"}`          | The agent named the session, or named it again. The server keeps it as the session's `title`.            |
-| `{"Prompted": {text, files, checkpoint}}` | A client handed the agent a turn. Sent to every client watching the session, the one that sent it included. `files` are names. `checkpoint` (absent means `false`) says the files were kept before the turn, so `restore` can put them back. |
+| `{"Titled": "text"}`          | The session was named, by the reader or by the agent. The server keeps it as the session's `title`.      |
+| `{"Prompted": {text, files, checkpoint, turn}}` | A client handed the agent a turn. Sent to every client watching the session, the one that sent it included. `files` are names. `checkpoint` (absent means `false`) says the files were kept before the turn, so `restore` can put them back. `turn` (absent or 0 means a turn from before turns had ids, which goes by the number of this event) is the id the harness saves the turn under; it names the files kept before the turn, and a rewind or a branch goes back to before a turn by it. |
 | `{"Queued": {id, text, files}}` | A client wrote while a turn was running, so the prompt waits under `id`, counted per session. `files` are names. |
 | `{"Unqueued": id}`            | The prompt queued under `id` stopped waiting: it is handed over (a `Prompted` event follows) or dropped.  |
 | `{"Rewound": {turn}}`         | The conversation went back to before the reader's turn `turn`: drop that turn and everything after it.   |
@@ -1299,10 +1301,24 @@ browser helper that take them are in [browser.md](browser.md#adding-screenshots-
 ## Not in the protocol yet
 
 - After a restart the server holds the sessions but not their agents. The
-  next `prompt` starts the agent again as a new conversation and hands it what
-  was said before as text ahead of the prompt. Queued prompts are not kept: the server drops them when it
-  starts again, with an `Unqueued` event for each.
-- The log of events is never trimmed.
+  conversation itself, its turns, its title and the settings chosen for it, is
+  kept by the harness, not the server: the server reads it back from the
+  harness when it starts, and the next `prompt` starts the agent again on the
+  same saved conversation. Only a session from before the harness kept
+  conversations is handed what was said before as text ahead of the prompt. A
+  turn that was stopped, failed or interrupted is kept by the harness as a
+  turn the model never sees, so it still shows in the session after a restart.
+  The harness also keeps what can be set and the choices made, the commands
+  it offers, how full the context is and the files each tool call changed, so
+  the server keeps none of those. What the server keeps itself is what the
+  harness cannot know: which turns have files kept, queued prompts, and
+  restore and rewind notes. A session from before the harness kept
+  conversations is handed to the harness the first time the server loads it,
+  as its prompts and what the agent said, without the tools it used, and the
+  copy is then cut from its log.
+  Queued prompts are not kept: the server drops them when it starts again,
+  with an `Unqueued` event for each.
+- The log of events is never trimmed while the server runs.
 - Shells do not survive a restart of the server.
 - There are no requests for file contents, file watching,
   listing checkpoints or deleting a session, and no message says that a project was

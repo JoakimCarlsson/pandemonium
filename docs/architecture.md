@@ -88,7 +88,10 @@ One crate per layer, each depending only on the layers below it.
   the conversation held with one over the harness's wire protocol, and its
   sign-in; the harness is its own program in the `oh-my-crab` repository, and
   `PANDEMONIUM_HARNESS` points at a build of it, and the tools it offers are
-  listed by running `crab tools`),
+  listed by running `crab tools`. The harness owns each conversation: its
+  turns, title and chosen settings are saved by it, and the server reads them
+  back with `crab history`. The server keeps only what is its own, such as
+  worktrees, files kept per turn and queued prompts),
   `pm-agent-library` (the skills, instructions, agent definitions, hooks and
   tools each agent product is given, read from the folders it keeps them in,
   and which of them the reader turned off), `pm-mcp` (a client
