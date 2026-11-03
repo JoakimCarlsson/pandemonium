@@ -61,6 +61,7 @@ impl Session {
                 text,
                 files,
                 checkpoint,
+                ..
             } => self.prompted(text, files, checkpoint),
             Event::Queued { id, text, files } => self.queued.push(Queued { id, text, files }),
             Event::Unqueued(id) => self.queued.retain(|waiting| waiting.id != id),
@@ -95,9 +96,8 @@ impl Session {
         }
     }
 
-    /// Ends everything that was running, as the turn that started it was stopped.
+    /// Ends every call that was running, as the turn was stopped; commands and tasks left running in the background go on, as the harness keeps them.
     fn halted(&mut self) {
-        self.shells.clear();
         for tool in self.tools_mut() {
             if tool.state == ToolState::Running {
                 tool.state = ToolState::Failed;
@@ -414,6 +414,7 @@ mod tests {
             text: "Hello".to_owned(),
             files: Vec::new(),
             checkpoint: false,
+            turn: 0,
         });
         let before = session.messages.len();
         session.hear(Event::SignedOut {
@@ -432,6 +433,7 @@ mod tests {
             text: "Hello again".to_owned(),
             files: Vec::new(),
             checkpoint: false,
+            turn: 0,
         });
         assert_eq!(session.status, Status::Working);
         session.hear(Event::Said("Reply".to_owned()));
