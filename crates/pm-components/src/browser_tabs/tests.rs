@@ -29,12 +29,13 @@ fn a_new_tab_is_shown() {
 #[test]
 fn tabs_are_selected_and_closed() {
     let mut state = opened().browser_pressed(BROWSER_NEW_TAB);
+    let second = state.browser.as_ref().unwrap().tabs[1].id;
     state = state.browser_pressed(FocusId(BROWSER_TAB_SELECT));
     assert_eq!(state.browser.as_ref().unwrap().active, 0);
     state = state.browser_pressed(FocusId(BROWSER_TAB_CLOSE));
     let browser = state.browser.as_ref().unwrap();
     assert_eq!((browser.tabs.len(), browser.active), (1, 0));
-    assert_eq!(browser.tabs[0].id, 2);
+    assert_eq!(browser.tabs[0].id, second);
     state = state.browser_pressed(FocusId(BROWSER_TAB_CLOSE));
     assert!(state.browser.is_none());
     assert_ne!(state.tab, Tab::Browser);
@@ -44,13 +45,15 @@ fn tabs_are_selected_and_closed() {
 #[test]
 fn numbers_stay_with_tabs() {
     let mut state = opened();
-    let second = state.browser_tab_opened("http://localhost:3000", None, true, false);
-    assert_eq!(second, Some(2));
-    assert!(state.browser_tab_closed(1));
+    let first = state.browser.as_ref().unwrap().active_id();
+    let second = state
+        .browser_tab_opened("http://localhost:3000", None, true, false)
+        .unwrap();
+    assert!(state.browser_tab_closed(first));
     let browser = state.browser.as_ref().unwrap();
-    assert_eq!(browser.active_id(), 2);
-    assert!(browser.tab(2).unwrap().agent);
-    assert!(!state.browser_tab_closed(1));
+    assert_eq!(browser.active_id(), second);
+    assert!(browser.tab(second).unwrap().agent);
+    assert!(!state.browser_tab_closed(first));
 }
 
 /// The padlock locks the tab shown and unlocks it, and a tab an agent opened cannot be locked.
@@ -69,11 +72,12 @@ fn the_lock_keeps_agents_out_of_user_tabs_only() {
 #[test]
 fn an_agent_tab_opens_in_the_background() {
     let mut state = opened();
+    let first = state.browser.as_ref().unwrap().active_id();
     let id = state
         .browser_tab_opened("http://localhost:3000", None, true, false)
         .unwrap();
     let browser = state.browser.as_ref().unwrap();
-    assert_eq!(browser.active_id(), 1);
+    assert_eq!(browser.active_id(), first);
     assert_eq!(browser.agent_target(), id);
     let infos = browser.tab_infos();
     assert!(infos[1].agent && infos[1].target && !infos[1].viewing);
@@ -162,9 +166,10 @@ fn commands_carry_their_tab() {
     state.take_browser_commands();
     state.open_served_page("http://localhost:9000", None);
     let commands = state.take_browser_commands();
+    let second = state.browser.as_ref().unwrap().tabs[1].id;
     assert_eq!(
         commands,
-        vec![(2, Command::Load("http://localhost:9000".to_owned()))]
+        vec![(second, Command::Load("http://localhost:9000".to_owned()))]
     );
     assert_eq!(state.browser.as_ref().unwrap().active, 0);
 }

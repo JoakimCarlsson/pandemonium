@@ -138,7 +138,7 @@ impl Session {
         };
         let told = vec![(number, self.note(number, &event), event)];
         if afresh {
-            self.start_agent(&conversation::settings(&self.log));
+            self.start_agent(number, &conversation::settings(&self.log));
         }
         if let Some(chat) = &self.chat {
             chat.prompt(&format!("{preface}{}", prompt.text), &prompt.paths);

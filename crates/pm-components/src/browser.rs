@@ -205,8 +205,6 @@ pub struct Browser {
     pub tabs: Vec<BrowserTab>,
     /// The index of the tab being shown.
     pub active: usize,
-    /// The number the next tab gets.
-    pub next_tab: u32,
     /// The tab the agents' tools work on when they name none, when an agent chose one.
     pub agent_tab: Option<u32>,
     /// The index of the first tab the strip draws when not all fit.
@@ -243,9 +241,13 @@ impl Browser {
     /// A browser with one tab about to load `address`.
     pub(crate) fn new(address: &str, host: Option<String>) -> Self {
         Self {
-            tabs: vec![BrowserTab::new(1, address, host, false)],
+            tabs: vec![BrowserTab::new(
+                crate::browser_scope::next_tab_number(),
+                address,
+                host,
+                false,
+            )],
             active: 0,
-            next_tab: 2,
             agent_tab: None,
             strip_start: 0,
             strip_fit: std::cell::Cell::new(usize::MAX),
@@ -254,6 +256,33 @@ impl Browser {
             tools_width: TOOLS_WIDTH,
             clearing: false,
         }
+    }
+
+    /// A browser as it was left: with `tabs`, the one at `active` shown, the developer tools open when `tools`, `tools_width` wide; nothing when `tabs` is empty.
+    pub(crate) fn restored(
+        tabs: &[SavedTab],
+        active: usize,
+        tools: bool,
+        tools_width: f32,
+    ) -> Option<Self> {
+        let first = tabs.first()?;
+        let mut browser = Self::new(&first.address, first.host.clone());
+        for saved in &tabs[1..] {
+            browser.open_tab(&saved.address, saved.host.clone(), saved.agent, false);
+        }
+        for (tab, saved) in browser.tabs.iter_mut().zip(tabs) {
+            tab.agent = saved.agent;
+            tab.locked = saved.locked && !saved.agent;
+        }
+        browser.active = active.min(browser.tabs.len() - 1);
+        if tools_width > 0.0 {
+            browser.tools_width = tools_width;
+        }
+        if tools {
+            browser.tools = true;
+            browser.commands.push(Command::OpenTools);
+        }
+        Some(browser)
     }
 }
 
@@ -390,25 +419,9 @@ impl WorkspaceState {
         tools_width: f32,
         shown: bool,
     ) {
-        let Some(first) = tabs.first() else {
+        let Some(browser) = Browser::restored(tabs, active, tools, tools_width) else {
             return;
         };
-        let mut browser = Browser::new(&first.address, first.host.clone());
-        for saved in &tabs[1..] {
-            browser.open_tab(&saved.address, saved.host.clone(), saved.agent, false);
-        }
-        for (tab, saved) in browser.tabs.iter_mut().zip(tabs) {
-            tab.agent = saved.agent;
-            tab.locked = saved.locked && !saved.agent;
-        }
-        browser.active = active.min(browser.tabs.len() - 1);
-        if tools_width > 0.0 {
-            browser.tools_width = tools_width;
-        }
-        if tools {
-            browser.tools = true;
-            browser.commands.push(Command::OpenTools);
-        }
         self.browser = Some(browser);
         if shown {
             self.tab = Tab::Browser;
@@ -417,18 +430,7 @@ impl WorkspaceState {
 
     /// How the browser is to be put back after a restart: its tabs, the index of the one shown, whether its developer tools are open and how wide they are.
     pub fn browser_saved(&self) -> Option<(Vec<SavedTab>, usize, bool, f32)> {
-        let browser = self.browser.as_ref()?;
-        let tabs = browser
-            .tabs
-            .iter()
-            .map(|tab| SavedTab {
-                address: tab.address.text().to_owned(),
-                host: tab.host.clone(),
-                agent: tab.agent,
-                locked: tab.locked,
-            })
-            .collect();
-        Some((tabs, browser.active, browser.tools, browser.tools_width))
+        self.browser.as_ref().map(crate::browser_scope::saved_parts)
     }
 
     /// Shows the developer tools beside the page when they are not shown, as pressing their button does.

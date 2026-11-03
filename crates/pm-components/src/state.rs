@@ -1635,6 +1635,10 @@ pub struct WorkspaceState {
     pub excerpts: Option<crate::excerpts::Excerpts>,
     /// The page of the web beside the work, while one is open.
     pub browser: Option<crate::browser::Browser>,
+    /// The scope of the session whose browser `browser` is, or `NO_SCOPE` on a page that is no session's.
+    pub browser_scope: u64,
+    /// The browsers of the sessions other than the one shown, by scope.
+    pub browsers: std::collections::HashMap<u64, crate::browser::Browser>,
     /// The folders of the project's files that are unfolded, by path.
     pub open_tree: std::collections::HashSet<String>,
     /// The folders of the changed files that are folded away, by group and path.
@@ -1919,6 +1923,8 @@ impl WorkspaceState {
             project_search: crate::project_search::ProjectSearch::default(),
             excerpts: None,
             browser: None,
+            browser_scope: crate::browser_scope::NO_SCOPE,
+            browsers: crate::browser_scope::no_browsers(),
             open_tree: std::collections::HashSet::new(),
             closed_folders: std::collections::HashSet::new(),
             closed_diffs: std::collections::HashSet::new(),
@@ -2699,6 +2705,7 @@ impl WorkspaceState {
         } else if let Some(index) = position(PROJECT_BASE, self.projects.len()) {
             self.page = Page::Project(index);
             self.overview_scroll = 0.0;
+            self.rescope_browser();
         } else if let Some(index) = position(NEW_IN_BASE, self.projects.len()) {
             self.start_in(index, None);
         } else if let Some((project, submodule)) = (NEW_IN_SUBMODULE_BASE..SESSION_BASE)
@@ -2720,6 +2727,7 @@ impl WorkspaceState {
             self.comment_target = None;
             self.fresh_git();
             self.chat_back = self.sessions[index].chat_back;
+            self.rescope_browser();
         } else if let Some(index) = position(AGENT_BASE, self.agent_slots()) {
             self.agent = index;
         } else if let Some(index) = position(CHOICE_BASE, self.choices()) {

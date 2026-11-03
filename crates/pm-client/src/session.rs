@@ -69,6 +69,8 @@ pub enum Incoming {
     },
     /// A program of the session with this number serves the web page at this address, on the server's machine.
     SessionServing {
+        /// The session.
+        session: u64,
         /// The address of the page.
         url: String,
     },
@@ -105,6 +107,8 @@ pub enum Incoming {
     BrowserCall {
         /// The call.
         call: u64,
+        /// The session whose agent made it, by the server's number; zero when the server does not say.
+        session: u64,
         /// The tool.
         tool: String,
         /// What the agent gave it, as JSON text.
@@ -513,8 +517,8 @@ fn converse(
                     ServerMessage::TerminalServing { terminal, url } => {
                         let _ = reporter.send(Incoming::TerminalServing { terminal, url });
                     }
-                    ServerMessage::SessionServing { url, .. } => {
-                        let _ = reporter.send(Incoming::SessionServing { url });
+                    ServerMessage::SessionServing { session, url } => {
+                        let _ = reporter.send(Incoming::SessionServing { session, url });
                     }
                     ServerMessage::UpdateProgress { received, total } => {
                         let _ = reporter.send(Incoming::UpdateProgress { received, total });
@@ -557,11 +561,13 @@ fn converse(
                     }
                     ServerMessage::BrowserCall {
                         call,
+                        session,
                         tool,
                         arguments,
                     } => {
                         let _ = reporter.send(Incoming::BrowserCall {
                             call,
+                            session,
                             tool,
                             arguments,
                         });

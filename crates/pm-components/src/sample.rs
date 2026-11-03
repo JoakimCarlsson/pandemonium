@@ -505,6 +505,8 @@ pub struct Queued {
 /// One agent's work on one task: its conversation and what it changed.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Session {
+    /// Names the session's browser for as long as the window runs, however the sessions are renumbered.
+    pub scope: u64,
     /// What the task is called.
     pub title: String,
     /// Which project, by position, it belongs to.
@@ -604,6 +606,7 @@ impl Session {
         messages: Vec<Message>,
     ) -> Self {
         Self {
+            scope: crate::browser_scope::next_scope(),
             title: title.to_owned(),
             project,
             branch: branch.to_owned(),

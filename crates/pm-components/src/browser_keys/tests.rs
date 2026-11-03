@@ -130,7 +130,8 @@ fn find_opens_steps_and_closes() {
             again: true
         }]
     );
-    state.browser_found(1, 2, 5);
+    let tab = state.browser.as_ref().unwrap().active_id();
+    state.browser_found(tab, 2, 5);
     let search = state.browser.as_ref().and_then(|b| b.search.as_ref());
     assert_eq!(
         search.map(|search| search.tally().0),

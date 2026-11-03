@@ -216,8 +216,7 @@ impl Browser {
         if self.tabs.len() >= MOST_TABS {
             return None;
         }
-        let id = self.next_tab;
-        self.next_tab += 1;
+        let id = crate::browser_scope::next_tab_number();
         self.tabs.push(BrowserTab::new(id, address, host, agent));
         if show {
             self.select(self.tabs.len() - 1);
