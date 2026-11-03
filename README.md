@@ -195,8 +195,8 @@ Other targets:
 ```sh
 make fmt                     # cargo fmt --all
 make lint                    # cargo clippy --workspace --all-targets -- -D warnings
-make install                 # build this checkout and install it as pandemonium-preview
-make install-server          # build and install only pandemonium-server
+make install                 # build this checkout and install it as pandemonium-preview, with crab built from the oh-my-crab checkout beside it (or PANDEMONIUM_HARNESS_SRC)
+make install-server          # build and install only pandemonium-server, and crab
 make uninstall               # remove pandemonium-preview and everything it keeps; the stable app is left alone
 make release VERSION=0.2.0   # bump, tag and push; CI builds and publishes
 make languages              # regenerate the language index after changing a language folder
