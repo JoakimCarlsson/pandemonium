@@ -106,6 +106,9 @@ pub(crate) struct Connection {
     pub(crate) attached: Mutex<HashSet<u64>>,
 }
 
+/// The harness's setting that gives the agent its checkpoint and rewind tools, which the app turns on for every agent it starts.
+const CHECKPOINTS: &str = "checkpoints";
+
 /// One session: an agent working in a folder, and everything it has done.
 pub(crate) struct Session {
     /// The agent that runs it.
@@ -126,8 +129,8 @@ pub(crate) struct Session {
     pub(crate) next_queued: u64,
     /// The id of the login the running agent was started as, or nothing for the agent's own.
     pub(crate) running_as: Option<String>,
-    /// How many turns of the saved history the next start continues from, after a rewind or a branch; all of it when there is none.
-    pub(crate) resume_keep: Option<usize>,
+    /// The id of the turn the next start goes back to before in the saved history, after a rewind or a branch; all of it when there is none.
+    pub(crate) resume_before: Option<String>,
 }
 
 impl Session {
@@ -148,17 +151,18 @@ impl Session {
             queue: VecDeque::new(),
             next_queued: 1,
             running_as: None,
-            resume_keep: None,
+            resume_before: None,
         }
     }
 
-    /// Starts the agent of the session in the session's folder as the session's login, without what the reader turned off, and gives it the settings the reader chose.
+    /// Starts the agent of the session in the session's folder as the session's login, without what the reader turned off, and gives it the `settings` the reader chose now; the harness gives back the ones it saved with the conversation.
     pub(crate) fn start_agent(&mut self, number: u64, settings: &[(String, String)]) {
         let home = crate::handler::login_folder(&self.meta.agent, self.meta.login.as_deref());
         let mut given = crate::library::given(self.agent, &self.directory, number);
         given.conversation = Some(crate::sessions::HISTORY.to_owned());
         given.history = crate::sessions::history_folder(number);
-        given.keep = self.resume_keep.take();
+        given.before = self.resume_before.take();
+        given.defaults = vec![(CHECKPOINTS.to_owned(), "on".to_owned())];
         let chat = Chat::start(
             self.agent,
             self.directory.clone(),

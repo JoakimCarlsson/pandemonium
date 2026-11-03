@@ -132,17 +132,24 @@ impl Session {
         let afresh = self.chat.is_none();
         let preface =
             conversation::preface(&self.log, afresh && !crate::sessions::has_history(number));
+        let turn = self.next_seq();
         let event = Event::Prompted {
             text: prompt.text.clone(),
             files: prompt.names,
-            checkpoint: self.checkpoint(number, self.next_seq()),
+            checkpoint: self.checkpoint(number, turn),
+            turn,
         };
         let told = vec![(number, self.note(number, &event), event)];
         if afresh {
-            self.start_agent(number, &conversation::settings(&self.log));
+            let settings = if crate::sessions::has_history(number) {
+                Vec::new()
+            } else {
+                conversation::settings(&self.log)
+            };
+            self.start_agent(number, &settings);
         }
         if let Some(chat) = &self.chat {
-            chat.prompt(&format!("{preface}{}", prompt.text), &prompt.paths);
+            chat.prompt(&prompt.text, &prompt.paths, turn, &preface);
             self.busy = true;
         }
         told

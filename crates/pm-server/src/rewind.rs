@@ -29,10 +29,13 @@ impl Session {
             return Err(format!("session {number} has no turn {turn}"));
         }
         self.chat = None;
+        let first = conversation::turns(&self.log)
+            .get(turn as usize)
+            .map(|held| held.id);
         let mut told = self.drop_queue(number);
         let event = Event::Rewound { turn };
         told.push((number, self.note(number, &event), event));
-        self.resume_keep = Some(conversation::kept_by_harness(&self.log));
+        self.resume_before = first.map(|id| id.to_string());
         Ok(told)
     }
 
@@ -43,7 +46,7 @@ impl Session {
         let Some(before) = turns.get(turn as usize).filter(|before| before.checkpoint) else {
             return Err(format!("no files were kept before turn {turn}"));
         };
-        let files = pm_git::restore(&self.directory, &kept(number, before.seq), &backup(number))
+        let files = pm_git::restore(&self.directory, &kept(number, before.id), &backup(number))
             .map_err(|reason| format!("could not put the files back: {reason}"))?;
         let event = Event::Restored { turn, files };
         Ok(vec![(number, self.note(number, &event), event)])

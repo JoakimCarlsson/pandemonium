@@ -379,7 +379,9 @@ fn fork_session(core: &Core, connection: &Arc<Connection>, source: u64, turn: u6
             ..held.meta.clone()
         };
         let mut branch = Session::new(held.agent, held.directory.clone(), log, meta);
-        branch.resume_keep = Some(conversation::kept_by_harness(&branch.log));
+        branch.resume_before = conversation::turns(&held.log)
+            .get(turn as usize + 1)
+            .map(|next| next.id.to_string());
         branch
     };
     let number = core.next_session();
@@ -698,6 +700,13 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             trying(core, session, |held| {
                 if title.is_empty() {
                     return Err("a session needs a title".to_owned());
+                }
+                if let Some(chat) = &held.chat {
+                    chat.rename(&title);
+                    return Ok(Vec::new());
+                }
+                if let Some(folder) = crate::sessions::history_folder(session) {
+                    pm_harness::rename_saved(crate::sessions::HISTORY, &folder, &title)?;
                 }
                 let event = pm_harness::Event::Titled(title);
                 Ok(vec![(session, held.note(session, &event), event)])
