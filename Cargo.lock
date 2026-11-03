@@ -2251,6 +2251,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "omc-client"
+version = "0.1.0"
+dependencies = [
+ "omc-wire",
+]
+
+[[package]]
+name = "omc-wire"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2563,12 +2578,12 @@ dependencies = [
 name = "pm-harness"
 version = "0.14.4"
 dependencies = [
- "base64",
+ "omc-client",
+ "omc-wire",
  "pm-agent-library",
  "pm-tools",
  "serde",
  "serde_json",
- "toml",
  "ureq",
 ]
 

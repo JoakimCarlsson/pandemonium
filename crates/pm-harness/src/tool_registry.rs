@@ -239,7 +239,7 @@ fn listing(entry: &Value) -> Option<Listing> {
         website: entry["websiteUrl"]
             .as_str()
             .or_else(|| entry["repository"]["url"].as_str())
-            .filter(|address| crate::install::is_web_address(address))
+            .filter(|address| crate::web::is_web_address(address))
             .unwrap_or_default()
             .to_owned(),
         title,

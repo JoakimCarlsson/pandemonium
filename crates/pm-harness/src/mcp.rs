@@ -1,7 +1,7 @@
-//! The tool servers an agent is started with, as the protocol describes them.
+//! The tool servers an agent is given, and the command lines that start programs.
 
+use omc_wire::{Reach, ToolServer};
 use serde::Deserialize;
-use serde_json::{Value, json};
 
 /// One tool server as the server keeps it: a name, what to run or reach, and the pairs that go with it.
 #[derive(Deserialize)]
@@ -22,36 +22,32 @@ fn given() -> bool {
     true
 }
 
-/// The pairs of `env` as the protocol writes them: a name and a value each.
-fn pairs(env: Vec<(String, String)>) -> Vec<Value> {
-    env.into_iter()
-        .map(|(name, value)| json!({ "name": name, "value": value }))
-        .collect()
-}
-
 /// Describes one kept server to an agent: by its address when `target` is one, by its command otherwise.
-fn described(kept: Kept) -> Option<Value> {
+fn described(kept: Kept) -> Option<ToolServer> {
     if kept.target.starts_with("http://") || kept.target.starts_with("https://") {
-        return Some(json!({
-            "type": "http",
-            "name": kept.name,
-            "url": kept.target,
-            "headers": pairs(kept.env),
-        }));
+        return Some(ToolServer {
+            name: kept.name,
+            reach: Reach::Http {
+                url: kept.target,
+                headers: kept.env,
+            },
+        });
     }
     let mut words = command_words(&kept.target).into_iter();
-    let command = words.next()?;
-    Some(json!({
-        "name": kept.name,
-        "command": command,
-        "args": words.collect::<Vec<_>>(),
-        "env": pairs(kept.env),
-    }))
+    let program = words.next()?;
+    Some(ToolServer {
+        name: kept.name,
+        reach: Reach::Command {
+            program,
+            args: words.collect(),
+            env: kept.env,
+        },
+    })
 }
 
 /// The tool servers in `kept`, the text the server saves them as, ready to hand an agent when it opens a conversation; none when the text is not a list of them.
 #[must_use]
-pub fn mcp_servers(kept: &str) -> Vec<Value> {
+pub fn mcp_servers(kept: &str) -> Vec<ToolServer> {
     serde_json::from_str::<Vec<Kept>>(kept)
         .unwrap_or_default()
         .into_iter()

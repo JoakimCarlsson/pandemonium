@@ -1,8 +1,7 @@
-//! What an agent's own files say about who it is signed in as and what skills it has installed.
+//! What an agent's own files say about who it is signed in as.
 
-use std::collections::HashSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde_json::Value;
 
@@ -28,7 +27,6 @@ pub fn account_in_folder(agent: Agent, home: PathBuf) -> Option<String> {
 fn account_in(agent: Agent, own: Option<PathBuf>) -> Option<String> {
     let home = std::env::home_dir()?;
     match agent.product()? {
-        Product::Copilot => None,
         Product::Claude => {
             let file = match own {
                 Some(own) => own.join(".claude.json"),
@@ -52,41 +50,7 @@ fn account_in(agent: Agent, own: Option<PathBuf>) -> Option<String> {
             let claims: Value = serde_json::from_slice(&payload).ok()?;
             claims["email"].as_str().map(str::to_owned)
         }
-        Product::Grok => {
-            let grok = own
-                .or_else(|| std::env::var_os("GROK_HOME").map(PathBuf::from))
-                .unwrap_or_else(|| home.join(".grok"));
-            let held: Value =
-                serde_json::from_str(&fs::read_to_string(grok.join("auth.json")).ok()?).ok()?;
-            held.as_object()?
-                .values()
-                .find_map(|entry| entry["email"].as_str())
-                .map(str::to_owned)
-        }
     }
-}
-
-/// The skills `agent` is given in the project at `directory`: those found in the folders it keeps them in, less the ones `withheld` turns off.
-pub(crate) fn given_skills(
-    agent: Agent,
-    directory: &Path,
-    withheld: &[String],
-) -> Vec<pm_agent_library::Item> {
-    pm_agent_library::skills(agent.product(), directory, agent.config_folder().as_deref())
-        .into_iter()
-        .filter(|skill| skill.enabled(withheld))
-        .collect()
-}
-
-/// The names of the skills installed for `agent` and not turned off in `withheld`, for telling a skill from a command in what it offers behind a slash; a skill a plugin brings is named without its plugin.
-pub fn skill_names(agent: Agent, directory: &Path, withheld: &[String]) -> HashSet<String> {
-    if agent.product() != Some(Product::Claude) {
-        return HashSet::new();
-    }
-    given_skills(agent, directory, withheld)
-        .into_iter()
-        .map(|skill| skill.name.rsplit(':').next().unwrap_or_default().to_owned())
-        .collect()
 }
 
 /// The bytes a base64 text in the URL-safe alphabet stands for.

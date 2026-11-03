@@ -5,10 +5,10 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-base64 = "0.23.1"
-pm-agent-library.workspace = true
+omc-client = { version = "0.1.0", path = "../../../oh-my-crab/crates/omc-client" }
+omc-wire = { version = "0.1.0", path = "../../../oh-my-crab/crates/omc-wire" }
+pm-agent-library = { version = "0.14.4", path = "../pm-agent-library" }
 pm-tools.workspace = true
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
-toml = "1.1.8"
 ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
