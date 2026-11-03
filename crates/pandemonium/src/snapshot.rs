@@ -2,10 +2,6 @@
 
 use std::path::Path;
 
-use pm_harness::{
-    Alternative, Background, Choice, Diff, Discovery, Event, Hook, Inquiry, Kind, Permission, Pick,
-    PlanStep, Progress, Question, Setting, Slash, Tool, ToolState, Verdict,
-};
 use pm_components::Project;
 use pm_components::adder::{ADDER_BROWSE, ADDER_CLONE, ADDER_ROW_BASE, Found, Kind as Row};
 use pm_components::browser_safety::{Certificate, Download, Question as Asked, Saving};
@@ -13,18 +9,21 @@ use pm_components::diff::gutter_id;
 use pm_components::git_controls::{BRANCH_BUTTON, BRANCH_FILTER, Pick as Choosing};
 use pm_components::git_menus::MenuKind;
 use pm_components::git_prompts::Prompt;
-use pm_components::hooks_prompt::HOOKS_REVIEW;
 use pm_components::open_files::EDITOR_FIELD;
 use pm_components::panes::{Item, SPLIT_RIGHT, Side};
 use pm_components::settings::{SETTINGS_ADD, SETTINGS_FIND, Section};
 use pm_components::settings_catalog::{OPEN_LIST, Setting as SettingsCatalogue};
 use pm_components::settings_machines::{MACHINE_ADD, MACHINE_ADDRESS, MACHINE_NAME};
 use pm_components::state::{
-    AGENT_BASE, CHAT_TEXT, COMMENT_ADD, COMMENT_FIELD, COMMIT_MESSAGE, DETAILS_BASE, FILE_BASE,
-    RESTORE_BASE, REVIEW_FILES, STAGE_BASE, SUBAGENTS_CHIP, TAB_CHAT,
+    CHAT_TEXT, COMMENT_ADD, COMMENT_FIELD, COMMIT_MESSAGE, DETAILS_BASE, FILE_BASE, RESTORE_BASE,
+    REVIEW_FILES, STAGE_BASE, SUBAGENTS_CHIP, TAB_CHAT,
 };
 use pm_components::state::{LOCATION, SETTINGS};
 use pm_components::tree_actions::{TREE_NEW_FOLDER, TreeTarget};
+use pm_harness::{
+    Alternative, Background, Choice, Diff, Discovery, Event, Inquiry, Kind, Permission, Pick,
+    PlanStep, Progress, Question, Setting, Slash, Tool, ToolState, Verdict,
+};
 use pm_input::{FocusId, PointerState};
 use pm_pages::{ADD_PROJECT, HISTORY, PROMPT, SEND, Screen, TAB_DIFF, TERMINAL, WorkspaceState};
 use pm_renderer::{DrawList, Renderer};
@@ -218,12 +217,10 @@ pub enum Shot {
     Wrapped,
     /// The page for starting work after a command was picked from the list behind a slash.
     Slashed,
-    /// The page for starting work with Codex and a dollar sign being typed.
-    Dollar,
-    /// A Codex conversation with messages and its skills menu open.
-    DollarSession,
-    /// The page for starting work with Codex and more skills than rows, the last one highlighted.
-    DollarScrolled,
+    /// A conversation with messages and the list of commands and skills behind a slash open.
+    SlashSession,
+    /// The page for starting work with more commands and skills than rows, the last one highlighted.
+    SlashScrolled,
     /// The page for starting work with the list of models scrolled to its end.
     Scrolling,
     /// The page for starting work with the menu of where it is done open.
@@ -238,10 +235,6 @@ pub enum Shot {
     Inquiring,
     /// A conversation whose reader answered a form of questions.
     Answered,
-    /// A conversation whose Codex holds back hooks until the reader trusts them, asking what to do.
-    Hooks,
-    /// The same conversation with the hooks held back listed for review.
-    HooksReview,
     /// A conversation whose turn ended while two subagents and a command were still running.
     Background,
     /// The same conversation with the subagents above the prompt box open.
@@ -3067,37 +3060,24 @@ impl Shot {
                     .edited(PROMPT, Edit::Paste("/c".to_owned()))
                     .after(FocusId(4401)),
             ),
-            Self::DollarScrolled => {
-                let mut state = welcome().after(FocusId(AGENT_BASE + 1));
-                state.sync_context();
-                let skills = (1..=14)
+            Self::SlashScrolled => {
+                let mut state = welcome();
+                state.agent_commands[0] = (1..=14)
                     .map(|number| Slash {
                         name: format!("skill-{number:02}"),
                         description: format!("Description of the skill numbered {number}"),
                     })
                     .collect();
-                state = state
-                    .with_skills(1, 0, skills, Default::default())
-                    .after(pm_components::state::SKILL_BUTTON);
+                state = state.after(pm_components::state::SLASH_BUTTON);
                 for _ in 0..13 {
                     state = state.slash_moved(1);
                 }
                 Screen::Workspace(state)
             }
-            Self::Dollar | Self::DollarSession => {
-                let mut state = if matches!(self, Self::DollarSession) {
-                    let mut state = WorkspaceState::sample();
-                    state.sessions[0].agent = 1;
-                    state
-                } else {
-                    welcome().after(FocusId(AGENT_BASE + 1))
-                };
-                state.sync_context();
-                state = state.with_skills(1, 0, vec![
-                    Slash { name: "review".to_owned(), description: "Review the changes in this project".to_owned() },
-                    Slash { name: "release-notes".to_owned(), description: "Write release notes from recent commits".to_owned() },
-                ], Default::default());
-                Screen::Workspace(state.after(pm_components::state::SKILL_BUTTON))
+            Self::SlashSession => {
+                let mut state = WorkspaceState::sample();
+                state.sessions[0].commands = claude_discovery().commands;
+                Screen::Workspace(state.edited(PROMPT, Edit::Paste("/".to_owned())))
             }
             Self::Scrolling => {
                 Screen::Workspace(welcome().after(FocusId(4200)).scrolled_menu(1000.0, 1000.0))
@@ -3139,8 +3119,6 @@ impl Shot {
                 ))
             }
             Self::Inquiring => Screen::Workspace(live(Turn::Inquiring)),
-            Self::Hooks => Screen::Workspace(hooks_held()),
-            Self::HooksReview => Screen::Workspace(hooks_held().after(HOOKS_REVIEW)),
             Self::Background => Screen::Workspace(live(Turn::Background)),
             Self::Agents => {
                 Screen::Workspace(live(Turn::Background).after(FocusId(SUBAGENTS_CHIP.0)))
@@ -3569,7 +3547,7 @@ fn with_library_sample(state: WorkspaceState) -> WorkspaceState {
         },
         Item {
             model: "sonnet".to_owned(),
-            tools: vec!["Read".to_owned(), "Grep".to_owned(), "Glob".to_owned()],
+            tools: vec!["read".to_owned(), "grep".to_owned(), "glob".to_owned()],
             ..item(Kind::Agent, Scope::Workspace, "reviewer", "Reviews a change for bugs before it is committed", inside(".claude/agents/reviewer.md"))
         },
         item(Kind::Agent, Scope::User, "researcher", "Finds out how a library is used across the code", "/home/me/.claude/agents/researcher.md".to_owned()),
@@ -3645,13 +3623,21 @@ fn welcome() -> WorkspaceState {
 fn claude_discovery() -> Discovery {
     Discovery {
         settings: claude_settings(),
-        commands: ["compact", "clear", "model", "review", "init"]
-            .into_iter()
-            .map(|name| Slash {
-                name: name.to_owned(),
-                description: format!("Run {name}"),
-            })
-            .collect(),
+        commands: [
+            "compact",
+            "clear",
+            "model",
+            "review",
+            "init",
+            "release-notes",
+            "frontend-design:frontend-design",
+        ]
+        .into_iter()
+        .map(|name| Slash {
+            name: name.to_owned(),
+            description: format!("Run {name}"),
+        })
+        .collect(),
     }
 }
 
@@ -3754,40 +3740,6 @@ fn queued() -> WorkspaceState {
     )
 }
 
-/// A finished conversation whose Codex holds back a new hook and a changed one until the reader trusts them.
-fn hooks_held() -> WorkspaceState {
-    let hook = |key: &str, event: &str, matcher: Option<&str>, command: &str, changed| Hook {
-        key: format!("/home/reader/.codex/hooks.json:{key}"),
-        event: event.to_owned(),
-        matcher: matcher.map(str::to_owned),
-        command: command.to_owned(),
-        source: "/home/reader/.codex/hooks.json".to_owned(),
-        hash: format!("sha256:{key}"),
-        changed,
-    };
-    let state = live(Turn::Finished);
-    let session = state.sessions.len() - 1;
-    state.heard(
-        session,
-        Event::Hooks(vec![
-            hook(
-                "pre_tool_use:0:0",
-                "preToolUse",
-                Some("Bash"),
-                "sh -c 'cat >> ~/.cache/scratch/pandemonium/pretool.log'",
-                false,
-            ),
-            hook(
-                "session_start:0:0",
-                "sessionStart",
-                None,
-                "/home/reader/.local/bin/muffle hook codex --terse",
-                true,
-            ),
-        ]),
-    )
-}
-
 /// A finished conversation whose files were kept before its first message, scrolled back to it.
 fn kept() -> WorkspaceState {
     live(Turn::Finished)
@@ -3877,22 +3829,22 @@ fn live(turn: Turn) -> WorkspaceState {
         ]),
         Event::Tool(tool(
             "1",
-            "Read",
+            "read",
             Kind::Read,
             "~/code/pandemonium/crates/pm-components/src/workspace/state.rs",
         )),
-        Event::Tool(tool("2", "Grep", Kind::Search, "sidebar_scroll")),
+        Event::Tool(tool("2", "grep", Kind::Search, "sidebar_scroll")),
         Event::Tool(Tool {
             diff: Some(Diff {
                 path: "~/code/pandemonium/src/lib.rs".to_owned(),
                 old: Some("fn a() {}\nfn b() {}\nfn c() {}\n".to_owned()),
                 new: "fn a() {}\nfn d() {}\nfn c() {}\n".to_owned(),
             }),
-            ..tool("3", "Edit", Kind::Edit, "~/code/pandemonium/src/lib.rs")
+            ..tool("3", "edit", Kind::Edit, "~/code/pandemonium/src/lib.rs")
         }),
         Event::Tool(Tool {
             output: Some("running 12 tests\ntest result: ok. 12 passed".to_owned()),
-            ..tool("4", "Terminal", Kind::Execute, "cargo test")
+            ..tool("4", "bash", Kind::Execute, "cargo test")
         }),
         Event::Said(
             "The offset is clamped against a height measured before the list is rebuilt."
@@ -3900,7 +3852,7 @@ fn live(turn: Turn) -> WorkspaceState {
         ),
         Event::Tool(tool(
             "5",
-            "Read",
+            "read",
             Kind::Read,
             "~/code/pandemonium/README.md",
         )),

@@ -39,15 +39,6 @@ pub const SETTINGS_TARGET: FocusId = FocusId(20_000_007);
 /// The box the form's environment is written in.
 pub const SETTINGS_ENV: FocusId = FocusId(20_000_008);
 
-/// The box the form's package, which the runner fetches when the agent is not installed, is written in.
-pub const SETTINGS_PACKAGE: FocusId = FocusId(20_000_020);
-
-/// The box the form's install command is written in.
-pub const SETTINGS_INSTALLER: FocusId = FocusId(20_000_021);
-
-/// The box the form's login folder variable is written in.
-pub const SETTINGS_HOME: FocusId = FocusId(20_000_022);
-
 /// The box the list showing is searched with.
 pub const SETTINGS_SEARCH: FocusId = FocusId(20_000_030);
 
@@ -247,7 +238,7 @@ impl Section {
             Self::EditorVim => "Vim",
             Self::Keymap => "Keymap",
             Self::Agents => "Agents",
-            Self::AgentServers => "Agent Servers",
+            Self::AgentServers => "Agents and accounts",
             Self::McpServers => "MCP Servers",
             Self::Customizations => "Overview",
             Self::Skills => "Skills",

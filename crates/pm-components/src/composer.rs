@@ -22,7 +22,7 @@ use crate::size::Size;
 use crate::state::{
     ACCOUNT, ACCOUNT_BASE, AGENT_TOGGLE, ATTACH, ATTACHED_BASE, BRANCH_BASE, EFFORT_BASE, LOCATION,
     Location, MENTION, MENU_BODY, MENU_SCROLL, PICK_BASE, PLACE_BASE, PROMPT, Picker, SEND,
-    SEND_NOW, SETTING_BASE, SKILL_BUTTON, SLASH_BASE, SLASH_BUTTON, STOP, WorkspaceState,
+    SEND_NOW, SETTING_BASE, SLASH_BASE, SLASH_BUTTON, STOP, WorkspaceState,
 };
 use crate::usage;
 use crate::{Button, Checkbox, Input, Stepper, button, checkbox, input};
@@ -326,14 +326,7 @@ fn slash_list(state: &WorkspaceState) -> Option<Node> {
     Some(
         Popover::new()
             .full_width()
-            .heading(
-                if matches[0].0 == '$' {
-                    "Skills"
-                } else {
-                    "Commands"
-                },
-                None,
-            )
+            .heading("Commands", None)
             .child(
                 node()
                     .styles([
@@ -343,59 +336,42 @@ fn slash_list(state: &WorkspaceState) -> Option<Node> {
                         overflow_hidden(),
                     ])
                     .scroll_from_start(MENU_SCROLL, state.menu_scroll)
-                    .children(
-                        matches
-                            .iter()
-                            .enumerate()
-                            .map(|(position, (prefix, command))| {
-                                let mut styles = vec![
-                                    flex(),
-                                    items_baseline(),
-                                    gap(3),
-                                    px(2.5),
-                                    py(2),
-                                    rounded(Radius::Lg),
-                                    cursor_pointer(),
-                                    bg(Role::SurfaceHover).hover(),
-                                ];
-                                if position == chosen {
-                                    styles.push(bg(Role::SurfaceHover));
-                                }
-                                let row = node()
-                                    .styles(styles)
-                                    .child(text(format!("{prefix}{}", command.name)).styles([
-                                        text_px(13),
-                                        leading_ratio(1.4),
-                                        font_mono(),
-                                        text_color(Role::Text),
-                                    ]))
+                    .children(matches.iter().enumerate().map(|(position, command)| {
+                        let mut styles = vec![
+                            flex(),
+                            items_baseline(),
+                            gap(3),
+                            px(2.5),
+                            py(2),
+                            rounded(Radius::Lg),
+                            cursor_pointer(),
+                            bg(Role::SurfaceHover).hover(),
+                        ];
+                        if position == chosen {
+                            styles.push(bg(Role::SurfaceHover));
+                        }
+                        let row = node()
+                            .styles(styles)
+                            .child(text(format!("/{}", command.name)).styles([
+                                text_px(13),
+                                leading_ratio(1.4),
+                                font_mono(),
+                                text_color(Role::Text),
+                            ]))
+                            .child(
+                                node()
+                                    .styles([flex_1(), min_w_px(0), overflow_hidden()])
                                     .child(
-                                        node()
-                                            .styles([flex_1(), min_w_px(0), overflow_hidden()])
-                                            .child(
-                                                line(&command.description, 12, 1.4, Role::Subtle)
-                                                    .styles([truncate()]),
-                                            ),
-                                    )
-                                    .children((!state.has_skills() && *prefix == '/').then(|| {
-                                        line(
-                                            if state.is_skill(&command.name) {
-                                                "skill"
-                                            } else {
-                                                "command"
-                                            },
-                                            11,
-                                            1.4,
-                                            Role::Subtle,
-                                        )
-                                    }));
-                                if position < PRESSABLE_LIST_ROWS {
-                                    row.focusable(FocusId(SLASH_BASE + position as u64))
-                                } else {
-                                    row
-                                }
-                            }),
-                    ),
+                                        line(&command.description, 12, 1.4, Role::Subtle)
+                                            .styles([truncate()]),
+                                    ),
+                            );
+                        if position < PRESSABLE_LIST_ROWS {
+                            row.focusable(FocusId(SLASH_BASE + position as u64))
+                        } else {
+                            row
+                        }
+                    })),
             )
             .above_box(),
     )
@@ -559,12 +535,6 @@ pub fn composer(
         && state.elements.is_empty()
         && state.captures.is_empty();
     let settings = state.settings_now();
-    let skills = state.has_skills();
-    let placeholder = if skills {
-        format!("{placeholder} or $ for skills")
-    } else {
-        placeholder.to_owned()
-    };
     let mut strip = node()
         .styles([flex(), items_center(), gap(1), px(2.5), pt(1), pb(2.5)])
         .child(Button::icon(IconName::Plus, ATTACH).build())
@@ -576,15 +546,6 @@ pub fn composer(
                 .monospace()
                 .build(),
         );
-    if skills {
-        strip = strip.child(
-            Button::new("$", SKILL_BUTTON)
-                .size(Size::Sm)
-                .variant(button::Variant::Ghost)
-                .monospace()
-                .build(),
-        );
-    }
     for (position, index) in WorkspaceState::chips(settings).into_iter().enumerate() {
         let setting = &settings[index];
         let icon = (setting.category == "mode").then_some(IconName::Zap);
@@ -666,7 +627,7 @@ pub fn composer(
         .child(
             Input::new(&state.prompt, PROMPT)
                 .variant(input::Variant::Multiline)
-                .placeholder(&placeholder)
+                .placeholder(placeholder)
                 .rows(rows)
                 .wrap(text_width, shaper)
                 .build(),

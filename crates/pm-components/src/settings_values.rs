@@ -29,16 +29,10 @@ pub(crate) enum Control {
 }
 
 /// The modes an agent can be started in, as the choices name them.
-const MODES: &[&str] = &["Agent's own", "Ask", "Accept edits", "Plan", "Bypass"];
+const MODES: &[&str] = &["Agent's own", "Ask", "Plan", "Run freely"];
 
-/// The ids agents give the modes, in the order of [`MODES`]; nothing for the agent's own.
-const MODE_IDS: [Option<&str>; 5] = [
-    None,
-    Some("default"),
-    Some("acceptEdits"),
-    Some("plan"),
-    Some("bypassPermissions"),
-];
+/// The ids the harness gives the modes, in the order of [`MODES`]; nothing for the agent's own.
+const MODE_IDS: [Option<&str>; 4] = [None, Some("default"), Some("plan"), Some("yolo")];
 
 /// The presets of keys, as the choices name them, in the order of [`Preset::ALL`].
 const PRESETS: &[&str] = &[

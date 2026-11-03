@@ -57,7 +57,6 @@ impl Session {
                 self.finish(Some(reason));
             }
             Event::Titled(title) => self.title = title,
-            Event::Hooks(hooks) => self.hooks_held(hooks),
             Event::Prompted {
                 text,
                 files,

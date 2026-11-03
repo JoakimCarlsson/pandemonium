@@ -280,7 +280,6 @@ pub const MENU_SCROLL: FocusId = FocusId(351);
 /// Switches the agent persona on or off.
 pub const AGENT_TOGGLE: FocusId = FocusId(4290);
 
-/// Puts a dollar sign in the prompt, which lists the skills the agent offers.
 /// The button that attaches files to the prompt.
 pub const ATTACH: FocusId = FocusId(318);
 
@@ -289,8 +288,6 @@ pub const ATTACHED_BASE: u64 = 4800;
 
 /// The button that starts mentioning a file in the prompt.
 pub const MENTION: FocusId = FocusId(4281);
-
-pub const SKILL_BUTTON: FocusId = FocusId(4282);
 
 /// Puts a slash in the prompt, which lists the commands the agent offers.
 /// The body of an open menu, which is not a button but keeps a click on it from counting as outside.
@@ -839,8 +836,6 @@ pub enum Outgoing {
         /// What to look for; the well known servers when blank.
         query: String,
     },
-    /// Has the server keep these as the agents that can be started.
-    SaveAgentServers(Vec<pm_protocol::AgentServer>),
     /// Has the server keep these as the tool servers every agent is started with.
     SaveMcpServers(Vec<pm_protocol::McpServer>),
     /// Lists what the agent at `agent` is given in the project at `project`: its skills, instructions, agent definitions and hooks.
@@ -1131,17 +1126,6 @@ pub enum Outgoing {
         /// The folder.
         directory: String,
     },
-    /// Lists the skills of the agent at `agent` in the project at `project`.
-    Skills {
-        /// The agent, by position.
-        agent: usize,
-        /// The project, by position.
-        project: usize,
-        /// The machine, or nothing for this one.
-        host: Option<String>,
-        /// The project's folder.
-        directory: String,
-    },
     /// Asks the agent at `agent` on `host` what it lets the reader change and offers behind a slash.
     Discover {
         /// The agent, by position.
@@ -1210,13 +1194,6 @@ pub enum Outgoing {
         ticket: u64,
         /// What was answered to each question, or nothing to abandon the form.
         replies: Option<Vec<pm_harness::Reply>>,
-    },
-    /// Trusts hooks the Codex of a session holds back, as they were shown.
-    TrustHooks {
-        /// The session, by position.
-        session: usize,
-        /// The hooks to trust.
-        hooks: Vec<pm_harness::Hook>,
     },
     /// Takes the conversation of a session back to before one of the reader's turns, dropping it and all after it.
     Rewind {
@@ -1794,14 +1771,8 @@ pub struct WorkspaceState {
     pub branches_of: Option<usize>,
     /// The panel open over the conversation's chips, if one is.
     pub activity: Option<Activity>,
-    /// The commands each agent offers behind a slash, by the agent's position, once it has been asked.
+    /// The commands and skills each agent offers behind a slash, by the agent's position, once it has been asked.
     pub agent_commands: Vec<Vec<Slash>>,
-    /// The skills the chosen agent offers in the project being started in.
-    pub skills: Vec<Slash>,
-    /// The agent and project `skills` was read for.
-    pub skills_of: Option<(usize, usize)>,
-    /// The names of the skills installed for the chosen agent, which tell a skill from a command in the list behind a slash.
-    pub skill_names: std::collections::HashSet<String>,
     /// The files of the folder the prompt is for, which an `@` in the prompt offers.
     pub files: Vec<String>,
     /// The folders among `files` that hold no tracked file, by path.
@@ -1911,7 +1882,7 @@ impl WorkspaceState {
 
     /// A workspace of `projects` and `sessions`, open on the page for starting work.
     fn with(projects: Vec<Project>, sessions: Vec<Session>) -> Self {
-        let builtin = pm_protocol::builtin_agents();
+        let builtin = crate::agent_list::AgentEntry::shipped();
         let mut state = Self {
             projects,
             sessions,
@@ -1998,9 +1969,6 @@ impl WorkspaceState {
             branches_of: None,
             activity: None,
             agent_commands: vec![Vec::new(); builtin.len()],
-            skills: Vec::new(),
-            skills_of: None,
-            skill_names: std::collections::HashSet::new(),
             attachments: Vec::new(),
             elements: Vec::new(),
             captures: Vec::new(),
@@ -2333,9 +2301,6 @@ impl WorkspaceState {
                 self.prompt.apply(edit);
                 if self.prompt.revision() != before {
                     self.reset_slash();
-                    if matches!(self.prompt.text(), "/" | "$") {
-                        self.refresh_skills();
-                    }
                 }
             }
             COMMIT_MESSAGE => self.message.apply(edit),
@@ -2680,9 +2645,6 @@ impl WorkspaceState {
             return;
         }
         if self.press_inquiry(FocusId(id)) {
-            return;
-        }
-        if self.press_hooks(FocusId(id)) {
             return;
         }
         if self.press_terminal(FocusId(id)) {
@@ -3077,7 +3039,6 @@ impl WorkspaceState {
                 } else {
                     self.branches.first().cloned().unwrap_or_default()
                 };
-                session.skills = self.skills.clone();
                 session.messages[0].attachments = sent_files;
                 self.sessions.push(session);
                 self.pane_stash

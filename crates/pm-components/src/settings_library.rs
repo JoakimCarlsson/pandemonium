@@ -486,7 +486,7 @@ pub(crate) fn body(state: &WorkspaceState, section: Section, page: Node, room: f
                     card(part, count)
                 }),
         ),
-        (Section::Tools, _) => tools_page(state, page, room),
+        (Section::Tools, _) => tools_page(state, page),
         (_, Some(kind)) => items_page(state, kind, page, room),
         _ => page,
     }
@@ -616,18 +616,11 @@ fn item_row(state: &WorkspaceState, index: usize, item: &Item) -> Node {
 }
 
 /// The page of tools: the search box, and each set with how many of its tools are on and its switch, its tools under it when it is unfolded or searched.
-fn tools_page(state: &WorkspaceState, page: Node, room: f32) -> Node {
+fn tools_page(state: &WorkspaceState, page: Node) -> Node {
     let library = &state.settings_page.library;
     let product = library.product;
     let needle = state.settings_servers.search.text().trim().to_lowercase();
-    let mut page = page.child(search_box(state, Section::Tools));
-    if library.of.is_some() && product != Some(Product::Claude) {
-        let name = product.map_or("This agent", Product::name);
-        page = page.child(wrapped_note(
-            &format!("{name} is given a tool server's tools whole, so only whole servers can be turned off here."),
-            room,
-        ));
-    }
+    let page = page.child(search_box(state, Section::Tools));
     let Some(sets) = library.sets.as_ref() else {
         return page.child(note(if library.of.is_some() {
             "Listing the tools of each server…"

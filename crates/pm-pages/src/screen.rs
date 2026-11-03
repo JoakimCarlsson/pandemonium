@@ -40,7 +40,7 @@ impl Screen {
     }
 
     /// The screen listing `agents` as the ones that can be started.
-    pub fn with_agent_list(self, agents: Vec<pm_protocol::AgentServer>) -> Self {
+    pub fn with_agent_list(self, agents: Vec<pm_components::agent_list::AgentEntry>) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_agent_servers(agents)),
         }
@@ -1038,21 +1038,6 @@ impl Screen {
     pub fn with_branches(self, project: usize, branches: Vec<String>) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_branches(project, branches)),
-        }
-    }
-
-    /// The screen holding the skills found for `agent` in the project at `project`, while the workspace is showing.
-    pub fn with_skills(
-        self,
-        agent: usize,
-        project: usize,
-        skills: Vec<pm_harness::Slash>,
-        names: std::collections::HashSet<String>,
-    ) -> Self {
-        match self {
-            Self::Workspace(state) => {
-                Self::Workspace(state.with_skills(agent, project, skills, names))
-            }
         }
     }
 

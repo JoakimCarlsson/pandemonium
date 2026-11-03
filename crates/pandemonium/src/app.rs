@@ -272,8 +272,7 @@ impl App {
         let saved = pm_store::load_projects();
         let choices = pm_store::load_choices();
         let (logins, in_use) = pm_store::load_accounts();
-        let agents = pm_server::saved_agents();
-        work.know_agents(&agents);
+        let agents = pm_components::agent_list::AgentEntry::shipped();
         work.set_accounts(&logins, &in_use);
         let screen = saved
             .as_deref()

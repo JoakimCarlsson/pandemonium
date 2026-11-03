@@ -9,17 +9,17 @@ use crate::elements::{ELEMENT_BASE, ELEMENT_REMOVE_BASE, MOST_ELEMENTS};
 use crate::state::{
     ACCOUNT, ACCOUNT_BASE, AGENT_TOGGLE, APPROVALS_CHIP, ATTACHED_BASE, Activity, BRANCH_BASE,
     DETAILS_BASE, EFFORT_BASE, LOCATION, Location, MENTION, MENU_BODY, Outgoing, PICK_BASE,
-    PLACE_BASE, PLAN_CHIP, Page, Picker, SETTING_BASE, SHELLS_CHIP, SKILL_BUTTON, SLASH_BASE,
-    SLASH_BUTTON, STEP_BASE, SUBAGENTS_CHIP, WorkspaceState, prompt_field,
+    PLACE_BASE, PLAN_CHIP, Page, Picker, SETTING_BASE, SHELLS_CHIP, SLASH_BASE, SLASH_BUTTON,
+    STEP_BASE, SUBAGENTS_CHIP, WorkspaceState, prompt_field,
 };
 
 /// How tall one value of a menu is, in logical pixels.
 pub const ROW_HEIGHT: f32 = 47.0;
 
-/// The height in logical pixels of one row of the lists of files, commands and skills.
+/// The height in logical pixels of one row of the lists of files and commands.
 pub const LIST_ROW_HEIGHT: f32 = 34.0;
 
-/// How many rows of the lists of files, commands and skills show at once.
+/// How many rows of the lists of files and commands show at once.
 pub const LIST_ROWS: usize = 8;
 
 /// How many rows of the list behind a slash can be pressed with the pointer.
@@ -95,11 +95,6 @@ impl WorkspaceState {
         self.open().map_or(self.agent, |session| session.agent)
     }
 
-    /// Whether the agent the prompt is for offers skills behind a dollar sign.
-    pub fn has_skills(&self) -> bool {
-        self.agent_has_skills(self.agent_now())
-    }
-
     /// Who the agent the prompt is for is signed in as: the name of the open session's login or the one new work starts with, or the one in its own default folder.
     pub fn account(&self) -> Option<&str> {
         self.account_as(self.agent_now(), self.login_in_use())
@@ -122,50 +117,35 @@ impl WorkspaceState {
         self.account_as(self.agent_now(), None)
     }
 
-    /// Whether the command named `name` is a skill the agent has installed.
-    pub fn is_skill(&self, name: &str) -> bool {
-        self.skill_names
-            .contains(name.rsplit(':').next().unwrap_or(name))
-    }
-
-    /// The commands or skills offered behind a slash or a dollar sign that fit what has been typed, with which it was.
-    pub fn slash_matches(&self) -> Vec<(char, Slash)> {
+    /// The commands, skills and extension commands offered behind a slash that fit what has been typed.
+    pub fn slash_matches(&self) -> Vec<Slash> {
         let typed = self.prompt.text();
-        let Some(prefix) = typed.chars().next() else {
+        let Some(rest) = typed.strip_prefix('/') else {
             return Vec::new();
         };
-        let rest = &typed[prefix.len_utf8()..];
         if rest.contains(char::is_whitespace) {
             return Vec::new();
         }
-        let source: &[Slash] = match (prefix, self.open()) {
-            ('/', Some(session)) => &session.commands,
-            ('/', None) => self
+        let source: &[Slash] = match self.open() {
+            Some(session) => &session.commands,
+            None => self
                 .agent_commands
                 .get(self.agent)
                 .map_or(&[], Vec::as_slice),
-            ('$', Some(session)) if self.has_skills() => &session.skills,
-            ('$', None) if self.has_skills() => &self.skills,
-            _ => return Vec::new(),
         };
         let rest = rest.to_lowercase();
-        let brought: Vec<Slash> = match prefix {
-            '/' => self
-                .extension_commands()
-                .into_iter()
-                .map(|(_, command)| Slash {
-                    name: format!("{}:{}", command.extension, command.id),
-                    description: command.description,
-                })
-                .collect(),
-            _ => Vec::new(),
-        };
+        let brought = self
+            .extension_commands()
+            .into_iter()
+            .map(|(_, command)| Slash {
+                name: format!("{}:{}", command.extension, command.id),
+                description: command.description,
+            });
         source
             .iter()
             .cloned()
             .chain(brought)
             .filter(|command| command.name.to_lowercase().starts_with(&rest))
-            .map(|command| (prefix, command))
             .collect()
     }
 
@@ -270,26 +250,6 @@ impl WorkspaceState {
             {
                 self.base = None;
             }
-        }
-        self
-    }
-
-    /// Stores discovered skills in matching conversations, including those opened before discovery finished.
-    pub fn with_skills(
-        mut self,
-        agent: usize,
-        project: usize,
-        skills: Vec<pm_harness::Slash>,
-        names: std::collections::HashSet<String>,
-    ) -> Self {
-        for session in &mut self.sessions {
-            if session.agent == agent && session.project == project {
-                session.skills = skills.clone();
-            }
-        }
-        if self.skills_of == Some((agent, project)) {
-            self.skills = skills;
-            self.skill_names = names;
         }
         self
     }
@@ -449,7 +409,7 @@ impl WorkspaceState {
             return;
         }
         let taken = self.slash_matches().get(index).cloned();
-        if let Some((_, command)) = &taken
+        if let Some(command) = &taken
             && let Some((host, brought)) = self.extension_command_named(&command.name)
         {
             self.prompt = prompt_field("");
@@ -457,7 +417,7 @@ impl WorkspaceState {
             self.run_extension_command(host, brought);
             return;
         }
-        let chosen = taken.map(|(prefix, command)| format!("{prefix}{} ", command.name));
+        let chosen = taken.map(|command| format!("/{} ", command.name));
         if let Some(typed) = chosen {
             self.prompt = prompt_field(&typed);
             self.reset_slash();
@@ -582,62 +542,6 @@ impl WorkspaceState {
         self
     }
 
-    /// The agent and project the prompt is for, when the page shown has a prompt.
-    fn prompt_agent_project(&self) -> Option<(usize, usize)> {
-        match self.page {
-            Page::New(project) => Some((self.agent, project)),
-            Page::Session(index) => {
-                let session = self.sessions.get(index)?;
-                Some((session.agent, session.project))
-            }
-            _ => None,
-        }
-    }
-
-    /// Asks again for the skills of the prompt's agent and project, keeping those held until the answer comes, so that a skill added since they were read shows when the list behind a slash or a dollar sign opens.
-    pub(crate) fn refresh_skills(&mut self) {
-        let Some((agent, project)) = self.prompt_agent_project() else {
-            return;
-        };
-        if self.skills_of != Some((agent, project)) {
-            return;
-        }
-        let Some(held) = self.projects.get(project) else {
-            return;
-        };
-        self.outbox.push(Outgoing::Skills {
-            agent,
-            project,
-            host: held.host(),
-            directory: held.directory().to_string_lossy().into_owned(),
-        });
-    }
-
-    /// Reads skills for the prompt's agent and project, also hydrating restored conversations from the cache.
-    fn sync_skills(&mut self) {
-        let Some((agent, project)) = self.prompt_agent_project() else {
-            return;
-        };
-        if self.skills_of == Some((agent, project)) {
-            if let Page::Session(index) = self.page {
-                self.sessions[index].skills = self.skills.clone();
-            }
-            return;
-        }
-        let Some(held) = self.projects.get(project) else {
-            return;
-        };
-        self.skills_of = Some((agent, project));
-        self.skills.clear();
-        self.skill_names.clear();
-        self.outbox.push(Outgoing::Skills {
-            agent,
-            project,
-            host: held.host(),
-            directory: held.directory().to_string_lossy().into_owned(),
-        });
-    }
-
     /// Asks who every agent is signed in as in its own folder, for those not asked yet, so that the list of accounts names each default account.
     pub(crate) fn ask_default_accounts(&mut self) {
         for agent in 0..self.agent_slots() {
@@ -660,7 +564,6 @@ impl WorkspaceState {
 
     /// Reads what the page shown needs of its project: on a project's overview its own folder, and on the page for starting work also its branches, when they are not the ones read already.
     pub fn sync_context(&mut self) {
-        self.sync_skills();
         if let Page::Project(project) = self.page {
             self.read_home(project);
             self.sync_files_owner();
@@ -781,9 +684,6 @@ impl WorkspaceState {
             }
             typed.push('@');
             self.prompt = prompt_field(&typed);
-            self.reset_slash();
-        } else if id == SKILL_BUTTON.0 {
-            self.prompt = prompt_field("$");
             self.reset_slash();
         } else if id == LOCATION.0 {
             self.picker = (self.picker != Some(Picker::Location)).then_some(Picker::Location);
@@ -1210,11 +1110,7 @@ impl WorkspaceState {
         if (crate::state::COMMENT_FILE_BASE..crate::state::COMMENT_REMOVE_BASE).contains(&number) {
             return Some(crate::state::COMMENT_FIELD);
         }
-        (slash_row
-            || id == SLASH_BUTTON
-            || id == SKILL_BUTTON
-            || id == MENTION
-            || id == crate::state::REVISE)
+        (slash_row || id == SLASH_BUTTON || id == MENTION || id == crate::state::REVISE)
             .then_some(crate::state::PROMPT)
     }
 
@@ -1238,46 +1134,6 @@ impl WorkspaceState {
 #[cfg(test)]
 mod file_listing_tests {
     use super::*;
-
-    /// An existing conversation requests its skills and retains the server's reply.
-    #[test]
-    fn existing_session_loads_skills() {
-        let mut state = WorkspaceState::sample();
-        state.page = Page::Session(0);
-        state.skills_of = None;
-        state.sessions[0].skills.clear();
-        state.outbox.clear();
-        let agent = state.sessions[0].agent;
-        let project = state.sessions[0].project;
-        let directory = state.projects[project]
-            .directory()
-            .to_string_lossy()
-            .into_owned();
-        state.sync_context();
-        assert!(state.outbox.iter().any(|request| matches!(
-            request,
-            Outgoing::Skills { agent: asked_agent, project: asked_project, directory: asked_directory, .. }
-                if *asked_agent == agent && *asked_project == project && *asked_directory == directory
-        )));
-        state = state.with_skills(
-            agent,
-            project,
-            vec![Slash {
-                name: "review".into(),
-                description: "Review changes".into(),
-            }],
-            Default::default(),
-        );
-        assert_eq!(state.sessions[0].skills[0].name, "review");
-        state.outbox.clear();
-        state.sync_context();
-        assert!(
-            !state
-                .outbox
-                .iter()
-                .any(|request| matches!(request, Outgoing::Skills { .. }))
-        );
-    }
 
     /// Returning to a directory restores its files while requesting fresh server data.
     #[test]
@@ -1324,117 +1180,75 @@ mod file_listing_tests {
     }
 }
 
-/// Regression coverage for discovery arriving after a conversation has opened.
+/// Coverage for the list of commands and skills behind a slash.
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::sample::Session;
-    use crate::state::{SEND, SKILL_BUTTON};
+    use crate::state::SLASH_BUTTON;
 
-    /// A restored Codex conversation whose skills have not been discovered yet.
+    /// A restored conversation whose agent has announced no commands yet.
     fn conversation() -> WorkspaceState {
         let mut state = WorkspaceState::sample();
-        let agent = state
-            .offered_agents()
-            .into_iter()
-            .find(|agent| state.agent_has_skills(*agent))
-            .unwrap();
+        let agent = state.offered_agents().into_iter().next().unwrap();
         state.sessions[0] = Session::restored("Task", 0, "task", "/project", None, agent, false);
-        state.skills_of = None;
-        state.skills.clear();
-        state.outbox.clear();
+        state.page = Page::Session(0);
         state
     }
 
-    /// The skill offered by the server in these conversations.
-    fn skills() -> Vec<Slash> {
-        vec![Slash {
-            name: "review".into(),
-            description: "Review changes".into(),
-        }]
-    }
-
-    /// Restoring a conversation requests skills and makes the dollar button show them.
-    #[test]
-    fn restored_conversation_discovers_skills() {
-        let mut state = conversation();
-        let agent = state.sessions[0].agent;
-        state.sync_context();
-        assert!(state.outbox.iter().any(|request| matches!(request, Outgoing::Skills { agent: found, project: 0, .. } if *found == agent)));
-        state = state.with_skills(agent, 0, skills(), Default::default());
-        state.press_choice(SKILL_BUTTON.0);
-        assert_eq!(state.slash_matches(), vec![('$', skills().remove(0))]);
-    }
-
-    /// Typing a dollar sign or a slash asks for the skills again, so that one added since they were read shows, and the answer replaces what was held.
-    #[test]
-    fn opening_the_skill_list_reads_skills_again() {
-        let mut state = conversation();
-        let agent = state.sessions[0].agent;
-        state.sync_context();
-        state = state.with_skills(agent, 0, Vec::new(), Default::default());
-        state.outbox.clear();
-        state.prompt = prompt_field("");
-        state = state.edited(crate::state::PROMPT, pm_text::Edit::Insert('$'));
-        assert!(state.outbox.iter().any(|request| matches!(request, Outgoing::Skills { agent: found, project: 0, .. } if *found == agent)));
-        state = state.with_skills(agent, 0, skills(), Default::default());
-        assert_eq!(state.open().unwrap().skills.len(), skills().len());
-    }
-
-    /// Discovery that finishes after the first message still reaches the conversation.
-    #[test]
-    fn late_discovery_populates_existing_conversation() {
-        let mut state = conversation();
-        let agent = state.sessions[0].agent;
-        state.skills_of = Some((agent, 0));
-        state.page = Page::New(0);
-        state.agent = agent;
-        state.prompt = prompt_field("Review these changes");
-        state = state.after(SEND);
-        assert!(state.open().unwrap().skills.is_empty());
-        state = state.with_skills(agent, 0, skills(), Default::default());
-        assert!(!state.open().unwrap().messages.is_empty());
-        state.press_choice(SKILL_BUTTON.0);
-        assert_eq!(state.slash_matches().len(), 1);
-    }
-
-    /// A conversation restored after discovery reuses the matching cache without another request.
-    #[test]
-    fn restored_conversation_reuses_cached_skills() {
-        let mut state = conversation();
-        state.skills_of = Some((state.sessions[0].agent, 0));
-        state.skills = skills();
-        state.sync_context();
-        assert!(
-            !state
-                .outbox
-                .iter()
-                .any(|request| matches!(request, Outgoing::Skills { .. }))
-        );
-        state.press_choice(SKILL_BUTTON.0);
-        assert_eq!(state.slash_matches().len(), 1);
-    }
-
-    /// A state offering `count` skills behind the dollar button, with the list open.
-    fn many_skills(count: usize) -> WorkspaceState {
-        let mut state = conversation();
-        let agent = state.sessions[0].agent;
-        let skills = (0..count)
+    /// `count` entries named after a skill, which the agent announces beside its commands.
+    fn entries(count: usize) -> Vec<Slash> {
+        (0..count)
             .map(|number| Slash {
                 name: format!("skill-{number:02}"),
                 description: String::new(),
             })
-            .collect();
-        state = state.with_skills(agent, 0, skills, Default::default());
-        state.press_choice(SKILL_BUTTON.0);
+            .collect()
+    }
+
+    /// A state whose conversation offers `count` entries, with the list behind the slash button open.
+    fn many_entries(count: usize) -> WorkspaceState {
+        let mut state = conversation();
+        state.sessions[0].commands = entries(count);
+        state.press_choice(SLASH_BUTTON.0);
         state
+    }
+
+    /// Commands and skills the agent announced are listed together behind a slash, narrowed by what follows it.
+    #[test]
+    fn slash_lists_commands_and_skills_together() {
+        let mut state = conversation();
+        state.sessions[0].commands = vec![
+            Slash {
+                name: "compact".into(),
+                description: "Summarise the conversation".into(),
+            },
+            Slash {
+                name: "review".into(),
+                description: "Review changes".into(),
+            },
+        ];
+        state.press_choice(SLASH_BUTTON.0);
+        assert_eq!(state.slash_matches().len(), 2);
+        state = state.edited(crate::state::PROMPT, pm_text::Edit::Insert('r'));
+        let matches = state.slash_matches();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].name, "review");
+    }
+
+    /// A dollar sign opens no list, since skills are asked for behind a slash.
+    #[test]
+    fn dollar_sign_offers_nothing() {
+        let mut state = many_entries(3);
+        state.prompt = prompt_field("$");
+        assert!(state.slash_matches().is_empty());
     }
 
     /// Moving the highlight past the last visible row scrolls the list so the highlighted row stays in the window.
     #[test]
-    fn skill_list_scrolls_with_the_arrow_keys() {
+    fn list_scrolls_with_the_arrow_keys() {
         let window = LIST_ROW_HEIGHT * LIST_ROWS as f32;
-        let mut state = many_skills(20);
+        let mut state = many_entries(20);
         for _ in 0..19 {
             state = state.slash_moved(1);
             let top = state.slash as f32 * LIST_ROW_HEIGHT;
@@ -1453,12 +1267,12 @@ mod tests {
     /// Opening the list again after choosing from a scrolled one starts at the first row.
     #[test]
     fn reopening_the_list_starts_at_the_top() {
-        let mut state = many_skills(20);
+        let mut state = many_entries(20);
         for _ in 0..15 {
             state = state.slash_moved(1);
         }
         state = state.slash_taken();
-        state.press_choice(SKILL_BUTTON.0);
+        state.press_choice(SLASH_BUTTON.0);
         assert_eq!(state.slash, 0);
         assert_eq!(state.menu_scroll, 0.0);
     }
@@ -1466,7 +1280,7 @@ mod tests {
     /// Narrowing the list by typing puts the highlight and the scroll offset back at the first match.
     #[test]
     fn typing_resets_the_list_selection() {
-        let mut state = many_skills(20);
+        let mut state = many_entries(20);
         for _ in 0..15 {
             state = state.slash_moved(1);
         }

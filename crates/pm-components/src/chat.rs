@@ -416,7 +416,6 @@ pub fn chat(
                 .child(line(label, 13, 1.4, Role::Muted)),
         );
     }
-    messages = messages.children(crate::hooks_card::hooks_card(session, column));
     node()
         .styles([flex(), flex_col(), flex_1(), min_w_px(0), min_h(0)])
         .child(header(state, session))

@@ -2,7 +2,6 @@
 
 use std::time::{Duration, Instant};
 
-use pm_harness::Verdict;
 use pm_components::EditorCommand;
 use pm_components::arrange::{
     SESSION_MENU_CLOSE, SESSION_MENU_COPY_BRANCH, SESSION_MENU_COPY_PATH, SESSION_MENU_OPEN_FOLDER,
@@ -31,6 +30,7 @@ use pm_components::tab_menu::TabCommand;
 use pm_components::title_bar::{COMMAND_CENTER, TITLE_BAR_HEIGHT};
 use pm_config::ThemeMode;
 use pm_editor::{Action, Case, Chord, Keymap, LineOrder, Pressed};
+use pm_harness::Verdict;
 use pm_input::{FocusId, Key, KeyEvent};
 use pm_pages::Screen;
 use pm_protocol::{DebugAction, Seek};

@@ -1,9 +1,30 @@
-//! The agents a workspace can be started with: the ones the server lists, which start as the ones the app ships.
+//! The agents a workspace can be started with: the ones the app ships.
 
 use pm_icon::IconName;
-use pm_protocol::AgentServer;
 
 use crate::state::WorkspaceState;
+
+/// One agent the app ships, as the windows list it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AgentEntry {
+    /// What the app keeps the agent under.
+    pub id: String,
+    /// What a row calls it.
+    pub name: String,
+}
+
+impl AgentEntry {
+    /// The agents the app ships.
+    pub fn shipped() -> Vec<Self> {
+        pm_harness::AGENTS
+            .iter()
+            .map(|agent| Self {
+                id: agent.id.to_owned(),
+                name: agent.name.to_owned(),
+            })
+            .collect()
+    }
+}
 
 /// How an agent is shown: its glyph and its name.
 #[derive(Clone, Debug, PartialEq)]
@@ -14,15 +35,13 @@ pub struct AgentLook {
     pub name: String,
 }
 
-/// The glyph an agent is drawn with: the one of a product the app knows, or a terminal for any other.
-pub fn agent_icon(agent: &AgentServer) -> IconName {
-    match pm_harness::Product::of(&format!(
-        "{} {}",
-        agent.command,
-        agent.package.as_deref().unwrap_or_default()
-    )) {
-        Some(pm_harness::Product::Claude) => IconName::Sparkles,
-        Some(pm_harness::Product::Grok) => IconName::Zap,
+/// The glyph an agent is drawn with: the one of its product.
+pub fn agent_icon(agent: &AgentEntry) -> IconName {
+    match pm_harness::AGENTS
+        .iter()
+        .find(|shipped| shipped.id == agent.id)
+    {
+        Some(shipped) if shipped.product == pm_harness::Product::Claude => IconName::Sparkles,
         _ => IconName::Terminal,
     }
 }
@@ -52,7 +71,7 @@ impl WorkspaceState {
     }
 
     /// The agent at `index`: one offered, or, past those, one taken out of the list that sessions still run.
-    fn agent_record(&self, index: usize) -> Option<&AgentServer> {
+    fn agent_record(&self, index: usize) -> Option<&AgentEntry> {
         self.settings_servers
             .agents
             .iter()
@@ -79,18 +98,10 @@ impl WorkspaceState {
         if let Some(position) = self.agent_position(id) {
             return position;
         }
-        let record = pm_protocol::builtin_agents()
-            .into_iter()
-            .find(|agent| agent.id == id)
-            .unwrap_or_else(|| AgentServer {
-                id: id.to_owned(),
-                name: id.to_owned(),
-                command: String::new(),
-                env: Vec::new(),
-                package: None,
-                installer: None,
-                home: None,
-            });
+        let record = AgentEntry {
+            id: id.to_owned(),
+            name: id.to_owned(),
+        };
         self.settings_servers.retired.push(record);
         self.agent_slots() + self.settings_servers.retired.len() - 1
     }
@@ -98,17 +109,6 @@ impl WorkspaceState {
     /// Whether the agent at `index` can keep more than one login, which every agent can.
     pub fn agent_has_accounts(&self, index: usize) -> bool {
         self.agent_record(index).is_some()
-    }
-
-    /// Whether the agent at `index` is asked for skills behind a dollar sign.
-    pub fn agent_has_skills(&self, index: usize) -> bool {
-        self.agent_record(index).is_some_and(|agent| {
-            pm_harness::Product::of(&format!(
-                "{} {}",
-                agent.command,
-                agent.package.as_deref().unwrap_or_default()
-            )) == Some(pm_harness::Product::Codex)
-        })
     }
 
     /// How the agent at `index` is shown; a plain agent when there is none there.
@@ -126,14 +126,14 @@ impl WorkspaceState {
     }
 
     /// The state with `servers` as the agents that can be started.
-    pub fn with_agent_servers(mut self, servers: Vec<AgentServer>) -> Self {
+    pub fn with_agent_servers(mut self, servers: Vec<AgentEntry>) -> Self {
         self.set_agents(servers);
         self
     }
 
     /// Makes `servers` the agents that can be started, carrying everything kept per agent over to the agent's new position, retiring the agents that sessions still run.
-    pub(crate) fn set_agents(&mut self, servers: Vec<AgentServer>) {
-        let before: Vec<AgentServer> = self
+    pub(crate) fn set_agents(&mut self, servers: Vec<AgentEntry>) {
+        let before: Vec<AgentEntry> = self
             .settings_servers
             .agents
             .iter()
@@ -147,7 +147,7 @@ impl WorkspaceState {
             .filter(|session| !session.home)
             .map(|session| session.agent)
             .collect();
-        let retired: Vec<AgentServer> = before
+        let retired: Vec<AgentEntry> = before
             .iter()
             .enumerate()
             .filter(|(index, old)| {
@@ -155,7 +155,7 @@ impl WorkspaceState {
             })
             .map(|(_, old)| old.clone())
             .collect();
-        let after: Vec<&AgentServer> = servers.iter().chain(&retired).collect();
+        let after: Vec<&AgentEntry> = servers.iter().chain(&retired).collect();
         let moved: Vec<Option<usize>> = before
             .iter()
             .map(|old| after.iter().position(|new| new.id == old.id))
