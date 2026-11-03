@@ -28,6 +28,9 @@ pub fn discover(agent: Agent) -> Result<Discovery, String> {
         tools: Vec::new(),
         denied: Vec::new(),
         disabled: Vec::new(),
+        conversation: None,
+        history: None,
+        keep: None,
     }))?;
     let deadline = Instant::now() + PATIENCE;
     while let Some(left) = deadline.checked_duration_since(Instant::now()) {

@@ -85,6 +85,12 @@ pub struct Given {
     pub disabled: Vec<String>,
     /// Why the agent must not be started, when what the reader turned off cannot be kept off; the chat then fails with this instead of starting it.
     pub blocked: Option<String>,
+    /// The id the harness keeps the conversation's saved history under, and loads it from when the conversation is opened again; nothing is saved without one.
+    pub conversation: Option<String>,
+    /// The folder the harness keeps saved histories in, or its own when there is none.
+    pub history: Option<PathBuf>,
+    /// How many turns of the saved history to continue from, or all of it when there is none.
+    pub keep: Option<usize>,
 }
 
 /// A running agent and the conversation held with it.
@@ -227,6 +233,9 @@ fn drive(
         tools: given.tools,
         denied: given.denied,
         disabled: given.disabled,
+        conversation: given.conversation,
+        history: given.history,
+        keep: given.keep,
     }))?;
     loop {
         loop {

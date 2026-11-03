@@ -35,6 +35,9 @@ impl Agent {
             tools: Vec::new(),
             denied: Vec::new(),
             disabled: Vec::new(),
+            conversation: None,
+            history: None,
+            keep: None,
         }))?;
         harness.send(&Command::Login {
             provider: self.provider.to_owned(),
@@ -43,6 +46,7 @@ impl Agent {
         while let Some(left) = deadline.checked_duration_since(Instant::now()) {
             match harness.listen(left) {
                 Heard::Event(Event::LoginUrl(address)) => crate::web::open(&address)?,
+                Heard::Event(Event::LoginCode { url, .. }) => crate::web::open(&url)?,
                 Heard::Event(Event::SignedIn) => return Ok(()),
                 Heard::Event(Event::Failed(reason)) => return Err(reason),
                 Heard::Event(_) | Heard::Silence => {}
