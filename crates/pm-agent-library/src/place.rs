@@ -113,60 +113,11 @@ const CODEX: &[Place] = &[
     at(Hook, Workspace, Project, ".codex/hooks.json", Hooks),
 ];
 
-/// Where Grok Build reads its customizations.
-const GROK: &[Place] = &[
-    at(Skill, User, Own, "skills", Skills),
-    at(Skill, User, Home, ".agents/skills", Skills),
-    at(Skill, Workspace, Project, ".grok/skills", Skills),
-    at(Skill, Workspace, Project, ".agents/skills", Skills),
-    at(Instruction, User, Own, "GROK.md", File),
-    at(Instruction, User, Own, "AGENTS.md", File),
-    at(Instruction, Workspace, Project, "GROK.md", File),
-    at(Instruction, Workspace, Project, "AGENTS.md", File),
-    at(Instruction, Workspace, Project, "AGENTS.md", Nested),
-    at(Agent, User, Own, "agents", Files(".md")),
-    at(Agent, Workspace, Project, ".grok/agents", Files(".md")),
-    at(Hook, User, Own, "settings.json", Hooks),
-    at(Hook, Workspace, Project, ".grok/settings.json", Hooks),
-];
-
-/// Where GitHub Copilot reads its customizations.
-const COPILOT: &[Place] = &[
-    at(Skill, User, Own, "skills", Skills),
-    at(Skill, Workspace, Project, ".github/skills", Skills),
-    at(Instruction, User, Own, "copilot-instructions.md", File),
-    at(
-        Instruction,
-        Workspace,
-        Project,
-        ".github/copilot-instructions.md",
-        File,
-    ),
-    at(
-        Instruction,
-        Workspace,
-        Project,
-        ".github/instructions",
-        Files(".instructions.md"),
-    ),
-    at(Instruction, Workspace, Project, "AGENTS.md", File),
-    at(Agent, User, Own, "agents", Files(".agent.md")),
-    at(
-        Agent,
-        Workspace,
-        Project,
-        ".github/agents",
-        Files(".agent.md"),
-    ),
-];
-
 /// Every place `product` reads its customizations from; none for a product the app does not know.
 pub(crate) fn places(product: Option<Product>) -> &'static [Place] {
     match product {
         Some(Product::Claude) => CLAUDE,
         Some(Product::Codex) => CODEX,
-        Some(Product::Grok) => GROK,
-        Some(Product::Copilot) => COPILOT,
         None => &[],
     }
 }

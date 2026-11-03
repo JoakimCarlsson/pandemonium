@@ -50,47 +50,61 @@ pub struct ToolSet {
 /// What the set of an agent's own tools is kept under.
 pub const BUILT_IN: &str = "built-in";
 
-/// Claude Code's own tools, each with what it does.
-const CLAUDE_TOOLS: [(&str, &str); 12] = [
-    ("Agent", "Hands a task to an agent definition"),
-    ("Bash", "Runs shell commands"),
-    ("Edit", "Changes part of a file"),
-    ("Glob", "Finds files by pattern"),
-    ("Grep", "Searches the contents of files"),
-    ("NotebookEdit", "Changes cells of a notebook"),
-    ("Read", "Reads files"),
-    ("Skill", "Loads a skill"),
-    ("TodoWrite", "Keeps a list of the steps of a task"),
-    ("WebFetch", "Fetches a web page"),
-    ("WebSearch", "Searches the web"),
-    ("Write", "Writes whole files"),
+/// How much of the machine a tool reaches, which decides when the harness asks before running it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Tier {
+    /// It only reads.
+    Read,
+    /// It changes files.
+    Write,
+    /// It runs programs or other agents.
+    Exec,
+    /// It touches nothing; it talks to the reader or leaves a mode.
+    Neither,
+}
+
+/// The harness's own tools, each with what it does and the tier it needs.
+const HARNESS_TOOLS: [(&str, &str, Tier); 11] = [
+    ("read", "Reads files", Tier::Read),
+    ("grep", "Searches the contents of files", Tier::Read),
+    ("glob", "Finds files by pattern", Tier::Read),
+    ("bash", "Runs shell commands", Tier::Exec),
+    ("edit", "Changes part of a file", Tier::Write),
+    ("write", "Writes whole files", Tier::Write),
+    ("todo", "Keeps a list of the steps of a task", Tier::Read),
+    ("ask", "Asks the reader a question", Tier::Neither),
+    ("task", "Hands a task to a subagent", Tier::Exec),
+    ("skill", "Loads a skill", Tier::Read),
+    (
+        "exit_plan_mode",
+        "Presents a plan and leaves plan mode",
+        Tier::Neither,
+    ),
 ];
 
-/// Codex's own tools, each with what it does.
-const CODEX_TOOLS: [(&str, &str); 5] = [
-    ("shell", "Runs shell commands"),
-    ("apply_patch", "Changes files with a patch"),
-    ("update_plan", "Keeps the plan of a task"),
-    ("view_image", "Looks at a picture"),
-    ("web_search", "Searches the web"),
-];
+/// The tier the harness's own tool `name` needs, when it is one of them.
+pub fn tier(name: &str) -> Option<Tier> {
+    HARNESS_TOOLS
+        .iter()
+        .find(|(tool, _, _)| *tool == name)
+        .map(|(_, _, tier)| *tier)
+}
+
+/// The longest name a tool may have for the providers.
+const NAME_LIMIT: usize = 64;
 
 impl ToolSet {
-    /// The set of `product`'s own tools, when the app knows them.
+    /// The set of the harness's own tools, which every product runs on.
     pub fn built_in(product: Option<Product>) -> Option<Self> {
-        let tools: &[(&str, &str)] = match product? {
-            Product::Claude => &CLAUDE_TOOLS,
-            Product::Codex => &CODEX_TOOLS,
-            Product::Grok | Product::Copilot => return None,
-        };
+        product?;
         Some(Self {
             id: BUILT_IN.to_owned(),
-            name: format!("{} tools", product?.name()),
+            name: "Built-in tools".to_owned(),
             source: Source::BuiltIn,
             plugin: None,
-            tools: tools
+            tools: HARNESS_TOOLS
                 .iter()
-                .map(|(name, description)| ToolEntry {
+                .map(|(name, description, _)| ToolEntry {
                     name: (*name).to_owned(),
                     description: (*description).to_owned(),
                 })
@@ -132,21 +146,25 @@ impl ToolSet {
         !self.off(withheld) && (self.tools.is_empty() || self.enabled_count(withheld) > 0)
     }
 
-    /// Whether `product` can be started without one tool of the set while it keeps the others: Claude Code can leave out any tool, every other product only a tool server whole.
+    /// Whether `product` can be started without one tool of the set while it keeps the others: the harness leaves out any tool by name.
     pub fn per_tool(&self, product: Option<Product>) -> bool {
-        product == Some(Product::Claude)
+        product.is_some()
     }
 
-    /// Whether `product` can be started without the set: a tool server can always be left out, an agent's own tools only by Claude Code.
+    /// Whether `product` can be started without the set.
     pub fn switchable(&self, product: Option<Product>) -> bool {
-        self.source != Source::BuiltIn || self.per_tool(product)
+        product.is_some()
     }
 
-    /// The name `product` gives the tool `tool` of the set, as it is turned off by.
+    /// The name the harness gives the tool `tool` of the set, as it is turned off by.
     pub fn agent_name(&self, tool: &str) -> String {
         match self.source {
             Source::BuiltIn => tool.to_owned(),
-            Source::Server | Source::Plugin => format!("mcp__{}__{tool}", normalized(&self.id)),
+            Source::Server | Source::Plugin => {
+                let mut name = format!("mcp__{}__{}", normalized(&self.id), normalized(tool));
+                name.truncate(NAME_LIMIT);
+                name
+            }
         }
     }
 
@@ -160,11 +178,11 @@ impl ToolSet {
     }
 }
 
-/// `name` as Claude Code writes a server's name into the names of its tools: every character that is not a letter, a digit, `_` or `-` made `_`.
+/// `name` as the harness writes it into the name of a tool: every character that is not an ASCII letter, digit or `-` made `_`.
 fn normalized(name: &str) -> String {
     name.chars()
         .map(|character| match character {
-            'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '-' => character,
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' => character,
             _ => '_',
         })
         .collect()
@@ -203,4 +221,34 @@ pub fn toggled_tool(set: &ToolSet, tool: &str, withheld: &[String]) -> Vec<Strin
         kept.push(key);
     }
     kept
+}
+
+#[cfg(test)]
+/// Tests for the names the harness gives tools.
+mod tests {
+    use super::*;
+
+    /// A tool server's tool is named as the harness names it: unsafe characters become `_` and the name is cut at 64.
+    #[test]
+    fn server_tools_are_named_like_the_harness() {
+        let set = ToolSet {
+            id: "my server".to_owned(),
+            source: Source::Server,
+            ..ToolSet::default()
+        };
+        assert_eq!(set.agent_name("do.it"), "mcp__my_server__do_it");
+        assert_eq!(set.agent_name(&"x".repeat(100)).len(), 64);
+    }
+
+    /// The built-in set is the harness's tools, and the same for both products.
+    #[test]
+    fn built_in_is_the_harness_set() {
+        let claude = ToolSet::built_in(Some(Product::Claude)).unwrap();
+        let codex = ToolSet::built_in(Some(Product::Codex)).unwrap();
+        assert_eq!(claude.tools, codex.tools);
+        assert_eq!(claude.tools.len(), 11);
+        assert_eq!(claude.agent_name("bash"), "bash");
+        assert_eq!(tier("edit"), Some(Tier::Write));
+        assert_eq!(tier("ask"), Some(Tier::Neither));
+    }
 }

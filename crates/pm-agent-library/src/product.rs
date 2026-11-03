@@ -12,17 +12,13 @@ pub enum Product {
     Claude,
     /// Codex.
     Codex,
-    /// Grok Build.
-    Grok,
-    /// GitHub Copilot.
-    Copilot,
 }
 
 impl Product {
     /// The product that `command` starts, from the program and package it names, when it is one the app knows.
     pub fn of(command: &str) -> Option<Self> {
         let command = command.to_lowercase();
-        [Self::Claude, Self::Codex, Self::Grok, Self::Copilot]
+        [Self::Claude, Self::Codex]
             .into_iter()
             .find(|product| command.contains(product.slug()))
     }
@@ -32,8 +28,6 @@ impl Product {
         match self {
             Self::Claude => "CLAUDE_CONFIG_DIR",
             Self::Codex => "CODEX_HOME",
-            Self::Grok => "GROK_HOME",
-            Self::Copilot => "COPILOT_HOME",
         }
     }
 
@@ -42,8 +36,6 @@ impl Product {
         match self {
             Self::Claude => "claude",
             Self::Codex => "codex",
-            Self::Grok => "grok",
-            Self::Copilot => "copilot",
         }
     }
 
@@ -52,8 +44,6 @@ impl Product {
         match self {
             Self::Claude => "Claude Code",
             Self::Codex => "Codex",
-            Self::Grok => "Grok Build",
-            Self::Copilot => "GitHub Copilot",
         }
     }
 
