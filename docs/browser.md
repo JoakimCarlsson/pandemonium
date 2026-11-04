@@ -164,6 +164,18 @@ shown, so an agent that never uses tabs works as before, in the tab the reader
 looks at. `browser_navigate` with no tab open opens one marked as an agent's.
 The helper ignores `tab` (`agent.js` deletes it from the arguments).
 
+## WebGL
+
+Pages get WebGL and WebGL2. The helper leaves hardware acceleration on, so a
+machine with a GPU runs WebGL on it, and it passes `enable-unsafe-swiftshader`
+so that a machine with no GPU, such as a headless or remote Linux box, falls
+back to Chromium's software renderer. Recent Chromium no longer offers that
+fallback to WebGL unless the switch is given. The helper used to call
+`app.disableHardwareAcceleration()`, which left WebGL only the software path
+and, without the switch, no context at all (`getContext('webgl')` returned
+`null`). The page still paints through the offscreen window into the surface
+files; the window never reads GPU textures.
+
 ## When a page counts as loaded
 
 `browser_navigate`, `browser_back`, `browser_forward` and `browser_reload` end
