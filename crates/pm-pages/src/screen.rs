@@ -1165,6 +1165,13 @@ impl Screen {
         }
     }
 
+    /// Takes in what the agent of the session at `session` did, as `event`, without building the screen anew.
+    pub fn hear_in_place(&mut self, session: usize, event: Event) {
+        match self {
+            Self::Workspace(state) => state.hear_in_place(session, event),
+        }
+    }
+
     /// Whether the workspace has something to send to the servers.
     pub fn has_outbox(&self) -> bool {
         match self {

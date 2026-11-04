@@ -2584,6 +2584,12 @@ impl WorkspaceState {
 
     /// The state after the agent of the session at `session` did `event`.
     pub fn heard(mut self, session: usize, event: Event) -> Self {
+        self.hear_in_place(session, event);
+        self
+    }
+
+    /// Takes in what the agent of the session at `session` did, as `event`, without building the state anew.
+    pub fn hear_in_place(&mut self, session: usize, event: Event) {
         if matches!(&event, Event::Ask(ask) if ask.plan.is_some()) {
             self.plan_open = true;
             self.plan_scroll = 0.0;
@@ -2595,7 +2601,6 @@ impl WorkspaceState {
         if finishing {
             self.ask_reply_figures(session);
         }
-        self
     }
 
     /// The state after the agent of the session at `position` finished a turn while the window watched: the reader is told, or the session opens on what it changed, as the settings say.

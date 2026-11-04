@@ -1826,7 +1826,7 @@ impl Work {
                 | Event::Restored { .. }
         );
         let finished = live && matches!(event, Event::Finished(_));
-        model.update(|screen| *screen = std::mem::take(screen).heard(session, event));
+        model.update(|screen| screen.hear_in_place(session, event));
         if files_moved {
             self.refresh(model, session);
         }
