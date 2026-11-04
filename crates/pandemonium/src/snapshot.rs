@@ -254,6 +254,10 @@ pub enum Shot {
     AgentsScrolled,
     /// A conversation whose agent is on a turn with prompts queued behind it and another being written.
     Queued,
+    /// The same conversation with a long, multi-line prompt waiting, shown in full.
+    QueuedLong,
+    /// The same conversation with the first waiting prompt open for editing.
+    QueuedEditing,
     /// A conversation with the context ring in the prompt box.
     Usage,
     /// A conversation with the model menu open.
@@ -3234,6 +3238,10 @@ impl Shot {
                     )
             ),
             Self::Queued => Screen::Workspace(queued()),
+            Self::QueuedLong => Screen::Workspace(queued_long()),
+            Self::QueuedEditing => Screen::Workspace(
+                queued_long().after(FocusId(pm_components::queued::EDIT_QUEUED_BASE)),
+            ),
             Self::Kept => Screen::Workspace(kept()),
             Self::LongLine => Screen::Workspace(long_line()),
             Self::Restoring => Screen::Workspace(kept().after(FocusId(RESTORE_BASE))),
@@ -3806,6 +3814,27 @@ fn queued() -> WorkspaceState {
         PROMPT,
         Edit::Paste("Stop, the clamp lives in pm-ui".to_owned()),
     )
+}
+
+/// A conversation on a turn with a long, multi-line prompt waiting first and a short one with a file behind it.
+fn queued_long() -> WorkspaceState {
+    let waiting = |id: u64, text: &str, files: &[&str]| Event::Queued {
+        id,
+        text: text.to_owned(),
+        files: files.iter().map(|name| (*name).to_owned()).collect(),
+    };
+    let state = live(Turn::Working);
+    let session = state.sessions.len() - 1;
+    [
+        waiting(
+            1,
+            "Then add a test for the clamp, and make sure it covers a value below the minimum, a value above the maximum and a value exactly on each edge, because the last version only checked the middle of the range.\n\nAfter that, update the docs:\n- explain what the clamp does\n- list the edge cases it handles",
+            &[],
+        ),
+        waiting(2, "Use the layout in this screenshot", &["empty.png"]),
+    ]
+    .into_iter()
+    .fold(state, |state, event| state.heard(session, event))
 }
 
 /// A finished conversation whose Codex holds back a new hook and a changed one until the reader trusts them.

@@ -119,6 +119,7 @@ request with exactly one `response` carrying the same `id`.
 | `start_session`| `agent`, `repository`, `directory`, `title`, `base`, `settings`, `text`, `attachments`, `submodule`, `container` | `started`       |
 | `prompt`       | `session`, `text`, `attachments`, `now` (optional, `false` by default)                           | `done`          |
 | `remove_queued` | `session`, `queued`                                                                            | `done`          |
+| `edit_queued`  | `session`, `queued`, `text`                                                                      | `done`          |
 | `hurry`        | `session`, `queued`                                                                              | `done`          |
 | `rewind`       | `session`, `turn`                                                                                | `done`          |
 | `restore`      | `session`, `turn`                                                                                | `done`          |
@@ -351,6 +352,13 @@ everything said of them, its submodules' paths written from `directory`.
   deletes its uploaded files. Announces `Unqueued` so connected and reconnecting
   clients remove the row. Other waiting prompts keep their order. If the prompt
   has already left the queue, succeeds without doing anything.
+- **`edit_queued`:** replaces the text of the waiting prompt identified by
+  `queued` with `text`. The prompt keeps its place in the queue, its id and its
+  files, and the agent is handed the new text when its turn comes. Announces a
+  second `Queued` event under the same `id` carrying the new text, so connected
+  and reconnecting clients replace the row they hold instead of adding one. A
+  `text` that is empty after trimming, on a prompt without files, is ignored. If
+  the prompt has already left the queue, succeeds without doing anything.
 - **`rewind`:** takes the conversation back to before the reader's turn
   `turn`, counted from 0 among the `Prompted` events a rewind has not
   dropped. The turn and everything after it are dropped, announced with a
@@ -1036,7 +1044,7 @@ Events use serde's default form, one key naming the type.
 | `{"Titled": "text"}`          | The agent named the session, or named it again. The server keeps it as the session's `title`.            |
 | `{"Hooks": [Hook]}`           | The hooks the session's Codex holds back until the reader trusts them, all of them as they stand now. Replaces the earlier list; empty when none is held back. Told when a Codex session starts and again when a file the hooks are read from changes. Trust them with `trust_hooks`. |
 | `{"Prompted": {text, files, checkpoint}}` | A client handed the agent a turn. Sent to every client watching the session, the one that sent it included. `files` are names. `checkpoint` (absent means `false`) says the files were kept before the turn, so `restore` can put them back. |
-| `{"Queued": {id, text, files}}` | A client wrote while a turn was running, so the prompt waits under `id`, counted per session. `files` are names. |
+| `{"Queued": {id, text, files}}` | A client wrote while a turn was running, so the prompt waits under `id`, counted per session. `files` are names. Sent again under the same `id` when `edit_queued` changed the text: a client holding that `id` replaces its row. |
 | `{"Unqueued": id}`            | The prompt queued under `id` stopped waiting: it is handed over (a `Prompted` event follows) or dropped.  |
 | `{"Rewound": {turn}}`         | The conversation went back to before the reader's turn `turn`: drop that turn and everything after it.   |
 | `{"Restored": {turn, files}}` | The files were put back as they were before the reader's turn `turn`. `files` are the paths that changed, from the root of the repository. |

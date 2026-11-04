@@ -263,6 +263,15 @@ pub enum Request {
         /// The queued prompt, by the id its `Queued` event gave it.
         queued: u64,
     },
+    /// Replaces the text of a waiting prompt, keeping its place in the queue, its id and its attached files. Does nothing when the prompt has already left the queue.
+    EditQueued {
+        /// The session.
+        session: u64,
+        /// The queued prompt, by the id its `Queued` event gave it.
+        queued: u64,
+        /// What the prompt says from now on.
+        text: String,
+    },
     /// Takes a session's conversation back to before the reader's turn `turn`: the turn and all after it are dropped, and the agent starts the next one afresh with what came before it.
     Rewind {
         /// The session.

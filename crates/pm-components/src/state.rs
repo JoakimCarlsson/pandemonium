@@ -1193,6 +1193,15 @@ pub enum Outgoing {
         /// The queued prompt, by the id its `Queued` event gave it.
         queued: u64,
     },
+    /// Replaces the text of a waiting prompt, which keeps its place and its files.
+    EditQueued {
+        /// The session.
+        session: usize,
+        /// The queued prompt, by the id its `Queued` event gave it.
+        queued: u64,
+        /// What the prompt says from now on.
+        text: String,
+    },
     /// Answers the question the agent of a session asked.
     Choose {
         /// The session, by position.
@@ -1851,6 +1860,8 @@ pub struct WorkspaceState {
     pub color_picking: Option<crate::color_picker::ColorPicking>,
     /// The box for going to a line of the file shown by its number, when open.
     pub going_to: Option<crate::line_edits::GoingTo>,
+    /// The waiting prompt whose text is being edited in place, when one is.
+    pub editing_queued: Option<crate::queued::EditingQueued>,
     /// Where the signature of the call the caret is in hangs, in logical pixels of the window.
     pub signature_at: (f32, f32),
     /// The bar for finding and replacing in the file shown, when open.
@@ -2033,6 +2044,7 @@ impl WorkspaceState {
             color_picking: None,
             vim: pm_vim::Vim::default(),
             going_to: None,
+            editing_queued: None,
             signature_at: (0.0, 0.0),
             finding: None,
             blame: None,
@@ -2308,6 +2320,8 @@ impl WorkspaceState {
                     self.outbox.push(Outgoing::SignInSession { session });
                 }
             }
+            crate::queued::QUEUED_SAVE => self.save_queued_edit(),
+            crate::queued::QUEUED_CANCEL => self.editing_queued = None,
             SEND => self.send(false),
             SEND_NOW => self.send(true),
             STOP => self.stop(),
@@ -2339,6 +2353,11 @@ impl WorkspaceState {
                 }
             }
             COMMIT_MESSAGE => self.message.apply(edit),
+            crate::queued::QUEUED_FIELD => {
+                if let Some(editing) = self.editing_queued.as_mut() {
+                    editing.field.apply(edit);
+                }
+            }
             COMMENT_FIELD => self.comment_text.apply(edit),
             BRANCH_FILTER => self.git.filter.apply(edit),
             STASH_FIELD => self.git.stash_message.apply(edit),
@@ -2414,6 +2433,7 @@ impl WorkspaceState {
         match id {
             PROMPT => Some(&self.prompt),
             COMMIT_MESSAGE => Some(&self.message),
+            crate::queued::QUEUED_FIELD => self.editing_queued.as_ref().map(|open| &open.field),
             COMMENT_FIELD => Some(&self.comment_text),
             BRANCH_FILTER => Some(&self.git.filter),
             STASH_FIELD => Some(&self.git.stash_message),
@@ -2459,6 +2479,7 @@ impl WorkspaceState {
     pub fn is_field(id: FocusId) -> bool {
         id == PROMPT
             || id == COMMIT_MESSAGE
+            || id == crate::queued::QUEUED_FIELD
             || id == COMMENT_FIELD
             || id == BRANCH_FILTER
             || id == STASH_FIELD
@@ -2493,6 +2514,7 @@ impl WorkspaceState {
         match id {
             COMMIT_MESSAGE => COMMIT,
             COMMENT_FIELD => COMMENT_ADD,
+            crate::queued::QUEUED_FIELD => crate::queued::QUEUED_SAVE,
             BRANCH_FILTER => BRANCH_SUBMIT,
             STASH_FIELD | RENAME_FIELD => PROMPT_CONFIRM,
             ENTRY_FIELD => crate::tree_actions::TREE_NAME_SUBMIT,
@@ -2597,6 +2619,12 @@ impl WorkspaceState {
         let finishing = matches!(&event, Event::Finished(_) | Event::Failed(_));
         if let Some(held) = self.sessions.get_mut(session) {
             held.hear(event);
+            if let Some(editing) = &self.editing_queued
+                && editing.scope == held.scope
+                && !held.queued.iter().any(|queued| queued.id == editing.id)
+            {
+                self.editing_queued = None;
+            }
         }
         if finishing {
             self.ask_reply_figures(session);
@@ -2741,6 +2769,8 @@ impl WorkspaceState {
             self.act_on_queued(index, false);
         } else if let Some(index) = position(REMOVE_QUEUED_BASE, self.queued_open()) {
             self.act_on_queued(index, true);
+        } else if let Some(index) = position(crate::queued::EDIT_QUEUED_BASE, self.queued_open()) {
+            self.open_queued_edit(index);
         } else if let Some(index) = id
             .checked_sub(COPY_BASE)
             .map(|offset| offset as usize)

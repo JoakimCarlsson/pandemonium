@@ -900,6 +900,19 @@ impl Work {
                     },
                     Pending::Nothing,
                 ),
+                Outgoing::EditQueued {
+                    session,
+                    queued,
+                    text,
+                } => self.ask_session(
+                    session,
+                    |number| Request::EditQueued {
+                        session: number,
+                        queued,
+                        text,
+                    },
+                    Pending::Nothing,
+                ),
                 Outgoing::Hurry { session, queued } => self.ask_session(
                     session,
                     |number| Request::Hurry {

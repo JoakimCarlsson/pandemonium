@@ -831,6 +831,13 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
         Request::RemoveQueued { session, queued } => {
             telling(core, session, |held| held.remove_queued(session, queued))
         }
+        Request::EditQueued {
+            session,
+            queued,
+            text,
+        } => telling(core, session, |held| {
+            held.edit_queued(session, queued, text)
+        }),
         Request::Hurry { session, queued } => {
             let mut found = true;
             let response = telling(core, session, |held| {

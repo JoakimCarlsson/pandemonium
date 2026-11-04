@@ -73,6 +73,23 @@ impl Session {
         vec![(number, self.note(number, &event), event)]
     }
 
+    /// Replaces the text of the waiting prompt `id` of this session, numbered `number`, with `text`, keeping its place, its id and its files, and announces it again under the same id. Does nothing when the prompt has already left the queue, or when `text` is empty and no files go with it.
+    pub(crate) fn edit_queued(&mut self, number: u64, id: u64, text: String) -> Told {
+        let Some(waiting) = self.queue.iter_mut().find(|waiting| waiting.id == id) else {
+            return Told::new();
+        };
+        if text.trim().is_empty() && waiting.prompt.paths.is_empty() {
+            return Told::new();
+        }
+        waiting.prompt.text = text;
+        let event = Event::Queued {
+            id,
+            text: waiting.prompt.text.clone(),
+            files: waiting.prompt.names.clone(),
+        };
+        vec![(number, self.note(number, &event), event)]
+    }
+
     /// Hands the agent of this session, numbered `number`, the prompt that has waited longest, once its turn is over.
     pub(crate) fn advance(&mut self, number: u64) -> Told {
         if self.busy {
@@ -106,7 +123,9 @@ impl Session {
         for (_, event) in &self.log {
             match event {
                 Event::Queued { id, .. } => {
-                    waiting.push(*id);
+                    if !waiting.contains(id) {
+                        waiting.push(*id);
+                    }
                     self.next_queued = self.next_queued.max(id + 1);
                 }
                 Event::Unqueued(id) => waiting.retain(|held| held != id),
@@ -154,3 +173,6 @@ impl Session {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

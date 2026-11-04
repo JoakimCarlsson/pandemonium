@@ -244,6 +244,8 @@ fn main() {
             Some("subagents-expanded") => Shot::AgentsExpanded,
             Some("subagents-scrolled") => Shot::AgentsScrolled,
             Some("queued") => Shot::Queued,
+            Some("queued-long") => Shot::QueuedLong,
+            Some("queued-editing") => Shot::QueuedEditing,
             Some("usage") => Shot::Usage,
             Some("kept") => Shot::Kept,
             Some("long-line") => Shot::LongLine,
