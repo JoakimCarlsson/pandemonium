@@ -168,6 +168,8 @@ pub enum Shot {
     BrowserTabs(bool),
     /// The workspace on a second session, whose browser holds one tab of its own while the first session keeps the tabs of the browser-tabs picture.
     BrowserSessions,
+    /// The workspace with the browser on a form whose text field has the keyboard, showing its focus ring, the selected text and the caret.
+    BrowserInput,
     /// The workspace with the browser open and the question about clearing cookies and site data asked.
     BrowserClear,
     /// The workspace with the browser open and a page asking to use the camera and microphone, with a second question waiting.
@@ -1748,6 +1750,57 @@ fn browser_finding(tools: bool) -> WorkspaceState {
     state
 }
 
+/// The picture of a page with one text field that has the keyboard: a ring round the field, its text selected up to a caret.
+fn input_page(width: u32, height: u32) -> pm_renderer::Picture {
+    let (left, right, top, bottom) = (40_u32, 400_u32, 60_u32, 100_u32);
+    let (selected_to, caret) = (260_u32, 262_u32);
+    let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            let inside = x >= left && x < right && y >= top && y < bottom;
+            let edge = inside && (x < left + 2 || x >= right - 2 || y < top + 2 || y >= bottom - 2);
+            let text = inside && y >= top + 12 && y < bottom - 12 && x >= left + 12;
+            let pixel = if edge {
+                [229, 151, 0, 255]
+            } else if inside && x == caret && text {
+                [0, 0, 0, 255]
+            } else if text && x < selected_to {
+                [51, 103, 209, 255]
+            } else if inside {
+                [255, 255, 255, 255]
+            } else {
+                [247, 247, 247, 255]
+            };
+            pixels.extend_from_slice(&pixel);
+        }
+    }
+    pm_renderer::Picture {
+        key: pm_renderer::Picture::live_key(pm_components::browser::PAGE_SURFACE, 1),
+        width,
+        height,
+        pixels: std::sync::Arc::new(pixels),
+    }
+}
+
+/// The workspace with the browser on a page whose text field has the keyboard.
+fn browser_input() -> WorkspaceState {
+    let mut state = workspace_sample();
+    state.open_browser("http://localhost:5173/signup");
+    let first = state
+        .browser
+        .as_ref()
+        .map_or(1, |browser| browser.active_id());
+    state.browser_tab_painted(
+        first,
+        Some(input_page(640, 400)),
+        "Sign up",
+        "http://localhost:5173/signup",
+        pm_components::browser::Pointer::Text,
+        false,
+    );
+    state
+}
+
 /// The workspace on the second session, whose browser holds one tab, after the first session was left with several tabs open.
 fn browser_sessions() -> WorkspaceState {
     let mut state = workspace_sample().after(FocusId(pm_components::state::SESSION_BASE));
@@ -2945,6 +2998,7 @@ impl Shot {
             Self::BrowserFindTools => Screen::Workspace(browser_finding(true)),
             Self::BrowserTabs(many) => Screen::Workspace(browser_tabs(many)),
             Self::BrowserSessions => Screen::Workspace(browser_sessions()),
+            Self::BrowserInput => Screen::Workspace(browser_input()),
             Self::BrowserClear => {
                 let mut state = browser_finding(false);
                 state.browser_find_closed();
