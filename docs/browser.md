@@ -39,7 +39,12 @@ report says which is newest.
 opens a tab for it (see [Tabs](#tabs)).
 
 The helper runs each page as an offscreen Electron window and replays the
-window's pointer, scroll and key requests as input events. The picker and the
+window's pointer, scroll and key requests as input events. The page counts as active only while its hidden window
+is focused, so `Focus` focuses and blurs that window: without it a field shows no
+caret or focus ring and a selection paints grey. Cut, copy, paste and select all, pressed with the platform's shortcut key (Command on macOS, Control
+elsewhere), run as the page's own edit commands, since Chromium binds those keys
+in a browser shell that an offscreen page lacks (`shortcutEdit` in
+`helpers/electron-browser/src/input.js`). The picker and the
 agent tools use the page's DevTools protocol through Electron's debugger. The
 developer tools are Electron's own, painted into a second page.
 
