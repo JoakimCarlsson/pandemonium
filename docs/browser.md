@@ -39,7 +39,12 @@ report says which is newest.
 opens a tab for it (see [Tabs](#tabs)).
 
 The helper runs each page as an offscreen Electron window and replays the
-window's pointer, scroll and key requests as input events. The picker and the
+window's pointer, scroll and key requests as input events. The page counts as active only while its hidden window
+is focused, so `Focus` focuses and blurs that window: without it a field shows no
+caret or focus ring and a selection paints grey. Cut, copy, paste and select all, pressed with the platform's shortcut key (Command on macOS, Control
+elsewhere), run as the page's own edit commands, since Chromium binds those keys
+in a browser shell that an offscreen page lacks (`shortcutEdit` in
+`helpers/electron-browser/src/input.js`). The picker and the
 agent tools use the page's DevTools protocol through Electron's debugger. The
 developer tools are Electron's own, painted into a second page.
 
@@ -163,6 +168,18 @@ tab an agent last opened, selected or named, and when there is none on the tab
 shown, so an agent that never uses tabs works as before, in the tab the reader
 looks at. `browser_navigate` with no tab open opens one marked as an agent's.
 The helper ignores `tab` (`agent.js` deletes it from the arguments).
+
+## WebGL
+
+Pages get WebGL and WebGL2. The helper leaves hardware acceleration on, so a
+machine with a GPU runs WebGL on it, and it passes `enable-unsafe-swiftshader`
+so that a machine with no GPU, such as a headless or remote Linux box, falls
+back to Chromium's software renderer. Recent Chromium no longer offers that
+fallback to WebGL unless the switch is given. The helper used to call
+`app.disableHardwareAcceleration()`, which left WebGL only the software path
+and, without the switch, no context at all (`getContext('webgl')` returned
+`null`). The page still paints through the offscreen window into the surface
+files; the window never reads GPU textures.
 
 ## When a page counts as loaded
 

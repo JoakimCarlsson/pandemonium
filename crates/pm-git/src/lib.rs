@@ -5,6 +5,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+mod branching;
 mod carry;
 mod checkpoint;
 mod conflict;
@@ -18,6 +19,7 @@ mod revision;
 mod submodule;
 mod words;
 
+pub use branching::{BranchInfo, branch_info, branch_operation};
 pub use checkpoint::{checkpoint, restore};
 pub use conflict::{Sides, sides};
 pub use file_log::{Blame, FileCommit, Found, blame, file_history, permalink, search};
@@ -1129,6 +1131,9 @@ pub struct Tracking {
     pub ahead: usize,
     /// How many commits the one it follows has that it has not.
     pub behind: usize,
+    /// How many remotes the repository has to publish to or follow a branch of, a folder of repositories having as few as its poorest repository; nothing when the server did not say.
+    #[serde(default)]
+    pub remotes: Option<usize>,
 }
 
 /// What the checked out branch of the repository `directory` is in follows, and how far apart they are. Of a folder of repositories, how far apart they are all together, following something only when every one of them does.
@@ -1146,8 +1151,10 @@ pub fn tracking(directory: &Path) -> Tracking {
                 .flatten(),
             ahead: each.iter().map(|held| held.ahead).sum(),
             behind: each.iter().map(|held| held.behind).sum(),
+            remotes: each.iter().map(|held| held.remotes).min().flatten(),
         };
     }
+    let remotes = Some(branching::remotes(directory).len());
     let Ok(upstream) = run(
         directory,
         &[
@@ -1171,6 +1178,7 @@ pub fn tracking(directory: &Path) -> Tracking {
         upstream: Some(upstream.trim().to_owned()),
         ahead: numbers.next().unwrap_or(0),
         behind: numbers.next().unwrap_or(0),
+        remotes,
     }
 }
 
@@ -1224,17 +1232,32 @@ pub fn remote(directory: &Path, operation: &str) -> Result<(), String> {
 
 /// Pushes the checked out branch, after the submodules' own commits, and makes it follow what it was pushed to when it follows nothing.
 fn push(directory: &Path) -> Result<(), String> {
+    push_to(directory, None)
+}
+
+/// Pushes the checked out branch, after the submodules' own commits. With a `target` of a remote and a branch name on it, the branch is published there and made to follow it; without one, a branch that follows something is pushed to it, and one that follows nothing is published to `origin`, or the first remote, under its own name.
+///
+/// # Errors
+///
+/// Fails when git refuses the push, or when the repository has no remote to publish to.
+fn push_to(directory: &Path, target: Option<(&str, &str)>) -> Result<(), String> {
     submodule::push_inside(directory)?;
-    if tracking(directory).upstream.is_some() {
+    if target.is_none() && tracking(directory).upstream.is_some() {
         return run(directory, &["push"]).map(|_| ());
     }
-    let remotes = run(directory, &["remote"]).unwrap_or_default();
-    let remote = remotes
-        .lines()
-        .find(|remote| *remote == "origin")
-        .or_else(|| remotes.lines().next())
-        .ok_or_else(|| "this repository has no remote to publish to".to_owned())?;
-    run(directory, &["push", "--set-upstream", remote, "HEAD"]).map(|_| ())
+    let (remote, refspec) = match target {
+        Some((remote, name)) => (remote.to_owned(), format!("HEAD:refs/heads/{name}")),
+        None => {
+            let remotes = branching::remotes(directory);
+            let remote = remotes
+                .iter()
+                .find(|remote| *remote == "origin")
+                .or_else(|| remotes.first())
+                .ok_or_else(|| "this repository has no remote to publish to".to_owned())?;
+            (remote.clone(), "HEAD".to_owned())
+        }
+    };
+    run(directory, &["push", "--set-upstream", &remote, &refspec]).map(|_| ())
 }
 
 /// The messages of the commits `directory`'s branch has that `base` has not, oldest first.

@@ -119,6 +119,8 @@ request with exactly one `response` carrying the same `id`.
 | `start_session`| `agent`, `repository`, `directory`, `title`, `base`, `settings`, `text`, `attachments`, `submodule`, `container` | `started`       |
 | `prompt`       | `session`, `text`, `attachments`, `now` (optional, `false` by default)                           | `done`          |
 | `remove_queued` | `session`, `queued`                                                                            | `done`          |
+| `hold_queue`   | `session`, `held`                                                                                | `done`          |
+| `edit_queued`  | `session`, `queued`, `text`                                                                      | `done`          |
 | `hurry`        | `session`, `queued`                                                                              | `done`          |
 | `rewind`       | `session`, `turn`                                                                                | `done`          |
 | `restore`      | `session`, `turn`                                                                                | `done`          |
@@ -159,6 +161,8 @@ request with exactly one `response` carrying the same `id`.
 | `commit`       | `directory`, `message`, `tracked` (optional), `amend` (optional)                                 | `done`          |
 | `log`          | `directory`, `limit`, `all`                                                                      | `log`           |
 | `sync`         | `directory`, `operation`                                                                         | `done`          |
+| `branch_info`  | `directory`, `branch` (optional)                                                                 | `branch_info`   |
+| `branch_operation` | `directory`, `action`, `branch`, `target` (optional), `remote` (optional), `with_remote` (default false) | `done`      |
 | `cherry_pick`  | `directory`, `commit`                                                                            | `done`          |
 | `stashes`      | `directory`                                                                                      | `stashes`       |
 | `stash`        | `directory`, `action`, `index`, `message`                                                        | `done`          |
@@ -351,6 +355,22 @@ everything said of them, its submodules' paths written from `directory`.
   deletes its uploaded files. Announces `Unqueued` so connected and reconnecting
   clients remove the row. Other waiting prompts keep their order. If the prompt
   has already left the queue, succeeds without doing anything.
+- **`hold_queue`:** with `held: true`, stops the session's queue from handing
+  a waiting prompt to the agent when its turn ends, so a prompt can be edited
+  without the ones behind it going first. The prompts stay queued and the
+  running turn is not stopped. With `held: false` the hold ends and the queue
+  goes on at once if the agent is between turns. Only the client that holds the
+  queue can let it go, and the hold ends when that client disconnects. A second
+  client asking to hold a queue already held is ignored.
+- **`edit_queued`:** replaces the text of the waiting prompt identified by
+  `queued` with `text`. The prompt keeps its place in the queue, its id and its
+  files, and the agent is handed the new text when its turn comes. Announces a
+  second `Queued` event under the same `id` carrying the new text, so connected
+  and reconnecting clients replace the row they hold instead of adding one. A
+  `text` that is empty after trimming, on a prompt without files, is ignored. If
+  the prompt has already left the queue, succeeds without doing anything.
+  Also ends the hold of `hold_queue` if the client that asked holds the queue, so
+  the queue goes on once the edit is applied.
 - **`rewind`:** takes the conversation back to before the reader's turn
   `turn`, counted from 0 among the `Prompted` events a rewind has not
   dropped. The turn and everything after it are dropped, announced with a
@@ -588,6 +608,25 @@ everything said of them, its submodules' paths written from `directory`.
 - **`checkout`:** checks out the local branch `branch`; a remote branch such as
   `origin/main` gets a local branch that follows it. Fails when git refuses,
   for instance while the branch is checked out in another worktree.
+- **`branch_info`:** lists the repository's `remotes` and their branches, and,
+  for the local `branch` when given, the commits it has that the checked out
+  branch has not (`unmerged`), the commits it has that the branch it follows,
+  or any remote when it follows none, has not (`unpushed`), the other
+  worktree it is checked out in (`elsewhere`), and the remote branch it follows
+  (`follows`). In a folder of repositories the
+  remotes and branches every child has, with the counts added up.
+- **`branch_operation`:** `action` is `publish` (push the checked out branch
+  to `remote` as the branch `target` and make it follow it), `set_upstream`
+  (the checked out branch follows the remote branch `target`, such as
+  `origin/main`), `unset_upstream`, `rename` (the local `branch` becomes
+  `target`, and with `with_remote` the branch it follows on its remote is
+  renamed too and followed), `delete` (the local `branch`, and with
+  `with_remote` the one it follows on its remote), `merge` or `rebase` (the
+  local or remote `branch` into the checked out one). A merge or rebase that
+  stops on conflicts answers `done`; the stopped operation is then reported by
+  `standing` and `inspected` and finished with `step`. The checked out branch
+  cannot be deleted, and a branch checked out in another worktree can be neither
+  renamed nor deleted. A folder of repositories runs it in each child.
 - **`create_branch`:** makes the branch `name` at the commit the folder is at
   and checks it out.
 - **`create_entry`:** makes an empty file, or a folder when `folder`, at
@@ -872,6 +911,7 @@ embedded context, and anything else as a link to the stored file.
 | `files`      | `paths`: repository-relative tracked, untracked and ignored files, `folders` (optional): untracked and ignored folders that may hold no file yet, `ignored` (optional): which paths and folders git ignores, listed so a tree can dim them |
 | `branches`   | `names`: local branches, the current one first, then remote ones such as `origin/main`; read from git at each request. Of a folder of repositories, those every child has, then the rest |
 | `submodules` | `paths`: every submodule's path from the root of the repository, nested ones included, initialised or not; in a folder of repositories, each child followed by its submodules, from the folder, so a child is listed like a submodule |
+| `branch_info` | `remotes`: remote names, `remote_branches`: their branches such as `origin/main`, `unmerged`, `unpushed`: counts, `elsewhere`: the folder of the other worktree that has the asked branch, or null, `follows`: the remote branch the asked branch follows such as `origin/main`, or null |
 | `submodule_heads` | `heads`: `[[path, head]]` for each checked out submodule, nested ones included (in a folder of repositories each child first, then its submodules): its branch, or `@ <commit>` on a detached head. `branches`, `checkout` and `create_branch` on a submodule's or a child's folder act on that repository alone |
 | `stashes`    | `stashes`: `[{index, message, when}]`, newest first |
 | `log`        | `commits`: `[{id, refs, summary, lanes}]`, newest first |
@@ -879,9 +919,9 @@ embedded context, and anything else as a link to the stored file.
 | `bytes`      | `bytes` (base64): what a file holds, `truncated`: whether it was cut short |
 | `identity`   | `default`, `selected`: who the agent is signed in as, or null |
 | `started`    | `session`, `directory`, `branch` (always null for now), `head` (null without a worktree), `skipped`: `[[path, reason]]` for submodules the worktree could not check out |
-| `standing`   | `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind}`, `operation`: as in `inspected`, `repositories`: `[{path, branch, head, tracking}]`, `repository`: whether the folder is a repository or holds some |
+| `standing`   | `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind, remotes}`, `operation`: as in `inspected`, `repositories`: `[{path, branch, head, tracking}]`, `repository`: whether the folder is a repository or holds some |
 | `diffs`      | `files`: `[{path, diff, words}]`, one for each of the files asked for that a repository of the folder holds |
-| `inspected`  | `changes`: `[{path, diff, words, staged, untracked, index, worktree, conflicted, from, submodule, repository, moved, added, removed, lazy}]`, `added` and `removed` the lines the file puts in and takes out, counted over the whole file, and `lazy` true when `diff` and `words` are left out because the file's diff is asked for with `diffs` (an older server leaves `lazy` false and sends them), files inside submodules listed under their paths from the root with `submodule` the submodule's path, files of a folder of repositories listed under their paths from the folder with `repository` the child's folder name and null for one repository, and a submodule checked out at another commit than the one recorded as its own path with `moved`: `{from, to, commits, back}` (abbreviated commits, the subjects between them oldest first, `back` when it went back past them) and an empty `diff`, `commits`: `[string]` or null, `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind}`, `operation`: `Merge`, `Rebase` or `CherryPick` with what git prepared, or null, `repositories` (optional): `[{path, branch, head, tracking}]` for each child of a folder of repositories, empty for one repository; `branch`, `head` and `tracking` then sum up the children: the one branch they are all on or the branches joined by ` · `, the first child's commit, and the commits ahead and behind added up, following something only when every child does |
+| `inspected`  | `changes`: `[{path, diff, words, staged, untracked, index, worktree, conflicted, from, submodule, repository, moved, added, removed, lazy}]`, `added` and `removed` the lines the file puts in and takes out, counted over the whole file, and `lazy` true when `diff` and `words` are left out because the file's diff is asked for with `diffs` (an older server leaves `lazy` false and sends them), files inside submodules listed under their paths from the root with `submodule` the submodule's path, files of a folder of repositories listed under their paths from the folder with `repository` the child's folder name and null for one repository, and a submodule checked out at another commit than the one recorded as its own path with `moved`: `{from, to, commits, back}` (abbreviated commits, the subjects between them oldest first, `back` when it went back past them) and an empty `diff`, `commits`: `[string]` or null, `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind, remotes}`, `operation`: `Merge`, `Rebase` or `CherryPick` with what git prepared, or null, `repositories` (optional): `[{path, branch, head, tracking}]` for each child of a folder of repositories, empty for one repository; `branch`, `head` and `tracking` then sum up the children: the one branch they are all on or the branches joined by ` · `, the first child's commit, and the commits ahead and behind added up, following something only when every child does |
 | `projects`   | `paths`, `saved`                                          |
 | `choices`    | `choices`: `[[agent, setting, value]]`                    |
 | `agent_servers` | `servers`: `[{id, name, command, env, package, installer, home}]`                |
@@ -1036,7 +1076,7 @@ Events use serde's default form, one key naming the type.
 | `{"Titled": "text"}`          | The agent named the session, or named it again. The server keeps it as the session's `title`.            |
 | `{"Hooks": [Hook]}`           | The hooks the session's Codex holds back until the reader trusts them, all of them as they stand now. Replaces the earlier list; empty when none is held back. Told when a Codex session starts and again when a file the hooks are read from changes. Trust them with `trust_hooks`. |
 | `{"Prompted": {text, files, checkpoint}}` | A client handed the agent a turn. Sent to every client watching the session, the one that sent it included. `files` are names. `checkpoint` (absent means `false`) says the files were kept before the turn, so `restore` can put them back. |
-| `{"Queued": {id, text, files}}` | A client wrote while a turn was running, so the prompt waits under `id`, counted per session. `files` are names. |
+| `{"Queued": {id, text, files}}` | A client wrote while a turn was running, so the prompt waits under `id`, counted per session. `files` are names. Sent again under the same `id` when `edit_queued` changed the text: a client holding that `id` replaces its row. |
 | `{"Unqueued": id}`            | The prompt queued under `id` stopped waiting: it is handed over (a `Prompted` event follows) or dropped.  |
 | `{"Rewound": {turn}}`         | The conversation went back to before the reader's turn `turn`: drop that turn and everything after it.   |
 | `{"Restored": {turn, files}}` | The files were put back as they were before the reader's turn `turn`. `files` are the paths that changed, from the root of the repository. |

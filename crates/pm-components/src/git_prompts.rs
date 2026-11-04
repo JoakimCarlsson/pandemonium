@@ -94,6 +94,8 @@ pub enum Prompt {
     Rename(usize),
     /// Whether to close the window while agents are working.
     Quit,
+    /// A question or list about publishing, following, renaming, deleting, merging or rebasing a branch.
+    Branch(crate::branch_tasks::BranchTask),
 }
 
 impl WorkspaceState {
@@ -125,6 +127,9 @@ impl WorkspaceState {
 
     /// Carries out `action` if it presses a question or one of its rows, and says whether it did.
     pub(crate) fn press_prompt(&mut self, action: FocusId) -> bool {
+        if self.press_branch_task(action) {
+            return true;
+        }
         match action {
             PROMPT_INSIDE | STASH_FIELD => {}
             PROMPT_CANCEL | PROMPT_OUTSIDE => self.git.prompt = None,
@@ -155,6 +160,10 @@ impl WorkspaceState {
         }
         if prompt == Prompt::Quit {
             self.quitting = true;
+            return;
+        }
+        if let Prompt::Branch(task) = prompt {
+            self.confirm_branch_task(task);
             return;
         }
         if let Prompt::Rename(position) = prompt {
@@ -195,7 +204,11 @@ impl WorkspaceState {
                     message: Some(message).filter(|message| !message.is_empty()),
                 });
             }
-            Prompt::Stashes(_) | Prompt::Close(_) | Prompt::Rename(_) | Prompt::Quit => {}
+            Prompt::Stashes(_)
+            | Prompt::Close(_)
+            | Prompt::Rename(_)
+            | Prompt::Quit
+            | Prompt::Branch(_) => {}
             Prompt::Unsaved(index) => self.discard_file(index),
             Prompt::Remove(targets) => {
                 for target in targets {
@@ -488,6 +501,7 @@ pub fn prompt(state: &WorkspaceState, open: &Prompt) -> Node {
             question(title, words, "Delete", Variant::Destructive)
         }
         Prompt::Stashes(action) => stash_list(state, *action),
+        Prompt::Branch(task) => crate::branch_tasks::branch_prompt(state, *task),
         Prompt::Quit => question(
             "Close the window while agents are working?".to_owned(),
             "The agents keep working on the server; open the window again to see what they did.",

@@ -8,6 +8,7 @@ use pm_acp::{
 };
 use pm_components::Project;
 use pm_components::adder::{ADDER_BROWSE, ADDER_CLONE, ADDER_ROW_BASE, Found, Kind as Row};
+use pm_components::branch_tasks::{BRANCH_TASK_ROW_BASE, BranchTask};
 use pm_components::browser_safety::{Certificate, Download, Question as Asked, Saving};
 use pm_components::diff::gutter_id;
 use pm_components::git_controls::{BRANCH_BUTTON, BRANCH_FILTER, Pick as Choosing};
@@ -148,6 +149,14 @@ pub enum Shot {
     Discarding,
     /// The workspace with the list of branches open and a name being typed.
     Branching,
+    /// The source control panel on a branch with commits and a remote but no upstream, with changes still uncommitted and the menu under the commit button open.
+    BranchLocal,
+    /// The source control panel on a branch that follows a remote branch, ahead and behind it.
+    BranchFollowing,
+    /// The list of remote branches the current branch can be made to follow.
+    BranchUpstream,
+    /// The question of whether to delete a branch with unmerged and unpushed commits.
+    BranchDelete,
     /// The workspace reading a file as it is in the last commit.
     Reading,
     Editing,
@@ -168,6 +177,8 @@ pub enum Shot {
     BrowserTabs(bool),
     /// The workspace on a second session, whose browser holds one tab of its own while the first session keeps the tabs of the browser-tabs picture.
     BrowserSessions,
+    /// The workspace with the browser on a form whose text field has the keyboard, showing its focus ring, the selected text and the caret.
+    BrowserInput,
     /// The workspace with the browser open and the question about clearing cookies and site data asked.
     BrowserClear,
     /// The workspace with the browser open and a page asking to use the camera and microphone, with a second question waiting.
@@ -252,6 +263,10 @@ pub enum Shot {
     AgentsScrolled,
     /// A conversation whose agent is on a turn with prompts queued behind it and another being written.
     Queued,
+    /// The same conversation with a long, multi-line prompt waiting, shown in full.
+    QueuedLong,
+    /// The same conversation with the first waiting prompt open for editing.
+    QueuedEditing,
     /// A conversation with the context ring in the prompt box.
     Usage,
     /// A conversation with the model menu open.
@@ -1415,6 +1430,7 @@ fn changes_repositories(picked: bool) -> WorkspaceState {
                     upstream: Some("origin/task/339-shared-branch".to_owned()),
                     ahead: 2,
                     behind: 0,
+                    remotes: Some(1),
                 },
             },
             pm_git::Standing {
@@ -1745,6 +1761,57 @@ fn browser_finding(tools: bool) -> WorkspaceState {
             browser.tools_width = 300.0;
         }
     }
+    state
+}
+
+/// The picture of a page with one text field that has the keyboard: a ring round the field, its text selected up to a caret.
+fn input_page(width: u32, height: u32) -> pm_renderer::Picture {
+    let (left, right, top, bottom) = (40_u32, 400_u32, 60_u32, 100_u32);
+    let (selected_to, caret) = (260_u32, 262_u32);
+    let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            let inside = x >= left && x < right && y >= top && y < bottom;
+            let edge = inside && (x < left + 2 || x >= right - 2 || y < top + 2 || y >= bottom - 2);
+            let text = inside && y >= top + 12 && y < bottom - 12 && x >= left + 12;
+            let pixel = if edge {
+                [229, 151, 0, 255]
+            } else if inside && x == caret && text {
+                [0, 0, 0, 255]
+            } else if text && x < selected_to {
+                [51, 103, 209, 255]
+            } else if inside {
+                [255, 255, 255, 255]
+            } else {
+                [247, 247, 247, 255]
+            };
+            pixels.extend_from_slice(&pixel);
+        }
+    }
+    pm_renderer::Picture {
+        key: pm_renderer::Picture::live_key(pm_components::browser::PAGE_SURFACE, 1),
+        width,
+        height,
+        pixels: std::sync::Arc::new(pixels),
+    }
+}
+
+/// The workspace with the browser on a page whose text field has the keyboard.
+fn browser_input() -> WorkspaceState {
+    let mut state = workspace_sample();
+    state.open_browser("http://localhost:5173/signup");
+    let first = state
+        .browser
+        .as_ref()
+        .map_or(1, |browser| browser.active_id());
+    state.browser_tab_painted(
+        first,
+        Some(input_page(640, 400)),
+        "Sign up",
+        "http://localhost:5173/signup",
+        pm_components::browser::Pointer::Text,
+        false,
+    );
     state
 }
 
@@ -2116,6 +2183,7 @@ fn overview() -> WorkspaceState {
             upstream: Some("origin/main".to_owned()),
             ahead: 2,
             behind: 0,
+            remotes: Some(1),
         };
     }
     let changes = state.sessions[0].changes[..1].to_vec();
@@ -2864,6 +2932,58 @@ impl Shot {
                 state.git.graph_all = true;
                 Screen::Workspace(state.with_git_menu(MenuKind::History(2), (1000.0, 600.0)))
             }
+            Self::BranchLocal => {
+                let mut state = source();
+                state.sessions[0].tracking = pm_git::Tracking {
+                    remotes: Some(2),
+                    ..pm_git::Tracking::default()
+                };
+                Screen::Workspace(state.with_git_menu(MenuKind::Commit, (1000.0, 600.0)))
+            }
+            Self::BranchFollowing => {
+                let mut state = source();
+                state.sessions[0].tracking = pm_git::Tracking {
+                    upstream: Some("origin/task/227-checkpoints".to_owned()),
+                    ahead: 2,
+                    behind: 1,
+                    remotes: Some(1),
+                };
+                Screen::Workspace(state)
+            }
+            Self::BranchUpstream => {
+                let info = pm_git::BranchInfo {
+                    remotes: vec!["origin".to_owned(), "fork".to_owned()],
+                    remote_branches: ["origin/main", "origin/feat/editor", "fork/main"]
+                        .map(str::to_owned)
+                        .to_vec(),
+                    ..pm_git::BranchInfo::default()
+                };
+                let mut state = source();
+                state.sessions[0].tracking.remotes = Some(2);
+                Screen::Workspace(
+                    state
+                        .branch_asked(BranchTask::Upstream)
+                        .with_branch_info(0, None, info),
+                )
+            }
+            Self::BranchDelete => {
+                let names = ["task/227-checkpoints", "main", "feat/session-titles"];
+                let info = pm_git::BranchInfo {
+                    remotes: vec!["origin".to_owned()],
+                    unmerged: 3,
+                    unpushed: 1,
+                    follows: Some("origin/feat/session-titles".to_owned()),
+                    ..pm_git::BranchInfo::default()
+                };
+                let mut state = source();
+                state.sessions[0].tracking.remotes = Some(1);
+                let state = state
+                    .branch_asked(BranchTask::Delete)
+                    .with_session_branches(0, names.map(str::to_owned).to_vec())
+                    .with_branch_info(0, None, info.clone())
+                    .after(FocusId(BRANCH_TASK_ROW_BASE + 1));
+                Screen::Workspace(state.with_branch_info(0, Some("feat/session-titles".to_owned()), info))
+            }
             Self::Stashing => Screen::Workspace(source().asked(Prompt::StashMessage)),
             Self::Refused => Screen::Workspace(
                 source().git_failed("Could not switch branch: fatal: a branch named 'main' already exists"),
@@ -2945,6 +3065,7 @@ impl Shot {
             Self::BrowserFindTools => Screen::Workspace(browser_finding(true)),
             Self::BrowserTabs(many) => Screen::Workspace(browser_tabs(many)),
             Self::BrowserSessions => Screen::Workspace(browser_sessions()),
+            Self::BrowserInput => Screen::Workspace(browser_input()),
             Self::BrowserClear => {
                 let mut state = browser_finding(false);
                 state.browser_find_closed();
@@ -3180,6 +3301,10 @@ impl Shot {
                     )
             ),
             Self::Queued => Screen::Workspace(queued()),
+            Self::QueuedLong => Screen::Workspace(queued_long()),
+            Self::QueuedEditing => Screen::Workspace(
+                queued_long().after(FocusId(pm_components::queued::EDIT_QUEUED_BASE)),
+            ),
             Self::Kept => Screen::Workspace(kept()),
             Self::LongLine => Screen::Workspace(long_line()),
             Self::Restoring => Screen::Workspace(kept().after(FocusId(RESTORE_BASE))),
@@ -3752,6 +3877,27 @@ fn queued() -> WorkspaceState {
         PROMPT,
         Edit::Paste("Stop, the clamp lives in pm-ui".to_owned()),
     )
+}
+
+/// A conversation on a turn with a long, multi-line prompt waiting first and a short one with a file behind it.
+fn queued_long() -> WorkspaceState {
+    let waiting = |id: u64, text: &str, files: &[&str]| Event::Queued {
+        id,
+        text: text.to_owned(),
+        files: files.iter().map(|name| (*name).to_owned()).collect(),
+    };
+    let state = live(Turn::Working);
+    let session = state.sessions.len() - 1;
+    [
+        waiting(
+            1,
+            "Then add a test for the clamp, and make sure it covers a value below the minimum, a value above the maximum and a value exactly on each edge, because the last version only checked the middle of the range.\n\nAfter that, update the docs:\n- explain what the clamp does\n- list the edge cases it handles",
+            &[],
+        ),
+        waiting(2, "Use the layout in this screenshot", &["empty.png"]),
+    ]
+    .into_iter()
+    .fold(state, |state, event| state.heard(session, event))
 }
 
 /// A finished conversation whose Codex holds back a new hook and a changed one until the reader trusts them.
