@@ -1433,6 +1433,28 @@ pub enum Outgoing {
         /// `fetch`, `pull`, `push` or `sync`.
         operation: &'static str,
     },
+    /// Asks what the controls over branches and remotes need to know about the repository the folder of a session is in, and about `branch` there.
+    BranchInfo {
+        /// The session, by position.
+        session: usize,
+        /// The local branch counted and looked for in other worktrees, or nothing for the remotes alone.
+        branch: Option<String>,
+    },
+    /// Publishes, sets or unsets the upstream of, renames, deletes, merges or rebases a branch of the repository the folder of a session is in.
+    BranchOperation {
+        /// The session, by position.
+        session: usize,
+        /// `publish`, `set_upstream`, `unset_upstream`, `rename`, `delete`, `merge` or `rebase`.
+        action: &'static str,
+        /// The branch acted on.
+        branch: String,
+        /// The new name, the name on the remote, or the remote branch to follow.
+        target: Option<String>,
+        /// The remote to publish to.
+        remote: Option<String>,
+        /// Whether to act on the branch on the remote too.
+        with_remote: bool,
+    },
     /// Lists the commits of the repository the folder of a session is in.
     Log {
         /// The session, by position.
@@ -2362,6 +2384,11 @@ impl WorkspaceState {
             COMMENT_FIELD => self.comment_text.apply(edit),
             BRANCH_FILTER => self.git.filter.apply(edit),
             STASH_FIELD => self.git.stash_message.apply(edit),
+            crate::branch_tasks::BRANCH_TASK_FIELD => {
+                if let Some(open) = self.git.branching.as_mut() {
+                    open.field.apply(edit);
+                }
+            }
             RENAME_FIELD => self.git.rename.apply(edit),
             EDITOR_FIELD => self.file_edited(edit),
             crate::navigate::RENAME_SYMBOL => {
@@ -2437,6 +2464,9 @@ impl WorkspaceState {
             COMMENT_FIELD => Some(&self.comment_text),
             BRANCH_FILTER => Some(&self.git.filter),
             STASH_FIELD => Some(&self.git.stash_message),
+            crate::branch_tasks::BRANCH_TASK_FIELD => {
+                self.git.branching.as_ref().map(|open| &open.field)
+            }
             RENAME_FIELD => Some(&self.git.rename),
             ENTRY_FIELD => self.git.naming.as_ref().map(|(_, field)| field),
             EDITOR_FIELD => self.shown_document().map(|document| &document.field),
@@ -2482,6 +2512,7 @@ impl WorkspaceState {
             || id == COMMENT_FIELD
             || id == BRANCH_FILTER
             || id == STASH_FIELD
+            || id == crate::branch_tasks::BRANCH_TASK_FIELD
             || id == RENAME_FIELD
             || id == ENTRY_FIELD
             || id == EDITOR_FIELD
@@ -2514,7 +2545,7 @@ impl WorkspaceState {
             COMMIT_MESSAGE => COMMIT,
             COMMENT_FIELD => COMMENT_ADD,
             BRANCH_FILTER => BRANCH_SUBMIT,
-            STASH_FIELD | RENAME_FIELD => PROMPT_CONFIRM,
+            STASH_FIELD | RENAME_FIELD | crate::branch_tasks::BRANCH_TASK_FIELD => PROMPT_CONFIRM,
             ENTRY_FIELD => crate::tree_actions::TREE_NAME_SUBMIT,
             EDITOR_FIELD => crate::open_files::EDITOR_SAVE,
             crate::navigate::RENAME_SYMBOL => crate::navigate::RENAME_SYMBOL_SUBMIT,

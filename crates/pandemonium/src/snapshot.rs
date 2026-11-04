@@ -8,6 +8,7 @@ use pm_acp::{
 };
 use pm_components::Project;
 use pm_components::adder::{ADDER_BROWSE, ADDER_CLONE, ADDER_ROW_BASE, Found, Kind as Row};
+use pm_components::branch_tasks::{BRANCH_TASK_ROW_BASE, BranchTask};
 use pm_components::browser_safety::{Certificate, Download, Question as Asked, Saving};
 use pm_components::diff::gutter_id;
 use pm_components::git_controls::{BRANCH_BUTTON, BRANCH_FILTER, Pick as Choosing};
@@ -148,6 +149,14 @@ pub enum Shot {
     Discarding,
     /// The workspace with the list of branches open and a name being typed.
     Branching,
+    /// The source control panel on a branch with commits and a remote but no upstream, with changes still uncommitted and the menu under the commit button open.
+    BranchLocal,
+    /// The source control panel on a branch that follows a remote branch, ahead and behind it.
+    BranchFollowing,
+    /// The list of remote branches the current branch can be made to follow.
+    BranchUpstream,
+    /// The question of whether to delete a branch with unmerged and unpushed commits.
+    BranchDelete,
     /// The workspace reading a file as it is in the last commit.
     Reading,
     Editing,
@@ -1421,6 +1430,7 @@ fn changes_repositories(picked: bool) -> WorkspaceState {
                     upstream: Some("origin/task/339-shared-branch".to_owned()),
                     ahead: 2,
                     behind: 0,
+                    remotes: Some(1),
                 },
             },
             pm_git::Standing {
@@ -2173,6 +2183,7 @@ fn overview() -> WorkspaceState {
             upstream: Some("origin/main".to_owned()),
             ahead: 2,
             behind: 0,
+            remotes: Some(1),
         };
     }
     let changes = state.sessions[0].changes[..1].to_vec();
@@ -2920,6 +2931,58 @@ impl Shot {
                 let mut state = source();
                 state.git.graph_all = true;
                 Screen::Workspace(state.with_git_menu(MenuKind::History(2), (1000.0, 600.0)))
+            }
+            Self::BranchLocal => {
+                let mut state = source();
+                state.sessions[0].tracking = pm_git::Tracking {
+                    remotes: Some(2),
+                    ..pm_git::Tracking::default()
+                };
+                Screen::Workspace(state.with_git_menu(MenuKind::Commit, (1000.0, 600.0)))
+            }
+            Self::BranchFollowing => {
+                let mut state = source();
+                state.sessions[0].tracking = pm_git::Tracking {
+                    upstream: Some("origin/task/227-checkpoints".to_owned()),
+                    ahead: 2,
+                    behind: 1,
+                    remotes: Some(1),
+                };
+                Screen::Workspace(state)
+            }
+            Self::BranchUpstream => {
+                let info = pm_git::BranchInfo {
+                    remotes: vec!["origin".to_owned(), "fork".to_owned()],
+                    remote_branches: ["origin/main", "origin/feat/editor", "fork/main"]
+                        .map(str::to_owned)
+                        .to_vec(),
+                    ..pm_git::BranchInfo::default()
+                };
+                let mut state = source();
+                state.sessions[0].tracking.remotes = Some(2);
+                Screen::Workspace(
+                    state
+                        .branch_asked(BranchTask::Upstream)
+                        .with_branch_info(0, None, info),
+                )
+            }
+            Self::BranchDelete => {
+                let names = ["task/227-checkpoints", "main", "feat/session-titles"];
+                let info = pm_git::BranchInfo {
+                    remotes: vec!["origin".to_owned()],
+                    unmerged: 3,
+                    unpushed: 1,
+                    follows: Some("origin/feat/session-titles".to_owned()),
+                    ..pm_git::BranchInfo::default()
+                };
+                let mut state = source();
+                state.sessions[0].tracking.remotes = Some(1);
+                let state = state
+                    .branch_asked(BranchTask::Delete)
+                    .with_session_branches(0, names.map(str::to_owned).to_vec())
+                    .with_branch_info(0, None, info.clone())
+                    .after(FocusId(BRANCH_TASK_ROW_BASE + 1));
+                Screen::Workspace(state.with_branch_info(0, Some("feat/session-titles".to_owned()), info))
             }
             Self::Stashing => Screen::Workspace(source().asked(Prompt::StashMessage)),
             Self::Refused => Screen::Workspace(

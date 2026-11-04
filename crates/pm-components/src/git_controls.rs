@@ -163,6 +163,8 @@ pub struct GitControls {
     pub tree_target: Option<crate::tree_actions::TreeTarget>,
     /// What was cut or copied out of the tree.
     pub tree_clipboard: Option<crate::tree_actions::Clipboard>,
+    /// What the open question or list about a branch has been told and what has been chosen in it.
+    pub branching: Option<crate::branch_tasks::Branching>,
     /// The stashes of the open session's repository, newest first.
     pub stashes: Vec<pm_git::Stash>,
     /// The merge, rebase or cherry-pick the open session's folder is stopped in, if it is in one.
@@ -220,6 +222,7 @@ impl Default for GitControls {
             tree_gesture: None,
             tree_target: None,
             tree_clipboard: None,
+            branching: None,
             stashes: Vec::new(),
             operation: None,
             graph_height: crate::graph::HEIGHT,
@@ -562,8 +565,15 @@ impl WorkspaceState {
         }
         let tracking = &session.tracking;
         match (session.on_branch, &tracking.upstream) {
-            (true, None) if !session.commits.is_empty() || !self.git.history.is_empty() => {
-                Primary::Publish
+            (true, None) => {
+                if tracking.remotes == Some(0) {
+                    Primary::Commit {
+                        title,
+                        stopped: Some("No remote to publish to"),
+                    }
+                } else {
+                    Primary::Publish
+                }
             }
             (true, Some(_)) if tracking.ahead + tracking.behind > 0 => Primary::Sync {
                 ahead: tracking.ahead,
@@ -578,6 +588,13 @@ impl WorkspaceState {
         match self.primary() {
             Primary::Commit { stopped: None, .. } => self.commit_pressed(false),
             Primary::Sync { .. } => self.remote("sync", "Syncing…"),
+            Primary::Publish
+                if self
+                    .review_session()
+                    .is_some_and(|s| s.tracking.remotes > Some(1)) =>
+            {
+                self.branch_task(crate::branch_tasks::BranchTask::Publish);
+            }
             Primary::Publish => self.remote("push", "Publishing…"),
             Primary::Commit { .. } | Primary::Busy(_) => {}
         }

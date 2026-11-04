@@ -16,6 +16,7 @@ pub mod assist;
 pub mod avatar;
 pub mod badge;
 pub mod branch_menu;
+pub mod branch_tasks;
 pub mod browser;
 pub mod browser_address;
 pub mod browser_clear;
