@@ -44,7 +44,7 @@ const profileFolder = argument('--profile');
 if (profileFolder) {
   app.setPath('userData', path.join(profileFolder, 'electron'));
 }
-app.disableHardwareAcceleration();
+app.commandLine.appendSwitch('enable-unsafe-swiftshader');
 
 /**
  * The socket to the window, once connected.
