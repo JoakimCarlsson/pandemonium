@@ -565,8 +565,8 @@ impl WorkspaceState {
         }
         let tracking = &session.tracking;
         match (session.on_branch, &tracking.upstream) {
-            (true, None) if !session.commits.is_empty() || !self.git.history.is_empty() => {
-                if tracking.remotes == 0 {
+            (true, None) => {
+                if tracking.remotes == Some(0) {
                     Primary::Commit {
                         title,
                         stopped: Some("No remote to publish to"),
@@ -591,7 +591,7 @@ impl WorkspaceState {
             Primary::Publish
                 if self
                     .review_session()
-                    .is_some_and(|s| s.tracking.remotes > 1) =>
+                    .is_some_and(|s| s.tracking.remotes > Some(1)) =>
             {
                 self.branch_task(crate::branch_tasks::BranchTask::Publish);
             }

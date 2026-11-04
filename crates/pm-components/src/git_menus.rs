@@ -275,7 +275,7 @@ impl WorkspaceState {
     /// What stops anything being done with a remote, when something does: the repository has none.
     fn no_remote(&self) -> Option<&'static str> {
         self.review_session()
-            .filter(|session| session.tracking.remotes == 0)
+            .filter(|session| session.tracking.remotes == Some(0))
             .map(|_| "no remote")
     }
 

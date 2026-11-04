@@ -486,36 +486,6 @@ fn branch_button(state: &WorkspaceState, session: &Session, working: bool) -> No
         .build()
 }
 
-/// The line under the branch saying which branch it follows and how far apart they are, or that it follows none, or that there is no remote to follow.
-fn upstream_line(session: &Session) -> Option<Node> {
-    if session.branch.is_empty() || !session.on_branch {
-        return None;
-    }
-    let tracking = &session.tracking;
-    let mut said = node()
-        .styles([flex(), items_center(), gap(2), h(7), px(3), flex_none()])
-        .child(glyph(IconName::GitPush, 3.0, Role::Subtle));
-    said = match &tracking.upstream {
-        Some(upstream) => {
-            let mut said = said.child(clipped(upstream.clone(), 12, Role::Muted));
-            for (count, arrow) in [
-                (tracking.behind, IconName::ArrowDown),
-                (tracking.ahead, IconName::ArrowUp),
-            ] {
-                if count > 0 {
-                    said = said
-                        .child(line(count.to_string(), 12, 1.4, Role::Muted))
-                        .child(glyph(arrow, 3.0, Role::Muted));
-                }
-            }
-            said
-        }
-        None if tracking.remotes == 0 => said.child(clipped("No remote", 12, Role::Subtle)),
-        None => said.child(clipped("No upstream", 12, Role::Subtle)),
-    };
-    Some(said)
-}
-
 /// The review panel for `session`.
 pub fn review(state: &WorkspaceState, session: &Session, height: f32, shaper: &mut Shaper) -> Node {
     node()
@@ -574,7 +544,6 @@ pub fn review(state: &WorkspaceState, session: &Session, height: f32, shaper: &m
                 ),
         )
         .child(band(10).child(branch_button(state, session, state.git.working)))
-        .children(upstream_line(session))
         .children(
             (state.review_tab == ReviewTab::Changes)
                 .then(|| repositories(state, session))

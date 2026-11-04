@@ -143,6 +143,20 @@ pub fn branch_info(directory: &Path, branch: Option<&str>) -> BranchInfo {
     info
 }
 
+/// Checks that `name` is a branch name git accepts and that cannot be taken for an option.
+///
+/// # Errors
+///
+/// Fails when the name is empty, starts with a dash, or is not a valid branch name.
+fn valid_name(directory: &Path, name: &str) -> Result<(), String> {
+    if name.is_empty() || name.starts_with('-') {
+        return Err(format!("{name:?} is not a branch name"));
+    }
+    run(directory, &["check-ref-format", "--branch", name])
+        .map(|_| ())
+        .map_err(|_| format!("{name} is not a valid branch name"))
+}
+
 /// Refuses to change the branch `branch` when it is checked out in another worktree, such as that of another session.
 fn refuse_elsewhere(directory: &Path, branch: &str) -> Result<(), String> {
     match checked_out_elsewhere(directory, branch) {
@@ -197,7 +211,7 @@ fn rename(directory: &Path, branch: &str, name: &str, with_remote: bool) -> Resu
             ],
         )?;
     }
-    run(directory, &["branch", "--move", branch, name])?;
+    run(directory, &["branch", "--move", "--", branch, name])?;
     if let Some((remote, old)) = remote {
         run(
             directory,
@@ -225,7 +239,7 @@ fn delete(directory: &Path, branch: &str, with_remote: bool) -> Result<(), Strin
     } else {
         None
     };
-    run(directory, &["branch", "--delete", "--force", branch])?;
+    run(directory, &["branch", "--delete", "--force", "--", branch])?;
     if let Some((remote, name)) = remote {
         run(directory, &["push", &remote, "--delete", &name])?;
     }
@@ -261,6 +275,19 @@ pub fn branch_operation(
         });
     }
     let missing = || format!("{action} needs a name");
+    if matches!(action, "rename" | "delete" | "merge" | "rebase") {
+        valid_name(directory, branch)?;
+    }
+    if matches!(action, "rename" | "set_upstream")
+        && let Some(target) = target
+    {
+        valid_name(directory, target)?;
+    }
+    if action == "publish"
+        && let Some(target) = target
+    {
+        valid_name(directory, target)?;
+    }
     match action {
         "publish" => publish(
             directory,
@@ -276,8 +303,11 @@ pub fn branch_operation(
         }
         "rename" => rename(directory, branch, target.ok_or_else(missing)?, with_remote),
         "delete" => delete(directory, branch, with_remote),
-        "merge" => until_conflicts(directory, &["merge", "--no-edit", branch]),
-        "rebase" => until_conflicts(directory, &["rebase", branch]),
+        "merge" => until_conflicts(
+            directory,
+            &["merge", "--no-edit", "--end-of-options", branch],
+        ),
+        "rebase" => until_conflicts(directory, &["rebase", "--end-of-options", branch]),
         other => Err(format!("{other} is not something to do with a branch")),
     }
 }

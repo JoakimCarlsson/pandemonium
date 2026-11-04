@@ -1131,9 +1131,9 @@ pub struct Tracking {
     pub ahead: usize,
     /// How many commits the one it follows has that it has not.
     pub behind: usize,
-    /// How many remotes the repository has to publish to or follow a branch of; a folder of repositories has as few as its poorest repository.
+    /// How many remotes the repository has to publish to or follow a branch of, a folder of repositories having as few as its poorest repository; nothing when the server did not say.
     #[serde(default)]
-    pub remotes: usize,
+    pub remotes: Option<usize>,
 }
 
 /// What the checked out branch of the repository `directory` is in follows, and how far apart they are. Of a folder of repositories, how far apart they are all together, following something only when every one of them does.
@@ -1151,10 +1151,10 @@ pub fn tracking(directory: &Path) -> Tracking {
                 .flatten(),
             ahead: each.iter().map(|held| held.ahead).sum(),
             behind: each.iter().map(|held| held.behind).sum(),
-            remotes: each.iter().map(|held| held.remotes).min().unwrap_or(0),
+            remotes: each.iter().map(|held| held.remotes).min().flatten(),
         };
     }
-    let remotes = branching::remotes(directory).len();
+    let remotes = Some(branching::remotes(directory).len());
     let Ok(upstream) = run(
         directory,
         &[

@@ -1430,7 +1430,7 @@ fn changes_repositories(picked: bool) -> WorkspaceState {
                     upstream: Some("origin/task/339-shared-branch".to_owned()),
                     ahead: 2,
                     behind: 0,
-                    remotes: 1,
+                    remotes: Some(1),
                 },
             },
             pm_git::Standing {
@@ -2183,7 +2183,7 @@ fn overview() -> WorkspaceState {
             upstream: Some("origin/main".to_owned()),
             ahead: 2,
             behind: 0,
-            remotes: 1,
+            remotes: Some(1),
         };
     }
     let changes = state.sessions[0].changes[..1].to_vec();
@@ -2935,7 +2935,7 @@ impl Shot {
             Self::BranchLocal => {
                 let mut state = source();
                 state.sessions[0].tracking = pm_git::Tracking {
-                    remotes: 2,
+                    remotes: Some(2),
                     ..pm_git::Tracking::default()
                 };
                 Screen::Workspace(state.with_git_menu(MenuKind::Commit, (1000.0, 600.0)))
@@ -2946,7 +2946,7 @@ impl Shot {
                     upstream: Some("origin/task/227-checkpoints".to_owned()),
                     ahead: 2,
                     behind: 1,
-                    remotes: 1,
+                    remotes: Some(1),
                 };
                 Screen::Workspace(state)
             }
@@ -2959,7 +2959,7 @@ impl Shot {
                     ..pm_git::BranchInfo::default()
                 };
                 let mut state = source();
-                state.sessions[0].tracking.remotes = 2;
+                state.sessions[0].tracking.remotes = Some(2);
                 Screen::Workspace(
                     state
                         .branch_asked(BranchTask::Upstream)
@@ -2976,7 +2976,7 @@ impl Shot {
                     ..pm_git::BranchInfo::default()
                 };
                 let mut state = source();
-                state.sessions[0].tracking.remotes = 1;
+                state.sessions[0].tracking.remotes = Some(1);
                 let state = state
                     .branch_asked(BranchTask::Delete)
                     .with_session_branches(0, names.map(str::to_owned).to_vec())
