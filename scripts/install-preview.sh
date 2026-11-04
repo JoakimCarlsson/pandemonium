@@ -1,9 +1,8 @@
 #!/bin/sh
 #
 # Installs this checkout as pandemonium-preview, or, given `server`, installs
-# only the headless pandemonium-server. Either way the harness, `crab`, is built
-# from the oh-my-crab checkout beside this one, or from PANDEMONIUM_HARNESS_SRC,
-# and installed next to it.
+# only the headless pandemonium-server. The harness that runs the agents is part
+# of the program, so nothing else is installed.
 #
 #   scripts/install-preview.sh [server]
 
@@ -19,23 +18,6 @@ NAME="pandemonium-preview"
 fail() {
     echo "error: $*" >&2
     exit 1
-}
-
-# Prints where the harness source is: PANDEMONIUM_HARNESS_SRC, or the oh-my-crab checkout beside this one; prints nothing when there is none.
-harness_source() {
-    src="${PANDEMONIUM_HARNESS_SRC:-$(cd .. && pwd)/oh-my-crab}"
-    [ -f "$src/crates/omc/Cargo.toml" ] && echo "$src" || true
-}
-
-# Builds the harness and installs it as `crab` in the bin folder, so that the agents the app starts are the ones built from the current harness source.
-install_harness() {
-    src="$(harness_source)"
-    [ -n "$src" ] || fail "the harness source was not found; check out oh-my-crab beside this folder or set PANDEMONIUM_HARNESS_SRC"
-    echo "building crab from $src"
-    (cd "$src" && CARGO_TARGET_DIR="$src/build" cargo build --release --locked -p omc)
-    mkdir -p "$BIN_DIR"
-    install -m 0755 "$src/build/release/crab" "$BIN_DIR/crab"
-    echo "installed crab ($(cd "$src" && git rev-parse --short HEAD 2>/dev/null || echo unknown)) to $BIN_DIR/crab"
 }
 
 # Adds the editor's icon to the user's hicolor theme, one size per picture.
@@ -92,7 +74,6 @@ install_editor() {
     PANDEMONIUM_CHANNEL=preview cargo build --release --locked -p pandemonium
     mkdir -p "$BIN_DIR"
     install -m 0755 target/release/pandemonium "$BIN_DIR/$NAME"
-    install_harness
     install_browser
     case "$(uname -s)" in
         Linux)
@@ -110,7 +91,6 @@ install_server() {
     cargo build --release --locked -p pm-server
     mkdir -p "$BIN_DIR"
     install -m 0755 target/release/pandemonium-server "$BIN_DIR/pandemonium-server"
-    install_harness
     echo "installed $("$BIN_DIR/pandemonium-server" --version) to $BIN_DIR/pandemonium-server"
 }
 

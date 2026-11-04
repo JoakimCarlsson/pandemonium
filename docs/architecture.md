@@ -86,11 +86,11 @@ One crate per layer, each depending only on the layers below it.
   `PANDEMONIUM_LANGUAGES` when it is set.
 - **Domain:** `pm-harness` (the app's side of the harness: the agents it ships,
   the conversation held with one over the harness's wire protocol, and its
-  sign-in; the harness is its own program in the `oh-my-crab` repository, and
-  `PANDEMONIUM_HARNESS` points at a build of it, and the tools it offers are
-  listed by running `crab tools`. The harness owns each conversation: its
+  sign-in; the harness is a library from the `oh-my-crab` repository that runs
+  inside the server, one conversation to a thread, and the tools it offers are
+  asked of it directly. The harness owns each conversation: its
   turns, title and chosen settings are saved by it, and the server reads them
-  back with `crab history`. The server keeps only what is its own, such as
+  back from it. The server keeps only what is its own, such as
   worktrees, files kept per turn and queued prompts),
   `pm-agent-library` (the skills, instructions, agent definitions, hooks and
   tools each agent product is given, read from the folders it keeps them in,

@@ -43,10 +43,11 @@ welcome as [issues](https://github.com/JoakimCarlsson/pandemonium/issues).
 - **A session is a worktree you review.** Starting an agent cuts a fresh
   worktree and branch. Its files, its diff and its conversation are shown in
   panes, not in a terminal beside the editor.
-- **Agents run in a harness.** The harness is a program of its own, `crab`,
-  that runs the agent loop and the tools for one conversation and speaks a
-  small JSON-lines protocol on its standard streams. It works in the
-  session's worktree.
+- **Agents run in a harness.** The harness, `crab`, lives in the
+  `oh-my-crab` repository and is built into the server. It runs the agent loop
+  and the tools for each conversation on a thread of its own, so a failure in
+  one conversation ends that conversation only. It works in the session's
+  worktree.
 - **A server owns the agents.** `pandemonium-server` starts the agents, makes
   their worktrees and runs git. The window is a client of it, so an agent keeps
   working when the window is closed, the laptop sleeps or the connection drops,
@@ -195,8 +196,8 @@ Other targets:
 ```sh
 make fmt                     # cargo fmt --all
 make lint                    # cargo clippy --workspace --all-targets -- -D warnings
-make install                 # build this checkout and install it as pandemonium-preview, with crab built from the oh-my-crab checkout beside it (or PANDEMONIUM_HARNESS_SRC)
-make install-server          # build and install only pandemonium-server, and crab
+make install                 # build this checkout and install it as pandemonium-preview
+make install-server          # build and install only pandemonium-server
 make uninstall               # remove pandemonium-preview and everything it keeps; the stable app is left alone
 make release VERSION=0.2.0   # bump, tag and push; CI builds and publishes
 make languages              # regenerate the language index after changing a language folder
