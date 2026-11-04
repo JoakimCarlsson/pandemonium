@@ -182,6 +182,20 @@ impl Session {
         self.log.last().map_or(0, |(seq, _)| *seq) + 1
     }
 
+    /// The id the next turn the reader hands the agent is saved under: one more than the largest id any turn in the log has, or the log has reached, so that it never repeats an id the log was rebuilt with.
+    pub(crate) fn next_turn_id(&self) -> u64 {
+        let used = self
+            .log
+            .iter()
+            .map(|(seq, event)| match event {
+                Event::Prompted { turn, .. } if *turn != 0 => *turn,
+                _ => *seq,
+            })
+            .max()
+            .unwrap_or(0);
+        used + 1
+    }
+
     /// Whether the log ends on a turn handed to the agent that never ended.
     pub(crate) fn turn_open(&self) -> bool {
         self.log.iter().fold(false, |open, (_, event)| match event {
@@ -444,4 +458,48 @@ pub(crate) fn now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.as_millis() as u64)
+}
+
+#[cfg(test)]
+/// Tests for the ids turns are saved under.
+mod turn_id_tests {
+    use super::*;
+
+    /// A session description with nothing set.
+    fn meta() -> Meta {
+        Meta {
+            agent: String::new(),
+            repository: String::new(),
+            directory: String::new(),
+            branch: None,
+            head: None,
+            base: None,
+            title: String::new(),
+            closed: false,
+            updated: 0,
+            login: None,
+            submodule: None,
+            container: false,
+        }
+    }
+
+    /// A turn id never repeats one the log holds, even when the log was rebuilt with fewer events than its ids reach.
+    #[test]
+    fn next_turn_id_stays_above_every_id_in_the_log() {
+        let prompted = |turn: u64| Event::Prompted {
+            text: String::new(),
+            files: Vec::new(),
+            checkpoint: false,
+            turn,
+        };
+        let log = vec![
+            (1, prompted(2)),
+            (2, prompted(40)),
+            (3, Event::Finished(None)),
+        ];
+        let session = Session::new(pm_harness::AGENTS[0], PathBuf::new(), log, meta());
+        assert_eq!(session.next_turn_id(), 41);
+        let empty = Session::new(pm_harness::AGENTS[0], PathBuf::new(), Vec::new(), meta());
+        assert_eq!(empty.next_turn_id(), 1);
+    }
 }
