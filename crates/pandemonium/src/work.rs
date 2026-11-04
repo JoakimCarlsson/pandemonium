@@ -411,6 +411,8 @@ pub struct Work {
     tokens: HashMap<String, String>,
     /// The number of the last event each session had when the window first listed it, by machine and number; the events up to it are history, not news.
     history: HashMap<(Host, u64), u64>,
+    /// The sessions whose history held something that moved their files, and so are read once when the history ends, by machine and number.
+    moved_in_history: HashSet<(Host, u64)>,
     /// What the servers reported that the window has yet to act on, oldest first.
     unheard: VecDeque<(Host, Incoming)>,
     /// The folders each server was last asked to watch, by machine.
@@ -478,6 +480,7 @@ impl Work {
             machine: None,
             tokens: HashMap::new(),
             history: HashMap::new(),
+            moved_in_history: HashSet::new(),
             unheard: VecDeque::new(),
             watched: HashMap::new(),
             read_again: HashSet::new(),
@@ -1827,7 +1830,11 @@ impl Work {
         );
         let finished = live && matches!(event, Event::Finished(_));
         model.update(|screen| screen.hear_in_place(session, event));
-        if files_moved {
+        let history_ends = !live && Some(&seq) >= self.history.get(&key);
+        if files_moved && !live {
+            self.moved_in_history.insert(key.clone());
+        }
+        if (files_moved && live) || (history_ends && self.moved_in_history.remove(&key)) {
             self.refresh(model, session);
         }
         if finished {
