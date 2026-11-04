@@ -12,7 +12,7 @@ use crate::event::Discovery;
 /// How long the harness has to open a conversation and say what it offers.
 const PATIENCE: Duration = Duration::from_secs(60);
 
-/// What `agent` says about itself, found by opening a conversation and closing it again.
+/// What `agent` says about itself, its settings and the commands its skills give, found by opening a conversation and closing it again.
 ///
 /// # Errors
 ///
@@ -36,19 +36,23 @@ pub fn discover(agent: Agent) -> Result<Discovery, String> {
         defaults: Vec::new(),
     }))?;
     let deadline = Instant::now() + PATIENCE;
+    let mut settings = None;
+    let mut commands = None;
     while let Some(left) = deadline.checked_duration_since(Instant::now()) {
         match harness.listen(left) {
-            Heard::Event(Event::Settings(settings)) => {
-                return Ok(Discovery {
-                    settings,
-                    commands: Vec::new(),
-                });
-            }
+            Heard::Event(Event::Settings(said)) => settings = Some(said),
+            Heard::Event(Event::Commands(said)) => commands = Some(said),
             Heard::Event(Event::SignedOut { reason, .. } | Event::Failed(reason)) => {
                 return Err(reason);
             }
             Heard::Event(_) | Heard::Silence => {}
             Heard::Closed(reason) => return Err(reason),
+        }
+        if let (Some(settings), Some(commands)) = (&settings, &commands) {
+            return Ok(Discovery {
+                settings: settings.clone(),
+                commands: commands.clone(),
+            });
         }
     }
     Err("did not answer in time".to_owned())

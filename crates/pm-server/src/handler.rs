@@ -477,7 +477,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
         Request::Library { agent, directory } => match agent_named(&agent) {
             Some(agent) => Response::Library {
                 product: agent.product(),
-                items: crate::library::items(agent, &place(&directory)),
+                items: crate::library::items(&place(&directory)),
                 withheld: crate::library::withheld(),
             },
             None => failed(format!("no agent is called {agent}")),

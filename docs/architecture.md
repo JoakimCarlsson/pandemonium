@@ -92,8 +92,8 @@ One crate per layer, each depending only on the layers below it.
   turns, title and chosen settings are saved by it, and the server reads them
   back from it. The server keeps only what is its own, such as
   worktrees, files kept per turn and queued prompts),
-  `pm-agent-library` (the skills, instructions, agent definitions, hooks and
-  tools each agent product is given, read from the folders it keeps them in,
+  `pm-agent-library` (the skills, instructions, agent definitions and tools
+  each agent is given, as the crab harness finds them through `omc-context`,
   and which of them the reader turned off), `pm-mcp` (a client
   of tool servers, which lists the tools they offer), `pm-dap`
   (programs debugged through debug adapters over the Debug Adapter Protocol:

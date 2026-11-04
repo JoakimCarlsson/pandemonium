@@ -421,11 +421,12 @@ fn openable(state: &WorkspaceState, item: &Item) -> bool {
     let Some((project, _)) = state.settings_page.library.of else {
         return false;
     };
-    state.projects.get(project).is_some_and(|held| {
-        held.host().is_none()
-            || (item.scope == Scope::Workspace
-                && inside_project(&item.path, &held.directory()).is_some())
-    })
+    !item.path.is_empty()
+        && state.projects.get(project).is_some_and(|held| {
+            held.host().is_none()
+                || (item.scope == Scope::Workspace
+                    && inside_project(&item.path, &held.directory()).is_some())
+        })
 }
 
 /// The choice of the agent the pages read for, and what they say they were read for: the project by name, and whether the app knows the agent's files.
@@ -532,7 +533,7 @@ fn items_page(state: &WorkspaceState, kind: Kind, page: Node, room: f32) -> Node
     if found > 0 {
         return page.child(note("Nothing found matches."));
     }
-    let places = locations(product, kind);
+    let places = locations(kind);
     let said = match places.is_empty() {
         true => format!(
             "Nothing found. {} keeps none the app reads.",

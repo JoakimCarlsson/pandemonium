@@ -21,9 +21,9 @@ pub(crate) fn withheld() -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Every customization `agent` is given in the project at `directory`, turned off or not.
-pub(crate) fn items(agent: Agent, directory: &Path) -> Vec<Item> {
-    pm_agent_library::discover(agent.product(), directory, agent.config_folder().as_deref())
+/// Every customization the harness gives an agent in the project at `directory`, turned off or not.
+pub(crate) fn items(directory: &Path) -> Vec<Item> {
+    pm_agent_library::discover(directory)
 }
 
 /// The tool servers agents are started with that are switched on: those saved and those the extensions bring.
@@ -124,7 +124,7 @@ fn keeps_built_in_off(set: &ToolSet, withheld: &[String]) -> bool {
 
 /// The instruction files (by path), skills and agent definitions (by name) of the project at `directory` that the reader turned off in `withheld`.
 fn disabled(agent: Agent, directory: &Path, withheld: &[String]) -> Vec<String> {
-    items(agent, directory)
+    items(directory)
         .into_iter()
         .filter(|item| item.kind.switchable(agent.product()) && !item.enabled(withheld))
         .filter_map(|item| match item.kind {

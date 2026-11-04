@@ -2793,6 +2793,9 @@ dependencies = [
 [[package]]
 name = "omc-context"
 version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
 
 [[package]]
 name = "omc-mcp"
@@ -3067,9 +3070,8 @@ checksum = "b4596b6d070b27117e987119b4dac604f3c58cfb0b191112e24771b2faeac1a6"
 name = "pm-agent-library"
 version = "0.14.5"
 dependencies = [
+ "omc-context",
  "serde",
- "serde_json",
- "toml",
 ]
 
 [[package]]
