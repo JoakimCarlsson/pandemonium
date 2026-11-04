@@ -1,8 +1,9 @@
 //! The work behind the screen: asking the servers to run the agents and the git operations, and taking in what they answer.
 
 use std::cell::Cell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::time::{Duration, Instant};
 
 use pm_acp::{Discovery, Event};
 use pm_client::{Client, Incoming};
@@ -397,6 +398,9 @@ struct Link {
     waiting: HashMap<u64, Pending>,
 }
 
+/// The longest one look at what the servers reported may take, so a long history being replayed never stops the window from drawing and answering.
+const HEARING_BUDGET: Duration = Duration::from_millis(8);
+
 /// The servers and the threads doing work for them.
 pub struct Work {
     /// The link to the server of each machine that has been asked something.
@@ -407,6 +411,8 @@ pub struct Work {
     tokens: HashMap<String, String>,
     /// The number of the last event each session had when the window first listed it, by machine and number; the events up to it are history, not news.
     history: HashMap<(Host, u64), u64>,
+    /// What the servers reported that the window has yet to act on, oldest first.
+    unheard: VecDeque<(Host, Incoming)>,
     /// The folders each server was last asked to watch, by machine.
     watched: HashMap<Host, Vec<String>>,
     /// The sessions, by position, whose folders were asked to be read while a read of them was on its way, so they are read once more when it lands.
@@ -472,6 +478,7 @@ impl Work {
             machine: None,
             tokens: HashMap::new(),
             history: HashMap::new(),
+            unheard: VecDeque::new(),
             watched: HashMap::new(),
             read_again: HashSet::new(),
             numbers: HashMap::new(),
@@ -1472,13 +1479,10 @@ impl Work {
             }
             self.finish(model, job);
         }
-        let hosts: Vec<Host> = self.links.keys().cloned().collect();
-        for host in hosts {
-            let items = match self.links.get(&host).and_then(|link| link.client.as_ref()) {
-                Some(client) => client.incoming(),
-                None => continue,
-            };
-            for item in items {
+        self.collect_incoming();
+        let started = Instant::now();
+        while let Some((host, item)) = self.unheard.pop_front() {
+            {
                 match item {
                     Incoming::UpdateProgress { received, total } => {
                         if host.is_none() {
@@ -1630,12 +1634,34 @@ impl Work {
                     }
                 }
             }
+            if started.elapsed() >= HEARING_BUDGET {
+                break;
+            }
         }
+    }
+
+    /// Moves what each connected server reported into the queue of what the window has yet to act on.
+    fn collect_incoming(&mut self) {
+        let hosts: Vec<Host> = self.links.keys().cloned().collect();
+        for host in hosts {
+            let Some(client) = self.links.get(&host).and_then(|link| link.client.as_ref()) else {
+                continue;
+            };
+            let items = client.incoming();
+            self.unheard
+                .extend(items.into_iter().map(|item| (host.clone(), item)));
+        }
+    }
+
+    /// Whether reports from the servers are queued that the window has not acted on yet.
+    pub fn hearing(&self) -> bool {
+        !self.unheard.is_empty()
     }
 
     /// Whether something is yet to be answered, so the screen should keep looking for what it finds.
     pub fn busy(&self) -> bool {
         self.pending.get() > 0
+            || !self.unheard.is_empty()
             || self
                 .links
                 .values()
@@ -2591,18 +2617,19 @@ impl Work {
 
     /// Where the session at `session` works.
     fn session_of(model: &State<Screen>, session: usize) -> Option<Placement> {
-        let screen = model.get();
-        let Screen::Workspace(state) = &screen;
-        let held = state.sessions.get(session)?;
-        let project = state.projects.get(held.project)?;
-        Some(Placement {
-            host: project.host(),
-            directory: held.directory.clone(),
-            agent: held.agent,
-            base: held.base.clone(),
-            repository: project.directory().to_string_lossy().into_owned(),
-            title: held.title.clone(),
-            submodule: held.submodule.clone(),
+        model.read(|screen| {
+            let Screen::Workspace(state) = screen;
+            let held = state.sessions.get(session)?;
+            let project = state.projects.get(held.project)?;
+            Some(Placement {
+                host: project.host(),
+                directory: held.directory.clone(),
+                agent: held.agent,
+                base: held.base.clone(),
+                repository: project.directory().to_string_lossy().into_owned(),
+                title: held.title.clone(),
+                submodule: held.submodule.clone(),
+            })
         })
     }
 

@@ -2322,6 +2322,9 @@ impl ApplicationHandler for App {
         }
         event_loop.set_control_flow(match (waiting, hover) {
             _ if browsing => ControlFlow::WaitUntil(Instant::now() + browser::PUMP),
+            _ if self.work.hearing() => {
+                ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(2))
+            }
             (true, _) => ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(50)),
             (false, Some(due)) => ControlFlow::WaitUntil(due),
             (false, None) => ControlFlow::Wait,
