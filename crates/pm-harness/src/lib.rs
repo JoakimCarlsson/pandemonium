@@ -12,6 +12,7 @@ mod chat;
 mod discover;
 mod event;
 mod history;
+mod inprocess;
 mod listing;
 mod login;
 mod mcp;
@@ -21,7 +22,7 @@ mod tool_registry;
 mod web;
 
 pub use account::{account, account_in_folder, default_account};
-pub use agent::{AGENTS, Agent, harness_program};
+pub use agent::{AGENTS, Agent};
 pub use chat::{Chat, Given, Notify};
 pub use discover::discover;
 pub use event::{
@@ -31,10 +32,10 @@ pub use event::{
 pub use history::{import_saved, rename_saved, saved_conversation};
 pub use listing::harness_tools;
 pub use mcp::{command_line, command_words, mcp_servers};
-pub use omc_client::Conversation;
-pub use omc_client::Event as WireEvent;
-pub use omc_client::PastTurn;
-pub use omc_client::{Imported, ImportedTurn};
+pub use omc_wire::Conversation;
+pub use omc_wire::Event as WireEvent;
+pub use omc_wire::PastTurn;
+pub use omc_wire::{Imported, ImportedTurn};
 pub use omc_wire::{Reach, ToolServer};
 pub use product::Product;
 pub use tool_registry::{Listing, search as search_tools};

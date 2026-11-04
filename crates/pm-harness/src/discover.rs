@@ -2,7 +2,9 @@
 
 use std::time::{Duration, Instant};
 
-use omc_client::{Command, Event, Harness, Heard, Opening};
+use omc_wire::{Command, Event, Opening};
+
+use crate::inprocess::{Harness, Heard};
 
 use crate::agent::Agent;
 use crate::event::Discovery;
@@ -14,10 +16,9 @@ const PATIENCE: Duration = Duration::from_secs(60);
 ///
 /// # Errors
 ///
-/// Fails with the reason when the harness is not installed, cannot be started, or the agent cannot be reached.
+/// Fails with the reason when the conversation cannot be started, or the agent cannot be reached.
 pub fn discover(agent: Agent) -> Result<Discovery, String> {
-    let command = agent.command().ok_or("the harness is not installed")?;
-    let mut harness = Harness::start(command)?;
+    let mut harness = Harness::start()?;
     let home = std::env::home_dir().unwrap_or_default();
     harness.send(&Command::Open(Opening {
         directory: home,

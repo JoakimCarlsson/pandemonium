@@ -1,13 +1,14 @@
 //! A conversation with one agent: what the reader says goes in, what the agent does comes out.
 
 use std::path::PathBuf;
-use std::process::Child;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use omc_client::{Command, Harness, Heard, Opening, ToolServer, end};
+use omc_wire::{Command, Opening, ToolServer};
+
+use crate::inprocess::{Harness, Heard, Stopper};
 
 use crate::agent::Agent;
 use crate::event::{Event, Reply};
@@ -82,12 +83,12 @@ impl Request {
     }
 }
 
-/// The harness's process once it is started, and whether the chat was stopped, shared by a chat and its driver thread.
+/// The way to end the conversation once it is started, and whether the chat was stopped, shared by a chat and its driver thread.
 #[derive(Default)]
 struct Ending {
-    /// The process, once it is started.
-    process: Option<Arc<Mutex<Child>>>,
-    /// Whether the chat was stopped, so a process started after that is ended at once.
+    /// The way to end the conversation, once it is started.
+    stopper: Option<Stopper>,
+    /// Whether the chat was stopped, so a conversation started after that is ended at once.
     stopped: bool,
 }
 
@@ -125,7 +126,7 @@ pub struct Chat {
     requests: Sender<Request>,
     /// What the driver thread reports.
     events: Receiver<Event>,
-    /// The harness's process, for ending it.
+    /// The way to end the conversation.
     ending: Arc<Mutex<Ending>>,
     /// The driver thread.
     driver: JoinHandle<()>,
@@ -162,12 +163,12 @@ impl Chat {
         }
     }
 
-    /// Ends the harness's process and waits until it and the driver thread are gone, so nothing the agent runs is left writing into its folder.
+    /// Ends the conversation and waits until it and the driver thread are gone, so nothing the agent runs is left writing into its folder.
     pub fn stop(self) {
         if let Ok(mut ending) = self.ending.lock() {
             ending.stopped = true;
-            if let Some(process) = &ending.process {
-                end(process);
+            if let Some(stopper) = &ending.stopper {
+                stopper.stop();
             }
         }
         drop(self.requests);
@@ -226,11 +227,11 @@ impl Chat {
     }
 }
 
-/// Starts the harness, opens a conversation and carries it until the chat is dropped or the harness stops.
+/// Starts a conversation with the harness, opens it and carries it until the chat is dropped or the harness stops.
 ///
 /// # Errors
 ///
-/// Fails with the reason when the harness is not installed, cannot be started, or stops.
+/// Fails with the reason when the conversation cannot be started, or ends badly.
 fn drive(
     agent: Agent,
     directory: PathBuf,
@@ -246,14 +247,13 @@ fn drive(
     if let Some(reason) = given.blocked {
         return Err(reason);
     }
-    let command = agent.command().ok_or("the harness is not installed")?;
-    let mut harness = Harness::start(command)?;
+    let mut harness = Harness::start()?;
     {
         let mut ending = ending.lock().map_err(|_| "the chat was dropped")?;
         if ending.stopped {
             return Ok(());
         }
-        ending.process = Some(harness.process());
+        ending.stopper = Some(harness.stopper());
     }
     harness.send(&Command::Open(Opening {
         directory,

@@ -3,7 +3,9 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use omc_client::{Command, Event, Harness, Heard, Opening};
+use omc_wire::{Command, Event, Opening};
+
+use crate::inprocess::{Harness, Heard};
 
 use crate::agent::Agent;
 
@@ -18,10 +20,9 @@ impl Agent {
     ///
     /// # Errors
     ///
-    /// Fails with the reason when the harness is not installed, cannot be started, or the login fails.
+    /// Fails with the reason when the conversation cannot be started, or the login fails.
     pub fn sign_in_in(self, home: Option<PathBuf>) -> Result<(), String> {
-        let command = self.command().ok_or("the harness is not installed")?;
-        let mut harness = Harness::start(command)?;
+        let mut harness = Harness::start()?;
         let directory = home
             .clone()
             .or_else(std::env::home_dir)
