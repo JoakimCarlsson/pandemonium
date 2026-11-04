@@ -83,6 +83,22 @@ pub enum Response {
         /// Their names, the current one first.
         names: Vec<String>,
     },
+    /// What the controls over branches and remotes need to know about a repository.
+    BranchInfo {
+        /// The remotes it has.
+        remotes: Vec<String>,
+        /// The branches of those remotes, each with its remote's name in front.
+        remote_branches: Vec<String>,
+        /// The commits the asked branch has that the checked out one has not.
+        unmerged: usize,
+        /// The commits the asked branch has that the branch it follows, or any remote, has not.
+        unpushed: usize,
+        /// The other worktree the asked branch is checked out in, when it is.
+        elsewhere: Option<String>,
+        /// The remote branch the asked branch follows, when it follows one.
+        #[serde(default)]
+        follows: Option<String>,
+    },
     /// The submodules of a repository.
     Submodules {
         /// Where each is, nested ones included, from the root of the repository.

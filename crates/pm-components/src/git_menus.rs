@@ -4,6 +4,7 @@ use pm_input::FocusId;
 use pm_ui::Node;
 
 use crate::Menu;
+use crate::branch_tasks::BranchTask;
 use crate::git_controls::{BRANCH_BUTTON, CHANGES_MORE, COMMIT_CHEVRON, GRAPH_REFS};
 use crate::git_prompts::{Prompt, StashAction};
 use crate::state::{ADD_PROJECT, Outgoing, WorkspaceState};
@@ -99,6 +100,20 @@ enum Command {
     Clone,
     /// Opens the list of branches.
     Checkout,
+    /// Asks where and under what name to publish the branch.
+    Publish,
+    /// Asks which remote branch the branch follows.
+    SetUpstream,
+    /// Makes the branch follow nothing.
+    UnsetUpstream,
+    /// Asks what to rename the branch to.
+    RenameBranch,
+    /// Asks which branch to delete.
+    DeleteBranch,
+    /// Asks which branch to merge into this one.
+    MergeBranch,
+    /// Asks which branch to rebase this one onto.
+    RebaseBranch,
     /// Reads the changes and the graph again.
     Refresh,
     /// Asks what to call a stash of the changes.
@@ -249,6 +264,66 @@ impl WorkspaceState {
         entries
     }
 
+    /// A row saying `label` that does `command`, or, when `reason` says why not, says so beside the label and does nothing.
+    fn branch_row(label: &str, command: Command, reason: Option<&str>) -> Entry {
+        match reason {
+            Some(reason) => Entry::Row(format!("{label} ({reason})"), None),
+            None => row(label, command),
+        }
+    }
+
+    /// What stops anything being done with a remote, when something does: the repository has none.
+    fn no_remote(&self) -> Option<&'static str> {
+        self.review_session()
+            .filter(|session| session.tracking.remotes == Some(0))
+            .map(|_| "no remote")
+    }
+
+    /// What stops something being done to the checked out branch, when something does: there is none, or there is no remote to follow.
+    fn no_branch_or_remote(&self) -> Option<&'static str> {
+        match self.review_session() {
+            Some(session) if !session.on_branch => Some("no branch checked out"),
+            _ => self.no_remote(),
+        }
+    }
+
+    /// The row that publishes the branch, with what stops it.
+    fn publish_entry(&self) -> Entry {
+        Self::branch_row(
+            "Publish Branch…",
+            Command::Publish,
+            self.no_branch_or_remote(),
+        )
+    }
+
+    /// The rows that choose what the branch follows, rename, delete, merge and rebase it.
+    fn branch_entries(&self) -> Vec<Entry> {
+        let detached = self
+            .review_session()
+            .filter(|session| !session.on_branch)
+            .map(|_| "no branch checked out");
+        let followed = self
+            .review_session()
+            .is_some_and(|session| session.tracking.upstream.is_some());
+        vec![
+            self.publish_entry(),
+            Self::branch_row(
+                "Set Upstream…",
+                Command::SetUpstream,
+                self.no_branch_or_remote(),
+            ),
+            Self::branch_row(
+                "Unset Upstream",
+                Command::UnsetUpstream,
+                detached.or((!followed).then_some("follows nothing")),
+            ),
+            Self::branch_row("Rename Branch…", Command::RenameBranch, detached),
+            row("Delete Branch…", Command::DeleteBranch),
+            Self::branch_row("Merge Branch…", Command::MergeBranch, detached),
+            Self::branch_row("Rebase Branch…", Command::RebaseBranch, detached),
+        ]
+    }
+
     /// The entries of the menu `kind`.
     fn menu_entries(&self, kind: MenuKind) -> Vec<Entry> {
         match kind {
@@ -299,15 +374,21 @@ impl WorkspaceState {
                     ),
                 ]
             }
-            MenuKind::Commit => self.commit_entries(),
+            MenuKind::Commit => {
+                let mut entries = self.commit_entries();
+                entries.push(Entry::Rule);
+                entries.push(self.publish_entry());
+                entries
+            }
             MenuKind::Source => {
                 let stashed = !self.git.stashes.is_empty();
+                let remote = self.no_remote();
                 let mut entries = vec![
-                    row("Pull", Command::Pull),
-                    row("Push", Command::Push),
+                    Self::branch_row("Pull", Command::Pull, remote),
+                    Self::branch_row("Push", Command::Push, remote),
                     row("Clone Repository…", Command::Clone),
                     row("Checkout…", Command::Checkout),
-                    row("Fetch", Command::Fetch),
+                    Self::branch_row("Fetch", Command::Fetch, remote),
                     Entry::Rule,
                     row("Stage All Changes", Command::StageAll),
                     row("Unstage All Changes", Command::UnstageAll),
@@ -328,6 +409,8 @@ impl WorkspaceState {
                     ),
                 ];
                 entries.extend(self.commit_entries());
+                entries.push(Entry::Rule);
+                entries.extend(self.branch_entries());
                 entries.extend([
                     Entry::Rule,
                     row("Stash…", Command::StashPush),
@@ -604,6 +687,20 @@ impl WorkspaceState {
             Command::Amend => self.ask(Prompt::Amend),
             Command::Abort => self.ask(Prompt::Abort),
             Command::Skip => self.ask(Prompt::Skip),
+            Command::Publish => self.branch_task(BranchTask::Publish),
+            Command::SetUpstream => self.branch_task(BranchTask::Upstream),
+            Command::UnsetUpstream => self.branch_operation(
+                "unset_upstream",
+                "Updating upstream…",
+                String::new(),
+                None,
+                None,
+                false,
+            ),
+            Command::RenameBranch => self.branch_task(BranchTask::Rename),
+            Command::DeleteBranch => self.branch_task(BranchTask::Delete),
+            Command::MergeBranch => self.branch_task(BranchTask::Merge),
+            Command::RebaseBranch => self.branch_task(BranchTask::Rebase),
             Command::Pull => self.remote("pull", "Pulling…"),
             Command::PullRebase => self.remote("pull_rebase", "Pulling…"),
             Command::Push => self.remote("push", "Pushing…"),

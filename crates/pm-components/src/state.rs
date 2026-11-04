@@ -1177,6 +1177,22 @@ pub enum Outgoing {
         /// The queued prompt, by the id its `Queued` event gave it.
         queued: u64,
     },
+    /// Holds the queue of a session while a waiting prompt is edited, or lets it go on.
+    HoldQueue {
+        /// The session.
+        session: usize,
+        /// Whether to hold the queue.
+        held: bool,
+    },
+    /// Replaces the text of a waiting prompt, which keeps its place and its files, and lets the queue go on.
+    EditQueued {
+        /// The session.
+        session: usize,
+        /// The queued prompt, by the id its `Queued` event gave it.
+        queued: u64,
+        /// What the prompt says from now on.
+        text: String,
+    },
     /// Answers the question the agent of a session asked.
     Choose {
         /// The session, by position.
@@ -1393,6 +1409,28 @@ pub enum Outgoing {
         session: usize,
         /// `fetch`, `pull`, `push` or `sync`.
         operation: &'static str,
+    },
+    /// Asks what the controls over branches and remotes need to know about the repository the folder of a session is in, and about `branch` there.
+    BranchInfo {
+        /// The session, by position.
+        session: usize,
+        /// The local branch counted and looked for in other worktrees, or nothing for the remotes alone.
+        branch: Option<String>,
+    },
+    /// Publishes, sets or unsets the upstream of, renames, deletes, merges or rebases a branch of the repository the folder of a session is in.
+    BranchOperation {
+        /// The session, by position.
+        session: usize,
+        /// `publish`, `set_upstream`, `unset_upstream`, `rename`, `delete`, `merge` or `rebase`.
+        action: &'static str,
+        /// The branch acted on.
+        branch: String,
+        /// The new name, the name on the remote, or the remote branch to follow.
+        target: Option<String>,
+        /// The remote to publish to.
+        remote: Option<String>,
+        /// Whether to act on the branch on the remote too.
+        with_remote: bool,
     },
     /// Lists the commits of the repository the folder of a session is in.
     Log {
@@ -1822,6 +1860,8 @@ pub struct WorkspaceState {
     pub color_picking: Option<crate::color_picker::ColorPicking>,
     /// The box for going to a line of the file shown by its number, when open.
     pub going_to: Option<crate::line_edits::GoingTo>,
+    /// The waiting prompt whose text is being edited in place, when one is.
+    pub editing_queued: Option<crate::queued::EditingQueued>,
     /// Where the signature of the call the caret is in hangs, in logical pixels of the window.
     pub signature_at: (f32, f32),
     /// The bar for finding and replacing in the file shown, when open.
@@ -2001,6 +2041,7 @@ impl WorkspaceState {
             color_picking: None,
             vim: pm_vim::Vim::default(),
             going_to: None,
+            editing_queued: None,
             signature_at: (0.0, 0.0),
             finding: None,
             blame: None,
@@ -2276,6 +2317,7 @@ impl WorkspaceState {
                     self.outbox.push(Outgoing::SignInSession { session });
                 }
             }
+            crate::queued::QUEUED_CANCEL => self.cancel_queued_edit(),
             SEND => self.send(false),
             SEND_NOW => self.send(true),
             STOP => self.stop(),
@@ -2307,6 +2349,11 @@ impl WorkspaceState {
             COMMENT_FIELD => self.comment_text.apply(edit),
             BRANCH_FILTER => self.git.filter.apply(edit),
             STASH_FIELD => self.git.stash_message.apply(edit),
+            crate::branch_tasks::BRANCH_TASK_FIELD => {
+                if let Some(open) = self.git.branching.as_mut() {
+                    open.field.apply(edit);
+                }
+            }
             RENAME_FIELD => self.git.rename.apply(edit),
             EDITOR_FIELD => self.file_edited(edit),
             crate::navigate::RENAME_SYMBOL => {
@@ -2382,6 +2429,9 @@ impl WorkspaceState {
             COMMENT_FIELD => Some(&self.comment_text),
             BRANCH_FILTER => Some(&self.git.filter),
             STASH_FIELD => Some(&self.git.stash_message),
+            crate::branch_tasks::BRANCH_TASK_FIELD => {
+                self.git.branching.as_ref().map(|open| &open.field)
+            }
             RENAME_FIELD => Some(&self.git.rename),
             ENTRY_FIELD => self.git.naming.as_ref().map(|(_, field)| field),
             EDITOR_FIELD => self.shown_document().map(|document| &document.field),
@@ -2427,6 +2477,7 @@ impl WorkspaceState {
             || id == COMMENT_FIELD
             || id == BRANCH_FILTER
             || id == STASH_FIELD
+            || id == crate::branch_tasks::BRANCH_TASK_FIELD
             || id == RENAME_FIELD
             || id == ENTRY_FIELD
             || id == EDITOR_FIELD
@@ -2459,7 +2510,7 @@ impl WorkspaceState {
             COMMIT_MESSAGE => COMMIT,
             COMMENT_FIELD => COMMENT_ADD,
             BRANCH_FILTER => BRANCH_SUBMIT,
-            STASH_FIELD | RENAME_FIELD => PROMPT_CONFIRM,
+            STASH_FIELD | RENAME_FIELD | crate::branch_tasks::BRANCH_TASK_FIELD => PROMPT_CONFIRM,
             ENTRY_FIELD => crate::tree_actions::TREE_NAME_SUBMIT,
             EDITOR_FIELD => crate::open_files::EDITOR_SAVE,
             crate::navigate::RENAME_SYMBOL => crate::navigate::RENAME_SYMBOL_SUBMIT,
@@ -2549,6 +2600,12 @@ impl WorkspaceState {
 
     /// The state after the agent of the session at `session` did `event`.
     pub fn heard(mut self, session: usize, event: Event) -> Self {
+        self.hear_in_place(session, event);
+        self
+    }
+
+    /// Takes in what the agent of the session at `session` did, as `event`, without building the state anew.
+    pub fn hear_in_place(&mut self, session: usize, event: Event) {
         if matches!(&event, Event::Ask(ask) if ask.plan.is_some()) {
             self.plan_open = true;
             self.plan_scroll = 0.0;
@@ -2556,11 +2613,17 @@ impl WorkspaceState {
         let finishing = matches!(&event, Event::Finished(_) | Event::Failed(_));
         if let Some(held) = self.sessions.get_mut(session) {
             held.hear(event);
+            let gone = self.editing_queued.as_ref().is_some_and(|editing| {
+                editing.scope == held.scope
+                    && !held.queued.iter().any(|queued| queued.id == editing.id)
+            });
+            if gone {
+                self.cancel_queued_edit();
+            }
         }
         if finishing {
             self.ask_reply_figures(session);
         }
-        self
     }
 
     /// The state after the agent of the session at `position` finished a turn while the window watched: the reader is told, or the session opens on what it changed, as the settings say.
@@ -2698,6 +2761,8 @@ impl WorkspaceState {
             self.act_on_queued(index, false);
         } else if let Some(index) = position(REMOVE_QUEUED_BASE, self.queued_open()) {
             self.act_on_queued(index, true);
+        } else if let Some(index) = position(crate::queued::EDIT_QUEUED_BASE, self.queued_open()) {
+            self.open_queued_edit(index);
         } else if let Some(index) = id
             .checked_sub(COPY_BASE)
             .map(|offset| offset as usize)
@@ -2980,8 +3045,12 @@ impl WorkspaceState {
     /// Hands the prompt to the agent: as the next message of the open
     /// session, or as the first of a new one. While the agent is on a turn
     /// the server queues it, or, `now`, stops the turn and hands it over in
-    /// its place.
+    /// its place. While a waiting prompt is being edited, it saves the edit instead.
     fn send(&mut self, now: bool) {
+        if self.editing_queued.is_some() {
+            self.save_queued_edit();
+            return;
+        }
         let mut text = self.prompt.text().trim().to_owned();
         if !self.elements.is_empty() {
             if !text.is_empty() {
@@ -3286,7 +3355,7 @@ impl WorkspaceState {
         let Some(session) = self.sessions.get_mut(open) else {
             return;
         };
-        if session.comments.is_empty() {
+        if session.comments.is_empty() || self.editing_queued.is_some() {
             return;
         }
         let items: Vec<String> = session
@@ -3635,6 +3704,33 @@ mod tests {
     use super::*;
     use crate::git_controls::Pick;
     use crate::panes::{Item, Side};
+
+    /// Taking in an agent's events in place leaves the workspace as taking them in by value does.
+    #[test]
+    fn hearing_in_place_matches_hearing_by_value() {
+        let events = || {
+            vec![
+                Event::Said("Hello, ".into()),
+                Event::Thought("hm".into()),
+                Event::Said("world.".into()),
+                Event::Failed("it broke".into()),
+            ]
+        };
+        let mut by_value = WorkspaceState::sample();
+        let mut in_place = WorkspaceState::sample();
+        for event in events() {
+            by_value = by_value.heard(0, event);
+        }
+        for event in events() {
+            in_place.hear_in_place(0, event);
+        }
+        assert_eq!(by_value.sessions[0].status, in_place.sessions[0].status);
+        assert_eq!(
+            by_value.sessions[0].messages.len(),
+            in_place.sessions[0].messages.len()
+        );
+        assert_eq!(by_value.plan_open, in_place.plan_open);
+    }
 
     /// Removing a selected submodule returns new work to the project root without changing existing sessions.
     #[test]

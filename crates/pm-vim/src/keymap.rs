@@ -7,6 +7,8 @@
 //! over earlier ones, so the reader's own bindings go on top of these and
 //! a binding to `null` takes a key away.
 
+use std::sync::{Arc, OnceLock};
+
 use crate::action::Action;
 use crate::key::Keystroke;
 use crate::mode::Mode;
@@ -153,15 +155,23 @@ pub struct BadBinding {
 /// Every binding in force.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Keymap {
-    /// The bindings, earliest first; a later one wins.
-    bindings: Vec<Binding>,
+    /// The bindings, earliest first; a later one wins; shared until one is added, so a default keymap costs no more than a count.
+    bindings: Arc<Vec<Binding>>,
 }
 
 impl Default for Keymap {
-    /// The bindings that come with modal editing, as far as they have an action here.
+    /// The bindings that come with modal editing, as far as they have an action here; read once, then shared.
     fn default() -> Self {
+        static DEFAULT: OnceLock<Keymap> = OnceLock::new();
+        DEFAULT.get_or_init(Self::built).clone()
+    }
+}
+
+impl Keymap {
+    /// The bindings that come with modal editing, read from the table.
+    fn built() -> Self {
         let mut keymap = Self {
-            bindings: Vec::new(),
+            bindings: Arc::new(Vec::new()),
         };
         for (keys, action, when) in DEFAULT {
             let bound = keymap.bind(keys, action, when);
@@ -169,9 +179,7 @@ impl Default for Keymap {
         }
         keymap
     }
-}
 
-impl Keymap {
     /// Adds a binding on top of those already in force.
     pub(crate) fn bind(&mut self, keys: &str, action: &str, when: &str) -> Result<(), BadBinding> {
         let bad = || BadBinding {
@@ -184,7 +192,7 @@ impl Keymap {
             action: Action::named(action).ok_or_else(bad)?,
             when: When::parse(when).ok_or_else(bad)?,
         };
-        self.bindings.push(binding);
+        Arc::make_mut(&mut self.bindings).push(binding);
         Ok(())
     }
 
@@ -586,3 +594,28 @@ const DEFAULT: &[(&str, &str, &str)] = &[
     ("g t", "GoToTab", "normal || visual"),
     ("g T", "GoToPreviousTab", "normal || visual"),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A binding added to one keymap leaves the shared default, and every keymap made from it, as it was.
+    #[test]
+    fn binding_one_keymap_leaves_the_shared_default_alone() {
+        let before = Keymap::default();
+        assert_eq!(before.bindings.len(), DEFAULT.len());
+        let mut own = Keymap::default();
+        own.bind("z z", "CurrentLine", "normal").unwrap();
+        assert_eq!(own.bindings.len(), DEFAULT.len() + 1);
+        assert_eq!(Keymap::default(), before);
+        assert_eq!(before.bindings.len(), DEFAULT.len());
+    }
+
+    /// A binding that cannot be read is refused without touching the keymap it was meant for.
+    #[test]
+    fn refused_binding_changes_nothing() {
+        let mut own = Keymap::default();
+        assert!(own.bind("z z", "NoSuchAction", "normal").is_err());
+        assert_eq!(own, Keymap::default());
+    }
+}

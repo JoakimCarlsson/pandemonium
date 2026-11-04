@@ -173,6 +173,18 @@ fn prompt(session: u64, text: &str, attachments: &[Attachment]) -> Prompt {
     }
 }
 
+/// Lets go of every queue `connection` holds, as the client went away, and hands the agents what then waits.
+pub(crate) fn release_queues(core: &Core, connection: &Arc<Connection>) {
+    let holder = Arc::as_ptr(connection) as usize;
+    let mut told = Told::new();
+    if let Ok(mut sessions) = core.sessions.lock() {
+        for (number, session) in sessions.iter_mut() {
+            told.extend(session.release_queue(*number, holder));
+        }
+    }
+    core.tell_all(told);
+}
+
 /// Runs `action` on the session numbered `number`, tells the clients what it noted, or says there is no such session.
 fn telling(core: &Core, number: u64, action: impl FnOnce(&mut Session) -> Told) -> Response {
     let mut told = Told::new();
@@ -731,6 +743,22 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
         }
         Request::RemoveQueued { session, queued } => {
             telling(core, session, |held| held.remove_queued(session, queued))
+        }
+        Request::HoldQueue { session, held } => {
+            let holder = Arc::as_ptr(connection) as usize;
+            telling(core, session, |found| {
+                found.hold_queue(session, holder, held)
+            })
+        }
+        Request::EditQueued {
+            session,
+            queued,
+            text,
+        } => {
+            let holder = Arc::as_ptr(connection) as usize;
+            telling(core, session, |held| {
+                held.edit_queued(session, holder, queued, text)
+            })
         }
         Request::Hurry { session, queued } => {
             let mut found = true;
@@ -1749,6 +1777,32 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             directory,
             operation,
         } => done(pm_git::remote(&place(&directory), &operation)),
+        Request::BranchInfo { directory, branch } => {
+            let info = pm_git::branch_info(&place(&directory), branch.as_deref());
+            Response::BranchInfo {
+                remotes: info.remotes,
+                remote_branches: info.remote_branches,
+                unmerged: info.unmerged,
+                unpushed: info.unpushed,
+                elsewhere: info.elsewhere,
+                follows: info.follows,
+            }
+        }
+        Request::BranchOperation {
+            directory,
+            action,
+            branch,
+            target,
+            remote,
+            with_remote,
+        } => done(pm_git::branch_operation(
+            &place(&directory),
+            &action,
+            &branch,
+            target.as_deref(),
+            remote.as_deref(),
+            with_remote,
+        )),
     }
 }
 

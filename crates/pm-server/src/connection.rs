@@ -204,6 +204,7 @@ pub(crate) fn serve(core: &Arc<Core>, stream: TcpStream, token: &str) {
     if let Ok(mut connections) = core.connections.lock() {
         connections.retain(|held| !Arc::ptr_eq(held, &connection));
     }
+    crate::handler::release_queues(core, &connection);
     crate::browser_tools::forget(&connection);
     core.documents.forget(&connection);
     core.folders.forget(&connection);

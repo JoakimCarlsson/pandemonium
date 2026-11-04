@@ -28,6 +28,21 @@ const CONTROL = 4;
 /** The bit the window sets while the command key is held. */
 const COMMAND = 128;
 
+/** The bit the window sets for the key that carries editing shortcuts: command on macOS, control elsewhere. */
+const SHORTCUT = process.platform === 'darwin' ? COMMAND : CONTROL;
+
+/**
+ * The editing the page is asked to do for a shortcut, by the lowercase letter pressed with the shortcut key. Chromium
+ * binds these in its browser shell, which an offscreen page does not have, so a key event alone does nothing.
+ * @type {Readonly<Record<string, 'cut' | 'copy' | 'paste' | 'selectAll'>>}
+ */
+const EDITS = {
+  x: 'cut',
+  c: 'copy',
+  v: 'paste',
+  a: 'selectAll',
+};
+
 /**
  * The keys that have names rather than a character, by Windows virtual-key code.
  * @type {Readonly<Record<number, string>>}
@@ -119,6 +134,20 @@ function keyEvents(key) {
 }
 
 /**
+ * The editing a press of `key` asks for, when it is an editing shortcut.
+ * @param {Key} key The key.
+ * @returns {'cut' | 'copy' | 'paste' | 'selectAll' | null} The editing, or nothing when the key is not a shortcut.
+ */
+function shortcutEdit(key) {
+  if (!key.pressed || !(key.modifiers & SHORTCUT) || key.modifiers & 8) return null;
+  const letter = keyName(key.code);
+  if (!letter || letter.length !== 1) return null;
+  const lower = letter.toLowerCase();
+  if (key.modifiers & 2) return null;
+  return EDITS[lower] || null;
+}
+
+/**
  * How the window should draw the pointer for the engine's cursor `type`.
  * @param {string} type The engine's name for the cursor, such as `hand`.
  * @returns {Cursor} The look the window knows.
@@ -171,6 +200,11 @@ function deliver(contents, request) {
     return true;
   }
   if ('Key' in input) {
+    const edit = shortcutEdit(input.Key.key);
+    if (edit) {
+      contents[edit]();
+      return true;
+    }
     for (const event of keyEvents(input.Key.key)) contents.sendInputEvent(event);
     return true;
   }

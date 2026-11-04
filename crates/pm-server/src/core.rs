@@ -127,6 +127,8 @@ pub(crate) struct Session {
     pub(crate) queue: VecDeque<Waiting>,
     /// The id the next waiting prompt gets.
     pub(crate) next_queued: u64,
+    /// The client holding the queue while it edits a waiting prompt, by the address of its connection, so that nothing waiting is handed to the agent.
+    pub(crate) held_by: Option<usize>,
     /// The id of the login the running agent was started as, or nothing for the agent's own.
     pub(crate) running_as: Option<String>,
     /// The id of the turn the next start goes back to before in the saved history, after a rewind or a branch; all of it when there is none.
@@ -150,6 +152,7 @@ impl Session {
             busy: false,
             queue: VecDeque::new(),
             next_queued: 1,
+            held_by: None,
             running_as: None,
             resume_before: None,
         }

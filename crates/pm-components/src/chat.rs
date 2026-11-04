@@ -41,26 +41,9 @@ const FOLDS_PER_PIECE: usize = 100;
 /// The sideways room the column keeps free on each side, in logical pixels.
 const GUTTER: f32 = 24.0;
 
-/// The lines of `content` wrapped to `width`, one text line each, in `tone`, with a gap where it has a blank line.
-///
-/// Lines break as the shaper measures them, so a word wider than `width` is cut
-/// where it must be. A line the wrapping broke at a space keeps it, so that
-/// text selected across it is copied as one line.
+/// The lines of `content` wrapped to `width` as conversation text, in `tone`, with a gap where it has a blank line.
 fn paragraph(content: &str, tone: Role, width: f32, shaper: &mut Shaper) -> Node {
-    let styles = [text_px(14), leading_ratio(1.57)];
-    node().styles([flex(), flex_col(), min_w_px(0)]).children(
-        pm_ui::wrap(shaper, content, styles, width.max(32.0))
-            .into_iter()
-            .map(|part| match part.end == part.start {
-                true => node().styles([h(3)]),
-                false => text(&content[part.start..part.end]).styles([
-                    text_px(14),
-                    leading_ratio(1.57),
-                    text_color(tone),
-                    min_w_px(0),
-                ]),
-            }),
-    )
+    crate::parts::paragraph(content, 14, 1.57, tone, width, shaper)
 }
 
 /// A button that shows under a message while the pointer is over it or it has focus, showing `icon`, saying what it does with `tooltip` and answering to `id`, switched off while `disabled`.
@@ -445,7 +428,7 @@ pub fn chat(
                 .child(
                     node()
                         .styles([w_full(), max_w_px(COLUMN), px(6)])
-                        .children(queued(session))
+                        .children(queued(state, session, column, shaper))
                         .children(session.inquiry.as_ref().map(|draft| {
                             node()
                                 .styles([w_full(), mb(2)])

@@ -223,7 +223,7 @@ class Page {
       this.win.setContentSize(asked.Resize.width, asked.Resize.height);
       this.holdViewport();
     } else if ('Focus' in asked) {
-      if (asked.Focus.focused) this.contents.focus();
+      this.focused(asked.Focus.focused);
     } else if ('Tool' in asked) {
       this.runTool(asked.Tool);
     } else if ('Pick' in asked) {
@@ -232,6 +232,21 @@ class Page {
       capture.run(this, asked.Capture.kind);
     } else if ('PickArea' in asked) {
       capture.pickArea(this, asked.PickArea.on);
+    }
+  }
+
+  /**
+   * Gives the page the keyboard or takes it away. The hidden window itself is focused, not only the contents, because
+   * Chromium treats a page in an unfocused window as inactive: it draws no caret or focus ring and paints a selection grey.
+   * @param {boolean} focused Whether the page has the keyboard.
+   * @returns {void}
+   */
+  focused(focused) {
+    if (focused) {
+      this.win.focus();
+      this.contents.focus();
+    } else {
+      this.win.blur();
     }
   }
 

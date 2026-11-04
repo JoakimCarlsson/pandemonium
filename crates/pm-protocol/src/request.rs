@@ -215,6 +215,22 @@ pub enum Request {
         /// The queued prompt, by the id its `Queued` event gave it.
         queued: u64,
     },
+    /// Replaces the text of a waiting prompt, keeping its place in the queue, its id and its attached files. Does nothing when the prompt has already left the queue.
+    EditQueued {
+        /// The session.
+        session: u64,
+        /// The queued prompt, by the id its `Queued` event gave it.
+        queued: u64,
+        /// What the prompt says from now on.
+        text: String,
+    },
+    /// Holds a session's queue while a client edits a waiting prompt, so that no waiting prompt is handed to the agent when its turn ends, or lets it go on. The hold ends by itself when the client that asked for it goes away.
+    HoldQueue {
+        /// The session.
+        session: u64,
+        /// Whether to hold the queue, or let it go on.
+        held: bool,
+    },
     /// Takes a session's conversation back to before the reader's turn `turn`: the turn and all after it are dropped, and the agent carries on from the conversation the harness saved up to before it.
     Rewind {
         /// The session.
@@ -556,6 +572,31 @@ pub enum Request {
         limit: usize,
         /// Whether to list what every reference reaches, rather than what the checked out branch reaches.
         all: bool,
+    },
+    /// What the controls over branches and remotes need to know about the repository a folder is in.
+    BranchInfo {
+        /// The folder.
+        directory: String,
+        /// The local branch to count unmerged and unpushed commits of and to find out whether another worktree has it, or nothing for the remotes alone.
+        branch: Option<String>,
+    },
+    /// Publishes, sets or unsets the upstream of, renames, deletes, merges or rebases a branch of the repository a folder is in.
+    BranchOperation {
+        /// The folder.
+        directory: String,
+        /// `publish`, `set_upstream`, `unset_upstream`, `rename`, `delete`, `merge` or `rebase`.
+        action: String,
+        /// The local branch acted on; for `merge` and `rebase` the one taken into the checked out branch. Unused by `publish`, `set_upstream` and `unset_upstream`, which act on the checked out branch.
+        branch: String,
+        /// The new name for `rename`, the branch name on the remote for `publish`, and the remote branch, such as `origin/main`, for `set_upstream`.
+        #[serde(default)]
+        target: Option<String>,
+        /// The remote `publish` publishes to.
+        #[serde(default)]
+        remote: Option<String>,
+        /// Whether `rename` and `delete` also act on the branch the local one follows on its remote.
+        #[serde(default)]
+        with_remote: bool,
     },
     /// Fetches, pulls or pushes the repository a folder is in, or syncs it by pulling and then pushing.
     Sync {

@@ -63,7 +63,15 @@ impl Session {
                 checkpoint,
                 ..
             } => self.prompted(text, files, checkpoint),
-            Event::Queued { id, text, files } => self.queued.push(Queued { id, text, files }),
+            Event::Queued { id, text, files } => {
+                match self.queued.iter_mut().find(|waiting| waiting.id == id) {
+                    Some(waiting) => {
+                        waiting.text = text;
+                        waiting.files = files;
+                    }
+                    None => self.queued.push(Queued { id, text, files }),
+                }
+            }
             Event::Unqueued(id) => self.queued.retain(|waiting| waiting.id != id),
             Event::Rewound { turn } => self.rewound(turn),
             Event::Restored { turn, files } => self.files_restored(turn, files.len()),
