@@ -155,6 +155,8 @@ enum Pending {
     Commit(usize, bool),
     /// The remote answered the session at this position, which asked it to fetch, pull, push or sync.
     Remote(usize),
+    /// What the controls over branches and remotes asked about the repository of the session at this position, and the branch they asked about.
+    BranchInfo(usize, Option<String>),
     /// The commits of the repository of the session at this position.
     Log(usize),
     /// The stashes of the repository of the session at this position.
@@ -1095,6 +1097,35 @@ impl Work {
                     |directory| Request::Sync {
                         directory,
                         operation: operation.to_owned(),
+                    },
+                    Pending::Remote(session),
+                ),
+                Outgoing::BranchInfo { session, branch } => {
+                    let asked = branch.clone();
+                    self.ask_in_repository(
+                        model,
+                        session,
+                        |directory| Request::BranchInfo { directory, branch },
+                        Pending::BranchInfo(session, asked),
+                    );
+                }
+                Outgoing::BranchOperation {
+                    session,
+                    action,
+                    branch,
+                    target,
+                    remote,
+                    with_remote,
+                } => self.ask_in_repository(
+                    model,
+                    session,
+                    |directory| Request::BranchOperation {
+                        directory,
+                        action: action.to_owned(),
+                        branch,
+                        target,
+                        remote,
+                        with_remote,
                     },
                     Pending::Remote(session),
                 ),
@@ -2368,6 +2399,29 @@ impl Work {
                     *screen = std::mem::take(screen).remote_done(session, failure);
                 });
                 self.refresh(model, session);
+            }
+            Pending::BranchInfo(session, branch) => {
+                if let Response::BranchInfo {
+                    remotes,
+                    remote_branches,
+                    unmerged,
+                    unpushed,
+                    elsewhere,
+                    follows,
+                } = response
+                {
+                    let info = pm_git::BranchInfo {
+                        remotes,
+                        remote_branches,
+                        unmerged,
+                        unpushed,
+                        elsewhere,
+                        follows,
+                    };
+                    model.update(|screen| {
+                        *screen = std::mem::take(screen).with_branch_info(session, branch, info);
+                    });
+                }
             }
             Pending::Stashes(session) => {
                 if let Response::Stashes { stashes } = response {

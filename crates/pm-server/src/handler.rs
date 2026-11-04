@@ -1877,6 +1877,32 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             directory,
             operation,
         } => done(pm_git::remote(&place(&directory), &operation)),
+        Request::BranchInfo { directory, branch } => {
+            let info = pm_git::branch_info(&place(&directory), branch.as_deref());
+            Response::BranchInfo {
+                remotes: info.remotes,
+                remote_branches: info.remote_branches,
+                unmerged: info.unmerged,
+                unpushed: info.unpushed,
+                elsewhere: info.elsewhere,
+                follows: info.follows,
+            }
+        }
+        Request::BranchOperation {
+            directory,
+            action,
+            branch,
+            target,
+            remote,
+            with_remote,
+        } => done(pm_git::branch_operation(
+            &place(&directory),
+            &action,
+            &branch,
+            target.as_deref(),
+            remote.as_deref(),
+            with_remote,
+        )),
     }
 }
 

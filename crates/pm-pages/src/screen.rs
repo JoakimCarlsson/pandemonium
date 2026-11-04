@@ -744,6 +744,20 @@ impl Screen {
         }
     }
 
+    /// The screen after the server answered the question about `branch` of the session at `session` with `info`.
+    pub fn with_branch_info(
+        self,
+        session: usize,
+        branch: Option<String>,
+        info: pm_git::BranchInfo,
+    ) -> Self {
+        match self {
+            Self::Workspace(state) => {
+                Self::Workspace(state.with_branch_info(session, branch, info))
+            }
+        }
+    }
+
     /// How big the panel the handle `id` resizes is now, in a window `window` logical pixels wide and tall, and which way the handle is pulled to grow it.
     pub fn sash(&self, id: FocusId, window: (f32, f32)) -> Option<(f32, Grows)> {
         match self {
