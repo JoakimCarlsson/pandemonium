@@ -1192,6 +1192,14 @@ impl WorkspaceState {
         if id == crate::draft::TYPE_OWN {
             return Some(crate::draft::OTHER);
         }
+        if (crate::queued::EDIT_QUEUED_BASE..crate::queued::EDIT_QUEUED_BASE + 1000)
+            .contains(&number)
+        {
+            return Some(crate::state::PROMPT);
+        }
+        if id == crate::queued::QUEUED_CANCEL {
+            return Some(crate::state::PROMPT);
+        }
         if crate::adder::is_adder(id) {
             return Some(crate::adder::ADDER_FIELD);
         }

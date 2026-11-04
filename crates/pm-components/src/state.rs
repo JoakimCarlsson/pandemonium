@@ -1193,6 +1193,22 @@ pub enum Outgoing {
         /// The queued prompt, by the id its `Queued` event gave it.
         queued: u64,
     },
+    /// Holds the queue of a session while a waiting prompt is edited, or lets it go on.
+    HoldQueue {
+        /// The session.
+        session: usize,
+        /// Whether to hold the queue.
+        held: bool,
+    },
+    /// Replaces the text of a waiting prompt, which keeps its place and its files, and lets the queue go on.
+    EditQueued {
+        /// The session.
+        session: usize,
+        /// The queued prompt, by the id its `Queued` event gave it.
+        queued: u64,
+        /// What the prompt says from now on.
+        text: String,
+    },
     /// Answers the question the agent of a session asked.
     Choose {
         /// The session, by position.
@@ -1851,6 +1867,8 @@ pub struct WorkspaceState {
     pub color_picking: Option<crate::color_picker::ColorPicking>,
     /// The box for going to a line of the file shown by its number, when open.
     pub going_to: Option<crate::line_edits::GoingTo>,
+    /// The waiting prompt whose text is being edited in place, when one is.
+    pub editing_queued: Option<crate::queued::EditingQueued>,
     /// Where the signature of the call the caret is in hangs, in logical pixels of the window.
     pub signature_at: (f32, f32),
     /// The bar for finding and replacing in the file shown, when open.
@@ -2033,6 +2051,7 @@ impl WorkspaceState {
             color_picking: None,
             vim: pm_vim::Vim::default(),
             going_to: None,
+            editing_queued: None,
             signature_at: (0.0, 0.0),
             finding: None,
             blame: None,
@@ -2308,6 +2327,7 @@ impl WorkspaceState {
                     self.outbox.push(Outgoing::SignInSession { session });
                 }
             }
+            crate::queued::QUEUED_CANCEL => self.cancel_queued_edit(),
             SEND => self.send(false),
             SEND_NOW => self.send(true),
             STOP => self.stop(),
@@ -2597,6 +2617,13 @@ impl WorkspaceState {
         let finishing = matches!(&event, Event::Finished(_) | Event::Failed(_));
         if let Some(held) = self.sessions.get_mut(session) {
             held.hear(event);
+            let gone = self.editing_queued.as_ref().is_some_and(|editing| {
+                editing.scope == held.scope
+                    && !held.queued.iter().any(|queued| queued.id == editing.id)
+            });
+            if gone {
+                self.cancel_queued_edit();
+            }
         }
         if finishing {
             self.ask_reply_figures(session);
@@ -2741,6 +2768,8 @@ impl WorkspaceState {
             self.act_on_queued(index, false);
         } else if let Some(index) = position(REMOVE_QUEUED_BASE, self.queued_open()) {
             self.act_on_queued(index, true);
+        } else if let Some(index) = position(crate::queued::EDIT_QUEUED_BASE, self.queued_open()) {
+            self.open_queued_edit(index);
         } else if let Some(index) = id
             .checked_sub(COPY_BASE)
             .map(|offset| offset as usize)
@@ -3023,8 +3052,12 @@ impl WorkspaceState {
     /// Hands the prompt to the agent: as the next message of the open
     /// session, or as the first of a new one. While the agent is on a turn
     /// the server queues it, or, `now`, stops the turn and hands it over in
-    /// its place.
+    /// its place. While a waiting prompt is being edited, it saves the edit instead.
     fn send(&mut self, now: bool) {
+        if self.editing_queued.is_some() {
+            self.save_queued_edit();
+            return;
+        }
         let mut text = self.prompt.text().trim().to_owned();
         if !self.elements.is_empty() {
             if !text.is_empty() {
@@ -3330,7 +3363,7 @@ impl WorkspaceState {
         let Some(session) = self.sessions.get_mut(open) else {
             return;
         };
-        if session.comments.is_empty() {
+        if session.comments.is_empty() || self.editing_queued.is_some() {
             return;
         }
         let items: Vec<String> = session
