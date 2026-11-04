@@ -351,16 +351,16 @@ everything said of them, its submodules' paths written from `directory`.
 - **`rewind`:** takes the conversation back to before the reader's turn
   `turn`, counted from 0 among the `Prompted` events a rewind has not
   dropped. The turn and everything after it are dropped, announced with a
-  `Rewound` event, and the agent stops. The next `prompt` starts it again as a
-  new conversation and hands it what came before the turn, as text ahead of
-  the prompt, with the settings it last reported. Files are left as they are.
+  `Rewound` event, and the agent stops. The next `prompt` starts it again on the
+  conversation the harness saved, cut back to before that turn by the turn's
+  id. Files are left as they are.
   Fails while a turn is running.
 - **`restore`:** puts the files of the session's folder back as they were
   before the reader's turn `turn`, counted as for `rewind`, and announces it
   with a `Restored` event. Before every turn in a git repository the server
   keeps the files, tracked or not but not ignored, under
-  `refs/worktree/pandemonium/sessions/<session>/turns/<seq>`, where `seq` is
-  the number of the turn's `Prompted` event; the files as they were before a
+  `refs/worktree/pandemonium/sessions/<session>/turns/<id>`, where `id` is
+  the turn's id, which its `Prompted` event carries; the files as they were before a
   restore are kept under `…/sessions/<session>/before-restore`. Neither the
   branch, the head nor the index changes. The agent's next prompt says that
   the files were put back. Fails while a turn is running, or when no files
@@ -371,8 +371,8 @@ everything said of them, its submodules' paths written from `directory`.
   files are shared, and is titled after the source with ` (branch)`. Its log
   starts with the source's latest `Settings` and `Commands` and the events of
   those turns, numbered from 1, with no files kept before them. Its agent is
-  not started until the first `prompt`, which hands it the conversation so far
-  as text ahead of the prompt. The response is `sessions` holding the new
+  not started until the first `prompt`, and then carries on from a copy of the
+  conversation the harness saved, cut at the branch point. The response is `sessions` holding the new
   session; the connection is attached to it, and other clients are told with
   `session_added`. Fails while the agent is still writing that reply.
 - **`cancel`:** stops the running turn and drops the prompts queued behind it,
@@ -414,7 +414,7 @@ everything said of them, its submodules' paths written from `directory`.
   own login when it is `null`, without touching any other session or the login
   new sessions start with. The server keeps it with the session; a running
   agent is started again under the new login before the session's next turn,
-  and told the conversation so far.
+  on the same saved conversation.
 - **`projects`, `choices`:** what the reader set up, kept by the server so that
   every client sees the same. `projects` says `saved: false` when the list was
   never saved, which means the app has not been set up yet. A project is an

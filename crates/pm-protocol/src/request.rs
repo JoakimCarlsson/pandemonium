@@ -215,7 +215,7 @@ pub enum Request {
         /// The queued prompt, by the id its `Queued` event gave it.
         queued: u64,
     },
-    /// Takes a session's conversation back to before the reader's turn `turn`: the turn and all after it are dropped, and the agent starts the next one afresh with what came before it.
+    /// Takes a session's conversation back to before the reader's turn `turn`: the turn and all after it are dropped, and the agent carries on from the conversation the harness saved up to before it.
     Rewind {
         /// The session.
         session: u64,
@@ -229,7 +229,7 @@ pub enum Request {
         /// The turn, by how many of the reader's turns came before it.
         turn: u64,
     },
-    /// Starts a session that branches off a session's conversation after the reader's turn `turn` and its reply. It works in the same folder, and its agent is told the conversation so far with the first prompt it is handed.
+    /// Starts a session that branches off a session's conversation after the reader's turn `turn` and its reply. It works in the same folder, and its agent carries on from a copy of the conversation the harness saved up to that point.
     ForkSession {
         /// The session branched off.
         session: u64,
