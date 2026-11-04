@@ -6,6 +6,9 @@ use crate::sessions::Meta;
 /// The number the sessions of these tests go by, which no real session has.
 const NUMBER: u64 = 4_000_000_101;
 
+/// The client the tests act as.
+const HOLDER: usize = 1;
+
 /// A session of the first agent with no agent running and nothing in its log.
 fn session() -> Session {
     let meta = Meta {
@@ -61,7 +64,7 @@ fn editing_a_waiting_prompt_keeps_its_place_and_files() {
     held.submit(NUMBER, prompt("second"), false);
     let first = held.queue[0].id;
 
-    let told = held.edit_queued(NUMBER, first, "first, edited".to_owned());
+    let told = held.edit_queued(NUMBER, HOLDER, first, "first, edited".to_owned());
 
     assert_eq!(told.len(), 1);
     assert!(matches!(
@@ -90,9 +93,12 @@ fn editing_a_prompt_that_left_the_queue_is_ignored() {
     held.queue.pop_front();
     let logged = held.log.len();
 
-    assert!(held.edit_queued(NUMBER, id, "late".to_owned()).is_empty());
     assert!(
-        held.edit_queued(NUMBER, id + 9, "never".to_owned())
+        held.edit_queued(NUMBER, HOLDER, id, "late".to_owned())
+            .is_empty()
+    );
+    assert!(
+        held.edit_queued(NUMBER, HOLDER, id + 9, "never".to_owned())
             .is_empty()
     );
     assert_eq!(held.log.len(), logged);
@@ -109,6 +115,35 @@ fn editing_a_prompt_to_nothing_is_ignored() {
     let id = held.queue[0].id;
     held.queue[0].prompt.paths.clear();
 
-    assert!(held.edit_queued(NUMBER, id, "  ".to_owned()).is_empty());
+    assert!(
+        held.edit_queued(NUMBER, HOLDER, id, "  ".to_owned())
+            .is_empty()
+    );
     assert_eq!(held.queue[0].prompt.text, "keep");
+}
+
+/// A queue a client holds hands nothing over while an edit is open, and lets go of the prompts when the holder ends its edit; another client can neither hold nor release it.
+#[test]
+fn a_held_queue_hands_nothing_over_until_its_holder_lets_go() {
+    let _forget = Forget;
+    let mut held = session();
+    held.busy = true;
+    held.submit(NUMBER, prompt("first"), false);
+    held.hold_queue(NUMBER, HOLDER, true);
+    held.hold_queue(NUMBER, HOLDER + 1, true);
+    held.busy = false;
+
+    assert!(held.advance(NUMBER).is_empty());
+    assert_eq!(held.queue.len(), 1);
+    assert!(held.hold_queue(NUMBER, HOLDER + 1, false).is_empty());
+    assert_eq!(held.held_by, Some(HOLDER));
+
+    held.edit_queued(NUMBER, HOLDER + 1, held.queue[0].id, "other".to_owned());
+    assert_eq!(held.held_by, Some(HOLDER));
+
+    held.busy = true;
+    let id = held.queue[0].id;
+    held.edit_queued(NUMBER, HOLDER, id, "mine".to_owned());
+    assert_eq!(held.held_by, None);
+    assert_eq!(held.queue[0].prompt.text, "mine");
 }

@@ -119,6 +119,7 @@ request with exactly one `response` carrying the same `id`.
 | `start_session`| `agent`, `repository`, `directory`, `title`, `base`, `settings`, `text`, `attachments`, `submodule`, `container` | `started`       |
 | `prompt`       | `session`, `text`, `attachments`, `now` (optional, `false` by default)                           | `done`          |
 | `remove_queued` | `session`, `queued`                                                                            | `done`          |
+| `hold_queue`   | `session`, `held`                                                                                | `done`          |
 | `edit_queued`  | `session`, `queued`, `text`                                                                      | `done`          |
 | `hurry`        | `session`, `queued`                                                                              | `done`          |
 | `rewind`       | `session`, `turn`                                                                                | `done`          |
@@ -352,6 +353,13 @@ everything said of them, its submodules' paths written from `directory`.
   deletes its uploaded files. Announces `Unqueued` so connected and reconnecting
   clients remove the row. Other waiting prompts keep their order. If the prompt
   has already left the queue, succeeds without doing anything.
+- **`hold_queue`:** with `held: true`, stops the session's queue from handing
+  a waiting prompt to the agent when its turn ends, so a prompt can be edited
+  without the ones behind it going first. The prompts stay queued and the
+  running turn is not stopped. With `held: false` the hold ends and the queue
+  goes on at once if the agent is between turns. Only the client that holds the
+  queue can let it go, and the hold ends when that client disconnects. A second
+  client asking to hold a queue already held is ignored.
 - **`edit_queued`:** replaces the text of the waiting prompt identified by
   `queued` with `text`. The prompt keeps its place in the queue, its id and its
   files, and the agent is handed the new text when its turn comes. Announces a
@@ -359,6 +367,8 @@ everything said of them, its submodules' paths written from `directory`.
   and reconnecting clients replace the row they hold instead of adding one. A
   `text` that is empty after trimming, on a prompt without files, is ignored. If
   the prompt has already left the queue, succeeds without doing anything.
+  Also ends the hold of `hold_queue` if the client that asked holds the queue, so
+  the queue goes on once the edit is applied.
 - **`rewind`:** takes the conversation back to before the reader's turn
   `turn`, counted from 0 among the `Prompted` events a rewind has not
   dropped. The turn and everything after it are dropped, announced with a

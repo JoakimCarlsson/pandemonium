@@ -1195,9 +1195,9 @@ impl WorkspaceState {
         if (crate::queued::EDIT_QUEUED_BASE..crate::queued::EDIT_QUEUED_BASE + 1000)
             .contains(&number)
         {
-            return Some(crate::queued::QUEUED_FIELD);
+            return Some(crate::state::PROMPT);
         }
-        if id == crate::queued::QUEUED_SAVE || id == crate::queued::QUEUED_CANCEL {
+        if id == crate::queued::QUEUED_CANCEL {
             return Some(crate::state::PROMPT);
         }
         if crate::adder::is_adder(id) {

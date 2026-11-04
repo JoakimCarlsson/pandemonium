@@ -2065,9 +2065,6 @@ impl App {
             return;
         }
         match event.key {
-            Key::Escape if self.focus.current() == Some(pm_components::queued::QUEUED_FIELD) => {
-                self.activate(pm_components::queued::QUEUED_CANCEL)
-            }
             Key::Escape if self.on_aside == Some(asides::Aside::Picker) => {
                 self.activate(PICKER_CLOSE)
             }

@@ -1193,7 +1193,14 @@ pub enum Outgoing {
         /// The queued prompt, by the id its `Queued` event gave it.
         queued: u64,
     },
-    /// Replaces the text of a waiting prompt, which keeps its place and its files.
+    /// Holds the queue of a session while a waiting prompt is edited, or lets it go on.
+    HoldQueue {
+        /// The session.
+        session: usize,
+        /// Whether to hold the queue.
+        held: bool,
+    },
+    /// Replaces the text of a waiting prompt, which keeps its place and its files, and lets the queue go on.
     EditQueued {
         /// The session.
         session: usize,
@@ -2320,8 +2327,7 @@ impl WorkspaceState {
                     self.outbox.push(Outgoing::SignInSession { session });
                 }
             }
-            crate::queued::QUEUED_SAVE => self.save_queued_edit(),
-            crate::queued::QUEUED_CANCEL => self.editing_queued = None,
+            crate::queued::QUEUED_CANCEL => self.cancel_queued_edit(),
             SEND => self.send(false),
             SEND_NOW => self.send(true),
             STOP => self.stop(),
@@ -2353,11 +2359,6 @@ impl WorkspaceState {
                 }
             }
             COMMIT_MESSAGE => self.message.apply(edit),
-            crate::queued::QUEUED_FIELD => {
-                if let Some(editing) = self.editing_queued.as_mut() {
-                    editing.field.apply(edit);
-                }
-            }
             COMMENT_FIELD => self.comment_text.apply(edit),
             BRANCH_FILTER => self.git.filter.apply(edit),
             STASH_FIELD => self.git.stash_message.apply(edit),
@@ -2433,7 +2434,6 @@ impl WorkspaceState {
         match id {
             PROMPT => Some(&self.prompt),
             COMMIT_MESSAGE => Some(&self.message),
-            crate::queued::QUEUED_FIELD => self.editing_queued.as_ref().map(|open| &open.field),
             COMMENT_FIELD => Some(&self.comment_text),
             BRANCH_FILTER => Some(&self.git.filter),
             STASH_FIELD => Some(&self.git.stash_message),
@@ -2479,7 +2479,6 @@ impl WorkspaceState {
     pub fn is_field(id: FocusId) -> bool {
         id == PROMPT
             || id == COMMIT_MESSAGE
-            || id == crate::queued::QUEUED_FIELD
             || id == COMMENT_FIELD
             || id == BRANCH_FILTER
             || id == STASH_FIELD
@@ -2514,7 +2513,6 @@ impl WorkspaceState {
         match id {
             COMMIT_MESSAGE => COMMIT,
             COMMENT_FIELD => COMMENT_ADD,
-            crate::queued::QUEUED_FIELD => crate::queued::QUEUED_SAVE,
             BRANCH_FILTER => BRANCH_SUBMIT,
             STASH_FIELD | RENAME_FIELD => PROMPT_CONFIRM,
             ENTRY_FIELD => crate::tree_actions::TREE_NAME_SUBMIT,
@@ -2619,11 +2617,12 @@ impl WorkspaceState {
         let finishing = matches!(&event, Event::Finished(_) | Event::Failed(_));
         if let Some(held) = self.sessions.get_mut(session) {
             held.hear(event);
-            if let Some(editing) = &self.editing_queued
-                && editing.scope == held.scope
-                && !held.queued.iter().any(|queued| queued.id == editing.id)
-            {
-                self.editing_queued = None;
+            let gone = self.editing_queued.as_ref().is_some_and(|editing| {
+                editing.scope == held.scope
+                    && !held.queued.iter().any(|queued| queued.id == editing.id)
+            });
+            if gone {
+                self.cancel_queued_edit();
             }
         }
         if finishing {
@@ -3053,8 +3052,12 @@ impl WorkspaceState {
     /// Hands the prompt to the agent: as the next message of the open
     /// session, or as the first of a new one. While the agent is on a turn
     /// the server queues it, or, `now`, stops the turn and hands it over in
-    /// its place.
+    /// its place. While a waiting prompt is being edited, it saves the edit instead.
     fn send(&mut self, now: bool) {
+        if self.editing_queued.is_some() {
+            self.save_queued_edit();
+            return;
+        }
         let mut text = self.prompt.text().trim().to_owned();
         if !self.elements.is_empty() {
             if !text.is_empty() {
@@ -3360,7 +3363,7 @@ impl WorkspaceState {
         let Some(session) = self.sessions.get_mut(open) else {
             return;
         };
-        if session.comments.is_empty() {
+        if session.comments.is_empty() || self.editing_queued.is_some() {
             return;
         }
         let items: Vec<String> = session

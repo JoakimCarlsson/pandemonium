@@ -900,6 +900,14 @@ impl Work {
                     },
                     Pending::Nothing,
                 ),
+                Outgoing::HoldQueue { session, held } => self.ask_session(
+                    session,
+                    |number| Request::HoldQueue {
+                        session: number,
+                        held,
+                    },
+                    Pending::Nothing,
+                ),
                 Outgoing::EditQueued {
                     session,
                     queued,

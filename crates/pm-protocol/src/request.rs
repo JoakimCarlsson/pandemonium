@@ -272,6 +272,13 @@ pub enum Request {
         /// What the prompt says from now on.
         text: String,
     },
+    /// Holds a session's queue while a client edits a waiting prompt, so that no waiting prompt is handed to the agent when its turn ends, or lets it go on. The hold ends by itself when the client that asked for it goes away.
+    HoldQueue {
+        /// The session.
+        session: u64,
+        /// Whether to hold the queue, or let it go on.
+        held: bool,
+    },
     /// Takes a session's conversation back to before the reader's turn `turn`: the turn and all after it are dropped, and the agent starts the next one afresh with what came before it.
     Rewind {
         /// The session.

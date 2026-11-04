@@ -124,6 +124,8 @@ pub(crate) struct Session {
     pub(crate) queue: VecDeque<Waiting>,
     /// The id the next waiting prompt gets.
     pub(crate) next_queued: u64,
+    /// The client holding the queue while it edits a waiting prompt, by the address of its connection, so that nothing waiting is handed to the agent.
+    pub(crate) held_by: Option<usize>,
     /// The id of the login the running agent was started as, or nothing for the agent's own.
     pub(crate) running_as: Option<String>,
     /// Whether the reader trusted hooks since the running agent started, so that the next turn starts it again to run them.
@@ -147,6 +149,7 @@ impl Session {
             busy: false,
             queue: VecDeque::new(),
             next_queued: 1,
+            held_by: None,
             running_as: None,
             hooks_trusted: false,
         }

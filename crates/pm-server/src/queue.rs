@@ -73,8 +73,21 @@ impl Session {
         vec![(number, self.note(number, &event), event)]
     }
 
-    /// Replaces the text of the waiting prompt `id` of this session, numbered `number`, with `text`, keeping its place, its id and its files, and announces it again under the same id. Does nothing when the prompt has already left the queue, or when `text` is empty and no files go with it.
-    pub(crate) fn edit_queued(&mut self, number: u64, id: u64, text: String) -> Told {
+    /// Replaces the text of the waiting prompt `id` of this session, numbered `number`, with `text`, keeping its place, its id and its files, and announces it again under the same id; then lets the queue go on if `holder` held it. Changes nothing when the prompt has already left the queue, or when `text` is empty and no files go with it.
+    pub(crate) fn edit_queued(
+        &mut self,
+        number: u64,
+        holder: usize,
+        id: u64,
+        text: String,
+    ) -> Told {
+        let mut told = self.replace_queued(number, id, text);
+        told.extend(self.release_queue(number, holder));
+        told
+    }
+
+    /// Replaces the text of the waiting prompt `id` with `text` and announces it, or does nothing when no such prompt waits or nothing would be left of it.
+    fn replace_queued(&mut self, number: u64, id: u64, text: String) -> Told {
         let Some(waiting) = self.queue.iter_mut().find(|waiting| waiting.id == id) else {
             return Told::new();
         };
@@ -90,9 +103,27 @@ impl Session {
         vec![(number, self.note(number, &event), event)]
     }
 
-    /// Hands the agent of this session, numbered `number`, the prompt that has waited longest, once its turn is over.
+    /// Holds the queue of this session, numbered `number`, for the client `holder`, or lets it go on when `held` is not set and `holder` is the one that holds it. A queue another client holds stays held. Letting go hands the agent the prompt that has waited longest if it is between turns.
+    pub(crate) fn hold_queue(&mut self, number: u64, holder: usize, held: bool) -> Told {
+        if held {
+            self.held_by.get_or_insert(holder);
+            return Told::new();
+        }
+        if self.held_by != Some(holder) {
+            return Told::new();
+        }
+        self.held_by = None;
+        self.advance(number)
+    }
+
+    /// Lets the queue of this session, numbered `number`, go on if `holder` held it, as that client went away.
+    pub(crate) fn release_queue(&mut self, number: u64, holder: usize) -> Told {
+        self.hold_queue(number, holder, false)
+    }
+
+    /// Hands the agent of this session, numbered `number`, the prompt that has waited longest, once its turn is over. Hands nothing over while a client holds the queue.
     pub(crate) fn advance(&mut self, number: u64) -> Told {
-        if self.busy {
+        if self.busy || self.held_by.is_some() {
             return Told::new();
         }
         let Some(waiting) = self.queue.pop_front() else {
