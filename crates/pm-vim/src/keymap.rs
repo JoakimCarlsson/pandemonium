@@ -594,3 +594,28 @@ const DEFAULT: &[(&str, &str, &str)] = &[
     ("g t", "GoToTab", "normal || visual"),
     ("g T", "GoToPreviousTab", "normal || visual"),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A binding added to one keymap leaves the shared default, and every keymap made from it, as it was.
+    #[test]
+    fn binding_one_keymap_leaves_the_shared_default_alone() {
+        let before = Keymap::default();
+        assert_eq!(before.bindings.len(), DEFAULT.len());
+        let mut own = Keymap::default();
+        own.bind("z z", "CurrentLine", "normal").unwrap();
+        assert_eq!(own.bindings.len(), DEFAULT.len() + 1);
+        assert_eq!(Keymap::default(), before);
+        assert_eq!(before.bindings.len(), DEFAULT.len());
+    }
+
+    /// A binding that cannot be read is refused without touching the keymap it was meant for.
+    #[test]
+    fn refused_binding_changes_nothing() {
+        let mut own = Keymap::default();
+        assert!(own.bind("z z", "NoSuchAction", "normal").is_err());
+        assert_eq!(own, Keymap::default());
+    }
+}

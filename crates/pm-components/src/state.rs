@@ -3680,6 +3680,33 @@ mod tests {
     use crate::git_controls::Pick;
     use crate::panes::{Item, Side};
 
+    /// Taking in an agent's events in place leaves the workspace as taking them in by value does.
+    #[test]
+    fn hearing_in_place_matches_hearing_by_value() {
+        let events = || {
+            vec![
+                Event::Said("Hello, ".into()),
+                Event::Thought("hm".into()),
+                Event::Said("world.".into()),
+                Event::Failed("it broke".into()),
+            ]
+        };
+        let mut by_value = WorkspaceState::sample();
+        let mut in_place = WorkspaceState::sample();
+        for event in events() {
+            by_value = by_value.heard(0, event);
+        }
+        for event in events() {
+            in_place.hear_in_place(0, event);
+        }
+        assert_eq!(by_value.sessions[0].status, in_place.sessions[0].status);
+        assert_eq!(
+            by_value.sessions[0].messages.len(),
+            in_place.sessions[0].messages.len()
+        );
+        assert_eq!(by_value.plan_open, in_place.plan_open);
+    }
+
     /// Removing a selected submodule returns new work to the project root without changing existing sessions.
     #[test]
     fn removed_submodule_resets_new_work() {
