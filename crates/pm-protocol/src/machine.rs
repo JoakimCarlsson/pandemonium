@@ -98,6 +98,9 @@ pub struct AgentPreferences {
     pub default_agent: Option<String>,
     /// The mode an agent starts in, by the id agents give it, such as `default`, `plan` or `yolo`, or the agent's own when nothing.
     pub permission_mode: Option<String>,
+    /// The agents, by id, left out of the ones a new session can be started with; they still run the sessions they have and keep their accounts.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hidden: Vec<String>,
 }
 
 /// The shell a server opens for the terminal dock.

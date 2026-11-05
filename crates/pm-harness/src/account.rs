@@ -1,79 +1,51 @@
-//! What an agent's own files say about who it is signed in as.
+//! Who an agent is signed in as, as the harness's own logins say.
 
-use std::fs;
 use std::path::PathBuf;
 
-use serde_json::Value;
+use omc_wire::{KeySource, SignIn};
 
 use crate::agent::Agent;
-use crate::product::Product;
 
-/// Who `agent` is signed in as, as its own files say: an organisation or an address.
+/// What an agent signed in with an API key the reader saved is called in place of an account.
+pub const SAVED_KEY: &str = "API key saved";
+
+/// Who `agent` is signed in as under the login folder in use for it: an organisation or an address.
 pub fn account(agent: Agent) -> Option<String> {
     account_in(agent, agent.home())
 }
 
-/// Who `agent` is signed in as when it keeps its login in its own default folder.
+/// Who `agent` is signed in as in the harness's own login folder.
 pub fn default_account(agent: Agent) -> Option<String> {
     account_in(agent, None)
 }
 
-/// Who `agent` is signed in as in the account folder `home`, whichever folder is in use.
+/// Who `agent` is signed in as in the login folder `home`.
 pub fn account_in_folder(agent: Agent, home: PathBuf) -> Option<String> {
     account_in(agent, Some(home))
 }
 
-/// Who `agent` is signed in as in the home folder `own`, or in its default one when there is none.
-fn account_in(agent: Agent, own: Option<PathBuf>) -> Option<String> {
-    let home = std::env::home_dir()?;
-    match agent.product()? {
-        Product::Claude => {
-            let file = match own {
-                Some(own) => own.join(".claude.json"),
-                None => home.join(".claude.json"),
-            };
-            let held: Value = serde_json::from_str(&fs::read_to_string(file).ok()?).ok()?;
-            let account = &held["oauthAccount"];
-            account["organizationName"]
-                .as_str()
-                .or_else(|| account["emailAddress"].as_str())
-                .map(str::to_owned)
-        }
-        Product::Codex => {
-            let codex = own
-                .or_else(|| std::env::var_os("CODEX_HOME").map(PathBuf::from))
-                .unwrap_or_else(|| home.join(".codex"));
-            let held: Value =
-                serde_json::from_str(&fs::read_to_string(codex.join("auth.json")).ok()?).ok()?;
-            let token = held["tokens"]["id_token"].as_str()?;
-            let payload = decode(token.split('.').nth(1)?)?;
-            let claims: Value = serde_json::from_slice(&payload).ok()?;
-            claims["email"].as_str().map(str::to_owned)
-        }
+/// What a login that names no account is called, as for GitHub Copilot.
+const UNNAMED: &str = "Signed in";
+
+/// Who `agent` is signed in as in the login folder `home`, or in the harness's own when there is none; a login that names no account is [`UNNAMED`], and an agent signed in with an API key says where the key comes from.
+fn account_in(agent: Agent, home: Option<PathBuf>) -> Option<String> {
+    if agent.sign_in == SignIn::ApiKey {
+        return omc_session::key_source(agent.provider, home).map(|source| match source {
+            KeySource::Environment { name } => format!("API key from {name}"),
+            KeySource::Saved => SAVED_KEY.to_owned(),
+        });
     }
+    omc_session::account(agent.provider, home.clone())
+        .or_else(|| omc_session::signed_in(agent.provider, home).then(|| UNNAMED.to_owned()))
 }
 
-/// The bytes a base64 text in the URL-safe alphabet stands for.
-fn decode(text: &str) -> Option<Vec<u8>> {
-    let mut bytes = Vec::new();
-    let mut buffer = 0u32;
-    let mut bits = 0;
-    for character in text.trim_end_matches('=').chars() {
-        let value = match character {
-            'A'..='Z' => character as u32 - 'A' as u32,
-            'a'..='z' => character as u32 - 'a' as u32 + 26,
-            '0'..='9' => character as u32 - '0' as u32 + 52,
-            '-' | '+' => 62,
-            '_' | '/' => 63,
-            _ => return None,
-        };
-        buffer = (buffer << 6) | value;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            bytes.push((buffer >> bits) as u8);
-            buffer &= (1 << bits) - 1;
-        }
+impl Agent {
+    /// Keeps `key` as the API key the agent is signed in with, in the harness's own login folder, or forgets the saved key when `key` is nothing or blank.
+    ///
+    /// # Errors
+    ///
+    /// Fails with the reason when the agent takes no API key or the logins cannot be written.
+    pub fn save_key(self, key: Option<&str>) -> Result<(), String> {
+        omc_session::save_key(self.provider, key, None)
     }
-    Some(bytes)
 }

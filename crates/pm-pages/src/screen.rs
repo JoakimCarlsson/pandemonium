@@ -990,7 +990,7 @@ impl Screen {
             Self::Workspace(mut state) => {
                 state.forget_identity(agent);
                 state.outbox_identity(agent, login);
-                Self::Workspace(state)
+                Self::Workspace(state.sign_in_code_ended())
             }
         }
     }

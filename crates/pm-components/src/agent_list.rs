@@ -1,8 +1,8 @@
-//! The agents a workspace can be started with: the ones the app ships.
+//! The agents a workspace can be started with: the ones the app offers, one for each provider of the harness.
 
 use pm_icon::IconName;
 
-use crate::state::WorkspaceState;
+use crate::state::{Outgoing, WorkspaceState};
 
 /// One agent the app ships, as the windows list it.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -14,9 +14,9 @@ pub struct AgentEntry {
 }
 
 impl AgentEntry {
-    /// The agents the app ships.
+    /// The agents the app offers.
     pub fn shipped() -> Vec<Self> {
-        pm_harness::AGENTS
+        pm_harness::agents()
             .iter()
             .map(|agent| Self {
                 id: agent.id.to_owned(),
@@ -35,15 +35,22 @@ pub struct AgentLook {
     pub name: String,
 }
 
-/// The glyph an agent is drawn with: the one of its product.
+/// The glyphs of the providers that have one of their own, by provider id; every other agent is drawn with [`IconName::Terminal`].
+const PROVIDER_ICONS: [(&str, IconName); 3] = [
+    ("claude", IconName::Sparkles),
+    ("copilot", IconName::Git),
+    ("openrouter", IconName::Globe),
+];
+
+/// The glyph an agent is drawn with: the one of its provider, or a terminal when the provider has none of its own.
 pub fn agent_icon(agent: &AgentEntry) -> IconName {
-    match pm_harness::AGENTS
-        .iter()
-        .find(|shipped| shipped.id == agent.id)
-    {
-        Some(shipped) if shipped.product == pm_harness::Product::Claude => IconName::Sparkles,
-        _ => IconName::Terminal,
-    }
+    pm_harness::agent(&agent.id)
+        .and_then(|offered| {
+            PROVIDER_ICONS
+                .iter()
+                .find(|(provider, _)| *provider == offered.provider)
+        })
+        .map_or(IconName::Terminal, |(_, icon)| *icon)
 }
 
 /// Rebuilds what is kept per agent for a new list: each agent keeps what it had, found by where `origin` says it was among the `before` agents, and a new agent starts with nothing.
@@ -68,6 +75,53 @@ impl WorkspaceState {
     /// The positions of the agents offered for new work, in the order the chips show them.
     pub fn offered_agents(&self) -> Vec<usize> {
         (0..self.agent_slots()).collect()
+    }
+
+    /// Whether the agent at `index` is offered when a new session is started, which it is unless it was hidden in the settings.
+    pub fn agent_shown(&self, index: usize) -> bool {
+        self.agent_record(index)
+            .is_some_and(|agent| !self.machine.agents.hidden.contains(&agent.id))
+    }
+
+    /// The positions of the agents a new session can be started with: the ones offered that were not hidden, in the order the chips show them.
+    pub fn startable_agents(&self) -> Vec<usize> {
+        self.offered_agents()
+            .into_iter()
+            .filter(|index| self.agent_shown(*index))
+            .collect()
+    }
+
+    /// Hides the agent at `index` from new sessions, or shows it again, and has the server keep the choice; the last agent shown cannot be hidden.
+    pub(crate) fn toggle_agent_shown(&mut self, index: usize) {
+        let Some(id) = self
+            .agent_id_at(index)
+            .filter(|_| index < self.agent_slots())
+        else {
+            return;
+        };
+        let hidden = &mut self.machine.agents.hidden;
+        if let Some(place) = hidden.iter().position(|held| *held == id) {
+            hidden.remove(place);
+        } else if self.startable_agents().len() > 1 {
+            self.machine.agents.hidden.push(id);
+        } else {
+            return;
+        }
+        self.keep_startable_agent();
+        if self.machine_loaded {
+            self.outbox
+                .push(Outgoing::SaveMachineSettings(self.machine.clone()));
+        }
+    }
+
+    /// Moves the agent new work is given to onto the first one shown, when the one picked was hidden.
+    pub(crate) fn keep_startable_agent(&mut self) {
+        if self.agent_shown(self.agent) {
+            return;
+        }
+        if let Some(first) = self.startable_agents().first() {
+            self.agent = *first;
+        }
     }
 
     /// The agent at `index`: one offered, or, past those, one taken out of the list that sessions still run.
@@ -106,9 +160,11 @@ impl WorkspaceState {
         self.agent_slots() + self.settings_servers.retired.len() - 1
     }
 
-    /// Whether the agent at `index` can keep more than one login, which every agent can.
+    /// Whether the agent at `index` can keep more than one login, which an agent whose sign-in names an account can.
     pub fn agent_has_accounts(&self, index: usize) -> bool {
-        self.agent_record(index).is_some()
+        self.agent_record(index)
+            .and_then(|record| pm_harness::agent(&record.id))
+            .is_some_and(|agent| agent.has_accounts())
     }
 
     /// How the agent at `index` is shown; a plain agent when there is none there.
@@ -183,5 +239,35 @@ impl WorkspaceState {
             .collect();
         self.settings_servers.agents = servers;
         self.settings_servers.retired = retired;
+    }
+}
+
+#[cfg(test)]
+/// Tests for hiding agents from new sessions.
+mod tests {
+    use super::*;
+
+    /// A hidden agent leaves the chips of a new session but stays listed, the picked agent moves off it, the choice is kept, and the last one shown stays.
+    #[test]
+    fn hidden_agents_leave_new_sessions_only() {
+        let mut state = WorkspaceState::new(&[]);
+        state.machine_loaded = true;
+        let all = state.offered_agents();
+        assert!(all.len() > 1);
+        state.agent = all[0];
+        state.toggle_agent_shown(all[0]);
+        assert!(!state.startable_agents().contains(&all[0]));
+        assert_eq!(state.offered_agents(), all);
+        assert_ne!(state.agent, all[0]);
+        assert!(state.take_outbox().iter().any(|sent| matches!(
+            sent,
+            Outgoing::SaveMachineSettings(settings) if settings.agents.hidden.len() == 1
+        )));
+        for index in &all[1..] {
+            state.toggle_agent_shown(*index);
+        }
+        assert_eq!(state.startable_agents().len(), 1);
+        state.toggle_agent_shown(all[0]);
+        assert!(state.startable_agents().contains(&all[0]));
     }
 }

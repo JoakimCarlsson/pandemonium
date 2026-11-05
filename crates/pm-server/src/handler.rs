@@ -36,9 +36,9 @@ fn saved_list<T: serde::Serialize>(name: &str, list: &[T]) -> Response {
     }
 }
 
-/// The agent whose id is `id`, when the app ships one by that name.
+/// The agent whose id is `id`, when the app offers one by that name.
 pub(crate) fn agent_named(id: &str) -> Option<Agent> {
-    pm_harness::AGENTS.into_iter().find(|agent| agent.id == id)
+    pm_harness::agent(id)
 }
 
 /// The folder `path` names on this machine, with a leading `~` taken to be the reader's home folder.
@@ -117,7 +117,7 @@ fn debug_done(found: bool, debug: u64) -> Response {
 
 /// Points every agent at the folder of the login in use for it, or at its own when none is.
 fn apply_accounts(logins: &[pm_protocol::Login], in_use: &[(String, String)]) {
-    for agent in pm_harness::AGENTS {
+    for &agent in pm_harness::agents() {
         let home = in_use
             .iter()
             .find(|(owner, _)| owner == agent.id)
@@ -667,12 +667,21 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             held.meta.login = login;
             sessions::save_meta(session, &held.meta);
         }),
-        Request::SignInSession { session } => sign_in_session(core, session),
-        Request::SignIn { agent, login } => match agent_named(&agent) {
-            Some(agent) => match sign_in_login(agent, login.as_deref()) {
+        Request::SignInSession { session } => sign_in_session(core, connection, session),
+        Request::SaveKey { agent, key } => match agent_named(&agent) {
+            Some(agent) => match agent.save_key(key.as_deref()) {
                 Ok(()) => Response::Done,
-                Err(reason) => failed(reason),
+                Err(error) => failed(error),
             },
+            None => failed(format!("no agent is called {agent}")),
+        },
+        Request::SignIn { agent, login } => match agent_named(&agent) {
+            Some(agent) => {
+                match sign_in_login(agent, login.as_deref(), &code_teller(connection, agent)) {
+                    Ok(()) => Response::Done,
+                    Err(reason) => failed(reason),
+                }
+            }
             None => failed(format!("no agent is called {agent}")),
         },
         Request::StartSession {
@@ -1806,19 +1815,35 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
     }
 }
 
-/// Signs `agent` in under the folder of the login `login`, so that the sign-in does not depend on which folder other requests have set; the folder in use when there is no login.
-fn sign_in_login(agent: Agent, login: Option<&str>) -> Result<(), String> {
-    match login {
-        Some(login) => {
-            let home = pm_store::account_directory(agent.id, login).map_err(|e| e.to_string())?;
-            agent.sign_in_folder(home)
-        }
-        None => agent.sign_in(),
+/// What tells `connection` the page and code a sign-in of `agent` waits for the reader to enter.
+fn code_teller(connection: &Arc<Connection>, agent: Agent) -> impl Fn(&str, &str) {
+    let connection = Arc::clone(connection);
+    move |url: &str, code: &str| {
+        let _ = connection.outbox.send(ServerMessage::SignInCode {
+            agent: agent.id.to_owned(),
+            url: url.to_owned(),
+            code: code.to_owned(),
+        });
     }
 }
 
-/// Signs in on this server using the session's account, then tells every attached client.
-fn sign_in_session(core: &Core, number: u64) -> Response {
+/// Signs `agent` in under the folder of the login `login`, so that the sign-in does not depend on which folder other requests have set; the folder in use when there is no login. `code` is told the page and code to show when the provider signs in with one.
+fn sign_in_login(
+    agent: Agent,
+    login: Option<&str>,
+    code: &dyn Fn(&str, &str),
+) -> Result<(), String> {
+    match login {
+        Some(login) => {
+            let home = pm_store::account_directory(agent.id, login).map_err(|e| e.to_string())?;
+            agent.sign_in_folder(home, code)
+        }
+        None => agent.sign_in(code),
+    }
+}
+
+/// Signs in on this server using the session's account, then tells every attached client; `connection`, which asked, is shown the code when the provider signs in with one.
+fn sign_in_session(core: &Core, connection: &Arc<Connection>, number: u64) -> Response {
     let found = core.sessions.lock().ok().and_then(|sessions| {
         let held = sessions.get(&number)?;
         Some((held.agent, held.meta.agent.clone(), held.meta.login.clone()))
@@ -1830,7 +1855,7 @@ fn sign_in_session(core: &Core, number: u64) -> Response {
     let result = if login.is_some() && home.is_none() {
         Err("the session's account no longer exists".to_owned())
     } else {
-        agent.sign_in_in(home)
+        agent.sign_in_in(home, &code_teller(connection, agent))
     };
     let event = match &result {
         Ok(()) => pm_harness::Event::SignedIn,

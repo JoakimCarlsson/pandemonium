@@ -109,6 +109,8 @@ pub struct ServerSettings {
     pub available_folded: bool,
     /// The menu open over a server, and where, if one is.
     pub menu: Option<ServerMenu>,
+    /// The box for an agent's API key, while one is open.
+    pub key_form: Option<crate::settings_agents::KeyForm>,
 }
 
 impl ServerSettings {
@@ -384,8 +386,12 @@ impl WorkspaceState {
             .contains(&id)
     }
 
-    /// Switches the `index`-th tool server on or off, and has the server keep the list.
+    /// Switches the `index`-th entry of the open list on or off: an agent is hidden from new sessions or shown again, and a tool server is switched and the list kept.
     fn toggle_server(&mut self, index: usize) {
+        if self.settings == Some(Section::AgentServers) {
+            self.toggle_agent_shown(index);
+            return;
+        }
         if let Some(tool) = self
             .settings_servers
             .tools
@@ -706,7 +712,8 @@ pub(crate) fn body(state: &WorkspaceState, section: Section, room: f32) -> Node 
         Section::Servers => inner
             .child(about)
             .children(crate::settings_machines::body(state, room)),
-        Section::AgentServers | Section::McpServers => list(state, section, inner, room),
+        Section::AgentServers => crate::settings_agents::body(state, inner, room),
+        Section::McpServers => list(state, section, inner, room),
         Section::Customizations
         | Section::Skills
         | Section::Instructions
@@ -846,13 +853,11 @@ fn list(state: &WorkspaceState, section: Section, page: Node, room: f32) -> Node
                 .styles([flex_none(), self_start()]),
         );
     }
-    if section != Section::AgentServers {
-        page = page.child(search_box(state, section));
-    }
+    page = page.child(search_box(state, section));
     if let (Some(form), true) = (form, adding) {
         page = page.child(form_node(form, section));
     }
-    let installed: Vec<Node> = installed_rows(state, section, &needle)
+    let installed: Vec<Node> = installed_rows(state, &needle)
         .into_iter()
         .map(|shown| {
             let editing =
@@ -863,34 +868,29 @@ fn list(state: &WorkspaceState, section: Section, page: Node, room: f32) -> Node
             }
         })
         .collect();
-    let accounts = section == Section::AgentServers;
-    let mut heading_row = node()
-        .styles([flex(), items_center(), justify_between(), flex_none()])
-        .child(heading(
-            if accounts { "Agents" } else { "Installed" },
-            installed.len(),
-            !settings.installed_folded,
-            SETTINGS_TOGGLE_INSTALLED,
-        ));
-    if !accounts {
-        heading_row = heading_row.child(
-            Button::new("Add Server", SETTINGS_ADD)
-                .variant(Variant::Outline)
-                .size(Size::Sm)
-                .disabled(adding)
-                .build(),
-        );
-    }
-    page = page.child(heading_row);
+    page = page.child(
+        node()
+            .styles([flex(), items_center(), justify_between(), flex_none()])
+            .child(heading(
+                "Installed",
+                installed.len(),
+                !settings.installed_folded,
+                SETTINGS_TOGGLE_INSTALLED,
+            ))
+            .child(
+                Button::new("Add Server", SETTINGS_ADD)
+                    .variant(Variant::Outline)
+                    .size(Size::Sm)
+                    .disabled(adding)
+                    .build(),
+            ),
+    );
     if !settings.installed_folded {
         page = page.child(if installed.is_empty() {
             note("Nothing installed matches.")
         } else {
             boxed(installed)
         });
-    }
-    if accounts {
-        return page;
     }
     let offers = offered_rows(state);
     page = page
@@ -1002,110 +1002,40 @@ struct InstalledRow {
     place: Option<usize>,
     /// Whether it is switched on, when it can be switched.
     enabled: Option<bool>,
-    /// For an account, its place in the list of accounts.
-    account: Option<usize>,
-    /// For an agent, its place in the list of agents, which it adds accounts to.
-    adds_account: Option<usize>,
 }
 
-/// The rows of the servers already there: for the agents the ones the app ships, which cannot be changed, then the ones added by hand.
-fn installed_rows(state: &WorkspaceState, section: Section, needle: &str) -> Vec<InstalledRow> {
+/// The rows of the tool servers already there whose name, reach or description holds `needle`.
+fn installed_rows(state: &WorkspaceState, needle: &str) -> Vec<InstalledRow> {
     let matching = |row: &InstalledRow| {
         needle.is_empty()
             || row.title.to_lowercase().contains(needle)
             || row.detail.to_lowercase().contains(needle)
             || row.description.to_lowercase().contains(needle)
     };
-    match section {
-        Section::AgentServers => state
-            .settings_servers
-            .agents
-            .iter()
-            .enumerate()
-            .flat_map(|(index, agent)| {
-                let accounts = state
-                    .logins
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, (owner, _, _))| *owner == agent.id)
-                    .map(|(position, (_, id, name))| InstalledRow {
-                        title: name.clone(),
-                        badges: if state
-                            .in_use
-                            .iter()
-                            .any(|(owner, used)| *owner == agent.id && used == id)
-                        {
-                            vec![("In use", Role::Subtle)]
-                        } else {
-                            Vec::new()
-                        },
-                        description: String::new(),
-                        detail: format!("account of {}", agent.name),
-                        place: None,
-                        enabled: None,
-                        account: Some(position),
-                        adds_account: None,
-                    });
-                let default = InstalledRow {
-                    title: match state.defaults.get(index) {
-                        Some(Some(Some(name))) => name.clone(),
-                        Some(Some(None)) => "Not signed in".to_owned(),
-                        _ => "Default account".to_owned(),
-                    },
-                    badges: if state.in_use.iter().any(|(owner, _)| *owner == agent.id) {
-                        Vec::new()
-                    } else {
-                        vec![("In use", Role::Subtle)]
-                    },
-                    description: String::new(),
-                    detail: format!("default account of {}", agent.name),
-                    place: None,
-                    enabled: None,
-                    account: None,
-                    adds_account: None,
-                };
-                std::iter::once(InstalledRow {
-                    title: agent.name.clone(),
-                    badges: Vec::new(),
-                    description: String::new(),
-                    detail: String::new(),
-                    place: Some(index),
-                    enabled: None,
-                    account: None,
-                    adds_account: Some(index),
-                })
-                .chain(std::iter::once(default))
-                .chain(accounts)
-            })
-            .filter(matching)
-            .collect(),
-        _ => state
-            .settings_servers
-            .tools
-            .iter()
-            .enumerate()
-            .map(|(index, tool)| InstalledRow {
-                title: tool.name.clone(),
-                badges: if tool.enabled {
-                    Vec::new()
-                } else {
-                    vec![("Disabled", Role::Subtle)]
-                },
-                description: match &tool.extension {
-                    Some(extension) => {
-                        format!("From the {extension} extension. {}", tool.description)
-                    }
-                    None => tool.description.clone(),
-                },
-                detail: reach_of(&tool.target, tool.env.len()),
-                place: Some(index),
-                enabled: Some(tool.enabled),
-                account: None,
-                adds_account: None,
-            })
-            .filter(matching)
-            .collect(),
-    }
+    state
+        .settings_servers
+        .tools
+        .iter()
+        .enumerate()
+        .map(|(index, tool)| InstalledRow {
+            title: tool.name.clone(),
+            badges: if tool.enabled {
+                Vec::new()
+            } else {
+                vec![("Disabled", Role::Subtle)]
+            },
+            description: match &tool.extension {
+                Some(extension) => {
+                    format!("From the {extension} extension. {}", tool.description)
+                }
+                None => tool.description.clone(),
+            },
+            detail: reach_of(&tool.target, tool.env.len()),
+            place: Some(index),
+            enabled: Some(tool.enabled),
+        })
+        .filter(matching)
+        .collect()
 }
 
 /// What the registry of a list offers, as rows, and the line to show under them when it has something to say.
@@ -1229,28 +1159,6 @@ fn row(shown: InstalledRow) -> Node {
     let mut actions = node().styles([flex(), items_center(), gap(2), flex_none()]);
     if let (Some(place), Some(on)) = (shown.place, shown.enabled) {
         actions = actions.child(switch(on, FocusId(SETTINGS_SWITCH_BASE + place as u64)));
-    }
-    if let Some(agent) = shown.adds_account {
-        actions = actions.child(
-            Button::new(
-                "Add account",
-                FocusId(SETTINGS_ACCOUNT_ADD_BASE + agent as u64),
-            )
-            .variant(Variant::Outline)
-            .size(Size::Sm)
-            .build(),
-        );
-    }
-    if let Some(account) = shown.account {
-        actions = actions.child(
-            Button::new(
-                "Remove",
-                FocusId(SETTINGS_ACCOUNT_REMOVE_BASE + account as u64),
-            )
-            .variant(Variant::Ghost)
-            .size(Size::Sm)
-            .build(),
-        );
     }
     if let Some(place) = shown.place {
         actions = actions.child(

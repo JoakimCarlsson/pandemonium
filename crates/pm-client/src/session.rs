@@ -116,6 +116,15 @@ pub enum Incoming {
     },
     /// The files of a folder this client watches changed; this is the folder, as the client named it.
     FolderChanged(String),
+    /// A sign-in this client asked for waits for the reader to enter a code on a web page.
+    SignInCode {
+        /// The agent being signed in, by its id.
+        agent: String,
+        /// The page to enter the code on.
+        url: String,
+        /// The code to enter.
+        code: String,
+    },
     /// Something an agent did, numbered within its session.
     Event {
         /// The session.
@@ -574,6 +583,9 @@ fn converse(
                     }
                     ServerMessage::FolderChanged { directory } => {
                         let _ = reporter.send(Incoming::FolderChanged(directory));
+                    }
+                    ServerMessage::SignInCode { agent, url, code } => {
+                        let _ = reporter.send(Incoming::SignInCode { agent, url, code });
                     }
                     ServerMessage::Ready { .. } | ServerMessage::Denied { .. } => {}
                 }

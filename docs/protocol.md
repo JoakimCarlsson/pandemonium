@@ -115,6 +115,7 @@ request with exactly one `response` carrying the same `id`.
 | `set_session_account` | `session`, `login` (a login id, or `null` for the agent's own)                            | `done`          |
 | `sign_in`      | `agent`, `login` (optional): a login id, signed in under its own folder and never the agent's default one | `done`          |
 | `sign_in_session` | `session` | `done` |
+| `save_key`     | `agent`, `key` (optional): the API key to keep for an agent signed in with one, or `null` to forget it; a key in the agent's environment variable still wins | `done` |
 | `start_session`| `agent`, `repository`, `directory`, `title`, `base`, `settings`, `text`, `attachments`, `submodule`, `container` | `started`       |
 | `prompt`       | `session`, `text`, `attachments`, `now` (optional, `false` by default)                           | `done`          |
 | `remove_queued` | `session`, `queued`                                                                            | `done`          |
@@ -494,8 +495,10 @@ everything said of them, its submodules' paths written from `directory`.
   time it is written with `write_file`, how many days it keeps it and how many
   megabytes of states one project may take up (30 days and 256 megabytes when
   not set). `agents` is
-  `{default_agent, permission_mode}`, each optional: the agent a client offers
-  first for new work, by id, and the mode new sessions start in. `shell` is
+  `{default_agent, permission_mode, hidden}`, each optional: the agent a client offers
+  first for new work, by id, the mode new sessions start in, and the ids of the
+  agents a client leaves out when a new session is started; a hidden agent still
+  runs its sessions and keeps its accounts. `shell` is
   `{program, arguments}`, the shell `open_terminal` starts when `program` is not
   empty. `extensions` maps an extension's folder name to `{granted}`, the
   capabilities it was allowed; `save_machine_settings` does not change it, only
@@ -1035,6 +1038,19 @@ stops the expired agent and drops queued prompts without sending them.
 failure sends `SignedOut` with its reason instead. Both events are numbered,
 persisted, and replayed like other session events. The next prompt uses the
 same session and its conversation history with refreshed credentials.
+
+### Signing in with a code
+
+Some providers sign in with a short code the reader enters on a web page rather
+than with a page that hands back by itself. While `sign_in` or `sign_in_session`
+waits for such a login, the server sends the asking client
+
+```json
+{"type": "sign_in_code", "agent": "copilot", "url": "https://github.com/login/device", "code": "ABCD-1234"}
+```
+
+and opens the page. Show the code until the request is answered with `done` or
+`failed`.
 
 ### Event types
 

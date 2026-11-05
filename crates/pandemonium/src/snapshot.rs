@@ -98,6 +98,8 @@ pub enum Shot {
     ComposerLong,
     /// A session whose account needs signing in again.
     SignedOut,
+    /// The workspace showing the code a GitHub Copilot sign-in waits for the reader to enter.
+    SignInCode,
     /// The workspace asking whether to close the window while agents are working.
     Quitting,
     /// The workspace telling of a newer release in its title bar.
@@ -212,6 +214,12 @@ pub enum Shot {
     Dragging,
     /// The page for starting work in this repository, with the agent's settings known.
     Welcome,
+    /// The page for starting work with Ollama and OpenRouter hidden from new sessions.
+    WelcomeHidden,
+    /// The agents and their accounts in the settings window, scrolled down, with Ollama and OpenRouter hidden from new sessions.
+    SettingsAccountsHidden,
+    /// The agents and their accounts in the settings window, scrolled down, with the box for OpenRouter's API key open.
+    SettingsAccountsKey,
     /// The page for starting work in this repository with the terminal open under it.
     WelcomeTerminal,
     /// A session cut into three panes: the conversation above the diff, beside a file.
@@ -340,6 +348,8 @@ pub enum Shot {
     SettingsForm,
     /// The settings panel on the Agent Servers inside Agents, with two accounts added to the first agent, at its narrowest when the flag is set.
     SettingsAccounts(bool),
+    /// The agents and their accounts in the settings window, scrolled down to the agents that keep no accounts and GitHub Copilot.
+    SettingsAccountsScrolled,
     /// The same panel waiting for the accounts and organizations to clone from.
     Loading,
     /// The same panel on the accounts and organizations to clone from.
@@ -2481,6 +2491,9 @@ impl Shot {
                 | Self::SettingsMcp
                 | Self::SettingsForm
                 | Self::SettingsAccounts(_)
+                | Self::SettingsAccountsScrolled
+                | Self::SettingsAccountsHidden
+                | Self::SettingsAccountsKey
         )
     }
 
@@ -2515,6 +2528,9 @@ impl Shot {
             "compact" => Some(Self::SettingsCompact(narrow)),
             "form" => Some(Self::SettingsForm),
             "accounts" => Some(Self::SettingsAccounts(narrow)),
+            "accounts-scrolled" => Some(Self::SettingsAccountsScrolled),
+            "accounts-hidden" => Some(Self::SettingsAccountsHidden),
+            "accounts-key" => Some(Self::SettingsAccountsKey),
             "mcp" => Some(Self::SettingsMcp),
             slug => SETTINGS_SHOTS
                 .iter()
@@ -2836,6 +2852,11 @@ impl Shot {
                     account: Some("work@example.com".to_owned()),
                 }))
             }
+            Self::SignInCode => Screen::Workspace(workspace().with_sign_in_code(
+                "copilot",
+                "https://github.com/login/device".to_owned(),
+                "ABCD-1234".to_owned(),
+            )),
             Self::SessionStates(unread) => {
                 let mut state = workspace();
                 for session in &mut state.sessions {
@@ -3153,6 +3174,26 @@ impl Shot {
             }
             Self::Dragging => Screen::Workspace(workspace().dragged_over(0, 2, (150.0, 470.0))),
             Self::Welcome => Screen::Workspace(welcome()),
+            Self::WelcomeHidden => Screen::Workspace(hiding_local_agents(welcome())),
+            Self::SettingsAccountsKey => {
+                let state = welcome();
+                let openrouter = state.agent_position("openrouter").unwrap_or_default();
+                Screen::Workspace(
+                    state
+                        .after(SETTINGS)
+                        .after(Section::AgentServers.id())
+                        .after(FocusId(
+                            pm_components::settings_agents::KEY_SET_BASE + openrouter as u64,
+                        ))
+                        .scrolled_settings(420.0, 420.0),
+                )
+            }
+            Self::SettingsAccountsHidden => Screen::Workspace(
+                hiding_local_agents(welcome())
+                    .after(SETTINGS)
+                    .after(Section::AgentServers.id())
+                    .scrolled_settings(420.0, 420.0),
+            ),
             Self::WelcomeTerminal => Screen::Workspace(with_shell(welcome())),
             Self::Panes => Screen::Workspace(
                 code()
@@ -3445,20 +3486,23 @@ impl Shot {
                     .after(Section::AgentServers.id())
                     .after(SETTINGS_ADD),
             ),
-            Self::SettingsAccounts(_) => {
+            Self::SettingsAccounts(_) | Self::SettingsAccountsScrolled => {
                 let agent = welcome().agent_id_at(0).unwrap_or_default();
-                Screen::Workspace(
-                    welcome()
-                        .after(SETTINGS)
-                        .after(Section::AgentServers.id())
-                        .with_accounts(
-                            vec![
-                                (agent.clone(), "a1".to_owned(), "work@example.com".to_owned()),
-                                (agent.clone(), "a2".to_owned(), "Account 2".to_owned()),
-                            ],
-                            vec![(agent, "a1".to_owned())],
-                        ),
-                )
+                let state = welcome()
+                    .after(SETTINGS)
+                    .after(Section::AgentServers.id())
+                    .with_accounts(
+                        vec![
+                            (agent.clone(), "a1".to_owned(), "work@example.com".to_owned()),
+                            (agent.clone(), "a2".to_owned(), "Account 2".to_owned()),
+                        ],
+                        vec![(agent, "a1".to_owned())],
+                    );
+                Screen::Workspace(if matches!(self, Self::SettingsAccountsScrolled) {
+                    state.scrolled_settings(420.0, 420.0)
+                } else {
+                    state
+                })
             }
             Self::Adding => Screen::Workspace(welcome().after(ADD_PROJECT)),
             Self::Loading => Screen::Workspace(welcome().after(ADD_PROJECT).after(ADDER_CLONE)),
@@ -4989,4 +5033,10 @@ pub fn write_browser(path: &Path, url: &str, tools: bool, interact: bool) -> Res
     drop(engine);
     image::save_buffer(path, &pixels, width, height, image::ColorType::Rgba8)
         .map_err(|error| error.to_string())
+}
+
+/// `state` with Ollama and OpenRouter hidden from new sessions, as the settings keep it.
+fn hiding_local_agents(mut state: WorkspaceState) -> WorkspaceState {
+    state.machine.agents.hidden = vec!["ollama".to_owned(), "openrouter".to_owned()];
+    state
 }

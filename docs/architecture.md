@@ -84,7 +84,7 @@ One crate per layer, each depending only on the layers below it.
   after a folder changes; a release build reads the folders from the repository
   at its own release tag, a debug build from its checkout, and either from
   `PANDEMONIUM_LANGUAGES` when it is set.
-- **Domain:** `pm-harness` (the app's side of the harness: the agents it ships,
+- **Domain:** `pm-harness` (the app's side of the harness: one agent per provider the harness lists,
   the conversation held with one over the harness's wire protocol, and its
   sign-in; the harness is a library from the `oh-my-crab` repository that runs
   inside the server, one conversation to a thread, and the tools it offers are

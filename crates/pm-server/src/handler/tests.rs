@@ -40,7 +40,7 @@ fn repository_with_worktree(name: &str) -> (PathBuf, PathBuf) {
 /// A session of the first agent that works in `worktree`, a worktree of `repository`.
 fn session_in(repository: &Path, worktree: &Path) -> Session {
     let meta = Meta {
-        agent: pm_harness::AGENTS[0].id.to_owned(),
+        agent: pm_harness::agents()[0].id.to_owned(),
         repository: repository.to_string_lossy().into_owned(),
         directory: worktree.to_string_lossy().into_owned(),
         branch: Some("work".to_owned()),
@@ -54,7 +54,7 @@ fn session_in(repository: &Path, worktree: &Path) -> Session {
         container: false,
     };
     Session::new(
-        pm_harness::AGENTS[0],
+        pm_harness::agents()[0],
         worktree.to_path_buf(),
         Vec::new(),
         meta,

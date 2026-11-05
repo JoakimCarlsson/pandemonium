@@ -21,8 +21,8 @@ mod profile;
 mod tool_registry;
 mod web;
 
-pub use account::{account, account_in_folder, default_account};
-pub use agent::{AGENTS, Agent};
+pub use account::{SAVED_KEY, account, account_in_folder, default_account};
+pub use agent::{Agent, agent, agents};
 pub use chat::{Chat, Given, Notify};
 pub use discover::discover;
 pub use event::{
@@ -36,7 +36,7 @@ pub use omc_wire::Conversation;
 pub use omc_wire::Event as WireEvent;
 pub use omc_wire::PastTurn;
 pub use omc_wire::{Imported, ImportedTurn};
-pub use omc_wire::{Reach, ToolServer};
+pub use omc_wire::{Reach, SignIn, ToolServer};
 pub use product::Product;
 pub use tool_registry::{Listing, search as search_tools};
 pub use web::{is_web_address, open as open_address};

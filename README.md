@@ -20,7 +20,7 @@ Pandemonium treats them as the real work.
 - **Review, don't babysit.** Every session is a branch with a diff and a
   conversation you can read, question and merge.
 - **One harness, many agents.** A harness of our own runs the agent loop and
-  the tools, with Claude and Codex built in and more agents to follow.
+  the tools, with Claude, Codex, GitHub Copilot, OpenRouter and Ollama built in.
 - **Agents keep going.** Close the window, sleep the laptop or lose the
   connection, and the agents carry on. Reconnect and catch up.
 - **Fast and native.** Rendered on the GPU with wgpu. No web view, no Electron.
@@ -63,12 +63,20 @@ The protocol between clients and a server is in [docs/protocol.md](docs/protocol
 
 ## Agents and accounts
 
-Claude and Codex are the agents that ship. Model and mode pickers come from
-what the harness reports. Sign in from Settings, Agents and accounts: the
-harness opens the provider's login page and keeps the credentials in the
-account's folder.
+Every provider of the harness is an agent: Claude, Codex, GitHub Copilot,
+OpenRouter and Ollama. The list comes from the harness, so a provider added
+there shows up here without a change to the app. Model and mode pickers also
+come from what the harness reports. Sign in from Settings, Agents and accounts:
+the app opens the provider's login page and the harness keeps the credentials
+in the account's folder. GitHub Copilot signs in with a code entered on
+GitHub's device page, which the app shows until the sign-in finishes.
 
-Every agent can keep more than one login. Each account is a folder under the
+An agent whose sign-in names an account (Claude, Codex, GitHub Copilot) can
+keep more than one login. OpenRouter takes an API key: add it on its card,
+where it is saved on the server's machine, or set `OPENROUTER_API_KEY`, which
+wins. Ollama needs no sign-in. The switch beside each agent in
+Settings, Agents and accounts hides it from the new session page; a hidden
+agent keeps its sessions and accounts. Each account is a folder under the
 data directory that holds that account's credentials, and the harness is
 started with it.
 

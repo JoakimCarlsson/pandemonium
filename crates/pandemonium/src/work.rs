@@ -115,6 +115,8 @@ enum Pending {
     Discover(Host, String),
     /// The agent at this position was signed in, or could not be.
     SignIn(usize, Option<String>),
+    /// A session's agent was signed in again, or could not be.
+    SignInSession,
     /// What the agent at the second position is given in the project at the first.
     Library(usize, usize),
     /// The tools the agent at the second position is given on the machine of the project at the first.
@@ -496,7 +498,7 @@ impl Work {
             jobs,
             reporter,
             discovered: false,
-            agents: pm_harness::AGENTS
+            agents: pm_harness::agents()
                 .iter()
                 .map(|agent| agent.id.to_owned())
                 .collect(),
@@ -1262,8 +1264,20 @@ impl Work {
                 Outgoing::SignInSession { session } => self.ask_session(
                     session,
                     |session| Request::SignInSession { session },
-                    Pending::Nothing,
+                    Pending::SignInSession,
                 ),
+                Outgoing::SaveKey { agent, key } => {
+                    if let Some(id) = self.agent_id(agent) {
+                        self.ask(
+                            &None,
+                            Request::SaveKey {
+                                agent: id,
+                                key: key.clone(),
+                            },
+                            Pending::SignIn(agent, None),
+                        );
+                    }
+                }
                 Outgoing::SignIn { agent, login } => {
                     if let Some(id) = self.agent_id(agent) {
                         self.ask(
@@ -1606,6 +1620,11 @@ impl Work {
                     Incoming::FolderChanged(directory) => {
                         self.folder_changed(model, &host, &directory);
                     }
+                    Incoming::SignInCode { agent, url, code } => {
+                        Self::in_workspace(model, |state| {
+                            state.with_sign_in_code(&agent, url, code)
+                        });
+                    }
                     Incoming::ExtensionsChanged(extensions) => {
                         self.ask_extension_assets(&host);
                         model.update(|screen| {
@@ -1865,6 +1884,12 @@ impl Work {
                 model.update(|screen| {
                     *screen = std::mem::take(screen).with_discovery_of(origin, &id, found);
                 });
+            }
+            Pending::SignInSession => {
+                Self::in_workspace(model, WorkspaceState::sign_in_code_ended);
+                if let Some(message) = failure {
+                    eprintln!("sign-in failed: {message}");
+                }
             }
             Pending::SignIn(agent, login) => {
                 model.update(|screen| *screen = std::mem::take(screen).signed_in(agent, login));

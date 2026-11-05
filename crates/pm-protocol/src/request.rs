@@ -1244,4 +1244,12 @@ pub enum Request {
         #[serde(default, with = "crate::bytes")]
         image: Vec<u8>,
     },
+    /// Keeps `key` as the API key of the agent, for an agent signed in with one, or forgets the saved key when `key` is nothing.
+    SaveKey {
+        /// The agent, by its id.
+        agent: String,
+        /// The key, or nothing to forget the one saved.
+        #[serde(default)]
+        key: Option<String>,
+    },
 }

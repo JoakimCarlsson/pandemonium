@@ -139,6 +139,9 @@ impl WorkspaceState {
         {
             self.agent = agent;
         }
+        if self.sessions.is_empty() {
+            self.keep_startable_agent();
+        }
         self.apply_indentation();
         self
     }

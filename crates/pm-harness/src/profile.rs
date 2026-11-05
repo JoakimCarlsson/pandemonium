@@ -10,9 +10,9 @@ use crate::agent::Agent;
 static ACTIVE: Mutex<Option<HashMap<&'static str, PathBuf>>> = Mutex::new(None);
 
 impl Agent {
-    /// Whether the agent can keep more than one login, which every agent can.
+    /// Whether the agent can keep more than one login, which an agent whose sign-in names an account can.
     pub fn has_accounts(self) -> bool {
-        true
+        self.sign_in.has_accounts()
     }
 
     /// Makes every conversation started from now on keep its login in `home`, or in the harness's own folder when there is none.
@@ -34,21 +34,21 @@ impl Agent {
         ACTIVE.lock().ok()?.as_ref()?.get(self.id).cloned()
     }
 
-    /// Signs the agent in under the login folder in use and returns once that is over.
+    /// Signs the agent in under the login folder in use and returns once that is over; `code` is told the page and code to show when the provider signs in with one.
     ///
     /// # Errors
     ///
     /// Fails with the reason when the harness cannot be started or the login fails.
-    pub fn sign_in(self) -> Result<(), String> {
-        self.sign_in_in(self.home())
+    pub fn sign_in(self, code: &dyn Fn(&str, &str)) -> Result<(), String> {
+        self.sign_in_in(self.home(), code)
     }
 
-    /// Signs the agent in under the login folder `home`, leaving the folder in use alone.
+    /// Signs the agent in under the login folder `home`, leaving the folder in use alone; `code` is told the page and code to show when the provider signs in with one.
     ///
     /// # Errors
     ///
     /// Fails with the reason when the harness cannot be started or the login fails.
-    pub fn sign_in_folder(self, home: PathBuf) -> Result<(), String> {
-        self.sign_in_in(Some(home))
+    pub fn sign_in_folder(self, home: PathBuf, code: &dyn Fn(&str, &str)) -> Result<(), String> {
+        self.sign_in_in(Some(home), code)
     }
 }

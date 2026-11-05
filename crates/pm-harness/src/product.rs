@@ -7,14 +7,14 @@ use crate::agent::Agent;
 pub use pm_agent_library::Product;
 
 impl Agent {
-    /// The product the agent runs, which is one the app knows.
+    /// The product the agent runs, when it is one the app knows.
     pub fn product(self) -> Option<Product> {
-        Some(self.product)
+        self.product
     }
 
-    /// The folder the agent's customizations are read from: the product's own.
+    /// The folder the agent's customizations are read from: its product's own, when it has a product.
     pub fn config_folder(self) -> Option<PathBuf> {
-        self.product.default_folder()
+        self.product?.default_folder()
     }
 
     /// Whether the agent can be told to read its skills again while a conversation is open.

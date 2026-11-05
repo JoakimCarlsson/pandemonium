@@ -296,7 +296,7 @@ fn drive(
 /// Tests that hold a conversation with the real harness.
 mod tests {
     use super::*;
-    use crate::agent::AGENTS;
+    use crate::agent::agents;
 
     /// A prompt that needs a tool is answered with a question, and the answer lets the turn finish.
     #[test]
@@ -305,7 +305,7 @@ mod tests {
         let folder = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../build/pm-harness-live");
         let _ = std::fs::create_dir_all(&folder);
         let chat = Chat::start(
-            AGENTS[0],
+            agents()[0],
             folder.clone(),
             None,
             Given::default(),

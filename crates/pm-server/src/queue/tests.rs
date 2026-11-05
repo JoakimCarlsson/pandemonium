@@ -12,7 +12,7 @@ const HOLDER: usize = 1;
 /// A session of the first agent with no agent running and nothing in its log.
 fn session() -> Session {
     let meta = Meta {
-        agent: pm_harness::AGENTS[0].id.to_owned(),
+        agent: pm_harness::agents()[0].id.to_owned(),
         repository: String::new(),
         directory: String::new(),
         branch: None,
@@ -26,7 +26,7 @@ fn session() -> Session {
         container: false,
     };
     Session::new(
-        pm_harness::AGENTS[0],
+        pm_harness::agents()[0],
         std::path::PathBuf::new(),
         Vec::new(),
         meta,

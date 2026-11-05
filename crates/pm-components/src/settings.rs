@@ -377,6 +377,9 @@ impl WorkspaceState {
             SETTINGS_CLOSE if self.settings_servers.form.is_some() => {
                 self.settings_servers.form = None;
             }
+            SETTINGS_CLOSE if self.settings_servers.key_form.is_some() => {
+                self.settings_servers.key_form = None;
+            }
             SETTINGS_CLOSE if self.settings_page.server_form.is_some() => {
                 self.settings_page.server_form = None;
             }
@@ -394,6 +397,7 @@ impl WorkspaceState {
             action if self.machines_pressed(action) => {}
             action if self.languages_pressed(action) => {}
             action if self.library_pressed(action) => {}
+            action if self.agents_pressed(action) => {}
             action => {
                 if let Some(section) = Section::ALL
                     .into_iter()

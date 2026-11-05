@@ -500,9 +500,9 @@ mod turn_id_tests {
             (2, prompted(40)),
             (3, Event::Finished(None)),
         ];
-        let session = Session::new(pm_harness::AGENTS[0], PathBuf::new(), log, meta());
+        let session = Session::new(pm_harness::agents()[0], PathBuf::new(), log, meta());
         assert_eq!(session.next_turn_id(), 41);
-        let empty = Session::new(pm_harness::AGENTS[0], PathBuf::new(), Vec::new(), meta());
+        let empty = Session::new(pm_harness::agents()[0], PathBuf::new(), Vec::new(), meta());
         assert_eq!(empty.next_turn_id(), 1);
     }
 }

@@ -1147,6 +1147,13 @@ pub enum Outgoing {
         /// The login's id.
         login: Option<String>,
     },
+    /// Keeps `key` as the API key of the agent, by position, or forgets the saved one when `key` is nothing.
+    SaveKey {
+        /// The agent, by position.
+        agent: usize,
+        /// The key, or nothing to forget the saved one.
+        key: Option<String>,
+    },
     /// Signs in again as the account of the open session.
     SignInSession {
         /// The session, by position.
@@ -1886,6 +1893,8 @@ pub struct WorkspaceState {
     pub update_open: bool,
     /// How far the update the reader asked for has got.
     pub update_run: crate::update_dialog::UpdateRun,
+    /// The code a sign-in waits for the reader to enter, while one does and the reader has not hidden it.
+    pub sign_in_code: Option<crate::sign_in_code::SignInCode>,
     /// The breakpoints and the program being debugged.
     pub debug: crate::debug::DebugState,
     /// What the project can be built, tested and run with.
@@ -2054,6 +2063,7 @@ impl WorkspaceState {
             update_scroll: 0.0,
             update_open: false,
             update_run: crate::update_dialog::UpdateRun::Idle,
+            sign_in_code: None,
             debug: crate::debug::DebugState::default(),
             tasks: crate::tasks::TaskState::default(),
             window: pm_config::WindowSettings::default(),
@@ -2234,6 +2244,9 @@ impl WorkspaceState {
         if crate::browser::is_browser_part(action) {
             return self.browser_pressed(action);
         }
+        if self.press_sign_in_code(action) {
+            return self;
+        }
         if crate::project_search::is_search_part(action) {
             return self.project_search_pressed(action);
         }
@@ -2399,6 +2412,7 @@ impl WorkspaceState {
             }
             crate::extensions::EXTENSIONS_SEARCH => self.extensions_searched(edit),
             id if crate::settings_servers::is_form_field(id) => self.server_form_edited(id, edit),
+            id if crate::settings_agents::is_key_field(id) => self.key_edited(edit),
             id if crate::settings_pages::is_setting_field(id) => self.setting_edited(id, edit),
             id if crate::settings_machines::is_machine_field(id) => self.machine_edited(id, edit),
             crate::settings::SETTINGS_FIND => {
@@ -2461,6 +2475,7 @@ impl WorkspaceState {
             ADDER_FIELD => self.adder.as_ref().map(|open| &open.field),
             PICKER_FIELD => self.folder_picker.as_ref().map(|open| &open.field),
             id if crate::settings_servers::is_form_field(id) => self.server_form_field(id),
+            id if crate::settings_agents::is_key_field(id) => self.key_field(),
             id if crate::settings_pages::is_setting_field(id) => self.setting_field(id),
             id if crate::settings_machines::is_machine_field(id) => self.machine_field(id),
             crate::settings::SETTINGS_FIND => Some(&self.settings_page.find),
@@ -2498,6 +2513,7 @@ impl WorkspaceState {
             || id == ADDER_FIELD
             || id == PICKER_FIELD
             || crate::settings_servers::is_form_field(id)
+            || crate::settings_agents::is_key_field(id)
             || crate::settings_pages::is_setting_field(id)
             || crate::settings_machines::is_machine_field(id)
             || id == crate::settings::SETTINGS_FIND
@@ -2529,6 +2545,7 @@ impl WorkspaceState {
             PICKER_FIELD => PICKER_SUBMIT,
             crate::settings::SETTINGS_SEARCH => crate::settings::SETTINGS_SEARCH_GO,
             id if crate::settings_servers::is_form_field(id) => crate::settings::SETTINGS_SAVE,
+            id if crate::settings_agents::is_key_field(id) => crate::settings_agents::KEY_SAVE,
             id if crate::settings_machines::is_machine_field(id) => {
                 crate::settings_machines::MACHINE_SAVE
             }
