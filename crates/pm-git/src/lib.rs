@@ -1214,7 +1214,7 @@ pub fn standings(directory: &Path) -> Vec<Standing> {
 /// Talks to the remote of the repository `directory` is in, or of each repository in a folder that holds several, naming those that fail: `fetch` from all of them, `pull`, `pull_rebase`, `push` the branch, publishing it when it follows nothing, `force_push` without overwriting what was not seen, or `sync` by pulling and then pushing.
 pub fn remote(directory: &Path, operation: &str) -> Result<(), String> {
     if let Layout::Repositories(children) = layout(directory) {
-        return multirepo::each(directory, &children, |child| remote(child, operation));
+        return multirepo::each(directory, &children, |child| remote_held(child, operation));
     }
     match operation {
         "fetch" => run(directory, &["fetch", "--all", "--prune"]).map(|_| ()),
@@ -1223,11 +1223,34 @@ pub fn remote(directory: &Path, operation: &str) -> Result<(), String> {
         "force_push" => run(directory, &["push", "--force-with-lease"]).map(|_| ()),
         "push" => push(directory),
         "sync" => {
-            run(directory, &["pull", "--prune"])?;
+            remote(directory, "pull")?;
             push(directory)
         }
         other => Err(format!("{other} is not something to ask of a remote")),
     }
+}
+
+/// Talks to the remote of `directory`, one repository of a folder that holds several, as [`remote`] does, except that the push of `push`, `force_push` and `sync` is left out when its branch has nothing to push, or for `force_push` nothing to rewind either, so a repository with nothing to send, such as one the user may only read, is not asked to take a push it would refuse.
+///
+/// # Errors
+///
+/// Fails as [`remote`] does for the steps it runs.
+fn remote_held(directory: &Path, operation: &str) -> Result<(), String> {
+    match operation {
+        "push" if nothing_to_push(directory, false) => Ok(()),
+        "force_push" if nothing_to_push(directory, true) => Ok(()),
+        "sync" => {
+            remote(directory, "pull")?;
+            remote_held(directory, "push")
+        }
+        _ => remote(directory, operation),
+    }
+}
+
+/// Whether the checked out branch of the repository `directory` follows something and has no commits that it lacks; a branch that follows nothing still has itself to publish. When `forced`, the branch must also lack none of its commits, since a forced push of a branch moved back is what rewinds the one it follows.
+fn nothing_to_push(directory: &Path, forced: bool) -> bool {
+    let standing = tracking(directory);
+    standing.upstream.is_some() && standing.ahead == 0 && (!forced || standing.behind == 0)
 }
 
 /// Pushes the checked out branch, after the submodules' own commits, and makes it follow what it was pushed to when it follows nothing.
@@ -1600,3 +1623,5 @@ pub fn cherry_pick(directory: &Path, commit: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod listing_tests;
+#[cfg(test)]
+mod remote_tests;
