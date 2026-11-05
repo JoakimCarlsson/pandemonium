@@ -8,9 +8,10 @@ use crate::captures::{CAPTURE_BASE, CAPTURE_REMOVE_BASE, MOST_CAPTURES};
 use crate::elements::{ELEMENT_BASE, ELEMENT_REMOVE_BASE, MOST_ELEMENTS};
 use crate::state::{
     ACCOUNT, ACCOUNT_BASE, AGENT_TOGGLE, APPROVALS_CHIP, ATTACHED_BASE, Activity, BRANCH_BASE,
-    DETAILS_BASE, EFFORT_BASE, LOCATION, Location, MENTION, MENU_BODY, Outgoing, PICK_BASE,
-    PLACE_BASE, PLAN_CHIP, Page, Picker, SETTING_BASE, SHELLS_CHIP, SLASH_BASE, SLASH_BUTTON,
-    STEP_BASE, SUBAGENTS_CHIP, WorkspaceState, prompt_field,
+    DETAILS_BASE, EFFORT_BASE, LOCATION, Location, MENTION, MENU_BODY, MENU_FILTER,
+    MENU_FILTER_PICK, MENU_PICK_BASE, MENU_PICK_ROOM, Outgoing, PICK_BASE, PLACE_BASE, PLAN_CHIP,
+    Page, Picker, SETTING_BASE, SHELLS_CHIP, SLASH_BASE, SLASH_BUTTON, STEP_BASE, SUBAGENTS_CHIP,
+    WorkspaceState, prompt_field,
 };
 
 /// How tall one value of a menu is, in logical pixels.
@@ -41,12 +42,18 @@ pub(crate) struct FileListing {
     ignored: std::collections::HashSet<String>,
 }
 
+/// How many values a menu holds before it is narrowed with a box.
+const MENU_FILTER_AFTER: usize = 12;
+
 impl WorkspaceState {
     /// Whether pressing `action` leaves the open menu open or works it.
     pub fn keeps_picker(action: FocusId) -> bool {
         let FocusId(id) = action;
         action == LOCATION
             || action == MENU_BODY
+            || action == MENU_FILTER
+            || action == MENU_FILTER_PICK
+            || (MENU_PICK_BASE..MENU_PICK_BASE + MENU_PICK_ROOM as u64).contains(&id)
             || action == ACCOUNT
             || (ACCOUNT_BASE..ACCOUNT_BASE + 50).contains(&id)
             || (SETTING_BASE..SETTING_BASE + 10).contains(&id)
@@ -708,7 +715,14 @@ impl WorkspaceState {
             let shown = Self::chips(self.settings_now());
             let wanted = shown.get(index).copied().map(Picker::Setting);
             self.picker = if self.picker == wanted { None } else { wanted };
+            self.menu_filter = pm_text::Field::default();
             self.menu_scroll = self.scroll_to_current();
+        } else if let Some(index) = within(MENU_PICK_BASE, MENU_PICK_ROOM) {
+            self.pick(index);
+        } else if id == MENU_FILTER_PICK.0 {
+            if let Some(first) = self.menu_matches().first().copied() {
+                self.pick(first);
+            }
         } else if let Some(index) = within(PICK_BASE, 100) {
             self.pick(index);
         } else if id == AGENT_TOGGLE.0 {
@@ -1051,6 +1065,46 @@ impl WorkspaceState {
         self.change(&id, value);
     }
 
+    /// Whether the open menu has so many values that it is narrowed with a box.
+    pub fn menu_filters(&self) -> bool {
+        let Some(Picker::Setting(at)) = self.picker else {
+            return false;
+        };
+        self.settings_now()
+            .get(at)
+            .is_some_and(|setting| setting.picks.len() > MENU_FILTER_AFTER)
+    }
+
+    /// The places, among all the values of the open menu, of those the box leaves: every value whose name, id or description holds each word typed, in any case.
+    pub fn menu_matches(&self) -> Vec<usize> {
+        let Some(Picker::Setting(at)) = self.picker else {
+            return Vec::new();
+        };
+        let Some(setting) = self.settings_now().get(at) else {
+            return Vec::new();
+        };
+        let typed = self.menu_filter.text().to_lowercase();
+        let words: Vec<&str> = typed.split_whitespace().collect();
+        setting
+            .picks
+            .iter()
+            .enumerate()
+            .filter(|(_, pick)| {
+                let said =
+                    format!("{} {} {}", pick.name, pick.value, pick.description).to_lowercase();
+                words.iter().all(|word| said.contains(word))
+            })
+            .map(|(place, _)| place)
+            .collect()
+    }
+
+    /// The box to give keyboard focus after `id` was pressed, when that opened a menu narrowed with a box.
+    pub fn menu_filter_focus(&self, id: FocusId) -> Option<FocusId> {
+        let FocusId(number) = id;
+        ((SETTING_BASE..SETTING_BASE + 10).contains(&number) && self.menu_filters())
+            .then_some(MENU_FILTER)
+    }
+
     /// Chooses the value at `index` of the menu that is open.
     fn pick(&mut self, index: usize) {
         let Some(Picker::Setting(at)) = self.picker else {
@@ -1194,6 +1248,65 @@ mod tests {
     use super::*;
     use crate::sample::Session;
     use crate::state::SLASH_BUTTON;
+
+    /// A long menu of models is narrowed with a box: typed words leave the models holding them, Enter takes the first left, and models past the hundredth can be taken.
+    #[test]
+    fn a_long_model_menu_is_narrowed_with_a_box() {
+        let picks: Vec<pm_harness::Pick> = (0..150)
+            .map(|place| {
+                let vendor = if place % 2 == 0 { "openai" } else { "qwen" };
+                pm_harness::Pick {
+                    value: format!("{vendor}/model-{place}"),
+                    name: format!("{vendor}/model-{place}"),
+                    description: String::new(),
+                }
+            })
+            .collect();
+        let model = pm_harness::Setting {
+            id: "model".to_owned(),
+            category: "model".to_owned(),
+            name: "Model".to_owned(),
+            current: "openai/model-0".to_owned(),
+            picks,
+        };
+        let mut state = WorkspaceState::new(&[]).with_discovery(
+            0,
+            pm_harness::Discovery {
+                settings: vec![model],
+                commands: Vec::new(),
+            },
+        );
+        state.agent = 0;
+        let chip = WorkspaceState::chips(state.settings_now())
+            .iter()
+            .position(|held| state.settings_now()[*held].category == "model")
+            .unwrap();
+        let opened = FocusId(SETTING_BASE + chip as u64);
+        let mut state = state.after(opened);
+        assert!(state.menu_filters());
+        assert_eq!(state.menu_filter_focus(opened), Some(MENU_FILTER));
+        assert_eq!(state.menu_matches().len(), 150);
+        state = state.edited(MENU_FILTER, pm_text::Edit::Paste("QWEN 14".to_owned()));
+        let left: Vec<String> = state
+            .menu_matches()
+            .iter()
+            .map(|place| state.settings_now()[0].picks[*place].value.clone())
+            .collect();
+        assert_eq!(
+            left,
+            [
+                "qwen/model-141",
+                "qwen/model-143",
+                "qwen/model-145",
+                "qwen/model-147",
+                "qwen/model-149"
+            ]
+        );
+        state = state.after(MENU_FILTER_PICK);
+        assert_eq!(state.settings_now()[0].current, "qwen/model-141");
+        state = state.after(opened).after(FocusId(MENU_PICK_BASE + 120));
+        assert_eq!(state.settings_now()[0].current, "openai/model-120");
+    }
 
     /// A restored conversation whose agent has announced no commands yet.
     fn conversation() -> WorkspaceState {

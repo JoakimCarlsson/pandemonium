@@ -272,6 +272,10 @@ pub enum Shot {
     Usage,
     /// A conversation with the model menu open.
     Picking,
+    /// The page for starting work with the menu of a long list of models open, narrowed with a box.
+    ManyModels,
+    /// The page for starting work with the menu of a long list of models narrowed to those holding `gpt`.
+    ModelsFiltered,
     /// A finished conversation scrolled back to its first message, whose files were kept before it.
     Kept,
     /// A finished conversation whose last message from the reader is one 2000-character line with no spaces.
@@ -3334,6 +3338,12 @@ impl Shot {
             Self::RestoredTop => Screen::Workspace(restored().scrolled_chat(-2000.0, 2000.0)),
             Self::Restoring => Screen::Workspace(kept().after(FocusId(RESTORE_BASE))),
             Self::Picking => Screen::Workspace(welcome().after(FocusId(4200))),
+            Self::ManyModels => Screen::Workspace(many_models().after(FocusId(4200))),
+            Self::ModelsFiltered => Screen::Workspace(
+                many_models()
+                    .after(FocusId(4200))
+                    .edited(pm_components::state::MENU_FILTER, Edit::Paste("gpt".to_owned())),
+            ),
             Self::Expanded => {
                 load_installed_grammar("rust");
                 Screen::Workspace(
@@ -5039,4 +5049,52 @@ pub fn write_browser(path: &Path, url: &str, tools: bool, interact: bool) -> Res
 fn hiding_local_agents(mut state: WorkspaceState) -> WorkspaceState {
     state.machine.agents.hidden = vec!["ollama".to_owned(), "openrouter".to_owned()];
     state
+}
+
+/// The page for starting work with an agent that offers as many models as a hosted router does.
+fn many_models() -> WorkspaceState {
+    let vendors = [
+        "openai",
+        "anthropic",
+        "google",
+        "meta-llama",
+        "mistralai",
+        "qwen",
+        "z-ai",
+        "deepseek",
+    ];
+    let families = [
+        "gpt-6.1-terra",
+        "claude-opus-5.5",
+        "gemini-4-pro",
+        "llama-5-405b",
+        "devstral-3",
+        "qwen4-coder",
+        "glm-5.3",
+        "deepseek-v5",
+    ];
+    let picks: Vec<Pick> = (0..80)
+        .map(|place| {
+            let value = format!("{}/{}-{place}", vendors[place % 8], families[place % 8]);
+            Pick {
+                value: value.clone(),
+                name: value,
+                description: String::new(),
+            }
+        })
+        .collect();
+    let mut discovery = claude_discovery();
+    if let Some(model) = discovery
+        .settings
+        .iter_mut()
+        .find(|setting| setting.category == "model")
+    {
+        model.current = picks[0].value.clone();
+        model.picks = picks;
+    }
+    let here = std::env::current_dir().unwrap_or_default();
+    let projects: Vec<Project> = Project::from_source(&here.to_string_lossy())
+        .into_iter()
+        .collect();
+    WorkspaceState::new(&projects).with_discovery(0, discovery)
 }

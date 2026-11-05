@@ -256,6 +256,8 @@ fn main() {
             Some("restored-top") => Shot::RestoredTop,
             Some("restoring") => Shot::Restoring,
             Some("picking") => Shot::Picking,
+            Some("many-models") => Shot::ManyModels,
+            Some("models-filtered") => Shot::ModelsFiltered,
             Some("expanded") => Shot::Expanded,
             Some("slashing") => Shot::Slashing,
             Some("missing") => Shot::Missing,

@@ -21,8 +21,8 @@ use crate::sample::Session;
 use crate::size::Size;
 use crate::state::{
     ACCOUNT, ACCOUNT_BASE, AGENT_TOGGLE, ATTACH, ATTACHED_BASE, BRANCH_BASE, EFFORT_BASE, LOCATION,
-    Location, MENTION, MENU_BODY, MENU_SCROLL, PICK_BASE, PLACE_BASE, PROMPT, Picker, SEND,
-    SEND_NOW, SETTING_BASE, SLASH_BASE, SLASH_BUTTON, STOP, WorkspaceState,
+    Location, MENTION, MENU_BODY, MENU_FILTER, MENU_PICK_BASE, MENU_SCROLL, PLACE_BASE, PROMPT,
+    Picker, SEND, SEND_NOW, SETTING_BASE, SLASH_BASE, SLASH_BUTTON, STOP, WorkspaceState,
 };
 use crate::usage;
 use crate::{Button, Checkbox, Input, Stepper, button, checkbox, input};
@@ -82,24 +82,52 @@ fn setting_menu(state: &WorkspaceState, index: usize, rows: u32, above: f32) -> 
         "mode" => ("Modes", Some(("shift+tab", "to switch"))),
         _ => (setting.name.as_str(), None),
     };
-    let mut menu = Popover::new().width(MENU_WIDTH).heading(title, hint).child(
-        node()
-            .styles([
-                flex(),
-                flex_col(),
-                max_h(list_height(settings, above, rows) / 4.0),
-                overflow_hidden(),
-            ])
-            .scroll_from_start(MENU_SCROLL, state.menu_scroll)
-            .children(setting.picks.iter().enumerate().map(|(position, pick)| {
-                row(
-                    &pick.name,
-                    &pick.description,
-                    pick.value == setting.current,
-                    FocusId(PICK_BASE + position as u64),
-                )
-            })),
-    );
+    let filters = state.menu_filters();
+    let shown: Vec<usize> = if filters {
+        state.menu_matches()
+    } else {
+        (0..setting.picks.len()).collect()
+    };
+    let mut menu = Popover::new().width(MENU_WIDTH).heading(title, hint);
+    if filters {
+        menu = menu.child(
+            node().styles([px(1), pb(1)]).child(
+                Input::search(&state.menu_filter, MENU_FILTER)
+                    .size(Size::Sm)
+                    .placeholder(match setting.category.as_str() {
+                        "model" => "Search models",
+                        _ => "Search",
+                    })
+                    .build(),
+            ),
+        );
+    }
+    let mut list = node()
+        .styles([
+            flex(),
+            flex_col(),
+            max_h(list_height(settings, above, rows) / 4.0),
+            overflow_hidden(),
+        ])
+        .scroll_from_start(MENU_SCROLL, state.menu_scroll)
+        .children(shown.iter().filter_map(|position| {
+            let pick = setting.picks.get(*position)?;
+            Some(row(
+                &pick.name,
+                &pick.description,
+                pick.value == setting.current,
+                FocusId(MENU_PICK_BASE + *position as u64),
+            ))
+        }));
+    if shown.is_empty() {
+        list = list.child(node().styles([px(2), py(2)]).child(line(
+            "Nothing matches",
+            13,
+            1.4,
+            Role::Muted,
+        )));
+    }
+    menu = menu.child(list);
     if setting.category == "model"
         && let Some(effort) = settings
             .iter()

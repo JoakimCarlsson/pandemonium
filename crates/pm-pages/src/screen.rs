@@ -1138,6 +1138,15 @@ impl Screen {
         WorkspaceState::refocus(id)
     }
 
+    /// The box to give keyboard focus after `id` was pressed: the prompt or a field the press calls for, or the box of a menu it opened that is narrowed with one.
+    pub fn focus_after(&self, id: FocusId) -> Option<FocusId> {
+        match self {
+            Self::Workspace(state) => {
+                WorkspaceState::refocus(id).or_else(|| state.menu_filter_focus(id))
+            }
+        }
+    }
+
     /// Whether the page for starting work is showing, which is where the prompt takes keyboard focus unasked.
     pub fn is_starting(&self) -> bool {
         matches!(self, Self::Workspace(state) if state.starting())

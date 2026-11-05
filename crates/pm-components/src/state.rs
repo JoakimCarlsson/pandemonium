@@ -277,6 +277,18 @@ pub const KEEP_FILES: FocusId = FocusId(4274);
 /// The scrolling list of values in the open menu.
 pub const MENU_SCROLL: FocusId = FocusId(351);
 
+/// The box the values of the open menu are narrowed with, when it has many.
+pub const MENU_FILTER: FocusId = FocusId(33_000_000);
+
+/// Chooses the first value the box of the open menu leaves, as Enter in the box does.
+pub const MENU_FILTER_PICK: FocusId = FocusId(33_000_001);
+
+/// The first of the values of the open menu, by their place among all its values; the rest follow it, with room for [`MENU_PICK_ROOM`].
+pub const MENU_PICK_BASE: u64 = 33_000_100;
+
+/// How many values of the open menu can be chosen.
+pub const MENU_PICK_ROOM: usize = 100_000;
+
 /// Switches the agent persona on or off.
 pub const AGENT_TOGGLE: FocusId = FocusId(4290);
 
@@ -1839,6 +1851,8 @@ pub struct WorkspaceState {
     pub in_use: Vec<(String, String)>,
     /// How far the list of values in the open menu is scrolled, in logical pixels.
     pub menu_scroll: f32,
+    /// What the values of the open menu are narrowed to, when it has many.
+    pub menu_filter: Field,
     /// The command highlighted in the list offered behind a slash, by position.
     pub slash: usize,
     /// The steps whose detail is open, by session, reply and position.
@@ -2036,6 +2050,7 @@ impl WorkspaceState {
             logins: Vec::new(),
             in_use: Vec::new(),
             menu_scroll: 0.0,
+            menu_filter: Field::default(),
             slash: 0,
             opened: Vec::new(),
             unfolded: Vec::new(),
@@ -2411,6 +2426,10 @@ impl WorkspaceState {
                 }
             }
             crate::extensions::EXTENSIONS_SEARCH => self.extensions_searched(edit),
+            MENU_FILTER => {
+                self.menu_filter.apply(edit);
+                self.menu_scroll = 0.0;
+            }
             id if crate::settings_servers::is_form_field(id) => self.server_form_edited(id, edit),
             id if crate::settings_agents::is_key_field(id) => self.key_edited(edit),
             id if crate::settings_pages::is_setting_field(id) => self.setting_edited(id, edit),
@@ -2472,6 +2491,7 @@ impl WorkspaceState {
             crate::find::REPLACE_FIELD => self.finding.as_ref().map(|finding| &finding.replacement),
             HISTORY_SEARCH => Some(&self.history_search),
             crate::extensions::EXTENSIONS_SEARCH => Some(&self.extensions_page.search),
+            MENU_FILTER => Some(&self.menu_filter),
             ADDER_FIELD => self.adder.as_ref().map(|open| &open.field),
             PICKER_FIELD => self.folder_picker.as_ref().map(|open| &open.field),
             id if crate::settings_servers::is_form_field(id) => self.server_form_field(id),
@@ -2509,6 +2529,7 @@ impl WorkspaceState {
             || id == crate::find::REPLACE_FIELD
             || id == HISTORY_SEARCH
             || id == crate::extensions::EXTENSIONS_SEARCH
+            || id == MENU_FILTER
             || id == OTHER
             || id == ADDER_FIELD
             || id == PICKER_FIELD
@@ -2541,6 +2562,7 @@ impl WorkspaceState {
             crate::debug::DEBUG_WATCH_FIELD => crate::debug::DEBUG_WATCH_ADD,
             crate::find::REPLACE_FIELD => crate::find::REPLACE_ONE,
             HISTORY_SEARCH => HISTORY,
+            MENU_FILTER => MENU_FILTER_PICK,
             ADDER_FIELD => ADDER_SUBMIT,
             PICKER_FIELD => PICKER_SUBMIT,
             crate::settings::SETTINGS_SEARCH => crate::settings::SETTINGS_SEARCH_GO,

@@ -800,7 +800,7 @@ impl App {
         {
             self.show_editor_caret();
         }
-        if let Some(next) = Screen::refocus(id) {
+        if let Some(next) = self.model.read(|screen| screen.focus_after(id)) {
             self.focus.focus(next);
         }
         self.focus_terminal = Screen::takes_keyboard(id);
