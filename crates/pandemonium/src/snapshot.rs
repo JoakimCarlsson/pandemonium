@@ -307,6 +307,8 @@ pub enum Shot {
     CapturesSent,
     /// The page for starting work split with the browser beside it, after the first prompt was sent.
     SplitStarted,
+    /// The session started from the page for starting work while a shell ran in the dock and the browser was open, holding both.
+    StartedHandedOver,
     /// A pane that was split and had the browser brought into it with the button of the empty pane.
     PaneBrowser,
     /// The workspace on its first session with the fold-out of its last reply open.
@@ -3379,6 +3381,15 @@ impl Shot {
                     .edited(PROMPT, Edit::Paste("hello".to_owned()))
                     .after(SEND);
                 Screen::Workspace(state)
+            }
+            Self::StartedHandedOver => {
+                let mut state = with_shell(welcome());
+                state.open_browser("http://localhost:5173");
+                let mut state = state
+                    .edited(PROMPT, Edit::Paste("Fix the header".to_owned()))
+                    .after(SEND);
+                state.rescope_browser();
+                Screen::Workspace(state.after(pm_components::browser::TAB_BROWSER))
             }
             Self::ElementsSent => {
                 let mut state = workspace_sample();
