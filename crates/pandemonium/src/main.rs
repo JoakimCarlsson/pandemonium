@@ -211,6 +211,7 @@ fn main() {
             Some("capture-menu") => Shot::CaptureMenu,
             Some("captures-sent") => Shot::CapturesSent,
             Some("split-started") => Shot::SplitStarted,
+            Some("started-handed-over") => Shot::StartedHandedOver,
             Some("overview") => Shot::Overview,
             Some("submodules") => Shot::Submodules,
             Some("overviewdiff") => Shot::OverviewDiff,

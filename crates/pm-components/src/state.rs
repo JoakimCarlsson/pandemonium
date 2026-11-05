@@ -3157,6 +3157,7 @@ impl WorkspaceState {
                 self.sessions.push(session);
                 self.pane_stash
                     .insert(self.sessions.len() - 1, self.panes.clone());
+                self.hand_over_new_page(project, self.sessions.len() - 1);
                 self.page = Page::Session(self.sessions.len() - 1);
                 self.tab = Tab::Chat;
                 self.sessions.len() - 1
