@@ -601,6 +601,10 @@ impl App {
             self.model
                 .update(|state| *state = std::mem::take(state).edited(id, Edit::ScrollTo(want)));
         }
+        if let Some(width) = model.read(|state| state.diff_resized(&self.output.scrollers)) {
+            self.model
+                .update(|state| *state = std::mem::take(state).measured_diff(width));
+        }
         let history_pending = pm_components::chat::history_pending();
         if history_pending {
             self.model.update(|_| {});

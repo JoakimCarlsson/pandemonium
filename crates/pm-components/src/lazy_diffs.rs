@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::sample::Change;
-use crate::state::{DIFF_WIDTH, Outgoing, Tab, WorkspaceState};
+use crate::state::{Outgoing, Tab, WorkspaceState};
 
 /// How far down from the top of the view, in logical pixels, the files whose diffs are wanted reach; the view and some of what is beyond it.
 const REACH: f32 = 2400.0;
@@ -41,7 +41,7 @@ impl WorkspaceState {
             if top > to {
                 break;
             }
-            let height = crate::diff::section_height(self, session, at, DIFF_WIDTH);
+            let height = crate::diff::section_height(self, session, at, self.diff_width);
             if top + height >= from
                 && (!change.loaded || change.stale)
                 && !self.asking_diffs.contains(&(index, change.path.clone()))
@@ -105,7 +105,29 @@ impl WorkspaceState {
                 change.stale = false;
             }
         }
+        self.pin_diff();
         self
+    }
+
+    /// Scrolls the diff to the header of the file it is anchored to, now that the files above it may have changed height; an anchor whose file is no longer in the diff being reviewed is let go.
+    pub(crate) fn pin_diff(&mut self) {
+        let Some((session, path)) = &self.diff_anchor else {
+            return;
+        };
+        let offset = self
+            .sessions
+            .get(*session)
+            .filter(|_| self.review_index() == Some(*session))
+            .and_then(|held| {
+                held.changes
+                    .iter()
+                    .position(|change| &change.path == path)
+                    .map(|index| crate::diff::offset_of(self, held, index, self.diff_width))
+            });
+        match offset {
+            Some(offset) => self.diff_scroll = offset,
+            None => self.diff_anchor = None,
+        }
     }
 
     /// The state after the server said what the folder of the session at `session` is and where it stands, which it does before it has listed the files.
@@ -141,3 +163,6 @@ pub struct Standing {
     /// Where each repository stands when the folder holds several side by side.
     pub repositories: Vec<pm_git::Standing>,
 }
+
+#[cfg(test)]
+mod tests;

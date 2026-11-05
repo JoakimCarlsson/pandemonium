@@ -36,8 +36,9 @@ const COMMITS_SHOWN: usize = 8;
 const SHORT_ID: usize = 7;
 
 /// The groups the sessions fall in, in the order the overview shows them, each with its heading.
-const GROUPS: [(Status, &str); 5] = [
+const GROUPS: [(Status, &str); 6] = [
     (Status::NeedsInput, "Needs input"),
+    (Status::Unreachable, "Server out of reach"),
     (Status::Error, "Error"),
     (Status::Unread, "Unread"),
     (Status::Working, "Working"),
