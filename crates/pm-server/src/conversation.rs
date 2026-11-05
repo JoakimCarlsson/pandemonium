@@ -55,7 +55,8 @@ impl Turn {
 fn conversational(event: &Event) -> bool {
     matches!(
         event,
-        Event::Said(_)
+        Event::Started(_)
+            | Event::Said(_)
             | Event::Halted
             | Event::Thought(_)
             | Event::Tool(_)

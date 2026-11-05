@@ -3,8 +3,8 @@
 use serde_json::{Value, json};
 
 pub use omc_wire::{
-    Alternative, Background, Choice, Diff, Inquiry, Kind, Permission, Pick, PlanStep, Progress,
-    Question, Reply, Setting, Slash, Tool, ToolState, Usage, Verdict,
+    Alternative, Background, Choice, Diff, Inquiry, Kind, Part, Permission, Pick, PlanStep,
+    Progress, Question, Reply, Setting, Slash, Tool, ToolState, Usage, Verdict,
 };
 
 /// What an agent did, in the order it did it.
@@ -16,6 +16,8 @@ pub enum Event {
     Commands(Vec<Slash>),
     /// How full the conversation's context is now.
     Used(Usage),
+    /// A new block of the agent's reply starts, of the kind given; the `Said` or `Thought` chunks that follow belong to it until the next block starts.
+    Started(Part),
     /// The agent said this much more of its reply.
     Said(String),
     /// The agent thought this much more.
@@ -175,6 +177,7 @@ impl Event {
             Wire::Settings(settings) => Some(Self::Settings(settings)),
             Wire::Commands(commands) => Some(Self::Commands(commands)),
             Wire::Used(usage) => Some(Self::Used(usage)),
+            Wire::Started(part) => Some(Self::Started(part)),
             Wire::Said(text) => Some(Self::Said(text)),
             Wire::Thought(text) => Some(Self::Thought(text)),
             Wire::Tool(tool) => Some(Self::Tool(tool)),

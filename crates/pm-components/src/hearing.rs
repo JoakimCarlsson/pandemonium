@@ -9,7 +9,12 @@ use crate::sample::{Message, Queued, Session, Shell, Status, Step, Thought, Tool
 
 impl Session {
     /// Takes in what the agent did.
+    ///
+    /// A thought goes on while its chunks come one after another; the start of a new block of the reply, or anything else the agent does, ends it, so the next chunk of thought starts a new one. An empty chunk of speech or thought is ignored, so it cannot cut a thought short.
     pub fn hear(&mut self, event: Event) {
+        if matches!(&event, Event::Said(text) | Event::Thought(text) if text.is_empty()) {
+            return;
+        }
         if !matches!(event, Event::Thought(_)) {
             self.stop_thinking();
         }
@@ -31,6 +36,7 @@ impl Session {
             }
             Event::Commands(commands) => self.commands = commands,
             Event::Used(usage) => self.context = Some(usage),
+            Event::Started(_) => {}
             Event::Said(text) => self.say(&text),
             Event::Thought(text) => self.think(text),
             Event::Tool(tool) => self.use_tool(tool),
@@ -413,6 +419,46 @@ fn worked(seconds: u64) -> String {
 /// Tests for a session that needs its account signed in again.
 mod tests {
     use super::*;
+
+    /// The chunks of one thinking block make one thought, and a new thinking block starts another.
+    #[test]
+    fn each_thinking_block_is_one_thought() {
+        let mut session = Session::started("Test", 0, "Hello");
+        session.hear(Event::Started(pm_harness::Part::Thinking));
+        session.hear(Event::Thought("The".to_owned()));
+        session.hear(Event::Thought(" user".to_owned()));
+        session.hear(Event::Started(pm_harness::Part::Thinking));
+        session.hear(Event::Thought("Then".to_owned()));
+        session.hear(Event::Started(pm_harness::Part::Text));
+        session.hear(Event::Said("Hey!".to_owned()));
+        let reply = session.messages.last().unwrap();
+        let thoughts: Vec<&str> = reply
+            .steps
+            .iter()
+            .filter_map(|step| match step {
+                Step::Thought(thought) => Some(thought.text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(thoughts, ["The user", "Then"]);
+        assert_eq!(reply.text, "Hey!");
+    }
+
+    /// Empty speech streamed between chunks of thought leaves the thought whole, as one step.
+    #[test]
+    fn empty_speech_does_not_split_a_thought() {
+        let mut session = Session::started("Test", 0, "Hello");
+        for chunk in ["The", " user", " says hello."] {
+            session.hear(Event::Thought(chunk.to_owned()));
+            session.hear(Event::Said(String::new()));
+        }
+        let reply = session.messages.last().unwrap();
+        assert_eq!(reply.steps.len(), 1);
+        assert!(reply.said.is_empty());
+        assert!(
+            matches!(&reply.steps[0], Step::Thought(thought) if thought.text == "The user says hello.")
+        );
+    }
 
     /// Authentication failures stay out of the transcript and clear after login.
     #[test]
