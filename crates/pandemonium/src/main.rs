@@ -154,6 +154,7 @@ fn main() {
             Some("diff") => Shot::Diff,
             Some("worddiff") => Shot::WordDiff,
             Some("diff-listed") => Shot::DiffListed,
+            Some("diff-opened") => Shot::DiffOpened,
             Some("diff-compact") => Shot::DiffCompact,
             Some("commenting") => Shot::Commenting,
             Some("files") => Shot::Files,

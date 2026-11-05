@@ -1618,7 +1618,7 @@ pub enum Tab {
     Update,
 }
 
-/// About how wide the diff is, in logical pixels, when scrolling it to a file, which only the height of the notes on the files above depends on.
+/// How wide the diff is taken to be, in logical pixels, until it has been drawn and its width measured.
 pub(crate) const DIFF_WIDTH: f32 = 900.0;
 
 /// What the review panel lists.
@@ -1689,6 +1689,10 @@ pub struct WorkspaceState {
     pub comment_text: Field,
     /// How far down the diff is scrolled, in logical pixels.
     pub diff_scroll: f32,
+    /// How wide the diff was last drawn, in logical pixels, which decides how its lines wrap and so how tall each file is.
+    pub diff_width: f32,
+    /// The file, by session and path, whose header the diff is kept scrolled to while the heights of the files above it settle, until the diff is scrolled by hand.
+    pub(crate) diff_anchor: Option<(usize, String)>,
     /// The files, by session and path, whose diffs were asked of the server and have not come.
     pub(crate) asking_diffs: std::collections::HashSet<(usize, String)>,
     /// How far down the review panel's list is scrolled, in logical pixels.
@@ -1971,6 +1975,8 @@ impl WorkspaceState {
             comment_target: None,
             comment_text: Field::default(),
             diff_scroll: 0.0,
+            diff_width: DIFF_WIDTH,
+            diff_anchor: None,
             asking_diffs: std::collections::HashSet::new(),
             tree_scroll: 0.0,
             homed: None,
@@ -3429,7 +3435,7 @@ impl WorkspaceState {
         self.tree_scroll = 0.0;
     }
 
-    /// Opens the diff scrolled to the change at `index`, unfolded.
+    /// Opens the diff scrolled to the change at `index`, unfolded, and keeps it scrolled there while the files above it settle.
     pub(crate) fn open_change(&mut self, index: usize) {
         self.file = Some(index);
         self.select_change(index);
@@ -3442,9 +3448,15 @@ impl WorkspaceState {
         {
             self.closed_diffs.remove(&path);
         }
-        self.diff_scroll = self.review_session().map_or(0.0, |session| {
-            crate::diff::offset_of(self, session, index, DIFF_WIDTH)
-        });
+        self.diff_anchor = self
+            .review_index()
+            .zip(
+                self.review_session()
+                    .and_then(|session| session.changes.get(index)),
+            )
+            .map(|(session, change)| (session, change.path.clone()));
+        self.diff_scroll = 0.0;
+        self.pin_diff();
     }
 
     /// Folds the folder at `position` of the open session's changes, or unfolds it.
@@ -3481,6 +3493,7 @@ impl WorkspaceState {
         {
             toggle(&mut self.closed_diffs, path);
         }
+        self.pin_diff();
     }
 
     /// Folds the folder at `position` of the project's files, or unfolds it.
@@ -3497,7 +3510,15 @@ impl WorkspaceState {
 
     /// The state after the diff is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
     pub fn scrolled_diff(mut self, delta: f32, room: f32) -> Self {
+        self.diff_anchor = None;
         self.diff_scroll = (self.diff_scroll + delta).clamp(0.0, room);
+        self
+    }
+
+    /// The state after the diff was drawn `width` logical pixels wide, kept scrolled to the file it is anchored to now that its lines wrap at that width.
+    pub fn measured_diff(mut self, width: f32) -> Self {
+        self.diff_width = width;
+        self.pin_diff();
         self
     }
 
@@ -3712,6 +3733,7 @@ impl WorkspaceState {
             self.file = None;
         }
         self.remarked(&marked);
+        self.pin_diff();
         self
     }
 

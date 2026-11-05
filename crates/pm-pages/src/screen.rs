@@ -492,6 +492,23 @@ impl Screen {
         }
     }
 
+    /// The screen after the diff was drawn `width` logical pixels wide.
+    pub fn measured_diff(self, width: f32) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.measured_diff(width)),
+        }
+    }
+
+    /// The width the diff was drawn at among `scrollers`, in logical pixels, when it differs from the width the screen last took it to be.
+    pub fn diff_resized(&self, scrollers: &[pm_ui::Scroller]) -> Option<f32> {
+        let Self::Workspace(state) = self;
+        scrollers
+            .iter()
+            .find(|scroller| scroller.id == pm_components::state::DIFF_SCROLL)
+            .map(|scroller| scroller.rect.width)
+            .filter(|width| (width - state.diff_width).abs() > 0.5)
+    }
+
     /// The screen after the list of sections of the settings window is scrolled by `delta`
     /// logical pixels, downwards when positive, with `room` pixels to scroll.
     pub fn scrolled_settings_nav(self, delta: f32, room: f32) -> Self {
