@@ -21,6 +21,8 @@ pub enum Status {
     Error,
     /// The agent needs an answer or permission.
     NeedsInput,
+    /// The agent was at work when the window lost its connection to the agent's server, so what the agent does now is not known.
+    Unreachable,
 }
 
 /// What a line of a diff does to the file.
@@ -593,6 +595,8 @@ pub struct Session {
     pub shells: Vec<Shell>,
     /// How full the context is, once the agent has said.
     pub context: Option<pm_acp::Usage>,
+    /// Whether the window has lost its connection to the session's server, so that what its agent does is not heard until the connection is made anew.
+    pub out_of_reach: bool,
 }
 
 impl Session {
@@ -654,6 +658,7 @@ impl Session {
             terminals: Vec::new(),
             terminal_active: 0,
             shells: Vec::new(),
+            out_of_reach: false,
         }
     }
 
@@ -783,7 +788,11 @@ impl Session {
         if self.ask.is_some() || self.inquiry.is_some() || self.signed_out.is_some() {
             Status::NeedsInput
         } else if self.status == Status::Working || self.background_running() {
-            Status::Working
+            if self.out_of_reach {
+                Status::Unreachable
+            } else {
+                Status::Working
+            }
         } else if self.unread() {
             if self.latest_error {
                 Status::Error

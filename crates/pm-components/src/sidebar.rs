@@ -99,12 +99,14 @@ pub fn status_icon(status: Status) -> Node {
         Status::Error => "Unread error",
         Status::NeedsInput => "Needs input",
         Status::Idle => "Idle",
+        Status::Unreachable => "Server out of reach",
     })
     .child(match status {
         Status::Working => glyph(IconName::Loading, 3.5, Role::Muted).styles([animate_spin()]),
         Status::Unread => node().styles([size(2), rounded_full(), bg(Role::Accent)]),
         Status::Error => glyph(IconName::Close, 3.5, Role::Danger),
         Status::NeedsInput => glyph(IconName::Message, 3.5, Role::Warning),
+        Status::Unreachable => glyph(IconName::Plug, 3.5, Role::Warning),
         Status::Idle => node().styles([
             size(2),
             rounded_full(),
