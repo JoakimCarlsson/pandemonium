@@ -95,6 +95,7 @@ pub mod project_search;
 pub mod queued;
 pub mod quick_choices;
 pub mod quick_input;
+mod reach;
 pub mod review;
 pub mod sample;
 pub mod sash;

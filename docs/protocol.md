@@ -1063,7 +1063,7 @@ Events use serde's default form, one key naming the type.
 | `{"Thought": "text"}`         | More of the agent's reasoning. Append it.                                                                 |
 | `{"Tool": Tool}`              | A tool the agent is using. Later events with the same `id` update it.                                     |
 | `{"Background": {id, label, running}}` | A command or task went on running beyond its call (`running` true), or ended (false). `id` is the handle the agent knows it by; for a command left running by a turn it is the `id` of its `Tool`. The agent is still at work while any runs, though the turn is over. |
-| `{"Halted": null}`            | The turn was stopped or failed: nothing the agent had running goes on. A `Finished` or `SignedOut` follows.              |
+| `{"Halted": null}`            | The turn was stopped or failed: nothing the agent had running goes on. A `Finished`, `SignedOut` or `Failed` follows.              |
 | `{"Plan": [PlanStep]}`        | The agent's plan, whole. Replaces the earlier one.                                                        |
 | `{"Ask": Permission}`         | The agent waits for an answer: send `choose` with the `ticket` and the `id` of a choice.                  |
 | `{"Inquire": Inquiry}`      | The agent waits for answers to a form of questions: send `answer` with the `ticket` and a reply for each question. |
@@ -1071,7 +1071,7 @@ Events use serde's default form, one key naming the type.
 | `{"Finished": null}`          | The turn ended. A string instead of null means it failed with that reason.                                |
 | `{"SignedOut": {"reason", "account"}}` | The turn ended because the session account needs signing in again. Send `sign_in_session`; do not append the reason as an assistant reply. |
 | `"SignedIn"` | The session account was signed in again. Clear its sign-in notice. |
-| `{"Failed": "reason"}`        | The agent could not be started or stopped. The next `prompt` starts it again.                             |
+| `{"Failed": "reason"}`        | The agent could not be started or stopped. A `Halted` comes before it, and it ends an open turn. The next `prompt` starts it again. |
 | `{"Container": "step"}`       | The dev container of the session is coming up: what it is doing now. Cleared when the agent starts.      |
 | `{"Titled": "text"}`          | The agent named the session, or named it again. The server keeps it as the session's `title`.            |
 | `{"Hooks": [Hook]}`           | The hooks the session's Codex holds back until the reader trusts them, all of them as they stand now. Replaces the earlier list; empty when none is held back. Told when a Codex session starts and again when a file the hooks are read from changes. Trust them with `trust_hooks`. |

@@ -212,6 +212,33 @@ impl Session {
             .collect()
     }
 
+    /// Takes `event`, which the agent of the session numbered `number` reported, into the log, does what it calls for and returns what it noted.
+    ///
+    /// When the agent stopped, what it had running stopped with it, so a `Halted` is noted before the `Failed`, as when a turn is ended for it. Nothing is noted when `event` only says again what the log said.
+    pub(crate) fn take_in(&mut self, number: u64, event: Event) -> Told {
+        let mut told = Told::new();
+        if self.repeats(&event) {
+            return told;
+        }
+        if matches!(event, Event::Failed(_)) {
+            told.push((number, self.note(number, &Event::Halted), Event::Halted));
+        }
+        told.push((number, self.note(number, &event), event.clone()));
+        match event {
+            Event::Failed(_) | Event::SignedOut { .. } => {
+                self.chat = None;
+                self.busy = false;
+                told.extend(self.drop_queue(number));
+            }
+            Event::Finished(_) => {
+                self.busy = false;
+                told.extend(self.advance(number));
+            }
+            _ => {}
+        }
+        told
+    }
+
     /// Whether `event` only says again what the last context usage or the last held-back hooks in the log said; no hooks held back is what a log without any says.
     pub(crate) fn repeats(&self, event: &Event) -> bool {
         let last = |kind: fn(&Event) -> bool| {
@@ -429,22 +456,7 @@ impl Core {
                             session.meta.login.as_deref(),
                         );
                     }
-                    if session.repeats(&event) {
-                        continue;
-                    }
-                    told.push((*number, session.note(*number, &event), event.clone()));
-                    match event {
-                        Event::Failed(_) | Event::SignedOut { .. } => {
-                            session.chat = None;
-                            session.busy = false;
-                            told.extend(session.drop_queue(*number));
-                        }
-                        Event::Finished(_) => {
-                            session.busy = false;
-                            told.extend(session.advance(*number));
-                        }
-                        _ => {}
-                    }
+                    told.extend(session.take_in(*number, event));
                 }
             }
         }
@@ -458,3 +470,6 @@ pub(crate) fn now() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.as_millis() as u64)
 }
+
+#[cfg(test)]
+mod tests;

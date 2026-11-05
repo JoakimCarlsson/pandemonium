@@ -99,6 +99,8 @@ pub enum Shot {
     ComposerLong,
     /// A session whose account needs signing in again.
     SignedOut,
+    /// A session whose agent was at work when the window lost its connection to the agent's server.
+    OutOfReach,
     /// The workspace asking whether to close the window while agents are working.
     Quitting,
     /// The workspace telling of a newer release in its title bar.
@@ -2873,6 +2875,12 @@ impl Shot {
                     reason: "Failed to authenticate: OAuth session expired and could not be refreshed".to_owned(),
                     account: Some("work@example.com".to_owned()),
                 }))
+            }
+            Self::OutOfReach => {
+                let mut state = workspace();
+                state.sessions[0].status = pm_components::sample::Status::Working;
+                let host = state.projects[state.sessions[0].project].host();
+                Screen::Workspace(state.host_lost(&host))
             }
             Self::SessionStates(unread) => {
                 let mut state = workspace();

@@ -146,6 +146,7 @@ fn main() {
             Some("extension-install") => Shot::ExtensionInstall,
             Some("composer-long") => Shot::ComposerLong,
             Some("signed-out") => Shot::SignedOut,
+            Some("out-of-reach") => Shot::OutOfReach,
             Some("workspace") => Shot::Workspace,
             Some("session-states") => Shot::SessionStates(false),
             Some("session-states-unread") => Shot::SessionStates(true),
