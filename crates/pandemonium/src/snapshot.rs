@@ -99,6 +99,8 @@ pub enum Shot {
     ComposerLong,
     /// A session whose account needs signing in again.
     SignedOut,
+    /// A session whose agent was at work when the window lost its connection to the agent's server.
+    OutOfReach,
     /// The workspace asking whether to close the window while agents are working.
     Quitting,
     /// The workspace telling of a newer release in its title bar.
@@ -109,6 +111,8 @@ pub enum Shot {
     WordDiff,
     /// The workspace on the diff of its first session with the files after the first listed by the server and their diffs still to come.
     DiffListed,
+    /// The workspace on the diff opened at its third file while the diffs above it were still to come, after they arrived longer than estimated.
+    DiffOpened,
     /// The workspace on the diff at its compact density, with a file of thousands of added lines scrolled far down, whose rows must fill the view.
     DiffCompact,
     /// The workspace on the diff of its first session with a comment kept and another being written.
@@ -305,6 +309,8 @@ pub enum Shot {
     CapturesSent,
     /// The page for starting work split with the browser beside it, after the first prompt was sent.
     SplitStarted,
+    /// The session started from the page for starting work while a shell ran in the dock and the browser was open, holding both.
+    StartedHandedOver,
     /// A pane that was split and had the browser brought into it with the button of the empty pane.
     PaneBrowser,
     /// The workspace on its first session with the fold-out of its last reply open.
@@ -1929,6 +1935,37 @@ fn diff_listed() -> WorkspaceState {
     state
 }
 
+/// The workspace of [`diff_listed`] opened at its third file, then sent the diffs of every file the listing only counted, so the files above the opened one change height.
+fn diff_opened() -> WorkspaceState {
+    let read: Vec<pm_git::FileDiff> = workspace_sample().sessions[0]
+        .changes
+        .iter()
+        .skip(1)
+        .map(|change| pm_git::FileDiff {
+            path: change.path.clone(),
+            diff: unified(&change.diff),
+            words: change.words.clone(),
+        })
+        .collect();
+    let asked: Vec<String> = read.iter().map(|file| file.path.clone()).collect();
+    diff_listed()
+        .after(FocusId(FILE_BASE + 2))
+        .with_diffs(0, &asked, read)
+}
+
+/// The unified diff text that reads back as `lines`.
+fn unified(lines: &[pm_components::sample::DiffLine]) -> String {
+    lines
+        .iter()
+        .map(|line| match line.kind {
+            pm_components::sample::Kind::Hunk => format!("{}\n", line.text),
+            pm_components::sample::Kind::Context => format!(" {}\n", line.text),
+            pm_components::sample::Kind::Add => format!("+{}\n", line.text),
+            pm_components::sample::Kind::Remove => format!("-{}\n", line.text),
+        })
+        .collect()
+}
+
 /// The control a dropdown of the source control panel opens from, and the density the window is set to.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Trigger {
@@ -2839,6 +2876,12 @@ impl Shot {
                     account: Some("work@example.com".to_owned()),
                 }))
             }
+            Self::OutOfReach => {
+                let mut state = workspace();
+                state.sessions[0].status = pm_components::sample::Status::Working;
+                let host = state.projects[state.sessions[0].project].host();
+                Screen::Workspace(state.host_lost(&host))
+            }
             Self::SessionStates(unread) => {
                 let mut state = workspace();
                 for session in &mut state.sessions {
@@ -2897,6 +2940,10 @@ impl Shot {
             Self::DiffListed => {
                 load_installed_grammar("rust");
                 Screen::Workspace(diff_listed())
+            }
+            Self::DiffOpened => {
+                load_installed_grammar("rust");
+                Screen::Workspace(diff_opened())
             }
             Self::DiffCompact => {
                 load_installed_grammar("rust");
@@ -3342,6 +3389,15 @@ impl Shot {
                     .edited(PROMPT, Edit::Paste("hello".to_owned()))
                     .after(SEND);
                 Screen::Workspace(state)
+            }
+            Self::StartedHandedOver => {
+                let mut state = with_shell(welcome());
+                state.open_browser("http://localhost:5173");
+                let mut state = state
+                    .edited(PROMPT, Edit::Paste("Fix the header".to_owned()))
+                    .after(SEND);
+                state.rescope_browser();
+                Screen::Workspace(state.after(pm_components::browser::TAB_BROWSER))
             }
             Self::ElementsSent => {
                 let mut state = workspace_sample();
@@ -4358,7 +4414,7 @@ pub fn write(
     };
     let family = default_family();
     let theme = family.variant(appearance);
-    let screen = shot.screen();
+    let mut screen = shot.screen();
     let Screen::Workspace(held) = &screen;
     let looks = &held.window.appearance;
     if !looks.code_font.is_empty() || !looks.interface_font.is_empty() {
@@ -4369,7 +4425,7 @@ pub fn write(
         elapsed_ms: 0.0,
         ..input
     };
-    paint(
+    let rested = paint(
         width as f32,
         height as f32,
         &screen,
@@ -4378,6 +4434,9 @@ pub fn write(
         &mut shaper,
         &mut DrawList::new(),
     );
+    if let Some(measured) = screen.diff_resized(&rested.scrollers) {
+        screen = screen.measured_diff(measured);
+    }
     paint(
         width as f32,
         height as f32,

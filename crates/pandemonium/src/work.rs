@@ -1562,6 +1562,7 @@ impl Work {
                         model.update(|screen| {
                             *screen = std::mem::take(screen).reopen_documents(&host);
                         });
+                        Self::in_workspace(model, |state| state.host_reached(&host));
                     }
                     Incoming::Disconnected(reason) => {
                         eprintln!("the server on {host:?} is out of reach: {reason}");
@@ -1571,6 +1572,7 @@ impl Work {
                         model.update(|screen| {
                             *screen = std::mem::take(screen).with_git_working(false);
                         });
+                        Self::in_workspace(model, |state| state.host_lost(&host));
                     }
                     Incoming::Response { id, response } => {
                         let pending = self
