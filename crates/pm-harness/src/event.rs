@@ -189,9 +189,11 @@ impl Event {
             Wire::Finished(failure) => Some(Self::Finished(failure)),
             Wire::SignedOut { reason, account } => Some(Self::SignedOut { reason, account }),
             Wire::SignedIn => Some(Self::SignedIn),
-            Wire::LoginUrl(_) | Wire::LoginCode { .. } | Wire::Resumed(_) | Wire::Language(_) => {
-                None
-            }
+            Wire::LoginUrl(_)
+            | Wire::LoginCode { .. }
+            | Wire::Resumed(_)
+            | Wire::Language(_)
+            | Wire::Queued(_) => None,
             Wire::Failed(reason) => Some(Self::Failed(reason)),
             Wire::Titled(title) => Some(Self::Titled(title)),
         }
