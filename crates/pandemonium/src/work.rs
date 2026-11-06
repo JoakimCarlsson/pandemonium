@@ -925,6 +925,19 @@ impl Work {
                     },
                     Pending::Nothing,
                 ),
+                Outgoing::Trust {
+                    session,
+                    ticket,
+                    verdict,
+                } => self.ask_session(
+                    session,
+                    |number| Request::Trust {
+                        session: number,
+                        ticket,
+                        verdict,
+                    },
+                    Pending::Nothing,
+                ),
                 Outgoing::Rewind { session, turn } => self.ask_session(
                     session,
                     |number| Request::Rewind {

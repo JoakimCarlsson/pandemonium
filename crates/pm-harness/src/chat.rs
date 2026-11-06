@@ -11,7 +11,7 @@ use omc_wire::{Command, Opening, ToolServer};
 use crate::inprocess::{Harness, Heard, Stopper};
 
 use crate::agent::Agent;
-use crate::event::{Event, Reply};
+use crate::event::{Event, Reply, Verdict};
 use crate::language::{HubLanguages, LanguageServers};
 
 /// How long the driver waits for the harness before looking at its commands again.
@@ -43,6 +43,13 @@ enum Request {
         ticket: u64,
         /// What the reader answered, or nothing to abandon the form.
         replies: Option<Vec<Reply>>,
+    },
+    /// Answers the trust request under `ticket` with `verdict`.
+    Trust {
+        /// The request being answered.
+        ticket: u64,
+        /// What the reader decided.
+        verdict: Verdict,
     },
     /// Names the conversation.
     Rename {
@@ -77,6 +84,7 @@ impl Request {
             },
             Self::Choose { ticket, option } => Command::Choose { ticket, option },
             Self::Answer { ticket, replies } => Command::Answer { ticket, replies },
+            Self::Trust { ticket, verdict } => Command::Trust { ticket, verdict },
             Self::Rename { title } => Command::Rename { title },
             Self::Cancel => Command::Cancel,
             Self::Set { setting, value } => Command::Set { setting, value },
@@ -196,6 +204,11 @@ impl Chat {
     /// Answers the form of questions under `ticket` with `replies`, or abandons it.
     pub fn answer(&self, ticket: u64, replies: Option<Vec<Reply>>) {
         let _ = self.requests.send(Request::Answer { ticket, replies });
+    }
+
+    /// Answers the trust request under `ticket` with `verdict`: [`Verdict::Always`] trusts the project for good, [`Verdict::Allow`] for this conversation only, and [`Verdict::Reject`] records that it is not trusted. What a trusted project brings is used from the next turn on.
+    pub fn trust(&self, ticket: u64, verdict: Verdict) {
+        let _ = self.requests.send(Request::Trust { ticket, verdict });
     }
 
     /// Names the conversation, which the harness saves with it and tells back as a title.
@@ -464,6 +477,29 @@ mod tests {
             ticket += 1;
             std::thread::sleep(Duration::from_millis(500));
         }
+    }
+
+    /// A trust answer becomes the harness's trust command under the same ticket and verdict, in the shape the harness reads off its wire.
+    #[test]
+    fn a_trust_answer_is_sent_as_the_harness_trust_command() {
+        for verdict in [Verdict::Always, Verdict::Allow, Verdict::Reject] {
+            let command = Request::Trust { ticket: 9, verdict }.command();
+            assert_eq!(command, Command::Trust { ticket: 9, verdict });
+            let line = omc_wire::encode(&command).unwrap();
+            assert_eq!(omc_wire::decode::<Command>(&line).unwrap(), command);
+        }
+        let line = omc_wire::encode(
+            &Request::Trust {
+                ticket: 3,
+                verdict: Verdict::Always,
+            }
+            .command(),
+        )
+        .unwrap();
+        assert_eq!(
+            line.trim_end(),
+            r#"{"Trust":{"ticket":3,"verdict":"Always"}}"#
+        );
     }
 
     /// A prompt that needs a tool is answered with a question, and the answer lets the turn finish.

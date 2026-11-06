@@ -127,6 +127,7 @@ request with exactly one `response` carrying the same `id`.
 | `fork_session` | `session`, `turn`                                                                                | `sessions`      |
 | `choose`       | `session`, `ticket`, `option`                                                                    | `done`          |
 | `answer`       | `session`, `ticket`, `replies`                                                                   | `done`          |
+| `trust`        | `session`, `ticket`, `verdict`                                                                   | `done`          |
 | `cancel`       | `session`                                                                                        | `done`          |
 | `close_session`| `session`, `discard`?                                                                           | `done`, or `uncommitted` |
 | `rename_session`| `session`, `title`                                                                              | `done`          |
@@ -409,6 +410,14 @@ everything said of them, its submodules' paths written from `directory`.
   are the `label`s of the alternatives chosen and `other` is what the reader
   typed, both possibly empty to skip the question. A null `replies` abandons the
   form, which aborts the agent's use of the tool.
+- **`trust`:** answers a `Trust` event. `ticket` is the ticket of the request
+  and `verdict` is `Always` to trust the project's repository for good, `Allow`
+  to trust it for this session's conversation only, or `Reject` to record that
+  it is not trusted. What a trusted project brings is used from the agent's
+  next turn. The server notes a `Trusted` event with the verdict. Since `Always`
+  and `Reject` are recorded for the whole repository, the server answers every
+  other session of the same repository that waits on a request the same way,
+  each with a `Trusted` event of its own; `Allow` answers this session alone.
 - **`attach`:** subscribes the connection to a session and replays the events
   numbered after `after`. See [Events](#events).
 - **`standing`:** where a folder stands, answered from git's refs alone and so
@@ -1070,6 +1079,8 @@ Events use serde's default form, one key naming the type.
 | `{"Ask": Permission}`         | The agent waits for an answer: send `choose` with the `ticket` and the `id` of a choice.                  |
 | `{"Inquire": Inquiry}`      | The agent waits for answers to a form of questions: send `answer` with the `ticket` and a reply for each question. |
 | `{"Answered": [[question, answer]]}` | A client answered a form of questions. `answer` is null for a question that was skipped. |
+| `{"Trust": TrustRequest}`    | The agent left out what the project folder brings until the reader trusts the project, and goes on without it: send `trust` with the `ticket`. Sent when the agent starts and again when what is left out changes; a later request replaces an earlier one. |
+| `{"Trusted": {ticket, verdict}}` | The trust request under `ticket` stopped waiting: a client answered it with `verdict`, or it was dropped (`verdict` null) because the agent it came from stopped. Clear it when it is the one shown. |
 | `{"Finished": null}`          | The turn ended. A string instead of null means it failed with that reason.                                |
 | `{"SignedOut": {"reason", "account"}}` | The turn ended because the session account needs signing in again. Send `sign_in_session`; do not append the reason as an assistant reply. |
 | `"SignedIn"` | The session account was signed in again. Clear its sign-in notice. |
@@ -1112,6 +1123,14 @@ Shapes used above:
   changed since rather than new.
 - **Inquiry:** `{ticket, questions: [{header, text, multiple, alternatives: [{label, description}]}]}`.
   Send the answers to the questions with `answer`.
+- **TrustRequest:** `{ticket, root, standing, skipped: [{kind, name, path}]}`.
+  `root` is the folder trust is recorded for: the repository's main checkout,
+  which its worktrees share, or the folder outside a repository. `standing` is
+  `Unknown` (never decided), `Changed` (trusted, but a hook was added or changed
+  since, so only the hooks are left out) or `Declined`. `kind` is `Hook`,
+  `Instruction`, `Skill` or `Agent`; `name` is a skill's or agent's name, an
+  instruction file's path, or a hook's event, matcher and command; `path` is the
+  file it is defined in.
 
 ## Terminals
 

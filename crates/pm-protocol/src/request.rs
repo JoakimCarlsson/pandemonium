@@ -1252,4 +1252,13 @@ pub enum Request {
         #[serde(default)]
         key: Option<String>,
     },
+    /// Answers the trust request a session's agent made. A verdict that is recorded for the repository, `Always` or `Reject`, also answers the requests the server's other sessions of the same repository are waiting on.
+    Trust {
+        /// The session.
+        session: u64,
+        /// The request, by the number the agent put it under.
+        ticket: u64,
+        /// What the reader decided.
+        verdict: pm_harness::Verdict,
+    },
 }

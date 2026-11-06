@@ -33,6 +33,7 @@ mod session_servers;
 mod sessions;
 mod tasks;
 mod terminals;
+mod trust;
 mod uploads;
 
 pub use cli::run_with_arguments;

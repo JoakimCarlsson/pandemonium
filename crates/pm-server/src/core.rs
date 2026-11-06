@@ -223,7 +223,7 @@ impl Session {
 
     /// Takes `event`, which the agent of the session numbered `number` reported, into the log, does what it calls for and returns what it noted.
     ///
-    /// When the agent stopped, what it had running stopped with it, so a `Halted` is noted before the `Failed`, as when a turn is ended for it. Nothing is noted when `event` only says again what the log said.
+    /// When the agent stopped, what it had running stopped with it, so a `Halted` is noted before the `Failed`, as when a turn is ended for it, and the trust request it waited on is dropped. Nothing is noted when `event` only says again what the log said.
     pub(crate) fn take_in(&mut self, number: u64, event: Event) -> Told {
         let mut told = Told::new();
         if self.repeats(&event) {
@@ -238,6 +238,7 @@ impl Session {
                 self.chat = None;
                 self.busy = false;
                 told.extend(self.drop_queue(number));
+                told.extend(self.drop_trust(number));
             }
             Event::Finished(_) => {
                 self.busy = false;
@@ -351,7 +352,7 @@ impl Core {
         self.next_debug.fetch_add(1, Ordering::Relaxed)
     }
 
-    /// Holds again the sessions kept on disk, without their agents, and numbers new ones after them.
+    /// Holds again the sessions kept on disk, without their agents, and numbers new ones after them; the turns and trust requests their agents left open are closed, as those agents are gone.
     pub(crate) fn load(&self) {
         let mut highest = 0;
         if let Ok(mut sessions) = self.sessions.lock() {
@@ -363,6 +364,7 @@ impl Core {
                 let mut session = Session::new(agent, meta.agent_folder(), log, meta);
                 session.forget_queue(number);
                 session.end_open_turn(number, INTERRUPTED);
+                session.drop_trust(number);
                 sessions.insert(number, session);
             }
         }

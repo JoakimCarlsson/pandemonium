@@ -1230,6 +1230,15 @@ pub enum Outgoing {
         /// What was answered to each question, or nothing to abandon the form.
         replies: Option<Vec<pm_harness::Reply>>,
     },
+    /// Answers the request of the agent of a session to trust its project.
+    Trust {
+        /// The session, by position.
+        session: usize,
+        /// The request, by the number the agent put it under.
+        ticket: u64,
+        /// What the reader decided.
+        verdict: pm_harness::Verdict,
+    },
     /// Takes the conversation of a session back to before one of the reader's turns, dropping it and all after it.
     Rewind {
         /// The session, by position.
@@ -2318,6 +2327,7 @@ impl WorkspaceState {
             crate::title_bar::UPDATE => self.open_release(),
             crate::title_bar::LANGUAGE_UPDATE => return self.with_extensions_page(),
             update if self.press_update(update) => {}
+            trust if self.trust_pressed(trust) => {}
             action if crate::settings::is_settings(action) => {
                 return self.settings_pressed(action);
             }

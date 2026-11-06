@@ -27,9 +27,9 @@ pub use agent::{Agent, agent, agents};
 pub use chat::{Chat, Given, Notify};
 pub use discover::discover;
 pub use event::{
-    Alternative, Background, Choice, Diff, Discovery, Event, Inquiry, Kind, Merge, Part,
-    Permission, Pick, PlanStep, Progress, Question, Reply, Setting, Slash, Tool, ToolState, Usage,
-    Verdict, Worktree,
+    Alternative, Background, Choice, Diff, Discovery, Event, Input, Inquiry, Kind, Merge, Part,
+    Permission, Pick, PlanStep, Progress, Question, Reply, Setting, Skipped, Slash, Standing, Tool,
+    ToolState, TrustRequest, Usage, Verdict, Worktree,
 };
 pub use history::{import_saved, rename_saved, saved_conversation};
 pub use language::LanguageServers;

@@ -134,6 +134,7 @@ pub mod title_bar;
 pub mod trail;
 pub mod tree;
 pub mod tree_actions;
+pub mod trust;
 pub mod update;
 pub mod update_dialog;
 pub mod usage;

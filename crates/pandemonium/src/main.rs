@@ -243,6 +243,8 @@ fn main() {
             Some("live") => Shot::Live,
             Some("asking") => Shot::Asking,
             Some("asking-command") => Shot::AskingCommand,
+            Some("trust") => Shot::Trust,
+            Some("trust-changed") => Shot::TrustChanged,
             Some("inquiring") => Shot::Inquiring,
             Some("answered") => Shot::Answered,
             Some("background") => Shot::Background,

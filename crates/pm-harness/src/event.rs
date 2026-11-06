@@ -3,8 +3,9 @@
 use serde_json::{Value, json};
 
 pub use omc_wire::{
-    Alternative, Background, Choice, Diff, Inquiry, Kind, Merge, Part, Permission, Pick, PlanStep,
-    Progress, Question, Reply, Setting, Slash, Tool, ToolState, Usage, Verdict, Worktree,
+    Alternative, Background, Choice, Diff, Input, Inquiry, Kind, Merge, Part, Permission, Pick,
+    PlanStep, Progress, Question, Reply, Setting, Skipped, Slash, Standing, Tool, ToolState,
+    TrustRequest, Usage, Verdict, Worktree,
 };
 
 /// What an agent did, in the order it did it.
@@ -88,6 +89,15 @@ pub enum Event {
         turn: u64,
         /// The files that changed, from the root of the repository.
         files: Vec<String>,
+    },
+    /// The harness left out what the project folder brings until the reader trusts the project, and waits for an answer under the request's ticket; the conversation goes on without those inputs meanwhile.
+    Trust(TrustRequest),
+    /// The trust request under `ticket` stopped waiting: the reader answered it with `verdict`, or it was dropped, with no verdict, because the conversation it belonged to ended.
+    Trusted {
+        /// The request, by the number the harness put it under.
+        ticket: u64,
+        /// What the reader decided, or nothing when the request was dropped unanswered.
+        verdict: Option<Verdict>,
     },
 }
 
@@ -194,8 +204,40 @@ impl Event {
             | Wire::Resumed(_)
             | Wire::Language(_)
             | Wire::Queued(_) => None,
+            Wire::Trust(request) => Some(Self::Trust(request)),
             Wire::Failed(reason) => Some(Self::Failed(reason)),
             Wire::Titled(title) => Some(Self::Titled(title)),
         }
+    }
+}
+
+#[cfg(test)]
+/// Tests for how the harness's events become the app's.
+mod tests {
+    use std::path::PathBuf;
+
+    use super::*;
+
+    /// A trust request the harness sends as a line of its wire protocol becomes the app's trust event whole, and survives the trip through the session log's encoding.
+    #[test]
+    fn a_trust_request_is_kept() {
+        let request = TrustRequest {
+            ticket: 7,
+            root: PathBuf::from("/w/repo"),
+            standing: Standing::Changed,
+            skipped: vec![Skipped {
+                kind: Input::Hook,
+                name: "PreToolUse bash: ./guard.sh".to_owned(),
+                path: PathBuf::from("/w/repo/.claude/settings.json"),
+            }],
+        };
+        let line = omc_wire::encode(&omc_wire::Event::Trust(request.clone())).unwrap();
+        let heard = Event::from_harness(omc_wire::decode(&line).unwrap());
+        assert_eq!(heard, Some(Event::Trust(request.clone())));
+        let kept = serde_json::to_string(&heard).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Option<Event>>(&kept).unwrap(),
+            Some(Event::Trust(request))
+        );
     }
 }

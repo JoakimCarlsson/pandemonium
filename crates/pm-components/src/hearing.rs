@@ -79,6 +79,16 @@ impl Session {
                 }
             }
             Event::Unqueued(id) => self.queued.retain(|waiting| waiting.id != id),
+            Event::Trust(request) => self.trust = Some(request),
+            Event::Trusted { ticket, .. } => {
+                if self
+                    .trust
+                    .as_ref()
+                    .is_some_and(|open| open.ticket == ticket)
+                {
+                    self.trust = None;
+                }
+            }
             Event::Rewound { turn } => self.rewound(turn),
             Event::Restored { turn, files } => self.files_restored(turn, files.len()),
         }

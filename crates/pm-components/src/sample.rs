@@ -3,7 +3,7 @@
 use std::time::Instant;
 
 use pm_harness::{
-    Diff, Kind as ToolKind, Permission, PlanStep, Setting, Slash, ToolState, Worktree,
+    Diff, Kind as ToolKind, Permission, PlanStep, Setting, Slash, ToolState, TrustRequest, Worktree,
 };
 
 use crate::dock::TerminalTab;
@@ -574,6 +574,8 @@ pub struct Session {
     pub ask: Option<Permission>,
     /// The form of questions the agent waits on the reader to answer, if it waits on one.
     pub inquiry: Option<Draft>,
+    /// The request to trust the project, whose instructions, skills, agents or hooks the agent goes without until it is answered, if the agent made one.
+    pub trust: Option<TrustRequest>,
     /// When the turn that is running began, if one is.
     pub turn_started: Option<Instant>,
     /// How many of the prompts this window sent the server has yet to repeat back, so that they are not added twice.
@@ -645,6 +647,7 @@ impl Session {
             container: None,
             ask: None,
             inquiry: None,
+            trust: None,
             turn_started: None,
             echoes: 0,
             queued: Vec::new(),
@@ -781,7 +784,11 @@ impl Session {
 
     /// The activity or attention that matters most in the workspace list.
     pub fn shown(&self) -> Status {
-        if self.ask.is_some() || self.inquiry.is_some() || self.signed_out.is_some() {
+        if self.ask.is_some()
+            || self.inquiry.is_some()
+            || self.trust.is_some()
+            || self.signed_out.is_some()
+        {
             Status::NeedsInput
         } else if self.status == Status::Working || self.background_running() {
             if self.out_of_reach {

@@ -3065,6 +3065,38 @@ dependencies = [
 ]
 
 [[package]]
+name = "omc-dap"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "dirs",
+ "libc",
+ "omc-tools",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "omc-hooks"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "dirs",
+ "futures-util",
+ "globset",
+ "libc",
+ "omc-agent",
+ "omc-context",
+ "omc-memory",
+ "omc-providers",
+ "omc-wire",
+ "regex",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "omc-mcp"
 version = "0.1.0"
 dependencies = [
@@ -3077,6 +3109,17 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
+]
+
+[[package]]
+name = "omc-memory"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "omc-context",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3106,7 +3149,10 @@ dependencies = [
  "omc-agent",
  "omc-auth",
  "omc-context",
+ "omc-dap",
+ "omc-hooks",
  "omc-mcp",
+ "omc-memory",
  "omc-providers",
  "omc-tools",
  "omc-wire",
@@ -3132,10 +3178,13 @@ dependencies = [
  "grep-regex",
  "grep-searcher",
  "htmd",
+ "html5ever",
  "ignore",
  "image",
  "libc",
+ "markup5ever_rcdom",
  "omc-context",
+ "omc-memory",
  "omc-wire",
  "pdf-extract",
  "regex",

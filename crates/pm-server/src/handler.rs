@@ -808,6 +808,23 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                 chat.answer(ticket, replies);
             }
         }),
+        Request::Trust {
+            session,
+            ticket,
+            verdict,
+        } => {
+            let answered = match core.sessions.lock() {
+                Ok(mut sessions) => crate::trust::answer(&mut sessions, session, ticket, verdict),
+                Err(_) => Err("the server is shutting down".to_owned()),
+            };
+            match answered {
+                Ok(told) => {
+                    core.tell_all(told);
+                    Response::Done
+                }
+                Err(reason) => failed(reason),
+            }
+        }
         Request::Cancel { session } => telling(core, session, |held| {
             let mut told = match &held.chat {
                 Some(chat) => {

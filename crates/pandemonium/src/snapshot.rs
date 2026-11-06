@@ -22,8 +22,9 @@ use pm_components::state::{
 use pm_components::state::{LOCATION, SETTINGS};
 use pm_components::tree_actions::{TREE_NEW_FOLDER, TreeTarget};
 use pm_harness::{
-    Alternative, Background, Choice, Diff, Discovery, Event, Inquiry, Kind, Merge, Permission,
-    Pick, PlanStep, Progress, Question, Setting, Slash, Tool, ToolState, Verdict, Worktree,
+    Alternative, Background, Choice, Diff, Discovery, Event, Input as Skip, Inquiry, Kind, Merge,
+    Permission, Pick, PlanStep, Progress, Question, Setting, Skipped, Slash, Standing, Tool,
+    ToolState, TrustRequest, Verdict, Worktree,
 };
 use pm_input::{FocusId, PointerState};
 use pm_pages::{ADD_PROJECT, HISTORY, PROMPT, SEND, Screen, TAB_DIFF, TERMINAL, WorkspaceState};
@@ -254,6 +255,10 @@ pub enum Shot {
     Asking,
     /// A conversation whose agent waits for permission to run a long command.
     AskingCommand,
+    /// A conversation whose agent left out the hooks, instruction files, skills and agents of a project nobody has trusted yet, and waits for the reader to trust it.
+    Trust,
+    /// A conversation whose agent left out the hooks of a trusted project, as one changed since it was trusted.
+    TrustChanged,
     /// A conversation whose agent waits for the answers to a form of three questions.
     Inquiring,
     /// A conversation whose reader answered a form of questions.
@@ -3315,6 +3320,8 @@ impl Shot {
             Self::Live => Screen::Workspace(live(Turn::Finished)),
             Self::Asking => Screen::Workspace(live(Turn::Asking)),
             Self::AskingCommand => Screen::Workspace(live(Turn::Command)),
+            Self::Trust => Screen::Workspace(trusting(Standing::Unknown)),
+            Self::TrustChanged => Screen::Workspace(trusting(Standing::Changed)),
             Self::Answered => {
                 let state = live(Turn::Working);
                 let session = state.open_index().unwrap();
@@ -3951,6 +3958,59 @@ fn claude_settings() -> Vec<Setting> {
             ],
         ),
     ]
+}
+
+/// A finished conversation whose agent waits for the reader to trust the project it works in, which stands as `standing`: never decided, with hooks, instruction files, skills and an agent left out, or trusted before a hook changed, with only the hooks left out.
+fn trusting(standing: Standing) -> WorkspaceState {
+    let root = "/home/reader/code/pandemonium";
+    let skipped = |kind, name: &str, path: &str| Skipped {
+        kind,
+        name: name.to_owned(),
+        path: format!("{root}/{path}").into(),
+    };
+    let settings = ".claude/settings.json";
+    let skipped = match standing {
+        Standing::Changed => vec![skipped(
+            Skip::Hook,
+            "PreToolUse Bash: ./scripts/guard.sh --deny-network",
+            settings,
+        )],
+        _ => vec![
+            skipped(Skip::Hook, "PreToolUse Bash: ./scripts/guard.sh", settings),
+            skipped(Skip::Hook, "Stop: make lint && make fmt", settings),
+            skipped(Skip::Instruction, &format!("{root}/AGENTS.md"), "AGENTS.md"),
+            skipped(Skip::Instruction, &format!("{root}/CLAUDE.md"), "CLAUDE.md"),
+            skipped(
+                Skip::Instruction,
+                &format!("{root}/crates/pm-ui/AGENTS.md"),
+                "crates/pm-ui/AGENTS.md",
+            ),
+            skipped(
+                Skip::Instruction,
+                &format!("{root}/.claude/rules/rust.md"),
+                ".claude/rules/rust.md",
+            ),
+            skipped(
+                Skip::Instruction,
+                &format!("{root}/.claude/rules/snapshots.md"),
+                ".claude/rules/snapshots.md",
+            ),
+            skipped(Skip::Skill, "release", ".claude/skills/release/SKILL.md"),
+            skipped(Skip::Skill, "snapshot", ".claude/skills/snapshot/SKILL.md"),
+            skipped(Skip::Agent, "reviewer", ".claude/agents/reviewer.md"),
+        ],
+    };
+    let state = live(Turn::Finished);
+    let session = state.open_index().unwrap();
+    state.heard(
+        session,
+        Event::Trust(TrustRequest {
+            ticket: 1,
+            root: root.into(),
+            standing,
+            skipped,
+        }),
+    )
 }
 
 /// How the turn of a made-up conversation stands at the end of it.
