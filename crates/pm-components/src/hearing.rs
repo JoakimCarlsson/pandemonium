@@ -515,4 +515,34 @@ mod tests {
                 .contains("Something went wrong: Other error")
         );
     }
+
+    /// The calls a script of the agent made are steps of their own, not subagents, while a call that starts a subagent still is one.
+    #[test]
+    fn script_calls_are_not_subagents() {
+        let tool = |id: &str, parent: Option<&str>, agent: Option<&str>| {
+            Event::Tool(pm_harness::Tool {
+                id: id.to_owned(),
+                title: Some(id.to_owned()),
+                kind: None,
+                state: Some(ToolState::Running),
+                target: None,
+                diff: None,
+                output: None,
+                parent: parent.map(str::to_owned),
+                agent: agent.map(str::to_owned),
+                worktree: None,
+            })
+        };
+        let mut session = Session::started("Test", 0, "Hello");
+        session.hear(tool("s1", None, None));
+        session.hear(tool("s1:1", Some("s1"), Some(crate::sample::SCRIPT_AGENT)));
+        session.hear(tool("s1:2", Some("s1"), Some(crate::sample::SCRIPT_AGENT)));
+        session.hear(tool("t1", None, Some("task")));
+        let agents: Vec<&str> = session
+            .subagents()
+            .into_iter()
+            .map(|(_, _, tool)| tool.id.as_str())
+            .collect();
+        assert_eq!(agents, ["t1"]);
+    }
 }

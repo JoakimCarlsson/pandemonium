@@ -10,6 +10,9 @@ use crate::dock::TerminalTab;
 use crate::draft::Draft;
 use crate::project::Project;
 
+/// The agent the harness names on the tool calls a script of the agent made, which are steps of their own and not subagents.
+pub const SCRIPT_AGENT: &str = "script";
+
 /// The activity or attention indicator shown beside a session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Status {
@@ -399,9 +402,11 @@ pub struct ToolUse {
 }
 
 impl ToolUse {
-    /// Whether it starts a subagent.
+    /// Whether it starts a subagent; a call a script of the agent made carries the agent `script` but starts none, and shows as a step of its own.
     pub fn is_subagent(&self) -> bool {
-        self.agent.is_some()
+        self.agent
+            .as_deref()
+            .is_some_and(|agent| agent != SCRIPT_AGENT)
     }
 
     /// Whether it is a subagent still at work.
