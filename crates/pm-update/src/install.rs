@@ -169,11 +169,10 @@ fn restore(installed: &Installed) -> Result<(), String> {
     })
 }
 
-/// Starts the new version, apart from this process so that it outlives it, and waits until it has run for a moment; the old version is put back if it does not start. The server it finds running is kept.
+/// Starts the new version, apart from this process so that it outlives it, and waits until it has run for a moment; the old version is put back if it does not start. The new version replaces the server it finds running, so the update reaches the server too.
 pub fn relaunch(installed: &Installed) -> Result<(), String> {
     let mut command = Command::new(&installed.launch);
     command
-        .env(crate::KEEP_SERVER, "1")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());

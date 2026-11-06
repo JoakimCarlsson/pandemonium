@@ -2484,7 +2484,6 @@ dependencies = [
  "pm-acp",
  "pm-protocol",
  "pm-store",
- "pm-update",
  "serde_json",
  "tungstenite",
 ]
