@@ -158,7 +158,7 @@ impl Session {
         }
     }
 
-    /// Starts the agent of the session in the session's folder as the session's login, without what the reader turned off, and gives it the `settings` the reader chose now; the harness gives back the ones it saved with the conversation.
+    /// Starts the agent of the session in the session's folder as the session's login, without what the reader turned off, with the server's language servers to format and check what it writes, and gives it the `settings` the reader chose now; the harness gives back the ones it saved with the conversation.
     pub(crate) fn start_agent(&mut self, number: u64, settings: &[(String, String)]) {
         let home = crate::handler::login_folder(&self.meta.agent, self.meta.login.as_deref());
         let mut given = crate::library::given(self.agent, &self.directory, number);
@@ -166,6 +166,7 @@ impl Session {
         given.history = crate::sessions::history_folder(number);
         given.before = self.resume_before.take();
         given.defaults = vec![(CHECKPOINTS.to_owned(), "on".to_owned())];
+        given.languages = crate::documents::shared_hub().map(pm_harness::LanguageServers);
         let chat = Chat::start(
             self.agent,
             self.directory.clone(),

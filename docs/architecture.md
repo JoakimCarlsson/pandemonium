@@ -86,7 +86,9 @@ One crate per layer, each depending only on the layers below it.
   `PANDEMONIUM_LANGUAGES` when it is set.
 - **Domain:** `pm-harness` (the app's side of the harness: one agent per provider the harness lists,
   the conversation held with one over the harness's wire protocol, and its
-  sign-in; the harness is a library from the `oh-my-crab` repository that runs
+  sign-in, and the answers to the harness's language requests, given from the
+  server's own language hub so that the files an agent writes are formatted
+  and checked by the servers already running; the harness is a library from the `oh-my-crab` repository that runs
   inside the server, one conversation to a thread, and the tools it offers are
   asked of it directly. The harness owns each conversation: its
   turns, title and chosen settings are saved by it, and the server reads them

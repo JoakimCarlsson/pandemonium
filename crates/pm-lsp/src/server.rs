@@ -1,7 +1,8 @@
 //! One running language server: started for a project, told of the files open in it, and asked for completions and hovers.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -33,6 +34,26 @@ const STOPPING: Duration = Duration::from_secs(2);
 
 /// What is done with the diagnostics a server publishes: the address of the file, the version they are about and the diagnostics.
 pub(crate) type DiagnosticsSink = Arc<dyn Fn(String, Option<i32>, Vec<Diagnostic>) + Send + Sync>;
+
+/// Gives out the next number of what servers say and do, so that what a server said can be put in order with the work it began.
+pub(crate) type Counter = Arc<dyn Fn() -> u64 + Send + Sync>;
+
+/// The work a server reports it is doing, such as loading the project or checking it.
+#[derive(Default)]
+pub(crate) struct Work {
+    /// The work begun and not yet ended, by the token the server reports its progress under.
+    working: Mutex<HashSet<String>>,
+    /// The number, from the server's [`Counter`], of the last time it began some work; zero when it never has.
+    began: AtomicU64,
+}
+
+impl Work {
+    /// Whether something said under the number `said` is the last word for now: no work is going on, and it was said after the last work began.
+    fn is_settled_since(&self, said: u64) -> bool {
+        self.working.lock().is_ok_and(|working| working.is_empty())
+            && said > self.began.load(Ordering::SeqCst)
+    }
+}
 
 /// What a server last said is wrong with each file, as it wrote it, by address, to hand back when asking it for changes at a place.
 type Raw = Arc<Mutex<HashMap<String, Vec<Value>>>>;
@@ -122,6 +143,8 @@ pub(crate) struct LanguageServer {
     token_data: Mutex<HashMap<String, (String, Vec<u64>)>>,
     /// The folders of the workspace it works on, the project's own first, as it was last told.
     folders: Folders,
+    /// The work it reports it is doing.
+    work: Arc<Work>,
 }
 
 /// The folders of the workspace a server works on, shared with the handler that answers when it asks for them.
@@ -360,11 +383,12 @@ fn capabilities() -> Value {
             "publishDiagnostics": {"versionSupport": true},
             "diagnostic": {"dynamicRegistration": false, "relatedDocumentSupport": false}
         },
-        "window": {"workDoneProgress": false, "showDocument": {"support": true}}
+        "window": {"workDoneProgress": true, "showDocument": {"support": true}}
     })
 }
 
-/// What answers the requests of a server started with `settings`, tells it the workspace `folders` when it asks, hands the diagnostics it publishes to `sink` and keeps them as written in `raw`, and keeps the edits it asks to have made in `applied`.
+/// What answers the requests of a server started with `settings`, tells it the workspace `folders` when it asks, hands the diagnostics it publishes to `sink` and keeps them as written in `raw`, keeps the edits it asks to have made in `applied`, and keeps the work it reports in `work`, numbering each piece begun with `count`.
+#[allow(clippy::too_many_arguments)]
 fn handler(
     folders: Folders,
     settings: Value,
@@ -372,8 +396,14 @@ fn handler(
     raw: Raw,
     applied: Applied,
     shown: Shown,
+    work: Arc<Work>,
+    count: Counter,
 ) -> Handler {
     Arc::new(move |method, params| match method {
+        "$/progress" => {
+            note_progress(&work, &count, &params);
+            Value::Null
+        }
         "workspace/configuration" => Value::Array(
             params
                 .get("items")
@@ -431,6 +461,28 @@ fn handler(
     })
 }
 
+/// Notes in `work` the progress a server reports in `params`: work begun under a token, numbered with `count`, or ended.
+fn note_progress(work: &Work, count: &Counter, params: &Value) {
+    let token = match params.get("token") {
+        Some(Value::String(token)) => token.clone(),
+        Some(other) => other.to_string(),
+        None => return,
+    };
+    let Ok(mut working) = work.working.lock() else {
+        return;
+    };
+    match params.pointer("/value/kind").and_then(Value::as_str) {
+        Some("begin") => {
+            working.insert(token);
+            work.began.store(count(), Ordering::SeqCst);
+        }
+        Some("end") => {
+            working.remove(&token);
+        }
+        _ => {}
+    }
+}
+
 impl LanguageServer {
     /// Starts the server of `spec` for the project at `root`, handing what it says is wrong with files to `sink`: the project's or the machine's own program first, and the one installed in the data folder when there is none or it does not start, installing that first when it is missing.
     pub(crate) fn start(
@@ -439,10 +491,19 @@ impl LanguageServer {
         extra: &[PathBuf],
         env: &BTreeMap<String, String>,
         sink: DiagnosticsSink,
+        count: Counter,
     ) -> Result<Self, String> {
         let first_try = match found(spec, Some(root)) {
             Some(program) => {
-                match Self::start_program(&program, spec, root, extra, env, sink.clone()) {
+                match Self::start_program(
+                    &program,
+                    spec,
+                    root,
+                    extra,
+                    env,
+                    sink.clone(),
+                    count.clone(),
+                ) {
                     Ok(server) => return Ok(server),
                     Err(reason) if spec.install.is_some() => Some(reason),
                     Err(reason) => return Err(reason),
@@ -454,7 +515,7 @@ impl LanguageServer {
             Some(before) => format!("{before}; {reason}"),
             None => reason,
         })?;
-        Self::start_program(&program, spec, root, extra, env, sink)
+        Self::start_program(&program, spec, root, extra, env, sink, count)
     }
 
     /// Starts `program` as the server of `spec` for the project at `root`, with the folders `extra` attached to its workspace, and sets it up.
@@ -465,6 +526,7 @@ impl LanguageServer {
         extra: &[PathBuf],
         env: &BTreeMap<String, String>,
         sink: DiagnosticsSink,
+        count: Counter,
     ) -> Result<Self, String> {
         let first: Vec<PathBuf> = spec
             .project
@@ -472,6 +534,7 @@ impl LanguageServer {
             .map(|folder| root.join(folder))
             .collect();
         let raw = Raw::default();
+        let work = Arc::new(Work::default());
         let applied = Applied::default();
         let shown = Shown::default();
         let mut environment = env.clone();
@@ -494,6 +557,8 @@ impl LanguageServer {
                 raw.clone(),
                 applied.clone(),
                 shown.clone(),
+                work.clone(),
+                count,
             ),
         )?;
         let mut params = json!({
@@ -554,7 +619,13 @@ impl LanguageServer {
             pulled: Mutex::new(HashMap::new()),
             token_data: Mutex::new(HashMap::new()),
             folders,
+            work,
         })
+    }
+
+    /// Whether what the server said under the number `said`, from its [`Counter`], is its last word for now: it is doing no work it reported, and said it after it last began some, so that what it said while still loading the project is not taken for what it finds once loaded.
+    pub(crate) fn is_settled_since(&self, said: u64) -> bool {
+        self.work.is_settled_since(said)
     }
 
     /// Whether the server takes in workspace folders being added and removed while it runs.
@@ -1993,4 +2064,31 @@ fn utf16_to_byte(text: &str, units: usize) -> usize {
         counted += character.len_utf16();
     }
     text.len()
+}
+
+#[cfg(test)]
+/// Tests for following the work a server reports.
+mod tests {
+    use super::*;
+
+    /// What a server says while it reports work going on, or before work it began since, is not its last word; what it says once that work has ended is.
+    #[test]
+    fn follows_the_work_a_server_reports() {
+        let work = Work::default();
+        let numbers = Arc::new(AtomicU64::new(10));
+        let count: Counter = {
+            let numbers = numbers.clone();
+            Arc::new(move || numbers.fetch_add(1, Ordering::SeqCst) + 1)
+        };
+        assert!(work.is_settled_since(1));
+        let progress = |token: Value, kind: &str| json!({"token": token, "value": {"kind": kind}});
+        note_progress(&work, &count, &progress(json!("indexing"), "begin"));
+        note_progress(&work, &count, &progress(json!("indexing"), "report"));
+        assert!(!work.is_settled_since(12));
+        note_progress(&work, &count, &progress(json!("indexing"), "end"));
+        assert!(!work.is_settled_since(11));
+        assert!(work.is_settled_since(12));
+        note_progress(&work, &count, &progress(json!(7), "begin"));
+        assert!(!work.is_settled_since(13));
+    }
 }

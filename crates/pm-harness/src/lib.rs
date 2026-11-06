@@ -13,6 +13,7 @@ mod discover;
 mod event;
 mod history;
 mod inprocess;
+mod language;
 mod listing;
 mod login;
 mod mcp;
@@ -30,6 +31,7 @@ pub use event::{
     PlanStep, Progress, Question, Reply, Setting, Slash, Tool, ToolState, Usage, Verdict,
 };
 pub use history::{import_saved, rename_saved, saved_conversation};
+pub use language::LanguageServers;
 pub use listing::harness_tools;
 pub use mcp::{command_line, command_words, mcp_servers};
 pub use omc_wire::Conversation;

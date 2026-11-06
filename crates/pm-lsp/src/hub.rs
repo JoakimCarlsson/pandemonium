@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
@@ -15,7 +16,7 @@ use crate::manifest::ServerSpec;
 use crate::preferences::ServerOverride;
 use crate::provider::{Provider, SymbolLabel};
 use crate::server::{
-    DiagnosticsSink, Found, LanguageServer, LinkAnswer, Pressed, action_of, file_changes,
+    Counter, DiagnosticsSink, Found, LanguageServer, LinkAnswer, Pressed, action_of, file_changes,
 };
 use crate::types::{
     CodeAction, CodeLens, ColorPresentation, ColorSwatch, Completion, Diagnostic, DocumentLink,
@@ -50,6 +51,17 @@ pub struct Published {
     /// The file, from the root of the project.
     pub path: String,
     /// The version of the file the diagnostics are about, when the server says.
+    pub version: Option<i32>,
+    /// What is wrong.
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+/// What a language server last said is wrong with a file, and how recently it said it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Said {
+    /// How many times servers had said what is wrong with a file, this one included, when this was said; a larger number was said later.
+    pub publication: u64,
+    /// The version of the file it is about, when the server says.
     pub version: Option<i32>,
     /// What is wrong.
     pub diagnostics: Vec<Diagnostic>,
@@ -100,6 +112,8 @@ struct Plan {
 struct Document {
     /// The installed language it is written in.
     language: String,
+    /// Which opening of a file on the hub this is, so that whoever opened it can tell when someone else has opened it since.
+    opening: u64,
     /// Its text and version.
     buffer: Buffer,
     /// Its language's server, when the language has one.
@@ -122,6 +136,12 @@ pub struct Hub {
     servers: Mutex<HashMap<(PathBuf, String), Slot>>,
     /// The latest diagnostics of each file, by address, kept for when a file is opened after they were published.
     published: Mutex<HashMap<String, Latest>>,
+    /// How many times servers have said what is wrong with a file.
+    publications: AtomicU64,
+    /// How many times files have been opened.
+    openings: AtomicU64,
+    /// The number of the latest time a server said what is wrong with each file, by address.
+    heard: Mutex<HashMap<String, u64>>,
     /// The project and path of each open file, by address.
     addresses: Mutex<HashMap<String, (PathBuf, String)>>,
     /// Edits of files that arrived before the request that opens them, by project and path and then by the version they make.
@@ -226,6 +246,9 @@ impl Hub {
             changed: Condvar::new(),
             servers: Mutex::new(HashMap::new()),
             published: Mutex::new(HashMap::new()),
+            publications: AtomicU64::new(0),
+            openings: AtomicU64::new(0),
+            heard: Mutex::new(HashMap::new()),
             addresses: Mutex::new(HashMap::new()),
             waiting: Mutex::new(HashMap::new()),
             actions: Mutex::new(HashMap::new()),
@@ -578,6 +601,10 @@ impl Hub {
             };
             if let Ok(mut published) = hub.published.lock() {
                 published.insert(uri.clone(), (version, diagnostics.clone()));
+                let publication = hub.publications.fetch_add(1, Ordering::SeqCst) + 1;
+                if let Ok(mut heard) = hub.heard.lock() {
+                    heard.insert(uri.clone(), publication);
+                }
             }
             let place = hub
                 .addresses
@@ -592,6 +619,15 @@ impl Hub {
                     diagnostics,
                 });
             }
+        })
+    }
+
+    /// What numbers the work servers begin in the same order as what they say is wrong with files, from [`Hub::publications`].
+    fn counter(self: &Arc<Self>) -> Counter {
+        let hub: Weak<Self> = Arc::downgrade(self);
+        Arc::new(move || {
+            hub.upgrade()
+                .map_or(0, |hub| hub.publications.fetch_add(1, Ordering::SeqCst) + 1)
         })
     }
 
@@ -621,6 +657,7 @@ impl Hub {
                         &self.neighbours_of(root),
                         &(self.environment)(root, language, &ready),
                         sink.clone(),
+                        self.counter(),
                     )
                     .map(Arc::new)
                 })
@@ -670,6 +707,7 @@ impl Hub {
             early.retain(|made, _| *made > version);
             let mut document = Document {
                 language: language.to_owned(),
+                opening: self.openings.fetch_add(1, Ordering::SeqCst) + 1,
                 buffer: Buffer::new(text, version),
                 spec: plan.primary.clone(),
                 early,
@@ -912,19 +950,47 @@ impl Hub {
 
     /// Closes the open file at `path` of the project at `root`, and stops its server when no other file of the project uses it.
     pub fn close(self: &Arc<Self>, root: &Path, path: &str) {
+        if let Ok(mut waiting) = self.waiting.lock() {
+            waiting.remove(&(root.to_path_buf(), path.to_owned()));
+        }
+        self.close_where(root, path, |_| true);
+    }
+
+    /// Closes the open file at `path` of the project at `root` as [`Hub::close`] does, but only while it is still the opening numbered `opening`, which [`Hub::opening`] told; a file someone has opened again since is left open.
+    pub fn close_opening(self: &Arc<Self>, root: &Path, path: &str, opening: u64) {
+        self.close_where(root, path, |document| document.opening == opening);
+    }
+
+    /// Which opening the open file at `path` of the project at `root` is, a number no other opening of a file on this hub has; nothing when it is not open.
+    pub fn opening(&self, root: &Path, path: &str) -> Option<u64> {
+        self.documents.lock().ok().and_then(|documents| {
+            documents
+                .get(&(root.to_path_buf(), path.to_owned()))
+                .map(|document| document.opening)
+        })
+    }
+
+    /// Closes the open file at `path` of the project at `root` when `closes` says so of it, and stops its server when no other file of the project uses it.
+    fn close_where(
+        self: &Arc<Self>,
+        root: &Path,
+        path: &str,
+        closes: impl FnOnce(&Document) -> bool,
+    ) {
         let key = (root.to_path_buf(), path.to_owned());
         let uri = file_uri(&root.join(path));
+        let Some(document) = self.documents.lock().ok().and_then(|mut documents| {
+            documents
+                .get(&key)
+                .is_some_and(closes)
+                .then(|| documents.remove(&key))
+                .flatten()
+        }) else {
+            return;
+        };
         if let Ok(mut waiting) = self.waiting.lock() {
             waiting.remove(&key);
         }
-        let Some(document) = self
-            .documents
-            .lock()
-            .ok()
-            .and_then(|mut documents| documents.remove(&key))
-        else {
-            return;
-        };
         if let Ok(mut addresses) = self.addresses.lock() {
             addresses.remove(&uri);
         }
@@ -1241,6 +1307,46 @@ impl Hub {
                 })
             }
         }
+    }
+
+    /// How many times servers have said what is wrong with a file so far; what is said later has a larger [`Said::publication`].
+    pub fn publications(&self) -> u64 {
+        self.publications.load(Ordering::SeqCst)
+    }
+
+    /// What a language server last said is wrong with the file at `path` of the project at `root`, when one has said anything.
+    pub fn said(&self, root: &Path, path: &str) -> Option<Said> {
+        let uri = file_uri(&root.join(path));
+        let published = self.published.lock().ok()?;
+        let (version, diagnostics) = published.get(&uri)?.clone();
+        let publication = self
+            .heard
+            .lock()
+            .ok()
+            .and_then(|heard| heard.get(&uri).copied())
+            .unwrap_or(0);
+        Some(Said {
+            publication,
+            version,
+            diagnostics,
+        })
+    }
+
+    /// Whether what the server of the open file at `path` of the project at `root` said under [`Said::publication`] `said` is its last word for now: it reports no work going on, such as loading the project, and said it after it last began some. A file with no server running, or not open, is settled.
+    pub fn is_settled(&self, root: &Path, path: &str, said: u64) -> bool {
+        let server = self.documents.lock().ok().and_then(|documents| {
+            documents
+                .get(&(root.to_path_buf(), path.to_owned()))
+                .and_then(|document| document.server.clone())
+        });
+        server.is_none_or(|server| server.is_settled_since(said))
+    }
+
+    /// Whether the file at `path` of the project at `root` is open.
+    pub fn is_open(&self, root: &Path, path: &str) -> bool {
+        self.documents
+            .lock()
+            .is_ok_and(|documents| documents.contains_key(&(root.to_path_buf(), path.to_owned())))
     }
 
     /// What the language servers last said is wrong with the files of the project at `root`, open or not, the worst first and then by file and place.

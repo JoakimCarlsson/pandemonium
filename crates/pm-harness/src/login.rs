@@ -47,6 +47,7 @@ impl Agent {
             keep: None,
             before: None,
             defaults: Vec::new(),
+            languages: false,
         }))?;
         harness.send(&Command::Login {
             provider: self.provider.to_owned(),
