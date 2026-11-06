@@ -16,8 +16,9 @@ use std::time::Duration;
 use omc_wire::{Command, Event};
 use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
-/// What listening to a conversation for a moment came to.
+/// What listening to a conversation for a moment came to; nearly always an event, so the event is kept unboxed.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum Heard {
     /// The conversation reported this.
     Event(Event),

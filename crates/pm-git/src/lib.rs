@@ -18,6 +18,7 @@ mod places;
 mod revision;
 mod submodule;
 mod words;
+mod worktrees;
 
 pub use branching::{BranchInfo, branch_info, branch_operation};
 pub use checkpoint::{checkpoint, restore};
@@ -31,6 +32,7 @@ pub use places::{clone, folders};
 pub use revision::revision_changes;
 pub use submodule::{populate, submodule_heads, submodules};
 pub use words::{Words, words};
+pub use worktrees::HARNESS_LOCK_REASON;
 
 /// Where, under a repository, the worktrees made for tasks are kept.
 const WORKTREES: &str = ".pandemonium/worktrees";

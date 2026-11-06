@@ -1,6 +1,8 @@
 //! What an agent did on the way to a reply: the steps it took, its plan and its questions.
 
-use pm_harness::{Diff, Kind as ToolKind, Permission, PlanStep, Progress, ToolState, Verdict};
+use pm_harness::{
+    Diff, Kind as ToolKind, Merge, Permission, PlanStep, Progress, ToolState, Verdict, Worktree,
+};
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
@@ -279,6 +281,32 @@ fn agent_mark(state: ToolState) -> Node {
     })
 }
 
+/// The chip of a subagent working in a git worktree of its own: that it does, while it works, and what became of its changes once it ended.
+fn worktree_chip(worktree: &Worktree) -> Node {
+    let (label, role) = match &worktree.merge {
+        None => ("worktree".to_owned(), Role::Muted),
+        Some(Merge::Applied { files }) if files.len() == 1 => {
+            ("applied 1 file".to_owned(), Role::Success)
+        }
+        Some(Merge::Applied { files }) => (format!("applied {} files", files.len()), Role::Success),
+        Some(Merge::Unchanged) => ("no changes".to_owned(), Role::Subtle),
+        Some(Merge::Conflicted { .. }) => ("conflict".to_owned(), Role::Danger),
+        Some(Merge::Held { .. }) => ("not applied".to_owned(), Role::Warning),
+    };
+    node()
+        .styles([
+            flex(),
+            flex_none(),
+            items_center(),
+            gap(1),
+            px(1.5),
+            rounded(Radius::Md),
+            bg(Role::SurfaceHover),
+        ])
+        .child(glyph(IconName::GitFork, 3.0, role))
+        .child(text(label).styles([text_px(12), leading_ratio(1.4), text_color(role)]))
+}
+
 /// The steps of `all` that are the work of the subagent `parent`.
 fn beneath<'a>(all: &'a [Step], parent: &str) -> Vec<&'a ToolUse> {
     all.iter()
@@ -370,6 +398,7 @@ pub fn subagents(
                             text_color(Role::Muted),
                         ]))
                 }))
+                .children(tool.worktree.as_deref().map(worktree_chip))
                 .child(clipped(described, 13, Role::Text))
                 .child(
                     line(

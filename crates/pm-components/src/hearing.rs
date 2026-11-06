@@ -297,6 +297,7 @@ impl Session {
                 }
                 held.parent = tool.parent.or(held.parent.take());
                 held.agent = tool.agent.or(held.agent.take());
+                held.worktree = tool.worktree.or(held.worktree.take());
                 held.target = tool.target.or(held.target.take());
                 held.diff = tool.diff.or(held.diff.take());
                 held.output = tool.output.or(held.output.take());
@@ -313,6 +314,7 @@ impl Session {
                 seconds: None,
                 parent: tool.parent,
                 agent: tool.agent,
+                worktree: tool.worktree,
             })),
         }
         if let Some(state) = ended {

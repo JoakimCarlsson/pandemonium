@@ -77,14 +77,15 @@ pub fn agent(id: &str) -> Option<Agent> {
 mod tests {
     use super::*;
 
-    /// Every provider of the harness is an agent, Claude keeps the id it was saved under, and only Claude and Codex have products.
+    /// Every provider of the harness is an agent with the first ones in their old order, Claude keeps the id it was saved under, and only Claude and Codex have products.
     #[test]
     fn every_provider_is_an_agent() {
         let ids: Vec<&str> = agents().iter().map(|agent| agent.id).collect();
         assert_eq!(
-            ids,
+            &ids[..5],
             ["claude-code", "codex", "ollama", "openrouter", "copilot"]
         );
+        assert!(ids.contains(&"kimi-code"));
         let claude = agent("claude-code").unwrap();
         assert_eq!(claude.provider, "claude");
         assert_eq!(claude.product, Some(Product::Claude));

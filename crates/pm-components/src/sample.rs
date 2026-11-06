@@ -2,7 +2,9 @@
 
 use std::time::Instant;
 
-use pm_harness::{Diff, Kind as ToolKind, Permission, PlanStep, Setting, Slash, ToolState};
+use pm_harness::{
+    Diff, Kind as ToolKind, Permission, PlanStep, Setting, Slash, ToolState, Worktree,
+};
 
 use crate::dock::TerminalTab;
 use crate::draft::Draft;
@@ -344,8 +346,9 @@ pub struct Message {
 /// A question of a form the reader answered, with the answer, or nothing when it was skipped.
 pub type Answered = (String, Option<String>);
 
-/// One thing the agent did on the way to a reply.
+/// One thing the agent did on the way to a reply; most are tool uses, so the tool use is kept unboxed.
 #[derive(Clone, Debug, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum Step {
     /// What the agent thought.
     Thought(Thought),
@@ -391,6 +394,8 @@ pub struct ToolUse {
     pub parent: Option<String>,
     /// The kind of subagent it starts, when it starts one.
     pub agent: Option<String>,
+    /// The git worktree of its own the subagent it starts works in, and what became of its changes, when it works apart from the agent.
+    pub worktree: Option<Box<Worktree>>,
 }
 
 impl ToolUse {

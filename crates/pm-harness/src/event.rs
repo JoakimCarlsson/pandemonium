@@ -3,8 +3,8 @@
 use serde_json::{Value, json};
 
 pub use omc_wire::{
-    Alternative, Background, Choice, Diff, Inquiry, Kind, Part, Permission, Pick, PlanStep,
-    Progress, Question, Reply, Setting, Slash, Tool, ToolState, Usage, Verdict,
+    Alternative, Background, Choice, Diff, Inquiry, Kind, Merge, Part, Permission, Pick, PlanStep,
+    Progress, Question, Reply, Setting, Slash, Tool, ToolState, Usage, Verdict, Worktree,
 };
 
 /// What an agent did, in the order it did it.

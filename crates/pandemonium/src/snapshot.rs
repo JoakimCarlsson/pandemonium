@@ -22,8 +22,8 @@ use pm_components::state::{
 use pm_components::state::{LOCATION, SETTINGS};
 use pm_components::tree_actions::{TREE_NEW_FOLDER, TreeTarget};
 use pm_harness::{
-    Alternative, Background, Choice, Diff, Discovery, Event, Inquiry, Kind, Permission, Pick,
-    PlanStep, Progress, Question, Setting, Slash, Tool, ToolState, Verdict,
+    Alternative, Background, Choice, Diff, Discovery, Event, Inquiry, Kind, Merge, Permission,
+    Pick, PlanStep, Progress, Question, Setting, Slash, Tool, ToolState, Verdict, Worktree,
 };
 use pm_input::{FocusId, PointerState};
 use pm_pages::{ADD_PROJECT, HISTORY, PROMPT, SEND, Screen, TAB_DIFF, TERMINAL, WorkspaceState};
@@ -266,6 +266,8 @@ pub enum Shot {
     AgentsExpanded,
     /// The expanded panel scrolled to its last rows.
     AgentsScrolled,
+    /// The open panel of subagents working in git worktrees of their own: one whose changes were applied, one still at work and one whose changes conflicted.
+    AgentsWorktrees,
     /// A conversation whose agent is on a turn with prompts queued behind it and another being written.
     Queued,
     /// The same conversation with a long, multi-line prompt waiting, shown in full.
@@ -3340,6 +3342,9 @@ impl Shot {
             Self::Agents => {
                 Screen::Workspace(live(Turn::Background).after(FocusId(SUBAGENTS_CHIP.0)))
             }
+            Self::AgentsWorktrees => {
+                Screen::Workspace(live(Turn::Isolated).after(FocusId(SUBAGENTS_CHIP.0)))
+            }
             Self::AgentsExpanded | Self::AgentsScrolled => {
                 let mut state = live(Turn::Background);
                 let session = state.open_index().unwrap();
@@ -3354,6 +3359,7 @@ impl Shot {
                         diff: None,
                         output: None,
                         agent: None,
+                        worktree: None,
                     }));
                 }
                 let (reply, position, _) = state.sessions[session].subagents().into_iter()
@@ -3962,6 +3968,8 @@ enum Turn {
     Working,
     /// The agent finished it with subagents and a command left running.
     Background,
+    /// The agent finished it like [`Turn::Background`], its subagents working in git worktrees of their own and a third one ended.
+    Isolated,
 }
 
 /// A conversation on a turn, with two prompts waiting behind it and a third being written.
@@ -4028,6 +4036,7 @@ fn restored() -> WorkspaceState {
         output: None,
         parent: None,
         agent: None,
+        worktree: None,
     };
     let done = |id: &str, output: &str, diff: Option<Diff>| {
         Event::Tool(Tool {
@@ -4040,6 +4049,7 @@ fn restored() -> WorkspaceState {
             output: Some(output.to_owned()),
             parent: None,
             agent: None,
+            worktree: None,
         })
     };
     let prompted = |text: &str, turn: u64| Event::Prompted {
@@ -4151,6 +4161,7 @@ fn live(turn: Turn) -> WorkspaceState {
         output: None,
         parent: None,
         agent: None,
+        worktree: None,
     };
     let mut state = WorkspaceState::new(&projects())
         .edited(
@@ -4312,7 +4323,7 @@ fn live(turn: Turn) -> WorkspaceState {
         }));
     } else if turn == Turn::Finished {
         events.push(Event::Finished(None));
-    } else if turn == Turn::Background {
+    } else if matches!(turn, Turn::Background | Turn::Isolated) {
         let agent = |id: &str, title: &str| Tool {
             state: Some(ToolState::Running),
             agent: Some("explore".to_owned()),
@@ -4341,14 +4352,61 @@ fn live(turn: Turn) -> WorkspaceState {
                 running: true,
                 call: Some("s1".to_owned()),
             }),
-            Event::Finished(None),
         ]);
+        if turn == Turn::Isolated {
+            events.extend(worktrees());
+        }
+        events.push(Event::Finished(None));
     }
     let asked = state.sessions.len() - 1;
     for event in events {
         state = state.heard(asked, event);
     }
     state
+}
+
+/// What the agent says of the subagents of [`Turn::Background`] working in git worktrees of their own: the first ended and its changes were applied, the second still works, and a third ended with changes that conflicted.
+fn worktrees() -> Vec<Event> {
+    let apart = |merge: Option<Merge>| {
+        Some(Box::new(Worktree {
+            path: "/home/reader/.cache/oh-my-crab/worktrees/c1/1/pandemonium".to_owned(),
+            merge,
+        }))
+    };
+    let update = |id: &str, state: Option<ToolState>, merge: Option<Merge>| Tool {
+        id: id.to_owned(),
+        title: None,
+        kind: None,
+        state,
+        target: None,
+        diff: None,
+        output: None,
+        parent: None,
+        agent: None,
+        worktree: apart(merge),
+    };
+    let applied = Merge::Applied {
+        files: ["src/session.rs", "src/root.rs", "src/lib.rs"]
+            .map(str::to_owned)
+            .to_vec(),
+    };
+    let conflicted = Merge::Conflicted {
+        patch: "/home/reader/.cache/oh-my-crab/output/c1/worktree-patch-1.log".to_owned(),
+        files: vec!["src/session.rs".to_owned()],
+    };
+    [
+        update("a1", Some(ToolState::Done), Some(applied)),
+        update("a2", None, None),
+        Tool {
+            title: Some("Rename the session root accessor".to_owned()),
+            kind: Some(Kind::Other),
+            target: Some("Rename the session root accessor".to_owned()),
+            agent: Some("task".to_owned()),
+            ..update("a3", Some(ToolState::Done), Some(conflicted))
+        },
+    ]
+    .map(Event::Tool)
+    .to_vec()
 }
 
 /// The text of the Rust file the code snapshots write in.

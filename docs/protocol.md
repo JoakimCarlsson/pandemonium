@@ -1087,12 +1087,18 @@ Shapes used above:
 - **Setting:** `{id, category, name, current, picks: [{value, name, description}]}`.
   `category` is `model`, `mode`, `thought_level` or something else. Change one
   with `set` and a `value` from `picks`.
-- **Tool:** `{id, title, kind, state, target, diff, output, parent, agent}`,
+- **Tool:** `{id, title, kind, state, target, diff, output, parent, agent, worktree}`,
   each but `id` possibly null. `agent`, when set, says the call starts a
   subagent of that kind; `parent` is the `id` of the subagent call whose work
   this is. Both may be absent in older logs. `kind` is `Read`, `Edit`, `Search`, `Execute`, `Fetch` or
   `Other`. `state` is `Running`, `Done` or `Failed`. `diff` is
-  `{path, old, new}`.
+  `{path, old, new}`. `worktree`, absent in older logs, is set on a call that
+  starts a subagent working in a git worktree of its own: `{path, merge}`,
+  where `path` is the folder it works in and `merge` is null while it works,
+  then `{"Applied": {files}}`, `"Unchanged"`, `{"Conflicted": {patch, files}}`
+  or `{"Held": {reason, patch}}` once its changes were applied to the session's
+  worktree, were none, did not apply cleanly and were saved to `patch`, or were
+  not applied for `reason`.
 - **PlanStep:** `{text, progress}` with `progress` one of `Pending`, `Doing`,
   `Done`.
 - **Permission:** `{ticket, title, command, plan?, choices: [{id, name, verdict}]}`
