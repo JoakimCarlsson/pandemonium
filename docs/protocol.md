@@ -1092,6 +1092,7 @@ Events use serde's default form, one key naming the type.
 | `{"Unqueued": id}`            | The prompt queued under `id` stopped waiting: it is handed over (a `Prompted` event follows) or dropped.  |
 | `{"Rewound": {turn}}`         | The conversation went back to before the reader's turn `turn`: drop that turn and everything after it.   |
 | `{"Restored": {turn, files}}` | The files were put back as they were before the reader's turn `turn`. `files` are the paths that changed, from the root of the repository. |
+| `{"ToolSignIn": "address"}`   | A tool server the agent uses wants the reader to sign in to it with OAuth. Show the address in the conversation and, when the event is live rather than replayed history, open it in the reader's browser. The server's tools come with the next prompt once signed in. |
 
 Shapes used above:
 

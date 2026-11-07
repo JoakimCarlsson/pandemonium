@@ -99,6 +99,8 @@ pub enum Shot {
     ComposerLong,
     /// A session whose account needs signing in again.
     SignedOut,
+    /// A session whose agent is writing its reply when a tool server it uses asks the reader to sign in, with the address of the sign-in page in the reply.
+    ToolSignIn,
     /// The workspace showing the code a GitHub Copilot sign-in waits for the reader to enter.
     SignInCode,
     /// A session whose agent was at work when the window lost its connection to the agent's server.
@@ -2900,6 +2902,19 @@ impl Shot {
                     account: Some("work@example.com".to_owned()),
                 }))
             }
+            Self::ToolSignIn => Screen::Workspace(
+                workspace()
+                    .heard(0, Event::Prompted {
+                        text: "Which issues are still open?".to_owned(),
+                        files: Vec::new(),
+                        checkpoint: false,
+                        turn: 7,
+                    })
+                    .heard(0, Event::Said("Let me look at the issue tracker.".to_owned()))
+                    .heard(0, Event::ToolSignIn(
+                        "https://issues.example.com/oauth/authorize?response_type=code&client_id=crab&state=Gc7p".to_owned(),
+                    )),
+            ),
             Self::SignInCode => Screen::Workspace(workspace().with_sign_in_code(
                 "copilot",
                 "https://github.com/login/device".to_owned(),

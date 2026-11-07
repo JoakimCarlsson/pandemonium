@@ -146,6 +146,7 @@ fn main() {
             Some("extension-install") => Shot::ExtensionInstall,
             Some("composer-long") => Shot::ComposerLong,
             Some("signed-out") => Shot::SignedOut,
+            Some("tool-sign-in") => Shot::ToolSignIn,
             Some("sign-in-code") => Shot::SignInCode,
             Some("out-of-reach") => Shot::OutOfReach,
             Some("workspace") => Shot::Workspace,

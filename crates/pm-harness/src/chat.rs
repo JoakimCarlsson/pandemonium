@@ -701,4 +701,113 @@ mod tests {
         assert!(util.contains("pub fn assist() -> u32"), "{util}");
         let _ = std::fs::remove_dir_all(&folder);
     }
+    /// Serves, on a thread of its own, a tool server at `/mcp` on a free local port that wants an OAuth sign-in, with the metadata that leads to its sign-in page, until the program ends; returns its address.
+    fn fake_signing_in_tool_server() -> String {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let served = base.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let mut reader = BufReader::new(stream);
+                let mut first = String::new();
+                if reader.read_line(&mut first).is_err() {
+                    continue;
+                }
+                let mut length = 0;
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).is_err() || header.trim().is_empty() {
+                        break;
+                    }
+                    if let Some((name, value)) = header.split_once(':')
+                        && name.eq_ignore_ascii_case("content-length")
+                    {
+                        length = value.trim().parse().unwrap_or(0);
+                    }
+                }
+                let mut body = vec![0; length];
+                let _ = reader.read_exact(&mut body);
+                let target = first.split_whitespace().nth(1).unwrap_or_default();
+                let json = |status: &str, body: String| {
+                    format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                };
+                let answer = if target.starts_with("/.well-known/oauth-protected-resource") {
+                    json(
+                        "200 OK",
+                        format!(
+                            r#"{{"resource":"{served}/mcp","authorization_servers":["{served}"]}}"#
+                        ),
+                    )
+                } else if target.starts_with("/.well-known/oauth-authorization-server") {
+                    json(
+                        "200 OK",
+                        format!(
+                            r#"{{"issuer":"{served}","authorization_endpoint":"{served}/authorize","token_endpoint":"{served}/token","registration_endpoint":"{served}/register","response_types_supported":["code"],"code_challenge_methods_supported":["S256"]}}"#
+                        ),
+                    )
+                } else if target.starts_with("/register") {
+                    json(
+                        "201 Created",
+                        r#"{"client_id":"pandemonium-test"}"#.to_owned(),
+                    )
+                } else {
+                    format!(
+                        "HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Bearer resource_metadata=\"{served}/.well-known/oauth-protected-resource\"\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    )
+                };
+                let _ = reader.into_inner().write_all(answer.as_bytes());
+            }
+        });
+        base
+    }
+
+    /// A tool server that wants an OAuth sign-in while a real conversation opens makes the harness send its sign-in page, which the app keeps as its tool sign-in event, the address leading to the fake server's own authorization page; no model is asked.
+    #[test]
+    #[ignore = "starts the tool servers the user's own files set up beside the fake one"]
+    fn live_tool_sign_in_reaches_the_app() {
+        let base = fake_signing_in_tool_server();
+        let folder =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../build/pm-harness-live-sign-in");
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(folder.join("home")).unwrap();
+        let chat = Chat::start(
+            agents()[0],
+            folder.clone(),
+            Some(folder.join("home")),
+            Given {
+                tools: vec![ToolServer {
+                    name: "fake".to_owned(),
+                    reach: omc_wire::Reach::Http {
+                        url: format!("{base}/mcp"),
+                        headers: Vec::new(),
+                    },
+                }],
+                ..Given::default()
+            },
+            Arc::new(|| {}),
+        );
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        let mut address = None;
+        while address.is_none() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(100));
+            for event in chat.events() {
+                eprintln!("EVENT {event:?}");
+                if let Event::ToolSignIn(page) = event {
+                    address = Some(page);
+                }
+            }
+        }
+        chat.stop();
+        let _ = std::fs::remove_dir_all(&folder);
+        let address = address.expect("no tool sign-in reached the app");
+        assert!(
+            address.starts_with(&format!("{base}/authorize?")),
+            "{address}"
+        );
+        assert!(address.contains("code_challenge_method=S256"), "{address}");
+    }
 }

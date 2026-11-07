@@ -91,6 +91,7 @@ impl Session {
             }
             Event::Rewound { turn } => self.rewound(turn),
             Event::Restored { turn, files } => self.files_restored(turn, files.len()),
+            Event::ToolSignIn(address) => self.sign_in_wanted(&address),
         }
     }
 
@@ -177,6 +178,29 @@ impl Session {
             "Restored {count} {files} to how they were before turn {}.",
             turn + 1
         ));
+        note.duration = Some(String::new());
+        self.messages.push(note);
+    }
+
+    /// Says that a tool server the agent uses wants the reader to sign in at `address`, which opens in their browser: in the reply being written, as a paragraph of its own, or as a note of its own between turns.
+    fn sign_in_wanted(&mut self, address: &str) {
+        let notice = format!(
+            "A tool server asks you to sign in. Its sign-in page opens in your browser; if it did not, open {address}"
+        );
+        let writing = self
+            .messages
+            .last()
+            .is_some_and(|last| !last.from_user && last.duration.is_none());
+        if writing {
+            let separator = if self.reply().text.is_empty() {
+                ""
+            } else {
+                "\n\n"
+            };
+            self.say(&format!("{separator}{notice}"));
+            return;
+        }
+        let mut note = Message::reply(&notice);
         note.duration = Some(String::new());
         self.messages.push(note);
     }
@@ -470,6 +494,44 @@ mod tests {
         assert!(
             matches!(&reply.steps[0], Step::Thought(thought) if thought.text == "The user says hello.")
         );
+    }
+
+    /// A tool server's sign-in page shows in the conversation with its address: as a note of its own between turns, and as a paragraph of the reply while the agent is writing one, which goes on in the same reply and ends normally.
+    #[test]
+    fn a_tool_sign_in_shows_its_address() {
+        let address = "http://127.0.0.1:4567/authorize?state=x";
+        let mut session = Session::started("Test", 0, "Hello");
+        session.hear(Event::Finished(None));
+        let before = session.messages.len();
+        session.hear(Event::ToolSignIn(address.to_owned()));
+        assert_eq!(session.messages.len(), before + 1);
+        let note = session.messages.last().unwrap();
+        assert!(
+            note.text.contains(address) && note.duration.is_some(),
+            "{}",
+            note.text
+        );
+        session.hear(Event::Prompted {
+            text: "Go on".to_owned(),
+            files: Vec::new(),
+            checkpoint: false,
+            turn: 1,
+        });
+        session.hear(Event::Said("Working on it.".to_owned()));
+        session.hear(Event::ToolSignIn(address.to_owned()));
+        session.hear(Event::Said(" Done.".to_owned()));
+        session.hear(Event::Finished(None));
+        let reply = session.messages.last().unwrap();
+        assert!(
+            reply
+                .text
+                .starts_with("Working on it.\n\nA tool server asks you to sign in."),
+            "{}",
+            reply.text
+        );
+        assert!(reply.text.ends_with("Done."), "{}", reply.text);
+        assert!(reply.duration.is_some());
+        assert_eq!(session.status, Status::Idle);
     }
 
     /// Authentication failures stay out of the transcript and clear after login.

@@ -1846,6 +1846,9 @@ impl Work {
                 | Event::Restored { .. }
         );
         let finished = live && matches!(event, Event::Finished(_));
+        if live && let Event::ToolSignIn(address) = &event {
+            open_sign_in(address);
+        }
         model.update(|screen| screen.hear_in_place(session, event));
         let history_ends = !live && Some(&seq) >= self.history.get(&key);
         if files_moved && !live {
@@ -2781,4 +2784,11 @@ fn show_in_file_manager(directory: &str) {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn();
+}
+
+/// Opens the sign-in page at `address` a tool server of an agent wants, in the reader's browser on this machine; a page that cannot be opened is reported on standard error, and the session still shows its address.
+fn open_sign_in(address: &str) {
+    if let Err(reason) = pm_harness::open_address(address) {
+        eprintln!("could not open a tool server's sign-in page: {reason}");
+    }
 }

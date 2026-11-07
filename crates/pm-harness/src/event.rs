@@ -99,6 +99,8 @@ pub enum Event {
         /// What the reader decided, or nothing when the request was dropped unanswered.
         verdict: Option<Verdict>,
     },
+    /// A tool server the agent uses wants the reader to sign in to it, at this web address, which a client opens in the reader's browser; the server's tools come with the next prompt once they have.
+    ToolSignIn(String),
 }
 
 /// What an agent says about itself when a conversation is opened.
@@ -199,11 +201,8 @@ impl Event {
             Wire::Finished(failure) => Some(Self::Finished(failure)),
             Wire::SignedOut { reason, account } => Some(Self::SignedOut { reason, account }),
             Wire::SignedIn => Some(Self::SignedIn),
-            Wire::LoginUrl(_)
-            | Wire::LoginCode { .. }
-            | Wire::Resumed(_)
-            | Wire::Language(_)
-            | Wire::Queued(_) => None,
+            Wire::LoginUrl(address) => Some(Self::ToolSignIn(address)),
+            Wire::LoginCode { .. } | Wire::Resumed(_) | Wire::Language(_) | Wire::Queued(_) => None,
             Wire::Trust(request) => Some(Self::Trust(request)),
             Wire::Failed(reason) => Some(Self::Failed(reason)),
             Wire::Titled(title) => Some(Self::Titled(title)),
@@ -217,6 +216,20 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+
+    /// The sign-in page a tool server wants opened, which the harness sends during a conversation as a line of its wire protocol, becomes the app's sign-in event, and survives the trip through the session log's encoding.
+    #[test]
+    fn a_tool_sign_in_is_kept() {
+        let address = "http://127.0.0.1:4567/authorize?state=x".to_owned();
+        let line = omc_wire::encode(&omc_wire::Event::LoginUrl(address.clone())).unwrap();
+        let heard = Event::from_harness(omc_wire::decode(&line).unwrap());
+        assert_eq!(heard, Some(Event::ToolSignIn(address.clone())));
+        let kept = serde_json::to_string(&heard).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Option<Event>>(&kept).unwrap(),
+            Some(Event::ToolSignIn(address))
+        );
+    }
 
     /// A trust request the harness sends as a line of its wire protocol becomes the app's trust event whole, and survives the trip through the session log's encoding.
     #[test]
