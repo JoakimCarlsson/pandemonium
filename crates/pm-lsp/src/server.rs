@@ -327,6 +327,7 @@ fn capabilities() -> Value {
             "typeDefinition": {"linkSupport": true},
             "implementation": {"linkSupport": true},
             "references": {},
+            "documentSymbol": {"hierarchicalDocumentSymbolSupport": true},
             "documentHighlight": {},
             "signatureHelp": {
                 "signatureInformation": {
@@ -814,10 +815,51 @@ impl LanguageServer {
     }
 
     /// Whether the server answers `provider`, one of the abilities it named when it started.
-    fn can(&self, provider: &str) -> bool {
+    pub(crate) fn can(&self, provider: &str) -> bool {
         self.abilities
             .get(provider)
             .is_some_and(|ability| !ability.is_null() && ability.as_bool() != Some(false))
+    }
+
+    /// How far the server has got with the work it reports, such as loading the project.
+    pub(crate) fn load(&self) -> crate::types::Load {
+        let working = self
+            .work
+            .working
+            .lock()
+            .is_ok_and(|working| !working.is_empty());
+        if working {
+            crate::types::Load::Working
+        } else if self.work.began.load(Ordering::SeqCst) == 0 {
+            crate::types::Load::NotBegun
+        } else {
+            crate::types::Load::Idle
+        }
+    }
+
+    /// The symbols of the file at `uri`, which is the file at `file`, outermost first and each followed by those inside it.
+    pub(crate) fn document_symbols(
+        &self,
+        uri: &str,
+        file: &Path,
+    ) -> Result<Vec<crate::types::Outline>, String> {
+        let answer = self.rpc.request(
+            "textDocument/documentSymbol",
+            json!({"textDocument": {"uri": uri}}),
+            ANSWERING,
+        )?;
+        Ok(crate::outline::document_symbols(&answer, file))
+    }
+
+    /// The symbols of the project whose names match `query`, with their kinds, as the server finds them.
+    pub(crate) fn project_symbols(
+        &self,
+        query: &str,
+    ) -> Result<Vec<crate::types::Outline>, String> {
+        let answer = self
+            .rpc
+            .request("workspace/symbol", json!({"query": query}), ANSWERING)?;
+        Ok(crate::outline::project_symbols(&answer))
     }
 
     /// Whether the server formats a stretch of a file.

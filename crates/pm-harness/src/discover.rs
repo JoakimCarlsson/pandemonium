@@ -35,6 +35,7 @@ pub fn discover(agent: Agent) -> Result<Discovery, String> {
         before: None,
         defaults: Vec::new(),
         languages: false,
+        navigation: false,
     }))?;
     let deadline = Instant::now() + PATIENCE;
     let mut settings = None;

@@ -307,7 +307,7 @@ fn drive(
     }
 }
 
-/// The request that opens the conversation of `agent` in `directory`, keeping its login in `home`, with what it is `given`, and the app's language servers seen from that folder when it is given them; the harness is told it is offered language services exactly when it is, so that it starts no servers of its own beside the app's.
+/// The request that opens the conversation of `agent` in `directory`, keeping its login in `home`, with what it is `given`, and the app's language servers seen from that folder when it is given them; the harness is told it is offered language services, which answer its questions about code too, exactly when it is, so that it starts no servers of its own beside the app's.
 fn opening(
     agent: Agent,
     directory: PathBuf,
@@ -319,6 +319,7 @@ fn opening(
         .map(|servers| Arc::new(HubLanguages::new(servers.0, directory.clone())));
     let opening = Opening {
         languages: languages.is_some(),
+        navigation: languages.is_some(),
         directory,
         home,
         provider: agent.provider.to_owned(),
@@ -396,13 +397,14 @@ mod tests {
             ..Given::default()
         };
         let (offered, languages) = opening(agents()[0], PathBuf::from("/w"), None, given);
-        assert!(offered.languages);
+        assert!(offered.languages && offered.navigation);
         assert!(languages.is_some());
         let (alone, languages) = opening(agents()[0], PathBuf::from("/w"), None, Given::default());
-        assert!(!alone.languages);
+        assert!(!alone.languages && !alone.navigation);
         assert!(languages.is_none());
         let line = omc_wire::encode(&Command::Open(offered)).unwrap();
         assert!(line.contains("\"languages\":true"), "{line}");
+        assert!(line.contains("\"navigation\":true"), "{line}");
     }
 
     /// A language request the harness sends as a line of its wire protocol is answered from the app's hub with a line the harness reads back as the answer under the same ticket: the hub formats the file and, once its server has caught up with the new text, reports the error in it. Skipped when Rust is not installed in the app.
@@ -609,5 +611,94 @@ mod tests {
             "{outputs:#?}"
         );
         assert_eq!(written, "pub fn answer() -> u32 {\n    42\n}\n");
+    }
+    /// Given the app's language servers, a real agent's `lsp references` and `lsp rename` in a project of two files are answered by them over the harness's language requests: the references name both files, the rename is approved through the harness's question and written by the harness from the edits the app's server made, and the files on disk end up renamed; nothing of the harness's own servers is involved. Prints what the agent did.
+    #[test]
+    #[ignore = "needs a login and Rust installed in the app"]
+    fn live_lsp_is_answered_by_the_apps_language_servers() {
+        let folder =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../build/pm-harness-live-lsp");
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(folder.join("src")).unwrap();
+        std::fs::write(
+            folder.join("Cargo.toml"),
+            "[package]\nname = \"livelsp\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            folder.join("src/lib.rs"),
+            "pub mod util;\n\n/// Two ones.\npub fn total() -> u32 {\n    util::helper() + util::helper()\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            folder.join("src/util.rs"),
+            "/// Gives one.\npub fn helper() -> u32 {\n    1\n}\n",
+        )
+        .unwrap();
+        let folder = folder.canonicalize().unwrap();
+        let chat = Chat::start(
+            agents()[0],
+            folder.clone(),
+            None,
+            Given {
+                languages: Some(crate::LanguageServers(hub())),
+                ..Given::default()
+            },
+            Arc::new(|| {}),
+        );
+        chat.set("model", "claude-haiku-5-5");
+        chat.prompt(
+            "First call the lsp tool with action references for the symbol helper on line 2 of src/util.rs. Then call the lsp tool with action rename to rename that same helper to assist. Use no other tools. Then reply with one line saying how many references you found.",
+            &[],
+            1,
+            "",
+        );
+        let mut outputs = Vec::new();
+        let mut asked = Vec::new();
+        let deadline = std::time::Instant::now() + Duration::from_secs(300);
+        let mut finished = false;
+        while !finished && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(100));
+            for event in chat.events() {
+                if let Event::Ask(question) = &event {
+                    eprintln!("ASK {}", question.title);
+                    asked.push(question.title.clone());
+                    chat.choose(question.ticket, Some("allow".to_owned()));
+                }
+                if let Event::Tool(tool) = &event
+                    && let Some(output) = &tool.output
+                {
+                    eprintln!(
+                        "TOOL {}\n{output}\n",
+                        tool.title.clone().unwrap_or_default()
+                    );
+                    outputs.push(output.clone());
+                }
+                if let Event::Said(text) = &event {
+                    eprint!("{text}");
+                }
+                finished |= matches!(event, Event::Finished(_));
+            }
+        }
+        chat.stop();
+        let lib = std::fs::read_to_string(folder.join("src/lib.rs")).unwrap();
+        let util = std::fs::read_to_string(folder.join("src/util.rs")).unwrap();
+        assert!(finished, "{outputs:#?}");
+        assert!(
+            outputs.iter().any(|output| output.contains("src/lib.rs")
+                && output.contains("src/util.rs")
+                && output.contains("reference")),
+            "{outputs:#?}"
+        );
+        assert!(
+            outputs
+                .iter()
+                .any(|output| output.starts_with("Renamed") && output.contains("tag")),
+            "{outputs:#?}"
+        );
+        assert!(!asked.is_empty(), "the rename was not approved first");
+        assert_eq!(lib.matches("util::assist()").count(), 2, "{lib}");
+        assert!(util.contains("pub fn assist() -> u32"), "{util}");
+        let _ = std::fs::remove_dir_all(&folder);
     }
 }

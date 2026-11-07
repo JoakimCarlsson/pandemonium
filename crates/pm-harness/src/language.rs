@@ -1,6 +1,8 @@
-//! Answering the harness's language requests from the app's own language servers, so that the agent's edits are formatted and checked by the servers already running and no second set is started for it.
+//! Answering the harness's language requests from the app's own language servers, so that the agent's edits are formatted and checked by the servers already running and no second set is started for it, and its questions about code are answered by them too.
 
-use std::collections::HashMap;
+mod navigation;
+
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -64,6 +66,8 @@ pub(crate) struct HubLanguages {
     root: PathBuf,
     /// The files this conversation opened on the hub, by path from `root`.
     opened: Mutex<HashMap<String, Opened>>,
+    /// The languages whose servers have been seen to finish loading the project, so that a question about code waits for that only the first time.
+    loaded: Mutex<HashSet<String>>,
 }
 
 impl HubLanguages {
@@ -73,6 +77,7 @@ impl HubLanguages {
             hub,
             root,
             opened: Mutex::new(HashMap::new()),
+            loaded: Mutex::new(HashSet::new()),
         }
     }
 
@@ -135,6 +140,39 @@ impl HubLanguages {
             LanguageAsk::Diagnostics { paths, wait_ms } => LanguageAnswer::Diagnostics {
                 diagnostics: self.diagnostics(paths, Duration::from_millis(*wait_ms)),
             },
+            LanguageAsk::Definition { at } => self.locate(
+                at,
+                pm_lsp::Seek::Definition,
+                "definitionProvider",
+                "definitions",
+            ),
+            LanguageAsk::TypeDefinition { at } => self.locate(
+                at,
+                pm_lsp::Seek::TypeDefinition,
+                "typeDefinitionProvider",
+                "type definitions",
+            ),
+            LanguageAsk::Implementation { at } => self.locate(
+                at,
+                pm_lsp::Seek::Implementation,
+                "implementationProvider",
+                "implementations",
+            ),
+            LanguageAsk::References { at } => self.locate(
+                at,
+                pm_lsp::Seek::References,
+                "referencesProvider",
+                "references",
+            ),
+            LanguageAsk::Hover { at } => self.hover(at),
+            LanguageAsk::DocumentSymbols { path } => self.document_symbols(path),
+            LanguageAsk::WorkspaceSymbols { query, near } => {
+                self.workspace_symbols(query, near.as_deref())
+            }
+            LanguageAsk::WorkspaceDiagnostics { wait_ms } => {
+                self.workspace_diagnostics(Duration::from_millis(*wait_ms))
+            }
+            LanguageAsk::Rename { at, new_name } => self.rename(at, new_name),
         }
     }
 
@@ -293,23 +331,28 @@ fn apply(text: &str, version: i32, mut edits: Vec<TextChange>) -> Option<String>
     Some(buffer.text().to_owned())
 }
 
+/// The character, counted from one, at which the place `units` UTF-16 code units into line `line` (counted from nought) of `text` falls, as the harness counts characters; a place past the end of the line is just after its last character.
+fn column_of(text: &str, line: u32, units: u32) -> u32 {
+    let line_text = text.lines().nth(line as usize).unwrap_or_default();
+    let mut counted = 0;
+    let mut column = 1;
+    for character in line_text.chars() {
+        if counted >= units {
+            break;
+        }
+        counted += u32::try_from(character.len_utf16()).unwrap_or(2);
+        column += 1;
+    }
+    column
+}
+
 /// `diagnostic`, which a server said about the file at `path` holding `text`, in the harness's form: placed by line and character, both counted from one.
 fn convert(diagnostic: &pm_lsp::Diagnostic, path: &Path, text: &str) -> Diagnostic {
     let start = diagnostic.span.start;
-    let line_text = text.lines().nth(start.line as usize).unwrap_or_default();
-    let mut units = 0;
-    let mut column = 1;
-    for character in line_text.chars() {
-        if units >= start.character {
-            break;
-        }
-        units += u32::try_from(character.len_utf16()).unwrap_or(2);
-        column += 1;
-    }
     Diagnostic {
         path: path.to_path_buf(),
         line: start.line + 1,
-        column,
+        column: column_of(text, start.line, start.character),
         severity: match diagnostic.severity {
             pm_lsp::Severity::Error => Severity::Error,
             pm_lsp::Severity::Warning => Severity::Warning,

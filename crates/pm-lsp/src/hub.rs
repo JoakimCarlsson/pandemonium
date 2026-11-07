@@ -20,8 +20,8 @@ use crate::server::{
 };
 use crate::types::{
     CodeAction, CodeLens, ColorPresentation, ColorSwatch, Completion, Diagnostic, DocumentLink,
-    FileEdit, FoldRange, Hover, InlayHint, InlineValue, LinkTarget, Location, Problem,
-    RenameTarget, Seek, SemanticToken, Signature, TextChange, Triggers,
+    FileEdit, FoldRange, Hover, InlayHint, InlineValue, LinkTarget, Load, Location, Outline,
+    Problem, RenameTarget, Seek, SemanticToken, Signature, TextChange, Triggers,
 };
 use crate::uri::{file_uri, path_of};
 
@@ -1672,6 +1672,104 @@ impl Hub {
             return Err(format!("nothing at this place can be renamed to {name}"));
         }
         self.share_edits(root, &[edit])
+    }
+
+    /// The language server the open file at `path` of the project at `root` is on, when it is on one.
+    fn server_of(&self, root: &Path, path: &str) -> Option<Arc<LanguageServer>> {
+        self.documents.lock().ok().and_then(|documents| {
+            documents
+                .get(&(root.to_path_buf(), path.to_owned()))
+                .and_then(|document| document.server.clone())
+        })
+    }
+
+    /// Whether the language server of the open file at `path` of the project at `root` answers `provider`, one of the abilities a server names when it starts, such as `referencesProvider`; nothing when the file is on no server.
+    pub fn offers(&self, root: &Path, path: &str, provider: &str) -> Option<bool> {
+        self.server_of(root, path)
+            .map(|server| server.can(provider))
+    }
+
+    /// How far the language server of the open file at `path` of the project at `root` has got with the work it reports, such as loading the project; nothing when the file is on no server.
+    pub fn load(&self, root: &Path, path: &str) -> Option<Load> {
+        self.server_of(root, path).map(|server| server.load())
+    }
+
+    /// The symbols of the open file at `path` of the project at `root`, outermost first and each followed by those inside it, once the file reaches `version`.
+    ///
+    /// # Errors
+    ///
+    /// Fails with the reason when the file is not open, is on no server, or the server fails.
+    pub fn document_symbols(
+        &self,
+        root: &Path,
+        path: &str,
+        version: i32,
+    ) -> Result<Vec<Outline>, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
+            return Err("no language server reads this file".to_owned());
+        };
+        let file = root.join(path);
+        server.document_symbols(&file_uri(&file), &file)
+    }
+
+    /// The symbols of the project at `root` whose names match `query`, with their kinds and files, as the language server of the open file at `path` finds them.
+    ///
+    /// # Errors
+    ///
+    /// Fails with the reason when the file is on no server or the server fails.
+    pub fn project_symbols(
+        &self,
+        root: &Path,
+        path: &str,
+        query: &str,
+    ) -> Result<Vec<Outline>, String> {
+        let server = self
+            .server_of(root, path)
+            .ok_or_else(|| "no language server reads this file".to_owned())?;
+        server.project_symbols(query)
+    }
+
+    /// The edits that rename the thing at `position` of the open file at `path` of the project at `root` to `name`, once the file reaches `version`, by file as an absolute path, each a stretch of the file as the server has it and what replaces it; nothing is written, to disk or to an open file.
+    ///
+    /// # Errors
+    ///
+    /// Fails with the reason when the file is on no server, the server fails or finds nothing to rename there, or the rename would create, move or delete files.
+    pub fn rename_edits(
+        &self,
+        root: &Path,
+        path: &str,
+        version: i32,
+        position: Position,
+        name: &str,
+    ) -> Result<Vec<(PathBuf, Vec<TextChange>)>, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
+            return Err("no language server reads this file".to_owned());
+        };
+        let edit = server.rename(&file_uri(&root.join(path)), position, name)?;
+        if edit.is_null() {
+            return Err(format!("nothing at this place can be renamed to {name}"));
+        }
+        let operation = edit
+            .get("documentChanges")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .find_map(|change| change.get("kind").and_then(Value::as_str));
+        if let Some(operation) = operation {
+            return Err(format!(
+                "the rename would also {operation} a file, which is not done here"
+            ));
+        }
+        file_changes(&edit)
+            .into_iter()
+            .map(|(address, changes)| {
+                path_of(&address)
+                    .map(|file| (file, changes))
+                    .ok_or_else(|| format!("the rename names {address}, which is not a file"))
+            })
+            .collect()
     }
 
     /// The servers running for the project at `root`.
