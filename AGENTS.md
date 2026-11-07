@@ -60,6 +60,13 @@ local paths. Never commit those lines; CI builds with `--locked` and fails on
 them. To move to a new oh-my-crab release, remove the file, change `tag` in
 both `Cargo.toml` files, build once so `Cargo.lock` follows, and commit.
 
+A release always builds against a published oh-my-crab tag. To release
+pandemonium with unreleased oh-my-crab work, release oh-my-crab first, then
+move to its tag as above. `scripts/release.sh` stops when the crates name
+different tags, when the tag is not published on GitHub, or when any `omc-*`
+entry in `Cargo.lock` does not come from that tag, which catches a local
+override and a stale lock.
+
 ## Verification
 
 - Put build output and snapshots in the git-ignored `build/` directory. Set
