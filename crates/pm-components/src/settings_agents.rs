@@ -124,16 +124,22 @@ impl WorkspaceState {
     }
 }
 
-/// How an agent that signs in as `sign_in` does, in the words under its name; `keyed` says it also takes an API key.
-fn how_it_signs_in(sign_in: Option<SignIn>, keyed: bool) -> &'static str {
-    match sign_in {
-        Some(SignIn::Browser) if keyed => "Signs in through your browser, or uses an API key",
-        Some(SignIn::DeviceCode) if keyed => "Signs in with a one-time code, or uses an API key",
-        Some(SignIn::Browser) => "Signs in through your browser",
-        Some(SignIn::DeviceCode) => "Signs in with a one-time code",
-        Some(SignIn::ApiKey) => "Uses an API key",
-        Some(SignIn::None) => "Runs on a local server, no sign-in needed",
-        None => "",
+/// How an agent that signs in as `sign_in` does, in the words under its name; `keyed` says it also takes an API key, and `credentials` names the cloud credentials it reads instead of signing in here, such as Google Cloud's.
+fn how_it_signs_in(sign_in: Option<SignIn>, keyed: bool, credentials: Option<&str>) -> String {
+    match (sign_in, credentials) {
+        (Some(SignIn::ApiKey), Some(credentials)) => format!("Uses an API key, or {credentials}"),
+        (Some(SignIn::None), Some(credentials)) => format!("Uses {credentials}"),
+        (Some(SignIn::Browser), _) if keyed => {
+            "Signs in through your browser, or uses an API key".to_owned()
+        }
+        (Some(SignIn::DeviceCode), _) if keyed => {
+            "Signs in with a one-time code, or uses an API key".to_owned()
+        }
+        (Some(SignIn::Browser), _) => "Signs in through your browser".to_owned(),
+        (Some(SignIn::DeviceCode), _) => "Signs in with a one-time code".to_owned(),
+        (Some(SignIn::ApiKey), None) => "Uses an API key".to_owned(),
+        (Some(SignIn::None), None) => "Runs on a local server, no sign-in needed".to_owned(),
+        (None, _) => String::new(),
     }
 }
 
@@ -196,13 +202,14 @@ fn inner_row() -> Node {
     flat_row().styles([pl(ROW_INSET)])
 }
 
-/// The top of an agent's card: its glyph, its name and how it signs in, `keyed` when it also takes an API key, and the switch that offers it for new sessions.
+/// The top of an agent's card: its glyph, its name and how it signs in, `keyed` when it also takes an API key and naming the cloud `credentials` it reads instead when it does, and the switch that offers it for new sessions.
 fn header(
     state: &WorkspaceState,
     index: usize,
     name: &str,
     sign_in: Option<SignIn>,
     keyed: bool,
+    credentials: Option<&str>,
 ) -> Node {
     let shown = state.agent_shown(index);
     let look = state.agent_look(index);
@@ -218,7 +225,7 @@ fn header(
                 .child(emblem(look.icon, !shown))
                 .child(titled(
                     name,
-                    how_it_signs_in(sign_in, keyed),
+                    &how_it_signs_in(sign_in, keyed, credentials),
                     if shown { Role::Text } else { Role::Muted },
                     badges,
                 )),
@@ -371,7 +378,15 @@ fn agent_card(state: &WorkspaceState, index: usize) -> Option<Node> {
     let agent = pm_harness::agent(&entry.id);
     let sign_in = agent.map(|agent| agent.sign_in);
     let keyed = agent.is_some_and(|agent| !agent.key_env.is_empty());
-    let mut rows = vec![header(state, index, &entry.name, sign_in, keyed)];
+    let credentials = agent.and_then(|agent| agent.credentials);
+    let mut rows = vec![header(
+        state,
+        index,
+        &entry.name,
+        sign_in,
+        keyed,
+        credentials,
+    )];
     match sign_in {
         Some(SignIn::Browser | SignIn::DeviceCode) => {
             rows.extend(account_rows(state, index, &entry.id));
@@ -444,6 +459,30 @@ mod tests {
                 .any(|outgoing| matches!(outgoing, Outgoing::SaveKey { key: None, .. }))
         );
         assert!(!state.agents_pressed(FocusId(1)));
+    }
+
+    /// A cloud provider that reads the cloud's own credentials says so instead of passing for a local server, one that also takes a key names both, and a local server keeps its words.
+    #[test]
+    fn cloud_providers_name_their_credentials() {
+        let label = |id: &str| {
+            let agent = pm_harness::agent(id).unwrap();
+            how_it_signs_in(
+                Some(agent.sign_in),
+                !agent.key_env.is_empty(),
+                agent.credentials,
+            )
+        };
+        assert_eq!(
+            label("vertex"),
+            "Uses Google Cloud credentials (gcloud or Application Default Credentials)"
+        );
+        assert!(
+            label("bedrock").starts_with("Uses an API key, or AWS credentials"),
+            "{}",
+            label("bedrock")
+        );
+        assert_eq!(label("ollama"), "Runs on a local server, no sign-in needed");
+        assert_eq!(label("openrouter"), "Uses an API key");
     }
 
     /// The default account can be signed in from its row.

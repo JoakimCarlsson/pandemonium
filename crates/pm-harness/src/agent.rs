@@ -29,6 +29,8 @@ pub struct Agent {
     pub sign_in: SignIn,
     /// The environment variables the provider reads an API key from, first first; empty when it takes none.
     pub key_env: &'static [String],
+    /// The cloud credentials the provider is reached with and where they come from, such as Google Cloud's, when it reads those instead of signing in here.
+    pub credentials: Option<&'static str>,
 }
 
 impl Agent {
@@ -42,6 +44,7 @@ impl Agent {
             provider,
             sign_in: info.sign_in,
             key_env: &info.key_env,
+            credentials: info.credentials.as_deref(),
         }
     }
 }
@@ -94,6 +97,21 @@ mod tests {
         assert_eq!(copilot.name, "GitHub Copilot");
         assert_eq!(copilot.product, None);
         assert_eq!(copilot.sign_in, SignIn::DeviceCode);
+        assert_eq!(copilot.credentials, None);
+        let vertex = agent("vertex").unwrap();
+        assert_eq!(vertex.sign_in, SignIn::None);
+        assert!(
+            vertex
+                .credentials
+                .is_some_and(|credentials| credentials.contains("Google Cloud"))
+        );
+        assert!(
+            agent("bedrock")
+                .unwrap()
+                .credentials
+                .is_some_and(|credentials| credentials.contains("AWS"))
+        );
+        assert_eq!(agent("ollama").unwrap().credentials, None);
         assert!(agent("nothing").is_none());
     }
 }

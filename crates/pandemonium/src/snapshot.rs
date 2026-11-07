@@ -369,6 +369,8 @@ pub enum Shot {
     SettingsAccounts(bool),
     /// The agents and their accounts in the settings window, scrolled down to the agents that keep no accounts and GitHub Copilot.
     SettingsAccountsScrolled,
+    /// The agents in the settings window scrolled to the end, where the cloud providers say which cloud credentials they read, at its narrowest when the flag is set.
+    SettingsAccountsCloud(bool),
     /// The same panel waiting for the accounts and organizations to clone from.
     Loading,
     /// The same panel on the accounts and organizations to clone from.
@@ -2542,6 +2544,7 @@ impl Shot {
                 | Self::SettingsForm
                 | Self::SettingsAccounts(_)
                 | Self::SettingsAccountsScrolled
+                | Self::SettingsAccountsCloud(_)
                 | Self::SettingsAccountsHidden
                 | Self::SettingsAccountsKey
         )
@@ -2558,10 +2561,11 @@ impl Shot {
                 | Self::SettingsMachine(true)
                 | Self::SettingsCompact(true)
                 | Self::SettingsAccounts(true)
+                | Self::SettingsAccountsCloud(true)
         )
     }
 
-    /// The settings shot `name` names: `settings` for the first section, `settings-` and a section's name for another, `settings-search`, `settings-picker`, `settings-machine` or `settings-compact`, each with `-narrow` after it for the window at its smallest.
+    /// The settings shot `name` names: `settings` for the first section, `settings-` and a section's name for another, `settings-search`, `settings-picker`, `settings-machine`, `settings-compact` or `settings-accounts-cloud`, each with `-narrow` after it for the window at its smallest.
     pub fn settings_named(name: &str) -> Option<Self> {
         let rest = name.strip_prefix("settings")?;
         let (rest, narrow) = match rest.strip_suffix("-narrow") {
@@ -2579,6 +2583,7 @@ impl Shot {
             "form" => Some(Self::SettingsForm),
             "accounts" => Some(Self::SettingsAccounts(narrow)),
             "accounts-scrolled" => Some(Self::SettingsAccountsScrolled),
+            "accounts-cloud" => Some(Self::SettingsAccountsCloud(narrow)),
             "accounts-hidden" => Some(Self::SettingsAccountsHidden),
             "accounts-key" => Some(Self::SettingsAccountsKey),
             "mcp" => Some(Self::SettingsMcp),
@@ -3261,6 +3266,12 @@ impl Shot {
                         .scrolled_settings(420.0, 420.0),
                 )
             }
+            Self::SettingsAccountsCloud(_) => Screen::Workspace(
+                welcome()
+                    .after(SETTINGS)
+                    .after(Section::AgentServers.id())
+                    .scrolled_settings(100_000.0, 100_000.0),
+            ),
             Self::SettingsAccountsHidden => Screen::Workspace(
                 hiding_local_agents(welcome())
                     .after(SETTINGS)
