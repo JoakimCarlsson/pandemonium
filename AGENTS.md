@@ -57,15 +57,32 @@ omc-context = { path = "../oh-my-crab/crates/omc-context" }
 
 While it exists, Cargo rewrites oh-my-crab's entries in `Cargo.lock` to the
 local paths. Never commit those lines; CI builds with `--locked` and fails on
-them. To move to a new oh-my-crab release, remove the file, change `tag` in
-both `Cargo.toml` files, build once so `Cargo.lock` follows, and commit.
+them. To keep them out of `git status`, tell git to ignore local changes to
+the lock:
 
-A release always builds against a published oh-my-crab tag. To release
-pandemonium with unreleased oh-my-crab work, release oh-my-crab first, then
-move to its tag as above. `scripts/release.sh` stops when the crates name
-different tags, when the tag is not published on GitHub, or when any `omc-*`
-entry in `Cargo.lock` does not come from that tag, which catches a local
-override and a stale lock.
+```sh
+git update-index --skip-worktree Cargo.lock
+```
+
+Undo that before committing a real lock change, pulling one, or releasing,
+since git then also leaves out lock changes you want.
+
+A release always builds against a published oh-my-crab tag, never the local
+checkout. To release pandemonium with unreleased oh-my-crab work:
+
+1. Release oh-my-crab with a new tag (see its `docs/development.md`).
+2. Turn the override off and restore the committed lock:
+   `rm -r .cargo && git update-index --no-skip-worktree Cargo.lock && git checkout Cargo.lock`.
+3. Change `tag` in `crates/pm-harness/Cargo.toml` and
+   `crates/pm-agent-library/Cargo.toml`, then build once so `Cargo.lock`
+   follows the new tag.
+4. Commit, then run `scripts/release.sh`.
+5. Create `.cargo/config.toml` again, and run the `--skip-worktree` command
+   again, to go back to developing against the local checkout.
+
+`scripts/release.sh` stops when the crates name different tags, when the tag
+is not published on GitHub, or when any `omc-*` entry in `Cargo.lock` does not
+come from that tag, which catches a local override and a stale lock.
 
 ## Verification
 
