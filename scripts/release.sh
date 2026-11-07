@@ -55,7 +55,7 @@ bump_version() {
 main() {
     [ $# -eq 1 ] || fail "usage: $0 <version>"
     version="${1#v}"
-    tag="v$version"
+    tag="$version"
     echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' \
         || fail "'$version' is not a semantic version"
 

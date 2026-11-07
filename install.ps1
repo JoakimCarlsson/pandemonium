@@ -32,6 +32,21 @@ $Binary = switch ($Component) {
 
 <#
 .SYNOPSIS
+Returns the tag the release of a version is published under: the bare version, or v followed by it for releases tagged before tags dropped the v.
+.PARAMETER Version
+The version, without a leading v.
+#>
+function Get-ReleaseTag([string]$Version) {
+    try {
+        Invoke-WebRequest -Uri "https://github.com/$Repo/releases/tag/$Version" -Method Head -UseBasicParsing | Out-Null
+        $Version
+    } catch {
+        "v$Version"
+    }
+}
+
+<#
+.SYNOPSIS
 Returns the version the latest release is tagged with, without the leading v.
 #>
 function Get-LatestVersion {
@@ -138,7 +153,7 @@ if ($Version -eq 'latest') { $Version = if ($Channel -eq 'preview') { Get-Latest
 $Version = $Version.TrimStart('v')
 
 $name = "$Binary-$Version-$Target"
-$tag = "v$Version"
+$tag = Get-ReleaseTag $Version
 $base = "https://github.com/$Repo/releases/download/$tag"
 $tmp = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid())
 New-Item -ItemType Directory -Path $tmp | Out-Null
