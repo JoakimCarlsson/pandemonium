@@ -124,9 +124,11 @@ impl WorkspaceState {
     }
 }
 
-/// How the agent at `agent` signs in, in the words under its name.
-fn how_it_signs_in(sign_in: Option<SignIn>) -> &'static str {
+/// How an agent that signs in as `sign_in` does, in the words under its name; `keyed` says it also takes an API key.
+fn how_it_signs_in(sign_in: Option<SignIn>, keyed: bool) -> &'static str {
     match sign_in {
+        Some(SignIn::Browser) if keyed => "Signs in through your browser, or uses an API key",
+        Some(SignIn::DeviceCode) if keyed => "Signs in with a one-time code, or uses an API key",
         Some(SignIn::Browser) => "Signs in through your browser",
         Some(SignIn::DeviceCode) => "Signs in with a one-time code",
         Some(SignIn::ApiKey) => "Uses an API key",
@@ -194,8 +196,14 @@ fn inner_row() -> Node {
     flat_row().styles([pl(ROW_INSET)])
 }
 
-/// The top of an agent's card: its glyph, its name and how it signs in, and the switch that offers it for new sessions.
-fn header(state: &WorkspaceState, index: usize, name: &str, sign_in: Option<SignIn>) -> Node {
+/// The top of an agent's card: its glyph, its name and how it signs in, `keyed` when it also takes an API key, and the switch that offers it for new sessions.
+fn header(
+    state: &WorkspaceState,
+    index: usize,
+    name: &str,
+    sign_in: Option<SignIn>,
+    keyed: bool,
+) -> Node {
     let shown = state.agent_shown(index);
     let look = state.agent_look(index);
     let badges = if shown {
@@ -210,7 +218,7 @@ fn header(state: &WorkspaceState, index: usize, name: &str, sign_in: Option<Sign
                 .child(emblem(look.icon, !shown))
                 .child(titled(
                     name,
-                    how_it_signs_in(sign_in),
+                    how_it_signs_in(sign_in, keyed),
                     if shown { Role::Text } else { Role::Muted },
                     badges,
                 )),
@@ -362,10 +370,15 @@ fn agent_card(state: &WorkspaceState, index: usize) -> Option<Node> {
     let entry = state.settings_servers.agents.get(index)?;
     let agent = pm_harness::agent(&entry.id);
     let sign_in = agent.map(|agent| agent.sign_in);
-    let mut rows = vec![header(state, index, &entry.name, sign_in)];
+    let keyed = agent.is_some_and(|agent| !agent.key_env.is_empty());
+    let mut rows = vec![header(state, index, &entry.name, sign_in, keyed)];
     match sign_in {
         Some(SignIn::Browser | SignIn::DeviceCode) => {
             rows.extend(account_rows(state, index, &entry.id));
+            let keys = agent.map_or(&[][..], |agent| agent.key_env);
+            if !keys.is_empty() {
+                rows.push(key_row(state, index, keys));
+            }
         }
         Some(SignIn::ApiKey) => rows.push(key_row(
             state,

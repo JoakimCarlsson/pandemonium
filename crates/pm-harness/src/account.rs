@@ -27,13 +27,17 @@ pub fn account_in_folder(agent: Agent, home: PathBuf) -> Option<String> {
 /// What a login that names no account is called, as for GitHub Copilot.
 const UNNAMED: &str = "Signed in";
 
-/// Who `agent` is signed in as in the login folder `home`, or in the harness's own when there is none; a login that names no account is [`UNNAMED`], and an agent signed in with an API key says where the key comes from.
+/// Who `agent` is signed in as in the login folder `home`, or in the harness's own when there is none; a login that names no account is [`UNNAMED`], and an agent signed in with an API key says where the key comes from. An agent that takes a key or an account login is reported by its key when it has one, and by its login otherwise.
 fn account_in(agent: Agent, home: Option<PathBuf>) -> Option<String> {
-    if agent.sign_in == SignIn::ApiKey {
-        return omc_session::key_source(agent.provider, home).map(|source| match source {
-            KeySource::Environment { name } => format!("API key from {name}"),
-            KeySource::Saved => SAVED_KEY.to_owned(),
-        });
+    if !agent.key_env.is_empty() || agent.sign_in == SignIn::ApiKey {
+        let key =
+            omc_session::key_source(agent.provider, home.clone()).map(|source| match source {
+                KeySource::Environment { name } => format!("API key from {name}"),
+                KeySource::Saved => SAVED_KEY.to_owned(),
+            });
+        if key.is_some() || agent.sign_in == SignIn::ApiKey {
+            return key;
+        }
     }
     omc_session::account(agent.provider, home.clone())
         .or_else(|| omc_session::signed_in(agent.provider, home).then(|| UNNAMED.to_owned()))
