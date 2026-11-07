@@ -5,5 +5,5 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-omc-context = { version = "0.1.0", path = "../../../oh-my-crab/crates/omc-context" }
+omc-context = { git = "https://github.com/JoakimCarlsson/oh-my-crab", tag = "v0.1.0" }
 serde = { version = "1.0.229", features = ["derive"] }

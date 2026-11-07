@@ -2,3 +2,6 @@
 /build
 /.pandemonium/tasks.yaml
 /helpers/electron-browser/node_modules
+
+# A local override that builds against an oh-my-crab checkout beside this one
+.cargo/config.toml

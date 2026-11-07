@@ -42,6 +42,24 @@
 - Run `make languages` after changing a language folder to regenerate
   `languages/languages.json` and its checksums.
 
+## Building against a local oh-my-crab
+
+`pm-harness` and `pm-agent-library` depend on oh-my-crab's crates by git tag.
+To build against the oh-my-crab checkout next to this repository instead,
+create `.cargo/config.toml`, which git ignores:
+
+```toml
+[patch."https://github.com/JoakimCarlsson/oh-my-crab"]
+omc-session = { path = "../oh-my-crab/crates/omc-session" }
+omc-wire = { path = "../oh-my-crab/crates/omc-wire" }
+omc-context = { path = "../oh-my-crab/crates/omc-context" }
+```
+
+While it exists, Cargo rewrites oh-my-crab's entries in `Cargo.lock` to the
+local paths. Never commit those lines; CI builds with `--locked` and fails on
+them. To move to a new oh-my-crab release, remove the file, change `tag` in
+both `Cargo.toml` files, build once so `Cargo.lock` follows, and commit.
+
 ## Verification
 
 - Put build output and snapshots in the git-ignored `build/` directory. Set

@@ -3030,6 +3030,7 @@ dependencies = [
 [[package]]
 name = "omc-agent"
 version = "0.1.0"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=v0.1.0#7c30410efcaa7c4acdf6522241598d1350b123b7"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3045,6 +3046,7 @@ dependencies = [
 [[package]]
 name = "omc-auth"
 version = "0.1.0"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=v0.1.0#7c30410efcaa7c4acdf6522241598d1350b123b7"
 dependencies = [
  "base64 0.23.1",
  "dirs",
@@ -3061,6 +3063,7 @@ dependencies = [
 [[package]]
 name = "omc-context"
 version = "0.1.0"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=v0.1.0#7c30410efcaa7c4acdf6522241598d1350b123b7"
 dependencies = [
  "ignore",
  "serde_json",
@@ -3069,6 +3072,7 @@ dependencies = [
 [[package]]
 name = "omc-dap"
 version = "0.1.0"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=v0.1.0#7c30410efcaa7c4acdf6522241598d1350b123b7"
 dependencies = [
  "async-trait",
  "dirs",
@@ -3081,6 +3085,7 @@ dependencies = [
 [[package]]
 name = "omc-hooks"
 version = "0.1.0"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=v0.1.0#7c30410efcaa7c4acdf6522241598d1350b123b7"
 dependencies = [
  "async-trait",
  "dirs",
@@ -3101,6 +3106,7 @@ dependencies = [
 [[package]]
 name = "omc-mcp"
 version = "0.1.0"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=v0.1.0#7c30410efcaa7c4acdf6522241598d1350b123b7"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3116,6 +3122,7 @@ dependencies = [
 [[package]]
 name = "omc-memory"
 version = "0.1.0"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=v0.1.0#7c30410efcaa7c4acdf6522241598d1350b123b7"
 dependencies = [
  "dirs",
  "omc-context",
@@ -3127,6 +3134,7 @@ dependencies = [
 [[package]]
 name = "omc-providers"
 version = "0.1.0"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=v0.1.0#7c30410efcaa7c4acdf6522241598d1350b123b7"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3145,6 +3153,7 @@ dependencies = [
 [[package]]
 name = "omc-script"
 version = "0.1.0"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=v0.1.0#7c30410efcaa7c4acdf6522241598d1350b123b7"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3159,6 +3168,7 @@ dependencies = [
 [[package]]
 name = "omc-session"
 version = "0.1.0"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=v0.1.0#7c30410efcaa7c4acdf6522241598d1350b123b7"
 dependencies = [
  "async-trait",
  "dirs",
@@ -3182,6 +3192,7 @@ dependencies = [
 [[package]]
 name = "omc-tools"
 version = "0.1.0"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=v0.1.0#7c30410efcaa7c4acdf6522241598d1350b123b7"
 dependencies = [
  "ast-grep-core",
  "ast-grep-language",
@@ -3220,6 +3231,7 @@ dependencies = [
 [[package]]
 name = "omc-wire"
 version = "0.1.0"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=v0.1.0#7c30410efcaa7c4acdf6522241598d1350b123b7"
 dependencies = [
  "serde",
  "serde_json",
