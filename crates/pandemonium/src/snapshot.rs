@@ -3878,7 +3878,20 @@ fn welcome() -> WorkspaceState {
     let projects: Vec<Project> = Project::from_source(&here.to_string_lossy())
         .into_iter()
         .collect();
-    WorkspaceState::new(&projects).with_discovery(0, claude_discovery())
+    signed_in(
+        WorkspaceState::new(&projects).with_discovery(0, claude_discovery()),
+        &["claude-code", "codex", "openrouter", "copilot"],
+    )
+}
+
+/// `state` with the default accounts of the agents `ids` signed in, so that the page for starting work offers them.
+fn signed_in(mut state: WorkspaceState, ids: &[&str]) -> WorkspaceState {
+    for id in ids {
+        if let Some(agent) = state.agent_position(id) {
+            state = state.with_identity(agent, Some("Signed in".to_owned()), None, None);
+        }
+    }
+    state
 }
 
 /// What Claude Code says about itself: its settings and commands.

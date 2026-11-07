@@ -83,12 +83,37 @@ impl WorkspaceState {
             .is_some_and(|agent| !self.machine.agents.hidden.contains(&agent.id))
     }
 
-    /// The positions of the agents a new session can be started with: the ones offered that were not hidden, in the order the chips show them.
+    /// Whether the agent at `index` can run work: its default account is signed in or has an API key, or the reader added a login for it.
+    pub fn agent_ready(&self, index: usize) -> bool {
+        matches!(self.defaults.get(index), Some(Some(Some(_))))
+            || self
+                .agent_record(index)
+                .is_some_and(|agent| self.logins.iter().any(|(owner, _, _)| *owner == agent.id))
+    }
+
+    /// The positions of the agents a new session can be started with, in the order the chips show them: the ones offered, not hidden and signed in.
+    ///
+    /// While no agent shown is known to be signed in, as before the sign-ins are read or on a machine with none, the agent picked is offered alone, or the first one shown when the one picked is hidden, so that work can still be started and signed in for.
     pub fn startable_agents(&self) -> Vec<usize> {
-        self.offered_agents()
+        let shown: Vec<usize> = self
+            .offered_agents()
             .into_iter()
             .filter(|index| self.agent_shown(*index))
-            .collect()
+            .collect();
+        let ready: Vec<usize> = shown
+            .iter()
+            .copied()
+            .filter(|index| self.agent_ready(*index))
+            .collect();
+        if !ready.is_empty() {
+            return ready;
+        }
+        let picked = shown
+            .iter()
+            .copied()
+            .find(|index| *index == self.agent)
+            .or_else(|| shown.first().copied());
+        picked.into_iter().collect()
     }
 
     /// Hides the agent at `index` from new sessions, or shows it again, and has the server keep the choice; the last agent shown cannot be hidden.
@@ -102,7 +127,7 @@ impl WorkspaceState {
         let hidden = &mut self.machine.agents.hidden;
         if let Some(place) = hidden.iter().position(|held| *held == id) {
             hidden.remove(place);
-        } else if self.startable_agents().len() > 1 {
+        } else if self.shown_agents() > 1 {
             self.machine.agents.hidden.push(id);
         } else {
             return;
@@ -114,9 +139,17 @@ impl WorkspaceState {
         }
     }
 
-    /// Moves the agent new work is given to onto the first one shown, when the one picked was hidden.
+    /// How many of the agents offered are not hidden.
+    fn shown_agents(&self) -> usize {
+        self.offered_agents()
+            .into_iter()
+            .filter(|index| self.agent_shown(*index))
+            .count()
+    }
+
+    /// Moves the agent new work is given to onto the first one a new session can be started with, when the one picked was hidden or is not signed in.
     pub(crate) fn keep_startable_agent(&mut self) {
-        if self.agent_shown(self.agent) {
+        if self.startable_agents().contains(&self.agent) {
             return;
         }
         if let Some(first) = self.startable_agents().first() {
@@ -243,14 +276,43 @@ impl WorkspaceState {
 }
 
 #[cfg(test)]
-/// Tests for hiding agents from new sessions.
+/// Tests for hiding agents from new sessions and offering only those signed in.
 mod tests {
     use super::*;
+
+    /// A workspace whose every agent's default account is signed in.
+    fn signed_in_everywhere() -> WorkspaceState {
+        let mut state = WorkspaceState::new(&[]);
+        for held in &mut state.defaults {
+            *held = Some(Some("Signed in".to_owned()));
+        }
+        state
+    }
+
+    /// Only the agents signed in, by their default account, an added login or an API key, are offered for new sessions; before any is, the agent picked is offered alone, and it moves onto one signed in once one is known.
+    #[test]
+    fn only_signed_in_agents_start_new_sessions() {
+        let mut state = WorkspaceState::new(&[]);
+        let all = state.offered_agents();
+        assert!(all.len() > 3);
+        state.agent = all[0];
+        assert_eq!(state.startable_agents(), [all[0]]);
+        let key = state.agent_id_at(all[2]).unwrap();
+        state
+            .logins
+            .push((key, "work".to_owned(), "work".to_owned()));
+        state = state.with_identity(all[1], None, None, None);
+        state = state.with_identity(all[3], Some("API key saved".to_owned()), None, None);
+        assert_eq!(state.startable_agents(), [all[2], all[3]]);
+        assert_eq!(state.agent, all[2]);
+        assert!(!state.agent_ready(all[0]));
+        assert!(!state.agent_ready(all[1]));
+    }
 
     /// A hidden agent leaves the chips of a new session but stays listed, the picked agent moves off it, the choice is kept, and the last one shown stays.
     #[test]
     fn hidden_agents_leave_new_sessions_only() {
-        let mut state = WorkspaceState::new(&[]);
+        let mut state = signed_in_everywhere();
         state.machine_loaded = true;
         let all = state.offered_agents();
         assert!(all.len() > 1);

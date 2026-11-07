@@ -314,7 +314,7 @@ impl WorkspaceState {
         }
     }
 
-    /// The state knowing who the agent at `agent` is signed in as, and naming the login `naming` after the one asked about when there is one; `selected` is who the login in use is when nothing is named.
+    /// The state knowing who the agent at `agent` is signed in as, and naming the login `naming` after the one asked about when there is one; `selected` is who the login in use is when nothing is named; the agent picked for new work moves onto one signed in when it is not.
     pub fn with_identity(
         mut self,
         agent: usize,
@@ -325,6 +325,7 @@ impl WorkspaceState {
         if let Some(held) = self.defaults.get_mut(agent) {
             *held = Some(default);
         }
+        self.keep_startable_agent();
         match naming {
             Some(login) => self.name_login(agent, &login, selected),
             None => {
@@ -549,7 +550,7 @@ impl WorkspaceState {
         self
     }
 
-    /// Asks who every agent is signed in as in its own folder, for those not asked yet, so that the list of accounts names each default account.
+    /// Asks who every agent is signed in as in its own folder, for those not asked yet, so that the list of accounts names each default account and the page for starting work offers only the agents signed in.
     pub(crate) fn ask_default_accounts(&mut self) {
         for agent in 0..self.agent_slots() {
             let Some(held) = self.defaults.get_mut(agent) else {
@@ -569,7 +570,7 @@ impl WorkspaceState {
         }
     }
 
-    /// Reads what the page shown needs of its project: on a project's overview its own folder, and on the page for starting work also its branches, when they are not the ones read already.
+    /// Reads what the page shown needs of its project: on a project's overview its own folder, and on the page for starting work also its branches and who every agent is signed in as, when they are not the ones read already.
     pub fn sync_context(&mut self) {
         if let Page::Project(project) = self.page {
             self.read_home(project);
@@ -586,6 +587,7 @@ impl WorkspaceState {
         if let Some(held) = self.projects.get(project) {
             self.sync_discovery(held.host());
         }
+        self.ask_default_accounts();
         let asked = self.defaults.get(self.agent).is_some_and(Option::is_some)
             && self.identities.get(self.agent).is_some_and(Option::is_some);
         if !asked && self.agent < self.agent_slots() {

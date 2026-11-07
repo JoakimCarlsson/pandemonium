@@ -380,7 +380,7 @@ fn agent_card(state: &WorkspaceState, index: usize) -> Option<Node> {
 /// The page of the agents: what it is for, then a card for each agent.
 pub(crate) fn body(state: &WorkspaceState, page: Node, room: f32) -> Node {
     page.child(paragraph(
-        "Every agent the harness offers. Switch one off to leave it out when starting a new session; its sessions and accounts stay.",
+        "Every agent the harness offers. New sessions offer the ones signed in; switch one off to leave it out even then. Its sessions and accounts stay.",
         room,
     ))
     .children((0..state.agent_slots()).filter_map(|index| agent_card(state, index)))
