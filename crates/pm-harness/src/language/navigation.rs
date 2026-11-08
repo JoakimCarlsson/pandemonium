@@ -22,18 +22,18 @@ const BEGIN: Duration = Duration::from_secs(3);
 const QUIET: Duration = Duration::from_secs(1);
 
 /// A file the servers are ready to be asked about.
-struct Ready {
+pub(super) struct Ready {
     /// The file, from the root of the project.
-    relative: String,
+    pub(super) relative: String,
     /// The version the hub holds it at, or nought when someone else has it open and keeps its version.
-    version: i32,
+    pub(super) version: i32,
     /// What the file holds on disk.
-    text: String,
+    pub(super) text: String,
 }
 
 /// The texts of files on disk, each read once, to place what the servers point at in them.
 #[derive(Default)]
-struct Texts(HashMap<PathBuf, String>);
+pub(super) struct Texts(pub(super) HashMap<PathBuf, String>);
 
 impl Texts {
     /// The text of the file at `file`, read the first time it is asked for; empty when it cannot be read.
@@ -44,7 +44,7 @@ impl Texts {
     }
 
     /// The stretch `span` of the file at `file`, in UTF-16 code units, as the harness places it.
-    fn stretch(&mut self, file: &Path, span: Span) -> Stretch {
+    pub(super) fn stretch(&mut self, file: &Path, span: Span) -> Stretch {
         let text = self.of(file);
         Stretch {
             path: file.to_path_buf(),
@@ -68,8 +68,34 @@ impl Texts {
     }
 }
 
+/// The edits `changed` a server made, by file, each a stretch of the file as it is on disk and what replaces it, placed as the harness counts places against the texts of `texts`.
+pub(super) fn file_edits(
+    texts: &mut Texts,
+    changed: Vec<(PathBuf, Vec<pm_lsp::TextChange>)>,
+) -> Vec<FileEdits> {
+    changed
+        .into_iter()
+        .map(|(file, changes)| {
+            let edits = changes
+                .into_iter()
+                .filter_map(|change| {
+                    let stretch = texts.stretch(&file, change.span?);
+                    Some(TextEdit {
+                        line: stretch.line,
+                        column: stretch.column,
+                        end_line: stretch.end_line,
+                        end_column: stretch.end_column,
+                        text: change.text,
+                    })
+                })
+                .collect();
+            FileEdits { path: file, edits }
+        })
+        .collect()
+}
+
 /// The place in `text` that line `line` and character `column` name, both counted from one, as a server counts it: the line from nought and the UTF-16 code units into it.
-fn position_of(text: &str, line: u32, column: u32) -> Position {
+pub(super) fn position_of(text: &str, line: u32, column: u32) -> Position {
     let line = line.saturating_sub(1);
     let units: usize = text
         .lines()
@@ -88,7 +114,12 @@ impl HubLanguages {
     /// # Errors
     ///
     /// Answers [`LanguageAnswer::Failed`] for a file outside the project, [`LanguageAnswer::NoServer`] when no installed language or no running server reads it, and [`LanguageAnswer::Unsupported`] when its server does not answer `provider`.
-    fn ready(&self, path: &Path, provider: &str, what: &str) -> Result<Ready, LanguageAnswer> {
+    pub(super) fn ready(
+        &self,
+        path: &Path,
+        provider: &str,
+        what: &str,
+    ) -> Result<Ready, LanguageAnswer> {
         if !path.starts_with(&self.root) {
             return Err(LanguageAnswer::Failed {
                 reason: format!(
@@ -123,7 +154,7 @@ impl HubLanguages {
     }
 
     /// Waits up to [`LOADING`], the first time a file of its language is asked about, for the server of the open file at `relative` to finish the work it reports, such as loading the project; at once after that.
-    fn settle(&self, relative: &str) {
+    pub(super) fn settle(&self, relative: &str) {
         let language = pm_lsp::language_of(relative).unwrap_or_default();
         let is_loaded = || {
             self.loaded
@@ -327,25 +358,7 @@ impl HubLanguages {
         };
         let mut texts = Texts::default();
         texts.0.insert(at.path.clone(), ready.text);
-        let files = changed
-            .into_iter()
-            .map(|(file, changes)| {
-                let edits = changes
-                    .into_iter()
-                    .filter_map(|change| {
-                        let stretch = texts.stretch(&file, change.span?);
-                        Some(TextEdit {
-                            line: stretch.line,
-                            column: stretch.column,
-                            end_line: stretch.end_line,
-                            end_column: stretch.end_column,
-                            text: change.text,
-                        })
-                    })
-                    .collect();
-                FileEdits { path: file, edits }
-            })
-            .collect();
+        let files = file_edits(&mut texts, changed);
         LanguageAnswer::Edits { files }
     }
 }

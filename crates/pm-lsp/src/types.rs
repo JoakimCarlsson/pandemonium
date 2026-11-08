@@ -512,3 +512,16 @@ pub enum Load {
     /// It began some work and reports none going on now.
     Idle,
 }
+
+/// One language server of a project and how it stands.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ServerState {
+    /// The id of its spec, such as `rust-analyzer`.
+    pub id: String,
+    /// The installed languages of the open files it reads.
+    pub languages: Vec<String>,
+    /// How it stands, in a word: `starting`, `failed`, `stopped`, `loading` or `running`.
+    pub state: String,
+    /// More about it, such as why it failed, when there is more to say.
+    pub detail: Option<String>,
+}

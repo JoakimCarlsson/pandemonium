@@ -21,7 +21,7 @@ use crate::server::{
 use crate::types::{
     CodeAction, CodeLens, ColorPresentation, ColorSwatch, Completion, Diagnostic, DocumentLink,
     FileEdit, FoldRange, Hover, InlayHint, InlineValue, LinkTarget, Load, Location, Outline,
-    Problem, RenameTarget, Seek, SemanticToken, Signature, TextChange, Triggers,
+    Problem, RenameTarget, Seek, SemanticToken, ServerState, Signature, TextChange, Triggers,
 };
 use crate::uri::{file_uri, path_of};
 
@@ -85,6 +85,9 @@ type Offered = (Arc<LanguageServer>, Vec<Value>);
 
 /// The folders besides a project's own that its language servers work on, as the project at a folder has them.
 pub type Neighbours = Arc<dyn Fn(&Path) -> Vec<PathBuf> + Send + Sync>;
+
+/// Edits by file, each file as an absolute path with the stretches of it replaced and what replaces them.
+pub type FileChanges = Vec<(PathBuf, Vec<TextChange>)>;
 
 /// A language server of one project, started once however many files ask for it at the same time.
 type Slot = Arc<OnceLock<Result<Arc<LanguageServer>, String>>>;
@@ -1772,6 +1775,214 @@ impl Hub {
             .collect()
     }
 
+    /// The edits applying one of the changes the language server of the open file at `path` of the project at `root` offers for `span`, once the file reaches `version`, only those of the kinds in `only` when it names any: the one titled `title` when there is one, otherwise the `index`-th, counted from one. The change is resolved when the server needs that, and its command, when the server carries it out itself, is carried out, the edits the server asks for meanwhile being kept instead of made. Returns the title of the change taken and its edits by file as an absolute path, each a stretch of the file as the server has it and what replaces it; nothing is written, to disk or to an open file.
+    ///
+    /// # Errors
+    ///
+    /// Fails with the reason when the file is on no server, no such change is offered, it is disabled, it only runs a command the server does not carry out itself, the server fails, or the edits would create, move or delete files.
+    #[allow(clippy::too_many_arguments)]
+    pub fn action_edits(
+        &self,
+        root: &Path,
+        path: &str,
+        version: i32,
+        span: Span,
+        only: &[String],
+        index: usize,
+        title: Option<&str>,
+    ) -> Result<(String, FileChanges), String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
+            return Err("no language server reads this file".to_owned());
+        };
+        let offered: Vec<Value> = server
+            .code_actions(&file_uri(&root.join(path)), span, only)?
+            .into_iter()
+            .filter(|value| action_of(value).is_some())
+            .collect();
+        let titled = title.and_then(|title| {
+            offered
+                .iter()
+                .find(|value| value.get("title").and_then(Value::as_str) == Some(title))
+        });
+        let mut action = titled
+            .or_else(|| index.checked_sub(1).and_then(|at| offered.get(at)))
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "that change is not offered there now; {} are offered",
+                    offered.len()
+                )
+            })?;
+        let shown = action_of(&action).ok_or_else(|| "that change has no title".to_owned())?;
+        if let Some(reason) = shown.disabled {
+            return Err(format!(
+                "the change \"{}\" cannot be made now: {reason}",
+                shown.title
+            ));
+        }
+        let command = match action.get("command") {
+            Some(Value::String(name)) => Some(name.clone()),
+            Some(command) => command
+                .get("command")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            None => None,
+        };
+        if let Some(name) = command.filter(|name| !server.runs_command(name)) {
+            if action.get("command").is_some_and(Value::is_string) || action.get("edit").is_none() {
+                return Err(format!(
+                    "the change \"{}\" only runs the editor command {name}, which the language server does not carry out itself",
+                    shown.title
+                ));
+            }
+            if let Some(object) = action.as_object_mut() {
+                object.remove("command");
+            }
+        }
+        let (edits, _) = server.take_action(&action)?;
+        Ok((shown.title, edits_by_file(&edits, "change")?))
+    }
+
+    /// The edits the servers running for the project at `root` ask for before the file at `from` is moved to `to`, both from the root of the project, by file as an absolute path, each a stretch of the file as it is and what replaces it; nothing is written or moved.
+    ///
+    /// # Errors
+    ///
+    /// Fails with the reason when the edits would create, move or delete files or name something that is not a file.
+    pub fn rename_file_edits(
+        &self,
+        root: &Path,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<(PathBuf, Vec<TextChange>)>, String> {
+        let (old, new) = (file_uri(&root.join(from)), file_uri(&root.join(to)));
+        let edits: Vec<Value> = self
+            .running(root)
+            .iter()
+            .filter_map(|server| server.will_rename(&old, &new).ok())
+            .filter(|edit| !edit.is_null())
+            .collect();
+        edits_by_file(&edits, "move")
+    }
+
+    /// The id of the language server spec the open file at `path` of the project at `root` is read by, when it has one.
+    pub fn server_id(&self, root: &Path, path: &str) -> Option<String> {
+        self.documents.lock().ok().and_then(|documents| {
+            documents
+                .get(&(root.to_path_buf(), path.to_owned()))
+                .and_then(|document| document.spec.as_ref().map(|spec| spec.id.clone()))
+        })
+    }
+
+    /// The language servers of the project at `root`, those started and being started, each with the languages of the open files it reads and how it stands.
+    pub fn server_states(&self, root: &Path) -> Vec<ServerState> {
+        let slots: Vec<(String, Slot)> = self
+            .servers
+            .lock()
+            .map(|servers| {
+                servers
+                    .iter()
+                    .filter(|((held, _), _)| held == root)
+                    .map(|((_, id), slot)| (id.clone(), slot.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut states: Vec<ServerState> = slots
+            .into_iter()
+            .map(|(id, slot)| {
+                let languages = self.languages_on(root, &id);
+                let (state, detail) = match slot.get() {
+                    None => ("starting", None),
+                    Some(Err(reason)) => ("failed", Some(reason.clone())),
+                    Some(Ok(server)) if !server.is_alive() => ("stopped", None),
+                    Some(Ok(server)) if server.load() == Load::Working => ("loading", None),
+                    Some(Ok(_)) => ("running", None),
+                };
+                ServerState {
+                    id,
+                    languages,
+                    state: state.to_owned(),
+                    detail,
+                }
+            })
+            .collect();
+        states.sort_by(|left, right| left.id.cmp(&right.id));
+        states
+    }
+
+    /// The installed languages of the open files of the project at `root` that the server of the spec `id` reads, as their language's own server or beside it.
+    fn languages_on(&self, root: &Path, id: &str) -> Vec<String> {
+        let mut languages: Vec<String> = self
+            .documents
+            .lock()
+            .map(|documents| {
+                documents
+                    .iter()
+                    .filter(|((held, _), document)| {
+                        held == root
+                            && (document.spec.as_ref().is_some_and(|spec| spec.id == id)
+                                || document.companions.iter().any(|held| held.spec.id == id))
+                    })
+                    .map(|(_, document)| document.language.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        languages.sort();
+        languages.dedup();
+        languages
+    }
+
+    /// Stops the servers of the project at `root` whose spec ids are in `ids` and starts them again, moving the open files they read onto the new ones; returns the ids of those that were running or being started and so restarted.
+    pub fn restart(self: &Arc<Self>, root: &Path, ids: &[String]) -> Vec<String> {
+        let stopping: Vec<(String, Option<Arc<LanguageServer>>)> = match self.servers.lock() {
+            Ok(mut servers) => ids
+                .iter()
+                .filter_map(|id| {
+                    let slot = servers.remove(&(root.to_path_buf(), id.clone()))?;
+                    Some((
+                        id.clone(),
+                        slot.get().and_then(|started| started.clone().ok()),
+                    ))
+                })
+                .collect(),
+            Err(_) => return Vec::new(),
+        };
+        let restarted: Vec<String> = stopping.iter().map(|(id, _)| id.clone()).collect();
+        let moved: Vec<(PathBuf, String)> = self
+            .documents
+            .lock()
+            .map(|mut documents| {
+                documents
+                    .iter_mut()
+                    .filter(|((held, _), document)| {
+                        held == root
+                            && document
+                                .spec
+                                .iter()
+                                .chain(document.companions.iter().map(|held| &held.spec))
+                                .any(|spec| restarted.contains(&spec.id))
+                    })
+                    .map(|(key, document)| {
+                        document.server = None;
+                        document
+                            .companions
+                            .retain(|held| !restarted.contains(&held.spec.id));
+                        key.clone()
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        for (_, server) in stopping {
+            if let Some(server) = server {
+                std::thread::spawn(move || server.stop());
+            }
+        }
+        for key in moved {
+            self.move_server(key);
+        }
+        restarted
+    }
+
     /// The servers running for the project at `root`.
     fn running(&self, root: &Path) -> Vec<Arc<LanguageServer>> {
         let slots: Vec<Slot> = self
@@ -1913,6 +2124,34 @@ fn link_target(root: &Path, address: &str) -> Option<LinkTarget> {
         )
     });
     Some(LinkTarget::File { path, position })
+}
+
+/// The changes to each file the edits across a project `edits` a server wrote make together, by file as an absolute path; `what` names what they are for to the reader.
+///
+/// # Errors
+///
+/// Fails with the reason when one of them would create, move or delete a file, or names something that is not a file.
+fn edits_by_file(edits: &[Value], what: &str) -> Result<Vec<(PathBuf, Vec<TextChange>)>, String> {
+    let operation = edits
+        .iter()
+        .filter_map(|edit| edit.get("documentChanges").and_then(Value::as_array))
+        .flatten()
+        .find_map(|change| change.get("kind").and_then(Value::as_str));
+    if let Some(operation) = operation {
+        return Err(format!(
+            "the {what} would also {operation} a file, which is not done here"
+        ));
+    }
+    let mut files: Vec<(PathBuf, Vec<TextChange>)> = Vec::new();
+    for (address, mut changes) in edits.iter().flat_map(file_changes) {
+        let file = path_of(&address)
+            .ok_or_else(|| format!("the {what} names {address}, which is not a file"))?;
+        match files.iter_mut().find(|(held, _)| *held == file) {
+            Some((_, held)) => held.append(&mut changes),
+            None => files.push((file, changes)),
+        }
+    }
+    Ok(files)
 }
 
 /// The path of `file` from the root of the project at `root`, when it is inside it.

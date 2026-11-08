@@ -61,6 +61,6 @@ pub use semantic::{TokenRule, kind_by_rules, parse_rules, rules_for};
 pub use types::{
     CodeAction, CodeLens, ColorPresentation, ColorSwatch, Completion, CompletionKind, Diagnostic,
     DocumentLink, FileEdit, FoldRange, HintKind, Hover, InlayHint, InlineValue, InlineValueKind,
-    LinkTarget, Load, Location, Outline, Problem, RenameTarget, Seek, SemanticToken, Severity,
-    Signature, TextChange, TokenKind, Triggers,
+    LinkTarget, Load, Location, Outline, Problem, RenameTarget, Seek, SemanticToken, ServerState,
+    Severity, Signature, TextChange, TokenKind, Triggers,
 };

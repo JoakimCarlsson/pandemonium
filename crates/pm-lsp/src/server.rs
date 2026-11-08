@@ -903,6 +903,15 @@ impl LanguageServer {
             .is_some_and(|options| !options.is_null())
     }
 
+    /// Whether the server carries out the command named `name` itself, as it said when it started.
+    pub(crate) fn runs_command(&self, name: &str) -> bool {
+        self.abilities
+            .get("executeCommandProvider")
+            .and_then(|provider| provider.get("commands"))
+            .and_then(Value::as_array)
+            .is_some_and(|commands| commands.iter().any(|held| held.as_str() == Some(name)))
+    }
+
     /// The edit across the project that the server asks for before the file or folder at `from` is renamed to `to`, as it writes it; nothing when it takes no part in renames.
     pub(crate) fn will_rename(&self, from: &str, to: &str) -> Result<Value, String> {
         if !self.takes_part_in("willRename") {

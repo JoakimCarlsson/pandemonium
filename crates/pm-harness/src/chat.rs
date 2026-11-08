@@ -612,6 +612,107 @@ mod tests {
         );
         assert_eq!(written, "pub fn answer() -> u32 {\n    42\n}\n");
     }
+    /// Given the app's language servers, a real agent's `lsp code_actions`, `lsp format` and `lsp rename_file` are answered by them over the harness's language requests: the import of a name used without its `use` is offered and applied, a badly laid out file is formatted, and a file is moved with its module declaration updated, each change approved through the harness's question and written by the harness from the edits the app's server made. Prints what the agent did.
+    #[test]
+    #[ignore = "needs a login and Rust installed in the app"]
+    fn live_lsp_changes_are_answered_by_the_apps_language_servers() {
+        let folder = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../build/pm-harness-live-lsp-changes");
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::create_dir_all(folder.join("src")).unwrap();
+        std::fs::write(
+            folder.join("Cargo.toml"),
+            "[package]\nname = \"livechanges\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n",
+        )
+        .unwrap();
+        std::fs::write(
+            folder.join("src/lib.rs"),
+            "pub mod messy;\npub mod util;\n\npub fn total() -> usize {\n    crate::util::names().len()\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            folder.join("src/util.rs"),
+            "pub fn names() -> HashMap<u32, String> {\n    HashMap::new()\n}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            folder.join("src/messy.rs"),
+            "pub fn  add( a:u32,b:u32 )->u32{a+b}\n",
+        )
+        .unwrap();
+        let folder = folder.canonicalize().unwrap();
+        let chat = Chat::start(
+            agents()[0],
+            folder.clone(),
+            None,
+            Given {
+                languages: Some(crate::LanguageServers(hub())),
+                ..Given::default()
+            },
+            Arc::new(|| {}),
+        );
+        chat.set("model", "claude-haiku-5-5");
+        chat.prompt(
+            "Use only the lsp tool, one call at a time, in this order. 1) Call lsp code_actions with path src/util.rs, line 2 and symbol HashMap to list the actions, then call it again with apply set to the number of the action that imports std::collections::HashMap. 2) Call lsp format on src/messy.rs. 3) Call lsp rename_file to move src/util.rs to src/helpers.rs. Then reply with one short line.",
+            &[],
+            1,
+            "",
+        );
+        let mut outputs = Vec::new();
+        let mut asked = Vec::new();
+        let deadline = std::time::Instant::now() + Duration::from_secs(300);
+        let mut finished = false;
+        while !finished && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(100));
+            for event in chat.events() {
+                if let Event::Ask(question) = &event {
+                    eprintln!("ASK {}", question.title);
+                    asked.push(question.title.clone());
+                    chat.choose(question.ticket, Some("allow".to_owned()));
+                }
+                if let Event::Tool(tool) = &event
+                    && let Some(output) = &tool.output
+                {
+                    eprintln!(
+                        "TOOL {}\n{output}\n",
+                        tool.title.clone().unwrap_or_default()
+                    );
+                    outputs.push(output.clone());
+                }
+                if let Event::Said(text) = &event {
+                    eprint!("{text}");
+                }
+                finished |= matches!(event, Event::Finished(_));
+            }
+        }
+        chat.stop();
+        let lib = std::fs::read_to_string(folder.join("src/lib.rs")).unwrap();
+        let helpers = std::fs::read_to_string(folder.join("src/helpers.rs")).unwrap_or_default();
+        let messy = std::fs::read_to_string(folder.join("src/messy.rs")).unwrap();
+        assert!(finished, "{outputs:#?}");
+        assert!(
+            outputs
+                .iter()
+                .any(|output| output.starts_with("Applied the code action")),
+            "{outputs:#?}"
+        );
+        assert!(
+            asked.len() >= 3,
+            "the changes were not approved first: {asked:?}"
+        );
+        assert!(
+            helpers.contains("use std::collections::HashMap;"),
+            "{helpers}"
+        );
+        assert!(!folder.join("src/util.rs").exists());
+        assert!(lib.contains("pub mod helpers;"), "{lib}");
+        assert!(
+            messy.contains("pub fn add(a: u32, b: u32) -> u32 {"),
+            "{messy}"
+        );
+        let _ = std::fs::remove_dir_all(&folder);
+    }
+
     /// Given the app's language servers, a real agent's `lsp references` and `lsp rename` in a project of two files are answered by them over the harness's language requests: the references name both files, the rename is approved through the harness's question and written by the harness from the edits the app's server made, and the files on disk end up renamed; nothing of the harness's own servers is involved. Prints what the agent did.
     #[test]
     #[ignore = "needs a login and Rust installed in the app"]

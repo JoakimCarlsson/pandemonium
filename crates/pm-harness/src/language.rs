@@ -1,5 +1,6 @@
-//! Answering the harness's language requests from the app's own language servers, so that the agent's edits are formatted and checked by the servers already running and no second set is started for it, and its questions about code are answered by them too.
+//! Answering the harness's language requests from the app's own language servers, so that the agent's edits are formatted and checked by the servers already running and no second set is started for it, and its questions about code, code actions, file moves and the servers' state are answered by them too.
 
+mod actions;
 mod navigation;
 
 use std::collections::{HashMap, HashSet};
@@ -173,6 +174,18 @@ impl HubLanguages {
                 self.workspace_diagnostics(Duration::from_millis(*wait_ms))
             }
             LanguageAsk::Rename { at, new_name } => self.rename(at, new_name),
+            LanguageAsk::FormatRange { range } => self.format_range(range),
+            LanguageAsk::CodeActions { range, only } => self.code_actions(range, only),
+            LanguageAsk::ApplyCodeAction {
+                range,
+                only,
+                index,
+                title,
+            } => self.apply_code_action(range, only, *index, title.as_deref()),
+            LanguageAsk::WillRenameFile { from, to } => self.will_rename_file(from, to),
+            LanguageAsk::FileRenamed { from, to } => self.file_renamed(from, to),
+            LanguageAsk::Status {} => self.status(),
+            LanguageAsk::Reload { server, near } => self.reload(server.as_deref(), near.as_deref()),
         }
     }
 
