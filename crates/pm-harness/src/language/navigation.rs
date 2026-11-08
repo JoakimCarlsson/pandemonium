@@ -155,6 +155,11 @@ impl HubLanguages {
 
     /// Waits up to [`LOADING`], the first time a file of its language is asked about, for the server of the open file at `relative` to finish the work it reports, such as loading the project; at once after that.
     pub(super) fn settle(&self, relative: &str) {
+        self.settle_until(relative, Instant::now() + LOADING);
+    }
+
+    /// Waits until `deadline` at the latest, the first time a file of its language is asked about, for the server of the open file at `relative` to finish the work it reports, such as loading the project, giving a server that has reported none yet [`BEGIN`] to begin some; at once after that.
+    pub(super) fn settle_until(&self, relative: &str, deadline: Instant) {
         let language = pm_lsp::language_of(relative).unwrap_or_default();
         let is_loaded = || {
             self.loaded
@@ -166,7 +171,7 @@ impl HubLanguages {
         }
         let started = Instant::now();
         let mut quiet_since: Option<Instant> = None;
-        while started.elapsed() < LOADING {
+        while Instant::now() < deadline {
             let now = Instant::now();
             match self.hub.load(&self.root, relative) {
                 None => return,

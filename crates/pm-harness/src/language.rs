@@ -201,13 +201,16 @@ impl HubLanguages {
         (formatted != synced.text).then_some(formatted)
     }
 
-    /// What the servers say is wrong with the files at `paths`, as they are on disk now, waiting up to `wait` for them to say it about the new text once they have finished any work they report, such as loading the project; by then, what they last said about the new text, which leaves out a file they said nothing new about.
+    /// What the servers say is wrong with the files at `paths`, as they are on disk now, waiting up to `wait` for them to say it about the new text once they have finished any work they report, such as loading the project, which the first time includes giving a server a moment to begin that work, so that what it says before it starts loading is not taken for its answer; by then, what they last said about the new text, which leaves out a file they said nothing new about.
     fn diagnostics(&self, paths: &[PathBuf], wait: Duration) -> Vec<Diagnostic> {
         let deadline = Instant::now() + wait;
         let synced: Vec<(PathBuf, Synced)> = paths
             .iter()
             .filter_map(|path| self.sync(path).map(|synced| (path.clone(), synced)))
             .collect();
+        for (_, synced) in &synced {
+            self.settle_until(&synced.path, deadline);
+        }
         let mut found = Vec::new();
         let mut waiting: Vec<&(PathBuf, Synced)> = synced.iter().collect();
         loop {
