@@ -13,19 +13,13 @@ use pm_ui::{Node, node};
 use crate::button::Variant;
 use crate::parts::{clipped, glyph, line};
 use crate::settings::Section;
-use crate::settings_row::{choices, switch};
+use crate::settings_row::switch;
 use crate::settings_servers::{
     boxed, card, flat_row, heading_only, note, paragraph, search_box, wrapped_note,
 };
 use crate::size::Size;
 use crate::state::{Outgoing, Page, WorkspaceState};
 use crate::{Badge, Button};
-
-/// The first of the choices of the agent the pages read for; the rest follow it.
-const AGENT_PICK_BASE: u64 = 20_000_950;
-
-/// One past the last choice of the agent the pages read for.
-const AGENT_PICK_END: u64 = 20_001_000;
 
 /// The first of the switches turning a customization on or off; the rest follow it.
 const ITEM_SWITCH_BASE: u64 = 20_001_000;
@@ -50,8 +44,6 @@ const LIBRARY_END: u64 = 20_010_000;
 pub struct Library {
     /// The project and the agent, by position, what is held was read for.
     pub of: Option<(usize, usize)>,
-    /// The agent chosen on the pages, by position, in place of the one the prompt is for.
-    pub agent: Option<usize>,
     /// The product the agent runs, as its server says.
     pub product: Option<Product>,
     /// The customizations found, or nothing while they are being read.
@@ -140,7 +132,7 @@ fn source_label(set: &ToolSet) -> String {
 }
 
 impl WorkspaceState {
-    /// The project and the agent the pages are about, by position: the project of the page showing, or the first project when the page has none, and the agent chosen on the pages, or the one the prompt is for until one is.
+    /// The project and the agent the pages are about, by position: the project of the page showing, or the first project when the page has none, and the agent the prompt is for.
     fn library_target(&self) -> Option<(usize, usize)> {
         let project = match self.page {
             Page::Project(project) | Page::New(project) => project,
@@ -148,12 +140,7 @@ impl WorkspaceState {
             Page::History | Page::Extensions => 0,
         };
         self.projects.get(project)?;
-        let agent = self
-            .settings_page
-            .library
-            .agent
-            .filter(|agent| *agent < self.agent_slots())
-            .unwrap_or_else(|| self.agent_now());
+        let agent = self.agent_now();
         Some((project, agent))
     }
 
@@ -284,14 +271,6 @@ impl WorkspaceState {
     /// The state after `action`, which may name a switch, a button or a heading of the pages, was pressed; whether it named one.
     pub(crate) fn library_pressed(&mut self, action: FocusId) -> bool {
         let FocusId(number) = action;
-        if (AGENT_PICK_BASE..AGENT_PICK_END).contains(&number) {
-            let library = &mut self.settings_page.library;
-            library.agent = Some((number - AGENT_PICK_BASE) as usize);
-            library.items = None;
-            library.sets = None;
-            self.read_library();
-            return true;
-        }
         if !(ITEM_SWITCH_BASE..ITEM_SWITCH_BASE + 1000).contains(&number)
             && !(ITEM_OPEN_BASE..LIBRARY_END).contains(&number)
         {
@@ -429,22 +408,16 @@ fn openable(state: &WorkspaceState, item: &Item) -> bool {
         })
 }
 
-/// The choice of the agent the pages read for, and what they say they were read for: the project by name, and whether the app knows the agent's files.
+/// What the pages say they were read for: the project by name, and whether the app knows the agent's files.
 fn context(state: &WorkspaceState, room: f32) -> Node {
     let library = &state.settings_page.library;
-    let Some((project, agent)) = library.of else {
+    let Some((project, _)) = library.of else {
         return wrapped_note("Add a project to see what agents are given in it.", room);
     };
     let project = state
         .projects
         .get(project)
         .map_or("", |held| held.name.as_str());
-    let names: Vec<String> = state
-        .offered_agents()
-        .into_iter()
-        .map(|offered| state.agent_look(offered).name)
-        .collect();
-    let named: Vec<&str> = names.iter().map(String::as_str).collect();
     let said = match library.product {
         Some(_) => format!("Read for {project}."),
         None => {
@@ -453,12 +426,6 @@ fn context(state: &WorkspaceState, room: f32) -> Node {
     };
     node()
         .styles([flex(), flex_col(), gap(2), flex_none()])
-        .child(
-            choices(&named, agent, |place| {
-                FocusId(AGENT_PICK_BASE + place as u64)
-            })
-            .styles([pm_style::self_start()]),
-        )
         .child(wrapped_note(&said, room))
 }
 
