@@ -145,6 +145,7 @@ request with exactly one `response` carrying the same `id`.
 | `library`      | `agent`, `directory`                                                                             | `library`       |
 | `tool_sets`    | `agent`                                                                                          | `tool_sets`     |
 | `save_withheld`| `keys`: `[string]`                                                                               | `done`          |
+| `create_customization` | `kind` (`skill`, `instruction` or `agent`), `scope` (`workspace` or `user`), `name`, `description`, `directory` | `created`, with `path` |
 | `watch_folders`| `directories`: `[string]`                                                                       | `done`          |
 | `machine_settings`| none                                                                                          | `machine_settings` |
 | `save_machine_settings`| `settings`: `{git, history, agents, shell, languages, workspace, extensions, servers}`              | `done`          |
@@ -455,6 +456,15 @@ everything said of them, its submodules' paths written from `directory`.
   when it begins with `http://` or `https://`, and `env` is then the headers it
   is sent; otherwise it is the command that starts it, and `env` its environment.
   Every new session is started with the tool servers saved at that moment that are `enabled`; `description` and `website` are optional and `enabled` is true when missing.
+- **`create_customization`:** writes a new skill, instruction file or agent
+  definition on the server's machine from a short template, and answers
+  `created` with the `path` written. `name` is lowercase letters, digits and
+  hyphens. A `workspace` one goes under the project's `.claude` folder and a
+  `user` one under Claude Code's config folder (`~/.claude`, or
+  `CLAUDE_CONFIG_DIR`): `skills/<name>/SKILL.md`, `rules/<name>.md` or
+  `agents/<name>.md`, with `description` in its front matter, or as its first
+  line for instructions. It fails, writing nothing, when the file is already
+  there; hooks cannot be created this way.
 - **`library`, `tool_sets`, `save_withheld`:** what an agent is given in a
   project, read on the server's machine from the folders the agent's product
   keeps it in, so a remote project lists the remote machine's files. `library`
@@ -504,10 +514,17 @@ everything said of them, its submodules' paths written from `directory`.
   time it is written with `write_file`, how many days it keeps it and how many
   megabytes of states one project may take up (30 days and 256 megabytes when
   not set). `agents` is
-  `{default_agent, permission_mode, hidden}`, each optional: the agent a client offers
+  `{default_agent, permission_mode, hidden, effort, memory, checkpoints, cache, cache_warming, plan_model, plan_autosave}`,
+  each optional: the agent a client offers
   first for new work, by id, the mode new sessions start in, and the ids of the
   agents a client leaves out when a new session is started; a hidden agent still
-  runs its sessions and keeps its accounts. `shell` is
+  runs its sessions and keeps its accounts. `effort` (`low`, `medium`, `high`,
+  `xhigh` or `max`; the harness's own when not set), `memory` (default `true`),
+  `checkpoints` (default `true`), `cache` (`5m` or `1h`, default `5m`) and
+  `cache_warming` (default `true`), `plan_model` (`model` or `provider/model`;
+  the conversation's model when empty) and `plan_autosave` (default `false`)
+  are the settings every agent's conversation
+  starts with; a choice saved with a conversation wins over them. `shell` is
   `{program, arguments}`, the shell `open_terminal` starts when `program` is not
   empty. `extensions` maps an extension's folder name to `{granted}`, the
   capabilities it was allowed; `save_machine_settings` does not change it, only

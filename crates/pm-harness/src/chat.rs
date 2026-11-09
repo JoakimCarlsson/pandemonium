@@ -82,7 +82,11 @@ impl Request {
                 turn,
                 context,
             },
-            Self::Choose { ticket, option } => Command::Choose { ticket, option },
+            Self::Choose { ticket, option } => Command::Choose {
+                ticket,
+                option,
+                note: None,
+            },
             Self::Answer { ticket, replies } => Command::Answer { ticket, replies },
             Self::Trust { ticket, verdict } => Command::Trust { ticket, verdict },
             Self::Rename { title } => Command::Rename { title },

@@ -252,6 +252,20 @@ pub enum Setting {
     DefaultAgent,
     /// The mode agents start in.
     PermissionMode,
+    /// How hard the model thinks in a new conversation.
+    Effort,
+    /// Whether agents start with their memory.
+    Memory,
+    /// Whether agents have the checkpoint and rewind tools.
+    Checkpoints,
+    /// How long the prompt cache lives.
+    PromptCache,
+    /// Whether the prompt cache is kept warm.
+    CacheWarming,
+    /// The model plan mode plans with.
+    PlanModel,
+    /// Whether plans are saved in the project too.
+    PlanAutosave,
     /// What a session does when its agent finishes.
     OnFinish,
     /// How the reader is told an agent finished.
@@ -300,7 +314,7 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting, in the order the pages show them.
-    pub const ALL: [Self; 115] = [
+    pub const ALL: [Self; 122] = [
         Self::Launch,
         Self::ConfirmClose,
         Self::CheckUpdates,
@@ -394,6 +408,13 @@ impl Setting {
         Self::GitHosts,
         Self::DefaultAgent,
         Self::PermissionMode,
+        Self::Effort,
+        Self::Memory,
+        Self::Checkpoints,
+        Self::PromptCache,
+        Self::CacheWarming,
+        Self::PlanModel,
+        Self::PlanAutosave,
         Self::OnFinish,
         Self::Notification,
         Self::DefaultServer,
@@ -526,9 +547,17 @@ impl Setting {
             Self::BranchTemplate | Self::WorktreeFolder | Self::WorktreeInclude => {
                 Section::Worktrees
             }
-            Self::DefaultAgent | Self::PermissionMode | Self::OnFinish | Self::Notification => {
-                Section::Agents
-            }
+            Self::DefaultAgent
+            | Self::PermissionMode
+            | Self::Effort
+            | Self::Memory
+            | Self::Checkpoints
+            | Self::PromptCache
+            | Self::CacheWarming
+            | Self::PlanModel
+            | Self::PlanAutosave
+            | Self::OnFinish
+            | Self::Notification => Section::Agents,
             Self::DefaultServer => Section::Servers,
             Self::VimMode
             | Self::VimClipboard
@@ -563,7 +592,14 @@ impl Setting {
             | Self::WorktreeInclude
             | Self::GitHosts
             | Self::DefaultAgent
-            | Self::PermissionMode => Keeper::Machine,
+            | Self::PermissionMode
+            | Self::Effort
+            | Self::Memory
+            | Self::Checkpoints
+            | Self::PromptCache
+            | Self::CacheWarming
+            | Self::PlanModel
+            | Self::PlanAutosave => Keeper::Machine,
             _ => Keeper::Window,
         }
     }
@@ -944,6 +980,34 @@ impl Setting {
             Self::PermissionMode => (
                 "Default permission mode",
                 "The mode an agent starts in, when it offers that mode.",
+            ),
+            Self::Effort => (
+                "Default effort",
+                "How hard the model thinks in a new conversation. Auto starts at medium; a model that does not offer the level picks its own.",
+            ),
+            Self::Memory => (
+                "Memory",
+                "Start agents with what earlier conversations in the project remembered, and let them save, search and forget memories.",
+            ),
+            Self::Checkpoints => (
+                "Checkpoints",
+                "Let agents mark a checkpoint and later replace the exploration since it with a report, to keep long conversations short. Files are never restored.",
+            ),
+            Self::PromptCache => (
+                "Prompt cache",
+                "How long cached context lives after each request, where the provider lets it be picked. An hour costs more to write but survives longer pauses.",
+            ),
+            Self::CacheWarming => (
+                "Keep cache warm",
+                "Refresh the cached context shortly before it expires while a long tool runs or the conversation waits, when that costs less than losing it.",
+            ),
+            Self::PlanModel => (
+                "Plan model",
+                "The model plan mode plans with, as model or provider/model; empty plans with the conversation's model.",
+            ),
+            Self::PlanAutosave => (
+                "Save plans in the project",
+                "Also save each plan an agent submits as markdown under .oh-my-crab/plans in the project.",
             ),
             Self::OnFinish => (
                 "When an agent finishes",

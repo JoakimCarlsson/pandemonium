@@ -521,6 +521,20 @@ pub enum Request {
         /// Every key turned off.
         keys: Vec<String>,
     },
+    /// Writes a new skill, instruction file or agent definition from a template, in the project's folder or the reader's own, and answers with the file written.
+    CreateCustomization {
+        /// What it is: a skill, an instruction file or an agent definition.
+        kind: crate::library::Kind,
+        /// Whether it goes in the project's folder or the reader's own.
+        scope: crate::library::Scope,
+        /// Its name: lowercase letters, digits and hyphens.
+        name: String,
+        /// What it is for.
+        #[serde(default)]
+        description: String,
+        /// The project's folder on the server's machine.
+        directory: String,
+    },
     /// Has the server tell this connection whenever the files of one of `directories`, or what git keeps about them, change, in place of the folders it watched before.
     WatchFolders {
         /// The folders, as their sessions name them; none to watch nothing.
@@ -531,7 +545,7 @@ pub enum Request {
     /// Replaces what the reader set up for the work the server does on its machine, and puts it to work.
     SaveMachineSettings {
         /// The settings, whole.
-        settings: crate::MachineSettings,
+        settings: Box<crate::MachineSettings>,
     },
     /// The newest release of the app on `channel`, as its project publishes them.
     LatestRelease {

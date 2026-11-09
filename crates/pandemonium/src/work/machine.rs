@@ -22,7 +22,7 @@ impl Work {
             self.ask(
                 &host,
                 Request::SaveMachineSettings {
-                    settings: settings.clone(),
+                    settings: Box::new(settings.clone()),
                 },
                 Pending::Nothing,
             );
@@ -34,7 +34,9 @@ impl Work {
         host.as_ref()?;
         self.machine
             .clone()
-            .map(|settings| Request::SaveMachineSettings { settings })
+            .map(|settings| Request::SaveMachineSettings {
+                settings: Box::new(settings),
+            })
     }
 
     /// Asks the server on this machine for the newest release on `channel`.

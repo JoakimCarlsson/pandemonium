@@ -210,6 +210,7 @@ impl WorkspaceState {
     /// Puts away what belongs to the section that was showing, and has the tool registry offer its well known servers again if a search had narrowed them.
     pub(crate) fn section_changed(&mut self) {
         self.settings_servers.form = None;
+        self.settings_page.library.draft = None;
         self.settings_servers.scroll = 0.0;
         self.settings_servers.search = Field::default();
         if !self.settings_servers.searched.is_empty() {

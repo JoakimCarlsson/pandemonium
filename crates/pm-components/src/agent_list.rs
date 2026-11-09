@@ -134,8 +134,9 @@ impl WorkspaceState {
         }
         self.keep_startable_agent();
         if self.machine_loaded {
-            self.outbox
-                .push(Outgoing::SaveMachineSettings(self.machine.clone()));
+            self.outbox.push(Outgoing::SaveMachineSettings(Box::new(
+                self.machine.clone(),
+            )));
         }
     }
 

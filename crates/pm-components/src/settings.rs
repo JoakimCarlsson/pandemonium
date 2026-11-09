@@ -396,6 +396,11 @@ impl WorkspaceState {
             action if self.keymap_pressed(action) => {}
             action if self.machines_pressed(action) => {}
             action if self.languages_pressed(action) => {}
+            action
+                if self.draft_pressed(
+                    action,
+                    self.settings.and_then(crate::settings_library::kind_of),
+                ) => {}
             action if self.library_pressed(action) => {}
             action if self.agents_pressed(action) => {}
             action => {

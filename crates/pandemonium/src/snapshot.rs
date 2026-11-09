@@ -361,6 +361,8 @@ pub enum Shot {
     SettingsMachine(bool),
     /// The settings window on Appearance set compact with interface text at 15 pixels, at its narrowest when the flag is set.
     SettingsCompact(bool),
+    /// The settings window on Skills with the form for a new skill filled in for every project, at its narrowest when the flag is set.
+    SettingsDraft(bool),
     /// The settings panel on the MCP servers inside Agents, with one installed, the registry's offers and the menu of the installed one open.
     SettingsMcp,
     /// The settings panel on the Agent Servers inside Agents, with the form for adding one open.
@@ -2541,6 +2543,7 @@ impl Shot {
                 | Self::SettingsMachine(_)
                 | Self::SettingsCompact(_)
                 | Self::SettingsMcp
+                | Self::SettingsDraft(_)
                 | Self::SettingsForm
                 | Self::SettingsAccounts(_)
                 | Self::SettingsAccountsScrolled
@@ -2559,13 +2562,14 @@ impl Shot {
                 | Self::SettingsSearch(true)
                 | Self::SettingsPicker(true)
                 | Self::SettingsMachine(true)
+                | Self::SettingsDraft(true)
                 | Self::SettingsCompact(true)
                 | Self::SettingsAccounts(true)
                 | Self::SettingsAccountsCloud(true)
         )
     }
 
-    /// The settings shot `name` names: `settings` for the first section, `settings-` and a section's name for another, `settings-search`, `settings-picker`, `settings-machine`, `settings-compact` or `settings-accounts-cloud`, each with `-narrow` after it for the window at its smallest.
+    /// The settings shot `name` names: `settings` for the first section, `settings-` and a section's name for another, `settings-search`, `settings-picker`, `settings-machine`, `settings-compact`, `settings-skills-new` or `settings-accounts-cloud`, each with `-narrow` after it for the window at its smallest.
     pub fn settings_named(name: &str) -> Option<Self> {
         let rest = name.strip_prefix("settings")?;
         let (rest, narrow) = match rest.strip_suffix("-narrow") {
@@ -2587,6 +2591,7 @@ impl Shot {
             "accounts-hidden" => Some(Self::SettingsAccountsHidden),
             "accounts-key" => Some(Self::SettingsAccountsKey),
             "mcp" => Some(Self::SettingsMcp),
+            "skills-new" => Some(Self::SettingsDraft(narrow)),
             slug => SETTINGS_SHOTS
                 .iter()
                 .find(|(held, _)| *held == slug)
@@ -3563,6 +3568,25 @@ impl Shot {
                     .edited(MACHINE_ADDRESS, Edit::Paste("100.64.0.9:6868".to_owned()))
                     .scrolled_settings(if narrow { 300.0 } else { 0.0 }, 2000.0),
             ),
+            Self::SettingsDraft(narrow) => Screen::Workspace(
+                browser_settings_sample(Section::Skills)
+                    .after(pm_components::settings_drafts::DRAFT_NEW)
+                    .edited(
+                        pm_components::settings_drafts::DRAFT_NAME,
+                        Edit::Paste("ship-it".to_owned()),
+                    )
+                    .edited(
+                        pm_components::settings_drafts::DRAFT_DESCRIPTION,
+                        Edit::Paste("Tags a release once CI is green on every OS".to_owned()),
+                    )
+                    .after(
+                        pm_components::settings_drafts::draft_scope(
+                            pm_protocol::library::Scope::User,
+                        )
+                        .unwrap_or(pm_components::settings_drafts::DRAFT_NEW),
+                    )
+                    .scrolled_settings(if narrow { 260.0 } else { 0.0 }, 2000.0),
+            ),
             Self::SettingsMcp => Screen::Workspace(
                 welcome()
                     .after(SETTINGS)
@@ -3893,8 +3917,14 @@ fn with_library_sample(state: WorkspaceState) -> WorkspaceState {
     ];
     let agent = state.agent;
     let mut state = state
-        .with_library(0, agent, Some(Product::Claude), items, withheld.clone())
-        .with_tool_sets(0, agent, Some(Product::Claude), sets, withheld);
+        .with_library(
+            Some(0),
+            agent,
+            Some(Product::Claude),
+            items,
+            withheld.clone(),
+        )
+        .with_tool_sets(Some(0), agent, Some(Product::Claude), sets, withheld);
     state.settings_page.library.open_sets = vec!["github".to_owned()];
     state
 }

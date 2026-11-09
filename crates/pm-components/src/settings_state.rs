@@ -81,8 +81,9 @@ impl WorkspaceState {
     /// Puts `setting` to work once it changed: a setting the servers keep is sent to them, and the open files take what changed of their indentation.
     pub(crate) fn setting_changed(&mut self, setting: Setting) {
         if setting.keeper() == Keeper::Machine && self.machine_loaded {
-            self.outbox
-                .push(Outgoing::SaveMachineSettings(self.machine.clone()));
+            self.outbox.push(Outgoing::SaveMachineSettings(Box::new(
+                self.machine.clone(),
+            )));
         }
         match setting {
             Setting::TabSize

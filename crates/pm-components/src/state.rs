@@ -854,19 +854,36 @@ pub enum Outgoing {
     Library {
         /// The agent, by position.
         agent: usize,
-        /// The project, by position.
-        project: usize,
+        /// The project, by position, or nothing when none is open.
+        project: Option<usize>,
         /// The machine, or nothing for this one.
         host: Option<String>,
-        /// The project's folder.
+        /// The project's folder, or empty when none is open.
         directory: String,
+    },
+    /// Writes a new skill, instruction file or agent definition from a template for the project at `project`.
+    CreateCustomization {
+        /// The project, by position, or nothing when none is open.
+        project: Option<usize>,
+        /// The machine, or nothing for this one.
+        host: Option<String>,
+        /// The project's folder, or empty when none is open.
+        directory: String,
+        /// What it is.
+        kind: pm_protocol::library::Kind,
+        /// Whether it goes in the project's folder or the reader's own.
+        scope: pm_protocol::library::Scope,
+        /// Its name.
+        name: String,
+        /// What it is for.
+        description: String,
     },
     /// Lists the tools the agent at `agent` is given, on the machine of the project at `project`.
     ToolSets {
         /// The agent, by position.
         agent: usize,
-        /// The project, by position.
-        project: usize,
+        /// The project, by position, or nothing when none is open.
+        project: Option<usize>,
         /// The machine, or nothing for this one.
         host: Option<String>,
     },
@@ -883,7 +900,7 @@ pub enum Outgoing {
         path: String,
     },
     /// Has every server the window reaches keep these as what the reader set up for the work it does on its machine.
-    SaveMachineSettings(pm_protocol::MachineSettings),
+    SaveMachineSettings(Box<pm_protocol::MachineSettings>),
     /// Tells the reader something happened while they may be looking elsewhere, in the way they chose.
     Notify {
         /// What happened, in a few words.
@@ -2447,6 +2464,7 @@ impl WorkspaceState {
                 self.menu_scroll = 0.0;
             }
             id if crate::settings_servers::is_form_field(id) => self.server_form_edited(id, edit),
+            id if crate::settings_drafts::is_draft_field(id) => self.draft_edited(id, edit),
             id if crate::settings_agents::is_key_field(id) => self.key_edited(edit),
             id if crate::settings_pages::is_setting_field(id) => self.setting_edited(id, edit),
             id if crate::settings_machines::is_machine_field(id) => self.machine_edited(id, edit),
@@ -2511,6 +2529,7 @@ impl WorkspaceState {
             ADDER_FIELD => self.adder.as_ref().map(|open| &open.field),
             PICKER_FIELD => self.folder_picker.as_ref().map(|open| &open.field),
             id if crate::settings_servers::is_form_field(id) => self.server_form_field(id),
+            id if crate::settings_drafts::is_draft_field(id) => self.draft_field(id),
             id if crate::settings_agents::is_key_field(id) => self.key_field(),
             id if crate::settings_pages::is_setting_field(id) => self.setting_field(id),
             id if crate::settings_machines::is_machine_field(id) => self.machine_field(id),
@@ -2550,6 +2569,7 @@ impl WorkspaceState {
             || id == ADDER_FIELD
             || id == PICKER_FIELD
             || crate::settings_servers::is_form_field(id)
+            || crate::settings_drafts::is_draft_field(id)
             || crate::settings_agents::is_key_field(id)
             || crate::settings_pages::is_setting_field(id)
             || crate::settings_machines::is_machine_field(id)
@@ -2583,6 +2603,9 @@ impl WorkspaceState {
             PICKER_FIELD => PICKER_SUBMIT,
             crate::settings::SETTINGS_SEARCH => crate::settings::SETTINGS_SEARCH_GO,
             id if crate::settings_servers::is_form_field(id) => crate::settings::SETTINGS_SAVE,
+            id if crate::settings_drafts::is_draft_field(id) => {
+                crate::settings_drafts::DRAFT_CREATE
+            }
             id if crate::settings_agents::is_key_field(id) => crate::settings_agents::KEY_SAVE,
             id if crate::settings_machines::is_machine_field(id) => {
                 crate::settings_machines::MACHINE_SAVE

@@ -577,4 +577,9 @@ pub enum Response {
     },
     /// A session was not closed because its worktree has changes that are not committed; closing it with `discard` removes them.
     Uncommitted,
+    /// A file was written for the reader to fill in.
+    Created {
+        /// Its path on the server's machine.
+        path: String,
+    },
 }

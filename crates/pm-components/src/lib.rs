@@ -102,6 +102,7 @@ mod session_attention;
 pub mod settings;
 pub mod settings_agents;
 pub mod settings_catalog;
+pub mod settings_drafts;
 pub mod settings_editor;
 pub mod settings_keymap;
 pub mod settings_languages;

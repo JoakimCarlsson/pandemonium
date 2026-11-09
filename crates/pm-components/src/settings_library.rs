@@ -6,13 +6,15 @@ use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_protocol::library::{Item, Kind, Product, Scope, Source, ToolSet, locations};
 use pm_style::{
-    Role, flex, flex_1, flex_col, flex_none, gap, items_center, min_w_px, overflow_hidden, pl,
+    Role, flex, flex_1, flex_col, flex_none, gap, items_center, justify_between, min_w_px,
+    overflow_hidden, pl,
 };
 use pm_ui::{Node, node};
 
 use crate::button::Variant;
 use crate::parts::{clipped, glyph, line};
 use crate::settings::Section;
+use crate::settings_drafts::{draft_node, draftable, new_button};
 use crate::settings_row::switch;
 use crate::settings_servers::{
     boxed, card, flat_row, heading_only, note, paragraph, search_box, wrapped_note,
@@ -42,8 +44,8 @@ const LIBRARY_END: u64 = 20_010_000;
 /// What the pages hold: what was read for which project and agent, and which sets of tools are unfolded.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Library {
-    /// The project and the agent, by position, what is held was read for.
-    pub of: Option<(usize, usize)>,
+    /// The project, by position or nothing when none is open, and the agent, by position, what is held was read for.
+    pub of: Option<(Option<usize>, usize)>,
     /// The product the agent runs, as its server says.
     pub product: Option<Product>,
     /// The customizations found, or nothing while they are being read.
@@ -56,6 +58,8 @@ pub struct Library {
     pub error: Option<String>,
     /// The sets of tools unfolded, by id.
     pub open_sets: Vec<String>,
+    /// The form for a new customization, while it is open.
+    pub draft: Option<crate::settings_drafts::DraftForm>,
 }
 
 /// Whether `section` is one of the pages of what agents are given.
@@ -64,7 +68,7 @@ pub(crate) fn lists(section: Section) -> bool {
 }
 
 /// The kind of customization `section` lists, when it lists one.
-fn kind_of(section: Section) -> Option<Kind> {
+pub(crate) fn kind_of(section: Section) -> Option<Kind> {
     match section {
         Section::Skills => Some(Kind::Skill),
         Section::Instructions => Some(Kind::Instruction),
@@ -133,15 +137,25 @@ fn source_label(set: &ToolSet) -> String {
 
 impl WorkspaceState {
     /// The project and the agent the pages are about, by position: the project of the page showing, or the first project when the page has none, and the agent the prompt is for.
-    fn library_target(&self) -> Option<(usize, usize)> {
+    fn library_target(&self) -> Option<(Option<usize>, usize)> {
         let project = match self.page {
-            Page::Project(project) | Page::New(project) => project,
-            Page::Session(index) => self.sessions.get(index)?.project,
-            Page::History | Page::Extensions => 0,
-        };
-        self.projects.get(project)?;
-        let agent = self.agent_now();
-        Some((project, agent))
+            Page::Project(project) | Page::New(project) => Some(project),
+            Page::Session(index) => self.sessions.get(index).map(|session| session.project),
+            Page::History | Page::Extensions => Some(0),
+        }
+        .filter(|project| self.projects.get(*project).is_some());
+        Some((project, self.agent_now()))
+    }
+
+    /// The machine, or nothing for this one, and the folder of the project at `project`; this machine and no folder when no project is open.
+    pub(crate) fn library_place(&self, project: Option<usize>) -> Option<(Option<String>, String)> {
+        match project {
+            Some(project) => {
+                let held = self.projects.get(project)?;
+                Some((held.host(), held.directory().to_string_lossy().into_owned()))
+            }
+            None => Some((None, String::new())),
+        }
     }
 
     /// Asks the server of the project the pages are about for what its agent is given there, and for the agent's tools.
@@ -150,7 +164,7 @@ impl WorkspaceState {
             self.settings_page.library = Library::default();
             return;
         };
-        let Some(held) = self.projects.get(project) else {
+        let Some((host, directory)) = self.library_place(project) else {
             return;
         };
         let library = &mut self.settings_page.library;
@@ -163,20 +177,20 @@ impl WorkspaceState {
         self.outbox.push(Outgoing::Library {
             agent,
             project,
-            host: held.host(),
-            directory: held.directory().to_string_lossy().into_owned(),
+            host: host.clone(),
+            directory,
         });
         self.outbox.push(Outgoing::ToolSets {
             agent,
             project,
-            host: held.host(),
+            host,
         });
     }
 
     /// The state with what the agent at `agent` is given in the project at `project`, when that is still what the pages are about.
     pub fn with_library(
         mut self,
-        project: usize,
+        project: Option<usize>,
         agent: usize,
         product: Option<Product>,
         items: Vec<Item>,
@@ -194,7 +208,7 @@ impl WorkspaceState {
     /// The state with the tools the agent at `agent` is given, when that is still the agent the pages are about.
     pub fn with_tool_sets(
         mut self,
-        project: usize,
+        project: Option<usize>,
         agent: usize,
         product: Option<Product>,
         sets: Vec<ToolSet>,
@@ -240,13 +254,12 @@ impl WorkspaceState {
 
     /// Has the server of the project the pages are about keep `withheld` as what is turned off.
     fn keep_withheld(&mut self, withheld: Vec<String>) {
-        let host = self
+        let Some((host, _)) = self
             .settings_page
             .library
             .of
-            .and_then(|(project, _)| self.projects.get(project))
-            .map(crate::project::Project::host);
-        let Some(host) = host else {
+            .and_then(|(project, _)| self.library_place(project))
+        else {
             return;
         };
         self.settings_page.library.withheld = withheld.clone();
@@ -364,14 +377,28 @@ impl WorkspaceState {
         ) else {
             return;
         };
+        let (path, scope) = (item.path.clone(), item.scope);
+        self.open_customization(project, path, scope);
+    }
+
+    /// Opens the customization file `path` of `scope` for the project at `project`: one in the project's folder in the window, and one elsewhere in the program this machine opens it with, when the project is on this machine or no project is open.
+    pub(crate) fn open_customization(
+        &mut self,
+        project: Option<usize>,
+        path: String,
+        scope: Scope,
+    ) {
+        let Some(project) = project else {
+            self.outbox.push(Outgoing::OpenPath { path });
+            return;
+        };
         let Some(held) = self.projects.get(project) else {
             return;
         };
-        let path = item.path.clone();
         let inside = inside_project(&path, &held.directory());
         let local = held.host().is_none();
         match inside {
-            Some(inside) if item.scope == Scope::Workspace => {
+            Some(inside) if scope == Scope::Workspace => {
                 self.close_settings();
                 self.page = Page::Project(project);
                 self.sync_context();
@@ -400,6 +427,9 @@ fn openable(state: &WorkspaceState, item: &Item) -> bool {
     let Some((project, _)) = state.settings_page.library.of else {
         return false;
     };
+    let Some(project) = project else {
+        return !item.path.is_empty();
+    };
     !item.path.is_empty()
         && state.projects.get(project).is_some_and(|held| {
             held.host().is_none()
@@ -412,16 +442,16 @@ fn openable(state: &WorkspaceState, item: &Item) -> bool {
 fn context(state: &WorkspaceState, room: f32) -> Node {
     let library = &state.settings_page.library;
     let Some((project, _)) = library.of else {
-        return wrapped_note("Add a project to see what agents are given in it.", room);
+        return wrapped_note("Add an agent to see what it is given.", room);
     };
-    let project = state
-        .projects
-        .get(project)
-        .map_or("", |held| held.name.as_str());
+    let read_for = match project.and_then(|project| state.projects.get(project)) {
+        Some(held) => held.name.clone(),
+        None => "this machine; open a project to see its own too".to_owned(),
+    };
     let said = match library.product {
-        Some(_) => format!("Read for {project}."),
+        Some(_) => format!("Read for {read_for}."),
         None => {
-            format!("Read for {project}; the app does not know how to read this agent's files.")
+            format!("Read for {read_for}; the app does not know how to read this agent's files.")
         }
     };
     node()
@@ -493,7 +523,10 @@ fn items_page(state: &WorkspaceState, kind: Kind, page: Node, room: f32) -> Node
         .map(|(index, item)| item_row(state, index, item))
         .collect();
     let found = items.iter().filter(|item| item.kind == kind).count();
-    page = page.child(heading_only("Found", rows.len()));
+    page = page.child(found_heading(state, kind, rows.len()));
+    if let Some(form) = library.draft.as_ref().filter(|form| form.kind == kind) {
+        page = page.child(draft_node(form, room));
+    }
     if !rows.is_empty() {
         return page.child(boxed(rows));
     }
@@ -509,6 +542,14 @@ fn items_page(state: &WorkspaceState, kind: Kind, page: Node, room: f32) -> Node
         false => format!("Nothing found. They would go in {}.", places.join(", ")),
     };
     page.child(wrapped_note(&said, room))
+}
+
+/// The heading over the customizations of `kind` found, with how many show, and the button for a new one when one can be written.
+fn found_heading(state: &WorkspaceState, kind: Kind, shown: usize) -> Node {
+    node()
+        .styles([flex(), items_center(), justify_between(), flex_none()])
+        .child(heading_only("Found", shown))
+        .children(draftable(kind).then(|| new_button(state, kind)))
 }
 
 /// One customization as its row shows it: its name with its scope, what it is for, what it says about itself in the code font, its switch and the button that opens its file.

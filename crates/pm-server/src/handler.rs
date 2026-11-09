@@ -491,6 +491,26 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             None => failed(format!("no agent is called {agent}")),
         },
         Request::SaveWithheld { keys } => saved_list(crate::library::WITHHELD, &keys),
+        Request::CreateCustomization {
+            kind,
+            scope,
+            name,
+            description,
+            directory,
+        } => {
+            let draft = pm_agent_library::Draft {
+                kind,
+                scope,
+                name,
+                description,
+            };
+            match pm_agent_library::create(&draft, &place(&directory)) {
+                Ok(path) => Response::Created {
+                    path: path.to_string_lossy().into_owned(),
+                },
+                Err(reason) => failed(reason),
+            }
+        }
         Request::Files {
             directory,
             limit,

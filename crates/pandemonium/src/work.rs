@@ -118,9 +118,11 @@ enum Pending {
     /// A session's agent was signed in again, or could not be.
     SignInSession,
     /// What the agent at the second position is given in the project at the first.
-    Library(usize, usize),
+    Library(Option<usize>, usize),
     /// The tools the agent at the second position is given on the machine of the project at the first.
-    ToolSets(usize, usize),
+    ToolSets(Option<usize>, usize),
+    /// A new customization was written for the project at this position, or could not be.
+    Created(Option<usize>),
     /// The sessions the server of this machine holds.
     Sessions(Host),
     /// The files listed for this key.
@@ -1425,6 +1427,25 @@ impl Work {
                         );
                     }
                 }
+                Outgoing::CreateCustomization {
+                    project,
+                    host,
+                    directory,
+                    kind,
+                    scope,
+                    name,
+                    description,
+                } => self.ask(
+                    &host,
+                    Request::CreateCustomization {
+                        kind,
+                        scope,
+                        name,
+                        description,
+                        directory,
+                    },
+                    Pending::Created(project),
+                ),
                 Outgoing::SaveWithheld { host, keys } => {
                     self.ask(&host, Request::SaveWithheld { keys }, Pending::Nothing)
                 }
@@ -1456,7 +1477,7 @@ impl Work {
                     Pending::Added,
                 ),
                 Outgoing::Copy { text } => copies.push(text),
-                Outgoing::SaveMachineSettings(settings) => self.save_machine_settings(settings),
+                Outgoing::SaveMachineSettings(settings) => self.save_machine_settings(*settings),
                 Outgoing::LatestRelease { channel } => self.ask_release(channel),
                 Outgoing::DownloadUpdate { channel, version } => {
                     self.download_update(channel, version)
@@ -1961,6 +1982,15 @@ impl Work {
                 other => {
                     let reason = Self::trouble_of(other);
                     Self::in_workspace(model, |state| state.with_library_failed(reason));
+                }
+            },
+            Pending::Created(project) => match response {
+                Response::Created { path } => Self::in_workspace(model, |state| {
+                    state.with_customization_created(project, path)
+                }),
+                other => {
+                    let reason = Self::trouble_of(other);
+                    Self::in_workspace(model, |state| state.with_customization_failed(reason));
                 }
             },
             Pending::ToolSets(project, agent) => match response {

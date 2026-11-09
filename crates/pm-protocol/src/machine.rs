@@ -91,7 +91,7 @@ impl Default for HistoryPreferences {
 }
 
 /// What a new session starts with.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentPreferences {
     /// The agent new work is given to, by id, or the first one listed when nothing.
@@ -101,6 +101,63 @@ pub struct AgentPreferences {
     /// The agents, by id, left out of the ones a new session can be started with; they still run the sessions they have and keep their accounts.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub hidden: Vec<String>,
+    /// How hard the model thinks, by the harness's id such as `low`, `medium`, `high`, `xhigh` or `max`, or the harness's own choice when nothing; a model that does not take it thinks at its own default.
+    pub effort: Option<String>,
+    /// Whether agents start with what earlier conversations in the project remembered, and can save memories.
+    pub memory: bool,
+    /// Whether agents have the checkpoint and rewind tools.
+    pub checkpoints: bool,
+    /// How long the prompt cache lives, `5m` or `1h`, where the provider lets it be picked.
+    pub cache: String,
+    /// Whether the prompt cache is kept warm while a long tool runs or the conversation waits, where the provider can.
+    pub cache_warming: bool,
+    /// The model plan mode plans with, as `model` or `provider/model`, or the conversation's own model when empty.
+    pub plan_model: String,
+    /// Whether each plan an agent submits is also saved as markdown in the project.
+    pub plan_autosave: bool,
+}
+
+/// The prompt cache lifetime a new conversation starts with.
+pub const CACHE_SHORT: &str = "5m";
+
+impl Default for AgentPreferences {
+    /// No default agent or mode, memory, checkpoints and cache warming on, the short cache, planning with the conversation's model, and plans kept with the conversation only.
+    fn default() -> Self {
+        Self {
+            default_agent: None,
+            permission_mode: None,
+            hidden: Vec::new(),
+            effort: None,
+            memory: true,
+            checkpoints: true,
+            cache: CACHE_SHORT.to_owned(),
+            cache_warming: true,
+            plan_model: String::new(),
+            plan_autosave: false,
+        }
+    }
+}
+
+impl AgentPreferences {
+    /// The conversation settings a new conversation starts with, by the harness's setting id and value; a choice saved with a conversation wins over them.
+    pub fn conversation_defaults(&self) -> Vec<(String, String)> {
+        let switch = |on: bool| if on { "on" } else { "off" }.to_owned();
+        let mut defaults = vec![
+            ("memory".to_owned(), switch(self.memory)),
+            ("checkpoints".to_owned(), switch(self.checkpoints)),
+            ("cache".to_owned(), self.cache.clone()),
+            ("cache_warming".to_owned(), switch(self.cache_warming)),
+            ("plan_autosave".to_owned(), switch(self.plan_autosave)),
+        ];
+        let planner = self.plan_model.trim();
+        if !planner.is_empty() {
+            defaults.push(("plan_model".to_owned(), planner.to_owned()));
+        }
+        if let Some(effort) = &self.effort {
+            defaults.push(("effort".to_owned(), effort.clone()));
+        }
+        defaults
+    }
 }
 
 /// The shell a server opens for the terminal dock.
@@ -255,5 +312,42 @@ impl MachineSettings {
         } else {
             self.languages.insert(id.to_owned(), preferences);
         }
+    }
+}
+
+#[cfg(test)]
+/// Tests for the machine's settings.
+mod tests {
+    use super::*;
+
+    /// Settings saved before the conversation defaults existed read with memory, checkpoints and warming on, the short cache and no effort, and say so to the harness.
+    #[test]
+    fn older_agent_settings_keep_the_defaults() {
+        let read: AgentPreferences = serde_json::from_str(r#"{"permission_mode":"plan"}"#).unwrap();
+        assert_eq!(read.permission_mode.as_deref(), Some("plan"));
+        assert_eq!(
+            read.conversation_defaults(),
+            [
+                ("memory", "on"),
+                ("checkpoints", "on"),
+                ("cache", "5m"),
+                ("cache_warming", "on"),
+                ("plan_autosave", "off"),
+            ]
+            .map(|(id, value)| (id.to_owned(), value.to_owned()))
+        );
+        let chosen = AgentPreferences {
+            effort: Some("high".to_owned()),
+            memory: false,
+            plan_model: " anthropic/claude-opus-5-5 ".to_owned(),
+            ..read
+        };
+        let defaults = chosen.conversation_defaults();
+        assert!(defaults.contains(&("memory".to_owned(), "off".to_owned())));
+        assert!(defaults.contains(&("effort".to_owned(), "high".to_owned())));
+        assert!(defaults.contains(&(
+            "plan_model".to_owned(),
+            "anthropic/claude-opus-5-5".to_owned()
+        )));
     }
 }

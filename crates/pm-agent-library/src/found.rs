@@ -14,7 +14,27 @@ const WHOLE_PROJECT: &str = "the whole project";
 
 /// Every instruction file, skill and agent definition the harness gives an agent working in `project`, turned off or not, in the order crab finds them.
 pub fn discover(project: &Path) -> Vec<Item> {
-    let found = omc_context::discover(&Locations::detect(project), &[]);
+    found_in(&Locations::detect(project), Some(project))
+}
+
+/// The instruction files, skills and agent definitions the harness gives an agent in every project, read from the reader's own folders and its built-in ones, without any project's.
+pub fn discover_own() -> Vec<Item> {
+    let Some(home) = std::env::home_dir() else {
+        return Vec::new();
+    };
+    let locations = Locations {
+        project: false,
+        ..Locations::detect(&home)
+    };
+    found_in(&locations, None)
+        .into_iter()
+        .filter(|item| item.scope != Scope::Workspace)
+        .collect()
+}
+
+/// What crab finds in `locations`, as rows, with instruction files named from `project` when there is one.
+fn found_in(locations: &Locations, project: Option<&Path>) -> Vec<Item> {
+    let found = omc_context::discover(locations, &[]);
     found
         .skills
         .iter()
@@ -60,10 +80,10 @@ fn skill(found: &Skill) -> Item {
     }
 }
 
-/// `found` as a row of instruction files, applying to every project or the whole of `project`.
+/// `found` as a row of instruction files, applying to every project or the whole of `project`, when there is one.
 ///
 /// It is named by where it is, as `shown` writes it, so that two files of one name never share the key that turning one off is kept under, and keys kept before still match.
-fn instruction(found: &Instruction, project: &Path) -> Item {
+fn instruction(found: &Instruction, project: Option<&Path>) -> Item {
     Item {
         kind: Kind::Instruction,
         scope: if found.user {
@@ -85,9 +105,9 @@ fn instruction(found: &Instruction, project: &Path) -> Item {
     }
 }
 
-/// How a row names the file `file`: from `project` when it is inside it, after `~/` when it is in the home folder, and in full otherwise.
-fn shown(file: &Path, project: &Path) -> String {
-    if let Ok(inside) = file.strip_prefix(project) {
+/// How a row names the file `file`: from `project` when there is one and it is inside it, after `~/` when it is in the home folder, and in full otherwise.
+fn shown(file: &Path, project: Option<&Path>) -> String {
+    if let Some(inside) = project.and_then(|project| file.strip_prefix(project).ok()) {
         return inside.to_string_lossy().into_owned();
     }
     if let Some(home) = std::env::home_dir()
@@ -123,7 +143,7 @@ mod tests {
     /// Instruction files are named by where they are, so that two of one file name get different keys.
     #[test]
     fn instructions_are_named_by_where_they_are() {
-        let project = Path::new("/work/app");
+        let project = Some(Path::new("/work/app"));
         let at = |path: &str, user: bool| Instruction {
             path: path.into(),
             content: String::new(),
