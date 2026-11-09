@@ -887,9 +887,9 @@ checksum = "ce1932d832b1d6c0fcb852d4b1fd1fe9930fc2e0cfa7d125a90ee3f86978310d"
 
 [[package]]
 name = "crc32fast"
-version = "1.5.2"
+version = "1.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01a7799fd6b852db0e61728dde9a204c423b44d689dbd432522543614b490e78"
+checksum = "5f97d3416d5337d15c4b0d78c8c91df922ca143f57ec20e2d1c188333047ef04"
 dependencies = [
  "cfg-if",
 ]
@@ -3029,8 +3029,8 @@ dependencies = [
 
 [[package]]
 name = "omc-agent"
-version = "0.1.0"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.0#57aba7d47e851cea9ea7a112c64e917c56d0a5c9"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.1#672891c71779b2ea02a663ffe6fc444252fa40cb"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3045,8 +3045,8 @@ dependencies = [
 
 [[package]]
 name = "omc-auth"
-version = "0.1.0"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.0#57aba7d47e851cea9ea7a112c64e917c56d0a5c9"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.1#672891c71779b2ea02a663ffe6fc444252fa40cb"
 dependencies = [
  "base64 0.23.1",
  "dirs",
@@ -3062,8 +3062,8 @@ dependencies = [
 
 [[package]]
 name = "omc-context"
-version = "0.1.0"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.0#57aba7d47e851cea9ea7a112c64e917c56d0a5c9"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.1#672891c71779b2ea02a663ffe6fc444252fa40cb"
 dependencies = [
  "ignore",
  "serde_json",
@@ -3071,8 +3071,8 @@ dependencies = [
 
 [[package]]
 name = "omc-dap"
-version = "0.1.0"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.0#57aba7d47e851cea9ea7a112c64e917c56d0a5c9"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.1#672891c71779b2ea02a663ffe6fc444252fa40cb"
 dependencies = [
  "async-trait",
  "dirs",
@@ -3083,9 +3083,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "omc-extensions"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.1#672891c71779b2ea02a663ffe6fc444252fa40cb"
+dependencies = [
+ "async-trait",
+ "dirs",
+ "futures-util",
+ "omc-agent",
+ "omc-mcp",
+ "omc-providers",
+ "omc-tools",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "omc-hooks"
-version = "0.1.0"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.0#57aba7d47e851cea9ea7a112c64e917c56d0a5c9"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.1#672891c71779b2ea02a663ffe6fc444252fa40cb"
 dependencies = [
  "async-trait",
  "dirs",
@@ -3094,6 +3110,8 @@ dependencies = [
  "libc",
  "omc-agent",
  "omc-context",
+ "omc-extensions",
+ "omc-mcp",
  "omc-memory",
  "omc-providers",
  "omc-wire",
@@ -3105,11 +3123,13 @@ dependencies = [
 
 [[package]]
 name = "omc-mcp"
-version = "0.1.0"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.0#57aba7d47e851cea9ea7a112c64e917c56d0a5c9"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.1#672891c71779b2ea02a663ffe6fc444252fa40cb"
 dependencies = [
  "async-trait",
+ "dirs",
  "futures-util",
+ "oauth2",
  "omc-tools",
  "omc-wire",
  "reqwest 0.13.5",
@@ -3117,12 +3137,13 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
+ "url",
 ]
 
 [[package]]
 name = "omc-memory"
-version = "0.1.0"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.0#57aba7d47e851cea9ea7a112c64e917c56d0a5c9"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.1#672891c71779b2ea02a663ffe6fc444252fa40cb"
 dependencies = [
  "dirs",
  "omc-context",
@@ -3133,17 +3154,19 @@ dependencies = [
 
 [[package]]
 name = "omc-providers"
-version = "0.1.0"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.0#57aba7d47e851cea9ea7a112c64e917c56d0a5c9"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.1#672891c71779b2ea02a663ffe6fc444252fa40cb"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
+ "crc32fast",
  "dirs",
  "eventsource-stream",
  "futures-util",
  "getrandom 0.4.3",
  "omc-auth",
  "reqwest 0.13.5",
+ "ring",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -3152,8 +3175,8 @@ dependencies = [
 
 [[package]]
 name = "omc-script"
-version = "0.1.0"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.0#57aba7d47e851cea9ea7a112c64e917c56d0a5c9"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.1#672891c71779b2ea02a663ffe6fc444252fa40cb"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3167,8 +3190,8 @@ dependencies = [
 
 [[package]]
 name = "omc-session"
-version = "0.1.0"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.0#57aba7d47e851cea9ea7a112c64e917c56d0a5c9"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.1#672891c71779b2ea02a663ffe6fc444252fa40cb"
 dependencies = [
  "async-trait",
  "dirs",
@@ -3176,6 +3199,7 @@ dependencies = [
  "omc-auth",
  "omc-context",
  "omc-dap",
+ "omc-extensions",
  "omc-hooks",
  "omc-mcp",
  "omc-memory",
@@ -3191,8 +3215,8 @@ dependencies = [
 
 [[package]]
 name = "omc-tools"
-version = "0.1.0"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.0#57aba7d47e851cea9ea7a112c64e917c56d0a5c9"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.1#672891c71779b2ea02a663ffe6fc444252fa40cb"
 dependencies = [
  "ast-grep-core",
  "ast-grep-language",
@@ -3230,8 +3254,8 @@ dependencies = [
 
 [[package]]
 name = "omc-wire"
-version = "0.1.0"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.0#57aba7d47e851cea9ea7a112c64e917c56d0a5c9"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.1#672891c71779b2ea02a663ffe6fc444252fa40cb"
 dependencies = [
  "serde",
  "serde_json",
