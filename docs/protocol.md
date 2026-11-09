@@ -105,7 +105,6 @@ request with exactly one `response` carrying the same `id`.
 | `request`      | Fields                                                                                           | Normal response |
 | -------------- | ------------------------------------------------------------------------------------------------ | --------------- |
 | `discover`     | `agent`                                                                                          | `discovery`     |
-| `skills`       | `agent`, `directory`                                                                             | `skills`        |
 | `files`        | `directory`, `limit`, `expanded` (optional)                                                      | `files`         |
 | `branches`     | `directory`                                                                                      | `branches`      |
 | `submodules`   | `directory`                                                                                      | `submodules`    |
@@ -116,6 +115,7 @@ request with exactly one `response` carrying the same `id`.
 | `set_session_account` | `session`, `login` (a login id, or `null` for the agent's own)                            | `done`          |
 | `sign_in`      | `agent`, `login` (optional): a login id, signed in under its own folder and never the agent's default one | `done`          |
 | `sign_in_session` | `session` | `done` |
+| `save_key`     | `agent`, `key` (optional): the API key to keep for an agent signed in with one, or `null` to forget it; a key in the agent's environment variable still wins | `done` |
 | `start_session`| `agent`, `repository`, `directory`, `title`, `base`, `settings`, `text`, `attachments`, `submodule`, `container` | `started`       |
 | `prompt`       | `session`, `text`, `attachments`, `now` (optional, `false` by default)                           | `done`          |
 | `remove_queued` | `session`, `queued`                                                                            | `done`          |
@@ -127,7 +127,7 @@ request with exactly one `response` carrying the same `id`.
 | `fork_session` | `session`, `turn`                                                                                | `sessions`      |
 | `choose`       | `session`, `ticket`, `option`                                                                    | `done`          |
 | `answer`       | `session`, `ticket`, `replies`                                                                   | `done`          |
-| `trust_hooks`  | `session`, `hooks`: `[Hook]`                                                                     | `done`          |
+| `trust`        | `session`, `ticket`, `verdict`                                                                   | `done`          |
 | `cancel`       | `session`                                                                                        | `done`          |
 | `close_session`| `session`, `discard`?                                                                           | `done`, or `uncommitted` |
 | `rename_session`| `session`, `title`                                                                              | `done`          |
@@ -140,8 +140,6 @@ request with exactly one `response` carrying the same `id`.
 | `save_projects`| `paths`                                                                                          | `done`          |
 | `choices`      | none                                                                                             | `choices`       |
 | `save_choices` | `choices`: `[[agent, setting, value]]`                                                           | `done`          |
-| `agent_servers`| none                                                                                             | `agent_servers` |
-| `save_agent_servers`| `servers`: `[{id, name, command, env, package, installer, home}]`, `env`: `[[name, value]]`                                | `done`          |
 | `mcp_servers`  | none                                                                                             | `mcp_servers`   |
 | `save_mcp_servers`| `servers`: `[{name, target, env, description, website, enabled, extension}]`, `env`: `[[name, value]]`                                     | `done`          |
 | `library`      | `agent`, `directory`                                                                             | `library`       |
@@ -153,7 +151,6 @@ request with exactly one `response` carrying the same `id`.
 | `latest_release`| `channel`: `stable` or `preview`                                                                 | `latest_release` |
 | `download_update`| `channel`, `version`                                                                            | `update_staged` |
 | `cancel_update`| none                                                                                              | `done`          |
-| `registry_agents`| none                                                                                             | `registry_agents`|
 | `search_tools` | `query`                                                                                          | `tool_listings` |
 | `accounts`     | none                                                                                             | `accounts`      |
 | `sessions`     | none                                                                                             | `sessions`      |
@@ -251,7 +248,7 @@ request with exactly one `response` carrying the same `id`.
 | `revision_changes`| `directory`, `from` (optional), `to`                                                          | `revision_changes` |
 | `permalink`    | `directory`, `path`, `line` (optional), `end_line` (optional)                                    | `address`       |
 
-`agent` is an agent's id: `claude-code`, `codex` or `grok`.
+`agent` is an agent's id: `claude-code` or `codex`.
 
 `files` lists tracked, untracked and ignored files together, up to `limit` for
 each listing. Ignored paths are marked in the `ignored` response field so the
@@ -340,7 +337,9 @@ everything said of them, its submodules' paths written from `directory`.
   again, and fails when its folder was removed. Other clients are told with `session_closed`.
 - **`rename_session`:** keeps `title` as the session's title, trimmed, and fails when it is empty.
   Every client watching the session is told with a `Titled` event, the one that asked included. The
-  agent may name the session again later.
+  title belongs to the conversation: the server hands it to the harness, which saves it with the
+  conversation, and reads it back from there when it starts. An agent that finds its conversation
+  unnamed may name it once; a name the reader gave always wins.
 - **`prompt`:** hands the agent its next turn. If the agent has stopped (after
   a `failed` event) the server starts it again first. A prompt sent while a
   turn is running waits in the session's queue, which the server keeps, and is
@@ -374,16 +373,16 @@ everything said of them, its submodules' paths written from `directory`.
 - **`rewind`:** takes the conversation back to before the reader's turn
   `turn`, counted from 0 among the `Prompted` events a rewind has not
   dropped. The turn and everything after it are dropped, announced with a
-  `Rewound` event, and the agent stops. The next `prompt` starts it again as a
-  new conversation and hands it what came before the turn, as text ahead of
-  the prompt, with the settings it last reported. Files are left as they are.
+  `Rewound` event, and the agent stops. The next `prompt` starts it again on the
+  conversation the harness saved, cut back to before that turn by the turn's
+  id. Files are left as they are.
   Fails while a turn is running.
 - **`restore`:** puts the files of the session's folder back as they were
   before the reader's turn `turn`, counted as for `rewind`, and announces it
   with a `Restored` event. Before every turn in a git repository the server
   keeps the files, tracked or not but not ignored, under
-  `refs/worktree/pandemonium/sessions/<session>/turns/<seq>`, where `seq` is
-  the number of the turn's `Prompted` event; the files as they were before a
+  `refs/worktree/pandemonium/sessions/<session>/turns/<id>`, where `id` is
+  the turn's id, which its `Prompted` event carries; the files as they were before a
   restore are kept under `…/sessions/<session>/before-restore`. Neither the
   branch, the head nor the index changes. The agent's next prompt says that
   the files were put back. Fails while a turn is running, or when no files
@@ -394,8 +393,8 @@ everything said of them, its submodules' paths written from `directory`.
   files are shared, and is titled after the source with ` (branch)`. Its log
   starts with the source's latest `Settings` and `Commands` and the events of
   those turns, numbered from 1, with no files kept before them. Its agent is
-  not started until the first `prompt`, which hands it the conversation so far
-  as text ahead of the prompt. The response is `sessions` holding the new
+  not started until the first `prompt`, and then carries on from a copy of the
+  conversation the harness saved, cut at the branch point. The response is `sessions` holding the new
   session; the connection is attached to it, and other clients are told with
   `session_added`. Fails while the agent is still writing that reply.
 - **`cancel`:** stops the running turn and drops the prompts queued behind it,
@@ -411,13 +410,14 @@ everything said of them, its submodules' paths written from `directory`.
   are the `label`s of the alternatives chosen and `other` is what the reader
   typed, both possibly empty to skip the question. A null `replies` abandons the
   form, which aborts the agent's use of the tool.
-- **`trust_hooks`:** trusts hooks a `Hooks` event of the session listed, on the
-  machine the session runs on, the way Codex records trust itself (asked of
-  `codex app-server`, so `codex` in a terminal sees the same state). A hook is
-  trusted only when its `key` and `hash` still match what Codex lists, so one
-  that changed since it was shown stays untrusted. A `Hooks` event follows with
-  what is still held back, and the session's next turn starts its agent again
-  so that it runs the hooks trusted. Nothing is trusted without this request.
+- **`trust`:** answers a `Trust` event. `ticket` is the ticket of the request
+  and `verdict` is `Always` to trust the project's repository for good, `Allow`
+  to trust it for this session's conversation only, or `Reject` to record that
+  it is not trusted. What a trusted project brings is used from the agent's
+  next turn. The server notes a `Trusted` event with the verdict. Since `Always`
+  and `Reject` are recorded for the whole repository, the server answers every
+  other session of the same repository that waits on a request the same way,
+  each with a `Trusted` event of its own; `Allow` answers this session alone.
 - **`attach`:** subscribes the connection to a session and replays the events
   numbered after `after`. See [Events](#events).
 - **`standing`:** where a folder stands, answered from git's refs alone and so
@@ -444,22 +444,21 @@ everything said of them, its submodules' paths written from `directory`.
   own login when it is `null`, without touching any other session or the login
   new sessions start with. The server keeps it with the session; a running
   agent is started again under the new login before the session's next turn,
-  and told the conversation so far.
+  on the same saved conversation.
 - **`projects`, `choices`:** what the reader set up, kept by the server so that
   every client sees the same. `projects` says `saved: false` when the list was
   never saved, which means the app has not been set up yet. A project is an
   address of a folder on the server's machine, such as `~/code/app`.
 - **`mcp_servers`, extensions:** `mcp_servers` also lists the tool servers the extensions installed on the machine bring, each with `extension` set to the extension's folder name; `save_mcp_servers` leaves those out of what it keeps, and they go when the extension does. A tool server started as a program is `enabled: false` while its extension is not allowed to run programs, and one reached by address while it is not allowed to download.
-- **`agent_servers`, `mcp_servers`:** the agents the server can start and
-  the tool servers every agent is started with, kept by the server and replaced
-  whole by the matching `save_` request. The agents the app ships are in the list the first time it is asked for, and are changed or removed like any other; `package`, `installer` and `home` are optional. A tool server's `target` is an address
+- **`mcp_servers`:** the tool servers every agent is started with, kept by the
+  server and replaced whole by `save_mcp_servers`. A tool server's `target` is an address
   when it begins with `http://` or `https://`, and `env` is then the headers it
   is sent; otherwise it is the command that starts it, and `env` its environment.
   Every new session is started with the tool servers saved at that moment that are `enabled`; `description` and `website` are optional and `enabled` is true when missing.
 - **`library`, `tool_sets`, `save_withheld`:** what an agent is given in a
   project, read on the server's machine from the folders the agent's product
   keeps it in, so a remote project lists the remote machine's files. `library`
-  answers with `product` (`claude`, `codex`, `grok`, `copilot`, or null), the
+  answers with `product` (`claude`, `codex`, or null), the
   `items` found (`[{kind, scope, name, description, path, applies, model, tools,
   command}]`, `kind` one of `skill`, `instruction`, `agent`, `hook` and `scope`
   one of `workspace`, `user`, `built_in`) and `withheld`. `tool_sets` answers
@@ -471,13 +470,14 @@ everything said of them, its submodules' paths written from `directory`.
   `tools/<id>` and one tool's `tool/<id>/<tool>`; `save_withheld` replaces it
   whole and the server keeps it. A session started afterwards is not given what
   is turned off where its product can leave it out: a tool server turned off
-  whole is left out of `mcpServers`, Claude Code is started without the skills,
-  agent definitions and tools turned off and without the instruction files, and
-  Codex without the skills; `skills` leaves out the skills turned off. The
+  whole is left out of the tool servers given to the harness, and the harness is
+  told the names of the tools turned off (its own lowercase names, and
+  `mcp__<server>__<tool>` for a server's) and the instruction files (by path),
+  skills and agent definitions (by name) turned off; `skills` leaves out the
+  skills turned off. The
   files on disk are never changed.
-- **`registry_agents`, `search_tools`:** what the public registries of agents and
-  of tool servers offer, read by the server so that a client needs no access to
-  the internet. Only agents that are a package a runner fetches are listed.
+- **`search_tools`:** what the public registry of tool servers offers, read by
+  the server so that a client needs no access to the internet.
   `search_tools` with a blank `query` lists the well known servers; `asks` says
   that installing a listing has to ask for something first.
 - **`sessions`:** every session the server holds, running or not, with enough
@@ -504,8 +504,10 @@ everything said of them, its submodules' paths written from `directory`.
   time it is written with `write_file`, how many days it keeps it and how many
   megabytes of states one project may take up (30 days and 256 megabytes when
   not set). `agents` is
-  `{default_agent, permission_mode}`, each optional: the agent a client offers
-  first for new work, by id, and the mode new sessions start in. `shell` is
+  `{default_agent, permission_mode, hidden}`, each optional: the agent a client offers
+  first for new work, by id, the mode new sessions start in, and the ids of the
+  agents a client leaves out when a new session is started; a hidden agent still
+  runs its sessions and keeps its accounts. `shell` is
   `{program, arguments}`, the shell `open_terminal` starts when `program` is not
   empty. `extensions` maps an extension's folder name to `{granted}`, the
   capabilities it was allowed; `save_machine_settings` does not change it, only
@@ -907,7 +909,6 @@ embedded context, and anything else as a link to the stored file.
 | `done`       | none                                                      |
 | `failed`     | `message`                                                 |
 | `discovery`  | `settings`, `commands`                                    |
-| `skills`     | `skills` (`[{name, description}]`), `names` (`[string]`)  |
 | `files`      | `paths`: repository-relative tracked, untracked and ignored files, `folders` (optional): untracked and ignored folders that may hold no file yet, `ignored` (optional): which paths and folders git ignores, listed so a tree can dim them |
 | `branches`   | `names`: local branches, the current one first, then remote ones such as `origin/main`; read from git at each request. Of a folder of repositories, those every child has, then the rest |
 | `submodules` | `paths`: every submodule's path from the root of the repository, nested ones included, initialised or not; in a folder of repositories, each child followed by its submodules, from the folder, so a child is listed like a submodule |
@@ -924,14 +925,12 @@ embedded context, and anything else as a link to the stored file.
 | `inspected`  | `changes`: `[{path, diff, words, staged, untracked, index, worktree, conflicted, from, submodule, repository, moved, added, removed, lazy}]`, `added` and `removed` the lines the file puts in and takes out, counted over the whole file, and `lazy` true when `diff` and `words` are left out because the file's diff is asked for with `diffs` (an older server leaves `lazy` false and sends them), files inside submodules listed under their paths from the root with `submodule` the submodule's path, files of a folder of repositories listed under their paths from the folder with `repository` the child's folder name and null for one repository, and a submodule checked out at another commit than the one recorded as its own path with `moved`: `{from, to, commits, back}` (abbreviated commits, the subjects between them oldest first, `back` when it went back past them) and an empty `diff`, `commits`: `[string]` or null, `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind, remotes}`, `operation`: `Merge`, `Rebase` or `CherryPick` with what git prepared, or null, `repositories` (optional): `[{path, branch, head, tracking}]` for each child of a folder of repositories, empty for one repository; `branch`, `head` and `tracking` then sum up the children: the one branch they are all on or the branches joined by ` · `, the first child's commit, and the commits ahead and behind added up, following something only when every child does |
 | `projects`   | `paths`, `saved`                                          |
 | `choices`    | `choices`: `[[agent, setting, value]]`                    |
-| `agent_servers` | `servers`: `[{id, name, command, env, package, installer, home}]`                |
 | `mcp_servers` | `servers`: `[{name, target, env, description, website, enabled, extension}]`          |
 | `library`    | `product`, `items`, `withheld`, as described under `library` above |
 | `tool_sets`  | `product`, `sets`, `withheld`, as described under `library` above |
 | `machine_settings` | `settings`: `{git, history, agents, shell, languages, extensions, servers}`, as `save_machine_settings` takes them |
 | `latest_release` | `version`: the version, or null when none was found; `url`: its page; `name`, `published`, `body` (markdown notes): each null when absent; `assets`: `[{name, url, size}]` |
 | `update_staged` | `path`: where the checked and unpacked update is, to install from |
-| `registry_agents` | `agents`: `[{id, name, version, description, website, command, env}]` |
 | `tool_listings` | `listings`: `[{id, title, description, name, target, env, inputs, asks, website}]` |
 | `accounts`   | `logins`: `[{agent, id, name}]`, `in_use`: `[[agent, id]]` |
 | `sessions`   | `sessions`: `[SessionInfo]`                               |
@@ -1040,8 +1039,7 @@ still the folder of the whole worktree.
 that owns the session, using that session's account folder rather than the
 account selected for new work. It answers `done` or `failed`.
 
-`{"SignedOut": {"reason", "account"}}` ends a turn that failed with ACP `LOGIN_REQUIRED`
-(`-32000`) or an authentication failure. `account` names the session's account
+`{"SignedOut": {"reason", "account"}}` ends a turn that failed because the harness has no valid login for the agent's provider. `account` names the session's account
 on its server, or is null for the default account. It replaces `Finished` for that turn;
 clients show a sign-in notice and action, not an assistant message. The server
 stops the expired agent and drops queued prompts without sending them.
@@ -1050,6 +1048,19 @@ failure sends `SignedOut` with its reason instead. Both events are numbered,
 persisted, and replayed like other session events. The next prompt uses the
 same session and its conversation history with refreshed credentials.
 
+### Signing in with a code
+
+Some providers sign in with a short code the reader enters on a web page rather
+than with a page that hands back by itself. While `sign_in` or `sign_in_session`
+waits for such a login, the server sends the asking client
+
+```json
+{"type": "sign_in_code", "agent": "copilot", "url": "https://github.com/login/device", "code": "ABCD-1234"}
+```
+
+and opens the page. Show the code until the request is answered with `done` or
+`failed`.
+
 ### Event types
 
 Events use serde's default form, one key naming the type.
@@ -1057,7 +1068,7 @@ Events use serde's default form, one key naming the type.
 | Event                         | Meaning                                                                                                   |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------- |
 | `{"Settings": [Setting]}`     | What can be changed and how it stands now. Replaces the earlier list.                                     |
-| `{"Commands": [Slash]}`       | The commands offered behind a slash. Replaces the earlier list.                                           |
+| `{"Commands": [Slash]}`       | The commands and skills offered behind a slash, named alike, which the agent loads when a prompt starts with the name. Replaces the earlier list. |
 | `{"Used": {"used", "size"}}`  | How many tokens the context holds and how many it takes in all. Replaces the earlier count.               |
 | `{"Said": "text"}`            | More of the agent's reply. Append it to the reply so far.                                                 |
 | `{"Thought": "text"}`         | More of the agent's reasoning. Append it.                                                                 |
@@ -1068,30 +1079,38 @@ Events use serde's default form, one key naming the type.
 | `{"Ask": Permission}`         | The agent waits for an answer: send `choose` with the `ticket` and the `id` of a choice.                  |
 | `{"Inquire": Inquiry}`      | The agent waits for answers to a form of questions: send `answer` with the `ticket` and a reply for each question. |
 | `{"Answered": [[question, answer]]}` | A client answered a form of questions. `answer` is null for a question that was skipped. |
+| `{"Trust": TrustRequest}`    | The agent left out what the project folder brings until the reader trusts the project, and goes on without it: send `trust` with the `ticket`. Sent when the agent starts and again when what is left out changes; a later request replaces an earlier one. |
+| `{"Trusted": {ticket, verdict}}` | The trust request under `ticket` stopped waiting: a client answered it with `verdict`, or it was dropped (`verdict` null) because the agent it came from stopped. Clear it when it is the one shown. |
 | `{"Finished": null}`          | The turn ended. A string instead of null means it failed with that reason.                                |
 | `{"SignedOut": {"reason", "account"}}` | The turn ended because the session account needs signing in again. Send `sign_in_session`; do not append the reason as an assistant reply. |
 | `"SignedIn"` | The session account was signed in again. Clear its sign-in notice. |
 | `{"Failed": "reason"}`        | The agent could not be started or stopped. A `Halted` comes before it, and it ends an open turn. The next `prompt` starts it again. |
 | `{"Container": "step"}`       | The dev container of the session is coming up: what it is doing now. Cleared when the agent starts.      |
-| `{"Titled": "text"}`          | The agent named the session, or named it again. The server keeps it as the session's `title`.            |
-| `{"Hooks": [Hook]}`           | The hooks the session's Codex holds back until the reader trusts them, all of them as they stand now. Replaces the earlier list; empty when none is held back. Told when a Codex session starts and again when a file the hooks are read from changes. Trust them with `trust_hooks`. |
-| `{"Prompted": {text, files, checkpoint}}` | A client handed the agent a turn. Sent to every client watching the session, the one that sent it included. `files` are names. `checkpoint` (absent means `false`) says the files were kept before the turn, so `restore` can put them back. |
+| `{"Titled": "text"}`          | The session was named, by the reader or by the agent. The server keeps it as the session's `title`.      |
+| `{"Prompted": {text, files, checkpoint, turn}}` | A client handed the agent a turn. Sent to every client watching the session, the one that sent it included. `files` are names. `checkpoint` (absent means `false`) says the files were kept before the turn, so `restore` can put them back. `turn` (absent or 0 means a turn from before turns had ids, which goes by the number of this event) is the id the harness saves the turn under; it names the files kept before the turn, and a rewind or a branch goes back to before a turn by it. |
 | `{"Queued": {id, text, files}}` | A client wrote while a turn was running, so the prompt waits under `id`, counted per session. `files` are names. Sent again under the same `id` when `edit_queued` changed the text: a client holding that `id` replaces its row. |
 | `{"Unqueued": id}`            | The prompt queued under `id` stopped waiting: it is handed over (a `Prompted` event follows) or dropped.  |
 | `{"Rewound": {turn}}`         | The conversation went back to before the reader's turn `turn`: drop that turn and everything after it.   |
 | `{"Restored": {turn, files}}` | The files were put back as they were before the reader's turn `turn`. `files` are the paths that changed, from the root of the repository. |
+| `{"ToolSignIn": "address"}`   | A tool server the agent uses wants the reader to sign in to it with OAuth. Show the address in the conversation and, when the event is live rather than replayed history, open it in the reader's browser. The server's tools come with the next prompt once signed in. |
 
 Shapes used above:
 
 - **Setting:** `{id, category, name, current, picks: [{value, name, description}]}`.
   `category` is `model`, `mode`, `thought_level` or something else. Change one
   with `set` and a `value` from `picks`.
-- **Tool:** `{id, title, kind, state, target, diff, output, parent, agent}`,
+- **Tool:** `{id, title, kind, state, target, diff, output, parent, agent, worktree}`,
   each but `id` possibly null. `agent`, when set, says the call starts a
   subagent of that kind; `parent` is the `id` of the subagent call whose work
   this is. Both may be absent in older logs. `kind` is `Read`, `Edit`, `Search`, `Execute`, `Fetch` or
   `Other`. `state` is `Running`, `Done` or `Failed`. `diff` is
-  `{path, old, new}`.
+  `{path, old, new}`. `worktree`, absent in older logs, is set on a call that
+  starts a subagent working in a git worktree of its own: `{path, merge}`,
+  where `path` is the folder it works in and `merge` is null while it works,
+  then `{"Applied": {files}}`, `"Unchanged"`, `{"Conflicted": {patch, files}}`
+  or `{"Held": {reason, patch}}` once its changes were applied to the session's
+  worktree, were none, did not apply cleanly and were saved to `patch`, or were
+  not applied for `reason`.
 - **PlanStep:** `{text, progress}` with `progress` one of `Pending`, `Doing`,
   `Done`.
 - **Permission:** `{ticket, title, command, plan?, choices: [{id, name, verdict}]}`
@@ -1105,6 +1124,14 @@ Shapes used above:
   changed since rather than new.
 - **Inquiry:** `{ticket, questions: [{header, text, multiple, alternatives: [{label, description}]}]}`.
   Send the answers to the questions with `answer`.
+- **TrustRequest:** `{ticket, root, standing, skipped: [{kind, name, path}]}`.
+  `root` is the folder trust is recorded for: the repository's main checkout,
+  which its worktrees share, or the folder outside a repository. `standing` is
+  `Unknown` (never decided), `Changed` (trusted, but a hook was added or changed
+  since, so only the hooks are left out) or `Declined`. `kind` is `Hook`,
+  `Instruction`, `Skill` or `Agent`; `name` is a skill's or agent's name, an
+  instruction file's path, or a hook's event, matcher and command; `path` is the
+  file it is defined in.
 
 ## Terminals
 
@@ -1356,10 +1383,24 @@ browser helper that take them are in [browser.md](browser.md#adding-screenshots-
 ## Not in the protocol yet
 
 - After a restart the server holds the sessions but not their agents. The
-  next `prompt` starts the agent again as a new conversation and hands it what
-  was said before as text ahead of the prompt. Queued prompts are not kept: the server drops them when it
-  starts again, with an `Unqueued` event for each.
-- The log of events is never trimmed.
+  conversation itself, its turns, its title and the settings chosen for it, is
+  kept by the harness, not the server: the server reads it back from the
+  harness when it starts, and the next `prompt` starts the agent again on the
+  same saved conversation. Only a session from before the harness kept
+  conversations is handed what was said before as text ahead of the prompt. A
+  turn that was stopped, failed or interrupted is kept by the harness as a
+  turn the model never sees, so it still shows in the session after a restart.
+  The harness also keeps what can be set and the choices made, the commands
+  it offers, how full the context is and the files each tool call changed, so
+  the server keeps none of those. What the server keeps itself is what the
+  harness cannot know: which turns have files kept, queued prompts, and
+  restore and rewind notes. A session from before the harness kept
+  conversations is handed to the harness the first time the server loads it,
+  as its prompts and what the agent said, without the tools it used, and the
+  copy is then cut from its log.
+  Queued prompts are not kept: the server drops them when it starts again,
+  with an `Unqueued` event for each.
+- The log of events is never trimmed while the server runs.
 - Shells do not survive a restart of the server.
 - There are no requests for file contents, file watching,
   listing checkpoints or deleting a session, and no message says that a project was

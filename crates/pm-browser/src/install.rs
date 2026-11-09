@@ -114,7 +114,7 @@ pub fn install(progress: &dyn Fn(Step)) -> Result<(), String> {
     }
     let target = folder().ok_or("this machine has no data folder")?;
     let base = std::env::var("PANDEMONIUM_BROWSER_URL")
-        .unwrap_or_else(|_| format!("{RELEASES}/v{}", env!("CARGO_PKG_VERSION")));
+        .unwrap_or_else(|_| format!("{RELEASES}/{}", env!("CARGO_PKG_VERSION")));
     let name = format!("pandemonium-browser-{}.tar.gz", platform());
     let staging = target.with_extension("partial");
     let _ = std::fs::remove_dir_all(&staging);

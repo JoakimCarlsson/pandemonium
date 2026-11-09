@@ -479,3 +479,49 @@ pub struct TextChange {
     /// What replaced it.
     pub text: String,
 }
+
+/// A symbol a language server names in a file or finds in a project: a function, type, field, module and so on.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct Outline {
+    /// Its name.
+    pub name: String,
+    /// What kind of symbol it is, in lower case, such as `function` or `struct`.
+    pub kind: String,
+    /// More about it, such as a function's signature, when the server says.
+    #[serde(default)]
+    pub detail: Option<String>,
+    /// The symbol it is inside of, such as the type of a method, when the server says.
+    #[serde(default)]
+    pub container: Option<String>,
+    /// How deeply it is nested in the symbols of its file, from nought for the outermost; nought for the symbols of a project.
+    #[serde(default)]
+    pub depth: u32,
+    /// The file it is in, as an absolute path.
+    pub file: std::path::PathBuf,
+    /// Where its name is, in UTF-16 code units as the server counts them.
+    pub span: Span,
+}
+
+/// How far a language server has got with the work it reports, such as loading a project.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Load {
+    /// It has reported no work yet, and may not have begun.
+    NotBegun,
+    /// It reports work going on.
+    Working,
+    /// It began some work and reports none going on now.
+    Idle,
+}
+
+/// One language server of a project and how it stands.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ServerState {
+    /// The id of its spec, such as `rust-analyzer`.
+    pub id: String,
+    /// The installed languages of the open files it reads.
+    pub languages: Vec<String>,
+    /// How it stands, in a word: `starting`, `failed`, `stopped`, `loading` or `running`.
+    pub state: String,
+    /// More about it, such as why it failed, when there is more to say.
+    pub detail: Option<String>,
+}

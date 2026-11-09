@@ -1,6 +1,6 @@
 //! The ring in the prompt box that shows how full the conversation's context is, and the words it says when the pointer rests on it.
 
-use pm_acp::Usage;
+use pm_harness::Usage;
 use pm_style::{
     Color, Role, bg, cursor_default, flex, flex_none, h_px, items_center, justify_center,
     rounded_full, w_px,

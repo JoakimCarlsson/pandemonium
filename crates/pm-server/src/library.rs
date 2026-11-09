@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 
-use pm_acp::Agent;
-use pm_agent_library::{Item, Launch, Source, ToolEntry, ToolSet};
+use pm_agent_library::{Item, Kind, Source, ToolEntry, ToolSet};
+use pm_harness::Agent;
 use pm_protocol::McpServer;
 
 /// What the keys of everything turned off are kept under.
@@ -21,9 +21,9 @@ pub(crate) fn withheld() -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Every customization `agent` is given in the project at `directory`, turned off or not.
-pub(crate) fn items(agent: Agent, directory: &Path) -> Vec<Item> {
-    pm_agent_library::discover(agent.product(), directory, agent.config_folder().as_deref())
+/// Every customization the harness gives an agent in the project at `directory`, turned off or not.
+pub(crate) fn items(directory: &Path) -> Vec<Item> {
+    pm_agent_library::discover(directory)
 }
 
 /// The tool servers agents are started with that are switched on: those saved and those the extensions bring.
@@ -57,7 +57,7 @@ fn reached(server: &McpServer) -> Option<pm_mcp::Server> {
             headers: server.env.clone(),
         });
     }
-    let mut words = pm_acp::command_words(&server.target).into_iter();
+    let mut words = pm_harness::command_words(&server.target).into_iter();
     Some(pm_mcp::Server::Command {
         program: words.next()?,
         args: words.collect(),
@@ -110,49 +110,94 @@ pub(crate) fn tool_sets(agent: Agent) -> Vec<ToolSet> {
             })
             .collect()
     });
-    ToolSet::built_in(agent.product())
+    ToolSet::built_in(agent.product(), pm_harness::harness_tools())
         .into_iter()
         .chain(listed)
         .collect()
 }
 
-/// What `agent` of the session numbered `session` is started with in `directory`: the tool servers it is given, and what leaves out the customizations and tools the reader turned off.
-pub(crate) fn given(
-    agent: Agent,
-    directory: &Path,
-    session: u64,
-) -> (Vec<serde_json::Value>, Launch) {
+/// Whether the reader turned off the built-in set or any tool of it, which the harness can only be told by name once it has listed its tools.
+fn keeps_built_in_off(set: &ToolSet, withheld: &[String]) -> bool {
+    let prefix = format!("tool/{}/", set.id);
+    set.off(withheld) || withheld.iter().any(|key| key.starts_with(&prefix))
+}
+
+/// The instruction files (by path), skills and agent definitions (by name) of the project at `directory` that the reader turned off in `withheld`.
+fn disabled(agent: Agent, directory: &Path, withheld: &[String]) -> Vec<String> {
+    items(directory)
+        .into_iter()
+        .filter(|item| item.kind.switchable(agent.product()) && !item.enabled(withheld))
+        .filter_map(|item| match item.kind {
+            Kind::Instruction => Some(item.path),
+            Kind::Skill | Kind::Agent => Some(item.name),
+            Kind::Hook => None,
+        })
+        .collect()
+}
+
+/// What `agent` of the session numbered `session` working in `directory` is given: the tool servers the reader keeps on and the browser of the session, and the names of the tools the reader turned off.
+pub(crate) fn given(agent: Agent, directory: &Path, session: u64) -> pm_harness::Given {
     let withheld = withheld();
-    let product = agent.product();
     let kept: Vec<McpServer> = servers()
         .into_iter()
         .filter(|server| !set_of(server).off(&withheld))
         .collect();
-    let mut tools: Vec<String> = ToolSet::built_in(product)
+    let listed = pm_harness::harness_tools();
+    let built_in = ToolSet::built_in(agent.product(), listed.clone());
+    let blocked = match (&listed, built_in.as_ref()) {
+        (Err(reason), Some(set)) if keeps_built_in_off(set, &withheld) => Some(format!(
+            "the agent was not started because the harness could not list its tools, so what you turned off could not be kept off: {reason}"
+        )),
+        _ => None,
+    };
+    let mut denied: Vec<String> = built_in
         .map(|set| set.withheld_names(&withheld))
         .unwrap_or_default();
     for server in &kept {
         let set = set_of(server);
         let prefix = format!("tool/{}/", set.id);
-        tools.extend(
+        denied.extend(
             withheld
                 .iter()
                 .filter_map(|key| key.strip_prefix(&prefix))
                 .map(|tool| set.agent_name(tool)),
         );
     }
-    let off: Vec<Item> = items(agent, directory)
-        .into_iter()
-        .filter(|item| !item.enabled(&withheld))
-        .collect();
-    let mut servers = pm_acp::mcp_servers(&serde_json::to_string(&kept).unwrap_or_default());
+    let mut tools = pm_harness::mcp_servers(&serde_json::to_string(&kept).unwrap_or_default());
     if let Some((url, token)) = crate::browser_tools::offered(session) {
-        servers.push(serde_json::json!({
-            "type": "http",
-            "name": "pandemonium-browser",
-            "url": url,
-            "headers": [{ "name": "Authorization", "value": format!("Bearer {token}") }],
-        }));
+        tools.push(pm_harness::ToolServer {
+            name: "pandemonium-browser".to_owned(),
+            reach: pm_harness::Reach::Http {
+                url,
+                headers: vec![("Authorization".to_owned(), format!("Bearer {token}"))],
+            },
+        });
     }
-    (servers, Launch::without(product, &off, &tools))
+    pm_harness::Given {
+        tools,
+        denied,
+        disabled: disabled(agent, directory, &withheld),
+        blocked,
+        ..pm_harness::Given::default()
+    }
+}
+
+#[cfg(test)]
+/// Tests for what an agent is kept from when the harness cannot list its tools.
+mod tests {
+    use super::*;
+    use pm_agent_library::Product;
+
+    /// Turning off the built-in set or one of its tools means the listing is needed; turning off another set's tool does not.
+    #[test]
+    fn built_in_switches_need_the_listing() {
+        let set = ToolSet::built_in(Some(Product::Claude), Err("down".to_owned())).unwrap();
+        assert!(!keeps_built_in_off(&set, &[]));
+        assert!(!keeps_built_in_off(
+            &set,
+            &["tool/github/search".to_owned()]
+        ));
+        assert!(keeps_built_in_off(&set, &["tool/built-in/bash".to_owned()]));
+        assert!(keeps_built_in_off(&set, &["tools/built-in".to_owned()]));
+    }
 }

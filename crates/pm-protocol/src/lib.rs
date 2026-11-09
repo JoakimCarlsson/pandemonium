@@ -1,7 +1,6 @@
 //! The messages between a window, or any other client, and the server that owns the agents.
 
 mod address;
-mod agents;
 mod bytes;
 mod credential;
 mod debug;
@@ -18,7 +17,6 @@ pub use address::{
     CONTAINER_SCHEME, DIRECT_SCHEME, Route, SSH_SCHEME, TUNNEL_SCHEME, WSL_SCHEME, escape_folder,
     host_of, is_destination, route_of, unescape_folder,
 };
-pub use agents::builtin_agents;
 pub use credential::{Build, Credential, Target};
 pub use debug::{DebugAction, DebugAdapter, DebugFile, DebugInfo, DebugProcess, DebugScenario};
 pub use extensions::{
@@ -47,7 +45,7 @@ pub use pm_lsp::{
 };
 pub use pm_task::Task;
 pub use release::ReleaseAsset;
-pub use request::{AgentServer, Attachment, Login, McpServer, RegistryAgent, Request, ToolListing};
+pub use request::{Attachment, Login, McpServer, Request, ToolListing};
 pub use response::{Response, SessionInfo, TerminalInfo};
 pub use task::{RunnableTask, ToolchainInfo};
 

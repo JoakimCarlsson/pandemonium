@@ -1,6 +1,6 @@
 //! The workspace screen and the actions and auxiliary windows it exposes.
 
-use pm_acp::Event;
+use pm_harness::Event;
 use pm_input::FocusId;
 use pm_text::{Edit, Field, Shaper};
 use pm_ui::Node;
@@ -40,7 +40,7 @@ impl Screen {
     }
 
     /// The screen listing `agents` as the ones that can be started.
-    pub fn with_agent_list(self, agents: Vec<pm_protocol::AgentServer>) -> Self {
+    pub fn with_agent_list(self, agents: Vec<pm_components::agent_list::AgentEntry>) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_agent_servers(agents)),
         }
@@ -970,7 +970,7 @@ impl Screen {
     }
 
     /// The screen after the agent at `agent` told what it lets the reader change and what commands it offers.
-    pub fn with_discovery(self, agent: usize, found: pm_acp::Discovery) -> Self {
+    pub fn with_discovery(self, agent: usize, found: pm_harness::Discovery) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_discovery(agent, found)),
         }
@@ -1007,7 +1007,7 @@ impl Screen {
             Self::Workspace(mut state) => {
                 state.forget_identity(agent);
                 state.outbox_identity(agent, login);
-                Self::Workspace(state)
+                Self::Workspace(state.sign_in_code_ended())
             }
         }
     }
@@ -1017,7 +1017,7 @@ impl Screen {
         self,
         host: Option<String>,
         agent: usize,
-        found: pm_acp::Discovery,
+        found: pm_harness::Discovery,
     ) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_discovery_for(host, agent, found)),
@@ -1029,7 +1029,7 @@ impl Screen {
         self,
         host: Option<String>,
         id: &str,
-        found: pm_acp::Discovery,
+        found: pm_harness::Discovery,
     ) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_discovery_of(host, id, found)),
@@ -1069,21 +1069,6 @@ impl Screen {
     pub fn with_branches(self, project: usize, branches: Vec<String>) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_branches(project, branches)),
-        }
-    }
-
-    /// The screen holding the skills found for `agent` in the project at `project`, while the workspace is showing.
-    pub fn with_skills(
-        self,
-        agent: usize,
-        project: usize,
-        skills: Vec<pm_acp::Slash>,
-        names: std::collections::HashSet<String>,
-    ) -> Self {
-        match self {
-            Self::Workspace(state) => {
-                Self::Workspace(state.with_skills(agent, project, skills, names))
-            }
         }
     }
 
@@ -1168,6 +1153,15 @@ impl Screen {
     /// The box to give keyboard focus after `id` was pressed, when that is the prompt.
     pub fn refocus(id: FocusId) -> Option<FocusId> {
         WorkspaceState::refocus(id)
+    }
+
+    /// The box to give keyboard focus after `id` was pressed: the prompt or a field the press calls for, or the box of a menu it opened that is narrowed with one.
+    pub fn focus_after(&self, id: FocusId) -> Option<FocusId> {
+        match self {
+            Self::Workspace(state) => {
+                WorkspaceState::refocus(id).or_else(|| state.menu_filter_focus(id))
+            }
+        }
     }
 
     /// Whether the page for starting work is showing, which is where the prompt takes keyboard focus unasked.

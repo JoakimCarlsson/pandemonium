@@ -1,6 +1,6 @@
 //! What the workspace remembers: the page on screen, the panels that are open and what was typed.
 
-use pm_acp::{Event, Setting, Slash};
+use pm_harness::{Event, Setting, Slash};
 use pm_input::FocusId;
 use pm_text::{Edit, Field};
 
@@ -277,10 +277,21 @@ pub const KEEP_FILES: FocusId = FocusId(4274);
 /// The scrolling list of values in the open menu.
 pub const MENU_SCROLL: FocusId = FocusId(351);
 
+/// The box the values of the open menu are narrowed with, when it has many.
+pub const MENU_FILTER: FocusId = FocusId(33_000_000);
+
+/// Chooses the first value the box of the open menu leaves, as Enter in the box does.
+pub const MENU_FILTER_PICK: FocusId = FocusId(33_000_001);
+
+/// The first of the values of the open menu, by their place among all its values; the rest follow it, with room for [`MENU_PICK_ROOM`].
+pub const MENU_PICK_BASE: u64 = 33_000_100;
+
+/// How many values of the open menu can be chosen.
+pub const MENU_PICK_ROOM: usize = 100_000;
+
 /// Switches the agent persona on or off.
 pub const AGENT_TOGGLE: FocusId = FocusId(4290);
 
-/// Puts a dollar sign in the prompt, which lists the skills the agent offers.
 /// The button that attaches files to the prompt.
 pub const ATTACH: FocusId = FocusId(318);
 
@@ -289,8 +300,6 @@ pub const ATTACHED_BASE: u64 = 4800;
 
 /// The button that starts mentioning a file in the prompt.
 pub const MENTION: FocusId = FocusId(4281);
-
-pub const SKILL_BUTTON: FocusId = FocusId(4282);
 
 /// Puts a slash in the prompt, which lists the commands the agent offers.
 /// The body of an open menu, which is not a button but keeps a click on it from counting as outside.
@@ -839,8 +848,6 @@ pub enum Outgoing {
         /// What to look for; the well known servers when blank.
         query: String,
     },
-    /// Has the server keep these as the agents that can be started.
-    SaveAgentServers(Vec<pm_protocol::AgentServer>),
     /// Has the server keep these as the tool servers every agent is started with.
     SaveMcpServers(Vec<pm_protocol::McpServer>),
     /// Lists what the agent at `agent` is given in the project at `project`: its skills, instructions, agent definitions and hooks.
@@ -1131,17 +1138,6 @@ pub enum Outgoing {
         /// The folder.
         directory: String,
     },
-    /// Lists the skills of the agent at `agent` in the project at `project`.
-    Skills {
-        /// The agent, by position.
-        agent: usize,
-        /// The project, by position.
-        project: usize,
-        /// The machine, or nothing for this one.
-        host: Option<String>,
-        /// The project's folder.
-        directory: String,
-    },
     /// Asks the agent at `agent` on `host` what it lets the reader change and offers behind a slash.
     Discover {
         /// The agent, by position.
@@ -1162,6 +1158,13 @@ pub enum Outgoing {
         agent: usize,
         /// The login's id.
         login: Option<String>,
+    },
+    /// Keeps `key` as the API key of the agent, by position, or forgets the saved one when `key` is nothing.
+    SaveKey {
+        /// The agent, by position.
+        agent: usize,
+        /// The key, or nothing to forget the saved one.
+        key: Option<String>,
     },
     /// Signs in again as the account of the open session.
     SignInSession {
@@ -1225,14 +1228,16 @@ pub enum Outgoing {
         /// The form, by the number the agent put it under.
         ticket: u64,
         /// What was answered to each question, or nothing to abandon the form.
-        replies: Option<Vec<pm_acp::Reply>>,
+        replies: Option<Vec<pm_harness::Reply>>,
     },
-    /// Trusts hooks the Codex of a session holds back, as they were shown.
-    TrustHooks {
+    /// Answers the request of the agent of a session to trust its project.
+    Trust {
         /// The session, by position.
         session: usize,
-        /// The hooks to trust.
-        hooks: Vec<pm_acp::Hook>,
+        /// The request, by the number the agent put it under.
+        ticket: u64,
+        /// What the reader decided.
+        verdict: pm_harness::Verdict,
     },
     /// Takes the conversation of a session back to before one of the reader's turns, dropping it and all after it.
     Rewind {
@@ -1836,14 +1841,8 @@ pub struct WorkspaceState {
     pub branches_of: Option<usize>,
     /// The panel open over the conversation's chips, if one is.
     pub activity: Option<Activity>,
-    /// The commands each agent offers behind a slash, by the agent's position, once it has been asked.
+    /// The commands and skills each agent offers behind a slash, by the agent's position, once it has been asked.
     pub agent_commands: Vec<Vec<Slash>>,
-    /// The skills the chosen agent offers in the project being started in.
-    pub skills: Vec<Slash>,
-    /// The agent and project `skills` was read for.
-    pub skills_of: Option<(usize, usize)>,
-    /// The names of the skills installed for the chosen agent, which tell a skill from a command in the list behind a slash.
-    pub skill_names: std::collections::HashSet<String>,
     /// The files of the folder the prompt is for, which an `@` in the prompt offers.
     pub files: Vec<String>,
     /// The folders among `files` that hold no tracked file, by path.
@@ -1865,6 +1864,8 @@ pub struct WorkspaceState {
     pub in_use: Vec<(String, String)>,
     /// How far the list of values in the open menu is scrolled, in logical pixels.
     pub menu_scroll: f32,
+    /// What the values of the open menu are narrowed to, when it has many.
+    pub menu_filter: Field,
     /// The command highlighted in the list offered behind a slash, by position.
     pub slash: usize,
     /// The steps whose detail is open, by session, reply and position.
@@ -1919,6 +1920,8 @@ pub struct WorkspaceState {
     pub update_open: bool,
     /// How far the update the reader asked for has got.
     pub update_run: crate::update_dialog::UpdateRun,
+    /// The code a sign-in waits for the reader to enter, while one does and the reader has not hidden it.
+    pub sign_in_code: Option<crate::sign_in_code::SignInCode>,
     /// The breakpoints and the program being debugged.
     pub debug: crate::debug::DebugState,
     /// What the project can be built, tested and run with.
@@ -1955,7 +1958,7 @@ impl WorkspaceState {
 
     /// A workspace of `projects` and `sessions`, open on the page for starting work.
     fn with(projects: Vec<Project>, sessions: Vec<Session>) -> Self {
-        let builtin = pm_protocol::builtin_agents();
+        let builtin = crate::agent_list::AgentEntry::shipped();
         let mut state = Self {
             projects,
             sessions,
@@ -2044,9 +2047,6 @@ impl WorkspaceState {
             branches_of: None,
             activity: None,
             agent_commands: vec![Vec::new(); builtin.len()],
-            skills: Vec::new(),
-            skills_of: None,
-            skill_names: std::collections::HashSet::new(),
             attachments: Vec::new(),
             elements: Vec::new(),
             captures: Vec::new(),
@@ -2065,6 +2065,7 @@ impl WorkspaceState {
             logins: Vec::new(),
             in_use: Vec::new(),
             menu_scroll: 0.0,
+            menu_filter: Field::default(),
             slash: 0,
             opened: Vec::new(),
             unfolded: Vec::new(),
@@ -2092,6 +2093,7 @@ impl WorkspaceState {
             update_scroll: 0.0,
             update_open: false,
             update_run: crate::update_dialog::UpdateRun::Idle,
+            sign_in_code: None,
             debug: crate::debug::DebugState::default(),
             tasks: crate::tasks::TaskState::default(),
             window: pm_config::WindowSettings::default(),
@@ -2272,6 +2274,9 @@ impl WorkspaceState {
         if crate::browser::is_browser_part(action) {
             return self.browser_pressed(action);
         }
+        if self.press_sign_in_code(action) {
+            return self;
+        }
         if crate::project_search::is_search_part(action) {
             return self.project_search_pressed(action);
         }
@@ -2287,7 +2292,7 @@ impl WorkspaceState {
             .and_then(|card| card.text.as_deref())
             .and_then(|said| crate::assist::hover_link(said, action))
         {
-            if pm_acp::is_web_address(&address) {
+            if pm_harness::is_web_address(&address) {
                 self.outbox.push(Outgoing::Open { address });
             }
             return self;
@@ -2322,6 +2327,7 @@ impl WorkspaceState {
             crate::title_bar::UPDATE => self.open_release(),
             crate::title_bar::LANGUAGE_UPDATE => return self.with_extensions_page(),
             update if self.press_update(update) => {}
+            trust if self.trust_pressed(trust) => {}
             action if crate::settings::is_settings(action) => {
                 return self.settings_pressed(action);
             }
@@ -2381,9 +2387,6 @@ impl WorkspaceState {
                 self.prompt.apply(edit);
                 if self.prompt.revision() != before {
                     self.reset_slash();
-                    if matches!(self.prompt.text(), "/" | "$") {
-                        self.refresh_skills();
-                    }
                 }
             }
             COMMIT_MESSAGE => self.message.apply(edit),
@@ -2439,7 +2442,12 @@ impl WorkspaceState {
                 }
             }
             crate::extensions::EXTENSIONS_SEARCH => self.extensions_searched(edit),
+            MENU_FILTER => {
+                self.menu_filter.apply(edit);
+                self.menu_scroll = 0.0;
+            }
             id if crate::settings_servers::is_form_field(id) => self.server_form_edited(id, edit),
+            id if crate::settings_agents::is_key_field(id) => self.key_edited(edit),
             id if crate::settings_pages::is_setting_field(id) => self.setting_edited(id, edit),
             id if crate::settings_machines::is_machine_field(id) => self.machine_edited(id, edit),
             crate::settings::SETTINGS_FIND => {
@@ -2499,9 +2507,11 @@ impl WorkspaceState {
             crate::find::REPLACE_FIELD => self.finding.as_ref().map(|finding| &finding.replacement),
             HISTORY_SEARCH => Some(&self.history_search),
             crate::extensions::EXTENSIONS_SEARCH => Some(&self.extensions_page.search),
+            MENU_FILTER => Some(&self.menu_filter),
             ADDER_FIELD => self.adder.as_ref().map(|open| &open.field),
             PICKER_FIELD => self.folder_picker.as_ref().map(|open| &open.field),
             id if crate::settings_servers::is_form_field(id) => self.server_form_field(id),
+            id if crate::settings_agents::is_key_field(id) => self.key_field(),
             id if crate::settings_pages::is_setting_field(id) => self.setting_field(id),
             id if crate::settings_machines::is_machine_field(id) => self.machine_field(id),
             crate::settings::SETTINGS_FIND => Some(&self.settings_page.find),
@@ -2535,10 +2545,12 @@ impl WorkspaceState {
             || id == crate::find::REPLACE_FIELD
             || id == HISTORY_SEARCH
             || id == crate::extensions::EXTENSIONS_SEARCH
+            || id == MENU_FILTER
             || id == OTHER
             || id == ADDER_FIELD
             || id == PICKER_FIELD
             || crate::settings_servers::is_form_field(id)
+            || crate::settings_agents::is_key_field(id)
             || crate::settings_pages::is_setting_field(id)
             || crate::settings_machines::is_machine_field(id)
             || id == crate::settings::SETTINGS_FIND
@@ -2566,10 +2578,12 @@ impl WorkspaceState {
             crate::debug::DEBUG_WATCH_FIELD => crate::debug::DEBUG_WATCH_ADD,
             crate::find::REPLACE_FIELD => crate::find::REPLACE_ONE,
             HISTORY_SEARCH => HISTORY,
+            MENU_FILTER => MENU_FILTER_PICK,
             ADDER_FIELD => ADDER_SUBMIT,
             PICKER_FIELD => PICKER_SUBMIT,
             crate::settings::SETTINGS_SEARCH => crate::settings::SETTINGS_SEARCH_GO,
             id if crate::settings_servers::is_form_field(id) => crate::settings::SETTINGS_SAVE,
+            id if crate::settings_agents::is_key_field(id) => crate::settings_agents::KEY_SAVE,
             id if crate::settings_machines::is_machine_field(id) => {
                 crate::settings_machines::MACHINE_SAVE
             }
@@ -2723,7 +2737,7 @@ impl WorkspaceState {
             .and_then(|ask| {
                 ask.choices
                     .iter()
-                    .position(|choice| choice.verdict == pm_acp::Verdict::Reject)
+                    .position(|choice| choice.verdict == pm_harness::Verdict::Reject)
             });
         if let Some(index) = refusal {
             self.choose(index);
@@ -2749,9 +2763,6 @@ impl WorkspaceState {
             return;
         }
         if self.press_inquiry(FocusId(id)) {
-            return;
-        }
-        if self.press_hooks(FocusId(id)) {
             return;
         }
         if self.press_terminal(FocusId(id)) {
@@ -2900,7 +2911,7 @@ impl WorkspaceState {
                 let (_, piece) = *message.chunks().get(piece as usize)?;
                 pm_markdown::links(piece).into_iter().nth(link as usize)
             })
-            .filter(|address| pm_acp::is_web_address(address));
+            .filter(|address| pm_harness::is_web_address(address));
         if let Some(address) = address {
             self.outbox.push(Outgoing::Open { address });
         }
@@ -3152,7 +3163,6 @@ impl WorkspaceState {
                 } else {
                     self.branches.first().cloned().unwrap_or_default()
                 };
-                session.skills = self.skills.clone();
                 session.messages[0].attachments = sent_files;
                 self.sessions.push(session);
                 self.pane_stash

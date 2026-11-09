@@ -299,7 +299,7 @@ impl WorkspaceState {
     pub fn link_followed(mut self, target: pm_protocol::LinkTarget) -> Self {
         match target {
             pm_protocol::LinkTarget::Url { address } => {
-                if pm_acp::is_web_address(&address) {
+                if pm_harness::is_web_address(&address) {
                     self.outbox.push(Outgoing::Open { address });
                 }
             }

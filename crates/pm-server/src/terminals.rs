@@ -98,7 +98,7 @@ fn shell_command() -> CommandBuilder {
         return CommandBuilder::new_default_prog();
     }
     let mut command = CommandBuilder::new(program);
-    command.args(pm_acp::command_words(&shell.arguments));
+    command.args(pm_harness::command_words(&shell.arguments));
     command
 }
 

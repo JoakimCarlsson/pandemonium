@@ -39,7 +39,7 @@ mod tests {
     use super::*;
     use crate::project::Project;
     use crate::sample::{Session, Status};
-    use pm_acp::Event;
+    use pm_harness::Event;
 
     /// The machine the remote project of [`workspace`] is on.
     const REMOTE: &str = "build";
@@ -59,6 +59,7 @@ mod tests {
                     text: "Work".to_owned(),
                     files: Vec::new(),
                     checkpoint: false,
+                    turn: 1,
                 });
                 session
             })

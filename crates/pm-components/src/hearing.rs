@@ -2,14 +2,19 @@
 
 use std::time::Instant;
 
-use pm_acp::{Event, Kind as ToolKind, Tool, ToolState};
+use pm_harness::{Event, Kind as ToolKind, Tool, ToolState};
 
 use crate::draft::Draft;
 use crate::sample::{Message, Queued, Session, Shell, Status, Step, Thought, ToolUse};
 
 impl Session {
     /// Takes in what the agent did.
+    ///
+    /// A thought goes on while its chunks come one after another; the start of a new block of the reply, or anything else the agent does, ends it, so the next chunk of thought starts a new one. An empty chunk of speech or thought is ignored, so it cannot cut a thought short.
     pub fn hear(&mut self, event: Event) {
+        if matches!(&event, Event::Said(text) | Event::Thought(text) if text.is_empty()) {
+            return;
+        }
         if !matches!(event, Event::Thought(_)) {
             self.stop_thinking();
         }
@@ -31,6 +36,7 @@ impl Session {
             }
             Event::Commands(commands) => self.commands = commands,
             Event::Used(usage) => self.context = Some(usage),
+            Event::Started(_) => {}
             Event::Said(text) => self.say(&text),
             Event::Thought(text) => self.think(text),
             Event::Tool(tool) => self.use_tool(tool),
@@ -57,11 +63,11 @@ impl Session {
                 self.finish(Some(reason));
             }
             Event::Titled(title) => self.title = title,
-            Event::Hooks(hooks) => self.hooks_held(hooks),
             Event::Prompted {
                 text,
                 files,
                 checkpoint,
+                ..
             } => self.prompted(text, files, checkpoint),
             Event::Queued { id, text, files } => {
                 match self.queued.iter_mut().find(|waiting| waiting.id == id) {
@@ -73,13 +79,24 @@ impl Session {
                 }
             }
             Event::Unqueued(id) => self.queued.retain(|waiting| waiting.id != id),
+            Event::Trust(request) => self.trust = Some(request),
+            Event::Trusted { ticket, .. } => {
+                if self
+                    .trust
+                    .as_ref()
+                    .is_some_and(|open| open.ticket == ticket)
+                {
+                    self.trust = None;
+                }
+            }
             Event::Rewound { turn } => self.rewound(turn),
             Event::Restored { turn, files } => self.files_restored(turn, files.len()),
+            Event::ToolSignIn(address) => self.sign_in_wanted(&address),
         }
     }
 
     /// Takes in a command or task left running starting, or ending.
-    fn background(&mut self, background: pm_acp::Background) {
+    fn background(&mut self, background: pm_harness::Background) {
         let known = self.shells.iter().position(|held| held.id == background.id);
         if background.running {
             if known.is_none() {
@@ -104,9 +121,8 @@ impl Session {
         }
     }
 
-    /// Ends everything that was running, as the turn that started it was stopped.
+    /// Ends every call that was running, as the turn was stopped; commands and tasks left running in the background go on, as the harness keeps them.
     fn halted(&mut self) {
-        self.shells.clear();
         for tool in self.tools_mut() {
             if tool.state == ToolState::Running {
                 tool.state = ToolState::Failed;
@@ -162,6 +178,29 @@ impl Session {
             "Restored {count} {files} to how they were before turn {}.",
             turn + 1
         ));
+        note.duration = Some(String::new());
+        self.messages.push(note);
+    }
+
+    /// Says that a tool server the agent uses wants the reader to sign in at `address`, which opens in their browser: in the reply being written, as a paragraph of its own, or as a note of its own between turns.
+    fn sign_in_wanted(&mut self, address: &str) {
+        let notice = format!(
+            "A tool server asks you to sign in. Its sign-in page opens in your browser; if it did not, open {address}"
+        );
+        let writing = self
+            .messages
+            .last()
+            .is_some_and(|last| !last.from_user && last.duration.is_none());
+        if writing {
+            let separator = if self.reply().text.is_empty() {
+                ""
+            } else {
+                "\n\n"
+            };
+            self.say(&format!("{separator}{notice}"));
+            return;
+        }
+        let mut note = Message::reply(&notice);
         note.duration = Some(String::new());
         self.messages.push(note);
     }
@@ -292,6 +331,7 @@ impl Session {
                 }
                 held.parent = tool.parent.or(held.parent.take());
                 held.agent = tool.agent.or(held.agent.take());
+                held.worktree = tool.worktree.or(held.worktree.take());
                 held.target = tool.target.or(held.target.take());
                 held.diff = tool.diff.or(held.diff.take());
                 held.output = tool.output.or(held.output.take());
@@ -308,6 +348,7 @@ impl Session {
                 seconds: None,
                 parent: tool.parent,
                 agent: tool.agent,
+                worktree: tool.worktree,
             })),
         }
         if let Some(state) = ended {
@@ -316,7 +357,7 @@ impl Session {
     }
 
     /// Replaces the plan the reply keeps, or starts one.
-    fn plan(&mut self, plan: Vec<pm_acp::PlanStep>) {
+    fn plan(&mut self, plan: Vec<pm_harness::PlanStep>) {
         let reply = self.reply();
         match reply
             .steps
@@ -415,6 +456,84 @@ fn worked(seconds: u64) -> String {
 mod tests {
     use super::*;
 
+    /// The chunks of one thinking block make one thought, and a new thinking block starts another.
+    #[test]
+    fn each_thinking_block_is_one_thought() {
+        let mut session = Session::started("Test", 0, "Hello");
+        session.hear(Event::Started(pm_harness::Part::Thinking));
+        session.hear(Event::Thought("The".to_owned()));
+        session.hear(Event::Thought(" user".to_owned()));
+        session.hear(Event::Started(pm_harness::Part::Thinking));
+        session.hear(Event::Thought("Then".to_owned()));
+        session.hear(Event::Started(pm_harness::Part::Text));
+        session.hear(Event::Said("Hey!".to_owned()));
+        let reply = session.messages.last().unwrap();
+        let thoughts: Vec<&str> = reply
+            .steps
+            .iter()
+            .filter_map(|step| match step {
+                Step::Thought(thought) => Some(thought.text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(thoughts, ["The user", "Then"]);
+        assert_eq!(reply.text, "Hey!");
+    }
+
+    /// Empty speech streamed between chunks of thought leaves the thought whole, as one step.
+    #[test]
+    fn empty_speech_does_not_split_a_thought() {
+        let mut session = Session::started("Test", 0, "Hello");
+        for chunk in ["The", " user", " says hello."] {
+            session.hear(Event::Thought(chunk.to_owned()));
+            session.hear(Event::Said(String::new()));
+        }
+        let reply = session.messages.last().unwrap();
+        assert_eq!(reply.steps.len(), 1);
+        assert!(reply.said.is_empty());
+        assert!(
+            matches!(&reply.steps[0], Step::Thought(thought) if thought.text == "The user says hello.")
+        );
+    }
+
+    /// A tool server's sign-in page shows in the conversation with its address: as a note of its own between turns, and as a paragraph of the reply while the agent is writing one, which goes on in the same reply and ends normally.
+    #[test]
+    fn a_tool_sign_in_shows_its_address() {
+        let address = "http://127.0.0.1:4567/authorize?state=x";
+        let mut session = Session::started("Test", 0, "Hello");
+        session.hear(Event::Finished(None));
+        let before = session.messages.len();
+        session.hear(Event::ToolSignIn(address.to_owned()));
+        assert_eq!(session.messages.len(), before + 1);
+        let note = session.messages.last().unwrap();
+        assert!(
+            note.text.contains(address) && note.duration.is_some(),
+            "{}",
+            note.text
+        );
+        session.hear(Event::Prompted {
+            text: "Go on".to_owned(),
+            files: Vec::new(),
+            checkpoint: false,
+            turn: 1,
+        });
+        session.hear(Event::Said("Working on it.".to_owned()));
+        session.hear(Event::ToolSignIn(address.to_owned()));
+        session.hear(Event::Said(" Done.".to_owned()));
+        session.hear(Event::Finished(None));
+        let reply = session.messages.last().unwrap();
+        assert!(
+            reply
+                .text
+                .starts_with("Working on it.\n\nA tool server asks you to sign in."),
+            "{}",
+            reply.text
+        );
+        assert!(reply.text.ends_with("Done."), "{}", reply.text);
+        assert!(reply.duration.is_some());
+        assert_eq!(session.status, Status::Idle);
+    }
+
     /// Authentication failures stay out of the transcript and clear after login.
     #[test]
     fn signed_out_session_can_resume() {
@@ -423,6 +542,7 @@ mod tests {
             text: "Hello".to_owned(),
             files: Vec::new(),
             checkpoint: false,
+            turn: 0,
         });
         let before = session.messages.len();
         session.hear(Event::SignedOut {
@@ -441,6 +561,7 @@ mod tests {
             text: "Hello again".to_owned(),
             files: Vec::new(),
             checkpoint: false,
+            turn: 0,
         });
         assert_eq!(session.status, Status::Working);
         session.hear(Event::Said("Reply".to_owned()));
@@ -455,5 +576,35 @@ mod tests {
                 .text
                 .contains("Something went wrong: Other error")
         );
+    }
+
+    /// The calls a script of the agent made are steps of their own, not subagents, while a call that starts a subagent still is one.
+    #[test]
+    fn script_calls_are_not_subagents() {
+        let tool = |id: &str, parent: Option<&str>, agent: Option<&str>| {
+            Event::Tool(pm_harness::Tool {
+                id: id.to_owned(),
+                title: Some(id.to_owned()),
+                kind: None,
+                state: Some(ToolState::Running),
+                target: None,
+                diff: None,
+                output: None,
+                parent: parent.map(str::to_owned),
+                agent: agent.map(str::to_owned),
+                worktree: None,
+            })
+        };
+        let mut session = Session::started("Test", 0, "Hello");
+        session.hear(tool("s1", None, None));
+        session.hear(tool("s1:1", Some("s1"), Some(crate::sample::SCRIPT_AGENT)));
+        session.hear(tool("s1:2", Some("s1"), Some(crate::sample::SCRIPT_AGENT)));
+        session.hear(tool("t1", None, Some("task")));
+        let agents: Vec<&str> = session
+            .subagents()
+            .into_iter()
+            .map(|(_, _, tool)| tool.id.as_str())
+            .collect();
+        assert_eq!(agents, ["t1"]);
     }
 }

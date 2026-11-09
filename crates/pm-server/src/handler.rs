@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use pm_acp::Agent;
+use pm_harness::Agent;
 use pm_protocol::{Attachment, Request, Response, ServerMessage};
 
 use crate::conversation;
@@ -36,31 +36,9 @@ fn saved_list<T: serde::Serialize>(name: &str, list: &[T]) -> Response {
     }
 }
 
-/// Every agent the server can start: the ones saved, or the ones the app ships and those saved by an earlier version when none were.
-pub fn saved_agents() -> Vec<pm_protocol::AgentServer> {
-    match stored_list("agents") {
-        Ok(agents) if pm_store::load_text("agents").is_some() => agents,
-        _ => {
-            let mut agents = pm_protocol::builtin_agents();
-            agents.extend(stored_list("agent-servers").unwrap_or_default());
-            agents
-        }
-    }
-}
-
-/// The agent whose id is `id`: one in the list, or one the app ships that was taken out of it, so that sessions it ran keep running.
+/// The agent whose id is `id`, when the app offers one by that name.
 pub(crate) fn agent_named(id: &str) -> Option<Agent> {
-    let agents = saved_agents();
-    let record = agents
-        .iter()
-        .find(|record| record.id == id)
-        .cloned()
-        .or_else(|| {
-            pm_protocol::builtin_agents()
-                .into_iter()
-                .find(|record| record.id == id)
-        })?;
-    record.agent()
+    pm_harness::agent(id)
 }
 
 /// The folder `path` names on this machine, with a leading `~` taken to be the reader's home folder.
@@ -139,10 +117,7 @@ fn debug_done(found: bool, debug: u64) -> Response {
 
 /// Points every agent at the folder of the login in use for it, or at its own when none is.
 fn apply_accounts(logins: &[pm_protocol::Login], in_use: &[(String, String)]) {
-    for agent in saved_agents()
-        .iter()
-        .filter_map(|record| agent_named(&record.id))
-    {
+    for &agent in pm_harness::agents() {
         let home = in_use
             .iter()
             .find(|(owner, _)| owner == agent.id)
@@ -216,24 +191,6 @@ fn telling(core: &Core, number: u64, action: impl FnOnce(&mut Session) -> Told) 
     let response = with_session(core, number, |held| told = action(held));
     core.tell_all(told);
     response
-}
-
-/// Has the running agents of every session of `agent` that is between turns read their skills again, so that a skill added since they started can be used in the conversations already open.
-fn reload_skills(core: &Core, agent: Agent) {
-    if !agent.reloads_skills() {
-        return;
-    }
-    let Ok(sessions) = core.sessions.lock() else {
-        return;
-    };
-    for session in sessions.values() {
-        if session.agent.id == agent.id
-            && !session.busy
-            && let Some(chat) = &session.chat
-        {
-            chat.reload_skills();
-        }
-    }
 }
 
 /// Runs `action` on the session numbered `number` and tells the clients what it noted, or says why it could not be done.
@@ -433,9 +390,15 @@ fn fork_session(core: &Core, connection: &Arc<Connection>, source: u64, turn: u6
             updated: now(),
             ..held.meta.clone()
         };
-        Session::new(held.agent, held.directory.clone(), log, meta)
+        let mut branch = Session::new(held.agent, held.directory.clone(), log, meta);
+        branch.resume_before = conversation::turns(&held.log)
+            .get(turn as usize + 1)
+            .map(|next| next.id.to_string());
+        branch
     };
-    let number = hold_session(core, connection, branch);
+    let number = core.next_session();
+    crate::sessions::copy_history(source, number);
+    hold_session_as(core, connection, number, branch);
     announce(core, connection, number);
     match core.info(number) {
         Some(info) => Response::Sessions {
@@ -443,13 +406,6 @@ fn fork_session(core: &Core, connection: &Arc<Connection>, source: u64, turn: u6
         },
         None => failed(format!("session {number} went away as it was made")),
     }
-}
-
-/// Holds `session` under a new number, keeps it and its log on disk, has `connection` watch it and returns the number.
-fn hold_session(core: &Core, connection: &Arc<Connection>, session: Session) -> u64 {
-    let number = core.next_session();
-    hold_session_as(core, connection, number, session);
-    number
 }
 
 /// Holds `session` under `number`, which the caller took from the core, keeps it and its log on disk and has `connection` watch it.
@@ -487,33 +443,6 @@ fn with_session(core: &Core, number: u64, action: impl FnOnce(&mut Session)) -> 
     }
 }
 
-/// Trusts those of `hooks` the Codex of session `number` still holds back as they were shown, tells the clients which it holds back after that, and has the session's next turn start its agent again so that it runs them.
-fn trust_hooks(core: &Core, number: u64, hooks: &[pm_acp::Hook]) -> Response {
-    let found = core.sessions.lock().ok().and_then(|sessions| {
-        sessions.get(&number).map(|held| {
-            (
-                held.agent,
-                held.directory.clone(),
-                login_folder(&held.meta.agent, held.meta.login.as_deref()),
-            )
-        })
-    });
-    let Some((agent, directory, home)) = found else {
-        return failed(format!("no session is numbered {number}"));
-    };
-    match pm_acp::trust_hooks(agent, &directory, home.as_deref(), hooks) {
-        Ok(held_back) => telling(core, number, |held| {
-            held.hooks_trusted = true;
-            let event = pm_acp::Event::Hooks(held_back);
-            if held.repeats(&event) {
-                return Told::new();
-            }
-            vec![(number, held.note(number, &event), event)]
-        }),
-        Err(reason) => failed(format!("could not trust the hooks: {reason}")),
-    }
-}
-
 /// Subscribes `connection` to a session and replays what it missed after `after`.
 fn attach(core: &Core, connection: &Arc<Connection>, number: u64, after: u64) -> Response {
     let Ok(sessions) = core.sessions.lock() else {
@@ -539,29 +468,16 @@ fn attach(core: &Core, connection: &Arc<Connection>, number: u64, after: u64) ->
 pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Request) -> Response {
     match request {
         Request::Discover { agent } => match agent_named(&agent) {
-            Some(agent) => match pm_acp::discover(agent) {
+            Some(agent) => match pm_harness::discover(agent) {
                 Ok(found) => Response::Discovery(found),
                 Err(reason) => failed(reason),
             },
             None => failed(format!("no agent is called {agent}")),
         },
-        Request::Skills { agent, directory } => match agent_named(&agent) {
-            Some(agent) => {
-                let withheld = crate::library::withheld();
-                reload_skills(core, agent);
-                Response::Skills {
-                    skills: pm_acp::skills(agent, &place(&directory), &withheld),
-                    names: pm_acp::skill_names(agent, &place(&directory), &withheld)
-                        .into_iter()
-                        .collect(),
-                }
-            }
-            None => failed(format!("no agent is called {agent}")),
-        },
         Request::Library { agent, directory } => match agent_named(&agent) {
             Some(agent) => Response::Library {
                 product: agent.product(),
-                items: crate::library::items(agent, &place(&directory)),
+                items: crate::library::items(&place(&directory)),
                 withheld: crate::library::withheld(),
             },
             None => failed(format!("no agent is called {agent}")),
@@ -618,12 +534,12 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
         },
         Request::Identity { agent, login } => match agent_named(&agent) {
             Some(agent) => Response::Identity {
-                default: pm_acp::default_account(agent),
+                default: pm_harness::default_account(agent),
                 selected: match login {
                     Some(login) => login_folder(agent.id, Some(&login))
                         .or_else(|| pm_store::account_directory(agent.id, &login).ok())
-                        .and_then(|home| pm_acp::account_in_folder(agent, home)),
-                    None => pm_acp::account(agent),
+                        .and_then(|home| pm_harness::account_in_folder(agent, home)),
+                    None => pm_harness::account(agent),
                 },
             },
             None => failed(format!("no agent is called {agent}")),
@@ -692,29 +608,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             Ok(()) => Response::Done,
             Err(error) => failed(error.to_string()),
         },
-        Request::AgentServers => match Ok::<_, String>(saved_agents()) {
-            Ok(servers) => Response::AgentServers { servers },
-            Err(reason) => failed(reason),
-        },
-        Request::SaveAgentServers { servers } => saved_list("agents", &servers),
-        Request::RegistryAgents => match pm_acp::registry_agents() {
-            Ok(agents) => Response::RegistryAgents {
-                agents: agents
-                    .into_iter()
-                    .map(|agent| pm_protocol::RegistryAgent {
-                        id: agent.id,
-                        name: agent.name,
-                        version: agent.version,
-                        description: agent.description,
-                        website: agent.website,
-                        command: agent.command,
-                        env: agent.env,
-                    })
-                    .collect(),
-            },
-            Err(reason) => failed(reason),
-        },
-        Request::SearchTools { query } => match pm_acp::search_tools(&query) {
+        Request::SearchTools { query } => match pm_harness::search_tools(&query) {
             Ok(listings) => Response::ToolListings {
                 listings: listings
                     .into_iter()
@@ -773,12 +667,21 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             held.meta.login = login;
             sessions::save_meta(session, &held.meta);
         }),
-        Request::SignInSession { session } => sign_in_session(core, session),
-        Request::SignIn { agent, login } => match agent_named(&agent) {
-            Some(agent) => match sign_in_login(agent, login.as_deref()) {
+        Request::SignInSession { session } => sign_in_session(core, connection, session),
+        Request::SaveKey { agent, key } => match agent_named(&agent) {
+            Some(agent) => match agent.save_key(key.as_deref()) {
                 Ok(()) => Response::Done,
-                Err(reason) => failed(reason),
+                Err(error) => failed(error),
             },
+            None => failed(format!("no agent is called {agent}")),
+        },
+        Request::SignIn { agent, login } => match agent_named(&agent) {
+            Some(agent) => {
+                match sign_in_login(agent, login.as_deref(), &code_teller(connection, agent)) {
+                    Ok(()) => Response::Done,
+                    Err(reason) => failed(reason),
+                }
+            }
             None => failed(format!("no agent is called {agent}")),
         },
         Request::StartSession {
@@ -819,7 +722,14 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                 if title.is_empty() {
                     return Err("a session needs a title".to_owned());
                 }
-                let event = pm_acp::Event::Titled(title);
+                if let Some(chat) = &held.chat {
+                    chat.rename(&title);
+                    return Ok(Vec::new());
+                }
+                if let Some(folder) = crate::sessions::history_folder(session) {
+                    pm_harness::rename_saved(crate::sessions::HISTORY, &folder, &title)?;
+                }
+                let event = pm_harness::Event::Titled(title);
                 Ok(vec![(session, held.note(session, &event), event)])
             })
         }
@@ -898,7 +808,23 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                 chat.answer(ticket, replies);
             }
         }),
-        Request::TrustHooks { session, hooks } => trust_hooks(core, session, &hooks),
+        Request::Trust {
+            session,
+            ticket,
+            verdict,
+        } => {
+            let answered = match core.sessions.lock() {
+                Ok(mut sessions) => crate::trust::answer(&mut sessions, session, ticket, verdict),
+                Err(_) => Err("the server is shutting down".to_owned()),
+            };
+            match answered {
+                Ok(told) => {
+                    core.tell_all(told);
+                    Response::Done
+                }
+                Err(reason) => failed(reason),
+            }
+        }
         Request::Cancel { session } => telling(core, session, |held| {
             let mut told = match &held.chat {
                 Some(chat) => {
@@ -1906,19 +1832,35 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
     }
 }
 
-/// Signs `agent` in under the folder of the login `login`, so that the sign-in does not depend on which folder other requests have set; the folder in use when there is no login.
-fn sign_in_login(agent: Agent, login: Option<&str>) -> Result<(), String> {
-    match login {
-        Some(login) => {
-            let home = pm_store::account_directory(agent.id, login).map_err(|e| e.to_string())?;
-            agent.sign_in_folder(home)
-        }
-        None => agent.sign_in(),
+/// What tells `connection` the page and code a sign-in of `agent` waits for the reader to enter.
+fn code_teller(connection: &Arc<Connection>, agent: Agent) -> impl Fn(&str, &str) {
+    let connection = Arc::clone(connection);
+    move |url: &str, code: &str| {
+        let _ = connection.outbox.send(ServerMessage::SignInCode {
+            agent: agent.id.to_owned(),
+            url: url.to_owned(),
+            code: code.to_owned(),
+        });
     }
 }
 
-/// Signs in on this server using the session's account, then tells every attached client.
-fn sign_in_session(core: &Core, number: u64) -> Response {
+/// Signs `agent` in under the folder of the login `login`, so that the sign-in does not depend on which folder other requests have set; the folder in use when there is no login. `code` is told the page and code to show when the provider signs in with one.
+fn sign_in_login(
+    agent: Agent,
+    login: Option<&str>,
+    code: &dyn Fn(&str, &str),
+) -> Result<(), String> {
+    match login {
+        Some(login) => {
+            let home = pm_store::account_directory(agent.id, login).map_err(|e| e.to_string())?;
+            agent.sign_in_folder(home, code)
+        }
+        None => agent.sign_in(code),
+    }
+}
+
+/// Signs in on this server using the session's account, then tells every attached client; `connection`, which asked, is shown the code when the provider signs in with one.
+fn sign_in_session(core: &Core, connection: &Arc<Connection>, number: u64) -> Response {
     let found = core.sessions.lock().ok().and_then(|sessions| {
         let held = sessions.get(&number)?;
         Some((held.agent, held.meta.agent.clone(), held.meta.login.clone()))
@@ -1930,11 +1872,11 @@ fn sign_in_session(core: &Core, number: u64) -> Response {
     let result = if login.is_some() && home.is_none() {
         Err("the session's account no longer exists".to_owned())
     } else {
-        agent.sign_in_in(home)
+        agent.sign_in_in(home, &code_teller(connection, agent))
     };
     let event = match &result {
-        Ok(()) => pm_acp::Event::SignedIn,
-        Err(reason) => pm_acp::Event::SignedOut {
+        Ok(()) => pm_harness::Event::SignedIn,
+        Err(reason) => pm_harness::Event::SignedOut {
             reason: reason.clone(),
             account: login_name(&id, login.as_deref()),
         },

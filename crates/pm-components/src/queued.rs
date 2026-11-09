@@ -261,7 +261,7 @@ pub fn queued(
 
 #[cfg(test)]
 mod tests {
-    use pm_acp::Event;
+    use pm_harness::Event;
     use pm_text::Edit;
 
     use super::*;

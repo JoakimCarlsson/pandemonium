@@ -3,7 +3,7 @@
 use std::io::Write;
 use std::path::PathBuf;
 
-use pm_acp::Event;
+use pm_harness::Event;
 use serde::{Deserialize, Serialize};
 
 /// The folder under the app's data folder that sessions are kept in.
@@ -68,6 +68,31 @@ fn folder(number: u64) -> Option<PathBuf> {
     pm_store::data_directory().map(|root| root.join(FOLDER).join(number.to_string()))
 }
 
+/// The id the harness keeps a session's saved history under, which makes its file `history.jsonl` in the session's folder.
+pub(crate) const HISTORY: &str = "history";
+
+/// The folder the harness keeps the saved history of the session numbered `number` in, which is the session's own folder.
+pub(crate) fn history_folder(number: u64) -> Option<PathBuf> {
+    folder(number)
+}
+
+/// Whether the harness has a saved history for the session numbered `number`.
+pub(crate) fn has_history(number: u64) -> bool {
+    folder(number).is_some_and(|folder| folder.join(format!("{HISTORY}.jsonl")).is_file())
+}
+
+/// Copies the saved history of the session numbered `from` to the session numbered `to`, so that the one continues from where the other was without sharing it afterwards; nothing happens when there is none.
+pub(crate) fn copy_history(from: u64, to: u64) {
+    let (Some(source), Some(target)) = (folder(from), folder(to)) else {
+        return;
+    };
+    if pm_store::create_private_directory(&target).is_err() {
+        return;
+    }
+    let name = format!("{HISTORY}.jsonl");
+    let _ = std::fs::copy(source.join(&name), target.join(&name));
+}
+
 /// Writes `meta` as the description of the session numbered `number`.
 pub(crate) fn save_meta(number: u64, meta: &Meta) {
     let Some(folder) = folder(number) else {
@@ -83,8 +108,65 @@ pub(crate) fn save_meta(number: u64, meta: &Meta) {
     }
 }
 
-/// Adds `event`, numbered `seq`, to the end of the log of the session numbered `number`.
+/// What of `event` the log on disk keeps: nothing for what the harness saves with the conversation, and a turn the reader prompted without its words, since only whether its files were kept is the log's to say.
+fn on_disk(event: &Event) -> Option<Event> {
+    if !crate::conversation::kept_on_disk(event) {
+        return None;
+    }
+    Some(match event {
+        Event::Prompted {
+            checkpoint, turn, ..
+        } => Event::Prompted {
+            text: String::new(),
+            files: Vec::new(),
+            checkpoint: *checkpoint,
+            turn: *turn,
+        },
+        other => other.clone(),
+    })
+}
+
+/// Hands a session from before the harness kept conversations to the harness, which then holds its conversation, and cuts the copy out of its log on disk; the log as it is when the harness cannot take it, or when there is nothing to hand over.
+fn migrate(number: u64, meta: &Meta, log: Vec<(u64, Event)>) -> Vec<(u64, Event)> {
+    if has_history(number) {
+        return log;
+    }
+    let (Some(folder), Some(imported)) = (
+        history_folder(number),
+        crate::conversation::to_import(&log, &meta.title),
+    ) else {
+        return log;
+    };
+    if pm_harness::import_saved(HISTORY, &folder, &imported).is_err() {
+        return log;
+    }
+    let kept: Vec<String> = log
+        .iter()
+        .filter_map(|(seq, event)| {
+            serde_json::to_string(&Line {
+                seq: *seq,
+                event: on_disk(event)?,
+            })
+            .ok()
+        })
+        .collect();
+    let (path, staged) = (folder.join("events.jsonl"), folder.join("events.jsonl.new"));
+    let written = pm_store::open_private(&staged, false)
+        .and_then(|mut file| writeln!(file, "{}", kept.join("\n")).map(|()| file.sync_all()))
+        .and_then(|synced| synced)
+        .and_then(|()| std::fs::rename(&staged, &path));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&staged);
+    }
+    log
+}
+
+/// Adds `event`, numbered `seq`, to the end of the log of the session numbered `number`, unless the harness saves it with the conversation; a turn the reader prompted is kept without its words, since only whether its files were kept is the log's to say.
 pub(crate) fn append(number: u64, seq: u64, event: &Event) {
+    let Some(event) = on_disk(event) else {
+        return;
+    };
+    let event = &event;
     let Some(folder) = folder(number) else {
         return;
     };
@@ -104,6 +186,25 @@ pub(crate) fn append(number: u64, seq: u64, event: &Event) {
 
 /// A session kept on disk: its number, its description and its log.
 pub(crate) type Stored = (u64, Meta, Vec<(u64, Event)>);
+
+/// `log` and `meta` with the conversation and the name taken from the harness's saved history of the session numbered `number`, when the harness has one it can read; otherwise as they are.
+fn from_harness(number: u64, log: Vec<(u64, Event)>, mut meta: Meta) -> (Vec<(u64, Event)>, Meta) {
+    if !has_history(number) {
+        return (log, meta);
+    }
+    let Some(folder) = history_folder(number) else {
+        return (log, meta);
+    };
+    match pm_harness::saved_conversation(HISTORY, &folder) {
+        Ok(saved) => {
+            if let Some(title) = saved.title.clone().filter(|title| !title.is_empty()) {
+                meta.title = title;
+            }
+            (crate::conversation::from_saved(&log, &saved), meta)
+        }
+        Err(_) => (log, meta),
+    }
+}
 
 /// Every session kept on disk.
 pub(crate) fn load_all() -> Vec<Stored> {
@@ -127,6 +228,8 @@ pub(crate) fn load_all() -> Vec<Stored> {
                 .filter_map(|line| serde_json::from_str::<Line>(line).ok())
                 .map(|line| (line.seq, line.event))
                 .collect();
+            let log = migrate(number, &meta, log);
+            let (log, meta) = from_harness(number, log, meta);
             Some((number, meta, log))
         })
         .collect();

@@ -49,6 +49,14 @@ fn workspace_folders(
     kept
 }
 
+/// The hub of the server, once it has one, for the agents it starts to have their edits formatted and checked by.
+static SHARED: std::sync::OnceLock<Arc<Hub>> = std::sync::OnceLock::new();
+
+/// The hub that runs the server's language servers, once there is one.
+pub(crate) fn shared_hub() -> Option<Arc<Hub>> {
+    SHARED.get().cloned()
+}
+
 /// The open files and the hub that runs their language servers.
 pub(crate) struct Documents {
     /// The hub.
@@ -86,6 +94,7 @@ impl Documents {
                 },
             ),
         );
+        let _ = SHARED.set(hub.clone());
         let documents = Self { hub, openers };
         documents.settings_changed(&crate::machine::settings());
         documents

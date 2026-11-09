@@ -12,7 +12,7 @@ path = "src/main.rs"
 getrandom = "0.4.3"
 mio = { version = "1.2.4", features = ["os-poll", "net"] }
 notify = "8.2.0"
-pm-acp.workspace = true
+pm-harness.workspace = true
 pm-agent-library.workspace = true
 pm-buffer.workspace = true
 pm-dap.workspace = true

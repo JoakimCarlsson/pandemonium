@@ -7,7 +7,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-use pm_acp::{Agent, Chat, Event};
+use pm_harness::{Agent, Chat, Event};
 use pm_protocol::{ServerMessage, SessionInfo};
 
 use crate::debugs::Debugging;
@@ -106,6 +106,9 @@ pub(crate) struct Connection {
     pub(crate) attached: Mutex<HashSet<u64>>,
 }
 
+/// The harness's setting that gives the agent its checkpoint and rewind tools, which the app turns on for every agent it starts.
+const CHECKPOINTS: &str = "checkpoints";
+
 /// One session: an agent working in a folder, and everything it has done.
 pub(crate) struct Session {
     /// The agent that runs it.
@@ -128,8 +131,8 @@ pub(crate) struct Session {
     pub(crate) held_by: Option<usize>,
     /// The id of the login the running agent was started as, or nothing for the agent's own.
     pub(crate) running_as: Option<String>,
-    /// Whether the reader trusted hooks since the running agent started, so that the next turn starts it again to run them.
-    pub(crate) hooks_trusted: bool,
+    /// The id of the turn the next start goes back to before in the saved history, after a rewind or a branch; all of it when there is none.
+    pub(crate) resume_before: Option<String>,
 }
 
 impl Session {
@@ -151,35 +154,27 @@ impl Session {
             next_queued: 1,
             held_by: None,
             running_as: None,
-            hooks_trusted: false,
+            resume_before: None,
         }
     }
 
-    /// Starts the agent of the session numbered `number` in the session's folder as the session's login, without what the reader turned off, and gives it the settings the reader chose.
+    /// Starts the agent of the session in the session's folder as the session's login, without what the reader turned off, with the server's language servers to format and check what it writes, and gives it the `settings` the reader chose now; the harness gives back the ones it saved with the conversation.
     pub(crate) fn start_agent(&mut self, number: u64, settings: &[(String, String)]) {
-        let (tools, launch) = crate::library::given(self.agent, &self.directory, number);
         let home = crate::handler::login_folder(&self.meta.agent, self.meta.login.as_deref());
-        let enclosure = self.meta.container.then(|| {
-            let folder = self.directory.to_string_lossy().into_owned();
-            Box::new(move |progress: &dyn Fn(&str)| {
-                let enclosed = pm_transport::session_container(&folder, progress)?;
-                let workspace = std::path::PathBuf::from(&enclosed.workspace);
-                let enclose: pm_acp::Enclose =
-                    Arc::new(move |command| enclosed.wrap(&command, false));
-                Ok((workspace, enclose))
-            }) as pm_acp::Enclosure
-        });
+        let mut given = crate::library::given(self.agent, &self.directory, number);
+        given.conversation = Some(crate::sessions::HISTORY.to_owned());
+        given.history = crate::sessions::history_folder(number);
+        given.before = self.resume_before.take();
+        given.defaults = vec![(CHECKPOINTS.to_owned(), "on".to_owned())];
+        given.languages = crate::documents::shared_hub().map(pm_harness::LanguageServers);
         let chat = Chat::start(
             self.agent,
             self.directory.clone(),
             home,
-            tools,
-            launch,
-            enclosure,
+            given,
             Arc::new(|| BELL.ring()),
         );
         self.running_as = self.meta.login.clone();
-        self.hooks_trusted = false;
         for (setting, value) in settings {
             chat.set(setting, value);
         }
@@ -189,6 +184,20 @@ impl Session {
     /// The number the next event noted in the log of this session gets.
     pub(crate) fn next_seq(&self) -> u64 {
         self.log.last().map_or(0, |(seq, _)| *seq) + 1
+    }
+
+    /// The id the next turn the reader hands the agent is saved under: one more than the largest id any turn in the log has, or the log has reached, so that it never repeats an id the log was rebuilt with.
+    pub(crate) fn next_turn_id(&self) -> u64 {
+        let used = self
+            .log
+            .iter()
+            .map(|(seq, event)| match event {
+                Event::Prompted { turn, .. } if *turn != 0 => *turn,
+                _ => *seq,
+            })
+            .max()
+            .unwrap_or(0);
+        used + 1
     }
 
     /// Whether the log ends on a turn handed to the agent that never ended.
@@ -214,7 +223,7 @@ impl Session {
 
     /// Takes `event`, which the agent of the session numbered `number` reported, into the log, does what it calls for and returns what it noted.
     ///
-    /// When the agent stopped, what it had running stopped with it, so a `Halted` is noted before the `Failed`, as when a turn is ended for it. Nothing is noted when `event` only says again what the log said.
+    /// When the agent stopped, what it had running stopped with it, so a `Halted` is noted before the `Failed`, as when a turn is ended for it, and the trust request it waited on is dropped. Nothing is noted when `event` only says again what the log said.
     pub(crate) fn take_in(&mut self, number: u64, event: Event) -> Told {
         let mut told = Told::new();
         if self.repeats(&event) {
@@ -229,6 +238,7 @@ impl Session {
                 self.chat = None;
                 self.busy = false;
                 told.extend(self.drop_queue(number));
+                told.extend(self.drop_trust(number));
             }
             Event::Finished(_) => {
                 self.busy = false;
@@ -239,7 +249,7 @@ impl Session {
         told
     }
 
-    /// Whether `event` only says again what the last context usage or the last held-back hooks in the log said; no hooks held back is what a log without any says.
+    /// Whether `event` only says again what the last context usage in the log said.
     pub(crate) fn repeats(&self, event: &Event) -> bool {
         let last = |kind: fn(&Event) -> bool| {
             self.log
@@ -250,10 +260,6 @@ impl Session {
         };
         match event {
             Event::Used(_) => last(|held| matches!(held, Event::Used(_))) == Some(event),
-            Event::Hooks(hooks) => match last(|held| matches!(held, Event::Hooks(_))) {
-                Some(held) => held == event,
-                None => hooks.is_empty(),
-            },
             _ => false,
         }
     }
@@ -346,7 +352,7 @@ impl Core {
         self.next_debug.fetch_add(1, Ordering::Relaxed)
     }
 
-    /// Holds again the sessions kept on disk, without their agents, and numbers new ones after them.
+    /// Holds again the sessions kept on disk, without their agents, and numbers new ones after them; the turns and trust requests their agents left open are closed, as those agents are gone.
     pub(crate) fn load(&self) {
         let mut highest = 0;
         if let Ok(mut sessions) = self.sessions.lock() {
@@ -358,6 +364,7 @@ impl Core {
                 let mut session = Session::new(agent, meta.agent_folder(), log, meta);
                 session.forget_queue(number);
                 session.end_open_turn(number, INTERRUPTED);
+                session.drop_trust(number);
                 sessions.insert(number, session);
             }
         }

@@ -1,6 +1,6 @@
 //! What goes over the connection, each message one JSON text message, possibly split across frames.
 
-use pm_acp::Event;
+use pm_harness::Event;
 use serde::{Deserialize, Serialize};
 
 use crate::{Request, Response, SessionInfo};
@@ -150,5 +150,14 @@ pub enum ServerMessage {
         received: u64,
         /// How many there are in all; zero when not known.
         total: u64,
+    },
+    /// A sign-in the client asked for with `sign_in` or `sign_in_session` waits for the reader to enter `code` on the page `url`. Sent to that client alone; the answer to its request says when the sign-in is over.
+    SignInCode {
+        /// The agent being signed in, by its id.
+        agent: String,
+        /// The page to enter the code on.
+        url: String,
+        /// The code to enter.
+        code: String,
     },
 }

@@ -42,6 +42,48 @@
 - Run `make languages` after changing a language folder to regenerate
   `languages/languages.json` and its checksums.
 
+## Building against a local oh-my-crab
+
+`pm-harness` and `pm-agent-library` depend on oh-my-crab's crates by git tag.
+To build against the oh-my-crab checkout next to this repository instead,
+create `.cargo/config.toml`, which git ignores:
+
+```toml
+[patch."https://github.com/JoakimCarlsson/oh-my-crab"]
+omc-session = { path = "../oh-my-crab/crates/omc-session" }
+omc-wire = { path = "../oh-my-crab/crates/omc-wire" }
+omc-context = { path = "../oh-my-crab/crates/omc-context" }
+```
+
+While it exists, Cargo rewrites oh-my-crab's entries in `Cargo.lock` to the
+local paths. Never commit those lines; CI builds with `--locked` and fails on
+them. To keep them out of `git status`, tell git to ignore local changes to
+the lock:
+
+```sh
+git update-index --skip-worktree Cargo.lock
+```
+
+Undo that before committing a real lock change, pulling one, or releasing,
+since git then also leaves out lock changes you want.
+
+A release always builds against a published oh-my-crab tag, never the local
+checkout. To release pandemonium with unreleased oh-my-crab work:
+
+1. Release oh-my-crab with a new tag (see its `docs/development.md`).
+2. Turn the override off and restore the committed lock:
+   `rm -r .cargo && git update-index --no-skip-worktree Cargo.lock && git checkout Cargo.lock`.
+3. Change `tag` in `crates/pm-harness/Cargo.toml` and
+   `crates/pm-agent-library/Cargo.toml`, then build once so `Cargo.lock`
+   follows the new tag.
+4. Commit, then run `scripts/release.sh`.
+5. Create `.cargo/config.toml` again, and run the `--skip-worktree` command
+   again, to go back to developing against the local checkout.
+
+`scripts/release.sh` stops when the crates name different tags, when the tag
+is not published on GitHub, or when any `omc-*` entry in `Cargo.lock` does not
+come from that tag, which catches a local override and a stale lock.
+
 ## Verification
 
 - Put build output and snapshots in the git-ignored `build/` directory. Set

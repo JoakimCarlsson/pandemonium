@@ -3,9 +3,9 @@
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
-    Role, absolute, flex, flex_1, flex_col, font_semibold, gap, items_center, justify_center,
-    leading_ratio, max_w_px, min_h, px, py, relative, right, text_color, text_px, top,
-    tracking_tight, w_full,
+    Role, absolute, flex, flex_1, flex_col, flex_wrap, font_semibold, gap, items_center,
+    justify_center, leading_ratio, max_w_px, min_h, px, py, relative, right, text_color, text_px,
+    top, tracking_tight, w_full,
 };
 use pm_text::Shaper;
 use pm_ui::{Node, node, text};
@@ -79,12 +79,14 @@ pub fn welcome(state: &WorkspaceState, above: f32, text_width: f32, shaper: &mut
                     ]),
                 )
                 .child(
-                    node().styles([flex(), justify_center(), gap(2)]).children(
-                        state
-                            .offered_agents()
-                            .into_iter()
-                            .map(|index| chip(state, index)),
-                    ),
+                    node()
+                        .styles([flex(), flex_wrap(), justify_center(), gap(2), w_full()])
+                        .children(
+                            state
+                                .startable_agents()
+                                .into_iter()
+                                .map(|index| chip(state, index)),
+                        ),
                 )
                 .child(composer(
                     state,

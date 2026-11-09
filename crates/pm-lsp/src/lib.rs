@@ -26,6 +26,7 @@ mod install;
 mod legacy;
 mod lens;
 mod manifest;
+mod outline;
 mod paths;
 mod preferences;
 mod provider;
@@ -40,7 +41,7 @@ mod uri;
 pub use candidates::WILDCARD;
 pub use choice::ServerChoice;
 pub use editing::{editing_of, scopes_of, tags_of};
-pub use hub::{Environment, Hub, Neighbours, Published, Sink, rank, score};
+pub use hub::{Environment, Hub, Neighbours, Published, Said, Sink, rank, score};
 pub use index::{Index, Listing, build_index};
 pub use inherit::language_file;
 pub use install::{
@@ -60,6 +61,6 @@ pub use semantic::{TokenRule, kind_by_rules, parse_rules, rules_for};
 pub use types::{
     CodeAction, CodeLens, ColorPresentation, ColorSwatch, Completion, CompletionKind, Diagnostic,
     DocumentLink, FileEdit, FoldRange, HintKind, Hover, InlayHint, InlineValue, InlineValueKind,
-    LinkTarget, Location, Problem, RenameTarget, Seek, SemanticToken, Severity, Signature,
-    TextChange, TokenKind, Triggers,
+    LinkTarget, Load, Location, Outline, Problem, RenameTarget, Seek, SemanticToken, ServerState,
+    Severity, Signature, TextChange, TokenKind, Triggers,
 };

@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
@@ -15,12 +16,12 @@ use crate::manifest::ServerSpec;
 use crate::preferences::ServerOverride;
 use crate::provider::{Provider, SymbolLabel};
 use crate::server::{
-    DiagnosticsSink, Found, LanguageServer, LinkAnswer, Pressed, action_of, file_changes,
+    Counter, DiagnosticsSink, Found, LanguageServer, LinkAnswer, Pressed, action_of, file_changes,
 };
 use crate::types::{
     CodeAction, CodeLens, ColorPresentation, ColorSwatch, Completion, Diagnostic, DocumentLink,
-    FileEdit, FoldRange, Hover, InlayHint, InlineValue, LinkTarget, Location, Problem,
-    RenameTarget, Seek, SemanticToken, Signature, TextChange, Triggers,
+    FileEdit, FoldRange, Hover, InlayHint, InlineValue, LinkTarget, Load, Location, Outline,
+    Problem, RenameTarget, Seek, SemanticToken, ServerState, Signature, TextChange, Triggers,
 };
 use crate::uri::{file_uri, path_of};
 
@@ -55,6 +56,17 @@ pub struct Published {
     pub diagnostics: Vec<Diagnostic>,
 }
 
+/// What a language server last said is wrong with a file, and how recently it said it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Said {
+    /// How many times servers had said what is wrong with a file, this one included, when this was said; a larger number was said later.
+    pub publication: u64,
+    /// The version of the file it is about, when the server says.
+    pub version: Option<i32>,
+    /// What is wrong.
+    pub diagnostics: Vec<Diagnostic>,
+}
+
 /// What is done with what servers say is wrong with open files.
 pub type Sink = Arc<dyn Fn(Published) + Send + Sync>;
 
@@ -73,6 +85,9 @@ type Offered = (Arc<LanguageServer>, Vec<Value>);
 
 /// The folders besides a project's own that its language servers work on, as the project at a folder has them.
 pub type Neighbours = Arc<dyn Fn(&Path) -> Vec<PathBuf> + Send + Sync>;
+
+/// Edits by file, each file as an absolute path with the stretches of it replaced and what replaces them.
+pub type FileChanges = Vec<(PathBuf, Vec<TextChange>)>;
 
 /// A language server of one project, started once however many files ask for it at the same time.
 type Slot = Arc<OnceLock<Result<Arc<LanguageServer>, String>>>;
@@ -100,6 +115,8 @@ struct Plan {
 struct Document {
     /// The installed language it is written in.
     language: String,
+    /// Which opening of a file on the hub this is, so that whoever opened it can tell when someone else has opened it since.
+    opening: u64,
     /// Its text and version.
     buffer: Buffer,
     /// Its language's server, when the language has one.
@@ -122,6 +139,12 @@ pub struct Hub {
     servers: Mutex<HashMap<(PathBuf, String), Slot>>,
     /// The latest diagnostics of each file, by address, kept for when a file is opened after they were published.
     published: Mutex<HashMap<String, Latest>>,
+    /// How many times servers have said what is wrong with a file.
+    publications: AtomicU64,
+    /// How many times files have been opened.
+    openings: AtomicU64,
+    /// The number of the latest time a server said what is wrong with each file, by address.
+    heard: Mutex<HashMap<String, u64>>,
     /// The project and path of each open file, by address.
     addresses: Mutex<HashMap<String, (PathBuf, String)>>,
     /// Edits of files that arrived before the request that opens them, by project and path and then by the version they make.
@@ -226,6 +249,9 @@ impl Hub {
             changed: Condvar::new(),
             servers: Mutex::new(HashMap::new()),
             published: Mutex::new(HashMap::new()),
+            publications: AtomicU64::new(0),
+            openings: AtomicU64::new(0),
+            heard: Mutex::new(HashMap::new()),
             addresses: Mutex::new(HashMap::new()),
             waiting: Mutex::new(HashMap::new()),
             actions: Mutex::new(HashMap::new()),
@@ -578,6 +604,10 @@ impl Hub {
             };
             if let Ok(mut published) = hub.published.lock() {
                 published.insert(uri.clone(), (version, diagnostics.clone()));
+                let publication = hub.publications.fetch_add(1, Ordering::SeqCst) + 1;
+                if let Ok(mut heard) = hub.heard.lock() {
+                    heard.insert(uri.clone(), publication);
+                }
             }
             let place = hub
                 .addresses
@@ -592,6 +622,15 @@ impl Hub {
                     diagnostics,
                 });
             }
+        })
+    }
+
+    /// What numbers the work servers begin in the same order as what they say is wrong with files, from [`Hub::publications`].
+    fn counter(self: &Arc<Self>) -> Counter {
+        let hub: Weak<Self> = Arc::downgrade(self);
+        Arc::new(move || {
+            hub.upgrade()
+                .map_or(0, |hub| hub.publications.fetch_add(1, Ordering::SeqCst) + 1)
         })
     }
 
@@ -621,6 +660,7 @@ impl Hub {
                         &self.neighbours_of(root),
                         &(self.environment)(root, language, &ready),
                         sink.clone(),
+                        self.counter(),
                     )
                     .map(Arc::new)
                 })
@@ -670,6 +710,7 @@ impl Hub {
             early.retain(|made, _| *made > version);
             let mut document = Document {
                 language: language.to_owned(),
+                opening: self.openings.fetch_add(1, Ordering::SeqCst) + 1,
                 buffer: Buffer::new(text, version),
                 spec: plan.primary.clone(),
                 early,
@@ -912,19 +953,47 @@ impl Hub {
 
     /// Closes the open file at `path` of the project at `root`, and stops its server when no other file of the project uses it.
     pub fn close(self: &Arc<Self>, root: &Path, path: &str) {
+        if let Ok(mut waiting) = self.waiting.lock() {
+            waiting.remove(&(root.to_path_buf(), path.to_owned()));
+        }
+        self.close_where(root, path, |_| true);
+    }
+
+    /// Closes the open file at `path` of the project at `root` as [`Hub::close`] does, but only while it is still the opening numbered `opening`, which [`Hub::opening`] told; a file someone has opened again since is left open.
+    pub fn close_opening(self: &Arc<Self>, root: &Path, path: &str, opening: u64) {
+        self.close_where(root, path, |document| document.opening == opening);
+    }
+
+    /// Which opening the open file at `path` of the project at `root` is, a number no other opening of a file on this hub has; nothing when it is not open.
+    pub fn opening(&self, root: &Path, path: &str) -> Option<u64> {
+        self.documents.lock().ok().and_then(|documents| {
+            documents
+                .get(&(root.to_path_buf(), path.to_owned()))
+                .map(|document| document.opening)
+        })
+    }
+
+    /// Closes the open file at `path` of the project at `root` when `closes` says so of it, and stops its server when no other file of the project uses it.
+    fn close_where(
+        self: &Arc<Self>,
+        root: &Path,
+        path: &str,
+        closes: impl FnOnce(&Document) -> bool,
+    ) {
         let key = (root.to_path_buf(), path.to_owned());
         let uri = file_uri(&root.join(path));
+        let Some(document) = self.documents.lock().ok().and_then(|mut documents| {
+            documents
+                .get(&key)
+                .is_some_and(closes)
+                .then(|| documents.remove(&key))
+                .flatten()
+        }) else {
+            return;
+        };
         if let Ok(mut waiting) = self.waiting.lock() {
             waiting.remove(&key);
         }
-        let Some(document) = self
-            .documents
-            .lock()
-            .ok()
-            .and_then(|mut documents| documents.remove(&key))
-        else {
-            return;
-        };
         if let Ok(mut addresses) = self.addresses.lock() {
             addresses.remove(&uri);
         }
@@ -1241,6 +1310,46 @@ impl Hub {
                 })
             }
         }
+    }
+
+    /// How many times servers have said what is wrong with a file so far; what is said later has a larger [`Said::publication`].
+    pub fn publications(&self) -> u64 {
+        self.publications.load(Ordering::SeqCst)
+    }
+
+    /// What a language server last said is wrong with the file at `path` of the project at `root`, when one has said anything.
+    pub fn said(&self, root: &Path, path: &str) -> Option<Said> {
+        let uri = file_uri(&root.join(path));
+        let published = self.published.lock().ok()?;
+        let (version, diagnostics) = published.get(&uri)?.clone();
+        let publication = self
+            .heard
+            .lock()
+            .ok()
+            .and_then(|heard| heard.get(&uri).copied())
+            .unwrap_or(0);
+        Some(Said {
+            publication,
+            version,
+            diagnostics,
+        })
+    }
+
+    /// Whether what the server of the open file at `path` of the project at `root` said under [`Said::publication`] `said` is its last word for now: it reports no work going on, such as loading the project, and said it after it last began some. A file with no server running, or not open, is settled.
+    pub fn is_settled(&self, root: &Path, path: &str, said: u64) -> bool {
+        let server = self.documents.lock().ok().and_then(|documents| {
+            documents
+                .get(&(root.to_path_buf(), path.to_owned()))
+                .and_then(|document| document.server.clone())
+        });
+        server.is_none_or(|server| server.is_settled_since(said))
+    }
+
+    /// Whether the file at `path` of the project at `root` is open.
+    pub fn is_open(&self, root: &Path, path: &str) -> bool {
+        self.documents
+            .lock()
+            .is_ok_and(|documents| documents.contains_key(&(root.to_path_buf(), path.to_owned())))
     }
 
     /// What the language servers last said is wrong with the files of the project at `root`, open or not, the worst first and then by file and place.
@@ -1568,6 +1677,312 @@ impl Hub {
         self.share_edits(root, &[edit])
     }
 
+    /// The language server the open file at `path` of the project at `root` is on, when it is on one.
+    fn server_of(&self, root: &Path, path: &str) -> Option<Arc<LanguageServer>> {
+        self.documents.lock().ok().and_then(|documents| {
+            documents
+                .get(&(root.to_path_buf(), path.to_owned()))
+                .and_then(|document| document.server.clone())
+        })
+    }
+
+    /// Whether the language server of the open file at `path` of the project at `root` answers `provider`, one of the abilities a server names when it starts, such as `referencesProvider`; nothing when the file is on no server.
+    pub fn offers(&self, root: &Path, path: &str, provider: &str) -> Option<bool> {
+        self.server_of(root, path)
+            .map(|server| server.can(provider))
+    }
+
+    /// How far the language server of the open file at `path` of the project at `root` has got with the work it reports, such as loading the project; nothing when the file is on no server.
+    pub fn load(&self, root: &Path, path: &str) -> Option<Load> {
+        self.server_of(root, path).map(|server| server.load())
+    }
+
+    /// The symbols of the open file at `path` of the project at `root`, outermost first and each followed by those inside it, once the file reaches `version`.
+    ///
+    /// # Errors
+    ///
+    /// Fails with the reason when the file is not open, is on no server, or the server fails.
+    pub fn document_symbols(
+        &self,
+        root: &Path,
+        path: &str,
+        version: i32,
+    ) -> Result<Vec<Outline>, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
+            return Err("no language server reads this file".to_owned());
+        };
+        let file = root.join(path);
+        server.document_symbols(&file_uri(&file), &file)
+    }
+
+    /// The symbols of the project at `root` whose names match `query`, with their kinds and files, as the language server of the open file at `path` finds them.
+    ///
+    /// # Errors
+    ///
+    /// Fails with the reason when the file is on no server or the server fails.
+    pub fn project_symbols(
+        &self,
+        root: &Path,
+        path: &str,
+        query: &str,
+    ) -> Result<Vec<Outline>, String> {
+        let server = self
+            .server_of(root, path)
+            .ok_or_else(|| "no language server reads this file".to_owned())?;
+        server.project_symbols(query)
+    }
+
+    /// The edits that rename the thing at `position` of the open file at `path` of the project at `root` to `name`, once the file reaches `version`, by file as an absolute path, each a stretch of the file as the server has it and what replaces it; nothing is written, to disk or to an open file.
+    ///
+    /// # Errors
+    ///
+    /// Fails with the reason when the file is on no server, the server fails or finds nothing to rename there, or the rename would create, move or delete files.
+    pub fn rename_edits(
+        &self,
+        root: &Path,
+        path: &str,
+        version: i32,
+        position: Position,
+        name: &str,
+    ) -> Result<Vec<(PathBuf, Vec<TextChange>)>, String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
+            return Err("no language server reads this file".to_owned());
+        };
+        let edit = server.rename(&file_uri(&root.join(path)), position, name)?;
+        if edit.is_null() {
+            return Err(format!("nothing at this place can be renamed to {name}"));
+        }
+        let operation = edit
+            .get("documentChanges")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .find_map(|change| change.get("kind").and_then(Value::as_str));
+        if let Some(operation) = operation {
+            return Err(format!(
+                "the rename would also {operation} a file, which is not done here"
+            ));
+        }
+        file_changes(&edit)
+            .into_iter()
+            .map(|(address, changes)| {
+                path_of(&address)
+                    .map(|file| (file, changes))
+                    .ok_or_else(|| format!("the rename names {address}, which is not a file"))
+            })
+            .collect()
+    }
+
+    /// The edits applying one of the changes the language server of the open file at `path` of the project at `root` offers for `span`, once the file reaches `version`, only those of the kinds in `only` when it names any: the one titled `title` when there is one, otherwise the `index`-th, counted from one. The change is resolved when the server needs that, and its command, when the server carries it out itself, is carried out, the edits the server asks for meanwhile being kept instead of made. Returns the title of the change taken and its edits by file as an absolute path, each a stretch of the file as the server has it and what replaces it; nothing is written, to disk or to an open file.
+    ///
+    /// # Errors
+    ///
+    /// Fails with the reason when the file is on no server, no such change is offered, it is disabled, it only runs a command the server does not carry out itself, the server fails, or the edits would create, move or delete files.
+    #[allow(clippy::too_many_arguments)]
+    pub fn action_edits(
+        &self,
+        root: &Path,
+        path: &str,
+        version: i32,
+        span: Span,
+        only: &[String],
+        index: usize,
+        title: Option<&str>,
+    ) -> Result<(String, FileChanges), String> {
+        let key = (root.to_path_buf(), path.to_owned());
+        let Some((server, ())) = self.caught_up(&key, version, |_| ())? else {
+            return Err("no language server reads this file".to_owned());
+        };
+        let offered: Vec<Value> = server
+            .code_actions(&file_uri(&root.join(path)), span, only)?
+            .into_iter()
+            .filter(|value| action_of(value).is_some())
+            .collect();
+        let titled = title.and_then(|title| {
+            offered
+                .iter()
+                .find(|value| value.get("title").and_then(Value::as_str) == Some(title))
+        });
+        let mut action = titled
+            .or_else(|| index.checked_sub(1).and_then(|at| offered.get(at)))
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "that change is not offered there now; {} are offered",
+                    offered.len()
+                )
+            })?;
+        let shown = action_of(&action).ok_or_else(|| "that change has no title".to_owned())?;
+        if let Some(reason) = shown.disabled {
+            return Err(format!(
+                "the change \"{}\" cannot be made now: {reason}",
+                shown.title
+            ));
+        }
+        let command = match action.get("command") {
+            Some(Value::String(name)) => Some(name.clone()),
+            Some(command) => command
+                .get("command")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            None => None,
+        };
+        if let Some(name) = command.filter(|name| !server.runs_command(name)) {
+            if action.get("command").is_some_and(Value::is_string) || action.get("edit").is_none() {
+                return Err(format!(
+                    "the change \"{}\" only runs the editor command {name}, which the language server does not carry out itself",
+                    shown.title
+                ));
+            }
+            if let Some(object) = action.as_object_mut() {
+                object.remove("command");
+            }
+        }
+        let (edits, _) = server.take_action(&action)?;
+        Ok((shown.title, edits_by_file(&edits, "change")?))
+    }
+
+    /// The edits the servers running for the project at `root` ask for before the file at `from` is moved to `to`, both from the root of the project, by file as an absolute path, each a stretch of the file as it is and what replaces it; nothing is written or moved.
+    ///
+    /// # Errors
+    ///
+    /// Fails with the reason when the edits would create, move or delete files or name something that is not a file.
+    pub fn rename_file_edits(
+        &self,
+        root: &Path,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<(PathBuf, Vec<TextChange>)>, String> {
+        let (old, new) = (file_uri(&root.join(from)), file_uri(&root.join(to)));
+        let edits: Vec<Value> = self
+            .running(root)
+            .iter()
+            .filter_map(|server| server.will_rename(&old, &new).ok())
+            .filter(|edit| !edit.is_null())
+            .collect();
+        edits_by_file(&edits, "move")
+    }
+
+    /// The id of the language server spec the open file at `path` of the project at `root` is read by, when it has one.
+    pub fn server_id(&self, root: &Path, path: &str) -> Option<String> {
+        self.documents.lock().ok().and_then(|documents| {
+            documents
+                .get(&(root.to_path_buf(), path.to_owned()))
+                .and_then(|document| document.spec.as_ref().map(|spec| spec.id.clone()))
+        })
+    }
+
+    /// The language servers of the project at `root`, those started and being started, each with the languages of the open files it reads and how it stands.
+    pub fn server_states(&self, root: &Path) -> Vec<ServerState> {
+        let slots: Vec<(String, Slot)> = self
+            .servers
+            .lock()
+            .map(|servers| {
+                servers
+                    .iter()
+                    .filter(|((held, _), _)| held == root)
+                    .map(|((_, id), slot)| (id.clone(), slot.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut states: Vec<ServerState> = slots
+            .into_iter()
+            .map(|(id, slot)| {
+                let languages = self.languages_on(root, &id);
+                let (state, detail) = match slot.get() {
+                    None => ("starting", None),
+                    Some(Err(reason)) => ("failed", Some(reason.clone())),
+                    Some(Ok(server)) if !server.is_alive() => ("stopped", None),
+                    Some(Ok(server)) if server.load() == Load::Working => ("loading", None),
+                    Some(Ok(_)) => ("running", None),
+                };
+                ServerState {
+                    id,
+                    languages,
+                    state: state.to_owned(),
+                    detail,
+                }
+            })
+            .collect();
+        states.sort_by(|left, right| left.id.cmp(&right.id));
+        states
+    }
+
+    /// The installed languages of the open files of the project at `root` that the server of the spec `id` reads, as their language's own server or beside it.
+    fn languages_on(&self, root: &Path, id: &str) -> Vec<String> {
+        let mut languages: Vec<String> = self
+            .documents
+            .lock()
+            .map(|documents| {
+                documents
+                    .iter()
+                    .filter(|((held, _), document)| {
+                        held == root
+                            && (document.spec.as_ref().is_some_and(|spec| spec.id == id)
+                                || document.companions.iter().any(|held| held.spec.id == id))
+                    })
+                    .map(|(_, document)| document.language.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        languages.sort();
+        languages.dedup();
+        languages
+    }
+
+    /// Stops the servers of the project at `root` whose spec ids are in `ids` and starts them again, moving the open files they read onto the new ones; returns the ids of those that were running or being started and so restarted.
+    pub fn restart(self: &Arc<Self>, root: &Path, ids: &[String]) -> Vec<String> {
+        let stopping: Vec<(String, Option<Arc<LanguageServer>>)> = match self.servers.lock() {
+            Ok(mut servers) => ids
+                .iter()
+                .filter_map(|id| {
+                    let slot = servers.remove(&(root.to_path_buf(), id.clone()))?;
+                    Some((
+                        id.clone(),
+                        slot.get().and_then(|started| started.clone().ok()),
+                    ))
+                })
+                .collect(),
+            Err(_) => return Vec::new(),
+        };
+        let restarted: Vec<String> = stopping.iter().map(|(id, _)| id.clone()).collect();
+        let moved: Vec<(PathBuf, String)> = self
+            .documents
+            .lock()
+            .map(|mut documents| {
+                documents
+                    .iter_mut()
+                    .filter(|((held, _), document)| {
+                        held == root
+                            && document
+                                .spec
+                                .iter()
+                                .chain(document.companions.iter().map(|held| &held.spec))
+                                .any(|spec| restarted.contains(&spec.id))
+                    })
+                    .map(|(key, document)| {
+                        document.server = None;
+                        document
+                            .companions
+                            .retain(|held| !restarted.contains(&held.spec.id));
+                        key.clone()
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        for (_, server) in stopping {
+            if let Some(server) = server {
+                std::thread::spawn(move || server.stop());
+            }
+        }
+        for key in moved {
+            self.move_server(key);
+        }
+        restarted
+    }
+
     /// The servers running for the project at `root`.
     fn running(&self, root: &Path) -> Vec<Arc<LanguageServer>> {
         let slots: Vec<Slot> = self
@@ -1709,6 +2124,34 @@ fn link_target(root: &Path, address: &str) -> Option<LinkTarget> {
         )
     });
     Some(LinkTarget::File { path, position })
+}
+
+/// The changes to each file the edits across a project `edits` a server wrote make together, by file as an absolute path; `what` names what they are for to the reader.
+///
+/// # Errors
+///
+/// Fails with the reason when one of them would create, move or delete a file, or names something that is not a file.
+fn edits_by_file(edits: &[Value], what: &str) -> Result<Vec<(PathBuf, Vec<TextChange>)>, String> {
+    let operation = edits
+        .iter()
+        .filter_map(|edit| edit.get("documentChanges").and_then(Value::as_array))
+        .flatten()
+        .find_map(|change| change.get("kind").and_then(Value::as_str));
+    if let Some(operation) = operation {
+        return Err(format!(
+            "the {what} would also {operation} a file, which is not done here"
+        ));
+    }
+    let mut files: Vec<(PathBuf, Vec<TextChange>)> = Vec::new();
+    for (address, mut changes) in edits.iter().flat_map(file_changes) {
+        let file = path_of(&address)
+            .ok_or_else(|| format!("the {what} names {address}, which is not a file"))?;
+        match files.iter_mut().find(|(held, _)| *held == file) {
+            Some((_, held)) => held.append(&mut changes),
+            None => files.push((file, changes)),
+        }
+    }
+    Ok(files)
 }
 
 /// The path of `file` from the root of the project at `root`, when it is inside it.

@@ -1,9 +1,30 @@
-//! The agents a workspace can be started with: the ones the server lists, which start as the ones the app ships.
+//! The agents a workspace can be started with: the ones the app offers, one for each provider of the harness.
 
 use pm_icon::IconName;
-use pm_protocol::AgentServer;
 
-use crate::state::WorkspaceState;
+use crate::state::{Outgoing, WorkspaceState};
+
+/// One agent the app ships, as the windows list it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AgentEntry {
+    /// What the app keeps the agent under.
+    pub id: String,
+    /// What a row calls it.
+    pub name: String,
+}
+
+impl AgentEntry {
+    /// The agents the app offers.
+    pub fn shipped() -> Vec<Self> {
+        pm_harness::agents()
+            .iter()
+            .map(|agent| Self {
+                id: agent.id.to_owned(),
+                name: agent.name.to_owned(),
+            })
+            .collect()
+    }
+}
 
 /// How an agent is shown: its glyph and its name.
 #[derive(Clone, Debug, PartialEq)]
@@ -14,17 +35,22 @@ pub struct AgentLook {
     pub name: String,
 }
 
-/// The glyph an agent is drawn with: the one of a product the app knows, or a terminal for any other.
-pub fn agent_icon(agent: &AgentServer) -> IconName {
-    match pm_acp::Product::of(&format!(
-        "{} {}",
-        agent.command,
-        agent.package.as_deref().unwrap_or_default()
-    )) {
-        Some(pm_acp::Product::Claude) => IconName::Sparkles,
-        Some(pm_acp::Product::Grok) => IconName::Zap,
-        _ => IconName::Terminal,
-    }
+/// The glyphs of the providers that have one of their own, by provider id; every other agent is drawn with [`IconName::Terminal`].
+const PROVIDER_ICONS: [(&str, IconName); 3] = [
+    ("claude", IconName::Sparkles),
+    ("copilot", IconName::Git),
+    ("openrouter", IconName::Globe),
+];
+
+/// The glyph an agent is drawn with: the one of its provider, or a terminal when the provider has none of its own.
+pub fn agent_icon(agent: &AgentEntry) -> IconName {
+    pm_harness::agent(&agent.id)
+        .and_then(|offered| {
+            PROVIDER_ICONS
+                .iter()
+                .find(|(provider, _)| *provider == offered.provider)
+        })
+        .map_or(IconName::Terminal, |(_, icon)| *icon)
 }
 
 /// Rebuilds what is kept per agent for a new list: each agent keeps what it had, found by where `origin` says it was among the `before` agents, and a new agent starts with nothing.
@@ -51,8 +77,88 @@ impl WorkspaceState {
         (0..self.agent_slots()).collect()
     }
 
+    /// Whether the agent at `index` is offered when a new session is started, which it is unless it was hidden in the settings.
+    pub fn agent_shown(&self, index: usize) -> bool {
+        self.agent_record(index)
+            .is_some_and(|agent| !self.machine.agents.hidden.contains(&agent.id))
+    }
+
+    /// Whether the agent at `index` can run work: its default account is signed in or has an API key, or the reader added a login for it.
+    pub fn agent_ready(&self, index: usize) -> bool {
+        matches!(self.defaults.get(index), Some(Some(Some(_))))
+            || self
+                .agent_record(index)
+                .is_some_and(|agent| self.logins.iter().any(|(owner, _, _)| *owner == agent.id))
+    }
+
+    /// The positions of the agents a new session can be started with, in the order the chips show them: the ones offered, not hidden and signed in.
+    ///
+    /// While no agent shown is known to be signed in, as before the sign-ins are read or on a machine with none, the agent picked is offered alone, or the first one shown when the one picked is hidden, so that work can still be started and signed in for.
+    pub fn startable_agents(&self) -> Vec<usize> {
+        let shown: Vec<usize> = self
+            .offered_agents()
+            .into_iter()
+            .filter(|index| self.agent_shown(*index))
+            .collect();
+        let ready: Vec<usize> = shown
+            .iter()
+            .copied()
+            .filter(|index| self.agent_ready(*index))
+            .collect();
+        if !ready.is_empty() {
+            return ready;
+        }
+        let picked = shown
+            .iter()
+            .copied()
+            .find(|index| *index == self.agent)
+            .or_else(|| shown.first().copied());
+        picked.into_iter().collect()
+    }
+
+    /// Hides the agent at `index` from new sessions, or shows it again, and has the server keep the choice; the last agent shown cannot be hidden.
+    pub(crate) fn toggle_agent_shown(&mut self, index: usize) {
+        let Some(id) = self
+            .agent_id_at(index)
+            .filter(|_| index < self.agent_slots())
+        else {
+            return;
+        };
+        let hidden = &mut self.machine.agents.hidden;
+        if let Some(place) = hidden.iter().position(|held| *held == id) {
+            hidden.remove(place);
+        } else if self.shown_agents() > 1 {
+            self.machine.agents.hidden.push(id);
+        } else {
+            return;
+        }
+        self.keep_startable_agent();
+        if self.machine_loaded {
+            self.outbox
+                .push(Outgoing::SaveMachineSettings(self.machine.clone()));
+        }
+    }
+
+    /// How many of the agents offered are not hidden.
+    fn shown_agents(&self) -> usize {
+        self.offered_agents()
+            .into_iter()
+            .filter(|index| self.agent_shown(*index))
+            .count()
+    }
+
+    /// Moves the agent new work is given to onto the first one a new session can be started with, when the one picked was hidden or is not signed in.
+    pub(crate) fn keep_startable_agent(&mut self) {
+        if self.startable_agents().contains(&self.agent) {
+            return;
+        }
+        if let Some(first) = self.startable_agents().first() {
+            self.agent = *first;
+        }
+    }
+
     /// The agent at `index`: one offered, or, past those, one taken out of the list that sessions still run.
-    fn agent_record(&self, index: usize) -> Option<&AgentServer> {
+    fn agent_record(&self, index: usize) -> Option<&AgentEntry> {
         self.settings_servers
             .agents
             .iter()
@@ -79,36 +185,19 @@ impl WorkspaceState {
         if let Some(position) = self.agent_position(id) {
             return position;
         }
-        let record = pm_protocol::builtin_agents()
-            .into_iter()
-            .find(|agent| agent.id == id)
-            .unwrap_or_else(|| AgentServer {
-                id: id.to_owned(),
-                name: id.to_owned(),
-                command: String::new(),
-                env: Vec::new(),
-                package: None,
-                installer: None,
-                home: None,
-            });
+        let record = AgentEntry {
+            id: id.to_owned(),
+            name: id.to_owned(),
+        };
         self.settings_servers.retired.push(record);
         self.agent_slots() + self.settings_servers.retired.len() - 1
     }
 
-    /// Whether the agent at `index` can keep more than one login, which every agent can.
+    /// Whether the agent at `index` can keep more than one login, which an agent whose sign-in names an account can.
     pub fn agent_has_accounts(&self, index: usize) -> bool {
-        self.agent_record(index).is_some()
-    }
-
-    /// Whether the agent at `index` is asked for skills behind a dollar sign.
-    pub fn agent_has_skills(&self, index: usize) -> bool {
-        self.agent_record(index).is_some_and(|agent| {
-            pm_acp::Product::of(&format!(
-                "{} {}",
-                agent.command,
-                agent.package.as_deref().unwrap_or_default()
-            )) == Some(pm_acp::Product::Codex)
-        })
+        self.agent_record(index)
+            .and_then(|record| pm_harness::agent(&record.id))
+            .is_some_and(|agent| agent.has_accounts())
     }
 
     /// How the agent at `index` is shown; a plain agent when there is none there.
@@ -126,14 +215,14 @@ impl WorkspaceState {
     }
 
     /// The state with `servers` as the agents that can be started.
-    pub fn with_agent_servers(mut self, servers: Vec<AgentServer>) -> Self {
+    pub fn with_agent_servers(mut self, servers: Vec<AgentEntry>) -> Self {
         self.set_agents(servers);
         self
     }
 
     /// Makes `servers` the agents that can be started, carrying everything kept per agent over to the agent's new position, retiring the agents that sessions still run.
-    pub(crate) fn set_agents(&mut self, servers: Vec<AgentServer>) {
-        let before: Vec<AgentServer> = self
+    pub(crate) fn set_agents(&mut self, servers: Vec<AgentEntry>) {
+        let before: Vec<AgentEntry> = self
             .settings_servers
             .agents
             .iter()
@@ -147,7 +236,7 @@ impl WorkspaceState {
             .filter(|session| !session.home)
             .map(|session| session.agent)
             .collect();
-        let retired: Vec<AgentServer> = before
+        let retired: Vec<AgentEntry> = before
             .iter()
             .enumerate()
             .filter(|(index, old)| {
@@ -155,7 +244,7 @@ impl WorkspaceState {
             })
             .map(|(_, old)| old.clone())
             .collect();
-        let after: Vec<&AgentServer> = servers.iter().chain(&retired).collect();
+        let after: Vec<&AgentEntry> = servers.iter().chain(&retired).collect();
         let moved: Vec<Option<usize>> = before
             .iter()
             .map(|old| after.iter().position(|new| new.id == old.id))
@@ -183,5 +272,64 @@ impl WorkspaceState {
             .collect();
         self.settings_servers.agents = servers;
         self.settings_servers.retired = retired;
+    }
+}
+
+#[cfg(test)]
+/// Tests for hiding agents from new sessions and offering only those signed in.
+mod tests {
+    use super::*;
+
+    /// A workspace whose every agent's default account is signed in.
+    fn signed_in_everywhere() -> WorkspaceState {
+        let mut state = WorkspaceState::new(&[]);
+        for held in &mut state.defaults {
+            *held = Some(Some("Signed in".to_owned()));
+        }
+        state
+    }
+
+    /// Only the agents signed in, by their default account, an added login or an API key, are offered for new sessions; before any is, the agent picked is offered alone, and it moves onto one signed in once one is known.
+    #[test]
+    fn only_signed_in_agents_start_new_sessions() {
+        let mut state = WorkspaceState::new(&[]);
+        let all = state.offered_agents();
+        assert!(all.len() > 3);
+        state.agent = all[0];
+        assert_eq!(state.startable_agents(), [all[0]]);
+        let key = state.agent_id_at(all[2]).unwrap();
+        state
+            .logins
+            .push((key, "work".to_owned(), "work".to_owned()));
+        state = state.with_identity(all[1], None, None, None);
+        state = state.with_identity(all[3], Some("API key saved".to_owned()), None, None);
+        assert_eq!(state.startable_agents(), [all[2], all[3]]);
+        assert_eq!(state.agent, all[2]);
+        assert!(!state.agent_ready(all[0]));
+        assert!(!state.agent_ready(all[1]));
+    }
+
+    /// A hidden agent leaves the chips of a new session but stays listed, the picked agent moves off it, the choice is kept, and the last one shown stays.
+    #[test]
+    fn hidden_agents_leave_new_sessions_only() {
+        let mut state = signed_in_everywhere();
+        state.machine_loaded = true;
+        let all = state.offered_agents();
+        assert!(all.len() > 1);
+        state.agent = all[0];
+        state.toggle_agent_shown(all[0]);
+        assert!(!state.startable_agents().contains(&all[0]));
+        assert_eq!(state.offered_agents(), all);
+        assert_ne!(state.agent, all[0]);
+        assert!(state.take_outbox().iter().any(|sent| matches!(
+            sent,
+            Outgoing::SaveMachineSettings(settings) if settings.agents.hidden.len() == 1
+        )));
+        for index in &all[1..] {
+            state.toggle_agent_shown(*index);
+        }
+        assert_eq!(state.startable_agents().len(), 1);
+        state.toggle_agent_shown(all[0]);
+        assert!(state.startable_agents().contains(&all[0]));
     }
 }

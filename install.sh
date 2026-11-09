@@ -68,6 +68,16 @@ detect_target() {
     esac
 }
 
+# Prints the tag the release of version $1 is published under: the bare
+# version, or v followed by it for releases tagged before tags dropped the v.
+release_tag() {
+    if curl --connect-timeout 10 --max-time 60 -fsIL -o /dev/null "https://github.com/$REPO/releases/tag/$1" 2>/dev/null; then
+        echo "$1"
+    else
+        echo "v$1"
+    fi
+}
+
 # Prints the version the latest release is tagged with, without the leading v.
 latest_version() {
     url="$(curl --connect-timeout 10 --max-time 120 -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest")" \
@@ -224,7 +234,7 @@ main() {
     VERSION="${VERSION#v}"
 
     name="$binary-$VERSION-$target"
-    tag="v$VERSION"
+    tag="$(release_tag "$VERSION")"
     base="https://github.com/$REPO/releases/download/$tag"
     scratch="${XDG_CACHE_HOME:-$HOME/.cache}/scratch/pandemonium"
     mkdir -p "$scratch"

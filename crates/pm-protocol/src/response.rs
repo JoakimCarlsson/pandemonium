@@ -1,7 +1,7 @@
 //! What the server answers.
 
-use pm_acp::{Discovery, Slash};
 use pm_git::{Change, Owner, Repository};
+use pm_harness::Discovery;
 use serde::{Deserialize, Serialize};
 
 /// What the server knows about one session, enough to list it and open it again.
@@ -67,13 +67,6 @@ pub enum Response {
     },
     /// What an agent said about itself.
     Discovery(Discovery),
-    /// The skills an agent has in a project.
-    Skills {
-        /// The skills the agent can be asked for by name.
-        skills: Vec<Slash>,
-        /// The names of the skills, for telling them from commands.
-        names: Vec<String>,
-    },
     /// The files of a folder.
     Files {
         /// Their paths, from the root of the repository.
@@ -182,16 +175,6 @@ pub enum Response {
     Choices {
         /// Each choice as agent, setting and value.
         choices: Vec<(String, String, String)>,
-    },
-    /// The agents the server can start.
-    AgentServers {
-        /// Every agent, in the order they are kept.
-        servers: Vec<crate::AgentServer>,
-    },
-    /// The agents the public registry offers.
-    RegistryAgents {
-        /// The well known ones first.
-        agents: Vec<crate::RegistryAgent>,
     },
     /// The tool servers the public registry offers for a search.
     ToolListings {

@@ -1052,7 +1052,7 @@ impl App {
                 ZoomStep::Reset => ZoomAction::Reset,
             }),
             Command::OpenExternal => {
-                if let Err(reason) = pm_acp::open_address(&page.address()) {
+                if let Err(reason) = pm_harness::open_address(&page.address()) {
                     eprintln!("{reason}");
                 }
             }
@@ -1690,7 +1690,7 @@ impl App {
                     state.open_link_page(&address);
                 }),
                 Route::System(address) => {
-                    if let Err(reason) = pm_acp::open_address(&address) {
+                    if let Err(reason) = pm_harness::open_address(&address) {
                         eprintln!("{reason}");
                     }
                 }

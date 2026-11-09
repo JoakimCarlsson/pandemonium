@@ -1,6 +1,6 @@
 //! The plan an agent proposes before it starts: the panel that reads it and the band above the prompt that answers it.
 
-use pm_acp::{Permission, Verdict};
+use pm_harness::{Permission, Verdict};
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{

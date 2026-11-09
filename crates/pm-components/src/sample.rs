@@ -2,11 +2,16 @@
 
 use std::time::Instant;
 
-use pm_acp::{Diff, Kind as ToolKind, Permission, PlanStep, Setting, Slash, ToolState};
+use pm_harness::{
+    Diff, Kind as ToolKind, Permission, PlanStep, Setting, Slash, ToolState, TrustRequest, Worktree,
+};
 
 use crate::dock::TerminalTab;
 use crate::draft::Draft;
 use crate::project::Project;
+
+/// The agent the harness names on the tool calls a script of the agent made, which are steps of their own and not subagents.
+pub const SCRIPT_AGENT: &str = "script";
 
 /// The activity or attention indicator shown beside a session.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -344,8 +349,9 @@ pub struct Message {
 /// A question of a form the reader answered, with the answer, or nothing when it was skipped.
 pub type Answered = (String, Option<String>);
 
-/// One thing the agent did on the way to a reply.
+/// One thing the agent did on the way to a reply; most are tool uses, so the tool use is kept unboxed.
 #[derive(Clone, Debug, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum Step {
     /// What the agent thought.
     Thought(Thought),
@@ -391,12 +397,16 @@ pub struct ToolUse {
     pub parent: Option<String>,
     /// The kind of subagent it starts, when it starts one.
     pub agent: Option<String>,
+    /// The git worktree of its own the subagent it starts works in, and what became of its changes, when it works apart from the agent.
+    pub worktree: Option<Box<Worktree>>,
 }
 
 impl ToolUse {
-    /// Whether it starts a subagent.
+    /// Whether it starts a subagent; a call a script of the agent made carries the agent `script` but starts none, and shows as a step of its own.
     pub fn is_subagent(&self) -> bool {
-        self.agent.is_some()
+        self.agent
+            .as_deref()
+            .is_some_and(|agent| agent != SCRIPT_AGENT)
     }
 
     /// Whether it is a subagent still at work.
@@ -557,10 +567,8 @@ pub struct Session {
     pub commits: Vec<String>,
     /// What can be changed about the conversation, once the agent has said.
     pub settings: Vec<Setting>,
-    /// The commands the agent offers behind a slash.
+    /// The commands and skills the agent offers behind a slash.
     pub commands: Vec<Slash>,
-    /// The skills the agent offers behind a dollar sign.
-    pub skills: Vec<Slash>,
     /// The id of the login its agent runs as, or nothing for the agent's own.
     pub login: Option<String>,
     /// Why this session needs signing in again and its account's name on its server, when named.
@@ -571,10 +579,8 @@ pub struct Session {
     pub ask: Option<Permission>,
     /// The form of questions the agent waits on the reader to answer, if it waits on one.
     pub inquiry: Option<Draft>,
-    /// The hooks the agent's Codex holds back until the reader trusts them.
-    pub held_hooks: Vec<pm_acp::Hook>,
-    /// How the prompt about the held-back hooks shows.
-    pub hooks_prompt: crate::hooks_prompt::HooksPrompt,
+    /// The request to trust the project, whose instructions, skills, agents or hooks the agent goes without until it is answered, if the agent made one.
+    pub trust: Option<TrustRequest>,
     /// When the turn that is running began, if one is.
     pub turn_started: Option<Instant>,
     /// How many of the prompts this window sent the server has yet to repeat back, so that they are not added twice.
@@ -594,7 +600,7 @@ pub struct Session {
     /// The commands and tasks the agent left running beyond its turn.
     pub shells: Vec<Shell>,
     /// How full the context is, once the agent has said.
-    pub context: Option<pm_acp::Usage>,
+    pub context: Option<pm_harness::Usage>,
     /// Whether the window has lost its connection to the session's server, so that what its agent does is not heard until the connection is made anew.
     pub out_of_reach: bool,
 }
@@ -641,14 +647,12 @@ impl Session {
             settings: Vec::new(),
             context: None,
             commands: Vec::new(),
-            skills: Vec::new(),
             login: None,
             signed_out: None,
             container: None,
             ask: None,
             inquiry: None,
-            held_hooks: Vec::new(),
-            hooks_prompt: crate::hooks_prompt::HooksPrompt::Hidden,
+            trust: None,
             turn_started: None,
             echoes: 0,
             queued: Vec::new(),
@@ -785,7 +789,11 @@ impl Session {
 
     /// The activity or attention that matters most in the workspace list.
     pub fn shown(&self) -> Status {
-        if self.ask.is_some() || self.inquiry.is_some() || self.signed_out.is_some() {
+        if self.ask.is_some()
+            || self.inquiry.is_some()
+            || self.trust.is_some()
+            || self.signed_out.is_some()
+        {
             Status::NeedsInput
         } else if self.status == Status::Working || self.background_running() {
             if self.out_of_reach {

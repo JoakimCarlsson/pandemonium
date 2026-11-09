@@ -380,7 +380,13 @@ pub fn chat(
             px(6),
             py(8),
         ])
-        .children(retained::messages(state, session, column, shaper));
+        .children(retained::messages(state, session, column, shaper))
+        .children(
+            session
+                .trust
+                .as_ref()
+                .map(|request| crate::trust::card(request, column, shaper)),
+        );
     let asking = session.ask.as_ref();
     if let Some(ask) = asking.filter(|ask| ask.plan.is_none()) {
         messages = messages.child(question(ask, column, shaper));
@@ -401,7 +407,6 @@ pub fn chat(
                 .child(line(label, 13, 1.4, Role::Muted)),
         );
     }
-    messages = messages.children(crate::hooks_card::hooks_card(session, column));
     node()
         .styles([flex(), flex_col(), flex_1(), min_w_px(0), min_h(0)])
         .child(header(state, session))

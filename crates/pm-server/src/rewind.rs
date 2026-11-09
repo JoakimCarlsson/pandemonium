@@ -1,6 +1,6 @@
 //! Going back in a session: keeping its files before each turn, putting them back, and taking the conversation back to before a turn.
 
-use pm_acp::Event;
+use pm_harness::Event;
 
 use crate::conversation;
 use crate::core::{Session, Told};
@@ -22,16 +22,21 @@ impl Session {
             && pm_git::checkpoint(&self.directory, &kept(number, seq)).is_ok()
     }
 
-    /// Takes the conversation of this session, numbered `number`, back to before the reader's turn `turn`: its agent stops, and the next prompt starts one afresh that is told what came before.
+    /// Takes the conversation of this session, numbered `number`, back to before the reader's turn `turn`: its agent stops, dropping the trust request it waited on, and the next prompt starts one afresh that is told what came before.
     pub(crate) fn rewind(&mut self, number: u64, turn: u64) -> Result<Told, String> {
         self.idle()?;
         if turn as usize >= conversation::turns(&self.log).len() {
             return Err(format!("session {number} has no turn {turn}"));
         }
         self.chat = None;
+        let first = conversation::turns(&self.log)
+            .get(turn as usize)
+            .map(|held| held.id);
         let mut told = self.drop_queue(number);
+        told.extend(self.drop_trust(number));
         let event = Event::Rewound { turn };
         told.push((number, self.note(number, &event), event));
+        self.resume_before = first.map(|id| id.to_string());
         Ok(told)
     }
 
@@ -42,7 +47,7 @@ impl Session {
         let Some(before) = turns.get(turn as usize).filter(|before| before.checkpoint) else {
             return Err(format!("no files were kept before turn {turn}"));
         };
-        let files = pm_git::restore(&self.directory, &kept(number, before.seq), &backup(number))
+        let files = pm_git::restore(&self.directory, &kept(number, before.id), &backup(number))
             .map_err(|reason| format!("could not put the files back: {reason}"))?;
         let event = Event::Restored { turn, files };
         Ok(vec![(number, self.note(number, &event), event)])

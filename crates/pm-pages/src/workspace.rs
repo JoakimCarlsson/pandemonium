@@ -7,7 +7,7 @@ use pm_ui::{Node, node};
 use pm_components::arrange::{
     PROJECT_MENU_NEW, PROJECT_MENU_REMOVE, ProjectMenu, SESSION_MENU_CLOSE,
     SESSION_MENU_COPY_BRANCH, SESSION_MENU_COPY_PATH, SESSION_MENU_OPEN_FOLDER, SESSION_MENU_READ,
-    SESSION_MENU_RENAME, SESSION_MENU_REVIEW_HOOKS, SessionMenu,
+    SESSION_MENU_RENAME, SessionMenu,
 };
 use pm_components::context_menu::{editor_menu, field_menu};
 use pm_components::git_prompts;
@@ -155,6 +155,7 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
                 .map(|open| git_prompts::prompt(state, open)),
         )
         .children(pm_components::browser_clear::clear_question(state))
+        .children(pm_components::sign_in_code::code_dialog(state))
         .children(pm_components::assist::assist(state, height, shaper))
 }
 
@@ -167,11 +168,10 @@ fn project_menu(open: ProjectMenu) -> Node {
         .build()
 }
 
-/// The session menu: its checkout, title, hooks, read status and archive action.
+/// The session menu: its checkout, title, read status and archive action.
 fn session_menu(state: &WorkspaceState, open: SessionMenu) -> Node {
     let held = state.sessions.get(open.session);
     let on_branch = held.is_some_and(|held| held.on_branch);
-    let hooks_held = held.is_some_and(|held| !held.held_hooks.is_empty());
     let menu = Menu::new(open.at.0, open.at.1)
         .item("Copy path", None, SESSION_MENU_COPY_PATH, false)
         .item(
@@ -187,10 +187,6 @@ fn session_menu(state: &WorkspaceState, open: SessionMenu) -> Node {
             SESSION_MENU_OPEN_FOLDER,
             state.is_remote_session(open.session),
         );
-    let menu = match hooks_held {
-        true => menu.item("Review hooks", None, SESSION_MENU_REVIEW_HOOKS, false),
-        false => menu,
-    };
     menu.item(
         if held.is_some_and(|held| held.unread()) {
             "Mark as read"

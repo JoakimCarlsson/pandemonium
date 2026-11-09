@@ -1,6 +1,6 @@
 //! Prompts that wait for the agent's turn to end, and the one place a prompt is handed to an agent.
 
-use pm_acp::Event;
+use pm_harness::Event;
 
 use crate::conversation;
 use crate::core::{Session, Told};
@@ -170,28 +170,41 @@ impl Session {
 
     /// Opens the session again if it was closed, keeps its files as they are, starts its agent if it is not running and hands it `prompt` as its next turn.
     ///
-    /// An agent started afresh is told the conversation so far, and any agent is told of files put back since its last turn. An agent whose login changed, or whose reader trusted hooks since it started, is started afresh.
+    /// An agent started afresh is told the conversation so far, and any agent is told of files put back since its last turn. An agent whose login changed, is started afresh. A trust request left from an agent that stopped is dropped before a new one starts, since the new one asks again.
     fn hand(&mut self, number: u64, prompt: Prompt) -> Told {
         if self.meta.closed {
             self.meta.closed = false;
             sessions::save_meta(number, &self.meta);
         }
-        if self.running_as != self.meta.login || self.hooks_trusted {
+        if self.running_as != self.meta.login {
             self.chat = None;
         }
         let afresh = self.chat.is_none();
-        let preface = conversation::preface(&self.log, afresh);
+        let mut told = if afresh {
+            self.drop_trust(number)
+        } else {
+            Told::new()
+        };
+        let preface =
+            conversation::preface(&self.log, afresh && !crate::sessions::has_history(number));
+        let turn = self.next_turn_id();
         let event = Event::Prompted {
             text: prompt.text.clone(),
             files: prompt.names,
-            checkpoint: self.checkpoint(number, self.next_seq()),
+            checkpoint: self.checkpoint(number, turn),
+            turn,
         };
-        let told = vec![(number, self.note(number, &event), event)];
+        told.push((number, self.note(number, &event), event));
         if afresh {
-            self.start_agent(number, &conversation::settings(&self.log));
+            let settings = if crate::sessions::has_history(number) {
+                Vec::new()
+            } else {
+                conversation::settings(&self.log)
+            };
+            self.start_agent(number, &settings);
         }
         if let Some(chat) = &self.chat {
-            chat.prompt(&format!("{preface}{}", prompt.text), &prompt.paths);
+            chat.prompt(&prompt.text, &prompt.paths, turn, &preface);
             self.busy = true;
         }
         told

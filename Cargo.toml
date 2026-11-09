@@ -28,7 +28,7 @@ pm-vim = { path = "crates/pm-vim" }
 pm-theme = { path = "crates/pm-theme" }
 pm-protocol = { path = "crates/pm-protocol" }
 pm-git = { path = "crates/pm-git" }
-pm-acp = { path = "crates/pm-acp" }
+pm-harness = { path = "crates/pm-harness" }
 pm-store = { path = "crates/pm-store" }
 pm-client = { path = "crates/pm-client" }
 pm-ssh = { path = "crates/pm-ssh" }

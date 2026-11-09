@@ -203,7 +203,7 @@ impl Screen {
     }
 
     /// The control answering what the agent of the session shown asks with an answer of `verdict`, when it asks.
-    pub fn answer_of(&self, verdict: pm_acp::Verdict) -> Option<pm_input::FocusId> {
+    pub fn answer_of(&self, verdict: pm_harness::Verdict) -> Option<pm_input::FocusId> {
         match self {
             Self::Workspace(state) => state.answer_of(verdict),
         }

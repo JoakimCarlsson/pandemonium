@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-pm-acp.workspace = true
+pm-harness.workspace = true
 pm-components.workspace = true
 pm-config.workspace = true
 pm-editor.workspace = true

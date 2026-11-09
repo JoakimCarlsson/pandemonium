@@ -50,52 +50,27 @@ pub struct ToolSet {
 /// What the set of an agent's own tools is kept under.
 pub const BUILT_IN: &str = "built-in";
 
-/// Claude Code's own tools, each with what it does.
-const CLAUDE_TOOLS: [(&str, &str); 12] = [
-    ("Agent", "Hands a task to an agent definition"),
-    ("Bash", "Runs shell commands"),
-    ("Edit", "Changes part of a file"),
-    ("Glob", "Finds files by pattern"),
-    ("Grep", "Searches the contents of files"),
-    ("NotebookEdit", "Changes cells of a notebook"),
-    ("Read", "Reads files"),
-    ("Skill", "Loads a skill"),
-    ("TodoWrite", "Keeps a list of the steps of a task"),
-    ("WebFetch", "Fetches a web page"),
-    ("WebSearch", "Searches the web"),
-    ("Write", "Writes whole files"),
-];
-
-/// Codex's own tools, each with what it does.
-const CODEX_TOOLS: [(&str, &str); 5] = [
-    ("shell", "Runs shell commands"),
-    ("apply_patch", "Changes files with a patch"),
-    ("update_plan", "Keeps the plan of a task"),
-    ("view_image", "Looks at a picture"),
-    ("web_search", "Searches the web"),
-];
+/// The longest name a tool may have for the providers.
+const NAME_LIMIT: usize = 64;
 
 impl ToolSet {
-    /// The set of `product`'s own tools, when the app knows them.
-    pub fn built_in(product: Option<Product>) -> Option<Self> {
-        let tools: &[(&str, &str)] = match product? {
-            Product::Claude => &CLAUDE_TOOLS,
-            Product::Codex => &CODEX_TOOLS,
-            Product::Grok | Product::Copilot => return None,
+    /// The set of the harness's own tools, which every product runs on; `listed` is what the harness reported, or why it could not.
+    pub fn built_in(
+        product: Option<Product>,
+        listed: Result<Vec<ToolEntry>, String>,
+    ) -> Option<Self> {
+        product?;
+        let (tools, error) = match listed {
+            Ok(tools) => (tools, None),
+            Err(reason) => (Vec::new(), Some(reason)),
         };
         Some(Self {
             id: BUILT_IN.to_owned(),
-            name: format!("{} tools", product?.name()),
+            name: "Built-in tools".to_owned(),
             source: Source::BuiltIn,
             plugin: None,
-            tools: tools
-                .iter()
-                .map(|(name, description)| ToolEntry {
-                    name: (*name).to_owned(),
-                    description: (*description).to_owned(),
-                })
-                .collect(),
-            error: None,
+            tools,
+            error,
         })
     }
 
@@ -132,21 +107,25 @@ impl ToolSet {
         !self.off(withheld) && (self.tools.is_empty() || self.enabled_count(withheld) > 0)
     }
 
-    /// Whether `product` can be started without one tool of the set while it keeps the others: Claude Code can leave out any tool, every other product only a tool server whole.
+    /// Whether `product` can be started without one tool of the set while it keeps the others: the harness leaves out any tool by name.
     pub fn per_tool(&self, product: Option<Product>) -> bool {
-        product == Some(Product::Claude)
+        product.is_some()
     }
 
-    /// Whether `product` can be started without the set: a tool server can always be left out, an agent's own tools only by Claude Code.
+    /// Whether `product` can be started without the set.
     pub fn switchable(&self, product: Option<Product>) -> bool {
-        self.source != Source::BuiltIn || self.per_tool(product)
+        product.is_some()
     }
 
-    /// The name `product` gives the tool `tool` of the set, as it is turned off by.
+    /// The name the harness gives the tool `tool` of the set, as it is turned off by.
     pub fn agent_name(&self, tool: &str) -> String {
         match self.source {
             Source::BuiltIn => tool.to_owned(),
-            Source::Server | Source::Plugin => format!("mcp__{}__{tool}", normalized(&self.id)),
+            Source::Server | Source::Plugin => {
+                let mut name = format!("mcp__{}__{}", normalized(&self.id), normalized(tool));
+                name.truncate(NAME_LIMIT);
+                name
+            }
         }
     }
 
@@ -160,11 +139,11 @@ impl ToolSet {
     }
 }
 
-/// `name` as Claude Code writes a server's name into the names of its tools: every character that is not a letter, a digit, `_` or `-` made `_`.
+/// `name` as the harness writes it into the name of a tool: every character that is not an ASCII letter, digit or `-` made `_`.
 fn normalized(name: &str) -> String {
     name.chars()
         .map(|character| match character {
-            'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '-' => character,
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' => character,
             _ => '_',
         })
         .collect()
@@ -203,4 +182,40 @@ pub fn toggled_tool(set: &ToolSet, tool: &str, withheld: &[String]) -> Vec<Strin
         kept.push(key);
     }
     kept
+}
+
+#[cfg(test)]
+/// Tests for the names the harness gives tools.
+mod tests {
+    use super::*;
+
+    /// A tool server's tool is named as the harness names it: unsafe characters become `_` and the name is cut at 64.
+    #[test]
+    fn server_tools_are_named_like_the_harness() {
+        let set = ToolSet {
+            id: "my server".to_owned(),
+            source: Source::Server,
+            ..ToolSet::default()
+        };
+        assert_eq!(set.agent_name("do.it"), "mcp__my_server__do_it");
+        assert_eq!(set.agent_name(&"x".repeat(100)).len(), 64);
+    }
+
+    /// The built-in set is whatever the harness reported, and carries the reason when it could not.
+    #[test]
+    fn built_in_is_what_the_harness_reported() {
+        let listed = vec![ToolEntry {
+            name: "bash".to_owned(),
+            description: "Runs commands".to_owned(),
+        }];
+        let set = ToolSet::built_in(Some(Product::Claude), Ok(listed.clone())).unwrap();
+        assert_eq!(set.tools, listed);
+        assert_eq!(set.error, None);
+        assert_eq!(set.agent_name("bash"), "bash");
+        let failed =
+            ToolSet::built_in(Some(Product::Codex), Err("not installed".to_owned())).unwrap();
+        assert!(failed.tools.is_empty());
+        assert_eq!(failed.error.as_deref(), Some("not installed"));
+        assert!(ToolSet::built_in(None, Ok(Vec::new())).is_none());
+    }
 }

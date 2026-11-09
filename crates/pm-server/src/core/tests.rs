@@ -1,4 +1,4 @@
-//! Tests of how the server ends the turns its sessions leave open.
+//! Tests of how the server ends the turns its sessions leave open and numbers the turns it starts.
 
 use super::*;
 
@@ -20,7 +20,7 @@ impl Drop for Forget {
 /// A session of the first agent with no agent running, holding `log`.
 fn session(log: Vec<(u64, Event)>) -> Session {
     let meta = Meta {
-        agent: pm_acp::AGENTS[0].id.to_owned(),
+        agent: pm_harness::agents()[0].id.to_owned(),
         repository: String::new(),
         directory: String::new(),
         branch: None,
@@ -33,7 +33,7 @@ fn session(log: Vec<(u64, Event)>) -> Session {
         submodule: None,
         container: false,
     };
-    Session::new(pm_acp::AGENTS[0], PathBuf::new(), log, meta)
+    Session::new(pm_harness::agents()[0], PathBuf::new(), log, meta)
 }
 
 /// A turn left open when the server stopped ends with events numbered after everything a client already heard, so a client attaching again from its last event hears it end.
@@ -47,6 +47,7 @@ fn interrupted_turn_ends_after_what_clients_heard() {
                 text: "work".to_owned(),
                 files: Vec::new(),
                 checkpoint: false,
+                turn: 1,
             },
         ),
         (2, Event::Said("partly done".to_owned())),
@@ -73,6 +74,7 @@ fn agent_stopping_mid_turn_ends_the_turn_with_an_error() {
             text: "work".to_owned(),
             files: Vec::new(),
             checkpoint: false,
+            turn: 1,
         },
     )]);
     held.busy = true;
@@ -86,4 +88,22 @@ fn agent_stopping_mid_turn_ends_the_turn_with_an_error() {
     assert!(!held.turn_open());
     assert!(!held.busy);
     assert!(held.chat.is_none());
+}
+
+/// A turn id never repeats one the log holds, even when the log was rebuilt with fewer events than its ids reach.
+#[test]
+fn next_turn_id_stays_above_every_id_in_the_log() {
+    let prompted = |turn: u64| Event::Prompted {
+        text: String::new(),
+        files: Vec::new(),
+        checkpoint: false,
+        turn,
+    };
+    let rebuilt = session(vec![
+        (1, prompted(2)),
+        (2, prompted(40)),
+        (3, Event::Finished(None)),
+    ]);
+    assert_eq!(rebuilt.next_turn_id(), 41);
+    assert_eq!(session(Vec::new()).next_turn_id(), 1);
 }

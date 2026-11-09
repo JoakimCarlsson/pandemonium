@@ -115,6 +115,9 @@ fn source_bytes(message: &Message) -> usize {
                                 + optional(&tool.output)
                                 + optional(&tool.parent)
                                 + optional(&tool.agent)
+                                + tool.worktree.as_ref().map_or(0, |worktree| {
+                                    worktree.path.len() + std::mem::size_of::<pm_harness::Merge>()
+                                })
                                 + tool.diff.as_ref().map_or(0, |diff| {
                                     diff.path.len() + optional(&diff.old) + diff.new.len()
                                 })

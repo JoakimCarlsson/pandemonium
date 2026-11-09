@@ -1,7 +1,8 @@
 #!/bin/sh
 #
 # Installs this checkout as pandemonium-preview, or, given `server`, installs
-# only the headless pandemonium-server.
+# only the headless pandemonium-server. The harness that runs the agents is part
+# of the program, so nothing else is installed.
 #
 #   scripts/install-preview.sh [server]
 

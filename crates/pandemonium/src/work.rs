@@ -5,13 +5,13 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
-use pm_acp::{Discovery, Event};
 use pm_client::{Client, Incoming};
 use pm_components::adder::{Found, Kind};
 use pm_components::figures::Drawing;
 use pm_components::git_controls::GRAPH_LIMIT;
 use pm_components::state::SESSION_BASE;
 use pm_components::tree_actions::EntryChange;
+use pm_harness::{Discovery, Event};
 use pm_input::FocusId;
 use pm_pages::{Outgoing, Screen, WorkspaceState};
 use pm_protocol::{Attachment, Login, Request, Response, Target};
@@ -107,20 +107,16 @@ enum Pending {
     LatestRelease,
     /// The update the reader asked for, being downloaded.
     Update,
-    /// The agents the reader added by hand.
-    AgentServers,
     /// The tool servers every agent is started with.
     McpServers,
-    /// The agents the public registry offers.
-    RegistryAgents,
     /// The tool servers the public registry offered for this search.
     Tools(String),
     /// The agent with this id told what it lets the reader change.
     Discover(Host, String),
     /// The agent at this position was signed in, or could not be.
     SignIn(usize, Option<String>),
-    /// The skills of an agent in a project.
-    Skills(usize, usize),
+    /// A session's agent was signed in again, or could not be.
+    SignInSession,
     /// What the agent at the second position is given in the project at the first.
     Library(usize, usize),
     /// The tools the agent at the second position is given on the machine of the project at the first.
@@ -502,9 +498,9 @@ impl Work {
             jobs,
             reporter,
             discovered: false,
-            agents: pm_protocol::builtin_agents()
-                .into_iter()
-                .map(|agent| agent.id)
+            agents: pm_harness::agents()
+                .iter()
+                .map(|agent| agent.id.to_owned())
                 .collect(),
             resume: None,
             read_receipts: Vec::new(),
@@ -515,11 +511,6 @@ impl Work {
             release: None,
             wake,
         }
-    }
-
-    /// Takes `agents` as the ones the server on this machine can start, before it has been asked.
-    pub fn know_agents(&mut self, agents: &[pm_protocol::AgentServer]) {
-        self.agents = agents.iter().map(|agent| agent.id.clone()).collect();
     }
 
     /// Has the window finish opening on `view` once the sessions it needs are listed.
@@ -666,7 +657,6 @@ impl Work {
             return;
         }
         self.discovered = true;
-        self.ask(&None, Request::AgentServers, Pending::AgentServers);
         for agent in self.agents.clone() {
             self.ask(
                 &None,
@@ -693,28 +683,6 @@ impl Work {
                 })
             })
             .collect()
-    }
-
-    /// Takes `ids` as the agents the server lists, and asks the ones this window had not heard of what they let the reader change, once the others were asked.
-    fn listed(&mut self, ids: Vec<String>) {
-        let new: Vec<String> = ids
-            .iter()
-            .filter(|id| !self.agents.contains(id))
-            .cloned()
-            .collect();
-        self.agents = ids;
-        if !self.discovered {
-            return;
-        }
-        for agent in new {
-            self.ask(
-                &None,
-                Request::Discover {
-                    agent: agent.clone(),
-                },
-                Pending::Discover(None, agent),
-            );
-        }
     }
 
     /// The agent at `position`, by the id the servers know it by.
@@ -957,11 +925,16 @@ impl Work {
                     },
                     Pending::Nothing,
                 ),
-                Outgoing::TrustHooks { session, hooks } => self.ask_session(
+                Outgoing::Trust {
                     session,
-                    |number| Request::TrustHooks {
+                    ticket,
+                    verdict,
+                } => self.ask_session(
+                    session,
+                    |number| Request::Trust {
                         session: number,
-                        hooks,
+                        ticket,
+                        verdict,
                     },
                     Pending::Nothing,
                 ),
@@ -1304,8 +1277,20 @@ impl Work {
                 Outgoing::SignInSession { session } => self.ask_session(
                     session,
                     |session| Request::SignInSession { session },
-                    Pending::Nothing,
+                    Pending::SignInSession,
                 ),
+                Outgoing::SaveKey { agent, key } => {
+                    if let Some(id) = self.agent_id(agent) {
+                        self.ask(
+                            &None,
+                            Request::SaveKey {
+                                agent: id,
+                                key: key.clone(),
+                            },
+                            Pending::SignIn(agent, None),
+                        );
+                    }
+                }
                 Outgoing::SignIn { agent, login } => {
                     if let Some(id) = self.agent_id(agent) {
                         self.ask(
@@ -1366,23 +1351,6 @@ impl Work {
                     Request::Submodules { directory },
                     Pending::Submodules(project),
                 ),
-                Outgoing::Skills {
-                    agent,
-                    project,
-                    host,
-                    directory,
-                } => {
-                    if let Some(id) = self.agent_id(agent) {
-                        self.ask(
-                            &host,
-                            Request::Skills {
-                                agent: id,
-                                directory,
-                            },
-                            Pending::Skills(agent, project),
-                        );
-                    }
-                }
                 Outgoing::Discover { agent, host } => {
                     if let Some(id) = self.agent_id(agent) {
                         self.ask(
@@ -1408,9 +1376,7 @@ impl Work {
                     self.followed.push(address);
                 }
                 Outgoing::LoadServers => {
-                    self.ask(&None, Request::AgentServers, Pending::AgentServers);
                     self.ask(&None, Request::McpServers, Pending::McpServers);
-                    self.ask(&None, Request::RegistryAgents, Pending::RegistryAgents);
                     self.ask(
                         &None,
                         Request::SearchTools {
@@ -1426,14 +1392,6 @@ impl Work {
                     },
                     Pending::Tools(query),
                 ),
-                Outgoing::SaveAgentServers(servers) => {
-                    self.listed(servers.iter().map(|server| server.id.clone()).collect());
-                    self.ask(
-                        &None,
-                        Request::SaveAgentServers { servers },
-                        Pending::Nothing,
-                    );
-                }
                 Outgoing::SaveMcpServers(servers) => {
                     self.ask(&None, Request::SaveMcpServers { servers }, Pending::Nothing)
                 }
@@ -1677,6 +1635,11 @@ impl Work {
                     Incoming::FolderChanged(directory) => {
                         self.folder_changed(model, &host, &directory);
                     }
+                    Incoming::SignInCode { agent, url, code } => {
+                        Self::in_workspace(model, |state| {
+                            state.with_sign_in_code(&agent, url, code)
+                        });
+                    }
                     Incoming::ExtensionsChanged(extensions) => {
                         self.ask_extension_assets(&host);
                         model.update(|screen| {
@@ -1883,6 +1846,9 @@ impl Work {
                 | Event::Restored { .. }
         );
         let finished = live && matches!(event, Event::Finished(_));
+        if live && let Event::ToolSignIn(address) = &event {
+            open_sign_in(address);
+        }
         model.update(|screen| screen.hear_in_place(session, event));
         let history_ends = !live && Some(&seq) >= self.history.get(&key);
         if files_moved && !live {
@@ -1937,6 +1903,12 @@ impl Work {
                     *screen = std::mem::take(screen).with_discovery_of(origin, &id, found);
                 });
             }
+            Pending::SignInSession => {
+                Self::in_workspace(model, WorkspaceState::sign_in_code_ended);
+                if let Some(message) = failure {
+                    eprintln!("sign-in failed: {message}");
+                }
+            }
             Pending::SignIn(agent, login) => {
                 model.update(|screen| *screen = std::mem::take(screen).signed_in(agent, login));
                 if let Some(message) = failure {
@@ -1978,24 +1950,6 @@ impl Work {
                     self.adopt_terminals(model, &origin, terminals);
                 }
             }
-            Pending::Skills(agent, project) => {
-                if let Response::Skills { skills, names } = response {
-                    model.update(|screen| {
-                        *screen = std::mem::take(screen).with_skills(
-                            agent,
-                            project,
-                            skills,
-                            names.into_iter().collect(),
-                        );
-                    });
-                }
-            }
-            Pending::AgentServers => {
-                if let Response::AgentServers { servers } = response {
-                    self.listed(servers.iter().map(|server| server.id.clone()).collect());
-                    Self::in_workspace(model, |state| state.with_agent_servers(servers));
-                }
-            }
             Pending::Library(project, agent) => match response {
                 Response::Library {
                     product,
@@ -2026,13 +1980,6 @@ impl Work {
                 if let Response::McpServers { servers } = response {
                     Self::in_workspace(model, |state| state.with_mcp_servers(servers));
                 }
-            }
-            Pending::RegistryAgents => {
-                let answer = match response {
-                    Response::RegistryAgents { agents } => Ok(agents),
-                    other => Err(Self::trouble_of(other)),
-                };
-                Self::in_workspace(model, |state| state.with_registry_agents(answer));
             }
             Pending::Tools(query) => {
                 let answer = match response {
@@ -2837,4 +2784,11 @@ fn show_in_file_manager(directory: &str) {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn();
+}
+
+/// Opens the sign-in page at `address` a tool server of an agent wants, in the reader's browser on this machine; a page that cannot be opened is reported on standard error, and the session still shows its address.
+fn open_sign_in(address: &str) {
+    if let Err(reason) = pm_harness::open_address(address) {
+        eprintln!("could not open a tool server's sign-in page: {reason}");
+    }
 }

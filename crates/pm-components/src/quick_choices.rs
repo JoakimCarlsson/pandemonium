@@ -493,7 +493,7 @@ impl WorkspaceState {
     }
 
     /// The control answering what the agent of the session shown asks with an answer of `verdict`, when it asks.
-    pub fn answer_of(&self, verdict: pm_acp::Verdict) -> Option<FocusId> {
+    pub fn answer_of(&self, verdict: pm_harness::Verdict) -> Option<FocusId> {
         let ask = self.open()?.ask.as_ref()?;
         let index = ask
             .choices

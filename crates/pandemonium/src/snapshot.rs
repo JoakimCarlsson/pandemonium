@@ -2,10 +2,6 @@
 
 use std::path::Path;
 
-use pm_acp::{
-    Alternative, Background, Choice, Diff, Discovery, Event, Hook, Inquiry, Kind, Permission, Pick,
-    PlanStep, Progress, Question, Setting, Slash, Tool, ToolState, Verdict,
-};
 use pm_components::Project;
 use pm_components::adder::{ADDER_BROWSE, ADDER_CLONE, ADDER_ROW_BASE, Found, Kind as Row};
 use pm_components::branch_tasks::{BRANCH_TASK_ROW_BASE, BranchTask};
@@ -14,18 +10,22 @@ use pm_components::diff::gutter_id;
 use pm_components::git_controls::{BRANCH_BUTTON, BRANCH_FILTER, Pick as Choosing};
 use pm_components::git_menus::MenuKind;
 use pm_components::git_prompts::Prompt;
-use pm_components::hooks_prompt::HOOKS_REVIEW;
 use pm_components::open_files::EDITOR_FIELD;
 use pm_components::panes::{Item, SPLIT_RIGHT, Side};
 use pm_components::settings::{SETTINGS_ADD, SETTINGS_FIND, Section};
 use pm_components::settings_catalog::{OPEN_LIST, Setting as SettingsCatalogue};
 use pm_components::settings_machines::{MACHINE_ADD, MACHINE_ADDRESS, MACHINE_NAME};
 use pm_components::state::{
-    AGENT_BASE, CHAT_TEXT, COMMENT_ADD, COMMENT_FIELD, COMMIT_MESSAGE, DETAILS_BASE, FILE_BASE,
-    RESTORE_BASE, REVIEW_FILES, STAGE_BASE, SUBAGENTS_CHIP, TAB_CHAT,
+    CHAT_TEXT, COMMENT_ADD, COMMENT_FIELD, COMMIT_MESSAGE, DETAILS_BASE, FILE_BASE, RESTORE_BASE,
+    REVIEW_FILES, STAGE_BASE, SUBAGENTS_CHIP, TAB_CHAT,
 };
 use pm_components::state::{LOCATION, SETTINGS};
 use pm_components::tree_actions::{TREE_NEW_FOLDER, TreeTarget};
+use pm_harness::{
+    Alternative, Background, Choice, Diff, Discovery, Event, Input as Skip, Inquiry, Kind, Merge,
+    Permission, Pick, PlanStep, Progress, Question, Setting, Skipped, Slash, Standing, Tool,
+    ToolState, TrustRequest, Verdict, Worktree,
+};
 use pm_input::{FocusId, PointerState};
 use pm_pages::{ADD_PROJECT, HISTORY, PROMPT, SEND, Screen, TAB_DIFF, TERMINAL, WorkspaceState};
 use pm_renderer::{DrawList, Renderer};
@@ -99,6 +99,10 @@ pub enum Shot {
     ComposerLong,
     /// A session whose account needs signing in again.
     SignedOut,
+    /// A session whose agent is writing its reply when a tool server it uses asks the reader to sign in, with the address of the sign-in page in the reply.
+    ToolSignIn,
+    /// The workspace showing the code a GitHub Copilot sign-in waits for the reader to enter.
+    SignInCode,
     /// A session whose agent was at work when the window lost its connection to the agent's server.
     OutOfReach,
     /// The workspace asking whether to close the window while agents are working.
@@ -217,6 +221,12 @@ pub enum Shot {
     Dragging,
     /// The page for starting work in this repository, with the agent's settings known.
     Welcome,
+    /// The page for starting work with Ollama and OpenRouter hidden from new sessions.
+    WelcomeHidden,
+    /// The agents and their accounts in the settings window, scrolled down, with Ollama and OpenRouter hidden from new sessions.
+    SettingsAccountsHidden,
+    /// The agents and their accounts in the settings window, scrolled down, with the box for OpenRouter's API key open.
+    SettingsAccountsKey,
     /// The page for starting work in this repository with the terminal open under it.
     WelcomeTerminal,
     /// A session cut into three panes: the conversation above the diff, beside a file.
@@ -233,12 +243,10 @@ pub enum Shot {
     Wrapped,
     /// The page for starting work after a command was picked from the list behind a slash.
     Slashed,
-    /// The page for starting work with Codex and a dollar sign being typed.
-    Dollar,
-    /// A Codex conversation with messages and its skills menu open.
-    DollarSession,
-    /// The page for starting work with Codex and more skills than rows, the last one highlighted.
-    DollarScrolled,
+    /// A conversation with messages and the list of commands and skills behind a slash open.
+    SlashSession,
+    /// The page for starting work with more commands and skills than rows, the last one highlighted.
+    SlashScrolled,
     /// The page for starting work with the list of models scrolled to its end.
     Scrolling,
     /// The page for starting work with the menu of where it is done open.
@@ -249,14 +257,14 @@ pub enum Shot {
     Asking,
     /// A conversation whose agent waits for permission to run a long command.
     AskingCommand,
+    /// A conversation whose agent left out the hooks, instruction files, skills and agents of a project nobody has trusted yet, and waits for the reader to trust it.
+    Trust,
+    /// A conversation whose agent left out the hooks of a trusted project, as one changed since it was trusted.
+    TrustChanged,
     /// A conversation whose agent waits for the answers to a form of three questions.
     Inquiring,
     /// A conversation whose reader answered a form of questions.
     Answered,
-    /// A conversation whose Codex holds back hooks until the reader trusts them, asking what to do.
-    Hooks,
-    /// The same conversation with the hooks held back listed for review.
-    HooksReview,
     /// A conversation whose turn ended while two subagents and a command were still running.
     Background,
     /// The same conversation with the subagents above the prompt box open.
@@ -265,6 +273,8 @@ pub enum Shot {
     AgentsExpanded,
     /// The expanded panel scrolled to its last rows.
     AgentsScrolled,
+    /// The open panel of subagents working in git worktrees of their own: one whose changes were applied, one still at work and one whose changes conflicted.
+    AgentsWorktrees,
     /// A conversation whose agent is on a turn with prompts queued behind it and another being written.
     Queued,
     /// The same conversation with a long, multi-line prompt waiting, shown in full.
@@ -275,10 +285,18 @@ pub enum Shot {
     Usage,
     /// A conversation with the model menu open.
     Picking,
+    /// The page for starting work with the menu of a long list of models open, narrowed with a box.
+    ManyModels,
+    /// The page for starting work with the menu of a long list of models narrowed to those holding `gpt`.
+    ModelsFiltered,
     /// A finished conversation scrolled back to its first message, whose files were kept before it.
     Kept,
     /// A finished conversation whose last message from the reader is one 2000-character line with no spaces.
     LongLine,
+    /// A conversation the server rebuilt from what the harness saved, as its events come back after a restart: a turn with a tool, a diff and the context meter, a stopped turn and a failed one.
+    Restored,
+    /// The same conversation scrolled back to its first turn.
+    RestoredTop,
     /// A finished conversation with the offer to put the files back as they were before its first message open.
     Restoring,
     /// A conversation with the details of its steps open.
@@ -349,6 +367,10 @@ pub enum Shot {
     SettingsForm,
     /// The settings panel on the Agent Servers inside Agents, with two accounts added to the first agent, at its narrowest when the flag is set.
     SettingsAccounts(bool),
+    /// The agents and their accounts in the settings window, scrolled down to the agents that keep no accounts and GitHub Copilot.
+    SettingsAccountsScrolled,
+    /// The agents in the settings window scrolled to the end, where the cloud providers say which cloud credentials they read, at its narrowest when the flag is set.
+    SettingsAccountsCloud(bool),
     /// The same panel waiting for the accounts and organizations to clone from.
     Loading,
     /// The same panel on the accounts and organizations to clone from.
@@ -2521,6 +2543,10 @@ impl Shot {
                 | Self::SettingsMcp
                 | Self::SettingsForm
                 | Self::SettingsAccounts(_)
+                | Self::SettingsAccountsScrolled
+                | Self::SettingsAccountsCloud(_)
+                | Self::SettingsAccountsHidden
+                | Self::SettingsAccountsKey
         )
     }
 
@@ -2535,10 +2561,11 @@ impl Shot {
                 | Self::SettingsMachine(true)
                 | Self::SettingsCompact(true)
                 | Self::SettingsAccounts(true)
+                | Self::SettingsAccountsCloud(true)
         )
     }
 
-    /// The settings shot `name` names: `settings` for the first section, `settings-` and a section's name for another, `settings-search`, `settings-picker`, `settings-machine` or `settings-compact`, each with `-narrow` after it for the window at its smallest.
+    /// The settings shot `name` names: `settings` for the first section, `settings-` and a section's name for another, `settings-search`, `settings-picker`, `settings-machine`, `settings-compact` or `settings-accounts-cloud`, each with `-narrow` after it for the window at its smallest.
     pub fn settings_named(name: &str) -> Option<Self> {
         let rest = name.strip_prefix("settings")?;
         let (rest, narrow) = match rest.strip_suffix("-narrow") {
@@ -2555,6 +2582,10 @@ impl Shot {
             "compact" => Some(Self::SettingsCompact(narrow)),
             "form" => Some(Self::SettingsForm),
             "accounts" => Some(Self::SettingsAccounts(narrow)),
+            "accounts-scrolled" => Some(Self::SettingsAccountsScrolled),
+            "accounts-cloud" => Some(Self::SettingsAccountsCloud(narrow)),
+            "accounts-hidden" => Some(Self::SettingsAccountsHidden),
+            "accounts-key" => Some(Self::SettingsAccountsKey),
             "mcp" => Some(Self::SettingsMcp),
             slug => SETTINGS_SHOTS
                 .iter()
@@ -2876,6 +2907,24 @@ impl Shot {
                     account: Some("work@example.com".to_owned()),
                 }))
             }
+            Self::ToolSignIn => Screen::Workspace(
+                workspace()
+                    .heard(0, Event::Prompted {
+                        text: "Which issues are still open?".to_owned(),
+                        files: Vec::new(),
+                        checkpoint: false,
+                        turn: 7,
+                    })
+                    .heard(0, Event::Said("Let me look at the issue tracker.".to_owned()))
+                    .heard(0, Event::ToolSignIn(
+                        "https://issues.example.com/oauth/authorize?response_type=code&client_id=crab&state=Gc7p".to_owned(),
+                    )),
+            ),
+            Self::SignInCode => Screen::Workspace(workspace().with_sign_in_code(
+                "copilot",
+                "https://github.com/login/device".to_owned(),
+                "ABCD-1234".to_owned(),
+            )),
             Self::OutOfReach => {
                 let mut state = workspace();
                 state.sessions[0].status = pm_components::sample::Status::Working;
@@ -3203,6 +3252,32 @@ impl Shot {
             }
             Self::Dragging => Screen::Workspace(workspace().dragged_over(0, 2, (150.0, 470.0))),
             Self::Welcome => Screen::Workspace(welcome()),
+            Self::WelcomeHidden => Screen::Workspace(hiding_local_agents(welcome())),
+            Self::SettingsAccountsKey => {
+                let state = welcome();
+                let openrouter = state.agent_position("openrouter").unwrap_or_default();
+                Screen::Workspace(
+                    state
+                        .after(SETTINGS)
+                        .after(Section::AgentServers.id())
+                        .after(FocusId(
+                            pm_components::settings_agents::KEY_SET_BASE + openrouter as u64,
+                        ))
+                        .scrolled_settings(420.0, 420.0),
+                )
+            }
+            Self::SettingsAccountsCloud(_) => Screen::Workspace(
+                welcome()
+                    .after(SETTINGS)
+                    .after(Section::AgentServers.id())
+                    .scrolled_settings(100_000.0, 100_000.0),
+            ),
+            Self::SettingsAccountsHidden => Screen::Workspace(
+                hiding_local_agents(welcome())
+                    .after(SETTINGS)
+                    .after(Section::AgentServers.id())
+                    .scrolled_settings(420.0, 420.0),
+            ),
             Self::WelcomeTerminal => Screen::Workspace(with_shell(welcome())),
             Self::Panes => Screen::Workspace(
                 code()
@@ -3235,37 +3310,24 @@ impl Shot {
                     .edited(PROMPT, Edit::Paste("/c".to_owned()))
                     .after(FocusId(4401)),
             ),
-            Self::DollarScrolled => {
-                let mut state = welcome().after(FocusId(AGENT_BASE + 1));
-                state.sync_context();
-                let skills = (1..=14)
+            Self::SlashScrolled => {
+                let mut state = welcome();
+                state.agent_commands[0] = (1..=14)
                     .map(|number| Slash {
                         name: format!("skill-{number:02}"),
                         description: format!("Description of the skill numbered {number}"),
                     })
                     .collect();
-                state = state
-                    .with_skills(1, 0, skills, Default::default())
-                    .after(pm_components::state::SKILL_BUTTON);
+                state = state.after(pm_components::state::SLASH_BUTTON);
                 for _ in 0..13 {
                     state = state.slash_moved(1);
                 }
                 Screen::Workspace(state)
             }
-            Self::Dollar | Self::DollarSession => {
-                let mut state = if matches!(self, Self::DollarSession) {
-                    let mut state = WorkspaceState::sample();
-                    state.sessions[0].agent = 1;
-                    state
-                } else {
-                    welcome().after(FocusId(AGENT_BASE + 1))
-                };
-                state.sync_context();
-                state = state.with_skills(1, 0, vec![
-                    Slash { name: "review".to_owned(), description: "Review the changes in this project".to_owned() },
-                    Slash { name: "release-notes".to_owned(), description: "Write release notes from recent commits".to_owned() },
-                ], Default::default());
-                Screen::Workspace(state.after(pm_components::state::SKILL_BUTTON))
+            Self::SlashSession => {
+                let mut state = WorkspaceState::sample();
+                state.sessions[0].commands = claude_discovery().commands;
+                Screen::Workspace(state.edited(PROMPT, Edit::Paste("/".to_owned())))
             }
             Self::Scrolling => {
                 Screen::Workspace(welcome().after(FocusId(4200)).scrolled_menu(1000.0, 1000.0))
@@ -3284,6 +3346,8 @@ impl Shot {
             Self::Live => Screen::Workspace(live(Turn::Finished)),
             Self::Asking => Screen::Workspace(live(Turn::Asking)),
             Self::AskingCommand => Screen::Workspace(live(Turn::Command)),
+            Self::Trust => Screen::Workspace(trusting(Standing::Unknown)),
+            Self::TrustChanged => Screen::Workspace(trusting(Standing::Changed)),
             Self::Answered => {
                 let state = live(Turn::Working);
                 let session = state.open_index().unwrap();
@@ -3307,11 +3371,12 @@ impl Shot {
                 ))
             }
             Self::Inquiring => Screen::Workspace(live(Turn::Inquiring)),
-            Self::Hooks => Screen::Workspace(hooks_held()),
-            Self::HooksReview => Screen::Workspace(hooks_held().after(HOOKS_REVIEW)),
             Self::Background => Screen::Workspace(live(Turn::Background)),
             Self::Agents => {
                 Screen::Workspace(live(Turn::Background).after(FocusId(SUBAGENTS_CHIP.0)))
+            }
+            Self::AgentsWorktrees => {
+                Screen::Workspace(live(Turn::Isolated).after(FocusId(SUBAGENTS_CHIP.0)))
             }
             Self::AgentsExpanded | Self::AgentsScrolled => {
                 let mut state = live(Turn::Background);
@@ -3327,6 +3392,7 @@ impl Shot {
                         diff: None,
                         output: None,
                         agent: None,
+                        worktree: None,
                     }));
                 }
                 let (reply, position, _) = state.sessions[session].subagents().into_iter()
@@ -3341,7 +3407,7 @@ impl Shot {
                 live(Turn::Finished)
                     .heard(
                         0,
-                        Event::Used(pm_acp::Usage {
+                        Event::Used(pm_harness::Usage {
                             used: 84_000,
                             size: 200_000,
                         }),
@@ -3354,8 +3420,16 @@ impl Shot {
             ),
             Self::Kept => Screen::Workspace(kept()),
             Self::LongLine => Screen::Workspace(long_line()),
+            Self::Restored => Screen::Workspace(restored()),
+            Self::RestoredTop => Screen::Workspace(restored().scrolled_chat(-2000.0, 2000.0)),
             Self::Restoring => Screen::Workspace(kept().after(FocusId(RESTORE_BASE))),
             Self::Picking => Screen::Workspace(welcome().after(FocusId(4200))),
+            Self::ManyModels => Screen::Workspace(many_models().after(FocusId(4200))),
+            Self::ModelsFiltered => Screen::Workspace(
+                many_models()
+                    .after(FocusId(4200))
+                    .edited(pm_components::state::MENU_FILTER, Edit::Paste("gpt".to_owned())),
+            ),
             Self::Expanded => {
                 load_installed_grammar("rust");
                 Screen::Workspace(
@@ -3517,20 +3591,23 @@ impl Shot {
                     .after(Section::AgentServers.id())
                     .after(SETTINGS_ADD),
             ),
-            Self::SettingsAccounts(_) => {
+            Self::SettingsAccounts(_) | Self::SettingsAccountsScrolled => {
                 let agent = welcome().agent_id_at(0).unwrap_or_default();
-                Screen::Workspace(
-                    welcome()
-                        .after(SETTINGS)
-                        .after(Section::AgentServers.id())
-                        .with_accounts(
-                            vec![
-                                (agent.clone(), "a1".to_owned(), "work@example.com".to_owned()),
-                                (agent.clone(), "a2".to_owned(), "Account 2".to_owned()),
-                            ],
-                            vec![(agent, "a1".to_owned())],
-                        ),
-                )
+                let state = welcome()
+                    .after(SETTINGS)
+                    .after(Section::AgentServers.id())
+                    .with_accounts(
+                        vec![
+                            (agent.clone(), "a1".to_owned(), "work@example.com".to_owned()),
+                            (agent.clone(), "a2".to_owned(), "Account 2".to_owned()),
+                        ],
+                        vec![(agent, "a1".to_owned())],
+                    );
+                Screen::Workspace(if matches!(self, Self::SettingsAccountsScrolled) {
+                    state.scrolled_settings(420.0, 420.0)
+                } else {
+                    state
+                })
             }
             Self::Adding => Screen::Workspace(welcome().after(ADD_PROJECT)),
             Self::Loading => Screen::Workspace(welcome().after(ADD_PROJECT).after(ADDER_CLONE)),
@@ -3750,7 +3827,7 @@ fn with_library_sample(state: WorkspaceState) -> WorkspaceState {
         },
         Item {
             model: "sonnet".to_owned(),
-            tools: vec!["Read".to_owned(), "Grep".to_owned(), "Glob".to_owned()],
+            tools: vec!["read".to_owned(), "grep".to_owned(), "glob".to_owned()],
             ..item(Kind::Agent, Scope::Workspace, "reviewer", "Reviews a change for bugs before it is committed", inside(".claude/agents/reviewer.md"))
         },
         item(Kind::Agent, Scope::User, "researcher", "Finds out how a library is used across the code", "/home/me/.claude/agents/researcher.md".to_owned()),
@@ -3767,39 +3844,47 @@ fn with_library_sample(state: WorkspaceState) -> WorkspaceState {
         name: name.to_owned(),
         description: description.to_owned(),
     };
-    let sets = ToolSet::built_in(Some(Product::Claude))
-        .into_iter()
-        .chain([
-            ToolSet {
-                id: "github".to_owned(),
-                name: "github".to_owned(),
-                source: Source::Server,
-                plugin: None,
-                tools: vec![
-                    tool("create_issue", "Open a new issue in a repository"),
-                    tool("get_issue", "Read an issue and its comments"),
-                    tool(
-                        "list_pull_requests",
-                        "List the pull requests of a repository",
-                    ),
-                    tool("search_code", "Search code across repositories"),
-                    tool("add_issue_comment", "Comment on an issue"),
-                ],
-                error: None,
-            },
-            ToolSet {
-                id: "context7".to_owned(),
-                name: "context7".to_owned(),
-                source: Source::Plugin,
-                plugin: Some("docs".to_owned()),
-                tools: vec![
-                    tool("resolve-library-id", "Find the id of a library"),
-                    tool("get-library-docs", "Read the documentation of a library"),
-                ],
-                error: None,
-            },
-        ])
-        .collect();
+    let sets = ToolSet::built_in(
+        Some(Product::Claude),
+        Ok(vec![
+            tool("read", "Read a text file and return its lines."),
+            tool("grep", "Search file contents with a regular expression."),
+            tool("edit", "Edit a file by replacing one exact piece of text."),
+            tool("bash", "Run a shell command in the working directory."),
+        ]),
+    )
+    .into_iter()
+    .chain([
+        ToolSet {
+            id: "github".to_owned(),
+            name: "github".to_owned(),
+            source: Source::Server,
+            plugin: None,
+            tools: vec![
+                tool("create_issue", "Open a new issue in a repository"),
+                tool("get_issue", "Read an issue and its comments"),
+                tool(
+                    "list_pull_requests",
+                    "List the pull requests of a repository",
+                ),
+                tool("search_code", "Search code across repositories"),
+                tool("add_issue_comment", "Comment on an issue"),
+            ],
+            error: None,
+        },
+        ToolSet {
+            id: "context7".to_owned(),
+            name: "context7".to_owned(),
+            source: Source::Plugin,
+            plugin: Some("docs".to_owned()),
+            tools: vec![
+                tool("resolve-library-id", "Find the id of a library"),
+                tool("get-library-docs", "Read the documentation of a library"),
+            ],
+            error: None,
+        },
+    ])
+    .collect();
     let withheld = vec![
         "skill/user/commit".to_owned(),
         "tool/github/create_issue".to_owned(),
@@ -3819,20 +3904,41 @@ fn welcome() -> WorkspaceState {
     let projects: Vec<Project> = Project::from_source(&here.to_string_lossy())
         .into_iter()
         .collect();
-    WorkspaceState::new(&projects).with_discovery(0, claude_discovery())
+    signed_in(
+        WorkspaceState::new(&projects).with_discovery(0, claude_discovery()),
+        &["claude-code", "codex", "openrouter", "copilot"],
+    )
+}
+
+/// `state` with the default accounts of the agents `ids` signed in, so that the page for starting work offers them.
+fn signed_in(mut state: WorkspaceState, ids: &[&str]) -> WorkspaceState {
+    for id in ids {
+        if let Some(agent) = state.agent_position(id) {
+            state = state.with_identity(agent, Some("Signed in".to_owned()), None, None);
+        }
+    }
+    state
 }
 
 /// What Claude Code says about itself: its settings and commands.
 fn claude_discovery() -> Discovery {
     Discovery {
         settings: claude_settings(),
-        commands: ["compact", "clear", "model", "review", "init"]
-            .into_iter()
-            .map(|name| Slash {
-                name: name.to_owned(),
-                description: format!("Run {name}"),
-            })
-            .collect(),
+        commands: [
+            "compact",
+            "clear",
+            "model",
+            "review",
+            "init",
+            "release-notes",
+            "frontend-design:frontend-design",
+        ]
+        .into_iter()
+        .map(|name| Slash {
+            name: name.to_owned(),
+            description: format!("Run {name}"),
+        })
+        .collect(),
     }
 }
 
@@ -3893,6 +3999,59 @@ fn claude_settings() -> Vec<Setting> {
     ]
 }
 
+/// A finished conversation whose agent waits for the reader to trust the project it works in, which stands as `standing`: never decided, with hooks, instruction files, skills and an agent left out, or trusted before a hook changed, with only the hooks left out.
+fn trusting(standing: Standing) -> WorkspaceState {
+    let root = "/home/reader/code/pandemonium";
+    let skipped = |kind, name: &str, path: &str| Skipped {
+        kind,
+        name: name.to_owned(),
+        path: format!("{root}/{path}").into(),
+    };
+    let settings = ".claude/settings.json";
+    let skipped = match standing {
+        Standing::Changed => vec![skipped(
+            Skip::Hook,
+            "PreToolUse Bash: ./scripts/guard.sh --deny-network",
+            settings,
+        )],
+        _ => vec![
+            skipped(Skip::Hook, "PreToolUse Bash: ./scripts/guard.sh", settings),
+            skipped(Skip::Hook, "Stop: make lint && make fmt", settings),
+            skipped(Skip::Instruction, &format!("{root}/AGENTS.md"), "AGENTS.md"),
+            skipped(Skip::Instruction, &format!("{root}/CLAUDE.md"), "CLAUDE.md"),
+            skipped(
+                Skip::Instruction,
+                &format!("{root}/crates/pm-ui/AGENTS.md"),
+                "crates/pm-ui/AGENTS.md",
+            ),
+            skipped(
+                Skip::Instruction,
+                &format!("{root}/.claude/rules/rust.md"),
+                ".claude/rules/rust.md",
+            ),
+            skipped(
+                Skip::Instruction,
+                &format!("{root}/.claude/rules/snapshots.md"),
+                ".claude/rules/snapshots.md",
+            ),
+            skipped(Skip::Skill, "release", ".claude/skills/release/SKILL.md"),
+            skipped(Skip::Skill, "snapshot", ".claude/skills/snapshot/SKILL.md"),
+            skipped(Skip::Agent, "reviewer", ".claude/agents/reviewer.md"),
+        ],
+    };
+    let state = live(Turn::Finished);
+    let session = state.open_index().unwrap();
+    state.heard(
+        session,
+        Event::Trust(TrustRequest {
+            ticket: 1,
+            root: root.into(),
+            standing,
+            skipped,
+        }),
+    )
+}
+
 /// How the turn of a made-up conversation stands at the end of it.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Turn {
@@ -3908,6 +4067,8 @@ enum Turn {
     Working,
     /// The agent finished it with subagents and a command left running.
     Background,
+    /// The agent finished it like [`Turn::Background`], its subagents working in git worktrees of their own and a third one ended.
+    Isolated,
 }
 
 /// A conversation on a turn, with two prompts waiting behind it and a third being written.
@@ -3956,38 +4117,99 @@ fn queued_long() -> WorkspaceState {
     .fold(state, |state, event| state.heard(session, event))
 }
 
-/// A finished conversation whose Codex holds back a new hook and a changed one until the reader trusts them.
-fn hooks_held() -> WorkspaceState {
-    let hook = |key: &str, event: &str, matcher: Option<&str>, command: &str, changed| Hook {
-        key: format!("/home/reader/.codex/hooks.json:{key}"),
-        event: event.to_owned(),
-        matcher: matcher.map(str::to_owned),
-        command: command.to_owned(),
-        source: "/home/reader/.codex/hooks.json".to_owned(),
-        hash: format!("sha256:{key}"),
-        changed,
+/// A conversation told as the server tells it after a restart, from what the harness saved: the offer first, then each turn with its tools, its context meter and its end, the stopped and the failed turns among them.
+fn restored() -> WorkspaceState {
+    let state = WorkspaceState::new(&projects()).edited(
+        PROMPT,
+        Edit::Paste("Why does the sidebar lose its scroll position?".to_owned()),
+    );
+    let state = state.after(SEND);
+    let session = state.open_index().unwrap();
+    let tool = |id: &str, title: &str, kind, target: &str, state| Tool {
+        id: id.to_owned(),
+        title: Some(title.to_owned()),
+        kind: Some(kind),
+        state: Some(state),
+        target: Some(target.to_owned()),
+        diff: None,
+        output: None,
+        parent: None,
+        agent: None,
+        worktree: None,
     };
-    let state = live(Turn::Finished);
-    let session = state.sessions.len() - 1;
-    state.heard(
-        session,
-        Event::Hooks(vec![
-            hook(
-                "pre_tool_use:0:0",
-                "preToolUse",
-                Some("Bash"),
-                "sh -c 'cat >> ~/.cache/scratch/pandemonium/pretool.log'",
-                false,
-            ),
-            hook(
-                "session_start:0:0",
-                "sessionStart",
-                None,
-                "/home/reader/.local/bin/muffle hook codex --terse",
-                true,
-            ),
-        ]),
-    )
+    let done = |id: &str, output: &str, diff: Option<Diff>| {
+        Event::Tool(Tool {
+            id: id.to_owned(),
+            title: None,
+            kind: None,
+            state: Some(ToolState::Done),
+            target: None,
+            diff,
+            output: Some(output.to_owned()),
+            parent: None,
+            agent: None,
+            worktree: None,
+        })
+    };
+    let prompted = |text: &str, turn: u64| Event::Prompted {
+        text: text.to_owned(),
+        files: Vec::new(),
+        checkpoint: false,
+        turn,
+    };
+    [
+        Event::Settings(claude_settings()),
+        Event::Commands(vec![Slash {
+            name: "compact".to_owned(),
+            description: "Summarise the conversation to free up context".to_owned(),
+        }]),
+        prompted("Why does the sidebar lose its scroll position?", 1),
+        Event::Tool(tool(
+            "r1",
+            "read",
+            Kind::Read,
+            "crates/pm-components/src/state.rs",
+            ToolState::Running,
+        )),
+        Event::Used(pm_harness::Usage {
+            used: 9466,
+            size: 1_000_000,
+        }),
+        done("r1", "pub struct WorkspaceState { .. }", None),
+        Event::Tool(tool(
+            "e1",
+            "edit",
+            Kind::Edit,
+            "crates/pm-components/src/state.rs",
+            ToolState::Running,
+        )),
+        Event::Used(pm_harness::Usage {
+            used: 9667,
+            size: 1_000_000,
+        }),
+        done(
+            "e1",
+            "edited state.rs",
+            Some(Diff {
+                path: "crates/pm-components/src/state.rs".to_owned(),
+                old: Some("fn a() {}\nfn b() {}\nfn c() {}\n".to_owned()),
+                new: "fn a() {}\nfn d() {}\nfn c() {}\n".to_owned(),
+            }),
+        ),
+        Event::Said("The offset is clamped against a stale height, so I changed it.".to_owned()),
+        Event::Used(pm_harness::Usage {
+            used: 9791,
+            size: 1_000_000,
+        }),
+        Event::Finished(None),
+        prompted("Now count to a thousand out loud.", 5),
+        Event::Halted,
+        Event::Finished(None),
+        prompted("Run the whole test suite again.", 8),
+        Event::Finished(Some("the model was overloaded".to_owned())),
+    ]
+    .into_iter()
+    .fold(state, |state, event| state.heard(session, event))
 }
 
 /// A finished conversation whose files were kept before its first message, scrolled back to it.
@@ -3999,6 +4221,7 @@ fn kept() -> WorkspaceState {
                 text: "Why does the sidebar lose its scroll position?".to_owned(),
                 files: Vec::new(),
                 checkpoint: true,
+                turn: 0,
             },
         )
         .scrolled_chat(-400.0, 400.0)
@@ -4012,6 +4235,7 @@ fn long_line() -> WorkspaceState {
         text,
         files: Vec::new(),
         checkpoint: false,
+        turn: 0,
     };
     state
         .heard(
@@ -4036,6 +4260,7 @@ fn live(turn: Turn) -> WorkspaceState {
         output: None,
         parent: None,
         agent: None,
+        worktree: None,
     };
     let mut state = WorkspaceState::new(&projects())
         .edited(
@@ -4079,22 +4304,22 @@ fn live(turn: Turn) -> WorkspaceState {
         ]),
         Event::Tool(tool(
             "1",
-            "Read",
+            "read",
             Kind::Read,
             "~/code/pandemonium/crates/pm-components/src/workspace/state.rs",
         )),
-        Event::Tool(tool("2", "Grep", Kind::Search, "sidebar_scroll")),
+        Event::Tool(tool("2", "grep", Kind::Search, "sidebar_scroll")),
         Event::Tool(Tool {
             diff: Some(Diff {
                 path: "~/code/pandemonium/src/lib.rs".to_owned(),
                 old: Some("fn a() {}\nfn b() {}\nfn c() {}\n".to_owned()),
                 new: "fn a() {}\nfn d() {}\nfn c() {}\n".to_owned(),
             }),
-            ..tool("3", "Edit", Kind::Edit, "~/code/pandemonium/src/lib.rs")
+            ..tool("3", "edit", Kind::Edit, "~/code/pandemonium/src/lib.rs")
         }),
         Event::Tool(Tool {
             output: Some("running 12 tests\ntest result: ok. 12 passed".to_owned()),
-            ..tool("4", "Terminal", Kind::Execute, "cargo test")
+            ..tool("4", "bash", Kind::Execute, "cargo test")
         }),
         Event::Said(
             "The offset is clamped against a height measured before the list is rebuilt."
@@ -4102,7 +4327,7 @@ fn live(turn: Turn) -> WorkspaceState {
         ),
         Event::Tool(tool(
             "5",
-            "Read",
+            "read",
             Kind::Read,
             "~/code/pandemonium/README.md",
         )),
@@ -4197,7 +4422,7 @@ fn live(turn: Turn) -> WorkspaceState {
         }));
     } else if turn == Turn::Finished {
         events.push(Event::Finished(None));
-    } else if turn == Turn::Background {
+    } else if matches!(turn, Turn::Background | Turn::Isolated) {
         let agent = |id: &str, title: &str| Tool {
             state: Some(ToolState::Running),
             agent: Some("explore".to_owned()),
@@ -4226,14 +4451,61 @@ fn live(turn: Turn) -> WorkspaceState {
                 running: true,
                 call: Some("s1".to_owned()),
             }),
-            Event::Finished(None),
         ]);
+        if turn == Turn::Isolated {
+            events.extend(worktrees());
+        }
+        events.push(Event::Finished(None));
     }
     let asked = state.sessions.len() - 1;
     for event in events {
         state = state.heard(asked, event);
     }
     state
+}
+
+/// What the agent says of the subagents of [`Turn::Background`] working in git worktrees of their own: the first ended and its changes were applied, the second still works, and a third ended with changes that conflicted.
+fn worktrees() -> Vec<Event> {
+    let apart = |merge: Option<Merge>| {
+        Some(Box::new(Worktree {
+            path: "/home/reader/.cache/oh-my-crab/worktrees/c1/1/pandemonium".to_owned(),
+            merge,
+        }))
+    };
+    let update = |id: &str, state: Option<ToolState>, merge: Option<Merge>| Tool {
+        id: id.to_owned(),
+        title: None,
+        kind: None,
+        state,
+        target: None,
+        diff: None,
+        output: None,
+        parent: None,
+        agent: None,
+        worktree: apart(merge),
+    };
+    let applied = Merge::Applied {
+        files: ["src/session.rs", "src/root.rs", "src/lib.rs"]
+            .map(str::to_owned)
+            .to_vec(),
+    };
+    let conflicted = Merge::Conflicted {
+        patch: "/home/reader/.cache/oh-my-crab/output/c1/worktree-patch-1.log".to_owned(),
+        files: vec!["src/session.rs".to_owned()],
+    };
+    [
+        update("a1", Some(ToolState::Done), Some(applied)),
+        update("a2", None, None),
+        Tool {
+            title: Some("Rename the session root accessor".to_owned()),
+            kind: Some(Kind::Other),
+            target: Some("Rename the session root accessor".to_owned()),
+            agent: Some("task".to_owned()),
+            ..update("a3", Some(ToolState::Done), Some(conflicted))
+        },
+    ]
+    .map(Event::Tool)
+    .to_vec()
 }
 
 /// The text of the Rust file the code snapshots write in.
@@ -4663,7 +4935,7 @@ mod performance_tests {
                 let started = std::time::Instant::now();
                 screen = screen.heard(
                     0,
-                    pm_acp::Event::Said(format!(
+                    pm_harness::Event::Said(format!(
                         "chunk {version} of **streamed** words and `code`. "
                     )),
                 );
@@ -4987,4 +5259,58 @@ pub fn write_browser(path: &Path, url: &str, tools: bool, interact: bool) -> Res
     drop(engine);
     image::save_buffer(path, &pixels, width, height, image::ColorType::Rgba8)
         .map_err(|error| error.to_string())
+}
+
+/// `state` with Ollama and OpenRouter hidden from new sessions, as the settings keep it.
+fn hiding_local_agents(mut state: WorkspaceState) -> WorkspaceState {
+    state.machine.agents.hidden = vec!["ollama".to_owned(), "openrouter".to_owned()];
+    state
+}
+
+/// The page for starting work with an agent that offers as many models as a hosted router does.
+fn many_models() -> WorkspaceState {
+    let vendors = [
+        "openai",
+        "anthropic",
+        "google",
+        "meta-llama",
+        "mistralai",
+        "qwen",
+        "z-ai",
+        "deepseek",
+    ];
+    let families = [
+        "gpt-6.1-terra",
+        "claude-opus-5.5",
+        "gemini-4-pro",
+        "llama-5-405b",
+        "devstral-3",
+        "qwen4-coder",
+        "glm-5.3",
+        "deepseek-v5",
+    ];
+    let picks: Vec<Pick> = (0..80)
+        .map(|place| {
+            let value = format!("{}/{}-{place}", vendors[place % 8], families[place % 8]);
+            Pick {
+                value: value.clone(),
+                name: value,
+                description: String::new(),
+            }
+        })
+        .collect();
+    let mut discovery = claude_discovery();
+    if let Some(model) = discovery
+        .settings
+        .iter_mut()
+        .find(|setting| setting.category == "model")
+    {
+        model.current = picks[0].value.clone();
+        model.picks = picks;
+    }
+    let here = std::env::current_dir().unwrap_or_default();
+    let projects: Vec<Project> = Project::from_source(&here.to_string_lossy())
+        .into_iter()
+        .collect();
+    WorkspaceState::new(&projects).with_discovery(0, discovery)
 }

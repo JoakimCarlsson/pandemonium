@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use crate::multirepo::{self, Layout};
+use crate::worktrees::worktrees;
 use crate::{layout, operation, push_to, run, tracking};
 
 /// What the controls over branches and remotes need to know about a repository.
@@ -54,21 +55,15 @@ fn count(directory: &Path, range: &[&str]) -> usize {
         .unwrap_or(0)
 }
 
-/// The folder of the other worktree of the repository `directory` is in that has `branch` checked out, when there is one.
+/// The folder of the other worktree of the repository `directory` is in that has `branch` checked out, when there is one; the worktrees the agent harness makes for its subagents do not count.
 fn checked_out_elsewhere(directory: &Path, branch: &str) -> Option<String> {
     let here = run(directory, &["rev-parse", "--show-toplevel"]).ok()?;
-    let listing = run(directory, &["worktree", "list", "--porcelain"]).ok()?;
-    let wanted = format!("branch refs/heads/{branch}");
-    listing
-        .split("\n\n")
-        .filter(|block| block.lines().any(|line| line == wanted))
-        .filter_map(|block| {
-            block
-                .lines()
-                .find_map(|line| line.strip_prefix("worktree "))
-        })
-        .find(|path| *path != here.trim())
-        .map(str::to_owned)
+    let wanted = format!("refs/heads/{branch}");
+    worktrees(directory)
+        .into_iter()
+        .filter(|worktree| worktree.branch.as_deref() == Some(wanted.as_str()))
+        .map(|worktree| worktree.path)
+        .find(|path| path != here.trim())
 }
 
 /// The remote and the branch on it that the local branch `branch` follows, when it follows one.

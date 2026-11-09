@@ -5,6 +5,5 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+omc-context = { git = "https://github.com/JoakimCarlsson/oh-my-crab", tag = "0.1.1" }
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.154"
-toml = "1.1.8"

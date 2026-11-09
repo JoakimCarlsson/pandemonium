@@ -33,15 +33,9 @@ impl Kind {
         }
     }
 
-    /// Whether `product` can be started without the turned-off customizations of this kind; a product that reads them itself and cannot skip one cannot.
+    /// Whether the harness can leave out the turned-off customizations of this kind for `product`; hooks it cannot.
     pub fn switchable(self, product: Option<Product>) -> bool {
-        matches!(
-            (product, self),
-            (
-                Some(Product::Claude),
-                Kind::Skill | Kind::Instruction | Kind::Agent
-            ) | (Some(Product::Codex), Kind::Skill)
-        )
+        product.is_some() && self != Kind::Hook
     }
 }
 
