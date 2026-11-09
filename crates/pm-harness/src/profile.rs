@@ -10,9 +10,9 @@ use crate::agent::Agent;
 static ACTIVE: Mutex<Option<HashMap<&'static str, PathBuf>>> = Mutex::new(None);
 
 impl Agent {
-    /// Whether the agent can keep more than one login, which an agent whose sign-in names an account can.
+    /// Whether the agent can keep more than one login: one whose sign-in names an account, and one that takes an API key, each account keeping its own key.
     pub fn has_accounts(self) -> bool {
-        self.sign_in.has_accounts()
+        self.sign_in.has_accounts() || !self.key_env.is_empty()
     }
 
     /// Makes every conversation started from now on keep its login in `home`, or in the harness's own folder when there is none.

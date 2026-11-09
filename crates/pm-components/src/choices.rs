@@ -866,7 +866,7 @@ impl WorkspaceState {
     }
 
     /// The name a new login of the agent `owner` has until its sign-in tells who it is: the lowest number free of the logins' own, counting the agent's default account as the first.
-    fn placeholder_name(&self, owner: &str) -> String {
+    pub(crate) fn placeholder_name(&self, owner: &str) -> String {
         let number = (2..)
             .find(|number| {
                 let name = format!("Account {number}");
@@ -1008,7 +1008,10 @@ impl WorkspaceState {
         {
             *identity = Some(who.clone());
         }
-        let Some(who) = who else {
+        self.settings_servers
+            .login_identities
+            .insert(used.to_owned(), Some(who.clone()));
+        let Some(who) = who.filter(|who| !who.starts_with("API key")) else {
             return;
         };
         if let Some(login) = self

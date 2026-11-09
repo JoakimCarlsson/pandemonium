@@ -104,6 +104,7 @@ pub mod settings_agents;
 pub mod settings_catalog;
 pub mod settings_drafts;
 pub mod settings_editor;
+pub mod settings_ids;
 pub mod settings_keymap;
 pub mod settings_languages;
 pub mod settings_library;

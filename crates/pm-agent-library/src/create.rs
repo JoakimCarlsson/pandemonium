@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use omc_context::Locations;
+use omc_context::{Locations, Origin};
 
 use crate::item::{Kind, Scope};
 
@@ -19,6 +19,49 @@ pub struct Draft {
     pub description: String,
 }
 
+/// One of the files that shape the harness's own prompt.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PromptFile {
+    /// `SYSTEM.md`, whose text takes the place of the harness's built-in instructions.
+    Replace,
+    /// `APPEND_SYSTEM.md`, whose text is added to the end of every prompt.
+    Append,
+}
+
+/// The file `file` of `scope` for an agent working in `project`, empty when no project is open, made empty when it is not there yet, so that it can be opened and written; a file that is there is left as it is. An empty file changes nothing until something is written in it.
+///
+/// # Errors
+///
+/// Fails when the scope is the project's and `project` is empty, the scope is built in or a plugin's, the harness's config folder is not known, or the file cannot be made.
+pub fn create_prompt_file(
+    file: PromptFile,
+    scope: Scope,
+    project: &Path,
+) -> Result<PathBuf, String> {
+    folder_of(scope, project)?;
+    let origin = match scope {
+        Scope::Workspace => Origin::Project,
+        _ => Origin::User,
+    };
+    let files = omc_context::native_system_files(&Locations::detect(project), origin);
+    let path = match file {
+        PromptFile::Replace => files.replace,
+        PromptFile::Append => files.append,
+    }
+    .ok_or_else(|| "the harness's config folder is not known".to_owned())?;
+    if path.exists() {
+        return Ok(path);
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("could not make {}: {error}", parent.display()))?;
+    }
+    std::fs::write(&path, "")
+        .map_err(|error| format!("could not write {}: {error}", path.display()))?;
+    Ok(path)
+}
+
 /// Whether `name` can name a new customization: lowercase letters, digits and hyphens, starting with a letter or digit, at most 64 characters.
 pub fn valid_name(name: &str) -> bool {
     !name.is_empty()
@@ -31,11 +74,11 @@ pub fn valid_name(name: &str) -> bool {
 
 /// Writes `draft` for an agent working in `project`, empty when no project is open, and returns the file written.
 ///
-/// A skill becomes `skills/<name>/SKILL.md`, an instruction file `rules/<name>.md` and an agent definition `agents/<name>.md`, under the project's `.claude` folder or Claude Code's own config folder.
+/// A skill becomes `skills/<name>/SKILL.md`, an instruction file `rules/<name>.md` and an agent definition `agents/<name>.md`, under the harness's own folders: the project's `.oh-my-crab` folder, or the harness's config folder for every project. Claude Code's and Codex's folders are never written to.
 ///
 /// # Errors
 ///
-/// Fails when the kind is a hook, the scope is built in, the scope is the project's and `project` is empty, the name is not [`valid_name`], the reader's config folder is not known, the file is already there, or it cannot be written.
+/// Fails when the kind is a hook, the scope is built in or a plugin's, the scope is the project's and `project` is empty, the name is not [`valid_name`], the reader's config folder is not known, the file is already there, or it cannot be written.
 pub fn create(draft: &Draft, project: &Path) -> Result<PathBuf, String> {
     if !valid_name(&draft.name) {
         return Err(format!(
@@ -57,17 +100,21 @@ pub fn create(draft: &Draft, project: &Path) -> Result<PathBuf, String> {
     Ok(path)
 }
 
-/// The folder customizations of `scope` are written under for `project`: the project's `.claude` folder, or Claude Code's own config folder.
+/// The folder customizations of `scope` are written under for `project`: the project's `.oh-my-crab` folder, or the harness's own config folder.
 fn folder_of(scope: Scope, project: &Path) -> Result<PathBuf, String> {
     match scope {
         Scope::Workspace if project.as_os_str().is_empty() => {
             Err("no project is open to write it in".to_owned())
         }
-        Scope::Workspace => Ok(project.join(".claude")),
+        Scope::Workspace => Locations::detect(project)
+            .native_folder(Origin::Project)
+            .ok_or_else(|| "the project's folder is not known".to_owned()),
         Scope::User => Locations::detect(project)
-            .claude
-            .ok_or_else(|| "the home folder is not known".to_owned()),
-        Scope::BuiltIn => Err("built-in customizations cannot be written".to_owned()),
+            .native_folder(Origin::User)
+            .ok_or_else(|| "the harness's config folder is not known".to_owned()),
+        Scope::BuiltIn | Scope::Plugin => {
+            Err("built-in and plugin customizations cannot be written".to_owned())
+        }
     }
 }
 
@@ -160,9 +207,9 @@ mod tests {
         let skill = create(&draft(Kind::Skill, "ship-it"), &project).expect("skill");
         let rule = create(&draft(Kind::Instruction, "style"), &project).expect("rule");
         let agent = create(&draft(Kind::Agent, "reviewer"), &project).expect("agent");
-        assert_eq!(skill, project.join(".claude/skills/ship-it/SKILL.md"));
-        assert_eq!(rule, project.join(".claude/rules/style.md"));
-        assert_eq!(agent, project.join(".claude/agents/reviewer.md"));
+        assert_eq!(skill, project.join(".oh-my-crab/skills/ship-it/SKILL.md"));
+        assert_eq!(rule, project.join(".oh-my-crab/rules/style.md"));
+        assert_eq!(agent, project.join(".oh-my-crab/agents/reviewer.md"));
         let written = std::fs::read_to_string(&skill).expect("read");
         assert!(written.contains("description: Does the thing\n"));
         let found = crate::discover(&project);
@@ -187,6 +234,22 @@ mod tests {
     }
 
     /// Hooks and built-in scope cannot be drafted.
+    /// A prompt file is made empty in the project's own folder, and one already there is left as it is.
+    #[test]
+    fn prompt_files_are_made_once() {
+        let project = scratch("prompt");
+        let made =
+            create_prompt_file(PromptFile::Append, Scope::Workspace, &project).expect("made");
+        assert_eq!(made, project.join(".oh-my-crab/APPEND_SYSTEM.md"));
+        assert_eq!(std::fs::read_to_string(&made).expect("read"), "");
+        std::fs::write(&made, "Say done.").expect("write");
+        let again =
+            create_prompt_file(PromptFile::Append, Scope::Workspace, &project).expect("again");
+        assert_eq!(again, made);
+        assert_eq!(std::fs::read_to_string(&made).expect("read"), "Say done.");
+        assert!(create_prompt_file(PromptFile::Replace, Scope::Workspace, Path::new("")).is_err());
+    }
+
     #[test]
     fn hooks_and_built_ins_are_refused() {
         let project = scratch("refused");

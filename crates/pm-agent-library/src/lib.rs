@@ -11,8 +11,8 @@ mod item;
 mod product;
 mod tool;
 
-pub use create::{Draft, create, valid_name};
-pub use found::{discover, discover_own, locations};
+pub use create::{Draft, PromptFile, create, create_prompt_file, valid_name};
+pub use found::{APPENDS_PROMPT, REPLACES_PROMPT, discover, discover_own, locations};
 pub use item::{Item, Kind, Scope};
 pub use product::Product;
 pub use tool::{BUILT_IN, Source, ToolEntry, ToolSet, toggled_set, toggled_tool};

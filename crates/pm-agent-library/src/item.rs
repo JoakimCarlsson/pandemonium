@@ -48,17 +48,19 @@ pub enum Scope {
     Workspace,
     /// The reader's own folders, for every project.
     User,
-    /// What came with the agent or a plugin installed for it.
+    /// What came with the agent.
     BuiltIn,
+    /// What a plugin installed for the agent brings.
+    Plugin,
 }
 
 impl Scope {
-    /// The word a key of the scope holds.
+    /// The word a key of the scope holds; a plugin's are kept as built-in ones, as they were before plugins had a scope of their own, so that what was turned off stays off.
     pub fn slug(self) -> &'static str {
         match self {
             Self::Workspace => "workspace",
             Self::User => "user",
-            Self::BuiltIn => "built-in",
+            Self::BuiltIn | Self::Plugin => "built-in",
         }
     }
 
@@ -68,6 +70,7 @@ impl Scope {
             Self::Workspace => "Workspace",
             Self::User => "User",
             Self::BuiltIn => "Built-in",
+            Self::Plugin => "Plugin",
         }
     }
 }
@@ -98,6 +101,9 @@ pub struct Item {
     /// For a hook, the command it runs.
     #[serde(default)]
     pub command: String,
+    /// The tool whose folder it is kept in, such as `crab`, `Claude Code` or `Codex`, which reads it too; empty for a file every tool reads, such as a project's `AGENTS.md`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub tool: String,
 }
 
 impl Item {

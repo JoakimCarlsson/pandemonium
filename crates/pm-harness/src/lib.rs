@@ -22,7 +22,7 @@ mod profile;
 mod tool_registry;
 mod web;
 
-pub use account::{SAVED_KEY, account, account_in_folder, default_account};
+pub use account::{SAVED_KEY, UNNAMED, account, account_in_folder, default_account};
 pub use agent::{Agent, agent, agents};
 pub use chat::{Chat, Given, Notify};
 pub use discover::discover;

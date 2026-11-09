@@ -136,7 +136,7 @@ pub enum Request {
         /// The login's id, or nothing for the agent's own.
         login: Option<String>,
     },
-    /// Signs the agent in under the login `login`, or the one now in use when there is none.
+    /// Signs the agent in under the login `login`, or under its own default login when there is none, whichever login is in use.
     SignIn {
         /// The agent, by its id.
         agent: String,
@@ -533,6 +533,15 @@ pub enum Request {
         #[serde(default)]
         description: String,
         /// The project's folder on the server's machine.
+        directory: String,
+    },
+    /// Makes one of the files that shape the harness's prompt, empty, in the project's folder or the reader's own, when it is not there yet, and answers with its path.
+    CreatePromptFile {
+        /// Which file.
+        file: crate::library::PromptFile,
+        /// Whether it goes in the project's folder or the reader's own.
+        scope: crate::library::Scope,
+        /// The project's folder on the server's machine, or empty when no project is open.
         directory: String,
     },
     /// Has the server tell this connection whenever the files of one of `directories`, or what git keeps about them, change, in place of the folders it watched before.
@@ -1265,6 +1274,9 @@ pub enum Request {
         /// The key, or nothing to forget the one saved.
         #[serde(default)]
         key: Option<String>,
+        /// The added account the key belongs to, by id, or nothing for the agent's own login.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        login: Option<String>,
     },
     /// Answers the trust request a session's agent made. A verdict that is recorded for the repository, `Always` or `Reject`, also answers the requests the server's other sessions of the same repository are waiting on.
     Trust {

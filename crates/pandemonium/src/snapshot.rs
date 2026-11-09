@@ -3265,9 +3265,10 @@ impl Shot {
                     state
                         .after(SETTINGS)
                         .after(Section::AgentServers.id())
-                        .after(FocusId(
-                            pm_components::settings_agents::KEY_SET_BASE + openrouter as u64,
-                        ))
+                        .after(
+                            pm_components::settings_agents::key_set_id(openrouter)
+                                .unwrap_or(SETTINGS),
+                        )
                         .scrolled_settings(420.0, 420.0),
                 )
             }
@@ -3546,7 +3547,11 @@ impl Shot {
             Self::SettingsPicker(narrow) => Screen::Workspace(
                 settings_sample()
                     .after(Section::Appearance.id())
-                    .after(SettingsCatalogue::CodeFont.id(OPEN_LIST))
+                    .after(
+                        SettingsCatalogue::CodeFont
+                            .id(OPEN_LIST)
+                            .unwrap_or(SETTINGS_FIND),
+                    )
                     .scrolled_settings(if narrow { 560.0 } else { 0.0 }, 2000.0),
             ),
             Self::SettingsCompact(_) => {
@@ -3626,7 +3631,14 @@ impl Shot {
                             (agent.clone(), "a2".to_owned(), "Account 2".to_owned()),
                         ],
                         vec![(agent, "a1".to_owned())],
-                    );
+                    )
+                    .with_identity(
+                        0,
+                        Some("me@example.com".to_owned()),
+                        Some("work@example.com".to_owned()),
+                        Some("a1".to_owned()),
+                    )
+                    .with_identity(0, Some("me@example.com".to_owned()), None, Some("a2".to_owned()));
                 Screen::Workspace(if matches!(self, Self::SettingsAccountsScrolled) {
                     state.scrolled_settings(420.0, 420.0)
                 } else {
@@ -3834,9 +3846,17 @@ fn with_library_sample(state: WorkspaceState) -> WorkspaceState {
         ..Item::default()
     };
     let items = vec![
-        item(Kind::Skill, Scope::Workspace, "release-notes", "Writes the notes of a release from the commits since the last tag", inside(".claude/skills/release-notes/SKILL.md")),
+        item(Kind::Skill, Scope::Workspace, "release-notes", "Writes the notes of a release from the commits since the last tag", inside(".oh-my-crab/skills/release-notes/SKILL.md")),
         item(Kind::Skill, Scope::User, "commit", "Commit the changes made in this session on the current branch", "/home/me/.claude/skills/commit/SKILL.md".to_owned()),
-        item(Kind::Skill, Scope::BuiltIn, "frontend-design:frontend-design", "Guidance for distinctive, intentional visual design", "/home/me/.claude/plugins/cache/official/frontend-design/skills/frontend-design/SKILL.md".to_owned()),
+        item(Kind::Skill, Scope::Plugin, "frontend-design:frontend-design", "Guidance for distinctive, intentional visual design", "/home/me/.claude/plugins/cache/official/frontend-design/skills/frontend-design/SKILL.md".to_owned()),
+        Item {
+            applies: vec![pm_protocol::library::APPENDS_PROMPT.to_owned()],
+            ..item(Kind::Instruction, Scope::User, "~/.config/oh-my-crab/APPEND_SYSTEM.md", "", "/home/me/.config/oh-my-crab/APPEND_SYSTEM.md".to_owned())
+        },
+        Item {
+            applies: vec!["the whole project".to_owned()],
+            ..item(Kind::Instruction, Scope::Workspace, "AGENTS.md", "", inside("AGENTS.md"))
+        },
         Item {
             applies: vec!["the whole project".to_owned()],
             ..item(Kind::Instruction, Scope::Workspace, "CLAUDE.md", "", inside("CLAUDE.md"))
@@ -3864,6 +3884,20 @@ fn with_library_sample(state: WorkspaceState) -> WorkspaceState {
             ..item(Kind::Hook, Scope::Workspace, "Stop", "", inside(".claude/settings.json"))
         },
     ];
+    let items: Vec<Item> = items
+        .into_iter()
+        .map(|mut item| {
+            item.tool = if item.path.contains("oh-my-crab") || item.path.is_empty() {
+                "crab"
+            } else if item.path.contains(".claude") || item.path.ends_with("CLAUDE.md") {
+                "Claude Code"
+            } else {
+                ""
+            }
+            .to_owned();
+            item
+        })
+        .collect();
     let tool = |name: &str, description: &str| ToolEntry {
         name: name.to_owned(),
         description: description.to_owned(),

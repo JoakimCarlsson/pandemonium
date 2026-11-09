@@ -1,42 +1,53 @@
 //! The form on the pages of skills, instruction files and agent definitions that writes a new one from a template, in the project's folder or the reader's own, and opens it to be filled in.
 
 use pm_input::FocusId;
-use pm_protocol::library::{Kind, Scope, valid_name};
+use pm_protocol::library::{
+    APPENDS_PROMPT, Item, Kind, PromptFile, REPLACES_PROMPT, Scope, valid_name,
+};
 use pm_style::{
-    Radius, Role, bg, border, border_color, flex, flex_col, flex_none, gap, items_center, p,
-    rounded,
+    Radius, Role, bg, border, border_color, flex, flex_1, flex_col, flex_none, gap, items_center,
+    min_w_px, p, rounded,
 };
 use pm_text::{Edit, Field};
 use pm_ui::{Node, node};
 
 use crate::button::Variant;
 use crate::parts::line;
+use crate::settings_ids::{DRAFT_SCOPES, SINGLES};
 use crate::settings_row::choices;
-use crate::settings_servers::wrapped_note;
+use crate::settings_servers::{boxed, flat_row, wrapped_note};
 use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
 use crate::{Button, Input};
 
+/// Opens crab's `SYSTEM.md`, making it first when it is not there.
+pub const PROMPT_REPLACE: FocusId = SINGLES.at(83);
+
+/// Opens crab's `APPEND_SYSTEM.md`, making it first when it is not there.
+pub const PROMPT_APPEND: FocusId = SINGLES.at(84);
+
 /// Opens the form for a new customization of the page showing.
-pub const DRAFT_NEW: FocusId = FocusId(20_000_093);
+pub const DRAFT_NEW: FocusId = SINGLES.at(93);
 
 /// The box the new customization's name is written in.
-pub const DRAFT_NAME: FocusId = FocusId(20_000_094);
+pub const DRAFT_NAME: FocusId = SINGLES.at(94);
 
 /// The box what the new customization is for is written in.
-pub const DRAFT_DESCRIPTION: FocusId = FocusId(20_000_095);
+pub const DRAFT_DESCRIPTION: FocusId = SINGLES.at(95);
 
 /// Writes the new customization.
-pub const DRAFT_CREATE: FocusId = FocusId(20_000_096);
+pub const DRAFT_CREATE: FocusId = SINGLES.at(96);
 
 /// Closes the form without writing anything.
-pub const DRAFT_CANCEL: FocusId = FocusId(20_000_097);
-
-/// The first of the choices of where the new customization goes, in the order of [`SCOPES`].
-const DRAFT_SCOPE_BASE: u64 = 20_000_098;
+pub const DRAFT_CANCEL: FocusId = SINGLES.at(97);
 
 /// Where a new customization can go, in the order the form offers them.
 const SCOPES: [Scope; 2] = [Scope::Workspace, Scope::User];
+
+const _: () = assert!(
+    SCOPES.len() as u64 <= DRAFT_SCOPES.len(),
+    "DRAFT_SCOPES has no room for every place a customization can go"
+);
 
 /// A new customization being described.
 #[derive(Clone, Debug, PartialEq)]
@@ -91,7 +102,7 @@ pub fn draft_scope(scope: Scope) -> Option<FocusId> {
     SCOPES
         .iter()
         .position(|offered| *offered == scope)
-        .map(|place| FocusId(DRAFT_SCOPE_BASE + place as u64))
+        .and_then(|place| DRAFT_SCOPES.id(place))
 }
 
 /// Whether customizations of `kind` can be written from a template here; hooks live in settings files and cannot.
@@ -116,9 +127,7 @@ pub(crate) fn is_draft_field(id: FocusId) -> bool {
 
 /// Whether `id` names a control of the form.
 fn is_draft_control(id: FocusId) -> bool {
-    let FocusId(number) = id;
-    [DRAFT_NEW, DRAFT_CREATE, DRAFT_CANCEL].contains(&id)
-        || (DRAFT_SCOPE_BASE..DRAFT_SCOPE_BASE + SCOPES.len() as u64).contains(&number)
+    [DRAFT_NEW, DRAFT_CREATE, DRAFT_CANCEL].contains(&id) || DRAFT_SCOPES.contains(id)
 }
 
 impl WorkspaceState {
@@ -137,7 +146,6 @@ impl WorkspaceState {
         if !is_draft_control(action) {
             return false;
         }
-        let FocusId(number) = action;
         match action {
             DRAFT_NEW => {
                 if let Some(kind) = kind.filter(|kind| draftable(*kind)) {
@@ -147,14 +155,18 @@ impl WorkspaceState {
             DRAFT_CANCEL => self.settings_page.library.draft = None,
             DRAFT_CREATE => self.create_draft(),
             _ => {
-                if let Some(form) = self
-                    .settings_page
-                    .library
-                    .draft
-                    .as_mut()
-                    .filter(|form| form.in_project)
-                {
-                    form.scope = SCOPES[(number - DRAFT_SCOPE_BASE) as usize];
+                let scope = DRAFT_SCOPES
+                    .index_of(action)
+                    .and_then(|place| SCOPES.get(place));
+                if let (Some(form), Some(scope)) = (
+                    self.settings_page
+                        .library
+                        .draft
+                        .as_mut()
+                        .filter(|form| form.in_project),
+                    scope,
+                ) {
+                    form.scope = *scope;
                 }
             }
         }
@@ -191,13 +203,16 @@ impl WorkspaceState {
         });
     }
 
-    /// The state after the server wrote the new customization at `path` for the project at `project`: the form closes, the pages are read again and the file opens.
+    /// The state after the server wrote the new customization at `path` for the project at `project`: the form closes, the pages are read again and the file opens, even when the form was put away while the server wrote it; then the file is taken to be the project's when it lies in the project's folder.
     pub fn with_customization_created(mut self, project: Option<usize>, path: String) -> Self {
-        let Some(form) = self.settings_page.library.draft.take() else {
-            return self;
-        };
+        let scope = self
+            .settings_page
+            .library
+            .draft
+            .take()
+            .map_or(Scope::Workspace, |form| form.scope);
         self.read_library();
-        self.open_customization(project, path, form.scope);
+        self.open_customization(project, path, scope);
         self
     }
 
@@ -234,6 +249,99 @@ impl WorkspaceState {
     }
 }
 
+impl WorkspaceState {
+    /// The state after `action`, which may name one of the buttons of crab's prompt files, was pressed; whether it named one. The file in force is opened; one not there yet is made empty in the reader's own folder, then opened.
+    pub(crate) fn prompt_pressed(&mut self, action: FocusId) -> bool {
+        let file = match action {
+            PROMPT_REPLACE => PromptFile::Replace,
+            PROMPT_APPEND => PromptFile::Append,
+            _ => return false,
+        };
+        let Some((project, _)) = self.settings_page.library.of else {
+            return true;
+        };
+        if let Some(item) = prompt_item(self, file) {
+            let (path, scope) = (item.path.clone(), item.scope);
+            self.open_customization(project, path, scope);
+            return true;
+        }
+        let Some((host, directory)) = self.library_place(project) else {
+            return true;
+        };
+        self.outbox.push(Outgoing::CreatePromptFile {
+            project,
+            host,
+            directory,
+            file,
+            scope: Scope::User,
+        });
+        true
+    }
+}
+
+/// The instruction row of the prompt file `file` in force, when there is one.
+fn prompt_item(state: &WorkspaceState, file: PromptFile) -> Option<&Item> {
+    let said = match file {
+        PromptFile::Replace => REPLACES_PROMPT,
+        PromptFile::Append => APPENDS_PROMPT,
+    };
+    state
+        .settings_page
+        .library
+        .items
+        .as_ref()?
+        .iter()
+        .find(|item| {
+            item.kind == Kind::Instruction && item.applies.first().map(String::as_str) == Some(said)
+        })
+}
+
+/// The box of crab's own prompt files on the page of instructions: the one replacing its built-in instructions and the one added to every prompt, each with the button that opens or makes it.
+pub(crate) fn prompt_node(state: &WorkspaceState, room: f32) -> Node {
+    let row = |file: PromptFile, title: &str, about: &str, id: FocusId| {
+        let found = prompt_item(state, file);
+        let said = match found {
+            Some(_) => format!("{about} Written."),
+            None => format!("{about} Not written yet."),
+        };
+        flat_row()
+            .child(
+                node()
+                    .styles([flex(), flex_col(), gap(1), flex_1(), min_w_px(0)])
+                    .child(line(title, 13, 1.4, Role::Text))
+                    .child(wrapped_note(&said, (room - 160.0).max(120.0))),
+            )
+            .child(
+                Button::new(if found.is_some() { "Open" } else { "Write" }, id)
+                    .variant(Variant::Outline)
+                    .size(Size::Sm)
+                    .disabled(state.settings_page.library.of.is_none())
+                    .build(),
+            )
+    };
+    node()
+        .styles([flex(), flex_col(), gap(2), flex_none()])
+        .child(
+            node()
+                .styles([flex(), items_center(), flex_none(), pm_style::h(9)])
+                .child(line("System prompt", 15, 1.4, Role::Text).styles([pm_style::font_medium()])),
+        )
+        .child(boxed(vec![
+            row(
+                PromptFile::Replace,
+                "Replace crab's instructions",
+                "SYSTEM.md takes the place of crab's built-in instructions; its tools, skills and the project's details are still added.",
+                PROMPT_REPLACE,
+            ),
+            row(
+                PromptFile::Append,
+                "Add to every prompt",
+                "APPEND_SYSTEM.md is added to the end of every prompt, subagents' too.",
+                PROMPT_APPEND,
+            ),
+        ]))
+}
+
 /// The button that opens the form for a new customization of `kind`, turned off while the form is open or nothing can be written.
 pub(crate) fn new_button(state: &WorkspaceState, kind: Kind) -> Node {
     let library = &state.settings_page.library;
@@ -247,8 +355,8 @@ pub(crate) fn new_button(state: &WorkspaceState, kind: Kind) -> Node {
 /// What the form says about where `scope` puts a new customization of `kind`.
 fn place_note(kind: Kind, scope: Scope) -> String {
     let folder = match scope {
-        Scope::User => "~/.claude",
-        _ => "the project's .claude folder",
+        Scope::User => "crab's config folder (~/.config/oh-my-crab)",
+        _ => "the project's .oh-my-crab folder",
     };
     let file = match kind {
         Kind::Skill => "skills/<name>/SKILL.md",
@@ -259,7 +367,9 @@ fn place_note(kind: Kind, scope: Scope) -> String {
         Scope::User => "every project",
         _ => "this project",
     };
-    format!("Written to {file} in {folder}, for {reach}, then opened to be filled in.")
+    format!(
+        "Written to {file} in {folder}, for {reach}, then opened to be filled in. Only crab reads it; Claude Code's and Codex's folders are left alone."
+    )
 }
 
 /// The form for a new customization, `room` logical pixels across.
@@ -319,7 +429,7 @@ pub(crate) fn draft_node(form: &DraftForm, room: f32) -> Node {
                 .child(node().styles([flex()]).child(choices(
                     &["This project", "Every project"],
                     picked,
-                    |place| FocusId(DRAFT_SCOPE_BASE + place as u64),
+                    |place| DRAFT_SCOPES.id(place),
                 )))
         }))
         .child(wrapped_note(&place_note(form.kind, form.scope), room))
@@ -426,6 +536,45 @@ mod tests {
     }
 
     /// Hooks get no form.
+    /// The prompt file not written yet is made in the reader's own folder, and the one in force is opened rather than made again.
+    #[test]
+    fn prompt_files_are_made_or_opened() {
+        let mut state = WorkspaceState::new(&[]);
+        state.read_library();
+        let (project, agent) = state.settings_page.library.of.unwrap();
+        let written = Item {
+            kind: Kind::Instruction,
+            scope: Scope::User,
+            name: "~/.config/oh-my-crab/APPEND_SYSTEM.md".to_owned(),
+            path: "/home/me/.config/oh-my-crab/APPEND_SYSTEM.md".to_owned(),
+            applies: vec![APPENDS_PROMPT.to_owned()],
+            ..Item::default()
+        };
+        let mut state = state.with_library(project, agent, None, vec![written], Vec::new());
+        state.take_outbox();
+        assert!(state.prompt_pressed(PROMPT_REPLACE));
+        assert!(state.take_outbox().iter().any(|outgoing| matches!(
+            outgoing,
+            Outgoing::CreatePromptFile {
+                file: PromptFile::Replace,
+                scope: Scope::User,
+                ..
+            }
+        )));
+        assert!(state.prompt_pressed(PROMPT_APPEND));
+        let sent = state.take_outbox();
+        assert!(
+            !sent
+                .iter()
+                .any(|outgoing| matches!(outgoing, Outgoing::CreatePromptFile { .. }))
+        );
+        assert!(sent.iter().any(|outgoing| matches!(
+            outgoing,
+            Outgoing::OpenPath { path } if path.ends_with("APPEND_SYSTEM.md")
+        )));
+        assert!(!state.prompt_pressed(DRAFT_NEW));
+    }
+
     #[test]
     fn hooks_are_not_drafted() {
         assert!(draftable(Kind::Skill));

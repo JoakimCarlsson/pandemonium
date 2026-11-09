@@ -12,13 +12,8 @@ use crate::input::Input;
 use crate::parts::{clipped, line};
 use crate::settings::SETTINGS_KEYMAP_FIND;
 use crate::settings_catalog::Setting;
+use crate::settings_ids::{KEYMAP_CONTROLS, PER_ACTION};
 use crate::state::WorkspaceState;
-
-/// The first of the controls of the actions; each action has four after its own base, its place among them times four.
-const ACTION_BASE: u64 = 20_002_000;
-
-/// How many controls an action has room for.
-const PER_ACTION: u64 = 4;
 
 /// What a control of an action does.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -31,25 +26,22 @@ enum Part {
     Clear,
 }
 
-/// The name of the control `part` of `action`.
-fn id_of(action: Action, part: Part) -> FocusId {
-    let place = Action::ALL
-        .iter()
-        .position(|held| *held == action)
-        .unwrap_or_default() as u64;
+/// The name of the control `part` of `action`, or nothing when the keymap page has no room for the action.
+fn id_of(action: Action, part: Part) -> Option<FocusId> {
+    let place = Action::ALL.iter().position(|held| *held == action)?;
     let offset = match part {
         Part::Record => 0,
         Part::Reset => 1,
         Part::Clear => 2,
     };
-    FocusId(ACTION_BASE + place * PER_ACTION + offset)
+    KEYMAP_CONTROLS.cell(place, offset, PER_ACTION)
 }
 
 /// The action and the control of it that `id` names.
 fn control_of(id: FocusId) -> Option<(Action, Part)> {
-    let offset = id.0.checked_sub(ACTION_BASE)?;
-    let action = *Action::ALL.get((offset / PER_ACTION) as usize)?;
-    let part = match offset % PER_ACTION {
+    let (place, offset) = KEYMAP_CONTROLS.cell_of(id, PER_ACTION)?;
+    let action = *Action::ALL.get(place)?;
+    let part = match offset {
         0 => Part::Record,
         1 => Part::Reset,
         2 => Part::Clear,
@@ -103,26 +95,34 @@ impl WorkspaceState {
     }
 }
 
-/// A small button of a row saying `label`.
-fn small(label: &str, id: FocusId) -> Node {
-    node()
-        .styles([
+/// `control` answering to `id` and showing it can be pressed, or as it is when it has no name.
+fn pressable(control: Node, id: Option<FocusId>) -> Node {
+    match id {
+        Some(id) => control.styles([cursor_pointer()]).focusable(id),
+        None => control,
+    }
+}
+
+/// A small button of a row saying `label`, answering to `id`.
+fn small(label: &str, id: Option<FocusId>) -> Node {
+    pressable(
+        node().styles([
             flex(),
             items_center(),
             h(6),
             px(2),
             rounded(Radius::Sm),
-            cursor_pointer(),
             bg(Role::SurfaceHover).hover(),
-        ])
-        .focusable(id)
-        .child(line(label, 11, 1.4, Role::Muted))
+        ]),
+        id,
+    )
+    .child(line(label, 11, 1.4, Role::Muted))
 }
 
-/// The keys of `action`, each as a key cap, or what recording asks for while it records.
-fn caps(keys: &[String], recording: Option<&[String]>, id: FocusId) -> Node {
-    let mut held = node()
-        .styles([
+/// The keys of `action`, each as a key cap, or what recording asks for while it records, answering to `id`.
+fn caps(keys: &[String], recording: Option<&[String]>, id: Option<FocusId>) -> Node {
+    let mut held = pressable(
+        node().styles([
             flex(),
             items_center(),
             gap(1),
@@ -130,7 +130,6 @@ fn caps(keys: &[String], recording: Option<&[String]>, id: FocusId) -> Node {
             h(7),
             px(1.5),
             rounded(Radius::Sm),
-            cursor_pointer(),
             border(),
             border_color(if recording.is_some() {
                 Role::Accent
@@ -138,8 +137,9 @@ fn caps(keys: &[String], recording: Option<&[String]>, id: FocusId) -> Node {
                 Role::Border
             }),
             bg(Role::Background),
-        ])
-        .focusable(id);
+        ]),
+        id,
+    );
     if let Some(so_far) = recording {
         let said = if so_far.is_empty() {
             "Press keys…".to_owned()

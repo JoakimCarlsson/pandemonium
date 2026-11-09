@@ -1281,15 +1281,16 @@ impl Work {
                     |session| Request::SignInSession { session },
                     Pending::SignInSession,
                 ),
-                Outgoing::SaveKey { agent, key } => {
+                Outgoing::SaveKey { agent, key, login } => {
                     if let Some(id) = self.agent_id(agent) {
                         self.ask(
                             &None,
                             Request::SaveKey {
                                 agent: id,
                                 key: key.clone(),
+                                login: login.clone(),
                             },
-                            Pending::SignIn(agent, None),
+                            Pending::SignIn(agent, login),
                         );
                     }
                 }
@@ -1427,6 +1428,21 @@ impl Work {
                         );
                     }
                 }
+                Outgoing::CreatePromptFile {
+                    project,
+                    host,
+                    directory,
+                    file,
+                    scope,
+                } => self.ask(
+                    &host,
+                    Request::CreatePromptFile {
+                        file,
+                        scope,
+                        directory,
+                    },
+                    Pending::Created(project),
+                ),
                 Outgoing::CreateCustomization {
                     project,
                     host,

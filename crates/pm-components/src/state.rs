@@ -861,6 +861,19 @@ pub enum Outgoing {
         /// The project's folder, or empty when none is open.
         directory: String,
     },
+    /// Makes one of crab's prompt files, empty, when it is not there yet, for the project at `project`, and opens it.
+    CreatePromptFile {
+        /// The project, by position, or nothing when none is open.
+        project: Option<usize>,
+        /// The machine, or nothing for this one.
+        host: Option<String>,
+        /// The project's folder, or empty when none is open.
+        directory: String,
+        /// Which file.
+        file: pm_protocol::library::PromptFile,
+        /// Whether it goes in the project's folder or the reader's own.
+        scope: pm_protocol::library::Scope,
+    },
     /// Writes a new skill, instruction file or agent definition from a template for the project at `project`.
     CreateCustomization {
         /// The project, by position, or nothing when none is open.
@@ -1182,6 +1195,8 @@ pub enum Outgoing {
         agent: usize,
         /// The key, or nothing to forget the saved one.
         key: Option<String>,
+        /// The added account the key belongs to, by id, or nothing for the agent's own login.
+        login: Option<String>,
     },
     /// Signs in again as the account of the open session.
     SignInSession {
@@ -2465,7 +2480,7 @@ impl WorkspaceState {
             }
             id if crate::settings_servers::is_form_field(id) => self.server_form_edited(id, edit),
             id if crate::settings_drafts::is_draft_field(id) => self.draft_edited(id, edit),
-            id if crate::settings_agents::is_key_field(id) => self.key_edited(edit),
+            id if crate::settings_agents::is_key_field(id) => self.key_edited(id, edit),
             id if crate::settings_pages::is_setting_field(id) => self.setting_edited(id, edit),
             id if crate::settings_machines::is_machine_field(id) => self.machine_edited(id, edit),
             crate::settings::SETTINGS_FIND => {
@@ -2530,7 +2545,7 @@ impl WorkspaceState {
             PICKER_FIELD => self.folder_picker.as_ref().map(|open| &open.field),
             id if crate::settings_servers::is_form_field(id) => self.server_form_field(id),
             id if crate::settings_drafts::is_draft_field(id) => self.draft_field(id),
-            id if crate::settings_agents::is_key_field(id) => self.key_field(),
+            id if crate::settings_agents::is_key_field(id) => self.key_field(id),
             id if crate::settings_pages::is_setting_field(id) => self.setting_field(id),
             id if crate::settings_machines::is_machine_field(id) => self.machine_field(id),
             crate::settings::SETTINGS_FIND => Some(&self.settings_page.find),
@@ -2606,11 +2621,13 @@ impl WorkspaceState {
             id if crate::settings_drafts::is_draft_field(id) => {
                 crate::settings_drafts::DRAFT_CREATE
             }
-            id if crate::settings_agents::is_key_field(id) => crate::settings_agents::KEY_SAVE,
+            id if crate::settings_agents::is_key_field(id) => {
+                crate::settings_agents::key_submit(id)
+            }
             id if crate::settings_machines::is_machine_field(id) => {
                 crate::settings_machines::MACHINE_SAVE
             }
-            crate::settings_catalog::LIST_FIELD => crate::settings_catalog::LIST_ADD,
+            id if let Some(submit) = crate::settings_pages::list_submit_of(id) => submit,
             id if crate::settings_pages::is_setting_field(id)
                 || id == crate::settings::SETTINGS_FIND
                 || id == crate::settings::SETTINGS_KEYMAP_FIND =>

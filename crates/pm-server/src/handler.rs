@@ -142,6 +142,21 @@ pub(crate) fn login_folder(agent: &str, login: Option<&str>) -> Option<PathBuf> 
         .flatten()
 }
 
+/// Keeps `key` as the API key of `agent` for its added account `login`, or for its own login when there is none, or forgets the key saved there when `key` is nothing.
+fn save_key(agent: pm_harness::Agent, key: Option<&str>, login: Option<&str>) -> Response {
+    let home = match login {
+        Some(login) => match login_folder(agent.id, Some(login)) {
+            Some(home) => Some(home),
+            None => return failed(format!("no account {login} is kept for {}", agent.name)),
+        },
+        None => None,
+    };
+    match agent.save_key_in(key, home) {
+        Ok(()) => Response::Done,
+        Err(error) => failed(error),
+    }
+}
+
 /// The display name of a named account on this server.
 pub(crate) fn login_name(agent: &str, login: Option<&str>) -> Option<String> {
     let login = login?;
@@ -491,6 +506,16 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             None => failed(format!("no agent is called {agent}")),
         },
         Request::SaveWithheld { keys } => saved_list(crate::library::WITHHELD, &keys),
+        Request::CreatePromptFile {
+            file,
+            scope,
+            directory,
+        } => match pm_agent_library::create_prompt_file(file, scope, &place(&directory)) {
+            Ok(path) => Response::Created {
+                path: path.to_string_lossy().into_owned(),
+            },
+            Err(reason) => failed(reason),
+        },
         Request::CreateCustomization {
             kind,
             scope,
@@ -688,11 +713,8 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             sessions::save_meta(session, &held.meta);
         }),
         Request::SignInSession { session } => sign_in_session(core, connection, session),
-        Request::SaveKey { agent, key } => match agent_named(&agent) {
-            Some(agent) => match agent.save_key(key.as_deref()) {
-                Ok(()) => Response::Done,
-                Err(error) => failed(error),
-            },
+        Request::SaveKey { agent, key, login } => match agent_named(&agent) {
+            Some(agent) => save_key(agent, key.as_deref(), login.as_deref()),
             None => failed(format!("no agent is called {agent}")),
         },
         Request::SignIn { agent, login } => match agent_named(&agent) {
@@ -1864,7 +1886,7 @@ fn code_teller(connection: &Arc<Connection>, agent: Agent) -> impl Fn(&str, &str
     }
 }
 
-/// Signs `agent` in under the folder of the login `login`, so that the sign-in does not depend on which folder other requests have set; the folder in use when there is no login. `code` is told the page and code to show when the provider signs in with one.
+/// Signs `agent` in under the folder of the login `login`, so that the sign-in does not depend on which folder other requests have set; the agent's own default folder when there is no login. `code` is told the page and code to show when the provider signs in with one.
 fn sign_in_login(
     agent: Agent,
     login: Option<&str>,
@@ -1875,7 +1897,7 @@ fn sign_in_login(
             let home = pm_store::account_directory(agent.id, login).map_err(|e| e.to_string())?;
             agent.sign_in_folder(home, code)
         }
-        None => agent.sign_in(code),
+        None => agent.sign_in_in(None, code),
     }
 }
 
