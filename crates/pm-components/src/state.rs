@@ -1168,6 +1168,13 @@ pub enum Outgoing {
         /// The folder.
         directory: String,
     },
+    /// Asks how much of its allowance the account of the agent at `agent`, signed in under the login `login`, has used.
+    Allowance {
+        /// The agent, by position.
+        agent: usize,
+        /// The added account, by id, or nothing for the agent's own login.
+        login: Option<String>,
+    },
     /// Asks the agent at `agent` on `host` what it lets the reader change and offers behind a slash.
     Discover {
         /// The agent, by position.
@@ -1888,6 +1895,10 @@ pub struct WorkspaceState {
         std::collections::VecDeque<std::sync::Arc<crate::choices::FileListing>>,
     /// Who each agent is signed in as, by the agent's position, once it has been looked up.
     pub identities: Vec<Option<Option<String>>>,
+    /// How much of its allowance each account has used, by the agent's position and the added login's id, or nothing for the agent's own login, once the provider has said.
+    pub allowances: std::collections::HashMap<(usize, Option<String>), pm_harness::Limits>,
+    /// When each account's allowance was last asked after, by the agent's position and the login, in Unix milliseconds.
+    pub allowance_asked: std::collections::HashMap<(usize, Option<String>), u64>,
     /// Who each agent is signed in as in its own default folder, by the agent's position, once it has been looked up.
     pub defaults: Vec<Option<Option<String>>>,
     /// The named logins the reader has added: the agent's id, the folder name and what it is called.
@@ -2094,6 +2105,8 @@ impl WorkspaceState {
             file_listings: Default::default(),
             identities: vec![None; builtin.len()],
             defaults: vec![None; builtin.len()],
+            allowances: Default::default(),
+            allowance_asked: Default::default(),
             logins: Vec::new(),
             in_use: Vec::new(),
             menu_scroll: 0.0,
@@ -2850,6 +2863,7 @@ impl WorkspaceState {
             self.rescope_browser();
         } else if let Some(index) = position(AGENT_BASE, self.agent_slots()) {
             self.agent = index;
+            self.ask_allowance(index, true);
         } else if let Some(index) = position(CHOICE_BASE, self.choices()) {
             self.choose(index);
         } else if let Some(index) = position(HURRY_BASE, self.queued_open()) {

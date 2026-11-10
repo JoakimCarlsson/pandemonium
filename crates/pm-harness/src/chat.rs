@@ -275,6 +275,7 @@ fn drive(
         }
         ending.stopper = Some(harness.stopper());
     }
+    let mut watch = crate::limits::Watch::of(agent, home.clone());
     let (opening, languages) = opening(agent, directory, home, given);
     let (answers, answered) = mpsc::channel();
     harness.send(&Command::Open(opening))?;
@@ -282,6 +283,14 @@ fn drive(
         warm(languages.clone());
     }
     loop {
+        if let Some(watch) = &mut watch {
+            watch.tick();
+            for event in watch.heard() {
+                if !report(event) {
+                    return Ok(());
+                }
+            }
+        }
         loop {
             match requests.try_recv() {
                 Ok(request) => harness.send(&request.command())?,
@@ -299,6 +308,11 @@ fn drive(
                 }
             }
             Heard::Event(event) => {
+                if matches!(event, omc_wire::Event::Finished(_))
+                    && let Some(watch) = &mut watch
+                {
+                    watch.turn_ended();
+                }
                 if let Some(event) = Event::from_harness(event)
                     && !report(event)
                 {

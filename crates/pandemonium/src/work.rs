@@ -113,6 +113,8 @@ enum Pending {
     Tools(String),
     /// The agent with this id told what it lets the reader change.
     Discover(Host, String),
+    /// The provider of the agent at this position said how much of the account's allowance is used, or did not.
+    Allowance(usize, Option<String>),
     /// The agent at this position was signed in, or could not be.
     SignIn(usize, Option<String>),
     /// A session's agent was signed in again, or could not be.
@@ -1363,6 +1365,18 @@ impl Work {
                         );
                     }
                 }
+                Outgoing::Allowance { agent, login } => {
+                    if let Some(id) = self.agent_id(agent) {
+                        self.ask(
+                            &None,
+                            Request::Allowance {
+                                agent: id,
+                                login: login.clone(),
+                            },
+                            Pending::Allowance(agent, login),
+                        );
+                    }
+                }
                 Outgoing::Identity { agent, naming } => {
                     if let Some(id) = self.agent_id(agent) {
                         self.ask(
@@ -2124,6 +2138,15 @@ impl Work {
                         *screen = std::mem::take(screen).with_submodules(project, paths)
                     });
                 }
+            }
+            Pending::Allowance(agent, login) => {
+                let limits = match response {
+                    Response::Allowance { limits } => limits.map(|allowance| allowance.0),
+                    _ => None,
+                };
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_allowance(agent, login, limits);
+                });
             }
             Pending::Identity(agent, naming) => {
                 if let Response::Identity { default, selected } = response {

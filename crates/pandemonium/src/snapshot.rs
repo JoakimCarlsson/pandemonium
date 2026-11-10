@@ -283,6 +283,8 @@ pub enum Shot {
     QueuedEditing,
     /// A conversation with the context ring in the prompt box.
     Usage,
+    /// The page for starting work, with how much of its allowance each agent's account has used.
+    Allowances,
     /// A conversation with the model menu open.
     Picking,
     /// The page for starting work with the menu of a long list of models open, narrowed with a box.
@@ -3409,16 +3411,65 @@ impl Shot {
                 }
                 Screen::Workspace(state)
             }
-            Self::Usage => Screen::Workspace(
-                live(Turn::Finished)
+            Self::Usage => {
+                let state = live(Turn::Finished);
+                let last = state.sessions.len() - 1;
+                Screen::Workspace(
+                state
                     .heard(
-                        0,
+                        last,
                         Event::Used(pm_harness::Usage {
                             used: 84_000,
                             size: 200_000,
                         }),
                     )
-            ),
+                    .heard(
+                        last,
+                        Event::Limits(pm_harness::Allowance(pm_harness::Limits {
+                            provider: "claude".to_owned(),
+                            plan: None,
+                            fetched_at_ms: 0,
+                            limits: vec![
+                                {
+                                    let mut limit = pm_harness::Limit::new("5 hour");
+                                    limit.window = Some("5h".to_owned());
+                                    limit.used_fraction = Some(0.15);
+                                    limit.resets_at_ms = Some(3 * 3_600_000);
+                                    limit
+                                },
+                                {
+                                    let mut limit = pm_harness::Limit::new("7 day");
+                                    limit.window = Some("7d".to_owned());
+                                    limit.used_fraction = Some(0.3);
+                                    limit.resets_at_ms = Some(2 * 86_400_000);
+                                    limit
+                                },
+                            ],
+                        })),
+                    )
+            )
+            }
+            Self::Allowances => {
+                let used = |five: f64, week: f64| {
+                    let window = |label: &str, name: &str, fraction: f64| {
+                        let mut limit = pm_harness::Limit::new(label);
+                        limit.window = Some(name.to_owned());
+                        limit.used_fraction = Some(fraction);
+                        limit
+                    };
+                    Some(pm_harness::Limits {
+                        provider: "claude".to_owned(),
+                        plan: None,
+                        fetched_at_ms: 0,
+                        limits: vec![window("5 hour", "5h", five), window("7 day", "7d", week)],
+                    })
+                };
+                Screen::Workspace(
+                    WorkspaceState::new(&projects())
+                        .with_allowance(0, None, used(0.15, 0.3))
+                        .with_allowance(1, None, used(0.62, 0.8)),
+                )
+            }
             Self::Queued => Screen::Workspace(queued()),
             Self::QueuedLong => Screen::Workspace(queued_long()),
             Self::QueuedEditing => Screen::Workspace(

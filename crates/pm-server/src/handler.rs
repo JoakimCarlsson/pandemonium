@@ -489,6 +489,15 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             },
             None => failed(format!("no agent is called {agent}")),
         },
+        Request::Allowance { agent, login } => match agent_named(&agent) {
+            Some(agent) => {
+                let home = login_folder(agent.id, login.as_deref());
+                Response::Allowance {
+                    limits: pm_harness::allowance(agent, home),
+                }
+            }
+            None => failed(format!("no agent is called {agent}")),
+        },
         Request::Library { agent, directory } => match agent_named(&agent) {
             Some(agent) => Response::Library {
                 product: agent.product(),

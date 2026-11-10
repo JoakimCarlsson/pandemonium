@@ -10,6 +10,19 @@ use pm_text::Shaper;
 
 use crate::retain::Retained;
 
+/// Concentric rings drawn in the content area of a box, the first outermost.
+#[derive(Clone, Debug)]
+pub(crate) struct Rings {
+    /// How thick each ring is, in logical pixels.
+    pub(crate) width: f32,
+    /// How much space lies between one ring and the next one in, in logical pixels.
+    pub(crate) gap: f32,
+    /// The colour of the part of a ring that is not filled.
+    pub(crate) track: pm_style::Color,
+    /// How much of each ring is filled, from nought to one, clockwise from the top, and the colour of the filled part, outermost first.
+    pub(crate) filled: Vec<(f32, pm_style::Color)>,
+}
+
 /// How a caret is drawn.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum CaretShape {
@@ -49,8 +62,8 @@ pub struct Node {
     pub(crate) icon: Option<pm_icon::Svg>,
     /// A picture the box draws in its own colours, cropped to fill its content area.
     pub(crate) picture: Option<pm_renderer::Picture>,
-    /// A ring the box draws in its content area: how much of it is filled, how thick it is, the colour of the filled part and the colour of the rest.
-    pub(crate) arc: Option<(f32, f32, pm_style::Color, pm_style::Color)>,
+    /// The rings the box draws in its content area.
+    pub(crate) arc: Option<Rings>,
     /// A blinking caret at this byte offset of the text, shown while the
     /// named box holds focus.
     pub(crate) caret: Option<(usize, FocusId)>,
@@ -168,13 +181,32 @@ impl Node {
 
     /// Makes the box draw a ring `width` logical pixels thick, `share` of it, from nought to one, filled clockwise from the top in `color` and the rest in `track`.
     pub fn arc(
-        mut self,
+        self,
         share: f32,
         width: f32,
         color: impl Into<pm_style::Color>,
         track: impl Into<pm_style::Color>,
     ) -> Self {
-        self.arc = Some((share.clamp(0.0, 1.0), width, color.into(), track.into()));
+        self.rings(width, 0.0, track, [(share, color.into())])
+    }
+
+    /// Makes the box draw concentric rings in its content area, the first outermost, each `width` logical pixels thick and `gap` apart: each is `share` of a full turn, from nought to one, filled clockwise from the top in its colour, and the rest of it in `track`. Rings that no longer fit are left out.
+    pub fn rings(
+        mut self,
+        width: f32,
+        gap: f32,
+        track: impl Into<pm_style::Color>,
+        filled: impl IntoIterator<Item = (f32, pm_style::Color)>,
+    ) -> Self {
+        self.arc = Some(Rings {
+            width,
+            gap,
+            track: track.into(),
+            filled: filled
+                .into_iter()
+                .map(|(share, color)| (share.clamp(0.0, 1.0), color))
+                .collect(),
+        });
         self
     }
 

@@ -257,6 +257,7 @@ fn main() {
             Some("queued-long") => Shot::QueuedLong,
             Some("queued-editing") => Shot::QueuedEditing,
             Some("usage") => Shot::Usage,
+            Some("allowances") => Shot::Allowances,
             Some("kept") => Shot::Kept,
             Some("long-line") => Shot::LongLine,
             Some("restored") => Shot::Restored,

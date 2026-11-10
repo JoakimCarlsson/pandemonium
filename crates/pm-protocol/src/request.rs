@@ -84,6 +84,14 @@ pub enum Request {
         /// The agent, by its id.
         agent: String,
     },
+    /// How much of its allowance the account of the agent, signed in under the login, has used, asked of the provider.
+    Allowance {
+        /// The agent, by its id.
+        agent: String,
+        /// The added account to ask about, by id, or nothing for the agent's own login.
+        #[serde(default)]
+        login: Option<String>,
+    },
     /// The files of a folder, including ignored entries.
     Files {
         /// The folder.

@@ -322,10 +322,14 @@ impl WorkspaceState {
         selected: Option<String>,
         naming: Option<String>,
     ) -> Self {
+        let signed_in = default.is_some() || selected.is_some();
         if let Some(held) = self.defaults.get_mut(agent) {
             *held = Some(default);
         }
         self.keep_startable_agent();
+        if signed_in {
+            self.ask_allowance(agent, true);
+        }
         match naming {
             Some(login) => self.name_login(agent, &login, selected),
             None => {
@@ -524,6 +528,54 @@ impl WorkspaceState {
             Some(agent) => self.with_discovery_for(host, agent, found),
             None => self,
         }
+    }
+
+    /// How long an agent's allowance is left alone before asking again when the reader comes back to it, in milliseconds.
+    const ALLOWANCE_PATIENCE_MS: u64 = 60_000;
+
+    /// Asks how much of its allowance each account of the agent at `agent` has used: its own login and every login added for it, except those asked about a short while ago, so that the page for starting work can show them before anything is written.
+    ///
+    /// With `urgent`, an account nothing is known about yet is asked about even when it was asked a moment ago, as when the reader turns out to be signed in to it.
+    pub(crate) fn ask_allowance(&mut self, agent: usize, urgent: bool) {
+        let now = crate::age::now();
+        let Some(owner) = self.agent_id_at(agent) else {
+            return;
+        };
+        let added = self
+            .logins
+            .iter()
+            .filter(|(by, _, _)| *by == owner)
+            .map(|(_, id, _)| Some(id.clone()));
+        let accounts: Vec<Option<String>> = std::iter::once(None).chain(added).collect();
+        for login in accounts {
+            let key = (agent, login.clone());
+            let asked = self.allowance_asked.get(&key).copied().unwrap_or(0);
+            let unknown = !self.allowances.contains_key(&key);
+            if now.saturating_sub(asked) < Self::ALLOWANCE_PATIENCE_MS && !(urgent && unknown) {
+                continue;
+            }
+            self.allowance_asked.insert(key, now);
+            self.outbox.push(Outgoing::Allowance { agent, login });
+        }
+    }
+
+    /// The state after the provider said how much of its allowance the account of the agent at `agent`, under the added login `login` or its own, has used.
+    pub fn with_allowance(
+        mut self,
+        agent: usize,
+        login: Option<String>,
+        limits: Option<pm_harness::Limits>,
+    ) -> Self {
+        match limits {
+            Some(limits) => self.allowances.insert((agent, login), limits),
+            None => self.allowances.remove(&(agent, login)),
+        };
+        self
+    }
+
+    /// How much of its allowance the account of the agent at `agent`, under the added login `login` or its own, has used, when the provider has said.
+    pub fn allowance_of(&self, agent: usize, login: Option<&str>) -> Option<&pm_harness::Limits> {
+        self.allowances.get(&(agent, login.map(str::to_owned)))
     }
 
     /// The state after the agent at `agent` told what it lets the reader change and what commands it offers.
@@ -995,6 +1047,9 @@ impl WorkspaceState {
     ) -> Self {
         self.logins = logins;
         self.in_use = in_use;
+        for agent in 0..self.agent_slots() {
+            self.ask_allowance(agent, false);
+        }
         self
     }
 
@@ -1415,5 +1470,33 @@ mod tests {
         assert_eq!(state.slash, 0);
         assert_eq!(state.menu_scroll, 0.0);
         assert!(state.slash_matches().len() < 20);
+    }
+
+    /// Once the reader is known to be signed in to an agent, its own login and every login added for it are asked about their allowance, and the answers are held per account.
+    #[test]
+    fn every_account_of_a_signed_in_agent_is_asked_about_its_allowance() {
+        let mut state = WorkspaceState::new(&[]);
+        let owner = state.agent_id_at(0).unwrap();
+        state = state.with_accounts(vec![(owner, "work".into(), "Work".into())], Vec::new());
+        state.outbox.clear();
+        state = state.with_identity(0, Some("me".into()), None, None);
+        let asked: Vec<Option<String>> = state
+            .outbox
+            .iter()
+            .filter_map(|outgoing| match outgoing {
+                Outgoing::Allowance { agent: 0, login } => Some(login.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(asked, [None, Some("work".to_owned())]);
+        let limits = pm_harness::Limits {
+            provider: "claude".to_owned(),
+            plan: None,
+            fetched_at_ms: 0,
+            limits: Vec::new(),
+        };
+        state = state.with_allowance(0, Some("work".into()), Some(limits));
+        assert!(state.allowance_of(0, Some("work")).is_some());
+        assert!(state.allowance_of(0, None).is_none());
     }
 }
