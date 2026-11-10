@@ -19,8 +19,8 @@ pub struct SettingsPage {
     pub nav_scroll: f32,
     /// The boxes of the settings written as text, as they are being written.
     pub fields: HashMap<Setting, Field>,
-    /// The pattern being written to be added to the list of a setting.
-    pub list_add: Field,
+    /// The line being written to be added to the list of each setting written as a list.
+    pub list_adds: HashMap<Setting, Field>,
     /// The setting whose list of choices is open under it, when one is.
     pub picker: Option<Setting>,
     /// What the open list of choices is narrowed to.
@@ -81,8 +81,9 @@ impl WorkspaceState {
     /// Puts `setting` to work once it changed: a setting the servers keep is sent to them, and the open files take what changed of their indentation.
     pub(crate) fn setting_changed(&mut self, setting: Setting) {
         if setting.keeper() == Keeper::Machine && self.machine_loaded {
-            self.outbox
-                .push(Outgoing::SaveMachineSettings(self.machine.clone()));
+            self.outbox.push(Outgoing::SaveMachineSettings(Box::new(
+                self.machine.clone(),
+            )));
         }
         match setting {
             Setting::TabSize
@@ -103,13 +104,16 @@ impl WorkspaceState {
         }
     }
 
-    /// Gives every setting written as text that has no box yet one holding its text.
+    /// Gives every setting written as text that has no box yet one holding its text, and every setting written as a list an empty box for its next line.
     pub(crate) fn fill_fields(&mut self) {
         for setting in Setting::ALL.into_iter().filter(|setting| setting.is_text()) {
             if !self.settings_page.fields.contains_key(&setting) {
                 let text = setting.text(self);
                 self.settings_page.fields.insert(setting, Field::new(text));
             }
+        }
+        for listed in crate::settings_catalog::LISTS {
+            self.settings_page.list_adds.entry(listed).or_default();
         }
     }
 

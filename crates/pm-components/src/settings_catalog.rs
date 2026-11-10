@@ -3,12 +3,7 @@
 use pm_input::FocusId;
 
 use crate::settings::Section;
-
-/// The first of the controls of the settings; each setting has eight after its own base, its place among them times eight.
-const SETTING_BASE: u64 = 20_003_000;
-
-/// How many controls a setting has room for.
-const PER_SETTING: u64 = 8;
+use crate::settings_ids::{PER_SETTING, SETTING_CONTROLS};
 
 /// The control of a setting that opens or closes its list of choices.
 pub const OPEN_LIST: usize = 6;
@@ -16,43 +11,12 @@ pub const OPEN_LIST: usize = 6;
 /// The control of a setting that puts it back as it comes.
 pub(crate) const RESET: usize = 7;
 
-/// The first of the choices of the open list of a setting picked from a long one; the rest follow it.
-const PICK_BASE: u64 = 20_004_000;
-
-/// One past the last choice of an open list.
-const PICK_END: u64 = 20_005_000;
-
-/// The name of the choice at `index` of the open list.
-pub(crate) fn pick_id(index: usize) -> FocusId {
-    FocusId(PICK_BASE + index as u64)
-}
-
-/// The place in the open list of the choice `id` names.
-pub(crate) fn pick_of(id: FocusId) -> Option<usize> {
-    (PICK_BASE..PICK_END)
-        .contains(&id.0)
-        .then(|| (id.0 - PICK_BASE) as usize)
-}
-
-/// The box a pattern is written in before it is added to the list of a setting.
-pub(crate) const LIST_FIELD: FocusId = FocusId(20_000_065);
-
-/// The button that adds the pattern written in [`LIST_FIELD`] to the list.
-pub(crate) const LIST_ADD: FocusId = FocusId(20_000_066);
-
-/// The first of the buttons that remove a line of the list; the rest follow it.
-const LIST_REMOVE_BASE: u64 = 20_008_000;
-
-/// The button that removes the line at `index` of the list.
-pub(crate) fn list_remove_id(index: usize) -> FocusId {
-    FocusId(LIST_REMOVE_BASE + index as u64)
-}
-
-/// The line of the list the button `id` removes.
-pub(crate) fn list_remove_of(id: FocusId) -> Option<usize> {
-    id.0.checked_sub(LIST_REMOVE_BASE)
-        .map(|index| index as usize)
-}
+/// The settings written as a list of lines, each with its own box, add button and remove buttons.
+pub(crate) const LISTS: [Setting; 3] = [
+    Setting::WorktreeInclude,
+    Setting::VimBindings,
+    Setting::AgentOrigins,
+];
 
 /// Who keeps a setting between runs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -252,6 +216,18 @@ pub enum Setting {
     DefaultAgent,
     /// The mode agents start in.
     PermissionMode,
+    /// How hard the model thinks in a new conversation.
+    Effort,
+    /// Whether agents start with their memory.
+    Memory,
+    /// Whether agents have the checkpoint and rewind tools.
+    Checkpoints,
+    /// How long the prompt cache lives.
+    PromptCache,
+    /// Whether the prompt cache is kept warm.
+    CacheWarming,
+    /// Whether plans are saved in the project too.
+    PlanAutosave,
     /// What a session does when its agent finishes.
     OnFinish,
     /// How the reader is told an agent finished.
@@ -300,7 +276,7 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting, in the order the pages show them.
-    pub const ALL: [Self; 115] = [
+    pub const ALL: [Self; 121] = [
         Self::Launch,
         Self::ConfirmClose,
         Self::CheckUpdates,
@@ -394,6 +370,12 @@ impl Setting {
         Self::GitHosts,
         Self::DefaultAgent,
         Self::PermissionMode,
+        Self::Effort,
+        Self::Memory,
+        Self::Checkpoints,
+        Self::PromptCache,
+        Self::CacheWarming,
+        Self::PlanAutosave,
         Self::OnFinish,
         Self::Notification,
         Self::DefaultServer,
@@ -526,9 +508,16 @@ impl Setting {
             Self::BranchTemplate | Self::WorktreeFolder | Self::WorktreeInclude => {
                 Section::Worktrees
             }
-            Self::DefaultAgent | Self::PermissionMode | Self::OnFinish | Self::Notification => {
-                Section::Agents
-            }
+            Self::DefaultAgent
+            | Self::PermissionMode
+            | Self::Effort
+            | Self::Memory
+            | Self::Checkpoints
+            | Self::PromptCache
+            | Self::CacheWarming
+            | Self::PlanAutosave
+            | Self::OnFinish
+            | Self::Notification => Section::Agents,
             Self::DefaultServer => Section::Servers,
             Self::VimMode
             | Self::VimClipboard
@@ -563,7 +552,13 @@ impl Setting {
             | Self::WorktreeInclude
             | Self::GitHosts
             | Self::DefaultAgent
-            | Self::PermissionMode => Keeper::Machine,
+            | Self::PermissionMode
+            | Self::Effort
+            | Self::Memory
+            | Self::Checkpoints
+            | Self::PromptCache
+            | Self::CacheWarming
+            | Self::PlanAutosave => Keeper::Machine,
             _ => Keeper::Window,
         }
     }
@@ -945,6 +940,30 @@ impl Setting {
                 "Default permission mode",
                 "The mode an agent starts in, when it offers that mode.",
             ),
+            Self::Effort => (
+                "Default effort",
+                "How hard the model thinks in a new conversation. Auto starts at medium; a model that does not offer the level picks its own.",
+            ),
+            Self::Memory => (
+                "Memory",
+                "Start agents with what earlier conversations in the project remembered, and let them save, search and forget memories.",
+            ),
+            Self::Checkpoints => (
+                "Checkpoints",
+                "Let agents mark a checkpoint and later replace the exploration since it with a report, to keep long conversations short. Files are never restored.",
+            ),
+            Self::PromptCache => (
+                "Prompt cache",
+                "How long cached context lives after each request, where the provider lets it be picked. An hour costs more to write but survives longer pauses.",
+            ),
+            Self::CacheWarming => (
+                "Keep cache warm",
+                "Refresh the cached context shortly before it expires while a long tool runs or the conversation waits, when that costs less than losing it.",
+            ),
+            Self::PlanAutosave => (
+                "Save plans in the project",
+                "Also save each plan an agent submits as markdown under .oh-my-crab/plans in the project.",
+            ),
             Self::OnFinish => (
                 "When an agent finishes",
                 "Do nothing, tell you, or open the session on what it changed.",
@@ -1001,20 +1020,26 @@ impl Setting {
         }
     }
 
-    /// The name of its control at `option`.
-    pub fn id(self, option: usize) -> FocusId {
-        let place = Self::ALL
-            .iter()
-            .position(|held| *held == self)
-            .unwrap_or_default() as u64;
-        FocusId(SETTING_BASE + place * PER_SETTING + option as u64)
+    /// The name of its control at `option`, or nothing when `option` is past the controls a setting has room for.
+    pub fn id(self, option: usize) -> Option<FocusId> {
+        let place = Self::ALL.iter().position(|held| *held == self)?;
+        SETTING_CONTROLS.cell(place, option, PER_SETTING)
     }
 
     /// The setting, and the option of its control, that `id` names.
     pub(crate) fn of(id: FocusId) -> Option<(Self, usize)> {
-        let offset = id.0.checked_sub(SETTING_BASE)?;
-        let setting = Self::ALL.get((offset / PER_SETTING) as usize)?;
-        Some((*setting, (offset % PER_SETTING) as usize))
+        let (place, option) = SETTING_CONTROLS.cell_of(id, PER_SETTING)?;
+        Some((*Self::ALL.get(place)?, option))
+    }
+
+    /// The name of the choice at `option` of its row of choices, or nothing when `option` would reach the controls that open its list or reset it.
+    pub(crate) fn choice_id(self, option: usize) -> Option<FocusId> {
+        (option < OPEN_LIST).then(|| self.id(option)).flatten()
+    }
+
+    /// The place of the setting among those written as a list, when it is one.
+    pub(crate) fn list_place(self) -> Option<usize> {
+        LISTS.iter().position(|held| *held == self)
     }
 
     /// The setting written as text whose box `id` is.

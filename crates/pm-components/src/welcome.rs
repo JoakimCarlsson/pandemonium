@@ -17,16 +17,23 @@ use crate::parts::line;
 use crate::size::Size;
 use crate::state::{ADD_PROJECT, AGENT_BASE, REVIEW, WorkspaceState};
 
-/// A chip naming one agent, filled while it is the one chosen.
+/// A chip naming one agent, filled while it is the one chosen, with how much of its account's allowance is used as its tooltip once the provider has said.
 fn chip(state: &WorkspaceState, index: usize) -> Node {
     let agent = state.agent_look(index);
-    Button::new(agent.name, FocusId(AGENT_BASE + index as u64))
+    let chip = Button::new(agent.name, FocusId(AGENT_BASE + index as u64))
         .variant(Variant::Outline)
         .round()
         .with_icon(agent.icon)
         .size(Size::Md)
         .selected(index == state.agent)
-        .build()
+        .build();
+    match state
+        .allowance_of(index, state.login_for_new_work(index))
+        .and_then(crate::usage::tooltip)
+    {
+        Some(words) => chip.tooltip(words),
+        None => chip,
+    }
 }
 
 /// The page for starting work in a project, naming the project it starts in.

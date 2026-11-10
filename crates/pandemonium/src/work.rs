@@ -113,14 +113,18 @@ enum Pending {
     Tools(String),
     /// The agent with this id told what it lets the reader change.
     Discover(Host, String),
+    /// The provider of the agent at this position said how much of the account's allowance is used, or did not.
+    Allowance(usize, Option<String>),
     /// The agent at this position was signed in, or could not be.
     SignIn(usize, Option<String>),
     /// A session's agent was signed in again, or could not be.
     SignInSession,
     /// What the agent at the second position is given in the project at the first.
-    Library(usize, usize),
+    Library(Option<usize>, usize),
     /// The tools the agent at the second position is given on the machine of the project at the first.
-    ToolSets(usize, usize),
+    ToolSets(Option<usize>, usize),
+    /// A new customization was written for the project at this position, or could not be.
+    Created(Option<usize>),
     /// The sessions the server of this machine holds.
     Sessions(Host),
     /// The files listed for this key.
@@ -1279,15 +1283,16 @@ impl Work {
                     |session| Request::SignInSession { session },
                     Pending::SignInSession,
                 ),
-                Outgoing::SaveKey { agent, key } => {
+                Outgoing::SaveKey { agent, key, login } => {
                     if let Some(id) = self.agent_id(agent) {
                         self.ask(
                             &None,
                             Request::SaveKey {
                                 agent: id,
                                 key: key.clone(),
+                                login: login.clone(),
                             },
-                            Pending::SignIn(agent, None),
+                            Pending::SignIn(agent, login),
                         );
                     }
                 }
@@ -1360,6 +1365,18 @@ impl Work {
                         );
                     }
                 }
+                Outgoing::Allowance { agent, login } => {
+                    if let Some(id) = self.agent_id(agent) {
+                        self.ask(
+                            &None,
+                            Request::Allowance {
+                                agent: id,
+                                login: login.clone(),
+                            },
+                            Pending::Allowance(agent, login),
+                        );
+                    }
+                }
                 Outgoing::Identity { agent, naming } => {
                     if let Some(id) = self.agent_id(agent) {
                         self.ask(
@@ -1425,6 +1442,40 @@ impl Work {
                         );
                     }
                 }
+                Outgoing::CreatePromptFile {
+                    project,
+                    host,
+                    directory,
+                    file,
+                    scope,
+                } => self.ask(
+                    &host,
+                    Request::CreatePromptFile {
+                        file,
+                        scope,
+                        directory,
+                    },
+                    Pending::Created(project),
+                ),
+                Outgoing::CreateCustomization {
+                    project,
+                    host,
+                    directory,
+                    kind,
+                    scope,
+                    name,
+                    description,
+                } => self.ask(
+                    &host,
+                    Request::CreateCustomization {
+                        kind,
+                        scope,
+                        name,
+                        description,
+                        directory,
+                    },
+                    Pending::Created(project),
+                ),
                 Outgoing::SaveWithheld { host, keys } => {
                     self.ask(&host, Request::SaveWithheld { keys }, Pending::Nothing)
                 }
@@ -1456,7 +1507,7 @@ impl Work {
                     Pending::Added,
                 ),
                 Outgoing::Copy { text } => copies.push(text),
-                Outgoing::SaveMachineSettings(settings) => self.save_machine_settings(settings),
+                Outgoing::SaveMachineSettings(settings) => self.save_machine_settings(*settings),
                 Outgoing::LatestRelease { channel } => self.ask_release(channel),
                 Outgoing::DownloadUpdate { channel, version } => {
                     self.download_update(channel, version)
@@ -1963,6 +2014,15 @@ impl Work {
                     Self::in_workspace(model, |state| state.with_library_failed(reason));
                 }
             },
+            Pending::Created(project) => match response {
+                Response::Created { path } => Self::in_workspace(model, |state| {
+                    state.with_customization_created(project, path)
+                }),
+                other => {
+                    let reason = Self::trouble_of(other);
+                    Self::in_workspace(model, |state| state.with_customization_failed(reason));
+                }
+            },
             Pending::ToolSets(project, agent) => match response {
                 Response::ToolSets {
                     product,
@@ -2078,6 +2138,15 @@ impl Work {
                         *screen = std::mem::take(screen).with_submodules(project, paths)
                     });
                 }
+            }
+            Pending::Allowance(agent, login) => {
+                let limits = match response {
+                    Response::Allowance { limits } => limits.map(|allowance| allowance.0),
+                    _ => None,
+                };
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).with_allowance(agent, login, limits);
+                });
             }
             Pending::Identity(agent, naming) => {
                 if let Response::Identity { default, selected } = response {

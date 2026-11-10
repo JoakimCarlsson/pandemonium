@@ -106,9 +106,6 @@ pub(crate) struct Connection {
     pub(crate) attached: Mutex<HashSet<u64>>,
 }
 
-/// The harness's setting that gives the agent its checkpoint and rewind tools, which the app turns on for every agent it starts.
-const CHECKPOINTS: &str = "checkpoints";
-
 /// One session: an agent working in a folder, and everything it has done.
 pub(crate) struct Session {
     /// The agent that runs it.
@@ -165,7 +162,7 @@ impl Session {
         given.conversation = Some(crate::sessions::HISTORY.to_owned());
         given.history = crate::sessions::history_folder(number);
         given.before = self.resume_before.take();
-        given.defaults = vec![(CHECKPOINTS.to_owned(), "on".to_owned())];
+        given.defaults = crate::machine::settings().agents.conversation_defaults();
         given.languages = crate::documents::shared_hub().map(pm_harness::LanguageServers);
         let chat = Chat::start(
             self.agent,

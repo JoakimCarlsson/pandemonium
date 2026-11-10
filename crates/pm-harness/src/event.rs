@@ -3,10 +3,19 @@
 use serde_json::{Value, json};
 
 pub use omc_wire::{
-    Alternative, Background, Choice, Diff, Input, Inquiry, Kind, Merge, Part, Permission, Pick,
-    PlanStep, Progress, Question, Reply, Setting, Skipped, Slash, Standing, Tool, ToolState,
-    TrustRequest, Usage, Verdict, Worktree,
+    Alternative, Background, Choice, Diff, Input, Inquiry, Kind, Limit, LimitUnit, Limits, Merge,
+    Part, Permission, Pick, PlanStep, Progress, Question, Reply, Setting, Skipped, Slash, Standing,
+    Tool, ToolState, TrustRequest, Usage, Verdict, Worktree,
 };
+
+/// What an account has used of its allowance, as the event that carries it holds it.
+///
+/// The shares and counts in it are finite numbers, since the harness reads none that is not, so that two of them are equal exactly when every figure is, which is what [`Eq`] asks.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct Allowance(pub Limits);
+
+impl Eq for Allowance {}
 
 /// What an agent did, in the order it did it.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -101,6 +110,8 @@ pub enum Event {
     },
     /// A tool server the agent uses wants the reader to sign in to it, at this web address, which a client opens in the reader's browser; the server's tools come with the next prompt once they have.
     ToolSignIn(String),
+    /// How much of the account's allowance the provider says is used, as it stood when it was asked.
+    Limits(Allowance),
 }
 
 /// What an agent says about itself when a conversation is opened.

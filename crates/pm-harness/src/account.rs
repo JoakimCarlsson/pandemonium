@@ -25,7 +25,7 @@ pub fn account_in_folder(agent: Agent, home: PathBuf) -> Option<String> {
 }
 
 /// What a login that names no account is called, as for GitHub Copilot.
-const UNNAMED: &str = "Signed in";
+pub const UNNAMED: &str = "Signed in";
 
 /// Who `agent` is signed in as in the login folder `home`, or in the harness's own when there is none; a login that names no account is [`UNNAMED`], and an agent signed in with an API key says where the key comes from. An agent that takes a key or an account login is reported by its key when it has one, and by its login otherwise.
 fn account_in(agent: Agent, home: Option<PathBuf>) -> Option<String> {
@@ -50,6 +50,15 @@ impl Agent {
     ///
     /// Fails with the reason when the agent takes no API key or the logins cannot be written.
     pub fn save_key(self, key: Option<&str>) -> Result<(), String> {
-        omc_session::save_key(self.provider, key, None)
+        self.save_key_in(key, None)
+    }
+
+    /// Keeps `key` as the API key the agent is signed in with in the login folder `home`, or in the harness's own when there is none, or forgets the key saved there when `key` is nothing or blank.
+    ///
+    /// # Errors
+    ///
+    /// Fails with the reason when the agent takes no API key or the logins cannot be written.
+    pub fn save_key_in(self, key: Option<&str>, home: Option<PathBuf>) -> Result<(), String> {
+        omc_session::save_key(self.provider, key, home)
     }
 }

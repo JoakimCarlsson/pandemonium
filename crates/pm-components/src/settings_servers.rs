@@ -18,13 +18,13 @@ use crate::input::Input;
 use crate::menu::Menu;
 use crate::parts::{clipped, glyph, line, wrap};
 use crate::settings::{
-    SETTINGS_ACCOUNT_ADD_BASE, SETTINGS_ACCOUNT_REMOVE_BASE, SETTINGS_ADD, SETTINGS_CANCEL,
-    SETTINGS_DOCS, SETTINGS_EDIT_BASE, SETTINGS_ENV, SETTINGS_INSTALL_BASE, SETTINGS_MENU_COPY,
+    SETTINGS_ADD, SETTINGS_CANCEL, SETTINGS_DOCS, SETTINGS_ENV, SETTINGS_MENU_COPY,
     SETTINGS_MENU_EDIT, SETTINGS_MENU_REMOVE, SETTINGS_MENU_TOGGLE, SETTINGS_MENU_WEBSITE,
-    SETTINGS_MORE_BASE, SETTINGS_NAME, SETTINGS_RELEASE, SETTINGS_REMOVE_BASE, SETTINGS_SAVE,
-    SETTINGS_SCROLL, SETTINGS_SEARCH, SETTINGS_SEARCH_GO, SETTINGS_SWITCH_BASE, SETTINGS_TARGET,
-    SETTINGS_TOGGLE_AVAILABLE, SETTINGS_TOGGLE_INSTALLED, Section,
+    SETTINGS_NAME, SETTINGS_RELEASE, SETTINGS_SAVE, SETTINGS_SCROLL, SETTINGS_SEARCH,
+    SETTINGS_SEARCH_GO, SETTINGS_TARGET, SETTINGS_TOGGLE_AVAILABLE, SETTINGS_TOGGLE_INSTALLED,
+    Section,
 };
+use crate::settings_ids::{INSTALLS, SERVER_MORES, SERVER_SWITCHES};
 use crate::settings_row::switch;
 use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
@@ -111,6 +111,10 @@ pub struct ServerSettings {
     pub menu: Option<ServerMenu>,
     /// The box for an agent's API key, while one is open.
     pub key_form: Option<crate::settings_agents::KeyForm>,
+    /// The box for an added account's name, while one is open.
+    pub name_form: Option<crate::settings_agents::NameForm>,
+    /// Who each added account is signed in as, by the login's id: nothing while it is being asked, and nothing inside when it is signed out.
+    pub login_identities: std::collections::BTreeMap<String, Option<Option<String>>>,
 }
 
 impl ServerSettings {
@@ -207,9 +211,14 @@ impl WorkspaceState {
         self
     }
 
-    /// Puts away what belongs to the section that was showing, and has the tool registry offer its well known servers again if a search had narrowed them.
+    /// Puts away what belongs to the section that was showing, its forms and boxes, and has the tool registry offer its well known servers again if a search had narrowed them.
     pub(crate) fn section_changed(&mut self) {
         self.settings_servers.form = None;
+        self.settings_servers.key_form = None;
+        self.settings_servers.name_form = None;
+        self.settings_servers.menu = None;
+        self.settings_page.server_form = None;
+        self.settings_page.library.draft = None;
         self.settings_servers.scroll = 0.0;
         self.settings_servers.search = Field::default();
         if !self.settings_servers.searched.is_empty() {
@@ -232,7 +241,6 @@ impl WorkspaceState {
 
     /// The state after `action`, which names a button of a server list or its form, was pressed.
     pub(crate) fn servers_pressed(mut self, action: FocusId) -> Self {
-        let FocusId(number) = action;
         match action {
             SETTINGS_ADD => {
                 self.settings_servers.form = Some(ServerForm::holding(None, "", "", &[]))
@@ -249,25 +257,8 @@ impl WorkspaceState {
                 let query = self.settings_servers.search.text().trim().to_owned();
                 self.search_tools(query);
             }
-            _ if (SETTINGS_ACCOUNT_REMOVE_BASE..SETTINGS_ACCOUNT_ADD_BASE).contains(&number) => {
-                self.remove_account((number - SETTINGS_ACCOUNT_REMOVE_BASE) as usize);
-            }
-            _ if (SETTINGS_ACCOUNT_ADD_BASE..SETTINGS_ACCOUNT_ADD_BASE + 100).contains(&number) => {
-                self.add_account((number - SETTINGS_ACCOUNT_ADD_BASE) as usize);
-            }
-            _ if (SETTINGS_EDIT_BASE..SETTINGS_REMOVE_BASE).contains(&number) => {
-                let index = (number - SETTINGS_EDIT_BASE) as usize;
-                self.settings_servers.form = self.form_for(index);
-            }
-            _ if (SETTINGS_REMOVE_BASE..SETTINGS_INSTALL_BASE).contains(&number) => {
-                self.remove_server((number - SETTINGS_REMOVE_BASE) as usize);
-            }
-            _ if (SETTINGS_INSTALL_BASE..SETTINGS_SWITCH_BASE).contains(&number) => {
-                self.install((number - SETTINGS_INSTALL_BASE) as usize);
-            }
-            _ if (SETTINGS_SWITCH_BASE..SETTINGS_MORE_BASE).contains(&number) => {
-                self.toggle_server((number - SETTINGS_SWITCH_BASE) as usize);
-            }
+            _ if let Some(index) = INSTALLS.index_of(action) => self.install(index),
+            _ if let Some(index) = SERVER_SWITCHES.index_of(action) => self.toggle_server(index),
             SETTINGS_DOCS => self.outbox.push(Outgoing::Open {
                 address: TOOL_SERVERS_DOCS.to_owned(),
             }),
@@ -367,10 +358,7 @@ impl WorkspaceState {
 
     /// Which server's menu button `id` is, if it is one.
     pub fn settings_more_of(&self, id: FocusId) -> Option<usize> {
-        let FocusId(number) = id;
-        (self.settings.is_some()
-            && (SETTINGS_MORE_BASE..SETTINGS_MORE_BASE + 100).contains(&number))
-        .then(|| (number - SETTINGS_MORE_BASE) as usize)
+        self.settings.and(SERVER_MORES.index_of(id))
     }
 
     /// Whether `id` names a row of the menu of a server that is open.
@@ -386,12 +374,8 @@ impl WorkspaceState {
             .contains(&id)
     }
 
-    /// Switches the `index`-th entry of the open list on or off: an agent is hidden from new sessions or shown again, and a tool server is switched and the list kept.
+    /// Switches the `index`-th tool server on or off and has the server keep the list; one an extension brings is left as it is, as it has no switch.
     fn toggle_server(&mut self, index: usize) {
-        if self.settings == Some(Section::AgentServers) {
-            self.toggle_agent_shown(index);
-            return;
-        }
         if let Some(tool) = self
             .settings_servers
             .tools
@@ -1002,6 +986,8 @@ struct InstalledRow {
     place: Option<usize>,
     /// Whether it is switched on, when it can be switched.
     enabled: Option<bool>,
+    /// Whether its switch is drawn; one an extension brings is switched with the extension, so it has none.
+    switchable: bool,
 }
 
 /// The rows of the tool servers already there whose name, reach or description holds `needle`.
@@ -1033,6 +1019,7 @@ fn installed_rows(state: &WorkspaceState, needle: &str) -> Vec<InstalledRow> {
             detail: reach_of(&tool.target, tool.env.len()),
             place: Some(index),
             enabled: Some(tool.enabled),
+            switchable: tool.extension.is_none(),
         })
         .filter(matching)
         .collect()
@@ -1080,7 +1067,7 @@ fn offered_rows(state: &WorkspaceState) -> Offered {
     Offered { rows, status }
 }
 
-/// One row of what a registry offers: its name over what it is, and the button that installs it, or says that it is installed.
+/// One row of what a registry offers: its name over what it is, and the button that installs it, or says that it is installed; a row past the room for install buttons has none.
 fn offer(
     index: usize,
     title: &str,
@@ -1089,14 +1076,16 @@ fn offer(
     action: &str,
     installed: bool,
 ) -> Node {
-    let button = if installed {
-        Button::new("Installed", FocusId(SETTINGS_INSTALL_BASE + index as u64))
-            .variant(Variant::Outline)
-            .size(Size::Sm)
-            .disabled(true)
-    } else {
-        Button::new(action, FocusId(SETTINGS_INSTALL_BASE + index as u64)).size(Size::Sm)
-    };
+    let button = INSTALLS.id(index).map(|install| {
+        if installed {
+            Button::new("Installed", install)
+                .variant(Variant::Outline)
+                .size(Size::Sm)
+                .disabled(true)
+        } else {
+            Button::new(action, install).size(Size::Sm)
+        }
+    });
     flat_row()
         .child(
             node()
@@ -1118,7 +1107,7 @@ fn offer(
                     (!how.is_empty())
                         .then(|| line(how, 11, 1.5, Role::Subtle).styles([pm_style::font_mono()])),
                 )
-                .child(button.build()),
+                .children(button.map(Button::build)),
         )
 }
 
@@ -1157,15 +1146,11 @@ fn row(shown: InstalledRow) -> Node {
         text_column = text_column.child(clipped(shown.description, 12, Role::Muted));
     }
     let mut actions = node().styles([flex(), items_center(), gap(2), flex_none()]);
-    if let (Some(place), Some(on)) = (shown.place, shown.enabled) {
-        actions = actions.child(switch(on, FocusId(SETTINGS_SWITCH_BASE + place as u64)));
+    if let (Some(place), Some(on), true) = (shown.place, shown.enabled, shown.switchable) {
+        actions = actions.child(switch(on, SERVER_SWITCHES.id(place)));
     }
-    if let Some(place) = shown.place {
-        actions = actions.child(
-            Button::icon(IconName::More, FocusId(SETTINGS_MORE_BASE + place as u64))
-                .size(Size::Sm)
-                .build(),
-        );
+    if let Some(more) = shown.place.and_then(|place| SERVER_MORES.id(place)) {
+        actions = actions.child(Button::icon(IconName::More, more).size(Size::Sm).build());
     }
     flat_row()
         .child(

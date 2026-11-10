@@ -14,6 +14,7 @@ use crate::Button;
 use crate::button::Variant;
 use crate::input::Input;
 use crate::parts::{clipped, glyph, line, wrap};
+use crate::settings_ids::PICKS;
 use crate::size::Size;
 use crate::tile::Tile;
 
@@ -41,25 +42,31 @@ pub const SWITCH_WIDTH: f32 = 36.0;
 /// How many choices an open list shows before it asks to be narrowed.
 const MOST_LISTED: usize = 12;
 
+const _: () = assert!(
+    MOST_LISTED as u64 <= PICKS.len(),
+    "PICKS has no room for every row an open list shows"
+);
+
 /// How many choices a list has before it offers a box to narrow it.
 const FILTERED_FROM: usize = 10;
 
-/// A switch that is on while `on` is true, answering to `id`.
-pub fn switch(on: bool, id: FocusId) -> Node {
+/// A switch that is on while `on` is true, answering to `id`; with no name it is drawn but cannot be pressed.
+pub fn switch(on: bool, id: Option<FocusId>) -> Node {
     let knob = node().styles([size(4), rounded_full(), bg(Role::Text)]);
-    let track = node()
-        .styles([
-            flex(),
-            items_center(),
-            flex_none(),
-            w_px(36),
-            h(5),
-            p(0.5),
-            rounded_full(),
-            cursor_pointer(),
-            bg(if on { Role::Success } else { Role::Border }),
-        ])
-        .focusable(id);
+    let track = node().styles([
+        flex(),
+        items_center(),
+        flex_none(),
+        w_px(36),
+        h(5),
+        p(0.5),
+        rounded_full(),
+        bg(if on { Role::Success } else { Role::Border }),
+    ]);
+    let track = match id {
+        Some(id) => track.styles([cursor_pointer()]).focusable(id),
+        None => track,
+    };
     if on {
         track.styles([justify_end()]).child(knob)
     } else {
@@ -75,8 +82,8 @@ pub fn choices_width(names: &[&str]) -> f32 {
         .sum::<f32>()
 }
 
-/// The choices `names` side by side, `picked` marked, each answering to the name `id_of` gives its place.
-pub fn choices(names: &[&str], picked: usize, id_of: impl Fn(usize) -> FocusId) -> Node {
+/// The choices `names` side by side, `picked` marked, each answering to the name `id_of` gives its place; a choice given no name is left out.
+pub fn choices(names: &[&str], picked: usize, id_of: impl Fn(usize) -> Option<FocusId>) -> Node {
     node()
         .styles([
             flex(),
@@ -89,20 +96,23 @@ pub fn choices(names: &[&str], picked: usize, id_of: impl Fn(usize) -> FocusId) 
             border(),
             border_color(Role::Border),
         ])
-        .children(names.iter().enumerate().map(|(option, name)| {
+        .children(names.iter().enumerate().filter_map(|(option, name)| {
             let on = option == picked;
-            Tile::new(id_of(option))
-                .selected(on)
-                .height(6.5)
-                .radius(Radius::Sm)
-                .build()
-                .styles([justify_center(), px(2.5)])
-                .child(line(
-                    *name,
-                    12,
-                    1.4,
-                    if on { Role::Text } else { Role::Muted },
-                ))
+            let id = id_of(option)?;
+            Some(
+                Tile::new(id)
+                    .selected(on)
+                    .height(6.5)
+                    .radius(Radius::Sm)
+                    .build()
+                    .styles([justify_center(), px(2.5)])
+                    .child(line(
+                        *name,
+                        12,
+                        1.4,
+                        if on { Role::Text } else { Role::Muted },
+                    )),
+            )
         }))
 }
 
@@ -153,19 +163,20 @@ pub fn picker(shown: &str, width: f32, id: FocusId, open: bool) -> Node {
         .build()
 }
 
-/// The open list of `options` under a row, `picked` marked, each answering to the name `id_of` gives its place among all of them, narrowed by what `filter` holds when they are many.
-pub fn picker_list(
-    options: &[String],
-    picked: Option<usize>,
-    id_of: impl Fn(usize) -> FocusId,
-    filter: (&Field, FocusId),
-) -> Node {
-    let needle = filter.0.text().trim().to_lowercase();
-    let shown: Vec<(usize, &String)> = options
+/// The places among `options` of the ones the open list shows, narrowed to those holding what `filter` holds; the row of each is its place in what is returned.
+pub fn picker_shown(options: &[String], filter: &Field) -> Vec<usize> {
+    let needle = filter.text().trim().to_lowercase();
+    options
         .iter()
         .enumerate()
         .filter(|(_, name)| needle.is_empty() || name.to_lowercase().contains(&needle))
-        .collect();
+        .map(|(place, _)| place)
+        .collect()
+}
+
+/// The open list of `options` under a row, `picked` marked, narrowed by what `filter` holds when they are many; each row shown answers to its row in [`PICKS`], so a list of any length names its rows the same way.
+pub fn picker_list(options: &[String], picked: Option<usize>, filter: (&Field, FocusId)) -> Node {
+    let shown = picker_shown(options, filter.0);
     let more = shown.len().saturating_sub(MOST_LISTED);
     let mut list = node().styles([
         flex(),
@@ -188,22 +199,27 @@ pub fn picker_list(
             ),
         );
     }
-    list = list.children(shown.into_iter().take(MOST_LISTED).map(|(place, name)| {
-        let on = Some(place) == picked;
-        Tile::new(id_of(place))
-            .selected(on)
-            .height(7.0)
-            .gap(2.0)
-            .radius(Radius::Sm)
-            .build()
-            .styles([justify_between(), px(2)])
-            .child(clipped(
-                name.as_str(),
-                12,
-                if on { Role::Text } else { Role::Muted },
-            ))
-            .children(on.then(|| glyph(IconName::Check, 3.5, Role::Text)))
-    }));
+    list = list.children(shown.into_iter().enumerate().take(MOST_LISTED).filter_map(
+        |(row, place)| {
+            let on = Some(place) == picked;
+            let name = options.get(place)?;
+            Some(
+                Tile::new(PICKS.id(row)?)
+                    .selected(on)
+                    .height(7.0)
+                    .gap(2.0)
+                    .radius(Radius::Sm)
+                    .build()
+                    .styles([justify_between(), px(2)])
+                    .child(clipped(
+                        name.as_str(),
+                        12,
+                        if on { Role::Text } else { Role::Muted },
+                    ))
+                    .children(on.then(|| glyph(IconName::Check, 3.5, Role::Text))),
+            )
+        },
+    ));
     if more > 0 {
         list = list.child(
             node()
@@ -227,10 +243,10 @@ pub fn text_box(field: &Field, id: FocusId, placeholder: &str) -> Node {
         .build()
 }
 
-/// The `lines` one under another, each with a button that removes it answering to the name `remove_of` gives its place, then the box `field` answering to `field_id`, saying `placeholder` while empty, with the button `add`, labelled `label`, that adds what is written in it.
+/// The `lines` one under another, each with a button that removes it answering to the name `remove_of` gives its place, then the box `field` answering to its name, saying `placeholder` while empty, with the button `add`, labelled with its words, that adds what is written in it; a line given no name has no remove button.
 pub fn list(
     lines: &[String],
-    remove_of: impl Fn(usize) -> FocusId,
+    remove_of: impl Fn(usize) -> Option<FocusId>,
     field: (&Field, FocusId),
     add: (FocusId, &str),
     placeholder: &str,
@@ -248,10 +264,9 @@ pub fn list(
                 bg(Role::SurfaceHover).hover(),
             ])
             .child(line(text.as_str(), 12, 1.4, Role::Text).styles([font_mono()]))
-            .child(
-                Button::icon(IconName::Close, remove_of(place))
-                    .size(Size::Xs)
-                    .build(),
+            .children(
+                remove_of(place)
+                    .map(|remove| Button::icon(IconName::Close, remove).size(Size::Xs).build()),
             )
     });
     node()

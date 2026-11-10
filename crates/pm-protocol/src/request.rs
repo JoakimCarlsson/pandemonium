@@ -84,6 +84,14 @@ pub enum Request {
         /// The agent, by its id.
         agent: String,
     },
+    /// How much of its allowance the account of the agent, signed in under the login, has used, asked of the provider.
+    Allowance {
+        /// The agent, by its id.
+        agent: String,
+        /// The added account to ask about, by id, or nothing for the agent's own login.
+        #[serde(default)]
+        login: Option<String>,
+    },
     /// The files of a folder, including ignored entries.
     Files {
         /// The folder.
@@ -136,7 +144,7 @@ pub enum Request {
         /// The login's id, or nothing for the agent's own.
         login: Option<String>,
     },
-    /// Signs the agent in under the login `login`, or the one now in use when there is none.
+    /// Signs the agent in under the login `login`, or under its own default login when there is none, whichever login is in use.
     SignIn {
         /// The agent, by its id.
         agent: String,
@@ -521,6 +529,29 @@ pub enum Request {
         /// Every key turned off.
         keys: Vec<String>,
     },
+    /// Writes a new skill, instruction file or agent definition from a template, in the project's folder or the reader's own, and answers with the file written.
+    CreateCustomization {
+        /// What it is: a skill, an instruction file or an agent definition.
+        kind: crate::library::Kind,
+        /// Whether it goes in the project's folder or the reader's own.
+        scope: crate::library::Scope,
+        /// Its name: lowercase letters, digits and hyphens.
+        name: String,
+        /// What it is for.
+        #[serde(default)]
+        description: String,
+        /// The project's folder on the server's machine.
+        directory: String,
+    },
+    /// Makes one of the files that shape the harness's prompt, empty, in the project's folder or the reader's own, when it is not there yet, and answers with its path.
+    CreatePromptFile {
+        /// Which file.
+        file: crate::library::PromptFile,
+        /// Whether it goes in the project's folder or the reader's own.
+        scope: crate::library::Scope,
+        /// The project's folder on the server's machine, or empty when no project is open.
+        directory: String,
+    },
     /// Has the server tell this connection whenever the files of one of `directories`, or what git keeps about them, change, in place of the folders it watched before.
     WatchFolders {
         /// The folders, as their sessions name them; none to watch nothing.
@@ -531,7 +562,7 @@ pub enum Request {
     /// Replaces what the reader set up for the work the server does on its machine, and puts it to work.
     SaveMachineSettings {
         /// The settings, whole.
-        settings: crate::MachineSettings,
+        settings: Box<crate::MachineSettings>,
     },
     /// The newest release of the app on `channel`, as its project publishes them.
     LatestRelease {
@@ -1251,6 +1282,9 @@ pub enum Request {
         /// The key, or nothing to forget the one saved.
         #[serde(default)]
         key: Option<String>,
+        /// The added account the key belongs to, by id, or nothing for the agent's own login.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        login: Option<String>,
     },
     /// Answers the trust request a session's agent made. A verdict that is recorded for the repository, `Always` or `Reject`, also answers the requests the server's other sessions of the same repository are waiting on.
     Trust {

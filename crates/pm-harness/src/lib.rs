@@ -14,6 +14,7 @@ mod event;
 mod history;
 mod inprocess;
 mod language;
+mod limits;
 mod listing;
 mod login;
 mod mcp;
@@ -22,17 +23,18 @@ mod profile;
 mod tool_registry;
 mod web;
 
-pub use account::{SAVED_KEY, account, account_in_folder, default_account};
+pub use account::{SAVED_KEY, UNNAMED, account, account_in_folder, default_account};
 pub use agent::{Agent, agent, agents};
 pub use chat::{Chat, Given, Notify};
 pub use discover::discover;
 pub use event::{
-    Alternative, Background, Choice, Diff, Discovery, Event, Input, Inquiry, Kind, Merge, Part,
-    Permission, Pick, PlanStep, Progress, Question, Reply, Setting, Skipped, Slash, Standing, Tool,
-    ToolState, TrustRequest, Usage, Verdict, Worktree,
+    Allowance, Alternative, Background, Choice, Diff, Discovery, Event, Input, Inquiry, Kind,
+    Limit, LimitUnit, Limits, Merge, Part, Permission, Pick, PlanStep, Progress, Question, Reply,
+    Setting, Skipped, Slash, Standing, Tool, ToolState, TrustRequest, Usage, Verdict, Worktree,
 };
 pub use history::{import_saved, rename_saved, saved_conversation};
 pub use language::LanguageServers;
+pub use limits::allowance;
 pub use listing::harness_tools;
 pub use mcp::{command_line, command_words, mcp_servers};
 pub use omc_wire::Conversation;

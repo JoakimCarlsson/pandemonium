@@ -12,7 +12,7 @@ use pm_text::{Run, Shaper};
 use pm_theme::Theme;
 use pm_typography::TextOverflow;
 
-use crate::node::{Anchor, CaretShape, Mark, Node, Paint};
+use crate::node::{Anchor, CaretShape, Mark, Node, Paint, Rings};
 use crate::retain;
 use crate::select::{DrawnPiece, Pieces, TextPiece, TextSelection};
 use crate::tooltip::{self, Showing};
@@ -430,14 +430,8 @@ impl Frame<'_> {
         if let Some(name) = node.icon {
             self.icon(name, &computed, rect, content, opacity);
         }
-        if let Some((share, width, color, track)) = node.arc {
-            self.arc(
-                (share, width, color, track),
-                &computed,
-                rect,
-                content,
-                opacity,
-            );
+        if let Some(rings) = &node.arc {
+            self.arc(rings, &computed, rect, content, opacity);
         }
         if let Some(picture) = &node.picture {
             let inset = computed.layout.spacing.padding;
@@ -822,35 +816,42 @@ impl Frame<'_> {
         }
     }
 
-    /// Paints a ring in the largest square that fits the content area of the box at `rect`: the track all round, and over it the filled part.
+    /// Paints rings in the largest square that fits the content area of the box at `rect`, the first outermost: each one's track all round, and over it the filled part. A ring that would be thinner than nothing is left out.
     fn arc(
         &mut self,
-        arc: (f32, f32, Color, Color),
+        rings: &Rings,
         computed: &ComputedStyle,
         rect: Rect,
         world: Affine,
         opacity: f32,
     ) {
-        let (share, width, color, track) = arc;
         let inset = computed.layout.spacing.padding;
         let across =
             (rect.width - inset.left - inset.right).min(rect.height - inset.top - inset.bottom);
         let (x, y) = world.apply(rect.x + inset.left, rect.y + inset.top);
-        let bounds = Rect::new(x, y, across, across);
         let theme = self.theme;
-        self.list.push(Quad::arc(
-            bounds,
-            track.resolve(theme).alpha(opacity),
-            width,
-            1.0,
-        ));
-        if share > 0.0 {
+        let step = rings.width + rings.gap;
+        for (index, (share, color)) in rings.filled.iter().enumerate() {
+            let shrink = step * index as f32;
+            let side = across - 2.0 * shrink;
+            if side < 2.0 * rings.width {
+                break;
+            }
+            let bounds = Rect::new(x + shrink, y + shrink, side, side);
             self.list.push(Quad::arc(
                 bounds,
-                color.resolve(theme).alpha(opacity),
-                width,
-                share,
+                rings.track.resolve(theme).alpha(opacity),
+                rings.width,
+                1.0,
             ));
+            if *share > 0.0 {
+                self.list.push(Quad::arc(
+                    bounds,
+                    color.resolve(theme).alpha(opacity),
+                    rings.width,
+                    *share,
+                ));
+            }
         }
     }
 

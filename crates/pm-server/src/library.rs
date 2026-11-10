@@ -21,8 +21,11 @@ pub(crate) fn withheld() -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Every customization the harness gives an agent in the project at `directory`, turned off or not.
+/// Every customization the harness gives an agent in the project at `directory`, turned off or not; only the reader's own and the built-in ones when `directory` is empty, as no project is open.
 pub(crate) fn items(directory: &Path) -> Vec<Item> {
+    if directory.as_os_str().is_empty() {
+        return pm_agent_library::discover_own();
+    }
     pm_agent_library::discover(directory)
 }
 

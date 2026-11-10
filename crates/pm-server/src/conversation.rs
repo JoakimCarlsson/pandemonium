@@ -462,7 +462,8 @@ mod tests {
         assert!(!kept_on_disk(&Event::Commands(Vec::new())));
         assert!(!kept_on_disk(&Event::Used(pm_harness::Usage {
             used: 1,
-            size: 2
+            size: 2,
+            written: 0,
         })));
         assert!(kept_on_disk(&prompted("x", 1, true)));
         assert!(kept_on_disk(&Event::Rewound { turn: 0 }));
@@ -490,7 +491,14 @@ mod tests {
         let log: Vec<(u64, Event)> = vec![
             (1, Event::Settings(vec![setting("model", "old")])),
             (2, Event::Commands(vec![slash("old")])),
-            (3, Event::Used(pm_harness::Usage { used: 1, size: 2 })),
+            (
+                3,
+                Event::Used(pm_harness::Usage {
+                    used: 1,
+                    size: 2,
+                    written: 0,
+                }),
+            ),
         ];
         let saved = pm_harness::Conversation {
             offered: vec![setting("model", "new")],
@@ -530,7 +538,14 @@ mod tests {
             (10, Event::Finished(Some("boom".to_owned()))),
             (11, prompted("four", 0, false)),
             (12, said("x")),
-            (13, Event::Used(pm_harness::Usage { used: 1, size: 500 })),
+            (
+                13,
+                Event::Used(pm_harness::Usage {
+                    used: 1,
+                    size: 500,
+                    written: 0,
+                }),
+            ),
         ];
         let imported = to_import(&log, "Old").unwrap();
         let ends: Vec<(&str, &str, Option<&str>)> = imported

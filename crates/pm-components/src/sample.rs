@@ -601,6 +601,8 @@ pub struct Session {
     pub shells: Vec<Shell>,
     /// How full the context is, once the agent has said.
     pub context: Option<pm_harness::Usage>,
+    /// How much of the account's allowance the provider says is used, once it has said.
+    pub limits: Option<pm_harness::Limits>,
     /// Whether the window has lost its connection to the session's server, so that what its agent does is not heard until the connection is made anew.
     pub out_of_reach: bool,
 }
@@ -646,6 +648,7 @@ impl Session {
             commits: Vec::new(),
             settings: Vec::new(),
             context: None,
+            limits: None,
             commands: Vec::new(),
             login: None,
             signed_out: None,

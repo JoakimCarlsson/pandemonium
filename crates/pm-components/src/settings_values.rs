@@ -34,6 +34,25 @@ const MODES: &[&str] = &["Agent's own", "Ask", "Plan", "Run freely"];
 /// The ids the harness gives the modes, in the order of [`MODES`]; nothing for the agent's own.
 const MODE_IDS: [Option<&str>; 4] = [None, Some("default"), Some("plan"), Some("yolo")];
 
+/// The efforts a new conversation can start at, as the choices name them.
+const EFFORTS: &[&str] = &["Auto", "Low", "Medium", "High", "X-high", "Max"];
+
+/// The ids the harness gives the efforts, in the order of [`EFFORTS`]; nothing to leave it to the harness.
+const EFFORT_IDS: [Option<&str>; 6] = [
+    None,
+    Some("low"),
+    Some("medium"),
+    Some("high"),
+    Some("xhigh"),
+    Some("max"),
+];
+
+/// The prompt cache lifetimes, as the choices name them.
+const CACHES: &[&str] = &["5 minutes", "1 hour"];
+
+/// The ids the harness gives the prompt cache lifetimes, in the order of [`CACHES`].
+const CACHE_IDS: [&str; 2] = ["5m", "1h"];
+
 /// The presets of keys, as the choices name them, in the order of [`Preset::ALL`].
 const PRESETS: &[&str] = &[
     Preset::Pandemonium.title(),
@@ -361,6 +380,17 @@ impl Setting {
                 MODES,
                 place_of(&MODE_IDS, &machine.agents.permission_mode.as_deref()),
             ),
+            Self::Effort => Control::Choice(
+                EFFORTS,
+                place_of(&EFFORT_IDS, &machine.agents.effort.as_deref()),
+            ),
+            Self::Memory => Control::Switch(machine.agents.memory),
+            Self::Checkpoints => Control::Switch(machine.agents.checkpoints),
+            Self::PromptCache => {
+                Control::Choice(CACHES, place_of(&CACHE_IDS, &machine.agents.cache.as_str()))
+            }
+            Self::CacheWarming => Control::Switch(machine.agents.cache_warming),
+            Self::PlanAutosave => Control::Switch(machine.agents.plan_autosave),
             Self::OnFinish => Control::Choice(
                 &["Nothing", "Notify", "Open review"],
                 place_of(
@@ -622,6 +652,14 @@ impl Setting {
             Self::PermissionMode => {
                 machine.agents.permission_mode = chosen(&MODE_IDS, option).map(str::to_owned);
             }
+            Self::Effort => {
+                machine.agents.effort = chosen(&EFFORT_IDS, option).map(str::to_owned);
+            }
+            Self::Memory => machine.agents.memory ^= true,
+            Self::Checkpoints => machine.agents.checkpoints ^= true,
+            Self::PromptCache => machine.agents.cache = chosen(&CACHE_IDS, option).to_owned(),
+            Self::CacheWarming => machine.agents.cache_warming ^= true,
+            Self::PlanAutosave => machine.agents.plan_autosave ^= true,
             Self::OnFinish => {
                 let finishes = [Finish::Nothing, Finish::Notify, Finish::OpenReview];
                 window.agents.on_finish = chosen(&finishes, option);
@@ -1098,6 +1136,12 @@ impl Setting {
                     .permission_mode
                     .clone_from(&kept.agents.permission_mode);
             }
+            Self::Effort => machine.agents.effort.clone_from(&kept.agents.effort),
+            Self::Memory => machine.agents.memory = kept.agents.memory,
+            Self::Checkpoints => machine.agents.checkpoints = kept.agents.checkpoints,
+            Self::PromptCache => machine.agents.cache.clone_from(&kept.agents.cache),
+            Self::CacheWarming => machine.agents.cache_warming = kept.agents.cache_warming,
+            Self::PlanAutosave => machine.agents.plan_autosave = kept.agents.plan_autosave,
             Self::OnFinish => window.agents.on_finish = own.agents.on_finish,
             Self::Notification => window.agents.notification = own.agents.notification,
             Self::DefaultServer => {

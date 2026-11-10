@@ -198,6 +198,13 @@ fn location_menu(state: &WorkspaceState) -> Node {
 
 /// The menu of the logins of the chosen agent: its own, each one added, and adding another.
 fn account_menu(state: &WorkspaceState) -> Node {
+    /// What the menu says under an account: how much of its allowance is used, when the provider has said.
+    fn spoken(state: &WorkspaceState, login: Option<&str>) -> String {
+        state
+            .allowance_of(state.agent_now(), login)
+            .and_then(crate::usage::summary)
+            .unwrap_or_default()
+    }
     let used = state.login_in_use();
     let logins = state.logins_here();
     let mut menu = Popover::new()
@@ -205,14 +212,14 @@ fn account_menu(state: &WorkspaceState) -> Node {
         .heading("Account", None)
         .row(
             state.default_account().unwrap_or("Not signed in"),
-            "",
+            &spoken(state, None),
             used.is_none(),
             FocusId(ACCOUNT_BASE),
         );
     for (position, (id, name)) in logins.iter().enumerate() {
         menu = menu.row(
             name,
-            "",
+            &spoken(state, Some(id)),
             used == Some(*id),
             FocusId(ACCOUNT_BASE + 1 + position as u64),
         );
@@ -627,7 +634,13 @@ pub fn composer(
         ));
     }
     let strip = strip.child(spacer());
-    let strip = strip.children(session.and_then(usage::context_ring));
+    let strip = strip.children(match session {
+        Some(session) => usage::usage_rings(session),
+        None => usage::rings_of(
+            None,
+            state.allowance_of(state.agent, state.login_for_new_work(state.agent)),
+        ),
+    });
     let strip = strip.children(send_buttons(working, empty));
     let prompt_box = node()
         .styles([

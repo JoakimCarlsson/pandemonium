@@ -8,14 +8,9 @@ use pm_ui::Node;
 use crate::extensions::{group, pickable, row};
 use crate::parts::line;
 use crate::settings::Section;
+use crate::settings_ids::LANGUAGE_ROWS;
 use crate::settings_pages::page_rows;
 use crate::state::WorkspaceState;
-
-/// The first of the buttons installing or removing a language, in the order the page lists them; the rest follow it.
-const LANGUAGE_ROW_BASE: u64 = 20_005_500;
-
-/// One past the last of them.
-const LANGUAGE_ROW_END: u64 = 20_006_500;
 
 impl WorkspaceState {
     /// The languages the page lists: those installed first, then those that can be, each by name.
@@ -27,10 +22,9 @@ impl WorkspaceState {
 
     /// Carries out pressing `id` on the languages page, installing or removing a language, and says whether it was something of it.
     pub(crate) fn languages_pressed(&mut self, id: FocusId) -> bool {
-        if !(LANGUAGE_ROW_BASE..LANGUAGE_ROW_END).contains(&id.0) {
+        let Some(place) = LANGUAGE_ROWS.index_of(id) else {
             return false;
-        }
-        let place = (id.0 - LANGUAGE_ROW_BASE) as usize;
+        };
         if let Some(extension) = self.settings_languages().get(place).copied().cloned() {
             self.install_or_remove(&extension);
         }
@@ -38,12 +32,15 @@ impl WorkspaceState {
     }
 }
 
-/// The body of the languages page, `room` logical pixels across.
+/// The body of the languages page, `room` logical pixels across; languages past the room for their buttons are left out.
 pub(crate) fn body(state: &WorkspaceState, room: f32) -> Vec<Node> {
     let mut installed = Vec::new();
     let mut available = Vec::new();
     for (place, extension) in state.settings_languages().into_iter().enumerate() {
-        let built = row(extension, FocusId(LANGUAGE_ROW_BASE + place as u64));
+        let Some(action) = LANGUAGE_ROWS.id(place) else {
+            break;
+        };
+        let built = row(extension, action);
         if extension.installed {
             installed.push(built);
         } else {

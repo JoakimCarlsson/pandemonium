@@ -976,6 +976,18 @@ impl Screen {
         }
     }
 
+    /// The screen after the provider said how much of its allowance the account of the agent at `agent` has used.
+    pub fn with_allowance(
+        self,
+        agent: usize,
+        login: Option<String>,
+        limits: Option<pm_harness::Limits>,
+    ) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_allowance(agent, login, limits)),
+        }
+    }
+
     /// The screen with `paths` mentioned in the prompt, while the workspace is showing.
     pub fn with_attachments(self, paths: &[String]) -> Self {
         match self {

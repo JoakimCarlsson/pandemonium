@@ -4,8 +4,8 @@ use std::cell::RefCell;
 
 use pm_renderer::Rect;
 use pm_style::{
-    Radius, Role, bg, border, border_color, flex, items_start, leading_ratio, px, py, rounded,
-    text_color, text_px,
+    Radius, Role, bg, border, border_color, flex, flex_col, items_start, leading_ratio, px, py,
+    rounded, text_color, text_px,
 };
 
 use crate::node::{Node, node, text};
@@ -65,7 +65,7 @@ pub(crate) fn settle(asked: Option<(Rect, String)>, now: f32) -> Showing {
     })
 }
 
-/// The tooltip saying `words`, in a box that holds it at its own size: a small bordered card.
+/// The tooltip saying `words`, in a box that holds it at its own size: a small bordered card, with a line of text for each line of `words`.
 pub(crate) fn holder(words: &str) -> Node {
     node().styles([flex(), items_start()]).child(
         node()
@@ -77,10 +77,13 @@ pub(crate) fn holder(words: &str) -> Node {
                 border_color(Role::Border),
                 bg(Role::Surface),
             ])
-            .child(text(words.to_owned()).styles([
-                text_px(12),
-                leading_ratio(1.4),
-                text_color(Role::Text),
-            ])),
+            .styles([flex(), flex_col()])
+            .children(words.lines().map(|line| {
+                text(line.to_owned()).styles([
+                    text_px(12),
+                    leading_ratio(1.4),
+                    text_color(Role::Text),
+                ])
+            })),
     )
 }

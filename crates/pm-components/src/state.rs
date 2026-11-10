@@ -854,19 +854,49 @@ pub enum Outgoing {
     Library {
         /// The agent, by position.
         agent: usize,
-        /// The project, by position.
-        project: usize,
+        /// The project, by position, or nothing when none is open.
+        project: Option<usize>,
         /// The machine, or nothing for this one.
         host: Option<String>,
-        /// The project's folder.
+        /// The project's folder, or empty when none is open.
         directory: String,
+    },
+    /// Makes one of crab's prompt files, empty, when it is not there yet, for the project at `project`, and opens it.
+    CreatePromptFile {
+        /// The project, by position, or nothing when none is open.
+        project: Option<usize>,
+        /// The machine, or nothing for this one.
+        host: Option<String>,
+        /// The project's folder, or empty when none is open.
+        directory: String,
+        /// Which file.
+        file: pm_protocol::library::PromptFile,
+        /// Whether it goes in the project's folder or the reader's own.
+        scope: pm_protocol::library::Scope,
+    },
+    /// Writes a new skill, instruction file or agent definition from a template for the project at `project`.
+    CreateCustomization {
+        /// The project, by position, or nothing when none is open.
+        project: Option<usize>,
+        /// The machine, or nothing for this one.
+        host: Option<String>,
+        /// The project's folder, or empty when none is open.
+        directory: String,
+        /// What it is.
+        kind: pm_protocol::library::Kind,
+        /// Whether it goes in the project's folder or the reader's own.
+        scope: pm_protocol::library::Scope,
+        /// Its name.
+        name: String,
+        /// What it is for.
+        description: String,
     },
     /// Lists the tools the agent at `agent` is given, on the machine of the project at `project`.
     ToolSets {
         /// The agent, by position.
         agent: usize,
-        /// The project, by position.
-        project: usize,
+        /// The project, by position, or nothing when none is open.
+        project: Option<usize>,
         /// The machine, or nothing for this one.
         host: Option<String>,
     },
@@ -883,7 +913,7 @@ pub enum Outgoing {
         path: String,
     },
     /// Has every server the window reaches keep these as what the reader set up for the work it does on its machine.
-    SaveMachineSettings(pm_protocol::MachineSettings),
+    SaveMachineSettings(Box<pm_protocol::MachineSettings>),
     /// Tells the reader something happened while they may be looking elsewhere, in the way they chose.
     Notify {
         /// What happened, in a few words.
@@ -1138,6 +1168,13 @@ pub enum Outgoing {
         /// The folder.
         directory: String,
     },
+    /// Asks how much of its allowance the account of the agent at `agent`, signed in under the login `login`, has used.
+    Allowance {
+        /// The agent, by position.
+        agent: usize,
+        /// The added account, by id, or nothing for the agent's own login.
+        login: Option<String>,
+    },
     /// Asks the agent at `agent` on `host` what it lets the reader change and offers behind a slash.
     Discover {
         /// The agent, by position.
@@ -1165,6 +1202,8 @@ pub enum Outgoing {
         agent: usize,
         /// The key, or nothing to forget the saved one.
         key: Option<String>,
+        /// The added account the key belongs to, by id, or nothing for the agent's own login.
+        login: Option<String>,
     },
     /// Signs in again as the account of the open session.
     SignInSession {
@@ -1856,6 +1895,10 @@ pub struct WorkspaceState {
         std::collections::VecDeque<std::sync::Arc<crate::choices::FileListing>>,
     /// Who each agent is signed in as, by the agent's position, once it has been looked up.
     pub identities: Vec<Option<Option<String>>>,
+    /// How much of its allowance each account has used, by the agent's position and the added login's id, or nothing for the agent's own login, once the provider has said.
+    pub allowances: std::collections::HashMap<(usize, Option<String>), pm_harness::Limits>,
+    /// When each account's allowance was last asked after, by the agent's position and the login, in Unix milliseconds.
+    pub allowance_asked: std::collections::HashMap<(usize, Option<String>), u64>,
     /// Who each agent is signed in as in its own default folder, by the agent's position, once it has been looked up.
     pub defaults: Vec<Option<Option<String>>>,
     /// The named logins the reader has added: the agent's id, the folder name and what it is called.
@@ -2062,6 +2105,8 @@ impl WorkspaceState {
             file_listings: Default::default(),
             identities: vec![None; builtin.len()],
             defaults: vec![None; builtin.len()],
+            allowances: Default::default(),
+            allowance_asked: Default::default(),
             logins: Vec::new(),
             in_use: Vec::new(),
             menu_scroll: 0.0,
@@ -2447,7 +2492,8 @@ impl WorkspaceState {
                 self.menu_scroll = 0.0;
             }
             id if crate::settings_servers::is_form_field(id) => self.server_form_edited(id, edit),
-            id if crate::settings_agents::is_key_field(id) => self.key_edited(edit),
+            id if crate::settings_drafts::is_draft_field(id) => self.draft_edited(id, edit),
+            id if crate::settings_agents::is_key_field(id) => self.key_edited(id, edit),
             id if crate::settings_pages::is_setting_field(id) => self.setting_edited(id, edit),
             id if crate::settings_machines::is_machine_field(id) => self.machine_edited(id, edit),
             crate::settings::SETTINGS_FIND => {
@@ -2511,7 +2557,8 @@ impl WorkspaceState {
             ADDER_FIELD => self.adder.as_ref().map(|open| &open.field),
             PICKER_FIELD => self.folder_picker.as_ref().map(|open| &open.field),
             id if crate::settings_servers::is_form_field(id) => self.server_form_field(id),
-            id if crate::settings_agents::is_key_field(id) => self.key_field(),
+            id if crate::settings_drafts::is_draft_field(id) => self.draft_field(id),
+            id if crate::settings_agents::is_key_field(id) => self.key_field(id),
             id if crate::settings_pages::is_setting_field(id) => self.setting_field(id),
             id if crate::settings_machines::is_machine_field(id) => self.machine_field(id),
             crate::settings::SETTINGS_FIND => Some(&self.settings_page.find),
@@ -2550,6 +2597,7 @@ impl WorkspaceState {
             || id == ADDER_FIELD
             || id == PICKER_FIELD
             || crate::settings_servers::is_form_field(id)
+            || crate::settings_drafts::is_draft_field(id)
             || crate::settings_agents::is_key_field(id)
             || crate::settings_pages::is_setting_field(id)
             || crate::settings_machines::is_machine_field(id)
@@ -2583,11 +2631,16 @@ impl WorkspaceState {
             PICKER_FIELD => PICKER_SUBMIT,
             crate::settings::SETTINGS_SEARCH => crate::settings::SETTINGS_SEARCH_GO,
             id if crate::settings_servers::is_form_field(id) => crate::settings::SETTINGS_SAVE,
-            id if crate::settings_agents::is_key_field(id) => crate::settings_agents::KEY_SAVE,
+            id if crate::settings_drafts::is_draft_field(id) => {
+                crate::settings_drafts::DRAFT_CREATE
+            }
+            id if crate::settings_agents::is_key_field(id) => {
+                crate::settings_agents::key_submit(id)
+            }
             id if crate::settings_machines::is_machine_field(id) => {
                 crate::settings_machines::MACHINE_SAVE
             }
-            crate::settings_catalog::LIST_FIELD => crate::settings_catalog::LIST_ADD,
+            id if let Some(submit) = crate::settings_pages::list_submit_of(id) => submit,
             id if crate::settings_pages::is_setting_field(id)
                 || id == crate::settings::SETTINGS_FIND
                 || id == crate::settings::SETTINGS_KEYMAP_FIND =>
@@ -2810,6 +2863,7 @@ impl WorkspaceState {
             self.rescope_browser();
         } else if let Some(index) = position(AGENT_BASE, self.agent_slots()) {
             self.agent = index;
+            self.ask_allowance(index, true);
         } else if let Some(index) = position(CHOICE_BASE, self.choices()) {
             self.choose(index);
         } else if let Some(index) = position(HURRY_BASE, self.queued_open()) {

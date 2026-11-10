@@ -14,37 +14,29 @@ use crate::button::Variant;
 use crate::input::Input;
 use crate::parts::{clipped, line};
 use crate::settings::Section;
+use crate::settings_ids::{MACHINE_EDITS, MACHINE_REACHES, MACHINE_REMOVES, SINGLES};
 use crate::settings_pages::page_rows;
 use crate::settings_row::choices;
 use crate::size::Size;
 use crate::state::WorkspaceState;
 
 /// Opens the form for adding a server.
-pub const MACHINE_ADD: FocusId = FocusId(20_000_070);
+pub const MACHINE_ADD: FocusId = SINGLES.at(70);
 
 /// Keeps what the form holds.
-pub const MACHINE_SAVE: FocusId = FocusId(20_000_071);
+pub const MACHINE_SAVE: FocusId = SINGLES.at(71);
 
 /// Puts the form away without keeping it.
-pub const MACHINE_CANCEL: FocusId = FocusId(20_000_072);
+pub const MACHINE_CANCEL: FocusId = SINGLES.at(72);
 
 /// The box the form's name is written in.
-pub const MACHINE_NAME: FocusId = FocusId(20_000_073);
+pub const MACHINE_NAME: FocusId = SINGLES.at(73);
 
 /// The box the form's address is written in.
-pub const MACHINE_ADDRESS: FocusId = FocusId(20_000_074);
+pub const MACHINE_ADDRESS: FocusId = SINGLES.at(74);
 
 /// The box the form's token is written in.
-pub const MACHINE_TOKEN: FocusId = FocusId(20_000_075);
-
-/// The first of the choices of how the form's server is reached; the others follow it.
-const MACHINE_REACH_BASE: u64 = 20_000_076;
-
-/// The first of the buttons changing or taking out a server; each server has two after its own base, its place among them times two.
-const MACHINE_ROW_BASE: u64 = 20_005_000;
-
-/// One past the last of them.
-const MACHINE_ROW_END: u64 = 20_005_400;
+pub const MACHINE_TOKEN: FocusId = SINGLES.at(75);
 
 /// How the servers can be reached, in the order the form offers them.
 const REACHES: [Reach; 5] = [
@@ -54,6 +46,11 @@ const REACHES: [Reach; 5] = [
     Reach::Container,
     Reach::Tunnel,
 ];
+
+const _: () = assert!(
+    REACHES.len() as u64 <= MACHINE_REACHES.len(),
+    "MACHINE_REACHES has no room for every way a server is reached"
+);
 
 /// A server being described: which one of the list it replaces, and the boxes it is written in.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -114,27 +111,22 @@ impl WorkspaceState {
             }
             MACHINE_CANCEL => self.settings_page.server_form = None,
             MACHINE_SAVE => self.save_machine(),
-            FocusId(number)
-                if (MACHINE_REACH_BASE..MACHINE_REACH_BASE + REACHES.len() as u64)
-                    .contains(&number) =>
-            {
-                if let Some(form) = self.settings_page.server_form.as_mut() {
-                    form.reach = REACHES[(number - MACHINE_REACH_BASE) as usize];
+            _ if let Some(option) = MACHINE_REACHES.index_of(id) => {
+                if let (Some(form), Some(reach)) =
+                    (self.settings_page.server_form.as_mut(), REACHES.get(option))
+                {
+                    form.reach = *reach;
                 }
             }
-            FocusId(number) if (MACHINE_ROW_BASE..MACHINE_ROW_END).contains(&number) => {
-                let index = ((number - MACHINE_ROW_BASE) / 2) as usize;
-                if (number - MACHINE_ROW_BASE).is_multiple_of(2) {
-                    self.settings_page.server_form = self
-                        .window
-                        .servers
-                        .known
-                        .get(index)
-                        .map(|server| MachineForm::holding(Some(index), server));
-                } else {
-                    self.remove_machine(index);
-                }
+            _ if let Some(index) = MACHINE_EDITS.index_of(id) => {
+                self.settings_page.server_form = self
+                    .window
+                    .servers
+                    .known
+                    .get(index)
+                    .map(|server| MachineForm::holding(Some(index), server));
             }
+            _ if let Some(index) = MACHINE_REMOVES.index_of(id) => self.remove_machine(index),
             _ => return false,
         }
         true
@@ -231,7 +223,7 @@ fn form_node(form: &MachineForm) -> Node {
             .iter()
             .position(|held| *held == form.reach)
             .unwrap_or(0),
-        |option| FocusId(MACHINE_REACH_BASE + option as u64),
+        |option| MACHINE_REACHES.id(option),
     );
     let mut fields = node()
         .styles([flex(), flex_col(), gap(3), p(3)])
@@ -274,7 +266,7 @@ fn form_node(form: &MachineForm) -> Node {
     )
 }
 
-/// The row of a server: its name over how it is reached, and its buttons when it can be changed.
+/// The row of a server: its name over how it is reached, and its buttons when it can be changed and the page has names for them.
 fn machine_row(name: &str, reach: String, buttons: Option<usize>) -> Node {
     let words = node()
         .styles([flex(), flex_col(), gap(0.5), flex_1(), min_w_px(0)])
@@ -295,18 +287,18 @@ fn machine_row(name: &str, reach: String, buttons: Option<usize>) -> Node {
         Some(index) => row.child(
             node()
                 .styles([flex(), items_center(), gap(1), flex_none()])
-                .child(
-                    Button::new("Edit", FocusId(MACHINE_ROW_BASE + index as u64 * 2))
+                .children(MACHINE_EDITS.id(index).map(|edit| {
+                    Button::new("Edit", edit)
                         .variant(Variant::Ghost)
                         .size(Size::Sm)
-                        .build(),
-                )
-                .child(
-                    Button::new("Remove", FocusId(MACHINE_ROW_BASE + index as u64 * 2 + 1))
+                        .build()
+                }))
+                .children(MACHINE_REMOVES.id(index).map(|remove| {
+                    Button::new("Remove", remove)
                         .variant(Variant::Ghost)
                         .size(Size::Sm)
-                        .build(),
-                ),
+                        .build()
+                })),
         ),
         None => row,
     }

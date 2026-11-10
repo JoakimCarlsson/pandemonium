@@ -67,6 +67,11 @@ pub enum Response {
     },
     /// What an agent said about itself.
     Discovery(Discovery),
+    /// How much of its allowance an account has used; nothing when the provider meters none that can be read or does not say.
+    Allowance {
+        /// What the account has used, when the provider said.
+        limits: Option<pm_harness::Allowance>,
+    },
     /// The files of a folder.
     Files {
         /// Their paths, from the root of the repository.
@@ -577,4 +582,35 @@ pub enum Response {
     },
     /// A session was not closed because its worktree has changes that are not committed; closing it with `discard` removes them.
     Uncommitted,
+    /// A file was written for the reader to fill in.
+    Created {
+        /// Its path on the server's machine.
+        path: String,
+    },
+}
+
+#[cfg(test)]
+/// Tests for how answers are written.
+mod tests {
+    use super::*;
+
+    /// An answer about an allowance is written and read back whether or not the provider said anything.
+    #[test]
+    fn an_allowance_answer_round_trips() {
+        let limits = pm_harness::Limits {
+            provider: "claude".to_owned(),
+            plan: None,
+            fetched_at_ms: 1,
+            limits: vec![pm_harness::Limit::new("5 hour")],
+        };
+        for answer in [
+            Response::Allowance { limits: None },
+            Response::Allowance {
+                limits: Some(pm_harness::Allowance(limits)),
+            },
+        ] {
+            let text = serde_json::to_string(&answer).unwrap();
+            assert_eq!(serde_json::from_str::<Response>(&text).unwrap(), answer);
+        }
+    }
 }

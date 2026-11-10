@@ -113,9 +113,9 @@ request with exactly one `response` carrying the same `id`.
 | `identity`     | `agent`, `login` (optional): a login id whose folder answers `selected`, instead of the one in use | `identity`      |
 | `set_accounts` | `logins`: `[{agent, id, name}]`, `in_use`: `[[agent, id]]`                                       | `done`          |
 | `set_session_account` | `session`, `login` (a login id, or `null` for the agent's own)                            | `done`          |
-| `sign_in`      | `agent`, `login` (optional): a login id, signed in under its own folder and never the agent's default one | `done`          |
+| `sign_in`      | `agent`, `login` (optional): a login id, signed in under its own folder and never the agent's default one; without it, the agent's default login, whichever is in use | `done`          |
 | `sign_in_session` | `session` | `done` |
-| `save_key`     | `agent`, `key` (optional): the API key to keep for an agent signed in with one, or `null` to forget it; a key in the agent's environment variable still wins | `done` |
+| `save_key`     | `agent`, `key` (optional), `login` (optional): the API key to keep for an agent signed in with one, or `null` to forget it, in the folder of the added login `login` or the agent's default one; a key in the agent's environment variable still wins | `done` |
 | `start_session`| `agent`, `repository`, `directory`, `title`, `base`, `settings`, `text`, `attachments`, `submodule`, `container` | `started`       |
 | `prompt`       | `session`, `text`, `attachments`, `now` (optional, `false` by default)                           | `done`          |
 | `remove_queued` | `session`, `queued`                                                                            | `done`          |
@@ -145,6 +145,8 @@ request with exactly one `response` carrying the same `id`.
 | `library`      | `agent`, `directory`                                                                             | `library`       |
 | `tool_sets`    | `agent`                                                                                          | `tool_sets`     |
 | `save_withheld`| `keys`: `[string]`                                                                               | `done`          |
+| `create_prompt_file` | `file` (`replace` or `append`), `scope` (`workspace` or `user`), `directory` (empty when no project is open) | `created`, with `path` |
+| `create_customization` | `kind` (`skill`, `instruction` or `agent`), `scope` (`workspace` or `user`), `name`, `description`, `directory` | `created`, with `path` |
 | `watch_folders`| `directories`: `[string]`                                                                       | `done`          |
 | `machine_settings`| none                                                                                          | `machine_settings` |
 | `save_machine_settings`| `settings`: `{git, history, agents, shell, languages, workspace, extensions, servers}`              | `done`          |
@@ -455,6 +457,21 @@ everything said of them, its submodules' paths written from `directory`.
   when it begins with `http://` or `https://`, and `env` is then the headers it
   is sent; otherwise it is the command that starts it, and `env` its environment.
   Every new session is started with the tool servers saved at that moment that are `enabled`; `description` and `website` are optional and `enabled` is true when missing.
+- **`create_customization`:** writes a new skill, instruction file or agent
+  definition on the server's machine from a short template, and answers
+  `created` with the `path` written. `name` is lowercase letters, digits and
+  hyphens. It goes in the harness's own folders, never Claude Code's or
+  Codex's: a `workspace` one under the project's `.oh-my-crab` folder and a
+  `user` one under crab's config folder (`~/.config/oh-my-crab`, or
+  `OMC_CONFIG_DIR`): `skills/<name>/SKILL.md`, `rules/<name>.md` or
+  `agents/<name>.md`, with `description` in its front matter, or as its first
+  line for instructions. It fails, writing nothing, when the file is already
+  there; hooks cannot be created this way.
+- **`create_prompt_file`:** makes crab's `SYSTEM.md` (`replace`), whose text
+  takes the place of crab's built-in instructions, or `APPEND_SYSTEM.md`
+  (`append`), added to the end of every prompt, in the same folders, empty
+  when it is not there yet, and answers `created` with its `path`. An empty
+  file changes nothing until something is written in it.
 - **`library`, `tool_sets`, `save_withheld`:** what an agent is given in a
   project, read on the server's machine from the folders the agent's product
   keeps it in, so a remote project lists the remote machine's files. `library`
@@ -504,10 +521,17 @@ everything said of them, its submodules' paths written from `directory`.
   time it is written with `write_file`, how many days it keeps it and how many
   megabytes of states one project may take up (30 days and 256 megabytes when
   not set). `agents` is
-  `{default_agent, permission_mode, hidden}`, each optional: the agent a client offers
+  `{default_agent, permission_mode, hidden, effort, memory, checkpoints, cache, cache_warming, plan_model, plan_autosave}`,
+  each optional: the agent a client offers
   first for new work, by id, the mode new sessions start in, and the ids of the
   agents a client leaves out when a new session is started; a hidden agent still
-  runs its sessions and keeps its accounts. `shell` is
+  runs its sessions and keeps its accounts. `effort` (`low`, `medium`, `high`,
+  `xhigh` or `max`; the harness's own when not set), `memory` (default `true`),
+  `checkpoints` (default `true`), `cache` (`5m` or `1h`, default `5m`) and
+  `cache_warming` (default `true`) and `plan_autosave` (default `false`)
+  are the settings every agent's conversation
+  starts with; a choice saved with a conversation wins over them. `plan_model`
+  is no longer used and is ignored. `shell` is
   `{program, arguments}`, the shell `open_terminal` starts when `program` is not
   empty. `extensions` maps an extension's folder name to `{granted}`, the
   capabilities it was allowed; `save_machine_settings` does not change it, only

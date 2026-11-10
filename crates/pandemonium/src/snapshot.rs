@@ -283,6 +283,8 @@ pub enum Shot {
     QueuedEditing,
     /// A conversation with the context ring in the prompt box.
     Usage,
+    /// The page for starting work, with how much of its allowance each agent's account has used.
+    Allowances,
     /// A conversation with the model menu open.
     Picking,
     /// The page for starting work with the menu of a long list of models open, narrowed with a box.
@@ -361,6 +363,8 @@ pub enum Shot {
     SettingsMachine(bool),
     /// The settings window on Appearance set compact with interface text at 15 pixels, at its narrowest when the flag is set.
     SettingsCompact(bool),
+    /// The settings window on Skills with the form for a new skill filled in for every project, at its narrowest when the flag is set.
+    SettingsDraft(bool),
     /// The settings panel on the MCP servers inside Agents, with one installed, the registry's offers and the menu of the installed one open.
     SettingsMcp,
     /// The settings panel on the Agent Servers inside Agents, with the form for adding one open.
@@ -2541,6 +2545,7 @@ impl Shot {
                 | Self::SettingsMachine(_)
                 | Self::SettingsCompact(_)
                 | Self::SettingsMcp
+                | Self::SettingsDraft(_)
                 | Self::SettingsForm
                 | Self::SettingsAccounts(_)
                 | Self::SettingsAccountsScrolled
@@ -2559,13 +2564,14 @@ impl Shot {
                 | Self::SettingsSearch(true)
                 | Self::SettingsPicker(true)
                 | Self::SettingsMachine(true)
+                | Self::SettingsDraft(true)
                 | Self::SettingsCompact(true)
                 | Self::SettingsAccounts(true)
                 | Self::SettingsAccountsCloud(true)
         )
     }
 
-    /// The settings shot `name` names: `settings` for the first section, `settings-` and a section's name for another, `settings-search`, `settings-picker`, `settings-machine`, `settings-compact` or `settings-accounts-cloud`, each with `-narrow` after it for the window at its smallest.
+    /// The settings shot `name` names: `settings` for the first section, `settings-` and a section's name for another, `settings-search`, `settings-picker`, `settings-machine`, `settings-compact`, `settings-skills-new` or `settings-accounts-cloud`, each with `-narrow` after it for the window at its smallest.
     pub fn settings_named(name: &str) -> Option<Self> {
         let rest = name.strip_prefix("settings")?;
         let (rest, narrow) = match rest.strip_suffix("-narrow") {
@@ -2587,6 +2593,7 @@ impl Shot {
             "accounts-hidden" => Some(Self::SettingsAccountsHidden),
             "accounts-key" => Some(Self::SettingsAccountsKey),
             "mcp" => Some(Self::SettingsMcp),
+            "skills-new" => Some(Self::SettingsDraft(narrow)),
             slug => SETTINGS_SHOTS
                 .iter()
                 .find(|(held, _)| *held == slug)
@@ -3260,9 +3267,10 @@ impl Shot {
                     state
                         .after(SETTINGS)
                         .after(Section::AgentServers.id())
-                        .after(FocusId(
-                            pm_components::settings_agents::KEY_SET_BASE + openrouter as u64,
-                        ))
+                        .after(
+                            pm_components::settings_agents::key_set_id(openrouter)
+                                .unwrap_or(SETTINGS),
+                        )
                         .scrolled_settings(420.0, 420.0),
                 )
             }
@@ -3403,16 +3411,66 @@ impl Shot {
                 }
                 Screen::Workspace(state)
             }
-            Self::Usage => Screen::Workspace(
-                live(Turn::Finished)
+            Self::Usage => {
+                let state = live(Turn::Finished);
+                let last = state.sessions.len() - 1;
+                Screen::Workspace(
+                state
                     .heard(
-                        0,
+                        last,
                         Event::Used(pm_harness::Usage {
                             used: 84_000,
                             size: 200_000,
+                            written: 0,
                         }),
                     )
-            ),
+                    .heard(
+                        last,
+                        Event::Limits(pm_harness::Allowance(pm_harness::Limits {
+                            provider: "claude".to_owned(),
+                            plan: None,
+                            fetched_at_ms: 0,
+                            limits: vec![
+                                {
+                                    let mut limit = pm_harness::Limit::new("5 hour");
+                                    limit.window = Some("5h".to_owned());
+                                    limit.used_fraction = Some(0.15);
+                                    limit.resets_at_ms = Some(3 * 3_600_000);
+                                    limit
+                                },
+                                {
+                                    let mut limit = pm_harness::Limit::new("7 day");
+                                    limit.window = Some("7d".to_owned());
+                                    limit.used_fraction = Some(0.3);
+                                    limit.resets_at_ms = Some(2 * 86_400_000);
+                                    limit
+                                },
+                            ],
+                        })),
+                    )
+            )
+            }
+            Self::Allowances => {
+                let used = |five: f64, week: f64| {
+                    let window = |label: &str, name: &str, fraction: f64| {
+                        let mut limit = pm_harness::Limit::new(label);
+                        limit.window = Some(name.to_owned());
+                        limit.used_fraction = Some(fraction);
+                        limit
+                    };
+                    Some(pm_harness::Limits {
+                        provider: "claude".to_owned(),
+                        plan: None,
+                        fetched_at_ms: 0,
+                        limits: vec![window("5 hour", "5h", five), window("7 day", "7d", week)],
+                    })
+                };
+                Screen::Workspace(
+                    WorkspaceState::new(&projects())
+                        .with_allowance(0, None, used(0.15, 0.3))
+                        .with_allowance(1, None, used(0.62, 0.8)),
+                )
+            }
             Self::Queued => Screen::Workspace(queued()),
             Self::QueuedLong => Screen::Workspace(queued_long()),
             Self::QueuedEditing => Screen::Workspace(
@@ -3541,7 +3599,11 @@ impl Shot {
             Self::SettingsPicker(narrow) => Screen::Workspace(
                 settings_sample()
                     .after(Section::Appearance.id())
-                    .after(SettingsCatalogue::CodeFont.id(OPEN_LIST))
+                    .after(
+                        SettingsCatalogue::CodeFont
+                            .id(OPEN_LIST)
+                            .unwrap_or(SETTINGS_FIND),
+                    )
                     .scrolled_settings(if narrow { 560.0 } else { 0.0 }, 2000.0),
             ),
             Self::SettingsCompact(_) => {
@@ -3562,6 +3624,25 @@ impl Shot {
                     .edited(MACHINE_NAME, Edit::Paste("Lab".to_owned()))
                     .edited(MACHINE_ADDRESS, Edit::Paste("100.64.0.9:6868".to_owned()))
                     .scrolled_settings(if narrow { 300.0 } else { 0.0 }, 2000.0),
+            ),
+            Self::SettingsDraft(narrow) => Screen::Workspace(
+                browser_settings_sample(Section::Skills)
+                    .after(pm_components::settings_drafts::DRAFT_NEW)
+                    .edited(
+                        pm_components::settings_drafts::DRAFT_NAME,
+                        Edit::Paste("ship-it".to_owned()),
+                    )
+                    .edited(
+                        pm_components::settings_drafts::DRAFT_DESCRIPTION,
+                        Edit::Paste("Tags a release once CI is green on every OS".to_owned()),
+                    )
+                    .after(
+                        pm_components::settings_drafts::draft_scope(
+                            pm_protocol::library::Scope::User,
+                        )
+                        .unwrap_or(pm_components::settings_drafts::DRAFT_NEW),
+                    )
+                    .scrolled_settings(if narrow { 260.0 } else { 0.0 }, 2000.0),
             ),
             Self::SettingsMcp => Screen::Workspace(
                 welcome()
@@ -3602,7 +3683,14 @@ impl Shot {
                             (agent.clone(), "a2".to_owned(), "Account 2".to_owned()),
                         ],
                         vec![(agent, "a1".to_owned())],
-                    );
+                    )
+                    .with_identity(
+                        0,
+                        Some("me@example.com".to_owned()),
+                        Some("work@example.com".to_owned()),
+                        Some("a1".to_owned()),
+                    )
+                    .with_identity(0, Some("me@example.com".to_owned()), None, Some("a2".to_owned()));
                 Screen::Workspace(if matches!(self, Self::SettingsAccountsScrolled) {
                     state.scrolled_settings(420.0, 420.0)
                 } else {
@@ -3810,9 +3898,17 @@ fn with_library_sample(state: WorkspaceState) -> WorkspaceState {
         ..Item::default()
     };
     let items = vec![
-        item(Kind::Skill, Scope::Workspace, "release-notes", "Writes the notes of a release from the commits since the last tag", inside(".claude/skills/release-notes/SKILL.md")),
+        item(Kind::Skill, Scope::Workspace, "release-notes", "Writes the notes of a release from the commits since the last tag", inside(".oh-my-crab/skills/release-notes/SKILL.md")),
         item(Kind::Skill, Scope::User, "commit", "Commit the changes made in this session on the current branch", "/home/me/.claude/skills/commit/SKILL.md".to_owned()),
-        item(Kind::Skill, Scope::BuiltIn, "frontend-design:frontend-design", "Guidance for distinctive, intentional visual design", "/home/me/.claude/plugins/cache/official/frontend-design/skills/frontend-design/SKILL.md".to_owned()),
+        item(Kind::Skill, Scope::Plugin, "frontend-design:frontend-design", "Guidance for distinctive, intentional visual design", "/home/me/.claude/plugins/cache/official/frontend-design/skills/frontend-design/SKILL.md".to_owned()),
+        Item {
+            applies: vec![pm_protocol::library::APPENDS_PROMPT.to_owned()],
+            ..item(Kind::Instruction, Scope::User, "~/.config/oh-my-crab/APPEND_SYSTEM.md", "", "/home/me/.config/oh-my-crab/APPEND_SYSTEM.md".to_owned())
+        },
+        Item {
+            applies: vec!["the whole project".to_owned()],
+            ..item(Kind::Instruction, Scope::Workspace, "AGENTS.md", "", inside("AGENTS.md"))
+        },
         Item {
             applies: vec!["the whole project".to_owned()],
             ..item(Kind::Instruction, Scope::Workspace, "CLAUDE.md", "", inside("CLAUDE.md"))
@@ -3840,6 +3936,20 @@ fn with_library_sample(state: WorkspaceState) -> WorkspaceState {
             ..item(Kind::Hook, Scope::Workspace, "Stop", "", inside(".claude/settings.json"))
         },
     ];
+    let items: Vec<Item> = items
+        .into_iter()
+        .map(|mut item| {
+            item.tool = if item.path.contains("oh-my-crab") || item.path.is_empty() {
+                "crab"
+            } else if item.path.contains(".claude") || item.path.ends_with("CLAUDE.md") {
+                "Claude Code"
+            } else {
+                ""
+            }
+            .to_owned();
+            item
+        })
+        .collect();
     let tool = |name: &str, description: &str| ToolEntry {
         name: name.to_owned(),
         description: description.to_owned(),
@@ -3893,8 +4003,14 @@ fn with_library_sample(state: WorkspaceState) -> WorkspaceState {
     ];
     let agent = state.agent;
     let mut state = state
-        .with_library(0, agent, Some(Product::Claude), items, withheld.clone())
-        .with_tool_sets(0, agent, Some(Product::Claude), sets, withheld);
+        .with_library(
+            Some(0),
+            agent,
+            Some(Product::Claude),
+            items,
+            withheld.clone(),
+        )
+        .with_tool_sets(Some(0), agent, Some(Product::Claude), sets, withheld);
     state.settings_page.library.open_sets = vec!["github".to_owned()];
     state
 }
@@ -4174,6 +4290,7 @@ fn restored() -> WorkspaceState {
         Event::Used(pm_harness::Usage {
             used: 9466,
             size: 1_000_000,
+            written: 0,
         }),
         done("r1", "pub struct WorkspaceState { .. }", None),
         Event::Tool(tool(
@@ -4186,6 +4303,7 @@ fn restored() -> WorkspaceState {
         Event::Used(pm_harness::Usage {
             used: 9667,
             size: 1_000_000,
+            written: 0,
         }),
         done(
             "e1",
@@ -4200,6 +4318,7 @@ fn restored() -> WorkspaceState {
         Event::Used(pm_harness::Usage {
             used: 9791,
             size: 1_000_000,
+            written: 0,
         }),
         Event::Finished(None),
         prompted("Now count to a thousand out loud.", 5),
