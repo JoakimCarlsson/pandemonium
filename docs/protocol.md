@@ -252,10 +252,12 @@ request with exactly one `response` carrying the same `id`.
 
 `agent` is an agent's id: `claude-code` or `codex`.
 
-`files` lists tracked, untracked and ignored files together, up to `limit` for
-each listing. Ignored paths are marked in the `ignored` response field so the
-tree can dim them. The optional `expanded` array is accepted for older clients
-and has no effect. Clients list again when notified of changes.
+`files` lists ignored folders without walking them. Its optional `expanded`
+array names repository-relative ignored folders whose immediate files and
+subfolders are included, all marked ignored; a folder inside an ignored folder
+is listed only when the folder holding it is expanded too. It defaults to an
+empty array. These contents do not consume the base listing's `limit`. Clients
+list again when an ignored folder is unfolded and when notified of changes.
 
 A `directory` that is no repository but has repositories as direct children
 (each with a `.git` entry, hidden and bulky folders such as `node_modules`,
@@ -933,7 +935,7 @@ embedded context, and anything else as a link to the stored file.
 | `done`       | none                                                      |
 | `failed`     | `message`                                                 |
 | `discovery`  | `settings`, `commands`                                    |
-| `files`      | `paths`: repository-relative tracked, untracked and ignored files, `folders` (optional): untracked and ignored folders that may hold no file yet, `ignored` (optional): which paths and folders git ignores, listed so a tree can dim them |
+| `files`      | `paths`: repository-relative, tracked or not ignored plus the immediate files in expanded ignored folders, `folders` (optional): untracked folders, ignored folders and the immediate subfolders of expanded ignored folders, which may hold no file yet, `ignored` (optional): which of `paths` and `folders` git ignores, listed so a tree can dim them |
 | `branches`   | `names`: local branches, the current one first, then remote ones such as `origin/main`; read from git at each request. Of a folder of repositories, those every child has, then the rest |
 | `submodules` | `paths`: every submodule's path from the root of the repository, nested ones included, initialised or not; in a folder of repositories, each child followed by its submodules, from the folder, so a child is listed like a submodule |
 | `branch_info` | `remotes`: remote names, `remote_branches`: their branches such as `origin/main`, `unmerged`, `unpushed`: counts, `elsewhere`: the folder of the other worktree that has the asked branch, or null, `follows`: the remote branch the asked branch follows such as `origin/main`, or null |

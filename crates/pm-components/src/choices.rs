@@ -206,7 +206,7 @@ impl WorkspaceState {
                 key,
                 host,
                 directory,
-                expanded: Vec::new(),
+                expanded: self.open_folders(),
             });
         }
     }
