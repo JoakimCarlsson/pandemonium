@@ -300,9 +300,14 @@ impl WorkspaceState {
                 key,
                 host,
                 directory,
-                expanded: Vec::new(),
+                expanded: self.open_folders(),
             });
         }
+    }
+
+    /// The unfolded folders of the tree, among which the ignored ones have their contents listed only while they are open.
+    pub(crate) fn open_folders(&self) -> Vec<String> {
+        self.open_tree.iter().cloned().collect()
     }
 
     /// Carries out `action` if it is a button or row of the tree, and says whether it was.

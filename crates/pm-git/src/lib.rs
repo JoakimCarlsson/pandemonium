@@ -341,24 +341,30 @@ pub fn ignored(directory: &Path, limit: usize) -> Vec<String> {
     found
 }
 
-/// The top-level ignored folders of the repository `directory` is in, including empty ones.
-pub fn ignored_folders(directory: &Path, limit: usize) -> Vec<String> {
+/// What git ignores in the repository `directory` is in, as paths from it, at most `limit` of them, without walking into a folder ignored as a whole: such a folder is written once with a `/` at its end, and an ignored file outside one is written as it is.
+pub fn ignored_entries(directory: &Path, limit: usize) -> Vec<String> {
     match layout(directory) {
         Layout::Repositories(children) => {
-            return multirepo::gathered(directory, &children, limit, ignored_folders);
+            return multirepo::gathered(directory, &children, limit, ignored_entries);
         }
         Layout::Neither => return Vec::new(),
         Layout::Repository => {}
     }
-    ls_files(
+    let mut found = ls_files(
         directory,
         &["--others", "--ignored", "--directory", "--exclude-standard"],
-    )
-    .iter()
-    .filter_map(|line| line.strip_suffix('/'))
-    .take(limit)
-    .map(str::to_owned)
-    .collect()
+    );
+    found.truncate(limit);
+    found
+}
+
+/// The folders of the repository `directory` is in that git ignores as a whole, including empty ones, at most `limit` of them.
+pub fn ignored_folders(directory: &Path, limit: usize) -> Vec<String> {
+    ignored_entries(directory, limit)
+        .iter()
+        .filter_map(|entry| entry.strip_suffix('/'))
+        .map(str::to_owned)
+        .collect()
 }
 
 /// The branch `directory` has checked out, or nothing when it has none or is not a repository. Of a folder of repositories, the one branch they are all on, or the branches they are on, each named once and told apart by a dot.

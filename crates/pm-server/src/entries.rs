@@ -183,14 +183,39 @@ pub fn write(root: &Path, relative: &str, text: &str) -> Result<(), String> {
     fs::write(&path, text).map_err(|error| refused("write", &path, &error))
 }
 
-/// Checks ignored listings and their project boundaries.
+/// Lists one level of the folder `relative` of `root` as each entry's path from `root` and whether it is a folder, without following links outside the project or walking subfolders; nothing when the folder cannot be read or leaves `root`.
+pub(crate) fn children(root: &Path, relative: &str) -> Vec<(String, bool)> {
+    let Ok(folder) = inside_or_root(root, relative) else {
+        return Vec::new();
+    };
+    let Ok(entries) = fs::read_dir(folder) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let kind = entry.file_type().ok()?;
+            let path = format!("{relative}/{}", entry.file_name().to_string_lossy());
+            Some((path, kind.is_dir()))
+        })
+        .collect()
+}
+
+/// The folders `expanded` names, each once and every folder before the ones inside it, so that a folder is listed before what it holds is looked for.
+pub(crate) fn unfolded(mut expanded: Vec<String>) -> Vec<String> {
+    expanded.sort();
+    expanded.dedup();
+    expanded
+}
+
+/// Checks shallow ignored listings and their project boundaries.
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Ignored contents are listed with tracked files, including nested files.
+    /// Ignored contents are listed one level at a time without consuming the tracked file budget.
     #[test]
-    fn ignored_children_are_listed_and_refreshable() {
+    fn ignored_children_are_shallow_and_refreshable() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../build")
             .join(format!("ignored-children-{}", std::process::id()));
@@ -217,24 +242,35 @@ mod tests {
         );
         assert!(pm_git::files(&root, 2).contains(&"tracked.rs".to_owned()));
         assert_eq!(
-            pm_git::ignored(&root, 2),
-            vec!["server/prod/connect.sh".to_owned()]
+            pm_git::ignored_entries(&root, 2),
+            vec!["server/".to_owned()]
         );
         assert_eq!(pm_git::ignored_folders(&root, 2), vec!["server".to_owned()]);
+        assert_eq!(children(&root, "server").len(), 2);
+        assert_eq!(
+            children(&root, "server/prod"),
+            vec![("server/prod/connect.sh".to_owned(), false)]
+        );
         fs::write(root.join("server/prod/new.sh"), "echo ready\n").unwrap();
-        assert_eq!(pm_git::ignored(&root, 20).len(), 2);
+        assert_eq!(children(&root, "server/prod").len(), 2);
         rename(&root, "server/prod/new.sh", "server/prod/renamed.sh").unwrap();
         assert_eq!(
             fs::read_to_string(root.join("server/prod/renamed.sh")).unwrap(),
             "echo ready\n"
         );
         remove(&root, "server/prod/renamed.sh").unwrap();
-        assert_eq!(pm_git::ignored(&root, 20).len(), 1);
+        assert_eq!(children(&root, "server/prod").len(), 1);
         for index in 0..20_001 {
             fs::write(root.join(format!("server/stage/{index}")), "").unwrap();
         }
-        assert_eq!(pm_git::ignored(&root, 2).len(), 2);
+        assert_eq!(children(&root, "server/stage").len(), 20_001);
         assert!(pm_git::files(&root, 2).contains(&"tracked.rs".to_owned()));
+        assert!(children(&root, "../").is_empty());
+        assert!(children(&root, "missing").is_empty());
+        assert_eq!(
+            unfolded(vec!["b/c".to_owned(), "b".to_owned(), "b".to_owned()]),
+            vec!["b".to_owned(), "b/c".to_owned()]
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }

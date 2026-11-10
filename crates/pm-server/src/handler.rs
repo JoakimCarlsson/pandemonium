@@ -548,25 +548,39 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
         Request::Files {
             directory,
             limit,
-            expanded: _,
+            expanded,
         } => {
             let place = place(&directory);
-            let children = pm_git::child_repositories(&place);
             let mut paths = pm_git::files(&place, limit);
             let mut folders = pm_git::untracked_folders(&place, limit);
             let mut ignored = Vec::new();
-            for entry in pm_git::ignored(&place, limit) {
-                for (index, _) in entry.match_indices('/') {
-                    if !children.iter().any(|child| *child == entry[..index]) {
-                        ignored.push(entry[..index].to_owned());
+            let mut listable = std::collections::HashSet::new();
+            for entry in pm_git::ignored_entries(&place, limit) {
+                match entry.strip_suffix('/') {
+                    Some(folder) => {
+                        listable.insert(folder.to_owned());
+                        folders.push(folder.to_owned());
+                        ignored.push(folder.to_owned());
+                    }
+                    None => {
+                        paths.push(entry.clone());
+                        ignored.push(entry);
                     }
                 }
-                paths.push(entry.clone());
-                ignored.push(entry);
             }
-            for folder in pm_git::ignored_folders(&place, limit) {
-                ignored.push(folder.clone());
-                folders.push(folder);
+            for folder in crate::entries::unfolded(expanded) {
+                if !listable.contains(&folder) {
+                    continue;
+                }
+                for (path, is_folder) in crate::entries::children(&place, &folder) {
+                    ignored.push(path.clone());
+                    if is_folder {
+                        listable.insert(path.clone());
+                        folders.push(path);
+                    } else {
+                        paths.push(path);
+                    }
+                }
             }
             Response::Files {
                 paths,
