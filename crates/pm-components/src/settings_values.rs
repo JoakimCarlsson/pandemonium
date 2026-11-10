@@ -390,7 +390,6 @@ impl Setting {
                 Control::Choice(CACHES, place_of(&CACHE_IDS, &machine.agents.cache.as_str()))
             }
             Self::CacheWarming => Control::Switch(machine.agents.cache_warming),
-            Self::PlanModel => Control::Text("Same as the model"),
             Self::PlanAutosave => Control::Switch(machine.agents.plan_autosave),
             Self::OnFinish => Control::Choice(
                 &["Nothing", "Notify", "Open review"],
@@ -683,7 +682,6 @@ impl Setting {
             | Self::Shell
             | Self::ShellArguments
             | Self::BranchTemplate
-            | Self::PlanModel
             | Self::WorktreeFolder
             | Self::WorktreeInclude
             | Self::AgentOrigins
@@ -827,7 +825,6 @@ impl Setting {
                 | Self::Shell
                 | Self::ShellArguments
                 | Self::BranchTemplate
-                | Self::PlanModel
                 | Self::WorktreeFolder
                 | Self::GitHosts
                 | Self::WorkspaceFolders
@@ -889,7 +886,6 @@ impl Setting {
             Self::Shell => machine.shell.program.clone(),
             Self::ShellArguments => machine.shell.arguments.clone(),
             Self::BranchTemplate => machine.git.branch_template.clone(),
-            Self::PlanModel => machine.agents.plan_model.clone(),
             Self::WorktreeFolder => machine.git.worktree_root.clone(),
             Self::GitHosts => machine.git.hosts_text(),
             Self::WorkspaceFolders => machine.workspace.folders_text(),
@@ -923,7 +919,6 @@ impl Setting {
             Self::Shell => machine.shell.program = text,
             Self::ShellArguments => machine.shell.arguments = text,
             Self::BranchTemplate => machine.git.branch_template = text,
-            Self::PlanModel => machine.agents.plan_model = text,
             Self::WorktreeFolder => machine.git.worktree_root = text,
             Self::GitHosts => machine.git.set_hosts_text(&text),
             Self::WorkspaceFolders => machine.workspace.set_folders_text(&text),
@@ -1146,10 +1141,6 @@ impl Setting {
             Self::Checkpoints => machine.agents.checkpoints = kept.agents.checkpoints,
             Self::PromptCache => machine.agents.cache.clone_from(&kept.agents.cache),
             Self::CacheWarming => machine.agents.cache_warming = kept.agents.cache_warming,
-            Self::PlanModel => machine
-                .agents
-                .plan_model
-                .clone_from(&kept.agents.plan_model),
             Self::PlanAutosave => machine.agents.plan_autosave = kept.agents.plan_autosave,
             Self::OnFinish => window.agents.on_finish = own.agents.on_finish,
             Self::Notification => window.agents.notification = own.agents.notification,

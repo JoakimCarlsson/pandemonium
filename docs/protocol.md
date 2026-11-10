@@ -528,10 +528,10 @@ everything said of them, its submodules' paths written from `directory`.
   runs its sessions and keeps its accounts. `effort` (`low`, `medium`, `high`,
   `xhigh` or `max`; the harness's own when not set), `memory` (default `true`),
   `checkpoints` (default `true`), `cache` (`5m` or `1h`, default `5m`) and
-  `cache_warming` (default `true`), `plan_model` (`model` or `provider/model`;
-  the conversation's model when empty) and `plan_autosave` (default `false`)
+  `cache_warming` (default `true`) and `plan_autosave` (default `false`)
   are the settings every agent's conversation
-  starts with; a choice saved with a conversation wins over them. `shell` is
+  starts with; a choice saved with a conversation wins over them. `plan_model`
+  is no longer used and is ignored. `shell` is
   `{program, arguments}`, the shell `open_terminal` starts when `program` is not
   empty. `extensions` maps an extension's folder name to `{granted}`, the
   capabilities it was allowed; `save_machine_settings` does not change it, only

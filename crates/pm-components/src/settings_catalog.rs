@@ -226,8 +226,6 @@ pub enum Setting {
     PromptCache,
     /// Whether the prompt cache is kept warm.
     CacheWarming,
-    /// The model plan mode plans with.
-    PlanModel,
     /// Whether plans are saved in the project too.
     PlanAutosave,
     /// What a session does when its agent finishes.
@@ -278,7 +276,7 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting, in the order the pages show them.
-    pub const ALL: [Self; 122] = [
+    pub const ALL: [Self; 121] = [
         Self::Launch,
         Self::ConfirmClose,
         Self::CheckUpdates,
@@ -377,7 +375,6 @@ impl Setting {
         Self::Checkpoints,
         Self::PromptCache,
         Self::CacheWarming,
-        Self::PlanModel,
         Self::PlanAutosave,
         Self::OnFinish,
         Self::Notification,
@@ -518,7 +515,6 @@ impl Setting {
             | Self::Checkpoints
             | Self::PromptCache
             | Self::CacheWarming
-            | Self::PlanModel
             | Self::PlanAutosave
             | Self::OnFinish
             | Self::Notification => Section::Agents,
@@ -562,7 +558,6 @@ impl Setting {
             | Self::Checkpoints
             | Self::PromptCache
             | Self::CacheWarming
-            | Self::PlanModel
             | Self::PlanAutosave => Keeper::Machine,
             _ => Keeper::Window,
         }
@@ -964,10 +959,6 @@ impl Setting {
             Self::CacheWarming => (
                 "Keep cache warm",
                 "Refresh the cached context shortly before it expires while a long tool runs or the conversation waits, when that costs less than losing it.",
-            ),
-            Self::PlanModel => (
-                "Plan model",
-                "The model plan mode plans with, as model or provider/model; empty plans with the conversation's model.",
             ),
             Self::PlanAutosave => (
                 "Save plans in the project",

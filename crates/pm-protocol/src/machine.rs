@@ -111,7 +111,7 @@ pub struct AgentPreferences {
     pub cache: String,
     /// Whether the prompt cache is kept warm while a long tool runs or the conversation waits, where the provider can.
     pub cache_warming: bool,
-    /// The model plan mode plans with, as `model` or `provider/model`, or the conversation's own model when empty.
+    /// No longer used: kept so that saved settings still read, and never sent to a conversation.
     pub plan_model: String,
     /// Whether each plan an agent submits is also saved as markdown in the project.
     pub plan_autosave: bool,
@@ -121,7 +121,7 @@ pub struct AgentPreferences {
 pub const CACHE_SHORT: &str = "5m";
 
 impl Default for AgentPreferences {
-    /// No default agent or mode, memory, checkpoints and cache warming on, the short cache, planning with the conversation's model, and plans kept with the conversation only.
+    /// No default agent or mode, memory, checkpoints and cache warming on, the short cache, and plans kept with the conversation only.
     fn default() -> Self {
         Self {
             default_agent: None,
@@ -149,10 +149,6 @@ impl AgentPreferences {
             ("cache_warming".to_owned(), switch(self.cache_warming)),
             ("plan_autosave".to_owned(), switch(self.plan_autosave)),
         ];
-        let planner = self.plan_model.trim();
-        if !planner.is_empty() {
-            defaults.push(("plan_model".to_owned(), planner.to_owned()));
-        }
         if let Some(effort) = &self.effort {
             defaults.push(("effort".to_owned(), effort.clone()));
         }
@@ -345,9 +341,6 @@ mod tests {
         let defaults = chosen.conversation_defaults();
         assert!(defaults.contains(&("memory".to_owned(), "off".to_owned())));
         assert!(defaults.contains(&("effort".to_owned(), "high".to_owned())));
-        assert!(defaults.contains(&(
-            "plan_model".to_owned(),
-            "anthropic/claude-opus-5-5".to_owned()
-        )));
+        assert!(defaults.iter().all(|(id, _)| id != "plan_model"));
     }
 }
