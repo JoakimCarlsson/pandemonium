@@ -61,6 +61,7 @@ mod panes;
 mod paste;
 mod performance;
 mod select;
+mod shadow;
 mod terminal;
 mod vim;
 
@@ -105,6 +106,8 @@ const RELEASE_RECHECK: Duration = Duration::from_secs(6 * 60 * 60);
 
 /// The window and what draws into it; both exist once the platform is ready.
 pub struct App {
+    /// What casts the shadow of the window outside it, once the window has been drawn; dropped before the window it belongs to.
+    shadow: Option<shadow::Shadow>,
     /// The window, once it is open.
     window: Option<Arc<Window>>,
     /// What draws into the window, once it is open.
@@ -334,6 +337,7 @@ impl App {
         let flag = Rc::clone(&dirty);
         model.subscribe(move |_| flag.set(true));
         Self {
+            shadow: None,
             window: None,
             renderer: None,
             fonts_applied: (
@@ -2260,6 +2264,7 @@ impl ApplicationHandler for App {
         if self.window.is_some() {
             return;
         }
+        pm_components::set_shadow_outside(shadow::cast_outside(event_loop));
         let window =
             match event_loop.create_window(Self::attributes(Self::opening_size(event_loop))) {
                 Ok(window) => Arc::new(window),

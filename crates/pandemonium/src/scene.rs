@@ -38,9 +38,9 @@ fn scale_for(state: &Screen) {
     pm_style::set_scales(appearance.density.scale(), appearance.text_scale());
 }
 
-/// The colour the window is cleared to before anything is drawn: nothing, where the window floats and its band for the shadow must show what is behind it.
+/// The colour the window is cleared to before anything is drawn: nothing, where the window floats and what is behind it must show past its rounded corners and through its band for the shadow.
 pub fn ground(theme: &Theme) -> Srgba {
-    if pm_components::shadow_margin() > 0.0 {
+    if pm_components::framed() {
         Srgba::new(0.0, 0.0, 0.0, 0.0)
     } else {
         theme.role(Role::Background)
@@ -120,7 +120,7 @@ pub fn paint_picker(
 #[derive(Default)]
 pub struct Cached {
     /// The model version, logical viewport and clock second of the retained screen.
-    key: Option<(u64, u32, u32, u64)>,
+    key: Option<(u64, u32, u32, u64, bool)>,
     /// The tree and layout of the last screen built.
     scene: Option<pm_ui::Scene>,
 }
@@ -132,7 +132,7 @@ impl Cached {
         self.scene = None;
     }
 
-    /// Rebuilds on content, viewport or clock-second changes; otherwise only repaints interaction styles.
+    /// Rebuilds on content, viewport, clock-second or frame changes; otherwise only repaints interaction styles.
     #[allow(clippy::too_many_arguments)]
     pub fn paint(
         &mut self,
@@ -151,6 +151,7 @@ impl Cached {
             width.to_bits(),
             height.to_bits(),
             (input.elapsed_ms / 1000.0) as u64,
+            pm_components::framed(),
         );
         if self.key != Some(key) {
             let root = screen(state, width, height, shaper);

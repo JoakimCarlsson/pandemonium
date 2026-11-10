@@ -110,6 +110,8 @@ pub(super) fn is_aside(id: FocusId) -> bool {
 /// A window and what it alone keeps: what draws into it, where the pointer is
 /// over it, what its last frame found and the pointer shape it shows.
 pub(super) struct Surface {
+    /// What casts the shadow of the window outside it, once the window has been drawn; dropped before the window.
+    shadow: Option<super::shadow::Shadow>,
     /// The window.
     window: Option<Arc<Window>>,
     /// What draws into the window.
@@ -203,6 +205,7 @@ impl App {
         window.set_ime_allowed(true);
         window.request_redraw();
         Surface {
+            shadow: None,
             window: Some(window),
             renderer: Some(renderer),
             output: Output::default(),
@@ -285,6 +288,7 @@ impl App {
     /// Trades the main window's surface with `surface`.
     fn swap_surface(&mut self, surface: &mut Surface) {
         std::mem::swap(&mut self.window, &mut surface.window);
+        std::mem::swap(&mut self.shadow, &mut surface.shadow);
         std::mem::swap(&mut self.renderer, &mut surface.renderer);
         std::mem::swap(&mut self.output, &mut surface.output);
         std::mem::swap(&mut self.pointer, &mut surface.pointer);

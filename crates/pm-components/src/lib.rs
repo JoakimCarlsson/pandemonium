@@ -170,4 +170,7 @@ pub use surface::Surface;
 pub use tally::Tally;
 pub use tile::Tile;
 pub use title_bar::TitleBar;
-pub use window::{SHADOW_MARGIN, Window, set_floating, shadow_margin, shadowed};
+pub use window::{
+    FRAME_RADIUS, SHADOW_MARGIN, WINDOW_SHADOW, Window, framed, set_floating, set_shadow_outside,
+    shadow_margin, shadow_outside, shadowed,
+};

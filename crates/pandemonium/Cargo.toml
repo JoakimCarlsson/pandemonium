@@ -40,5 +40,12 @@ pm-browser = { path = "../pm-browser" }
 pm-update.workspace = true
 pm-vim.workspace = true
 
+[target.'cfg(target_os = "linux")'.dependencies]
+rustix = { version = "1.1.5", features = ["fs"] }
+wayland-backend = { version = "0.3.17", features = ["client_system"] }
+wayland-client = "0.31.15"
+wayland-protocols = { version = "0.32.13", features = ["client"] }
+x11rb = "0.13.2"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 mac-notification-sys = "0.6.15"
