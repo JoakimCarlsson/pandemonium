@@ -11,6 +11,7 @@ use pm_pages::Screen;
 use winit::dpi::LogicalSize;
 use winit::window::{CursorIcon, ResizeDirection, Window};
 
+use super::shadow::Shadow;
 use super::{App, DOUBLE_CLICK};
 
 /// How far in from the frame of the window a press resizes it, in logical pixels; so does a press anywhere in the band around the frame that holds its shadow.
@@ -37,9 +38,13 @@ fn edge_at(at: (f32, f32), size: (f32, f32)) -> Option<ResizeDirection> {
     }
 }
 
-/// How much wider and taller a window is than its frame, in logical pixels: the band on both sides that holds its shadow, when the window draws its own frame.
-const fn band() -> f32 {
-    if FRAMELESS { 2.0 * SHADOW_MARGIN } else { 0.0 }
+/// How much wider and taller a window is than its frame, in logical pixels: the band on both sides that holds its shadow, when the window draws its own frame and its shadow is not shown outside it.
+fn band() -> f32 {
+    if FRAMELESS && !pm_components::shadow_outside() {
+        2.0 * SHADOW_MARGIN
+    } else {
+        0.0
+    }
 }
 
 /// Whether `window` floats, with room around it for a shadow: it does unless it is maximized or full screen.
@@ -72,12 +77,17 @@ pub(super) fn edge_icon(direction: ResizeDirection) -> CursorIcon {
 }
 
 impl App {
-    /// Tells the windows built next whether they float, with a band around them for their shadow, and has the renderer leave that band: they float unless the window is maximized or full screen.
+    /// Tells the windows built next whether they float, with a band around them for their shadow, has the renderer leave that band, and fits the shadow cast outside the window to it: they float unless the window is maximized or full screen.
     pub(super) fn sync_floating(&mut self) {
         let floating = self.window.as_deref().is_some_and(floats);
         pm_components::set_floating(floating);
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.set_band(pm_components::shadow_margin());
+        }
+        if let Some(window) = self.window.as_deref() {
+            self.shadow
+                .get_or_insert_with(|| Shadow::open(window))
+                .fit(window, FRAMELESS && floating);
         }
     }
 
