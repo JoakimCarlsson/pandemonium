@@ -186,6 +186,18 @@ pub enum Primitive {
     /// Everything after this is drawn only inside the rectangle, or
     /// anywhere when there is none.
     Clip(Option<Rect>),
+    /// Everything after this is drawn only inside the rounded rectangle, or
+    /// anywhere when there is none.
+    Mask(Option<Mask>),
+}
+
+/// A rounded rectangle that drawing is kept inside, with antialiased corners.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Mask {
+    /// The rectangle, in logical pixels.
+    pub rect: Rect,
+    /// The radius of its corners, in logical pixels.
+    pub radius: f32,
 }
 
 /// The primitives of one frame, in the order they are drawn: later ones cover
@@ -220,6 +232,11 @@ impl DrawList {
     /// Limits what is added from now on to `clip`, or lifts the limit.
     pub fn set_clip(&mut self, clip: Option<Rect>) {
         self.primitives.push(Primitive::Clip(clip));
+    }
+
+    /// Keeps what is added from now on inside the rounded rectangle `mask`, or lifts that limit.
+    pub fn set_mask(&mut self, mask: Option<Mask>) {
+        self.primitives.push(Primitive::Mask(mask));
     }
 
     /// Adds `icon` over everything already in the list.

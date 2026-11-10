@@ -38,9 +38,13 @@ fn scale_for(state: &Screen) {
     pm_style::set_scales(appearance.density.scale(), appearance.text_scale());
 }
 
-/// The colour the window is cleared to before anything is drawn.
+/// The colour the window is cleared to before anything is drawn: nothing, where the window floats and its band for the shadow must show what is behind it.
 pub fn ground(theme: &Theme) -> Srgba {
-    theme.role(Role::Background)
+    if pm_components::shadow_margin() > 0.0 {
+        Srgba::new(0.0, 0.0, 0.0, 0.0)
+    } else {
+        theme.role(Role::Background)
+    }
 }
 
 /// Builds the screen for `state` and `input` and paints it into `list`,

@@ -1,7 +1,7 @@
 //! Painting a laid-out node tree into a draw list.
 
 use pm_input::{FocusId, PointerState};
-use pm_renderer::{Affine, DrawList, Icon, Quad, Rect, Text};
+use pm_renderer::{Affine, DrawList, Icon, Mask, Quad, Rect, Text};
 use pm_style::color::Srgba;
 use pm_style::layout::{Display, Overflow};
 use pm_style::primitives::Side;
@@ -249,6 +249,7 @@ pub(crate) fn paint(
         list,
         output: Output::default(),
         clip: None,
+        mask: None,
         origin: (0.0, 0.0),
         culling: true,
         group_hovered: false,
@@ -291,6 +292,8 @@ struct Frame<'a> {
     output: Output,
     /// The rectangle everything now being painted is clipped to.
     clip: Option<Rect>,
+    /// The rounded rectangle everything now being painted is kept inside.
+    mask: Option<Mask>,
     /// Where the boxes now being painted were laid out from: the top-left
     /// corner of the retained subtree they are in, or of the window.
     origin: (f32, f32),
@@ -400,6 +403,14 @@ impl Frame<'_> {
         let world = pose.then(parent);
         let opacity = opacity * computed.decoration.effects.opacity * pose_opacity;
         self.decoration(&computed, rect, world, opacity);
+        let outer_mask = self.mask;
+        if node.masked {
+            self.mask = Some(Mask {
+                rect: shown,
+                radius: computed.decoration.borders.radius.top_left,
+            });
+            self.list.set_mask(self.mask);
+        }
         let outer = self.clip;
         let display = computed.layout.display;
         if display.overflow_x != Overflow::Visible || display.overflow_y != Overflow::Visible {
@@ -472,6 +483,10 @@ impl Frame<'_> {
         if self.clip != outer {
             self.clip = outer;
             self.list.set_clip(outer);
+        }
+        if self.mask != outer_mask {
+            self.mask = outer_mask;
+            self.list.set_mask(outer_mask);
         }
         self.group_hovered = outer_group;
         self.selectable = outer_selectable;
@@ -560,6 +575,8 @@ impl Frame<'_> {
         let left = over.x.min(self.width - placed.width).max(0.0);
         self.clip = None;
         self.list.set_clip(None);
+        self.mask = None;
+        self.list.set_mask(None);
         self.origin = (left - placed.x, top - placed.y);
         self.node(
             card,

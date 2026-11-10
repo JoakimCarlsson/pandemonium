@@ -267,6 +267,8 @@ pub enum Shot {
     Answered,
     /// A conversation whose turn ended while two subagents and a command were still running.
     Background,
+    /// The same conversation in a floating window, with its shadow cast into the transparent band around it.
+    Floating,
     /// The same conversation with the subagents above the prompt box open.
     Agents,
     /// The open panel with dozens of expanded tool runs.
@@ -3379,7 +3381,7 @@ impl Shot {
                 ))
             }
             Self::Inquiring => Screen::Workspace(live(Turn::Inquiring)),
-            Self::Background => Screen::Workspace(live(Turn::Background)),
+            Self::Background | Self::Floating => Screen::Workspace(live(Turn::Background)),
             Self::Agents => {
                 Screen::Workspace(live(Turn::Background).after(FocusId(SUBAGENTS_CHIP.0)))
             }
@@ -4783,6 +4785,9 @@ pub fn write(
     } else {
         (WIDTH, HEIGHT)
     };
+    pm_components::set_floating(matches!(shot, Shot::Floating));
+    let band = pm_components::shadow_margin();
+    let target = (width + 2 * band as u32, height + 2 * band as u32);
     let paint = if shot.in_settings_window() {
         scene::paint_settings
     } else if shot.in_picker_window() {
@@ -4790,7 +4795,9 @@ pub fn write(
     } else {
         scene::paint
     };
-    let mut renderer = Renderer::headless(width, height, 1.0).map_err(|error| error.to_string())?;
+    let mut renderer =
+        Renderer::headless(target.0, target.1, 1.0).map_err(|error| error.to_string())?;
+    renderer.set_band(band);
     let mut shaper = scene::shaper();
     let mut list = DrawList::new();
     let input = Input {
@@ -4840,7 +4847,7 @@ pub fn write(
     let pixels = renderer
         .snapshot(&list, &mut shaper, scene::ground(theme))
         .ok_or("the renderer could not read its frame back")?;
-    image::save_buffer(path, &pixels, width, height, image::ColorType::Rgba8)
+    image::save_buffer(path, &pixels, target.0, target.1, image::ColorType::Rgba8)
         .map_err(|error| error.to_string())
 }
 

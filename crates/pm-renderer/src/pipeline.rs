@@ -1,6 +1,6 @@
 //! The instance layout the quad shader reads, and the pipeline that draws it.
 
-use crate::draw::Quad;
+use crate::draw::{Mask, Quad};
 
 /// The viewport every shader turns logical pixels into clip space with.
 #[repr(C)]
@@ -10,8 +10,51 @@ pub(crate) struct Viewport {
     pub(crate) size: [f32; 2],
     /// Physical pixels per logical pixel.
     pub(crate) scale: f32,
+    /// The corner radius of the mask, in physical pixels.
+    pub(crate) mask_radius: f32,
+    /// The left, top, right and bottom of the rounded rectangle everything is masked to, in physical pixels.
+    pub(crate) mask: [f32; 4],
+    /// How far right and down everything is drawn from where it says it is, in physical pixels.
+    pub(crate) offset: [f32; 2],
     /// Padding to the 16-byte alignment a uniform block needs.
-    pub(crate) padding: f32,
+    pub(crate) padding: [f32; 2],
+}
+
+impl Viewport {
+    /// How far out the edges of the mask lie when nothing is masked, in physical pixels.
+    const UNMASKED: f32 = 1.0e7;
+
+    /// The viewport of a target `size` physical pixels across at `scale` physical pixels per logical one, drawing everything `offset` physical pixels right and down of where it says it is and masking to `mask` when there is one.
+    pub(crate) fn new(size: (u32, u32), scale: f32, offset: f32, mask: Option<Mask>) -> Self {
+        let (mask_radius, mask) = match mask {
+            Some(Mask { rect, radius }) => (
+                radius * scale,
+                [
+                    rect.x * scale + offset,
+                    rect.y * scale + offset,
+                    (rect.x + rect.width) * scale + offset,
+                    (rect.y + rect.height) * scale + offset,
+                ],
+            ),
+            None => (
+                0.0,
+                [
+                    -Self::UNMASKED,
+                    -Self::UNMASKED,
+                    Self::UNMASKED,
+                    Self::UNMASKED,
+                ],
+            ),
+        };
+        Self {
+            size: [size.0 as f32, size.1 as f32],
+            scale,
+            mask_radius,
+            mask,
+            offset: [offset, offset],
+            padding: [0.0; 2],
+        }
+    }
 }
 
 /// One quad as the shader reads it.

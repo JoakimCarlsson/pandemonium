@@ -7,7 +7,7 @@ use pm_color::Srgba;
 use pm_text::Shaper;
 
 use crate::atlas::Atlas;
-use crate::draw::{DrawList, Picture, Primitive};
+use crate::draw::{DrawList, Mask, Picture, Primitive};
 use crate::geometry::Rect;
 use crate::pipeline::{GlyphInstance, QuadInstance, Viewport, build_pipeline};
 
@@ -86,10 +86,12 @@ pub struct Renderer {
     target: Target,
     /// Physical pixels per logical pixel.
     scale: f32,
-    /// The uniform holding the viewport.
-    viewport_buffer: wgpu::Buffer,
-    /// The bind group exposing the viewport to the shader.
-    viewport_group: wgpu::BindGroup,
+    /// How wide the band around the drawing is that is left for what spills out of it, such as the shadow of a window, in logical pixels.
+    band: f32,
+    /// The layout of the bind group exposing a viewport to the shaders.
+    viewport_layout: wgpu::BindGroupLayout,
+    /// The uniform holding each viewport of the frame and the bind group exposing it: the first masks nothing, and each one after it masks to one rounded rectangle of the frame.
+    viewports: Vec<(wgpu::Buffer, wgpu::BindGroup)>,
     /// The pipeline that draws quads.
     quad_pipeline: wgpu::RenderPipeline,
     /// The pipeline that draws glyphs.
@@ -349,19 +351,20 @@ impl Renderer {
         let (target, format) = match surface {
             Some(surface) => {
                 let capabilities = surface.get_capabilities(&adapter);
-                let format = capabilities
-                    .formats
-                    .iter()
-                    .copied()
-                    .find(|format| !format.is_srgb())
-                    .unwrap_or(capabilities.formats[0]);
+                let format = surface_format(&capabilities.formats);
                 let config = wgpu::SurfaceConfiguration {
                     usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                     format,
                     width: width.max(1),
                     height: height.max(1),
                     present_mode: wgpu::PresentMode::AutoVsync,
-                    alpha_mode: capabilities.alpha_modes[0],
+                    alpha_mode: [
+                        wgpu::CompositeAlphaMode::PreMultiplied,
+                        wgpu::CompositeAlphaMode::PostMultiplied,
+                    ]
+                    .into_iter()
+                    .find(|mode| capabilities.alpha_modes.contains(mode))
+                    .unwrap_or(capabilities.alpha_modes[0]),
                     color_space: wgpu::SurfaceColorSpace::Srgb,
                     view_formats: vec![],
                     desired_maximum_frame_latency: std::env::var("PANDEMONIUM_FRAME_LATENCY")
@@ -398,12 +401,6 @@ impl Renderer {
             }
         };
 
-        let viewport_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("viewport"),
-            size: size_of::<Viewport>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
         let viewport_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("viewport"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -417,14 +414,7 @@ impl Renderer {
                 count: None,
             }],
         });
-        let viewport_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("viewport"),
-            layout: &viewport_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: viewport_buffer.as_entire_binding(),
-            }],
-        });
+        let viewports = vec![viewport_uniform(&device, &viewport_layout)];
         let atlas = Atlas::new(&device);
         let quad_pipeline = build_pipeline(
             &device,
@@ -488,8 +478,9 @@ impl Renderer {
             queue,
             target,
             scale: scale.max(f32::EPSILON),
-            viewport_buffer,
-            viewport_group,
+            band: 0.0,
+            viewport_layout,
+            viewports,
             quad_pipeline,
             glyph_pipeline,
             image_pipeline,
@@ -633,10 +624,24 @@ impl Renderer {
         self.images.insert(picture.key, live.group.clone());
     }
 
-    /// The target size in logical pixels.
+    /// The size of the drawing in logical pixels: the target without the band around it.
     pub fn size(&self) -> (f32, f32) {
         let (width, height) = self.physical_size();
-        (width as f32 / self.scale, height as f32 / self.scale)
+        let band = 2.0 * self.offset();
+        (
+            (width as f32 - band).max(0.0) / self.scale,
+            (height as f32 - band).max(0.0) / self.scale,
+        )
+    }
+
+    /// Leaves a band `band` logical pixels wide around the drawing from the next frame on, for what spills out of it such as the shadow of a window. The drawing keeps its own coordinates, starting inside the band.
+    pub fn set_band(&mut self, band: f32) {
+        self.band = band.max(0.0);
+    }
+
+    /// How far right and down the drawing starts in the target, in whole physical pixels.
+    fn offset(&self) -> f32 {
+        (self.band * self.scale).round()
     }
 
     /// The target size in physical pixels.
@@ -798,29 +803,34 @@ impl Renderer {
         ground: Srgba,
     ) {
         let (width, height) = self.physical_size();
-        self.queue.write_buffer(
-            &self.viewport_buffer,
-            0,
-            bytemuck::bytes_of(&Viewport {
-                size: [width as f32, height as f32],
-                scale: self.scale,
-                padding: 0.0,
-            }),
-        );
-
         let mut quads: Vec<QuadInstance> = Vec::new();
         let mut glyphs: Vec<GlyphInstance> = Vec::new();
         let mut pictures: Vec<GlyphInstance> = Vec::new();
-        let mut batches: Vec<(Kind, Range<u32>, Option<Rect>)> = Vec::new();
+        let mut batches: Vec<Batch> = Vec::new();
         let mut clip: Option<Rect> = None;
+        let mut masks: Vec<Mask> = Vec::new();
+        let mut viewport = 0;
         for primitive in list.primitives() {
             match primitive {
                 Primitive::Quad(quad) => {
                     let at = quads.len() as u32;
                     quads.push(QuadInstance::new(quad));
-                    extend(&mut batches, Kind::Quad, at..at + 1, clip);
+                    extend(&mut batches, Kind::Quad, at..at + 1, (clip, viewport));
                 }
                 Primitive::Clip(next) => clip = *next,
+                Primitive::Mask(next) => {
+                    viewport = match next {
+                        Some(mask) => {
+                            let known = masks.iter().position(|held| held == mask);
+                            let index = known.unwrap_or_else(|| {
+                                masks.push(*mask);
+                                masks.len() - 1
+                            });
+                            index + 1
+                        }
+                        None => 0,
+                    };
+                }
                 Primitive::Image(image) => {
                     let picture = &image.picture;
                     self.upload_picture(picture);
@@ -848,7 +858,12 @@ impl Renderer {
                         color: [image.radius * self.scale, 0.0, 0.0, 1.0],
                         rotation: 0.0,
                     });
-                    extend(&mut batches, Kind::Image(picture.key), at..at + 1, clip);
+                    extend(
+                        &mut batches,
+                        Kind::Image(picture.key),
+                        at..at + 1,
+                        (clip, viewport),
+                    );
                 }
                 Primitive::Icon(icon) => {
                     let pixels = (icon.size * self.scale).round() as u32;
@@ -863,7 +878,7 @@ impl Renderer {
                         color: icon.color.to_array(),
                         rotation: icon.rotation,
                     });
-                    extend(&mut batches, Kind::Glyph, at..at + 1, clip);
+                    extend(&mut batches, Kind::Glyph, at..at + 1, (clip, viewport));
                 }
                 Primitive::Text(text) => {
                     let start = glyphs.len() as u32;
@@ -881,7 +896,7 @@ impl Renderer {
                     }
                     let end = glyphs.len() as u32;
                     if end > start {
-                        extend(&mut batches, Kind::Glyph, start..end, clip);
+                        extend(&mut batches, Kind::Glyph, start..end, (clip, viewport));
                     }
                 }
             }
@@ -908,6 +923,20 @@ impl Renderer {
             bytemuck::cast_slice(&pictures),
         );
 
+        let offset = self.offset();
+        while self.viewports.len() <= masks.len() {
+            self.viewports
+                .push(viewport_uniform(&self.device, &self.viewport_layout));
+        }
+        let masked = std::iter::once(None).chain(masks.into_iter().map(Some));
+        for ((buffer, _), mask) in self.viewports.iter().zip(masked) {
+            self.queue.write_buffer(
+                buffer,
+                0,
+                bytemuck::bytes_of(&Viewport::new((width, height), self.scale, offset, mask)),
+            );
+        }
+
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("frame"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -929,12 +958,18 @@ impl Renderer {
             timestamp_writes: None,
             occlusion_query_set: None,
         });
-        pass.set_bind_group(0, &self.viewport_group, &[]);
-        for (kind, range, clip) in batches {
-            let Some((x, y, w, h)) = scissor(clip, self.scale, (width, height)) else {
+        for Batch {
+            kind,
+            range,
+            clip,
+            viewport,
+        } in batches
+        {
+            let Some((x, y, w, h)) = scissor(clip, self.scale, offset, (width, height)) else {
                 continue;
             };
             pass.set_scissor_rect(x, y, w, h);
+            pass.set_bind_group(0, &self.viewports[viewport].1, &[]);
             if let Kind::Image(key) = kind {
                 if let (Some(group), Some(buffer)) = (self.images.get(&key), &self.image_instances)
                 {
@@ -963,37 +998,94 @@ impl Renderer {
     }
 }
 
-/// Adds `range` to the last batch when it is of the same `kind` and runs on
-/// from it, and starts a new batch otherwise.
-fn extend(
-    batches: &mut Vec<(Kind, Range<u32>, Option<Rect>)>,
+/// The format a window is drawn in, of the `offered` ones: one with eight bits of opacity, which a soft shadow over what is behind the window needs, before any other that is not sRGB-encoded, before the first offered.
+fn surface_format(offered: &[wgpu::TextureFormat]) -> wgpu::TextureFormat {
+    [
+        wgpu::TextureFormat::Bgra8Unorm,
+        wgpu::TextureFormat::Rgba8Unorm,
+    ]
+    .into_iter()
+    .find(|format| offered.contains(format))
+    .or_else(|| offered.iter().copied().find(|format| !format.is_srgb()))
+    .unwrap_or(offered[0])
+}
+
+/// A run of instances of one kind drawn together.
+struct Batch {
+    /// What the instances are.
     kind: Kind,
+    /// Which instances of that kind's buffer are drawn.
     range: Range<u32>,
+    /// The rectangle drawing is kept inside, when there is one.
     clip: Option<Rect>,
-) {
+    /// Which viewport of the frame the instances are drawn with: the first masks nothing.
+    viewport: usize,
+}
+
+/// Adds `range` to the last batch when it is of the same `kind`, runs on
+/// from it and is limited the same way, by the clip and the viewport of
+/// `limits`, and starts a new batch otherwise.
+fn extend(batches: &mut Vec<Batch>, kind: Kind, range: Range<u32>, limits: (Option<Rect>, usize)) {
+    let (clip, viewport) = limits;
     match batches.last_mut() {
-        Some((last, held, held_clip))
-            if *last == kind && held.end == range.start && *held_clip == clip =>
+        Some(last)
+            if last.kind == kind
+                && last.range.end == range.start
+                && last.clip == clip
+                && last.viewport == viewport =>
         {
-            held.end = range.end;
+            last.range.end = range.end;
         }
-        _ => batches.push((kind, range, clip)),
+        _ => batches.push(Batch {
+            kind,
+            range,
+            clip,
+            viewport,
+        }),
     }
 }
 
+/// A uniform that holds one viewport, and the bind group of `layout` that exposes it to the shaders.
+fn viewport_uniform(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+) -> (wgpu::Buffer, wgpu::BindGroup) {
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("viewport"),
+        size: size_of::<Viewport>() as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("viewport"),
+        layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: buffer.as_entire_binding(),
+        }],
+    });
+    (buffer, group)
+}
+
 /// The scissor rectangle, in physical pixels inside a target of `size`, that
-/// keeps drawing inside `clip`; the whole target without one, and nothing
-/// when the clip leaves no pixel of it.
-fn scissor(clip: Option<Rect>, scale: f32, size: (u32, u32)) -> Option<(u32, u32, u32, u32)> {
+/// keeps drawing inside `clip`, which is drawn `offset` physical pixels right
+/// and down of where it says it is; the whole target without one, and
+/// nothing when the clip leaves no pixel of it.
+fn scissor(
+    clip: Option<Rect>,
+    scale: f32,
+    offset: f32,
+    size: (u32, u32),
+) -> Option<(u32, u32, u32, u32)> {
     let Some(clip) = clip else {
         return Some((0, 0, size.0, size.1));
     };
-    let left = (clip.x * scale).floor().clamp(0.0, size.0 as f32) as u32;
-    let top = (clip.y * scale).floor().clamp(0.0, size.1 as f32) as u32;
-    let right = ((clip.x + clip.width) * scale)
+    let left = (clip.x * scale + offset).floor().clamp(0.0, size.0 as f32) as u32;
+    let top = (clip.y * scale + offset).floor().clamp(0.0, size.1 as f32) as u32;
+    let right = ((clip.x + clip.width) * scale + offset)
         .ceil()
         .clamp(0.0, size.0 as f32) as u32;
-    let bottom = ((clip.y + clip.height) * scale)
+    let bottom = ((clip.y + clip.height) * scale + offset)
         .ceil()
         .clamp(0.0, size.1 as f32) as u32;
     (right > left && bottom > top).then_some((left, top, right - left, bottom - top))
