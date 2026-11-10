@@ -75,6 +75,8 @@ pub struct Node {
     /// A byte range of this node's text an input method is still composing,
     /// underlined while the named box holds focus.
     pub(crate) marked: Option<(std::ops::Range<usize>, FocusId)>,
+    /// Whether everything inside the box is kept inside its rounded corners.
+    pub(crate) masked: bool,
     /// How far the contents are shifted left, in logical pixels, to scroll them.
     pub(crate) scroll_x: f32,
     /// How far the contents are shifted up, in logical pixels, to scroll them.
@@ -341,6 +343,14 @@ impl Node {
     /// its own: it looks focused while `id` holds keyboard focus.
     pub fn focused_with(mut self, id: FocusId) -> Self {
         self.focus_for = Some(id);
+        self
+    }
+
+    /// Keeps everything inside the box inside its rounded corners, which the
+    /// rectangle that hidden overflow clips to does not. The corners take the
+    /// radius of the top-left one.
+    pub fn masked(mut self) -> Self {
+        self.masked = true;
         self
     }
 

@@ -186,7 +186,7 @@ impl App {
             .with_title(aside.title())
             .with_resizable(true)
             .with_window_level(aside.level())
-            .with_min_inner_size(aside.least_size());
+            .with_min_inner_size(super::frame::with_band(aside.least_size()));
         let window = match event_loop.create_window(attributes) {
             Ok(window) => Arc::new(window),
             Err(error) => fail_to_start(&format!(
@@ -296,6 +296,7 @@ impl App {
     /// main one, and asks for the next while anything is moving or the frame
     /// could not be presented.
     pub(super) fn redraw_aside(&mut self, aside: Aside) {
+        self.sync_floating();
         let edge = self.frame_edge();
         let (Some(window), Some(renderer)) = (self.window.as_ref(), self.renderer.as_mut()) else {
             return;

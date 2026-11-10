@@ -6,7 +6,6 @@ use pm_text::{Edit, Field, Shaper};
 use pm_ui::Node;
 
 use crate::workspace::{Outgoing, WorkspaceState, workspace};
-use pm_components::Window;
 use pm_components::context_menu::{ContextMenu, field_menu};
 use pm_components::folder_picker::FolderPicker;
 use pm_components::git_controls::Pick;
@@ -14,6 +13,7 @@ use pm_components::git_menus::MenuKind;
 use pm_components::project::Project;
 use pm_components::sash::Grows;
 use pm_components::tree_actions::TreeTarget;
+use pm_components::{Window, shadowed};
 
 /// Which screen is showing, with what it remembers.
 #[derive(Clone, Debug, PartialEq)]
@@ -1367,7 +1367,7 @@ impl Screen {
 /// The whole screen for `state` in a window `width` by `height` logical pixels.
 pub fn screen(state: &Screen, width: f32, height: f32, shaper: &mut Shaper) -> Node {
     match state {
-        Screen::Workspace(state) => workspace(state, width, height, shaper),
+        Screen::Workspace(state) => shadowed(workspace(state, width, height, shaper)),
     }
 }
 

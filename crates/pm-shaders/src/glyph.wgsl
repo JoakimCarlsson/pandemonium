@@ -3,7 +3,10 @@
 struct Viewport {
     size: vec2<f32>,
     scale: f32,
-    padding: f32,
+    mask_radius: f32,
+    mask: vec4<f32>,
+    offset: vec2<f32>,
+    padding: vec2<f32>,
 }
 
 @group(0) @binding(0) var<uniform> viewport: Viewport;
@@ -22,6 +25,17 @@ struct Fragment {
     @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) color: vec4<f32>,
+}
+
+// How much of the pixel at `position`, in physical pixels, lies inside the
+// rounded rectangle everything is masked to.
+fn mask_coverage(position: vec2<f32>) -> f32 {
+    let half_size = (viewport.mask.zw - viewport.mask.xy) * 0.5;
+    let centre = (viewport.mask.xy + viewport.mask.zw) * 0.5;
+    let inner = abs(position - centre) - half_size + vec2<f32>(viewport.mask_radius);
+    let distance = length(max(inner, vec2<f32>(0.0))) + min(max(inner.x, inner.y), 0.0)
+        - viewport.mask_radius;
+    return clamp(0.5 - distance, 0.0, 1.0);
 }
 
 fn unit_corner(index: u32) -> vec2<f32> {
@@ -43,7 +57,7 @@ fn vertex(@builtin(vertex_index) index: u32, instance: Instance) -> Fragment {
     let offset = (corner - vec2<f32>(0.5, 0.5)) * instance.size;
     let sine = sin(instance.rotation);
     let cosine = cos(instance.rotation);
-    let point = middle + vec2<f32>(
+    let point = viewport.offset + middle + vec2<f32>(
         offset.x * cosine - offset.y * sine,
         offset.x * sine + offset.y * cosine,
     );
@@ -63,6 +77,6 @@ fn vertex(@builtin(vertex_index) index: u32, instance: Instance) -> Fragment {
 @fragment
 fn fragment(in: Fragment) -> @location(0) vec4<f32> {
     let coverage = textureSample(atlas, atlas_sampler, in.uv).r;
-    let alpha = in.color.a * coverage;
+    let alpha = in.color.a * coverage * mask_coverage(in.position.xy);
     return vec4<f32>(in.color.rgb * alpha, alpha);
 }

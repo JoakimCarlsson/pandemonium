@@ -249,6 +249,7 @@ fn main() {
             Some("inquiring") => Shot::Inquiring,
             Some("answered") => Shot::Answered,
             Some("background") => Shot::Background,
+            Some("floating") => Shot::Floating,
             Some("subagents") => Shot::Agents,
             Some("subagents-expanded") => Shot::AgentsExpanded,
             Some("subagents-scrolled") => Shot::AgentsScrolled,

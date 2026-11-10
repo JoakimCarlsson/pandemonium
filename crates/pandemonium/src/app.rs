@@ -420,11 +420,11 @@ impl App {
 }
 
 impl App {
-    /// The attributes the window is opened with, `size` logical pixels across.
+    /// The attributes the window is opened with, its frame `size` logical pixels across.
     fn attributes(size: LogicalSize<f32>) -> winit::window::WindowAttributes {
         let attributes = Window::default_attributes()
             .with_title("Pandemonium")
-            .with_inner_size(size);
+            .with_inner_size(frame::with_band(size));
         #[cfg(target_os = "macos")]
         let attributes = {
             use winit::platform::macos::WindowAttributesExtMacOS;
@@ -435,7 +435,7 @@ impl App {
                 .with_fullsize_content_view(true)
         };
         #[cfg(not(target_os = "macos"))]
-        let attributes = attributes.with_decorations(false);
+        let attributes = attributes.with_decorations(false).with_transparent(true);
         #[cfg(target_os = "linux")]
         let attributes = {
             use winit::platform::wayland::WindowAttributesExtWayland;
@@ -448,7 +448,7 @@ impl App {
         attributes
     }
 
-    /// How large the window opens: as large as it was when it was last closed, or as the screen it opens on is.
+    /// How large the frame of the window opens: as large as it was when the window was last closed, or as fits the screen it opens on.
     fn opening_size(event_loop: &ActiveEventLoop) -> LogicalSize<f32> {
         let saved = pm_store::load_text(WINDOW_SIZE_FILE).and_then(|text| {
             let (width, height) = text.trim().split_once(' ')?;
@@ -459,7 +459,10 @@ impl App {
                 .primary_monitor()
                 .or_else(|| event_loop.available_monitors().next())?;
             let size = monitor.size().to_logical::<f32>(monitor.scale_factor());
-            Some(LogicalSize::new(size.width, size.height))
+            Some(frame::without_band(LogicalSize::new(
+                size.width,
+                size.height,
+            )))
         };
         saved
             .filter(|size: &LogicalSize<f32>| size.width >= MIN_SAVED && size.height >= MIN_SAVED)
@@ -467,9 +470,14 @@ impl App {
             .unwrap_or(LogicalSize::new(WIDTH, HEIGHT))
     }
 
-    /// Keeps how large the window is for the next launch.
+    /// Keeps how large the frame of the window is for the next launch.
     fn remember_size(window: &Window) {
         let size = window.inner_size().to_logical::<f32>(window.scale_factor());
+        let size = if frame::floats(window) {
+            frame::without_band(size)
+        } else {
+            size
+        };
         if size.width >= MIN_SAVED && size.height >= MIN_SAVED {
             let _ = pm_store::save_text(
                 WINDOW_SIZE_FILE,
@@ -486,6 +494,7 @@ impl App {
             return;
         }
         let started = self.timings.start();
+        self.sync_floating();
         self.fit_terminal();
         let reaching = self.reaching() || self.reaching_terminal_link();
         let edge = self.frame_edge();
@@ -550,6 +559,7 @@ impl App {
             }
             self.naming = naming;
             let mut scroll_to = None;
+            let band = pm_components::shadow_margin();
             if let Some(id) = self.focus.current()
                 && let Some(field) = state.field(id)
                 && field.is_multiline()
@@ -571,7 +581,7 @@ impl App {
                     if self.ime_area != Some(area) {
                         self.ime_area = Some(area);
                         window.set_ime_cursor_area(
-                            LogicalPosition::new(area.0, area.1),
+                            LogicalPosition::new(area.0 + band, area.1 + band),
                             LogicalSize::new(area.2, area.3),
                         );
                     }
@@ -590,7 +600,7 @@ impl App {
                 if self.ime_area != Some(area) {
                     self.ime_area = Some(area);
                     window.set_ime_cursor_area(
-                        LogicalPosition::new(area.0, area.1),
+                        LogicalPosition::new(area.0 + band, area.1 + band),
                         LogicalSize::new(area.2, area.3),
                     );
                 }
@@ -2402,11 +2412,13 @@ impl App {
                 let received = self.timings.start();
                 let before = self.pointer;
                 let version = self.model.version();
-                self.pointer(PointerEvent::Moved(
-                    position.x as f32 / scale,
-                    position.y as f32 / scale,
-                ));
-                self.browser_moved((position.x as f32 / scale, position.y as f32 / scale));
+                let band = pm_components::shadow_margin();
+                let at = (
+                    position.x as f32 / scale - band,
+                    position.y as f32 / scale - band,
+                );
+                self.pointer(PointerEvent::Moved(at.0, at.1));
+                self.browser_moved(at);
                 if self.on_aside.is_none()
                     && self.model.version() == version
                     && !self.dirty.get()
