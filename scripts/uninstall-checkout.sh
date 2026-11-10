@@ -1,10 +1,11 @@
 #!/bin/sh
 #
-# Removes pandemonium-preview and everything it keeps, so that the next
-# `make install` starts from a clean slate. The stable pandemonium, its data and
-# its icons are left alone. A running preview and its server are stopped first.
+# Removes pandemonium-local, or pandemonium-preview when given `preview`, and
+# everything it keeps, so that the next `make install` starts from a clean
+# slate. The stable pandemonium, the other install, their data and their icons
+# are left alone. A running copy and its server are stopped first.
 #
-#   scripts/uninstall-preview.sh
+#   scripts/uninstall-checkout.sh [local|preview]
 
 set -eu
 
@@ -12,7 +13,17 @@ BIN_DIR="${PANDEMONIUM_BIN_DIR:-$HOME/.local/bin}"
 DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}"
 MAC_APPS_DIR="${PANDEMONIUM_APP_DIR:-$HOME/Applications}"
-NAME="pandemonium-preview"
+NAME="pandemonium-local"
+TITLE="Pandemonium Local"
+
+# Selects the install to remove and the names that go with it.
+select_channel() {
+    NAME="pandemonium-$1"
+    case "$1" in
+        preview) TITLE="Pandemonium Preview" ;;
+        *) TITLE="Pandemonium Local" ;;
+    esac
+}
 
 # Prints an error and exits.
 fail() {
@@ -61,13 +72,17 @@ uninstall_linux() {
 # Removes the files of the preview on macOS.
 uninstall_macos() {
     remove "$BIN_DIR/$NAME"
-    remove "$MAC_APPS_DIR/Pandemonium Preview.app"
+    remove "$MAC_APPS_DIR/$TITLE.app"
     remove "$HOME/Library/Application Support/$NAME"
     remove "$HOME/Library/Caches/$NAME"
 }
 
-# Stops the preview and removes it.
+# Stops the chosen install and removes it.
 main() {
+    case "${1:-local}" in
+        local | preview) select_channel "${1:-local}" ;;
+        *) fail "usage: $0 [local|preview]" ;;
+    esac
     stop_running
     case "$(uname -s)" in
         Linux) uninstall_linux ;;

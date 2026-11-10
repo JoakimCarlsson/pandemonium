@@ -101,12 +101,16 @@ fn tag() -> String {
     format!("v{}", env!("CARGO_PKG_VERSION"))
 }
 
-/// Whether this build reads the languages from the checkout it was built from: a debug build, and the preview channel, which is made from a checkout to be tried before it is released.
+/// Whether this build reads the languages from the checkout it was built from: a debug build, and the preview and local installs, which are made from a checkout to be tried before it is released.
 fn built_from_checkout() -> bool {
-    cfg!(debug_assertions) || option_env!("PANDEMONIUM_CHANNEL") == Some("preview")
+    cfg!(debug_assertions)
+        || matches!(
+            option_env!("PANDEMONIUM_CHANNEL"),
+            Some("preview" | "local")
+        )
 }
 
-/// The `languages` folder of the checkout a debug or preview build was built from, which it reads the languages from so that changes to them are seen before they are tagged.
+/// The `languages` folder of the checkout a debug, preview or local build was built from, which it reads the languages from so that changes to them are seen before they are tagged.
 fn checkout() -> Option<String> {
     if !built_from_checkout() {
         return None;
@@ -118,7 +122,7 @@ fn checkout() -> Option<String> {
         .then(|| folder.to_string_lossy().into_owned())
 }
 
-/// Where the languages are read from: the folder or address `PANDEMONIUM_LANGUAGES` names, the checkout a debug or preview build was built from, or the repository at this build's tag.
+/// Where the languages are read from: the folder or address `PANDEMONIUM_LANGUAGES` names, the checkout a debug, preview or local build was built from, or the repository at this build's tag.
 pub(crate) fn source() -> String {
     match std::env::var(OVERRIDE) {
         Ok(place) if !place.trim().is_empty() => place.trim().trim_end_matches('/').to_owned(),

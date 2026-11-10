@@ -1,10 +1,11 @@
 #!/bin/sh
 #
-# Installs this checkout as pandemonium-preview, or, given `server`, installs
-# only the headless pandemonium-server. The harness that runs the agents is part
-# of the program, so nothing else is installed.
+# Installs this checkout as pandemonium-local, or as pandemonium-preview when
+# given `preview`, or, given `server`, installs only the headless
+# pandemonium-server. The harness that runs the agents is part of the program,
+# so nothing else is installed.
 #
-#   scripts/install-preview.sh [server]
+#   scripts/install-checkout.sh [local|preview|server]
 
 set -eu
 
@@ -12,7 +13,19 @@ BIN_DIR="${PANDEMONIUM_BIN_DIR:-$HOME/.local/bin}"
 APPS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 ICONS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor"
 MAC_APPS_DIR="${PANDEMONIUM_APP_DIR:-$HOME/Applications}"
-NAME="pandemonium-preview"
+CHANNEL="local"
+NAME="pandemonium-local"
+TITLE="Pandemonium Local"
+
+# Selects the channel to install and the names that go with it.
+select_channel() {
+    CHANNEL="$1"
+    NAME="pandemonium-$CHANNEL"
+    case "$CHANNEL" in
+        preview) TITLE="Pandemonium Preview" ;;
+        *) TITLE="Pandemonium Local" ;;
+    esac
+}
 
 # Prints an error and exits.
 fail() {
@@ -40,7 +53,7 @@ install_icons() {
 install_desktop_entry() {
     mkdir -p "$APPS_DIR"
     sed -e "s|^Exec=pandemonium|Exec=$BIN_DIR/$NAME|" \
-        -e "s|^Name=Pandemonium|Name=Pandemonium Preview|" \
+        -e "s|^Name=Pandemonium|Name=$TITLE|" \
         packaging/pandemonium.desktop > "$APPS_DIR/$NAME.desktop"
     command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APPS_DIR" >/dev/null 2>&1 || true
 }
@@ -48,9 +61,9 @@ install_desktop_entry() {
 # Adds the app bundle.
 install_app_bundle() {
     mkdir -p "$MAC_APPS_DIR"
-    scripts/bundle-macos.sh target/release/pandemonium "$MAC_APPS_DIR/Pandemonium Preview.app" \
-        "Pandemonium Preview" io.github.joakimcarlsson.pandemonium.preview
-    echo "installed $MAC_APPS_DIR/Pandemonium Preview.app"
+    scripts/bundle-macos.sh target/release/pandemonium "$MAC_APPS_DIR/$TITLE.app" \
+        "$TITLE" "io.github.joakimcarlsson.pandemonium.$CHANNEL"
+    echo "installed $MAC_APPS_DIR/$TITLE.app"
 }
 
 # Installs the browser helper on Linux: the bundle the window would download goes to the lib folder, and a link named pandemonium-browser to its launcher goes beside the window, where the window looks for it.
@@ -70,8 +83,8 @@ install_browser() {
 # Builds and installs the window, which carries the local server in its `--server` mode.
 install_editor() {
     revision="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
-    echo "building pandemonium preview at $revision"
-    PANDEMONIUM_CHANNEL=preview cargo build --release --locked -p pandemonium
+    echo "building pandemonium $CHANNEL at $revision"
+    PANDEMONIUM_CHANNEL="$CHANNEL" cargo build --release --locked -p pandemonium
     mkdir -p "$BIN_DIR"
     install -m 0755 target/release/pandemonium "$BIN_DIR/$NAME"
     install_browser
@@ -97,10 +110,10 @@ install_server() {
 # Installs what was asked for and warns when it is not on the PATH.
 main() {
     command -v cargo >/dev/null 2>&1 || fail "'cargo' is required but was not found"
-    case "${1:-editor}" in
-        editor) install_editor ;;
+    case "${1:-local}" in
+        local | preview) select_channel "${1:-local}"; install_editor ;;
         server) install_server ;;
-        *) fail "usage: $0 [server]" ;;
+        *) fail "usage: $0 [local|preview|server]" ;;
     esac
     case ":$PATH:" in
         *":$BIN_DIR:"*) ;;

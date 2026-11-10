@@ -1,4 +1,4 @@
-.PHONY: fmt lint run browser-helper install install-server uninstall release languages extension-sample
+.PHONY: fmt lint run browser-helper install install-server uninstall local preview release languages extension-sample
 
 fmt:
 	cargo fmt --all
@@ -14,14 +14,19 @@ browser-helper: helpers/electron-browser/node_modules/electron/path.txt
 helpers/electron-browser/node_modules/electron/path.txt: helpers/electron-browser/package-lock.json
 	cd helpers/electron-browser && npm ci --no-audit --no-fund && node node_modules/electron/install.js
 
+TARGET := $(or $(filter local preview,$(MAKECMDGOALS)),local)
+
+local preview:
+	@:
+
 install:
-	scripts/install-preview.sh
+	scripts/install-checkout.sh $(TARGET)
 
 install-server:
-	scripts/install-preview.sh server
+	scripts/install-checkout.sh server
 
 uninstall:
-	scripts/uninstall-preview.sh
+	scripts/uninstall-checkout.sh $(TARGET)
 
 release:
 	scripts/release.sh $(VERSION)

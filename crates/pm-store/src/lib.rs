@@ -7,10 +7,11 @@ use std::path::PathBuf;
 /// The release channel this build was made for, as `PANDEMONIUM_CHANNEL` said when it was built.
 const CHANNEL: Option<&str> = option_env!("PANDEMONIUM_CHANNEL");
 
-/// The name this build goes by to the desktop and the file system: the launcher entry, the window class and the data folder. The preview channel has its own, so that it installs and keeps its data beside the stable app and never replaces it.
+/// The name this build goes by to the desktop and the file system: the launcher entry, the window class and the data folder. The preview and local installs have their own, so that they install and keep their data beside the stable app and never replace it.
 pub fn app_name() -> &'static str {
     match CHANNEL {
         Some("preview") => "pandemonium-preview",
+        Some("local") => "pandemonium-local",
         _ => "pandemonium",
     }
 }
