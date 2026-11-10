@@ -3421,6 +3421,7 @@ impl Shot {
                         Event::Used(pm_harness::Usage {
                             used: 84_000,
                             size: 200_000,
+                            written: 0,
                         }),
                     )
                     .heard(
@@ -4289,6 +4290,7 @@ fn restored() -> WorkspaceState {
         Event::Used(pm_harness::Usage {
             used: 9466,
             size: 1_000_000,
+            written: 0,
         }),
         done("r1", "pub struct WorkspaceState { .. }", None),
         Event::Tool(tool(
@@ -4301,6 +4303,7 @@ fn restored() -> WorkspaceState {
         Event::Used(pm_harness::Usage {
             used: 9667,
             size: 1_000_000,
+            written: 0,
         }),
         done(
             "e1",
@@ -4315,6 +4318,7 @@ fn restored() -> WorkspaceState {
         Event::Used(pm_harness::Usage {
             used: 9791,
             size: 1_000_000,
+            written: 0,
         }),
         Event::Finished(None),
         prompted("Now count to a thousand out loud.", 5),

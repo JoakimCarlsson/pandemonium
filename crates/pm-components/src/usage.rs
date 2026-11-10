@@ -290,6 +290,7 @@ mod tests {
         let context = Usage {
             used: 50,
             size: 100,
+            written: 0,
         };
         let found = meters(Some(&context), Some(&limits), 0);
         let shares: Vec<Option<f32>> = found.iter().map(|meter| meter.share).collect();
@@ -336,6 +337,7 @@ mod tests {
         let context = Usage {
             used: 50,
             size: 100,
+            written: 0,
         };
         assert!(rings_of(None, None).is_none());
         assert!(rings_of(Some(&context), None).is_some());
