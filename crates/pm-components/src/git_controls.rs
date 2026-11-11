@@ -276,7 +276,7 @@ impl WorkspaceState {
     pub fn change_folder_row_of(&self, id: FocusId) -> Option<usize> {
         id.0.checked_sub(crate::state::FOLDER_BASE)
             .map(|index| index as usize)
-            .filter(|index| *index < self.change_count())
+            .filter(|index| *index < self.change_folder_count())
     }
 
     /// The state with the menu on changed files open at `at` over the folder at `position` of the tree, acting on every file in it.
