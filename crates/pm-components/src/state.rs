@@ -2915,9 +2915,9 @@ impl WorkspaceState {
             self.open_change(index);
         } else if let Some(index) = position(STAGE_BASE, self.change_count()) {
             self.stage_changes(&[index]);
-        } else if let Some(index) = position(FOLDER_BASE, self.change_count()) {
+        } else if let Some(index) = position(FOLDER_BASE, self.change_folder_count()) {
             self.fold_change_folder(index);
-        } else if let Some(index) = position(FOLDER_STAGE_BASE, self.change_count()) {
+        } else if let Some(index) = position(FOLDER_STAGE_BASE, self.change_folder_count()) {
             self.stage_change_folder(index);
         } else if let Some(index) = position(OPEN_ARROW_BASE, self.change_count()) {
             self.open_changed_file(index);
@@ -3137,6 +3137,13 @@ impl WorkspaceState {
     pub(crate) fn change_count(&self) -> usize {
         self.review_session()
             .map_or(0, |session| session.changes.len())
+    }
+
+    /// How many folders the trees of the changed files the review panel lists have, folded or not: a file can sit under several, as under its repository and then its own folder.
+    pub(crate) fn change_folder_count(&self) -> usize {
+        self.review_session().map_or(0, |session| {
+            crate::change_list::folder_table(&session.changes, self.git.repository.as_deref()).len()
+        })
     }
 
     /// Applies `edit` to the change at `index` of the session the review panel is about.
@@ -3961,6 +3968,32 @@ mod tests {
         state = state.with_folder_change_menu(0, (0.0, 0.0));
         assert_eq!(state.marked_changes().len(), 4);
         state = state.after(FocusId(FOLDER_BASE));
+        assert!(!state.closed_folders.contains(&key));
+    }
+
+    /// A lone file under a repository of a project that holds several has more folders above it than there are changes, and each of them still folds.
+    #[test]
+    fn every_folder_above_a_lone_change_folds() {
+        let mut state = WorkspaceState::sample();
+        state.page = Page::Session(0);
+        state.sync_context();
+        let index = state.review_index().unwrap();
+        let mut change = Change::new("pandemonium/crates/pm-harness/src/steer.rs", "");
+        change.untracked = true;
+        change.repository = Some("pandemonium".to_owned());
+        state.sessions[index].changes = vec![change];
+        assert_eq!(state.change_folder_count(), 2);
+        let key = crate::change_list::fold_key(
+            crate::change_list::Group::Untracked,
+            "pandemonium/crates/pm-harness/src",
+        );
+        state = state.after(FocusId(FOLDER_BASE + 1));
+        assert!(state.closed_folders.contains(&key));
+        assert_eq!(
+            state.change_folder_row_of(FocusId(FOLDER_BASE + 1)),
+            Some(1)
+        );
+        state = state.after(FocusId(FOLDER_BASE + 1));
         assert!(!state.closed_folders.contains(&key));
     }
 }
