@@ -5,8 +5,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-omc-session = { git = "https://github.com/JoakimCarlsson/oh-my-crab", tag = "0.1.1", default-features = false }
-omc-wire = { git = "https://github.com/JoakimCarlsson/oh-my-crab", tag = "0.1.1" }
+omc-session = { git = "https://github.com/JoakimCarlsson/oh-my-crab", tag = "0.1.2", default-features = false }
+omc-wire = { git = "https://github.com/JoakimCarlsson/oh-my-crab", tag = "0.1.2" }
 pm-agent-library.workspace = true
 pm-buffer.workspace = true
 pm-lsp.workspace = true
