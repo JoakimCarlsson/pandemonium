@@ -1,6 +1,6 @@
 //! The device, the target and the one frame each redraw presents.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
 use pm_color::Srgba;
@@ -102,7 +102,7 @@ pub struct Renderer {
     image_layout: wgpu::BindGroupLayout,
     /// The sampler pictures are drawn with.
     image_sampler: wgpu::Sampler,
-    /// The bind group of every picture uploaded so far, by key.
+    /// The bind group of every picture the last frame drew, by key.
     images: HashMap<u64, wgpu::BindGroup>,
     /// The texture and bind group each live surface draws from, and the key of the frame in them.
     live: HashMap<u32, Live>,
@@ -624,6 +624,12 @@ impl Renderer {
         self.images.insert(picture.key, live.group.clone());
     }
 
+    /// Frees the texture of every picture and live surface that is not among `drawn`, the keys of the pictures the frame being encoded draws, so a picture that left the screen stops holding GPU memory and is uploaded again when it is next drawn.
+    fn forget_undrawn(&mut self, drawn: &HashSet<u64>) {
+        self.images.retain(|key, _| drawn.contains(key));
+        self.live.retain(|_, live| drawn.contains(&live.key));
+    }
+
     /// The size of the drawing in logical pixels: the target without the band around it.
     pub fn size(&self) -> (f32, f32) {
         let (width, height) = self.physical_size();
@@ -809,6 +815,7 @@ impl Renderer {
         let mut batches: Vec<Batch> = Vec::new();
         let mut clip: Option<Rect> = None;
         let mut masks: Vec<Mask> = Vec::new();
+        let mut drawn: HashSet<u64> = HashSet::new();
         let mut viewport = 0;
         for primitive in list.primitives() {
             match primitive {
@@ -837,6 +844,7 @@ impl Renderer {
                     if !self.images.contains_key(&picture.key) {
                         continue;
                     }
+                    drawn.insert(picture.key);
                     let (width, height) = (picture.width as f32, picture.height as f32);
                     let wanted = image.width / image.height.max(f32::EPSILON);
                     let held = width / height;
@@ -901,6 +909,7 @@ impl Renderer {
                 }
             }
         }
+        self.forget_undrawn(&drawn);
         upload(
             &self.device,
             &self.queue,
