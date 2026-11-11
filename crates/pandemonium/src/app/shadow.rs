@@ -53,7 +53,9 @@ impl Shadow {
     /// Fits the shadow to `window` as it is now: cast around its frame while it is `floating`, and gone while it is not.
     pub(super) fn fit(&mut self, window: &Window, floating: bool) {
         match self {
-            Self::Absent => {}
+            Self::Absent => {
+                let _ = (window, floating);
+            }
             #[cfg(target_os = "linux")]
             Self::Strips(strips) => {
                 let scale = window.scale_factor();
