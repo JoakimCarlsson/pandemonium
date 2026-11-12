@@ -258,6 +258,7 @@ fn main() {
             Some("background") => Shot::Background,
             Some("floating") => Shot::Floating,
             Some("subagents") => Shot::Agents,
+            Some("subagents-stoppable") => Shot::AgentsStoppable,
             Some("subagents-expanded") => Shot::AgentsExpanded,
             Some("subagents-scrolled") => Shot::AgentsScrolled,
             Some("subagents-worktrees") => Shot::AgentsWorktrees,

@@ -319,6 +319,12 @@ pub const TURN_BASE: u64 = 100_000;
 /// The first of the lines opening a step's detail; the rest follow it, a thousand to a reply.
 pub const STEP_BASE: u64 = 200_000;
 
+/// The first of the buttons stopping one subagent; the rest follow it, a thousand to a reply, each numbered as the line of its subagent is from [`STEP_BASE`].
+pub const SUBAGENT_STOP_BASE: u64 = 7_000_000_000_000;
+
+/// How many buttons stopping a subagent there is room for after [`SUBAGENT_STOP_BASE`].
+pub const SUBAGENT_STOP_ROOM: u64 = 1_000_000_000;
+
 /// The first of the summaries folding a part of a reply; the rest follow it, a thousand to a reply.
 pub const DETAILS_BASE: u64 = 400_000;
 
@@ -1312,6 +1318,13 @@ pub enum Outgoing {
     Cancel {
         /// The session, by position.
         session: usize,
+    },
+    /// Stops one subagent of the agent of a session, while the turn goes on.
+    StopSubagent {
+        /// The session, by position.
+        session: usize,
+        /// The subagent, by the id it is stopped by.
+        subagent: String,
     },
     /// Gives a setting of the agent of a session a value.
     Set {
@@ -2865,6 +2878,9 @@ impl WorkspaceState {
         if self.press_continue(FocusId(id)) {
             return;
         }
+        if self.press_subagent_stop(id) {
+            return;
+        }
         if self.press_choice(id) {
             return;
         }
@@ -3093,6 +3109,35 @@ impl WorkspaceState {
             }
             None => self.opened.push(key),
         }
+    }
+
+    /// Stops the subagent whose stop button `id` is, one of the open session's that is still at work: asks its server to, and takes the button away until the server says how the subagent stands. Returns whether `id` is such a button.
+    fn press_subagent_stop(&mut self, id: u64) -> bool {
+        if !(SUBAGENT_STOP_BASE..SUBAGENT_STOP_BASE + SUBAGENT_STOP_ROOM).contains(&id) {
+            return false;
+        }
+        let offset = (id - SUBAGENT_STOP_BASE) as usize;
+        let (message, step) = (offset / 1000, offset % 1000);
+        let Page::Session(open) = self.page else {
+            return true;
+        };
+        let tool = self
+            .sessions
+            .get_mut(open)
+            .and_then(|session| session.messages.get_mut(message))
+            .and_then(|reply| reply.steps.get_mut(step));
+        if let Some(crate::sample::Step::Tool(tool)) = tool
+            && let Some(subagent) = tool.stoppable().map(str::to_owned)
+        {
+            if let Some(stop) = &mut tool.stop {
+                stop.asked = true;
+            }
+            self.outbox.push(Outgoing::StopSubagent {
+                session: open,
+                subagent,
+            });
+        }
+        true
     }
 
     /// Opens or closes fold-out `place` of the reply at `message` of the open session.
@@ -4052,5 +4097,58 @@ mod tests {
         );
         state = state.after(FocusId(FOLDER_BASE + 1));
         assert!(!state.closed_folders.contains(&key));
+    }
+
+    /// Pressing the stop button of a subagent at work asks its server to stop that one, takes the button away, and leaves the panel of subagents open.
+    #[test]
+    fn stopping_a_subagent_asks_the_server_and_keeps_the_panel() {
+        let mut state = WorkspaceState::new(&[]).with_project("/work/app");
+        state.sessions.push(Session::started("Test", 0, "Hello"));
+        let open = state.sessions.len() - 1;
+        state.page = Page::Session(open);
+        let session = &mut state.sessions[open];
+        session.hear(pm_harness::Event::Tool(pm_harness::Tool {
+            id: "t1".to_owned(),
+            title: Some("Look".to_owned()),
+            kind: None,
+            state: Some(pm_harness::ToolState::Running),
+            target: None,
+            diff: None,
+            output: None,
+            parent: None,
+            agent: Some("scout".to_owned()),
+            worktree: None,
+        }));
+        session.hear(pm_harness::Event::Subagent(pm_harness::Subagent {
+            id: "t1".to_owned(),
+            call: "t1".to_owned(),
+            agent: "scout".to_owned(),
+            label: "Look".to_owned(),
+            model: None,
+            background: false,
+            state: pm_harness::SubagentState::Running,
+        }));
+        let (reply, position, _) = state.sessions[open].subagents()[0];
+        state.activity = Some(Activity::Subagents);
+        state.take_outbox();
+
+        let button = FocusId(SUBAGENT_STOP_BASE + (reply * 1000 + position) as u64);
+        let mut state = state.after(button);
+
+        assert_eq!(state.activity, Some(Activity::Subagents));
+        assert!(state.take_outbox().iter().any(|outgoing| matches!(
+            outgoing,
+            Outgoing::StopSubagent { session, subagent } if *session == open && subagent == "t1"
+        )));
+        let (_, _, tool) = state.sessions[open].subagents()[0];
+        assert_eq!(tool.stoppable(), None);
+        let mut state = state.after(button);
+        assert!(
+            !state
+                .take_outbox()
+                .iter()
+                .any(|outgoing| matches!(outgoing, Outgoing::StopSubagent { .. })),
+            "a second press asks nothing"
+        );
     }
 }

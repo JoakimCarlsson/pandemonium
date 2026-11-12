@@ -297,6 +297,13 @@ pub enum Request {
         /// The session.
         session: u64,
     },
+    /// Stops one subagent of a session's agent, and the subagents it started, while the turn and the other subagents go on.
+    StopSubagent {
+        /// The session.
+        session: u64,
+        /// The subagent, by the id its `Subagent` event gave it.
+        subagent: String,
+    },
     /// Gives a setting of a session's agent a value.
     Set {
         /// The session.

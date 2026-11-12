@@ -991,6 +991,15 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             told.extend(held.drop_queue(session));
             told
         }),
+        Request::StopSubagent { session, subagent } => {
+            trying(core, session, |held| match &held.chat {
+                Some(chat) => {
+                    chat.stop_subagent(&subagent);
+                    Ok(Told::new())
+                }
+                None => Err(format!("the agent of {} is not running", held.meta.title)),
+            })
+        }
         Request::Set {
             session,
             setting,

@@ -349,12 +349,16 @@ fn choose_settings(events: &mut [Event], chosen: &[(String, String)]) {
     }
 }
 
-/// Whether `event` is kept in the log on disk: what the harness saves with the conversation, such as its turns, its name, what can be set, the commands it offers and how full its context is, is not.
+/// Whether `event` is kept in the log on disk: what the harness saves with the conversation, such as its turns, its name, what can be set, the commands it offers and how full its context is, is not, and neither is a subagent starting or ending, which matters only while the agent that started it runs.
 pub(crate) fn kept_on_disk(event: &Event) -> bool {
     !conversational(event)
         && !matches!(
             event,
-            Event::Titled(_) | Event::Settings(_) | Event::Commands(_) | Event::Used(_)
+            Event::Titled(_)
+                | Event::Settings(_)
+                | Event::Commands(_)
+                | Event::Used(_)
+                | Event::Subagent(_)
         )
 }
 

@@ -30,7 +30,8 @@ pub use discover::discover;
 pub use event::{
     Allowance, Alternative, Background, Choice, Diff, Discovery, Event, Input, Inquiry, Kind,
     Limit, LimitUnit, Limits, Merge, Part, Permission, Pick, PlanStep, Progress, Question, Reply,
-    Setting, Skipped, Slash, Standing, Tool, ToolState, TrustRequest, Usage, Verdict, Worktree,
+    Setting, Skipped, Slash, Standing, Subagent, SubagentState, Tool, ToolState, TrustRequest,
+    Usage, Verdict, Worktree,
 };
 pub use history::{import_saved, rename_saved, saved_conversation};
 pub use language::LanguageServers;

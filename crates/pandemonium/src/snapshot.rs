@@ -285,6 +285,8 @@ pub enum Shot {
     Floating,
     /// The same conversation with the subagents above the prompt box open.
     Agents,
+    /// The open panel of subagents with those at work announced by their agent, each with the button that stops it.
+    AgentsStoppable,
     /// The open panel with dozens of expanded tool runs.
     AgentsExpanded,
     /// The expanded panel scrolled to its last rows.
@@ -3446,6 +3448,31 @@ impl Shot {
             Self::Background | Self::Floating => Screen::Workspace(live(Turn::Background)),
             Self::Agents => {
                 Screen::Workspace(live(Turn::Background).after(FocusId(SUBAGENTS_CHIP.0)))
+            }
+            Self::AgentsStoppable => {
+                let mut state = live(Turn::Background);
+                let session = state.open_index().unwrap();
+                let working: Vec<String> = state.sessions[session]
+                    .subagents()
+                    .into_iter()
+                    .filter(|(_, _, tool)| tool.is_working_agent())
+                    .map(|(_, _, tool)| tool.id.clone())
+                    .collect();
+                for id in working {
+                    state = state.heard(
+                        session,
+                        Event::Subagent(pm_harness::Subagent {
+                            id: id.clone(),
+                            call: id,
+                            agent: "scout".to_owned(),
+                            label: "Look".to_owned(),
+                            model: None,
+                            background: true,
+                            state: pm_harness::SubagentState::Running,
+                        }),
+                    );
+                }
+                Screen::Workspace(state.after(FocusId(SUBAGENTS_CHIP.0)))
             }
             Self::AgentsWorktrees => {
                 Screen::Workspace(live(Turn::Isolated).after(FocusId(SUBAGENTS_CHIP.0)))

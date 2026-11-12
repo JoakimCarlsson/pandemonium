@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 pub use omc_wire::{
     Alternative, Background, Choice, Diff, Input, Inquiry, Kind, Limit, LimitUnit, Limits, Merge,
     Part, Permission, Pick, PlanStep, Progress, Question, Reply, Setting, Skipped, Slash, Standing,
-    Tool, ToolState, TrustRequest, Usage, Verdict, Worktree,
+    Subagent, SubagentState, Tool, ToolState, TrustRequest, Usage, Verdict, Worktree,
 };
 
 /// What an account has used of its allowance, as the event that carries it holds it.
@@ -36,6 +36,8 @@ pub enum Event {
     Tool(Tool),
     /// A command or task left running beyond its call started, or ended.
     Background(Background),
+    /// A subagent started, or ended; while it runs it can be stopped by the id this gives it.
+    Subagent(Subagent),
     /// The turn was stopped, so that nothing the agent had running goes on.
     Halted,
     /// The agent's plan, whole, as it stands now.
@@ -192,8 +194,13 @@ impl Discovery {
     }
 }
 
+/// Whether `reason` is the harness saying that the subagent it was told to stop is not running: the subagent ended just before the reader stopped it, which leaves the turn as it is and is nothing to tell.
+fn stop_came_late(reason: &str) -> bool {
+    reason.starts_with("no subagent ") && reason.ends_with(" is running")
+}
+
 impl Event {
-    /// The event the app keeps for what the harness `reported`, or nothing when the app has no use for it.
+    /// The event the app keeps for what the harness `reported`, or nothing when the app has no use for it: a refusal to stop a subagent that had ended already is dropped, since the app takes a failure to mean the agent is gone.
     pub fn from_harness(reported: omc_wire::Event) -> Option<Self> {
         use omc_wire::Event as Wire;
         match reported {
@@ -205,6 +212,7 @@ impl Event {
             Wire::Thought(text) => Some(Self::Thought(text)),
             Wire::Tool(tool) => Some(Self::Tool(tool)),
             Wire::Background(background) => Some(Self::Background(background)),
+            Wire::Subagent(subagent) => Some(Self::Subagent(subagent)),
             Wire::Halted => Some(Self::Halted),
             Wire::Plan(plan) => Some(Self::Plan(plan)),
             Wire::Ask(permission) => Some(Self::Ask(permission)),
@@ -215,6 +223,7 @@ impl Event {
             Wire::LoginUrl(address) => Some(Self::ToolSignIn(address)),
             Wire::LoginCode { .. } | Wire::Resumed(_) | Wire::Language(_) | Wire::Queued(_) => None,
             Wire::Trust(request) => Some(Self::Trust(request)),
+            Wire::Failed(reason) if stop_came_late(&reason) => None,
             Wire::Failed(reason) => Some(Self::Failed(reason)),
             Wire::Titled(title) => Some(Self::Titled(title)),
         }
@@ -239,6 +248,34 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<Option<Event>>(&kept).unwrap(),
             Some(Event::ToolSignIn(address))
+        );
+    }
+
+    /// A subagent starting is kept with the id it is stopped by; the harness refusing to stop one that had ended already is dropped, and any other failure is kept.
+    #[test]
+    fn a_subagent_is_kept_and_a_late_stop_is_dropped() {
+        let subagent = Subagent {
+            id: "c1/2".to_owned(),
+            call: "c1".to_owned(),
+            agent: "scout".to_owned(),
+            label: "Find the parser".to_owned(),
+            model: None,
+            background: false,
+            state: SubagentState::Running,
+        };
+        assert_eq!(
+            Event::from_harness(omc_wire::Event::Subagent(subagent.clone())),
+            Some(Event::Subagent(subagent))
+        );
+        assert_eq!(
+            Event::from_harness(omc_wire::Event::Failed(
+                "no subagent c1/2 is running".to_owned()
+            )),
+            None
+        );
+        assert_eq!(
+            Event::from_harness(omc_wire::Event::Failed("out of memory".to_owned())),
+            Some(Event::Failed("out of memory".to_owned()))
         );
     }
 

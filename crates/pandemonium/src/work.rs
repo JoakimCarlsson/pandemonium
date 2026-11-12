@@ -998,6 +998,14 @@ impl Work {
                     |number| Request::Cancel { session: number },
                     Pending::Nothing,
                 ),
+                Outgoing::StopSubagent { session, subagent } => self.ask_session(
+                    session,
+                    |number| Request::StopSubagent {
+                        session: number,
+                        subagent,
+                    },
+                    Pending::Nothing,
+                ),
                 Outgoing::SessionAccount { session, login } => self.ask_session(
                     session,
                     |number| Request::SetSessionAccount {

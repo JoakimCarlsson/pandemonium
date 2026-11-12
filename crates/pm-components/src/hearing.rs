@@ -42,6 +42,7 @@ impl Session {
             Event::Thought(text) => self.think(text),
             Event::Tool(tool) => self.use_tool(tool),
             Event::Background(background) => self.background(background),
+            Event::Subagent(subagent) => self.subagent(&subagent),
             Event::Halted => self.halted(),
             Event::Plan(plan) => self.plan(plan),
             Event::Ask(question) => self.ask = Some(question),
@@ -53,6 +54,7 @@ impl Session {
                 reply.answers.push((at, answers));
             }
             Event::SignedOut { reason, account } => {
+                self.forget_stops();
                 self.turn_started = None;
                 self.finish(None);
                 self.signed_out = Some((reason, account));
@@ -60,6 +62,7 @@ impl Session {
             Event::SignedIn => self.signed_out = None,
             Event::Finished(error) => self.finish(error),
             Event::Failed(reason) => {
+                self.forget_stops();
                 self.container = None;
                 self.finish(Some(reason));
             }
@@ -122,10 +125,66 @@ impl Session {
         }
     }
 
-    /// Ends every call that was running, as the turn was stopped; commands and tasks left running in the background go on, as the harness keeps them.
-    fn halted(&mut self) {
+    /// Takes in a subagent starting, which gives the call that shows it the id it is stopped by, or ending, which takes that id away.
+    ///
+    /// The call is the one the subagent's events are filed under: the `task` call that started it, or, when that call started several, its step of the call, which the harness numbers as the id does after its last `/`.
+    fn subagent(&mut self, subagent: &pm_harness::Subagent) {
+        let own = subagent.id.rsplit(':').next().unwrap_or(&subagent.id);
+        let shown = match own.rsplit_once('/') {
+            Some((_, place)) => format!("{}:{place}", subagent.call),
+            None => subagent.call.clone(),
+        };
+        let running = subagent.state == pm_harness::SubagentState::Running;
+        for tool in self.tools_mut().filter(|tool| tool.id == shown) {
+            tool.stop = running.then(|| crate::sample::Stop {
+                id: subagent.id.clone(),
+                background: subagent.background,
+                asked: false,
+            });
+        }
+    }
+
+    /// Forgets how every subagent is stopped, as the agent that ran them is gone: it failed, its account needs signing in again, or the conversation was taken back, which starts the agent afresh.
+    fn forget_stops(&mut self) {
         for tool in self.tools_mut() {
-            if tool.state == ToolState::Running {
+            tool.stop = None;
+        }
+    }
+
+    /// The calls of the subagents their agent said run in the background, and of what those are doing: they go on when the turn that started them is stopped or fails.
+    fn outlasting(&self) -> Vec<String> {
+        let agents: Vec<&str> = self
+            .subagents()
+            .into_iter()
+            .filter(|(_, _, tool)| tool.is_working_agent() && tool.outlasts_the_turn())
+            .map(|(_, _, tool)| tool.id.as_str())
+            .collect();
+        let beneath = self
+            .messages
+            .iter()
+            .flat_map(|message| message.steps.iter())
+            .filter_map(|step| match step {
+                Step::Tool(tool) => Some(tool),
+                _ => None,
+            })
+            .filter(|tool| {
+                tool.parent
+                    .as_deref()
+                    .is_some_and(|parent| agents.contains(&parent))
+            })
+            .map(|tool| tool.id.clone());
+        agents
+            .iter()
+            .map(|id| (*id).to_owned())
+            .chain(beneath)
+            .collect()
+    }
+
+    /// Ends every call that was running, as the turn was stopped; the subagents running in the background and what they are doing go on, as the harness keeps them.
+    fn halted(&mut self) {
+        let kept = self.outlasting();
+        for tool in self.tools_mut() {
+            if tool.state == ToolState::Running && !kept.contains(&tool.id) {
                 tool.state = ToolState::Failed;
                 tool.seconds = Some(tool.started.elapsed().as_secs());
             }
@@ -165,6 +224,7 @@ impl Session {
         if let Some(at) = at {
             self.messages.truncate(at);
         }
+        self.forget_stops();
         self.ask = None;
         self.inquiry = None;
         self.echoes = 0;
@@ -350,6 +410,7 @@ impl Session {
                 parent: tool.parent,
                 agent: tool.agent,
                 worktree: tool.worktree,
+                stop: None,
             })),
         }
         if let Some(state) = ended {
@@ -416,7 +477,7 @@ impl Session {
             self.say(&format!("{separator}Something went wrong: {reason}"));
         }
         let carried = if error.is_some() {
-            Vec::new()
+            self.outlasting()
         } else {
             self.carried_on()
         };
@@ -456,6 +517,119 @@ fn worked(seconds: u64) -> String {
 /// Tests for a session that needs its account signed in again.
 mod tests {
     use super::*;
+
+    /// A call that starts a subagent of the kind `agent`, under `id`, nested in `parent` when it has one.
+    fn spawned(id: &str, parent: Option<&str>, agent: &str) -> Event {
+        Event::Tool(pm_harness::Tool {
+            id: id.to_owned(),
+            title: Some(id.to_owned()),
+            kind: None,
+            state: Some(ToolState::Running),
+            target: None,
+            diff: None,
+            output: None,
+            parent: parent.map(str::to_owned),
+            agent: Some(agent.to_owned()),
+            worktree: None,
+        })
+    }
+
+    /// The subagent `id` of the call `call` standing as `state` says.
+    fn announced(id: &str, call: &str, state: pm_harness::SubagentState) -> Event {
+        Event::Subagent(pm_harness::Subagent {
+            id: id.to_owned(),
+            call: call.to_owned(),
+            agent: "scout".to_owned(),
+            label: "Look".to_owned(),
+            model: None,
+            background: false,
+            state,
+        })
+    }
+
+    /// The id each call's subagent can be stopped by now, by the call's id.
+    fn stops(session: &Session) -> Vec<(&str, &str)> {
+        session
+            .subagents()
+            .into_iter()
+            .filter_map(|(_, _, tool)| Some((tool.id.as_str(), tool.stoppable()?)))
+            .collect()
+    }
+
+    /// A subagent that starts gives the call showing it the id it is stopped by, whether it is the call's only one, one of several or started by another subagent; ending takes the id away, and so does the agent going.
+    #[test]
+    fn a_running_subagent_can_be_stopped_by_its_id() {
+        use pm_harness::SubagentState::{Running, Stopped};
+        let mut session = Session::started("Test", 0, "Hello");
+        session.hear(spawned("t1", None, "scout"));
+        session.hear(spawned("t2", None, "task"));
+        session.hear(spawned("t2:1", Some("t2"), "scout"));
+        session.hear(spawned("t2:2", Some("t2"), "scout"));
+        session.hear(spawned("t2:2:s1", Some("t2:2"), "scout"));
+        session.hear(announced("t1", "t1", Running));
+        session.hear(announced("t2/1", "t2", Running));
+        session.hear(announced("t2/2", "t2", Running));
+        session.hear(announced("t2/2:s1", "t2:2:s1", Running));
+        assert_eq!(
+            stops(&session),
+            [
+                ("t1", "t1"),
+                ("t2:1", "t2/1"),
+                ("t2:2", "t2/2"),
+                ("t2:2:s1", "t2/2:s1")
+            ]
+        );
+
+        session.hear(announced("t2/1", "t2", Stopped));
+        assert!(!stops(&session).iter().any(|(tool, _)| *tool == "t2:1"));
+
+        session.hear(Event::Failed("gone".to_owned()));
+        assert!(stops(&session).is_empty());
+    }
+
+    /// Stopping the turn ends the subagents of the foreground and leaves one running in the background at work, with its button.
+    #[test]
+    fn a_background_subagent_outlasts_a_stopped_turn() {
+        let mut session = Session::started("Test", 0, "Hello");
+        session.hear(spawned("front", None, "scout"));
+        session.hear(spawned("back", None, "scout"));
+        session.hear(spawned("back:g", Some("back"), "scout"));
+        session.hear(announced(
+            "front",
+            "front",
+            pm_harness::SubagentState::Running,
+        ));
+        session.hear(Event::Subagent(pm_harness::Subagent {
+            id: "back".to_owned(),
+            call: "back".to_owned(),
+            agent: "scout".to_owned(),
+            label: "Look".to_owned(),
+            model: None,
+            background: true,
+            state: pm_harness::SubagentState::Running,
+        }));
+
+        session.hear(Event::Halted);
+        session.hear(announced(
+            "front",
+            "front",
+            pm_harness::SubagentState::Stopped,
+        ));
+        session.hear(Event::Finished(None));
+
+        assert_eq!(stops(&session), [("back", "back")]);
+        let running: Vec<&str> = session
+            .subagents()
+            .into_iter()
+            .filter(|(_, _, tool)| tool.is_working_agent())
+            .map(|(_, _, tool)| tool.id.as_str())
+            .collect();
+        assert!(running.contains(&"back") && running.contains(&"back:g"));
+        assert!(!running.contains(&"front"));
+
+        session.hear(Event::Rewound { turn: 0 });
+        assert!(stops(&session).is_empty());
+    }
 
     /// The chunks of one thinking block make one thought, and a new thinking block starts another.
     #[test]

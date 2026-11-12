@@ -130,6 +130,7 @@ request with exactly one `response` carrying the same `id`.
 | `answer`       | `session`, `ticket`, `replies`                                                                   | `done`          |
 | `trust`        | `session`, `ticket`, `verdict`                                                                   | `done`          |
 | `cancel`       | `session`                                                                                        | `done`          |
+| `stop_subagent`| `session`, `subagent`                                                                            | `done`          |
 | `close_session`| `session`, `discard`?                                                                           | `done`, or `uncommitted` |
 | `rename_session`| `session`, `title`                                                                              | `done`          |
 | `set`          | `session`, `setting`, `value`                                                                    | `done`          |
@@ -443,6 +444,12 @@ everything said of them, its submodules' paths written from `directory`.
   the turn is ended with `Halted` and a `Finished` that says why.
 - A turn the server was working on when it stopped is ended the same way the
   next time it loads its sessions, so no session stays working after a restart.
+- **`stop_subagent`:** stops one subagent of the session's agent, named by the
+  `id` its `Subagent` event gave it, and the subagents that one started. The
+  turn and the other subagents go on, and the agent is told the reader stopped
+  it. A `Subagent` event in the `Stopped` state follows for each one stopped.
+  Fails when the session's agent is not running. Stopping a subagent that has
+  just ended is answered `done` and changes nothing.
 - **`choose`:** answers an `ask` event. `ticket` is the ticket of the question
   and `option` is the `id` of one of its choices.
 - **`answer`:** answers an `Inquire` event. `ticket` is the ticket of the form
@@ -1158,6 +1165,7 @@ Events use serde's default form, one key naming the type.
 | `{"Thought": "text"}`         | More of the agent's reasoning. Append it.                                                                 |
 | `{"Tool": Tool}`              | A tool the agent is using. Later events with the same `id` update it.                                     |
 | `{"Background": {id, label, running}}` | A command or task went on running beyond its call (`running` true), or ended (false). `id` is the handle the agent knows it by; for a command left running by a turn it is the `id` of its `Tool`. The agent is still at work while any runs, though the turn is over. |
+| `{"Subagent": {id, call, agent, label, model, background, state}}` | A subagent started (`state` is `Running`), or ended (`Finished`, `Failed` or `Stopped`). `id` names it for `stop_subagent`; `call` is the `id` of the `Tool` of the call that started it. When that call started several, `id` ends in `/` and its place, and its own `Tool` is `call`, `:` and that place. Not kept on disk, so it is not replayed after the server restarts. |
 | `{"Halted": null}`            | The turn was stopped or failed: nothing the agent had running goes on. A `Finished`, `SignedOut` or `Failed` follows.              |
 | `{"Plan": [PlanStep]}`        | The agent's plan, whole. Replaces the earlier one.                                                        |
 | `{"Ask": Permission}`         | The agent waits for an answer: send `choose` with the `ticket` and the `id` of a choice.                  |

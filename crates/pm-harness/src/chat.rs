@@ -58,6 +58,11 @@ enum Request {
     },
     /// Stops the turn that is running.
     Cancel,
+    /// Stops one subagent, and the subagents it started, while the turn goes on.
+    StopSubagent {
+        /// The id a `Subagent` event gave it.
+        id: String,
+    },
     /// Gives the setting `setting` the value `value`.
     Set {
         /// The setting.
@@ -91,6 +96,7 @@ impl Request {
             Self::Trust { ticket, verdict } => Command::Trust { ticket, verdict },
             Self::Rename { title } => Command::Rename { title },
             Self::Cancel => Command::Cancel,
+            Self::StopSubagent { id } => Command::StopSubagent { id },
             Self::Set { setting, value } => Command::Set { setting, value },
         }
     }
@@ -225,6 +231,13 @@ impl Chat {
     /// Stops the turn that is running.
     pub fn cancel(&self) {
         let _ = self.requests.send(Request::Cancel);
+    }
+
+    /// Stops the subagent a `Subagent` event named `id`, and the subagents it started; the others and the turn go on, and the agent is told the reader stopped it. Nothing happens when it has ended already.
+    pub fn stop_subagent(&self, id: &str) {
+        let _ = self
+            .requests
+            .send(Request::StopSubagent { id: id.to_owned() });
     }
 
     /// Gives the setting `setting` the value `value`.

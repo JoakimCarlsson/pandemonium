@@ -399,6 +399,19 @@ pub struct ToolUse {
     pub agent: Option<String>,
     /// The git worktree of its own the subagent it starts works in, and what became of its changes, when it works apart from the agent.
     pub worktree: Option<Box<Worktree>>,
+    /// How the subagent it starts is stopped, while that subagent is at work on a running agent.
+    pub stop: Option<Stop>,
+}
+
+/// How a subagent at work is stopped, as its agent announced it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Stop {
+    /// The id it is stopped by.
+    pub id: String,
+    /// Whether it runs in the background, and so goes on when the turn that started it is stopped.
+    pub background: bool,
+    /// Whether the reader asked for it to be stopped and the agent has yet to say how it stands, so that it is not asked twice.
+    pub asked: bool,
 }
 
 impl ToolUse {
@@ -412,6 +425,19 @@ impl ToolUse {
     /// Whether it is a subagent still at work.
     pub fn is_working_agent(&self) -> bool {
         self.is_subagent() && self.state == ToolState::Running
+    }
+
+    /// The id its subagent can be stopped by now: while it is still at work and the reader has not asked for it to be stopped already.
+    pub fn stoppable(&self) -> Option<&str> {
+        self.stop
+            .as_ref()
+            .filter(|stop| !stop.asked && self.is_working_agent())
+            .map(|stop| stop.id.as_str())
+    }
+
+    /// Whether it starts a subagent that its agent said runs in the background, which the turn being stopped leaves running.
+    pub fn outlasts_the_turn(&self) -> bool {
+        self.stop.as_ref().is_some_and(|stop| stop.background)
     }
 }
 

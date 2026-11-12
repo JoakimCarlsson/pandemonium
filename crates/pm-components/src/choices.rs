@@ -10,8 +10,8 @@ use crate::state::{
     ACCOUNT, ACCOUNT_BASE, AGENT_TOGGLE, APPROVALS_CHIP, ATTACHED_BASE, Activity, BRANCH_BASE,
     DETAILS_BASE, EFFORT_BASE, LOCATION, Location, MENTION, MENU_BODY, MENU_FILTER,
     MENU_FILTER_PICK, MENU_PICK_BASE, MENU_PICK_ROOM, Outgoing, PICK_BASE, PLACE_BASE, PLAN_CHIP,
-    Page, Picker, SETTING_BASE, SHELLS_CHIP, SLASH_BASE, SLASH_BUTTON, STEP_BASE, SUBAGENTS_CHIP,
-    WorkspaceState, prompt_field,
+    Page, Picker, SETTING_BASE, SHELLS_CHIP, SLASH_BASE, SLASH_BUTTON, STEP_BASE,
+    SUBAGENT_STOP_BASE, SUBAGENT_STOP_ROOM, SUBAGENTS_CHIP, WorkspaceState, prompt_field,
 };
 
 /// How tall one value of a menu is, in logical pixels.
@@ -73,6 +73,7 @@ impl WorkspaceState {
             || action == SUBAGENTS_CHIP
             || action == SHELLS_CHIP
             || (STEP_BASE..DETAILS_BASE).contains(&action.0)
+            || (SUBAGENT_STOP_BASE..SUBAGENT_STOP_BASE + SUBAGENT_STOP_ROOM).contains(&action.0)
     }
 
     /// What the agent about to be spoken to lets the reader change: the open session's, or the chosen agent's.

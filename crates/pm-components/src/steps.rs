@@ -23,7 +23,7 @@ use crate::file_icon::{file_icon, file_language};
 use crate::parts::{clipped, glyph, line, wrap};
 use crate::sample::{DiffLine, Kind, Step, ToolUse};
 use crate::size::Size;
-use crate::state::{CHOICE_BASE, STEP_BASE};
+use crate::state::{CHOICE_BASE, STEP_BASE, SUBAGENT_STOP_BASE};
 use crate::{CodeBox, Tally};
 
 /// How many unchanged lines an edit shows around what changed.
@@ -328,7 +328,7 @@ pub fn is_inside_card(all: &[Step], position: usize) -> bool {
     })
 }
 
-/// The card of subagents: how many there are and how many are at work, then a row for each that folds out the tools it used.
+/// The card of subagents: how many there are and how many are at work, then a row for each that folds out the tools it used, with a button that stops it while it is at work and can be stopped.
 ///
 /// `scroll` bounds the rows to 240 logical pixels and scrolls them independently.
 /// `at` are the positions in `all`, the steps of the reply at `message`, of the tools that start them.
@@ -412,6 +412,16 @@ pub fn subagents(
                     )
                     .styles([flex_none()]),
                 )
+                .children(tool.stoppable().map(|_| {
+                    Button::icon(
+                        IconName::Stop,
+                        FocusId(SUBAGENT_STOP_BASE + (message * 1000 + position) as u64),
+                    )
+                    .size(Size::Xs)
+                    .build()
+                    .styles([flex_none()])
+                    .tooltip("Stop this subagent")
+                }))
                 .child(glyph(
                     if open {
                         IconName::ChevronDown
