@@ -178,6 +178,8 @@ fn main() {
             Some("changemenumany") => Shot::ChangeMenuMany,
             Some("treemenu") => Shot::TreeMenu,
             Some("treepicked") => Shot::TreePicked,
+            Some("treedragging") => Shot::TreeDragging,
+            Some("treehovered") => Shot::TreeHovered,
             Some("naming") => Shot::Naming,
             Some("discarding") => Shot::Discarding,
             Some("branching") => Shot::Branching,

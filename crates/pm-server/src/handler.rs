@@ -996,6 +996,11 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
         Request::RemoveEntry { directory, path } => {
             done(crate::entries::remove(&place(&directory), &path))
         }
+        Request::ImportFile {
+            directory,
+            path,
+            data,
+        } => done(crate::entries::import(&place(&directory), &path, &data)),
         Request::Discard { directory, paths } => done(pm_git::discard(&place(&directory), &paths)),
         Request::Ignore { directory, paths } => done(pm_git::ignore(&place(&directory), &paths)),
         Request::Checkout { directory, branch } => {

@@ -1527,6 +1527,13 @@ pub enum Outgoing {
         /// What is done.
         change: crate::tree_actions::EntryChange,
     },
+    /// Reads files and folders of this machine and writes them into the folder of a session.
+    Import {
+        /// The session, by position.
+        session: usize,
+        /// Each file or folder: where it is on this machine, and where it goes from the root of the session's folder.
+        files: Vec<(String, String)>,
+    },
     /// Lists the GitHub accounts and organizations on this machine, for the panel for adding a project.
     Owners,
     /// Lists the GitHub repositories of the account `login` on this machine, for the panel for adding a project.

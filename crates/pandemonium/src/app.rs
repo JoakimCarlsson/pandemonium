@@ -54,6 +54,7 @@ mod asides;
 mod browser;
 mod capture;
 mod code;
+mod drops;
 mod editing;
 mod frame;
 mod gesture;
@@ -63,7 +64,10 @@ mod performance;
 mod select;
 mod shadow;
 mod terminal;
+mod tree;
 mod vim;
+#[cfg(target_os = "linux")]
+mod wayland;
 
 use self::gesture::FieldText;
 use crate::keys::Clip;
@@ -214,6 +218,10 @@ pub struct App {
     pane_press: Option<(pm_components::panes::Item, (f32, f32))>,
     /// Whether the pointer moved far enough from `pane_press` for it to be a drag.
     pane_dragging: bool,
+    /// The row of the project's files a press began on, and where the pointer was.
+    tree_press: Option<(TreeTarget, (f32, f32))>,
+    /// What is known of files dragged in from outside the window.
+    outside: drops::Outside,
     /// Whether the prompt of the page for starting work was given keyboard focus on arriving there.
     autofocused: bool,
     /// Whether the tree was asking for a name when the last frame was drawn.
@@ -389,6 +397,8 @@ impl App {
             project_dragging: false,
             pane_press: None,
             pane_dragging: false,
+            tree_press: None,
+            outside: drops::Outside::default(),
             saved_choices: choices,
             saved_editor: editor,
             autosave_wait: None,
@@ -1384,6 +1394,7 @@ impl App {
                     .zip(self.pointer.position);
                 self.project_dragging = false;
                 self.pane_press(on);
+                self.tree_press(on);
                 if self.model.read(|screen| screen.list_menu_open())
                     && !on.is_some_and(|id| {
                         is_project_menu_item(id)
@@ -1442,6 +1453,7 @@ impl App {
                 self.drag_comment((x, y));
                 self.drag_project((x, y));
                 self.drag_pane((x, y));
+                self.drag_tree((x, y));
                 self.terminal_drag((x, y));
                 self.reach_terminal_link();
                 self.text_drag((x, y));
@@ -1465,7 +1477,7 @@ impl App {
                     self.copy_terminal_selection();
                 }
                 self.text_release();
-                if self.drop_project() || self.drop_pane() {
+                if self.drop_project() || self.drop_pane() || self.drop_tree() {
                     self.pressed_on = None;
                     return;
                 }
@@ -2037,14 +2049,18 @@ impl App {
             .update(|screen| *screen = std::mem::take(screen).navigated(delta));
     }
 
-    /// Picks every row of the list a row was last pressed in when the key asks to select everything, and says whether it did.
+    /// Carries out a key aimed at the list a row was last pressed in, and says whether it was one: the key that selects everything picks every row, and the project's files take the keys that cut, copy, paste, rename and delete.
     fn list_key(&mut self, event: KeyEvent) -> bool {
         let Some(id) = self.list_pressed else {
             return false;
         };
-        if self.focus.current().is_some_and(Screen::is_field)
-            || !matches!(keys::edit(&event), Some(Edit::SelectAll))
-        {
+        if self.focus.current().is_some_and(Screen::is_field) {
+            return false;
+        }
+        if self.model.read(|screen| screen.tree_row_of(id).is_some()) && self.tree_key(event) {
+            return true;
+        }
+        if !matches!(keys::edit(&event), Some(Edit::SelectAll)) {
             return false;
         }
         self.model.update(|screen| {
@@ -2296,6 +2312,7 @@ impl ApplicationHandler for App {
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         self.work.discover();
         self.work.poll(&self.model);
+        self.pump_drops();
         self.settle_rename_focus();
         if self.model.read(Screen::editor_settings_wanted) {
             let settings = self.saved_editor.clone();
@@ -2331,6 +2348,7 @@ impl ApplicationHandler for App {
             self.release_due(),
             self.view_save_deadline(),
             self.frame_deadline(),
+            self.drop_deadline(),
         ]
         .into_iter()
         .flatten()
@@ -2423,6 +2441,7 @@ impl App {
                     position.y as f32 / scale - band,
                 );
                 self.pointer(PointerEvent::Moved(at.0, at.1));
+                self.settle_drop();
                 self.browser_moved(at);
                 if self.on_aside.is_none()
                     && self.model.version() == version
@@ -2439,6 +2458,7 @@ impl App {
                 }
             }
             WindowEvent::CursorLeft { .. } => self.pointer(PointerEvent::Left),
+            WindowEvent::DroppedFile(path) => self.file_dropped(path),
             WindowEvent::MouseWheel { delta, .. } => {
                 let (across, down) = match delta {
                     MouseScrollDelta::LineDelta(across, down) => {

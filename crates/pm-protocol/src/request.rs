@@ -389,6 +389,16 @@ pub enum Request {
         /// Where the entry is, from the root of the folder.
         path: String,
     },
+    /// Writes a file brought from the client's machine into a folder, with the folders above it, refusing a name that is taken.
+    ImportFile {
+        /// The folder.
+        directory: String,
+        /// Where the file goes, from the root of the folder.
+        path: String,
+        /// What the file holds.
+        #[serde(with = "crate::bytes")]
+        data: Vec<u8>,
+    },
     /// Reads a file of a folder, as it is in the working folder or in the last commit.
     ReadFile {
         /// The folder.

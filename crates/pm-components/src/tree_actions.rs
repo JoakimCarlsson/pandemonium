@@ -1,4 +1,4 @@
-//! What the reader does to the project's files from the Files tab: make a file or folder, rename, cut, copy, paste, duplicate, delete and copy a path.
+//! What the reader does to the project's files from the Files tab: make a file or folder, rename, cut, copy, paste, duplicate, delete, copy a path, drag entries into another folder and bring files in from outside the window.
 
 use pm_input::FocusId;
 
@@ -89,6 +89,32 @@ pub struct Clipboard {
     pub cut: bool,
 }
 
+/// Entries held by the pointer over the tree, on their way to another folder: rows of the tree, or files from outside the window.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TreeDrag {
+    /// The rows being dragged, outermost only; none when the files come from outside the window.
+    pub targets: Vec<TreeTarget>,
+    /// The folder they would land in, from the root of the project and empty for the root, while the pointer is over one that can take them.
+    pub into: Option<String>,
+    /// Where the pointer is, in logical pixels.
+    pub at: (f32, f32),
+}
+
+/// What a key pressed over the tree asks of the rows picked.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TreeShortcut {
+    /// Holds them to be moved by a paste.
+    Cut,
+    /// Holds them to be copied by a paste.
+    Copy,
+    /// Puts what is held into the folder of the row last picked.
+    Paste,
+    /// Asks for a new name for the row last picked.
+    Rename,
+    /// Asks whether to delete them.
+    Delete,
+}
+
 /// What is done to the folder of a session on behalf of the tree.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EntryChange {
@@ -118,6 +144,13 @@ pub enum EntryChange {
         /// Where it is.
         path: String,
     },
+    /// Writes a file of this machine into the folder.
+    Import {
+        /// Where it goes, from the root of the project.
+        path: String,
+        /// What it holds.
+        data: Vec<u8>,
+    },
 }
 
 /// The folder `path` is in, empty for a path at the root.
@@ -137,6 +170,20 @@ pub fn joined(directory: &str, name: &str) -> String {
     } else {
         format!("{directory}/{name}")
     }
+}
+
+/// Splits `name` before its extension, keeping the dot with the extension; a leading dot starts no extension.
+fn split_extension(name: &str) -> (&str, &str) {
+    match name.rfind('.') {
+        Some(0) | None => (name, ""),
+        Some(at) => name.split_at(at),
+    }
+}
+
+/// Whether `path` is `folder` or inside it.
+fn within(path: &str, folder: &str) -> bool {
+    path.strip_prefix(folder)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
 /// `targets` without those inside a folder among them, which go with that folder.
@@ -486,20 +533,175 @@ impl WorkspaceState {
         if held.cut {
             self.git.tree_clipboard = None;
         }
-        for target in held.targets {
-            let change = if held.cut {
-                EntryChange::Rename {
-                    to: joined(&into, name_of(&target.path)),
-                    from: target.path,
-                }
-            } else {
-                EntryChange::Copy {
+        self.put_into(held.targets, into, !held.cut);
+    }
+
+    /// Moves `targets` into the folder `into`, or copies them there when `copy`, and unfolds it; an entry moved to where it already is stays put.
+    fn put_into(&mut self, targets: Vec<TreeTarget>, into: String, copy: bool) {
+        for target in targets {
+            if copy {
+                self.send_entry(EntryChange::Copy {
                     from: target.path,
                     into: into.clone(),
-                }
-            };
-            self.send_entry(change);
+                });
+            } else if parent_of(&target.path) != into {
+                self.drop_viewer_of(&target.path);
+                self.send_entry(EntryChange::Rename {
+                    to: joined(&into, name_of(&target.path)),
+                    from: target.path,
+                });
+            }
         }
+        if !into.is_empty() {
+            self.open_tree.insert(into);
+        }
+    }
+
+    /// Whether something was cut or copied out of the tree and waits to be pasted.
+    pub fn tree_holding(&self) -> bool {
+        self.git.tree_clipboard.is_some()
+    }
+
+    /// The state after `shortcut` was pressed over the tree: it acts on the rows picked, as the menu on the row last picked does.
+    pub fn tree_shortcut(mut self, shortcut: TreeShortcut) -> Self {
+        self.git.tree_target = Some(
+            self.git
+                .tree_selected
+                .clone()
+                .unwrap_or_else(TreeTarget::root),
+        );
+        match shortcut {
+            TreeShortcut::Cut => self.tree_hold(true),
+            TreeShortcut::Copy => self.tree_hold(false),
+            TreeShortcut::Paste => self.tree_paste(),
+            TreeShortcut::Rename => self.tree_rename(),
+            TreeShortcut::Delete => self.tree_delete(),
+        }
+        self
+    }
+
+    /// Whether the tree is known to hold something at `path`.
+    fn tree_has(&self, path: &str) -> bool {
+        self.files.iter().any(|file| within(file, path))
+            || self.tree_folders.iter().any(|folder| within(folder, path))
+    }
+
+    /// The first path for `name` in the folder `into` that neither the tree nor `taken` holds: its own, then `name copy.ext`, `name copy 2.ext` and so on.
+    fn free_path(&self, into: &str, name: &str, taken: &[String]) -> String {
+        let (stem, extension) = split_extension(name);
+        std::iter::once(name.to_owned())
+            .chain((1..).map(|count| match count {
+                1 => format!("{stem} copy{extension}"),
+                count => format!("{stem} copy {count}{extension}"),
+            }))
+            .map(|candidate| joined(into, &candidate))
+            .find(|path| !self.tree_has(path) && !taken.contains(path))
+            .unwrap_or_else(|| joined(into, name))
+    }
+
+    /// The state after the files and folders of this machine at `paths` were dropped on, or pasted over, `over`: they are written into its folder, each under a name nothing there holds. Without `over` they go where the row last picked is.
+    pub fn tree_brought_in(mut self, paths: Vec<String>, over: Option<TreeTarget>) -> Self {
+        self.git.tree_drag = None;
+        let Some(session) = self.review_index() else {
+            return self;
+        };
+        let into = over
+            .or_else(|| self.git.tree_selected.clone())
+            .map(|target| target.directory())
+            .unwrap_or_default();
+        let mut taken = Vec::new();
+        let mut files = Vec::new();
+        for source in paths {
+            let Some(name) = std::path::Path::new(&source)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+            else {
+                continue;
+            };
+            let path = self.free_path(&into, &name, &taken);
+            taken.push(path.clone());
+            files.push((source, path));
+        }
+        if files.is_empty() {
+            return self;
+        }
+        if !into.is_empty() {
+            self.open_tree.insert(into);
+        }
+        self.git.trouble = None;
+        self.outbox.push(Outgoing::Import { session, files });
+        self
+    }
+
+    /// The folder what is dragged would land in when the pointer is over `over`: nothing when it is over no row, or over a folder being dragged or something inside one.
+    fn landing(targets: &[TreeTarget], over: Option<TreeTarget>) -> Option<String> {
+        let into = over?.directory();
+        let inside_dragged = targets
+            .iter()
+            .any(|target| target.folder && within(&into, &target.path));
+        (!inside_dragged).then_some(into)
+    }
+
+    /// The state with the tree row `from` dragged to `at`, over the row `over` if it is over one: every row picked goes with it when it is one of them, and it goes alone when it is not.
+    pub fn tree_dragged(
+        mut self,
+        from: TreeTarget,
+        over: Option<TreeTarget>,
+        at: (f32, f32),
+    ) -> Self {
+        let targets = match self.git.tree_drag.take() {
+            Some(drag) if !drag.targets.is_empty() => drag.targets,
+            _ => {
+                if !self.tree_picked().contains(&from) {
+                    self.select_tree(from.clone());
+                }
+                outermost(self.tree_picked())
+            }
+        };
+        if targets.is_empty() {
+            return self;
+        }
+        let into = Self::landing(&targets, over);
+        self.git.menu = None;
+        self.git.tree_drag = Some(TreeDrag { targets, into, at });
+        self
+    }
+
+    /// The state with files from outside the window held at `at`, over the tree row `over` if they are over one.
+    pub fn tree_hovered(mut self, over: Option<TreeTarget>, at: (f32, f32)) -> Self {
+        self.git.tree_drag = Some(TreeDrag {
+            targets: Vec::new(),
+            into: Self::landing(&[], over),
+            at,
+        });
+        self
+    }
+
+    /// Whether rows of the tree are being dragged.
+    pub fn tree_dragging(&self) -> bool {
+        self.git
+            .tree_drag
+            .as_ref()
+            .is_some_and(|drag| !drag.targets.is_empty())
+    }
+
+    /// The state after the rows being dragged were let go: they move into the folder they were over, or are copied there when `copy`, and stay where they are when they were over none.
+    pub fn tree_dropped(mut self, copy: bool) -> Self {
+        if let Some(TreeDrag {
+            targets,
+            into: Some(into),
+            ..
+        }) = self.git.tree_drag.take()
+        {
+            self.put_into(targets, into, copy);
+        }
+        self
+    }
+
+    /// The state with nothing held over the tree any more, and nothing moved.
+    pub fn without_tree_drag(mut self) -> Self {
+        self.git.tree_drag = None;
+        self
     }
 
     /// Copies each entry the menu acts on into the folder it is in, beside itself.
@@ -583,3 +785,6 @@ impl WorkspaceState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

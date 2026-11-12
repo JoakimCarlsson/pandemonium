@@ -12,7 +12,7 @@ use pm_components::git_controls::Pick;
 use pm_components::git_menus::MenuKind;
 use pm_components::project::Project;
 use pm_components::sash::Grows;
-use pm_components::tree_actions::TreeTarget;
+use pm_components::tree_actions::{TreeShortcut, TreeTarget};
 use pm_components::{Window, shadowed};
 
 /// Which screen is showing, with what it remembers.
@@ -628,6 +628,62 @@ impl Screen {
     pub fn tree_row_picked(self, target: TreeTarget, how: Pick) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.tree_row_picked(target, how)),
+        }
+    }
+
+    /// The screen after `shortcut` was pressed over the project's files.
+    pub fn tree_shortcut(self, shortcut: TreeShortcut) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.tree_shortcut(shortcut)),
+        }
+    }
+
+    /// Whether something was cut or copied out of the project's files and waits to be pasted.
+    pub fn tree_holding(&self) -> bool {
+        match self {
+            Self::Workspace(state) => state.tree_holding(),
+        }
+    }
+
+    /// The screen after the files and folders of this machine at `paths` were dropped on, or pasted over, the row `over` of the project's files, or pasted where the row last picked is.
+    pub fn tree_brought_in(self, paths: Vec<String>, over: Option<TreeTarget>) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.tree_brought_in(paths, over)),
+        }
+    }
+
+    /// The screen with the row `from` of the project's files dragged to `at`, over the row `over` if it is over one.
+    pub fn tree_dragged(self, from: TreeTarget, over: Option<TreeTarget>, at: (f32, f32)) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.tree_dragged(from, over, at)),
+        }
+    }
+
+    /// The screen with files from outside the window held at `at`, over the row `over` of the project's files if they are over one.
+    pub fn tree_hovered(self, over: Option<TreeTarget>, at: (f32, f32)) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.tree_hovered(over, at)),
+        }
+    }
+
+    /// Whether rows of the project's files are being dragged.
+    pub fn tree_dragging(&self) -> bool {
+        match self {
+            Self::Workspace(state) => state.tree_dragging(),
+        }
+    }
+
+    /// The screen after the rows being dragged were let go, moved into the folder they were over or copied there when `copy`.
+    pub fn tree_dropped(self, copy: bool) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.tree_dropped(copy)),
+        }
+    }
+
+    /// The screen with nothing held over the project's files any more.
+    pub fn without_tree_drag(self) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.without_tree_drag()),
         }
     }
 

@@ -10,7 +10,6 @@ use std::ptr::NonNull;
 
 use pm_components::{FRAME_RADIUS, SHADOW_MARGIN, WINDOW_SHADOW};
 use rustix::fs::{MemfdFlags, memfd_create};
-use wayland_client::backend::{Backend, ObjectId};
 use wayland_client::globals::{GlobalListContents, registry_queue_init};
 use wayland_client::protocol::wl_buffer::{self, WlBuffer};
 use wayland_client::protocol::wl_compositor::WlCompositor;
@@ -21,9 +20,11 @@ use wayland_client::protocol::wl_shm_pool::WlShmPool;
 use wayland_client::protocol::wl_subcompositor::WlSubcompositor;
 use wayland_client::protocol::wl_subsurface::WlSubsurface;
 use wayland_client::protocol::wl_surface::WlSurface;
-use wayland_client::{Connection, Dispatch, EventQueue, Proxy, QueueHandle, delegate_noop};
+use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle, delegate_noop};
 use wayland_protocols::wp::viewporter::client::wp_viewport::WpViewport;
 use wayland_protocols::wp::viewporter::client::wp_viewporter::WpViewporter;
+
+use crate::app::wayland::{beside, share};
 
 /// How far the shadow of a quad fades, as a share of its blur radius, as the renderer draws it.
 const SOFTNESS: f32 = 1.3;
@@ -227,22 +228,6 @@ fn strip(
         subsurface,
         viewport,
     }
-}
-
-/// A connection of our own on the Wayland display `display` the window is on, with its own queue of events.
-///
-/// The display must stay open for as long as the connection lives, which it does: winit keeps it open while its event loop runs, and the event loop outlives every window and so every connection made for one.
-fn share(display: NonNull<c_void>) -> Connection {
-    let backend = unsafe { Backend::from_foreign_display(display.as_ptr().cast()) };
-    Connection::from_backend(backend)
-}
-
-/// The window's `wl_surface` at `surface`, as an object of `connection`; `None` when the pointer is not a surface.
-///
-/// The surface must stay alive for as long as the object is used, which it does: it is only used while the window is open, to lay the strips beside it.
-fn beside(connection: &Connection, surface: NonNull<c_void>) -> Option<WlSurface> {
-    let id = unsafe { ObjectId::from_ptr(WlSurface::interface(), surface.as_ptr().cast()) }.ok()?;
-    WlSurface::from_id(connection, id).ok()
 }
 
 /// Where the top, bottom, left and right strip go around a window `size` logical pixels across: each reaches the width of the shadow out past the window and the radius of its corners in under it, so the shadow shows past the rounded corners; `None` for a strip the window is too small to have.

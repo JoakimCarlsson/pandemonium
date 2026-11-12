@@ -132,7 +132,19 @@ fn files(state: &WorkspaceState, height: f32) -> Node {
             "No files yet."
         }));
     }
-    list = list.child(node().styles([flex_1(), min_h(32.0)]).focusable(TREE_SPACE));
+    let landing_at_root = state
+        .git
+        .tree_drag
+        .as_ref()
+        .is_some_and(|drag| drag.into.as_deref() == Some(""));
+    let mut space = node().styles([flex_1(), min_h(32.0)]);
+    if landing_at_root {
+        space = space.styles([
+            pm_style::rounded(pm_style::Radius::Sm),
+            pm_style::bg(pm_style::Color::from(Role::Accent).alpha(0.24)),
+        ]);
+    }
+    list = list.child(space.focusable(TREE_SPACE));
     node()
         .styles([flex(), flex_col(), pm_style::flex_1(), min_h(0)])
         .child(files_header(state))

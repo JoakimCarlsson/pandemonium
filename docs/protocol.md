@@ -174,6 +174,7 @@ request with exactly one `response` carrying the same `id`.
 | `rename_entry` | `directory`, `from`, `to`                                                                        | `done`, or `edited` |
 | `copy_entry`   | `directory`, `from`, `into`                                                                      | `done`          |
 | `remove_entry` | `directory`, `path`                                                                              | `done`          |
+| `import_file`  | `directory`, `path`, `data` (base64)                                                             | `done`          |
 | `write_file`   | `directory`, `path`, `text`                                                                      | `done`          |
 | `read_file`    | `directory`, `path`, `head`, `revision` (optional)                                               | `file`          |
 | `read_bytes`   | `directory`, `path`, `head`                                                                      | `bytes`         |
@@ -668,8 +669,12 @@ everything said of them, its submodules' paths written from `directory`.
 - **`copy_entry`:** copies `from` into the folder `into` (empty for the root of
   `directory`), under `name copy.ext`, `name copy 2.ext` and so on when the name
   is taken.
-- **`remove_entry`:** takes `path` and everything in it off the disk. Every
-  path of these four must stay inside `directory`.
+- **`remove_entry`:** takes `path` and everything in it off the disk.
+- **`import_file`:** writes `data`, a file of the client's machine, as a new
+  file at `path` and makes the folders above it; a name that is taken is
+  refused. A client brings a folder in one file at a time, and keeps each
+  request within the 16 MiB a frame may hold. Every path of these five must
+  stay inside `directory`.
 - **`write_file`:** replaces the contents of `path` (from the root of
   `directory`, which must stay inside it) with `text`, making the file when it is
   not there. A folder is refused. When the write succeeds and `directory` is in a

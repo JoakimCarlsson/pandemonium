@@ -152,6 +152,10 @@ pub enum Shot {
     TreeMenu,
     /// The project's files with three rows picked, two as a range, and the menu on them open.
     TreePicked,
+    /// The project's files with two rows picked and dragged over a folder, which is marked as where they would land.
+    TreeDragging,
+    /// The project's files with a row cut and files from outside the window held over the space under the rows.
+    TreeHovered,
     Naming,
     /// The workspace on the diff with the question of whether to discard two changed files open.
     Discarding,
@@ -3113,6 +3117,34 @@ impl Shot {
                         .tree_row_picked(file("Cargo.toml"), Choosing::Range)
                         .tree_row_picked(file("README.md"), Choosing::Toggle)
                         .with_tree_menu(file("README.md"), (1000.0, 250.0)),
+                )
+            }
+            Self::TreeDragging => {
+                let file = |path: &str| TreeTarget {
+                    path: path.to_owned(),
+                    folder: false,
+                };
+                let docs = TreeTarget {
+                    path: "docs".to_owned(),
+                    folder: true,
+                };
+                Screen::Workspace(
+                    files()
+                        .tree_row_picked(file("Cargo.toml"), Choosing::Toggle)
+                        .tree_row_picked(file("README.md"), Choosing::Toggle)
+                        .tree_dragged(file("README.md"), Some(docs), (1040.0, 150.0)),
+                )
+            }
+            Self::TreeHovered => {
+                let mut state = files();
+                state.git.tree_selected = Some(TreeTarget {
+                    path: "README.md".to_owned(),
+                    folder: false,
+                });
+                Screen::Workspace(
+                    state
+                        .tree_shortcut(pm_components::tree_actions::TreeShortcut::Cut)
+                        .tree_hovered(Some(TreeTarget::root()), (1040.0, 500.0)),
                 )
             }
             Self::Naming => Screen::Workspace(files().after(TREE_NEW_FOLDER)),
