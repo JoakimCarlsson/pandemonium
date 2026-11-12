@@ -121,6 +121,7 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
             })
         }))
         .children(sidebar::drag_ghost(state))
+        .children(pm_components::file_tree::drag_ghost(state))
         .children(state.project_menu.map(project_menu))
         .children(state.pane_menu.map(panes::pane_menu))
         .children(state.session_menu.map(|open| session_menu(state, open)))

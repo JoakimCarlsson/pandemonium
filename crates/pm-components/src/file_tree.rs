@@ -122,24 +122,59 @@ impl Changed {
     }
 }
 
-/// One row: a name beside the icon of what it is, `depth` levels down, and the letter it is marked with.
-fn row(
-    icon: Node,
-    name: &str,
-    depth: usize,
-    fold: Option<bool>,
-    id: FocusId,
-    changed: &Changed,
+/// How a row is drawn beyond what it names.
+struct Look {
+    /// What it says about the changes under it.
+    changed: Changed,
+    /// Whether it is among the rows picked.
     selected: bool,
-) -> Node {
+    /// Whether what the pointer holds would land in it.
+    landing: bool,
+    /// Whether it was cut and waits to be pasted elsewhere.
+    cut: bool,
+}
+
+/// How the row of the entry at `path` is drawn, given what it says about the changes under it.
+fn look(
+    state: &WorkspaceState,
+    chosen: &[TreeTarget],
+    path: &str,
+    folder: bool,
+    changed: Changed,
+) -> Look {
+    Look {
+        changed,
+        selected: picked(chosen, path, folder),
+        landing: folder
+            && state
+                .git
+                .tree_drag
+                .as_ref()
+                .is_some_and(|drag| drag.into.as_deref() == Some(path)),
+        cut: state.git.tree_clipboard.as_ref().is_some_and(|held| {
+            held.cut
+                && held
+                    .targets
+                    .iter()
+                    .any(|target| target.path == path && target.folder == folder)
+        }),
+    }
+}
+
+/// One row: a name beside the icon of what it is, `depth` levels down, and the letter it is marked with.
+fn row(icon: Node, name: &str, depth: usize, fold: Option<bool>, id: FocusId, look: &Look) -> Node {
     let chevron = match fold {
         Some(true) => glyph(IconName::ChevronDown, 3.5, Role::Muted),
         Some(false) => glyph(IconName::ChevronRight, 3.5, Role::Muted),
         None => node().styles([pm_style::size(3.5)]),
     };
-    let tone = changed.tone.unwrap_or_else(|| Color::from(Role::Text));
+    let tone = match look.changed.tone {
+        _ if look.cut => Color::from(Role::Subtle),
+        Some(tone) => tone,
+        None => Color::from(Role::Text),
+    };
     let mut row = Tile::new(id)
-        .selected(selected)
+        .selected(look.selected)
         .height(6.0)
         .gap(1.5)
         .radius(Radius::Sm)
@@ -156,10 +191,57 @@ fn row(
                 .styles([flex_1(), min_w_px(0), overflow_hidden()])
                 .child(line(name, 13, 1.4, tone).styles([truncate()])),
         );
-    if let Some(letter) = changed.letter {
+    if look.landing {
+        row = row.styles([pm_style::bg(Color::from(Role::Accent).alpha(0.24))]);
+    }
+    if look.cut {
+        row = row.styles([pm_style::opacity(60)]);
+    }
+    if let Some(letter) = look.changed.letter {
         row = row.child(line(letter, 11, 1.4, tone).styles([font_mono()]));
     }
     row
+}
+
+/// What the pointer holds over the tree, named beside it: the row being dragged, or how many there are.
+pub fn drag_ghost(state: &WorkspaceState) -> Option<Node> {
+    let drag = state.git.tree_drag.as_ref()?;
+    let first = drag.targets.first()?;
+    let (icon, label) = if drag.targets.len() == 1 {
+        let name = crate::tree_actions::name_of(&first.path);
+        let icon = if first.folder {
+            folder_icon(false, 4.0)
+        } else {
+            file_icon(name, 4.0)
+        };
+        (icon, name.to_owned())
+    } else {
+        (
+            glyph(IconName::Copy, 4.0, Role::Muted),
+            format!("{} items", drag.targets.len()),
+        )
+    };
+    Some(
+        node()
+            .styles([
+                pm_style::absolute(),
+                pm_style::left_px(drag.at.0 + 12.0),
+                pm_style::top_px(drag.at.1 + 10.0),
+                pm_style::z(60),
+                flex(),
+                items_center(),
+                gap(1.5),
+                h(7),
+                pm_style::px(2),
+                pm_style::rounded(Radius::Md),
+                pm_style::bg(Role::Surface),
+                pm_style::border(),
+                pm_style::border_color(Role::Border),
+                pm_style::shadow_md(),
+            ])
+            .child(icon)
+            .child(line(&label, 13, 1.4, Role::Text)),
+    )
 }
 
 /// The field a name is typed into where its row will be, `depth` levels down, with what is wrong with the name under it.
@@ -307,8 +389,7 @@ fn rows_of(
                         depth,
                         None,
                         id,
-                        &changed,
-                        picked(chosen, path, false),
+                        &look(state, chosen, path, false, changed),
                     )
                 });
             }
@@ -337,8 +418,7 @@ fn rows_of(
                             depth,
                             Some(open),
                             id,
-                            &changed,
-                            picked(chosen, &folder.path, true),
+                            &look(state, chosen, &folder.path, true, changed),
                         )
                     });
                 }

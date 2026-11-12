@@ -1,4 +1,4 @@
-//! The files and folders of a project folder, made, renamed, copied and removed for a client.
+//! The files and folders of a project folder, made, renamed, copied, brought in and removed for a client.
 //!
 //! Every path is taken from the root of the folder the client names and is
 //! refused when it would leave it. Nothing is overwritten: a name that is
@@ -171,6 +171,16 @@ pub fn remove(root: &Path, relative: &str) -> Result<(), String> {
     removed.map_err(|error| refused("remove", &path, &error))
 }
 
+/// Writes `data` as a new file at `relative`, making the folders above it and refusing a name that is taken.
+pub fn import(root: &Path, relative: &str, data: &[u8]) -> Result<(), String> {
+    let path = inside(root, relative)?;
+    refuse_taken(&path)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| refused("create", parent, &error))?;
+    }
+    fs::write(&path, data).map_err(|error| refused("write", &path, &error))
+}
+
 /// Replaces the contents of the file at `relative` with `text`, making it when it is not there and refusing a folder.
 pub fn write(root: &Path, relative: &str, text: &str) -> Result<(), String> {
     let path = inside(root, relative)?;
@@ -271,6 +281,25 @@ mod tests {
             unfolded(vec!["b/c".to_owned(), "b".to_owned(), "b".to_owned()]),
             vec!["b".to_owned(), "b/c".to_owned()]
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A file brought in keeps its bytes, makes the folders above it, and neither replaces what is there nor leaves the folder.
+    #[test]
+    fn import_writes_new_files_inside_the_folder() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../build")
+            .join(format!("import-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        import(&root, "assets/deep/logo.png", &[0, 159, 255]).unwrap();
+        assert_eq!(
+            fs::read(root.join("assets/deep/logo.png")).unwrap(),
+            vec![0, 159, 255]
+        );
+        assert!(import(&root, "assets/deep/logo.png", b"other").is_err());
+        assert!(import(&root, "../outside.txt", b"x").is_err());
+        assert!(import(&root, "/absolute.txt", b"x").is_err());
+        assert!(import(&root, "", b"x").is_err());
         fs::remove_dir_all(root).unwrap();
     }
 }

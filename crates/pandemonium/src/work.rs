@@ -22,6 +22,7 @@ use crate::view::View;
 
 pub(crate) mod code;
 mod debug;
+mod import;
 mod machine;
 pub(crate) mod picture;
 mod tasks;
@@ -38,6 +39,7 @@ fn entry_failure(change: &EntryChange) -> &'static str {
         EntryChange::Rename { .. } => "rename it",
         EntryChange::Copy { .. } => "copy it",
         EntryChange::Remove { .. } => "delete it",
+        EntryChange::Import { .. } => "bring it in",
     }
 }
 
@@ -60,6 +62,11 @@ fn entry_request(change: EntryChange, directory: String) -> Request {
             into,
         },
         EntryChange::Remove { path } => Request::RemoveEntry { directory, path },
+        EntryChange::Import { path, data } => Request::ImportFile {
+            directory,
+            path,
+            data,
+        },
     }
 }
 
@@ -94,6 +101,8 @@ enum Job {
     Grammar(String, Result<(), String>),
     /// The downloaded update was put in place and the new version started, or it could not be.
     Installed(Result<(), String>),
+    /// The files and folders of this machine to bring into the folder of the session at this position were read.
+    Gathered(usize, import::Gathered),
 }
 
 /// What is to be done with the answer to a request.
@@ -165,6 +174,8 @@ enum Pending {
     Git(usize, &'static str),
     /// A file or folder of the folder of the session at this position was made, renamed, copied or removed, with what failing at it is called.
     Entry(usize, &'static str),
+    /// One of the files brought into the folder of the session at this position was written, or an empty folder among them made.
+    Imported(usize),
     /// A file of the folder of the session at this position was written, at this path.
     Write(usize, String),
     /// The branches of the folder of the session at this position.
@@ -421,6 +432,8 @@ pub struct Work {
     watched: HashMap<Host, Vec<String>>,
     /// The sessions, by position, whose folders were asked to be read while a read of them was on its way, so they are read once more when it lands.
     read_again: HashSet<usize>,
+    /// How many of the files being brought into each session's folder, by position, the server has not answered for yet.
+    importing: HashMap<usize, usize>,
     /// The machine and the server's number of each session, by the session's position.
     numbers: HashMap<usize, (Host, u64)>,
     /// The session's position, by the machine and the server's number.
@@ -486,6 +499,7 @@ impl Work {
             unheard: VecDeque::new(),
             watched: HashMap::new(),
             read_again: HashSet::new(),
+            importing: HashMap::new(),
             numbers: HashMap::new(),
             positions: HashMap::new(),
             forgotten: HashSet::new(),
@@ -1149,6 +1163,9 @@ impl Work {
                         Pending::Entry(session, what),
                     );
                 }
+                Outgoing::Import { session, files } => self.spawn(move |reporter| {
+                    let _ = reporter.send(Job::Gathered(session, import::gather(files)));
+                }),
                 Outgoing::Ignore { session, paths } => self.ask_in_folder(
                     model,
                     session,
@@ -1805,6 +1822,7 @@ impl Work {
                 link.client = Some(client);
             }
             Job::Grammar(language, outcome) => self.grammar_compiled(model, &language, outcome),
+            Job::Gathered(session, gathered) => self.import(model, session, gathered),
             Job::Installed(outcome) => Self::in_workspace(model, |state| match outcome {
                 Ok(()) => state.with_update_installed(),
                 Err(reason) => state.with_update_failed(reason),
@@ -2328,6 +2346,23 @@ impl Work {
                 model.update(|screen| *screen = std::mem::take(screen).with_tree_stale());
                 self.refresh(model, session);
             }
+            Pending::Imported(session) => {
+                if let Some(message) = failure {
+                    let reason = format!("Could not bring it in: {message}");
+                    model.update(|screen| *screen = std::mem::take(screen).git_failed(&reason));
+                }
+                let left = self
+                    .importing
+                    .get(&session)
+                    .map_or(0, |left| left.saturating_sub(1));
+                if left == 0 {
+                    self.importing.remove(&session);
+                    model.update(|screen| *screen = std::mem::take(screen).with_tree_stale());
+                    self.refresh(model, session);
+                } else {
+                    self.importing.insert(session, left);
+                }
+            }
             Pending::SubmoduleHeads(session) => {
                 if let Response::SubmoduleHeads { heads } = response {
                     model.update(|screen| {
@@ -2760,6 +2795,29 @@ impl Work {
     ) {
         if let Some(placement) = Self::session_of(model, session) {
             self.ask(&placement.host, make(placement.directory), pending);
+        }
+    }
+
+    /// Asks the server of the session at `session` to write what was read for its folder, and tells the reader what was left out.
+    fn import(&mut self, model: &State<Screen>, session: usize, gathered: import::Gathered) {
+        if !gathered.skipped.is_empty() {
+            let reason = format!(
+                "Not everything was brought in: {}",
+                gathered.skipped.join("; ")
+            );
+            model.update(|screen| *screen = std::mem::take(screen).git_failed(&reason));
+        }
+        if Self::session_of(model, session).is_none() {
+            return;
+        }
+        *self.importing.entry(session).or_default() += gathered.changes.len();
+        for change in gathered.changes {
+            self.ask_in_folder(
+                model,
+                session,
+                |directory| entry_request(change, directory),
+                Pending::Imported(session),
+            );
         }
     }
 

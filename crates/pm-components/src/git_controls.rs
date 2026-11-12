@@ -163,6 +163,8 @@ pub struct GitControls {
     pub tree_target: Option<crate::tree_actions::TreeTarget>,
     /// What was cut or copied out of the tree.
     pub tree_clipboard: Option<crate::tree_actions::Clipboard>,
+    /// What the pointer holds over the tree, on its way to another folder.
+    pub tree_drag: Option<crate::tree_actions::TreeDrag>,
     /// What the open question or list about a branch has been told and what has been chosen in it.
     pub branching: Option<crate::branch_tasks::Branching>,
     /// The stashes of the open session's repository, newest first.
@@ -222,6 +224,7 @@ impl Default for GitControls {
             tree_gesture: None,
             tree_target: None,
             tree_clipboard: None,
+            tree_drag: None,
             branching: None,
             stashes: Vec::new(),
             operation: None,
