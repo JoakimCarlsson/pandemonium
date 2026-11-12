@@ -18,7 +18,7 @@ use crate::button::Variant;
 use crate::parts::line;
 use crate::sash::Sash;
 use crate::size::Size;
-use crate::state::{Tab, WorkspaceState};
+use crate::state::{Page, Tab, WorkspaceState};
 use crate::{Button, Input};
 
 /// The tab of the browser in a pane's strip.
@@ -354,9 +354,12 @@ pub fn is_browser_part(id: FocusId) -> bool {
 }
 
 impl WorkspaceState {
-    /// The machine of the project the reader is in when it is not this one.
+    /// The machine of the project or the chat the reader is in when it is not this one.
     pub(crate) fn current_project_host(&self) -> Option<String> {
-        self.projects.get(self.current_project())?.host()
+        match self.page {
+            Page::History | Page::Extensions => self.projects.first()?.host(),
+            _ => self.shown_machine(),
+        }
     }
 
     /// Opens the browser on `address`, or shows it when it is open, and shows it.

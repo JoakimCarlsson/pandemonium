@@ -19,6 +19,13 @@ impl WorkspaceState {
         }
     }
 
+    /// Moves the browser the page that starts a chat holds under `NO_SCOPE`, with its tabs, the tab shown and its developer tools, into the chat at `session`. That page has no folder and so no shells to hand over. Nothing happens when `session` is not a session.
+    pub(crate) fn hand_over_new_chat(&mut self, session: usize) {
+        if let Some(scope) = self.sessions.get(session).map(|held| held.scope) {
+            self.hand_over_browser(scope);
+        }
+    }
+
     /// Makes the browser held under `NO_SCOPE` the browser of `scope`, whether it is the one shown or one set aside.
     fn hand_over_browser(&mut self, scope: u64) {
         if self.browser_scope == NO_SCOPE {

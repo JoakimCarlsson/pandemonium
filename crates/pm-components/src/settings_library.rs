@@ -123,8 +123,11 @@ impl WorkspaceState {
     fn library_target(&self) -> Option<(Option<usize>, usize)> {
         let project = match self.page {
             Page::Project(project) | Page::New(project) => Some(project),
-            Page::Session(index) => self.sessions.get(index).map(|session| session.project),
-            Page::History | Page::Extensions => Some(0),
+            Page::Session(index) => self
+                .sessions
+                .get(index)
+                .map(|session| session.project.unwrap_or(0)),
+            Page::Chat | Page::History | Page::Extensions => Some(0),
         }
         .filter(|project| self.projects.get(*project).is_some());
         Some((project, self.agent_now()))

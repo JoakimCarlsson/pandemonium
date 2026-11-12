@@ -14,7 +14,7 @@ const FOLDER: &str = "sessions";
 pub(crate) struct Meta {
     /// The agent that runs it, by its id.
     pub(crate) agent: String,
-    /// The folder of the project it belongs to.
+    /// The folder of the project it belongs to, empty for a chat, which belongs to none.
     pub(crate) repository: String,
     /// The folder its agent works in.
     pub(crate) directory: String,
@@ -41,6 +41,9 @@ pub(crate) struct Meta {
     /// Whether its agent runs in the dev container of `directory`.
     #[serde(default)]
     pub(crate) container: bool,
+    /// Whether it is a chat that belongs to no project and works in a scratch folder the server made for it.
+    #[serde(default)]
+    pub(crate) chat: bool,
 }
 
 impl Meta {

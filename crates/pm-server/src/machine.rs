@@ -73,14 +73,14 @@ pub(crate) fn with_mode(settings: &[(String, String)]) -> Vec<(String, String)> 
     held
 }
 
-/// The repositories the server works for: those of the sessions it holds that are not closed, and the projects saved on its machine, each repository of a folder that holds several counted on its own.
+/// The repositories the server works for: those of the sessions it holds that are not closed, chats apart since they belong to no repository, and the projects saved on its machine, each repository of a folder that holds several counted on its own.
 fn repositories(core: &Core) -> BTreeSet<PathBuf> {
     let mut found: BTreeSet<PathBuf> = BTreeSet::new();
     if let Ok(sessions) = core.sessions.lock() {
         found.extend(
             sessions
                 .values()
-                .filter(|session| !session.meta.closed)
+                .filter(|session| !session.meta.closed && !session.meta.chat)
                 .map(|session| crate::handler::place(&session.meta.repository)),
         );
     }

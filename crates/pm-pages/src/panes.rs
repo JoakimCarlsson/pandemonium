@@ -218,6 +218,7 @@ fn page_label(state: &WorkspaceState) -> (IconName, String) {
             (IconName::Sparkles, state.agent_look(session.agent).name)
         }
         (Page::Project(_), _) => (IconName::Folder, "Overview".to_owned()),
+        (Page::Chat, _) => (IconName::Message, "New Chat".to_owned()),
         _ => (IconName::Plus, "New Session".to_owned()),
     }
 }

@@ -189,7 +189,7 @@ impl WorkspaceState {
 
     /// The commands extensions bring for the machine the prompt is for, each with that machine.
     pub(crate) fn extension_commands(&self) -> Vec<(Option<String>, ExtensionCommand)> {
-        let host = self.prompt_place().and_then(|(host, _)| host);
+        let host = self.prompt_machine();
         self.extension_assets
             .get(&host)
             .map(|assets| {

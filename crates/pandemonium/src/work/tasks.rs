@@ -17,7 +17,7 @@ struct Place {
 }
 
 impl Work {
-    /// Where the session at `session` works, and the project it belongs to.
+    /// Where the session at `session` works, and the project it belongs to; a chat belongs to none, and its scratch folder stands for one.
     fn task_place(model: &State<Screen>, session: usize) -> Option<Place> {
         let placement = Self::session_of(model, session)?;
         let directory = if placement.directory.is_empty() {
@@ -25,10 +25,15 @@ impl Work {
         } else {
             placement.directory
         };
+        let project = if placement.chat {
+            directory.clone()
+        } else {
+            placement.repository
+        };
         Some(Place {
             host: placement.host,
             directory,
-            project: placement.repository,
+            project,
         })
     }
 

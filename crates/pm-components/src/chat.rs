@@ -157,7 +157,7 @@ fn agent_message(
         && message
             .open
             .unwrap_or(session.latest_steps() == Some(index));
-    let root = state.projects[session.project].directory();
+    let root = state.root_of(session);
     let root = root.to_string_lossy();
     let held = state.opened.clone();
     let page = state.open_index();

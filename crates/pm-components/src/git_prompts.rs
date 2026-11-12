@@ -88,7 +88,7 @@ pub enum Prompt {
     Remove(Vec<TreeTarget>),
     /// Whether to close the tab at this position of the open files, which has changes that were not saved.
     Unsaved(usize),
-    /// Whether to close the session at this position, which has changes that are not committed, and remove its worktree with them.
+    /// Whether to close the session at this position, which has changes that are not committed, and remove its worktree with them; for a chat, whether to remove it with its scratch folder.
     Close(usize),
     /// What to call the session at this position now.
     Rename(usize),
@@ -468,6 +468,23 @@ pub fn prompt(state: &WorkspaceState, open: &Prompt) -> Node {
                 format!("Close {name} without saving?"),
                 "It has changes that are not saved. They are lost when it is closed.",
                 "Discard",
+                Variant::Destructive,
+            )
+        }
+        Prompt::Close(position)
+            if state
+                .sessions
+                .get(*position)
+                .is_some_and(crate::sample::Session::is_chat) =>
+        {
+            let title = state
+                .sessions
+                .get(*position)
+                .map_or("this chat", |session| session.title.as_str());
+            question(
+                format!("Remove {title}?"),
+                "Its folder is deleted with the files in it. The conversation stays in the history.",
+                "Remove",
                 Variant::Destructive,
             )
         }

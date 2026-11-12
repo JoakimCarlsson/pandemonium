@@ -1,4 +1,4 @@
-//! The sidebar: ways to start and find work, and every project with its sessions.
+//! The sidebar: ways to start and find work, the chats that belong to no project, and every project with its sessions.
 
 use pm_icon::IconName;
 use pm_input::FocusId;
@@ -35,9 +35,9 @@ const ROW: f32 = 36.0;
 /// The room under a project's last row, in logical pixels.
 const SECTION_GAP: f32 = 12.0;
 
-/// How tall everything in the sidebar but its list of projects is, in a
-/// window of any height: the three entries and the label above the list.
-const CHROME: f32 = 12.0 + 8.0 + 3.0 * ROW + 2.0 * 2.0 + ROW;
+/// How tall everything in the sidebar but its list of chats and projects is, in a
+/// window of any height: the four entries.
+const CHROME: f32 = 12.0 + 8.0 + 4.0 * ROW + 3.0 * 2.0;
 
 /// How tall the part of the sidebar showing the list is, in a window `height` logical pixels tall, under the title bar.
 pub fn list_viewport(height: f32) -> f32 {
@@ -52,11 +52,29 @@ pub fn project_height(state: &WorkspaceState, index: usize) -> f32 {
     let rows = state
         .sessions
         .iter()
-        .filter(|session| session.project == index && !session.closed)
+        .filter(|session| session.project == Some(index) && !session.closed)
         .count()
         + 2
         + state.projects[index].submodules.len();
     rows as f32 * ROW + SECTION_GAP
+}
+
+/// How tall the group of chats is with its heading, in logical pixels: nothing while no chat is open.
+pub fn chats_height(state: &WorkspaceState) -> f32 {
+    match state.open_chats().len() {
+        0 => 0.0,
+        chats => (chats + 1) as f32 * ROW + SECTION_GAP,
+    }
+}
+
+/// How tall the heading above the projects is, in logical pixels.
+pub const HEADING_HEIGHT: f32 = ROW;
+
+/// The heading of a group of the list, saying `words`.
+fn heading(words: &str) -> Node {
+    node()
+        .styles([flex(), items_center(), flex_none(), h(9), px(2)])
+        .child(line(words, 12, 1.4, Role::Subtle))
 }
 
 /// Every submodule row of the sidebar, project by project in the order they were added: the project's position and the submodule's path. The place of a row in this list is what it answers to.
@@ -77,7 +95,8 @@ pub fn submodule_rows(state: &WorkspaceState) -> Vec<(usize, String)> {
 /// The submodule of its project a session is listed under: the one it works in, when its project still lists it.
 fn listed_under<'a>(state: &'a WorkspaceState, session: &Session) -> Option<&'a str> {
     let submodule = session.submodule.as_deref()?;
-    state.projects[session.project]
+    state
+        .project_of(session)?
         .submodules
         .iter()
         .find(|path| *path == submodule)
@@ -116,7 +135,7 @@ pub fn status_icon(status: Status) -> Node {
     })
 }
 
-/// One of the three ways in at the top: a glyph and a label.
+/// One of the ways in at the top: a glyph and a label.
 fn entry(icon: IconName, label: &str, id: FocusId, selected: bool) -> Node {
     let tone = if selected { Role::Text } else { Role::Muted };
     Tile::new(id)
@@ -240,7 +259,7 @@ fn project(state: &WorkspaceState, index: usize) -> Node {
         .sessions
         .iter()
         .enumerate()
-        .filter(|(_, session)| session.project == index && !session.closed)
+        .filter(|(_, session)| session.project == Some(index) && !session.closed)
         .collect();
     let first_submodule = submodule_rows(state)
         .iter()
@@ -299,6 +318,31 @@ fn project(state: &WorkspaceState, index: usize) -> Node {
     section
 }
 
+/// The chats that belong to no project, under a heading of their own, or nothing while no chat is open.
+fn chats(state: &WorkspaceState) -> Option<Node> {
+    let members = state.open_chats();
+    if members.is_empty() {
+        return None;
+    }
+    let open = match state.page {
+        Page::Session(open) => Some(open),
+        _ => None,
+    };
+    Some(
+        node()
+            .styles([flex(), flex_col(), mb(3)])
+            .child(heading("Chats"))
+            .children(members.into_iter().map(|position| {
+                session_row(
+                    position,
+                    &state.sessions[position],
+                    open == Some(position),
+                    2.0,
+                )
+            })),
+    )
+}
+
 /// The whole sidebar for `state`.
 pub fn sidebar(state: &WorkspaceState) -> Node {
     node()
@@ -316,6 +360,12 @@ pub fn sidebar(state: &WorkspaceState) -> Node {
             node()
                 .styles([flex(), flex_col(), gap(0.5), p(2), pt(3)])
                 .children([
+                    entry(
+                        IconName::Message,
+                        "New chat",
+                        crate::chats::NEW_CHAT,
+                        state.page == Page::Chat,
+                    ),
                     entry(IconName::Plus, "New workspace", ADD_PROJECT, false),
                     entry(
                         IconName::History,
@@ -333,11 +383,6 @@ pub fn sidebar(state: &WorkspaceState) -> Node {
         )
         .child(
             node()
-                .styles([flex(), items_center(), h(9), px(4)])
-                .child(line("Workspaces", 12, 1.4, Role::Subtle)),
-        )
-        .child(
-            node()
                 .styles([
                     flex(),
                     flex_col(),
@@ -346,6 +391,8 @@ pub fn sidebar(state: &WorkspaceState) -> Node {
                     overflow_hidden(),
                     pm_style::flex_1(),
                 ])
+                .children(chats(state))
+                .child(heading("Workspaces"))
                 .children(
                     state
                         .display_order()

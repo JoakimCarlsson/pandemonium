@@ -225,7 +225,105 @@ fn trying(
     }
 }
 
-/// Starts a session, its agent in `submodule` of its folder when one is given, and hands the agent the first prompt.
+/// A session made ready for `start_session`, before its agent is started.
+pub(crate) struct Seat {
+    /// The number it is held under.
+    pub(crate) number: u64,
+    /// The session, with no agent running.
+    pub(crate) session: Session,
+    /// The folder of its worktree, its project or its scratch folder.
+    pub(crate) folder: PathBuf,
+    /// The submodules and files that could not be brought into its worktree, each with why.
+    pub(crate) skipped: Vec<(String, String)>,
+}
+
+/// Makes ready the session of `agent` that a `start_session` asks for, without starting its agent: it works in a scratch folder made for it when `scratch` is set, which makes it a chat that belongs to no project, in a worktree made from `base` when one is given, and in `directory` otherwise.
+///
+/// # Errors
+///
+/// Says why when the scratch folder or the worktree cannot be made, `directory` is not a folder, or the folder has no dev container to run in.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn seat(
+    core: &Core,
+    agent: Agent,
+    repository: &str,
+    directory: &str,
+    title: &str,
+    base: Option<&str>,
+    submodule: Option<&str>,
+    container: bool,
+    scratch: bool,
+) -> Result<Seat, String> {
+    let (repository, base, submodule, container) = if scratch {
+        ("", None, None, false)
+    } else {
+        (repository, base, submodule, container)
+    };
+    let reserved = scratch.then(|| core.next_session());
+    let mut skipped = Vec::new();
+    let (folder, head) = match (reserved, base) {
+        (Some(number), _) => {
+            let folder = crate::chats::create(number)
+                .map_err(|reason| format!("could not make a folder for the chat: {reason}"))?;
+            (folder, None)
+        }
+        (None, Some(_)) if pm_git::layout(&place(repository)) == pm_git::Layout::Neither => {
+            return Err(format!(
+                "{repository} holds no git repository, so it has no worktrees"
+            ));
+        }
+        (None, Some(base)) => match pm_git::add_worktree(
+            &place(repository),
+            title,
+            base,
+            &crate::machine::placement_for(container),
+        ) {
+            Ok(made) => {
+                skipped = made.skipped;
+                (made.path, Some((made.head, made.branch)))
+            }
+            Err(reason) => return Err(format!("could not make a worktree: {reason}")),
+        },
+        (None, None) => {
+            let folder = place(directory);
+            if !folder.is_dir() {
+                return Err(format!("{directory} is not a folder on this machine"));
+            }
+            (folder, None)
+        }
+    };
+    if container && !pm_transport::configured(&folder) {
+        return Err(format!(
+            "{} has no devcontainer.json to run the agent in",
+            folder.display()
+        ));
+    }
+    let (head, branch) = head.map_or((None, None), |(head, branch)| (Some(head), branch));
+    let meta = Meta {
+        agent: agent.id.to_owned(),
+        repository: repository.to_owned(),
+        directory: folder.to_string_lossy().into_owned(),
+        branch,
+        head,
+        base: base.map(str::to_owned),
+        title: title.to_owned(),
+        closed: false,
+        updated: now(),
+        login: login_for_new_work(agent.id),
+        submodule: submodule.map(str::to_owned),
+        container,
+        chat: scratch,
+    };
+    let session = Session::new(agent, meta.agent_folder(), Vec::new(), meta);
+    Ok(Seat {
+        number: reserved.unwrap_or_else(|| core.next_session()),
+        session,
+        folder,
+        skipped,
+    })
+}
+
+/// Starts a session, its agent in `submodule` of its folder when one is given, or, when `scratch` is set, a chat in a scratch folder of its own, and hands the agent the first prompt.
 #[allow(clippy::too_many_arguments)]
 fn start_session(
     core: &Arc<Core>,
@@ -240,60 +338,23 @@ fn start_session(
     attachments: &[Attachment],
     submodule: Option<&str>,
     container: bool,
+    scratch: bool,
 ) -> Response {
     let Some(agent) = agent_named(agent) else {
         return failed(format!("no agent is called {agent}"));
     };
-    let mut skipped = Vec::new();
-    let (folder, head) = match base {
-        Some(_) if pm_git::layout(&place(repository)) == pm_git::Layout::Neither => {
-            return failed(format!(
-                "{repository} holds no git repository, so it has no worktrees"
-            ));
-        }
-        Some(base) => match pm_git::add_worktree(
-            &place(repository),
-            title,
-            base,
-            &crate::machine::placement_for(container),
-        ) {
-            Ok(made) => {
-                skipped = made.skipped;
-                (made.path, Some((made.head, made.branch)))
-            }
-            Err(reason) => return failed(format!("could not make a worktree: {reason}")),
-        },
-        None => {
-            let folder = place(directory);
-            if !folder.is_dir() {
-                return failed(format!("{directory} is not a folder on this machine"));
-            }
-            (folder, None)
-        }
+    let Seat {
+        number,
+        mut session,
+        folder,
+        skipped,
+    } = match seat(
+        core, agent, repository, directory, title, base, submodule, container, scratch,
+    ) {
+        Ok(seat) => seat,
+        Err(reason) => return failed(reason),
     };
-    if container && !pm_transport::configured(&folder) {
-        return failed(format!(
-            "{} has no devcontainer.json to run the agent in",
-            folder.display()
-        ));
-    }
-    let (head, branch) = head.map_or((None, None), |(head, branch)| (Some(head), branch));
-    let meta = Meta {
-        agent: agent.id.to_owned(),
-        repository: repository.to_owned(),
-        directory: folder.to_string_lossy().into_owned(),
-        branch: branch.clone(),
-        head: head.clone(),
-        base: base.map(str::to_owned),
-        title: title.to_owned(),
-        closed: false,
-        updated: now(),
-        login: login_for_new_work(agent.id),
-        submodule: submodule.map(str::to_owned),
-        container,
-    };
-    let mut session = Session::new(agent, meta.agent_folder(), Vec::new(), meta);
-    let number = core.next_session();
+    let (branch, head) = (session.meta.branch.clone(), session.meta.head.clone());
     session.start_agent(number, &crate::machine::with_mode(settings));
     hold_session_as(core, connection, number, session);
     let first = prompt(number, text, attachments);
@@ -310,9 +371,9 @@ fn start_session(
 
 /// Stops the agent of session `number` and waits for it to exit, ends the shells that work in its worktree, removes the worktree it made when no other open session works in it, deletes the branch it made there when nothing would be lost, and marks it closed.
 ///
-/// A worktree with changes that are not committed is kept and the request answered with `Uncommitted`, unless `discard` is set.
+/// A worktree with changes that are not committed is kept and the request answered with `Uncommitted`, unless `discard` is set. The scratch folder of a chat is kept, so that the chat can be opened again, unless `discard` is set: then the shells in it are ended and it is removed with everything in it, when no other open session works in it.
 pub(crate) fn close_session(core: &Core, number: u64, discard: bool) -> Response {
-    let (chat, removal, enclosed) = {
+    let (chat, removal, enclosed, scratch) = {
         let Ok(mut sessions) = core.sessions.lock() else {
             return failed("the server is shutting down");
         };
@@ -327,6 +388,7 @@ pub(crate) fn close_session(core: &Core, number: u64, discard: bool) -> Response
         });
         let worktree = held.meta.head.is_some() && !shared;
         let container = held.meta.container && !shared;
+        let scratch = held.meta.chat && discard && !shared;
         if worktree && !discard && !pm_git::changes(&folder).is_empty() {
             return Response::Uncommitted;
         }
@@ -347,6 +409,7 @@ pub(crate) fn close_session(core: &Core, number: u64, discard: bool) -> Response
             held.chat.take(),
             removal,
             container.then(|| held.meta.directory.clone()),
+            scratch.then(|| held.meta.directory.clone()),
         )
     };
     if let Some(chat) = chat {
@@ -366,6 +429,12 @@ pub(crate) fn close_session(core: &Core, number: u64, discard: bool) -> Response
             pm_git::remove_worktree(&repository, &folder, branch.as_deref(), base.as_deref())
         {
             return failed(format!("could not remove the worktree: {reason}"));
+        }
+    }
+    if let Some(directory) = scratch {
+        core.close_terminals_in(&directory);
+        if let Err(reason) = crate::chats::remove(&place(&directory)) {
+            return failed(format!("could not remove the chat's folder: {reason}"));
         }
     }
     let told = {
@@ -760,6 +829,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             attachments,
             submodule,
             container,
+            scratch,
         } => start_session(
             core,
             connection,
@@ -773,6 +843,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             &attachments,
             submodule.as_deref(),
             container,
+            scratch,
         ),
         Request::CloseSession { session, discard } => {
             let closed = close_session(core, session, discard);

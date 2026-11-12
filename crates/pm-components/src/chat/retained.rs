@@ -230,7 +230,9 @@ pub(super) fn message(
     shaper: &mut Shaper,
 ) -> Node {
     let message = &session.messages[index];
-    let project = &state.projects[session.project].path;
+    let project = state
+        .project_of(session)
+        .map_or(session.directory.as_str(), |project| project.path.as_str());
     let page = state.open_index();
     let working = session.status == Status::Working;
     let latest_steps = session.latest_steps();
@@ -252,7 +254,7 @@ pub(super) fn message(
     );
     let cached = CACHE.with_borrow_mut(|cache| {
         let cached = cache.take((page, index))?;
-        if cached.project == *project
+        if cached.project == project
             && cached.geometry == geometry
             && cached.message == *message
             && cached.working == working
@@ -303,7 +305,7 @@ pub(super) fn message(
         cache.keep(Cached {
             index,
             page,
-            project: project.clone(),
+            project: project.to_owned(),
             message: message.clone(),
             working,
             latest_steps,

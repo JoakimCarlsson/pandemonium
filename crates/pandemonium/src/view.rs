@@ -34,6 +34,11 @@ enum Saved {
     Project(String),
     /// The extensions there are to install.
     Extensions,
+    /// The page that starts a chat, which belongs to no project.
+    Chat {
+        /// The machine the chat goes to, by destination; nothing for this one.
+        host: Option<String>,
+    },
     /// The page for starting work in the first project.
     #[default]
     First,
@@ -331,12 +336,17 @@ impl View {
         let page = match state.page {
             Page::Session(position) => match server_number(position) {
                 Some((host, number)) => Saved::Session { host, number },
-                None => Saved::New(path(
-                    state
-                        .sessions
-                        .get(position)
-                        .map_or(0, |session| session.project),
-                )),
+                None => match state.sessions.get(position) {
+                    Some(session) if session.is_chat() => Saved::Chat {
+                        host: session.machine.clone(),
+                    },
+                    session => Saved::New(path(
+                        session.and_then(|session| session.project).unwrap_or(0),
+                    )),
+                },
+            },
+            Page::Chat => Saved::Chat {
+                host: state.chat_on.clone(),
             },
             Page::New(project) => Saved::New(path(project)),
             Page::Project(project) => Saved::Project(path(project)),
@@ -478,15 +488,24 @@ impl View {
         self.session().and_then(|(host, _)| host)
     }
 
-    /// `state` with what does not wait for the server put back: the page for starting work or the history, the panels, the agent and the prompt.
+    /// `state` with what does not wait for the server put back: the page for starting work or a chat, or the history, the panels, the agent and the prompt. A page about a project is left as `state` has it when no project is there any more.
     pub fn apply(&self, mut state: WorkspaceState) -> WorkspaceState {
         let project_at = |path: &String| state.projects.iter().position(|held| held.path == *path);
+        let some_project = !state.projects.is_empty();
         match &self.page {
-            Saved::New(path) => state.page = Page::New(project_at(path).unwrap_or(0)),
-            Saved::Project(path) => state.page = Page::Project(project_at(path).unwrap_or(0)),
+            Saved::New(path) if some_project => {
+                state.page = Page::New(project_at(path).unwrap_or(0));
+            }
+            Saved::Project(path) if some_project => {
+                state.page = Page::Project(project_at(path).unwrap_or(0));
+            }
             Saved::History => state.page = Page::History,
             Saved::Extensions => state.page = Page::Extensions,
-            Saved::Session { .. } | Saved::First => {}
+            Saved::Chat { host } => {
+                state.chat_on = host.clone();
+                state.page = Page::Chat;
+            }
+            Saved::Session { .. } | Saved::First | Saved::New(_) | Saved::Project(_) => {}
         }
         state.review = self.review;
         state.review_tab = self.review_tab();

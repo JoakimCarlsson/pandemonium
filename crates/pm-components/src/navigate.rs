@@ -81,8 +81,8 @@ impl WorkspaceState {
     /// Whether the project of the session the review panel is about is on this machine.
     pub fn review_is_local(&self) -> bool {
         self.review_session()
-            .and_then(|session| self.projects.get(session.project))
-            .is_some_and(|project| project.host().is_none())
+            .and_then(|session| self.machine_of(session))
+            .is_some_and(|machine| machine.is_none())
     }
 
     /// Looks for what `seek` names from the byte `offset` of the file shown; what is found is listed at `at` unless it is one place to go to.

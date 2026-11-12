@@ -696,13 +696,13 @@ pub fn peek_of(id: FocusId) -> Option<usize> {
 }
 
 impl WorkspaceState {
-    /// Whether the page shows its views in panes: a session, the page for starting work or a project's overview.
+    /// Whether the page shows its views in panes: a session, a page for starting work or a project's overview.
     pub fn paned(&self) -> bool {
-        !self.projects.is_empty()
-            && matches!(
-                (self.page, self.open()),
-                (Page::Session(_), Some(_)) | (Page::New(_) | Page::Project(_), _)
-            )
+        match (self.page, self.open()) {
+            (Page::Session(_), Some(_)) | (Page::Chat, _) => true,
+            (Page::New(project) | Page::Project(project), _) => project < self.projects.len(),
+            _ => false,
+        }
     }
 
     /// Whether the terminal dock shows under the panes.
@@ -737,10 +737,13 @@ impl WorkspaceState {
         }
     }
 
-    /// Every tab the page has, in order: the page, the diff while the session changed files, and the open files.
+    /// Every tab the page has, in order: the page, the diff while the session changed files, and the open files. A chat has no diff.
     fn pane_items(&self) -> Vec<Item> {
         let mut items = vec![Item::Page];
-        if self.review_session().is_some() {
+        if self
+            .review_session()
+            .is_some_and(|session| !session.is_chat())
+        {
             items.push(Item::Diff);
         }
         if self.excerpts.is_some() {

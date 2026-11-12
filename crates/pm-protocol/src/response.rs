@@ -39,6 +39,9 @@ pub struct SessionInfo {
     /// The submodule its agent works in, from the root of the project, or nothing for the project itself.
     #[serde(default)]
     pub submodule: Option<String>,
+    /// Whether it is a chat that belongs to no project: `directory` is a scratch folder the server made for it, and `repository` is empty.
+    #[serde(default)]
+    pub chat: bool,
 }
 
 /// What the server knows about one shell.

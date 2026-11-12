@@ -21,6 +21,8 @@ pub enum Action {
     GoToSession,
     /// Starts a new session in the project shown.
     NewSession,
+    /// Starts a chat, which belongs to no project and works in a scratch folder its server makes.
+    NewChat,
     /// Adds a project to the window.
     AddProject,
     /// Shows every session of every project.
@@ -415,11 +417,12 @@ pub enum Action {
 
 impl Action {
     /// Every action, in the order the keymap lists them.
-    pub const ALL: [Self; 199] = [
+    pub const ALL: [Self; 200] = [
         Self::CommandPalette,
         Self::OpenSettings,
         Self::GoToSession,
         Self::NewSession,
+        Self::NewChat,
         Self::AddProject,
         Self::ShowHistory,
         Self::ShowExtensions,
@@ -624,6 +627,7 @@ impl Action {
             Self::OpenSettings => "open_settings",
             Self::GoToSession => "go_to_session",
             Self::NewSession => "new_session",
+            Self::NewChat => "new_chat",
             Self::AddProject => "add_project",
             Self::ShowHistory => "show_history",
             Self::ShowExtensions => "show_extensions",
@@ -829,6 +833,7 @@ impl Action {
             Self::OpenSettings => "Open Settings",
             Self::GoToSession => "Go to Session",
             Self::NewSession => "New Session",
+            Self::NewChat => "New Chat",
             Self::AddProject => "New Workspace",
             Self::ShowHistory => "Show History",
             Self::ShowExtensions => "Show Extensions",
@@ -1040,6 +1045,7 @@ impl Action {
         match self {
             Self::AddProject => "add project open folder repository",
             Self::NewSession => "start agent chat",
+            Self::NewChat => "start agent conversation scratch without project",
             Self::GoToSession => "switch project workspace",
             Self::CloneRepository => "new workspace project",
             Self::OpenSettings => "preferences configure",
@@ -1113,6 +1119,7 @@ impl Action {
             Self::CommandPalette | Self::OpenSettings => "Window",
             Self::GoToSession
             | Self::NewSession
+            | Self::NewChat
             | Self::AddProject
             | Self::ShowHistory
             | Self::ShowExtensions
@@ -1218,6 +1225,7 @@ impl Action {
                 | Self::OpenSettings
                 | Self::GoToSession
                 | Self::NewSession
+                | Self::NewChat
                 | Self::AddProject
                 | Self::ShowHistory
                 | Self::ShowExtensions
@@ -1471,6 +1479,7 @@ fn own() -> &'static [(Action, &'static [&'static str])] {
         (OpenSettings, &["ctrl+,"]),
         (GoToSession, &["ctrl+r"]),
         (NewSession, &["ctrl+n"]),
+        (NewChat, &[]),
         (AddProject, &[]),
         (ShowHistory, &[]),
         (ShowExtensions, &["ctrl+shift+x"]),

@@ -29,6 +29,9 @@ pub const SESSION_MENU_RENAME: FocusId = FocusId(7088);
 /// The row of a session's menu that shows its folder in the file manager.
 pub const SESSION_MENU_OPEN_FOLDER: FocusId = FocusId(7089);
 
+/// The row of a chat's menu that removes it for good: its scratch folder is deleted with what is in it.
+pub const SESSION_MENU_REMOVE: FocusId = FocusId(7123);
+
 /// The row that toggles whether the session has been read.
 pub const SESSION_MENU_READ: FocusId = FocusId(7103);
 
@@ -66,6 +69,7 @@ pub fn is_session_menu_item(id: FocusId) -> bool {
     [
         SESSION_MENU_READ,
         SESSION_MENU_CLOSE,
+        SESSION_MENU_REMOVE,
         SESSION_MENU_COPY_PATH,
         SESSION_MENU_COPY_BRANCH,
         SESSION_MENU_RENAME,
@@ -105,7 +109,7 @@ impl WorkspaceState {
             .or_else(|| within(NEW_IN_BASE, self.projects.len()))
             .or_else(|| {
                 within(SESSION_BASE, self.sessions.len())
-                    .map(|position| self.sessions[position].project)
+                    .and_then(|position| self.sessions[position].project)
             })
     }
 
@@ -131,8 +135,8 @@ impl WorkspaceState {
     pub fn is_remote_session(&self, position: usize) -> bool {
         self.sessions
             .get(position)
-            .and_then(|held| self.projects.get(held.project))
-            .is_some_and(|project| project.host().is_some())
+            .and_then(|held| self.machine_of(held))
+            .is_some_and(|machine| machine.is_some())
     }
 
     /// The state after the row `row` of the open session menu was pressed.
@@ -175,11 +179,17 @@ impl WorkspaceState {
                 });
                 self
             }
+            SESSION_MENU_REMOVE => {
+                if held.is_chat() {
+                    self.ask(Prompt::Close(open.session));
+                }
+                self
+            }
             _ => self.close_after_asking(open.session),
         }
     }
 
-    /// The state with the session at `session` closed, or, when its worktree has changes that are not committed, the reader asked first.
+    /// The state with the session at `session` closed, which for a chat archives it and keeps its scratch folder, or, when its worktree has changes that are not committed, the reader asked first.
     fn close_after_asking(mut self, session: usize) -> Self {
         let uncommitted = self
             .sessions
@@ -212,14 +222,17 @@ impl WorkspaceState {
             return;
         }
         held.closed = true;
-        let project = held.project;
+        let (project, machine) = (held.project, held.machine.clone());
         if self.page == Page::Session(position) {
-            self.start_in(project, None);
+            match project {
+                Some(project) => self.start_in(project, None),
+                None => self.start_chat_on(machine),
+            }
             self.sync_context();
         }
     }
 
-    /// The state with the reader asked whether to close the session at `position` though its worktree has changes that are not committed.
+    /// The state with the reader asked whether to close the session at `position` though its worktree has changes that are not committed, or whether to remove the chat there with its scratch folder.
     pub fn asking_to_close(mut self, position: usize) -> Self {
         if position < self.sessions.len() {
             self.ask(Prompt::Close(position));
@@ -325,7 +338,11 @@ impl WorkspaceState {
         let mut moved: Vec<Option<usize>> = Vec::with_capacity(self.sessions.len());
         let mut kept = Vec::new();
         for mut session in std::mem::take(&mut self.sessions) {
-            match map.get(session.project).copied().flatten() {
+            let placed = match session.project {
+                Some(project) => map.get(project).copied().flatten().map(Some),
+                None => Some(None),
+            };
+            match placed {
                 Some(project) => {
                     session.project = project;
                     moved.push(Some(kept.len()));
@@ -344,19 +361,16 @@ impl WorkspaceState {
         }
         self.sessions = kept;
         self.remap_debug(&moved);
-        self.page = match self.page {
-            Page::Session(position) => match moved.get(position).copied().flatten() {
-                Some(position) => Page::Session(position),
-                None => Page::New(0),
-            },
-            Page::New(project) => Page::New(map.get(project).copied().flatten().unwrap_or(0)),
-            Page::Project(project) => match map.get(project).copied().flatten() {
-                Some(project) => Page::Project(project),
-                None => Page::New(0),
-            },
-            Page::History => Page::History,
-            Page::Extensions => Page::Extensions,
+        let shown = match self.page {
+            Page::Session(position) => moved.get(position).copied().flatten().map(Page::Session),
+            Page::New(project) => map.get(project).copied().flatten().map(Page::New),
+            Page::Project(project) => map.get(project).copied().flatten().map(Page::Project),
+            page @ (Page::Chat | Page::History | Page::Extensions) => Some(page),
         };
+        match shown {
+            Some(page) => self.page = page,
+            None => self.start_anew(),
+        }
         self.opened = self
             .opened
             .iter()

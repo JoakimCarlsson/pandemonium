@@ -97,7 +97,7 @@ fn subagent_panel(state: &WorkspaceState, session: &Session) -> Option<Node> {
         .collect();
     let page = state.open_index();
     let held = state.opened.clone();
-    let root = state.projects[session.project].directory();
+    let root = state.root_of(session);
     Some(subagents(
         &session.messages[reply].steps,
         &positions,

@@ -20,13 +20,9 @@ impl WorkspaceState {
 
     /// The state with the sessions of the projects on `host` marked as heard when `reached`, and as out of reach when not.
     fn with_host_reach(mut self, host: &Option<String>, reached: bool) -> Self {
-        for session in &mut self.sessions {
-            let on_host = self
-                .projects
-                .get(session.project)
-                .is_some_and(|project| project.host() == *host);
-            if on_host {
-                session.out_of_reach = !reached;
+        for position in 0..self.sessions.len() {
+            if self.is_on(&self.sessions[position], host) {
+                self.sessions[position].out_of_reach = !reached;
             }
         }
         self

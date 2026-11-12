@@ -157,7 +157,7 @@ pub enum Request {
         /// The session's number.
         session: u64,
     },
-    /// Starts a session: makes its worktree when asked, starts its agent and hands it the first prompt.
+    /// Starts a session: makes its worktree when asked, or its scratch folder for a chat, starts its agent and hands it the first prompt.
     StartSession {
         /// The agent, by its id.
         agent: String,
@@ -181,12 +181,15 @@ pub enum Request {
         /// Whether the agent runs in the dev container of the folder it works in, which is built and started first.
         #[serde(default)]
         container: bool,
+        /// Whether the session is a chat that belongs to no project: the server makes a scratch folder of its own for the agent to work in, and `repository`, `directory`, `base`, `submodule` and `container` are not used.
+        #[serde(default)]
+        scratch: bool,
     },
-    /// Closes a session: stops its agent and marks it finished. Its log is kept; a worktree it made is removed, and without `discard` that is refused while the worktree has changes that are not committed.
+    /// Closes a session: stops its agent and marks it finished. Its log is kept; a worktree it made is removed, and without `discard` that is refused while the worktree has changes that are not committed. The scratch folder of a chat is kept, and removed with what is in it when `discard` is set.
     CloseSession {
         /// The session.
         session: u64,
-        /// Whether to remove the worktree even though it has changes that are not committed.
+        /// Whether to remove the worktree even though it has changes that are not committed, and the scratch folder of a chat.
         #[serde(default)]
         discard: bool,
     },
