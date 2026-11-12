@@ -90,6 +90,48 @@ pub(crate) fn turns(log: &[(u64, Event)]) -> Vec<Turn> {
     turns
 }
 
+/// The agent's final message of the last turn `log` tells: what it said after the last tool it used, its blocks of text set apart by an empty line.
+///
+/// # Errors
+///
+/// Says why there is none: the turn failed, for the reason it gave, it was stopped, it never ended, or the agent said nothing.
+pub(crate) fn final_reply(log: &[(u64, Event)]) -> Result<String, String> {
+    let turns = turns(log);
+    let Some(turn) = turns.last() else {
+        return Err("the conversation has no turn".to_owned());
+    };
+    let mut said = String::new();
+    let mut tools: Vec<&str> = Vec::new();
+    let mut ended: Option<Option<String>> = None;
+    let mut stopped = false;
+    let mut failed: Option<String> = None;
+    for event in &turn.events {
+        match event {
+            Event::Said(text) => said.push_str(text),
+            Event::Started(pm_harness::Part::Text) if !said.trim().is_empty() => {
+                said.push_str("\n\n");
+            }
+            Event::Tool(tool) if !tools.contains(&tool.id.as_str()) => {
+                tools.push(&tool.id);
+                said.clear();
+            }
+            Event::Halted => stopped = true,
+            Event::Failed(reason) => failed = Some(reason.clone()),
+            Event::Finished(reason) => ended = Some(reason.clone()),
+            _ => {}
+        }
+    }
+    match (failed, ended) {
+        (Some(reason), _) | (None, Some(Some(reason))) => Err(reason),
+        (None, _) if stopped => Err("the summary was stopped".to_owned()),
+        (None, None) => Err("the summary did not finish".to_owned()),
+        (None, Some(None)) if said.trim().is_empty() => {
+            Err("the agent wrote no summary".to_owned())
+        }
+        (None, Some(None)) => Ok(said.trim().to_owned()),
+    }
+}
+
 /// The log a branch of the conversation `log` tells starts from: what the agent last offered, then the reader's turns up to and with `turn`, counted from nought, with no files kept before them. Nothing when there is no such turn.
 pub(crate) fn through(log: &[(u64, Event)], turn: u64) -> Option<Vec<(u64, Event)>> {
     let turns = turns(log);

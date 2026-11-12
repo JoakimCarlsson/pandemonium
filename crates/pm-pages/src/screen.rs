@@ -1218,6 +1218,18 @@ impl Screen {
         }
     }
 
+    /// The screen after the server said how continuing the chat at `chat` in a project went: on the session at `started`, or with the chat told why there is none.
+    pub fn chat_continued(
+        self,
+        chat: usize,
+        started: Option<usize>,
+        failure: Option<&str>,
+    ) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.chat_continued(chat, started, failure)),
+        }
+    }
+
     /// The box to give keyboard focus after `id` was pressed, when that is the prompt.
     pub fn refocus(id: FocusId) -> Option<FocusId> {
         WorkspaceState::refocus(id)

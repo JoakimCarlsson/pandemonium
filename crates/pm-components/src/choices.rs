@@ -50,6 +50,7 @@ impl WorkspaceState {
     pub fn keeps_picker(action: FocusId) -> bool {
         let FocusId(id) = action;
         action == LOCATION
+            || crate::continue_chat::is_continue_part(action)
             || action == MENU_BODY
             || action == MENU_FILTER
             || action == MENU_FILTER_PICK
@@ -250,8 +251,9 @@ impl WorkspaceState {
         self
     }
 
-    /// The state holding `branches` for the project at `project`, unless the page has moved on.
+    /// The state holding `branches` for the project at `project`, unless the page has moved on, and for the choice of where a chat is continued when that is the project chosen there.
     pub fn with_branches(mut self, project: usize, branches: Vec<String>) -> Self {
+        self.continuing.read(project, &branches);
         if self.branches_of == Some(project) {
             self.branches = branches;
             if self.branches.is_empty() {

@@ -381,6 +381,7 @@ impl WorkspaceState {
         self.branches_of = self
             .branches_of
             .and_then(|project| map.get(project).copied().flatten());
+        self.continuing = crate::continue_chat::Choice::default();
         if moved.iter().enumerate().any(|(old, new)| *new != Some(old)) {
             self.outbox.push(Outgoing::Reindexed(moved));
         }

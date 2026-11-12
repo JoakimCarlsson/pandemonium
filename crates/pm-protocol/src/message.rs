@@ -151,6 +151,17 @@ pub enum ServerMessage {
         /// How many there are in all; zero when not known.
         total: u64,
     },
+    /// How continuing a chat in a project, asked for with `continue_chat`, went. Sent to the client that asked, or, when it has gone, to every client connected, so that it hears after connecting again; the other clients are told of the session with `session_added`.
+    ChatContinued {
+        /// The chat that was continued.
+        chat: u64,
+        /// The session that continues it, when one was started.
+        #[serde(default)]
+        started: Option<SessionInfo>,
+        /// Why no session was started: the summary turn failed or was stopped, or the session could not be made.
+        #[serde(default)]
+        failure: Option<String>,
+    },
     /// A sign-in the client asked for with `sign_in` or `sign_in_session` waits for the reader to enter `code` on the page `url`. Sent to that client alone; the answer to its request says when the sign-in is over.
     SignInCode {
         /// The agent being signed in, by its id.

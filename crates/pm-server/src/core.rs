@@ -130,6 +130,8 @@ pub(crate) struct Session {
     pub(crate) running_as: Option<String>,
     /// The id of the turn the next start goes back to before in the saved history, after a rewind or a branch; all of it when there is none.
     pub(crate) resume_before: Option<String>,
+    /// Where this chat is being continued as a session in a project, from when its agent is asked for the summary until the session is started or given up.
+    pub(crate) handoff: Option<crate::handoff::Handoff>,
 }
 
 impl Session {
@@ -152,6 +154,7 @@ impl Session {
             held_by: None,
             running_as: None,
             resume_before: None,
+            handoff: None,
         }
     }
 
@@ -212,10 +215,12 @@ impl Session {
             return Told::new();
         }
         self.busy = false;
-        [Event::Halted, Event::Finished(Some(reason.to_owned()))]
+        let told = [Event::Halted, Event::Finished(Some(reason.to_owned()))]
             .into_iter()
             .map(|event| (number, self.note(number, &event), event))
-            .collect()
+            .collect();
+        self.settle_handoff();
+        told
     }
 
     /// Takes `event`, which the agent of the session numbered `number` reported, into the log, does what it calls for and returns what it noted.
@@ -230,15 +235,20 @@ impl Session {
             told.push((number, self.note(number, &Event::Halted), Event::Halted));
         }
         told.push((number, self.note(number, &event), event.clone()));
+        if let Event::SignedOut { reason, .. } = &event {
+            self.fail_handoff(reason);
+        }
         match event {
             Event::Failed(_) | Event::SignedOut { .. } => {
                 self.chat = None;
                 self.busy = false;
+                self.settle_handoff();
                 told.extend(self.drop_queue(number));
                 told.extend(self.drop_trust(number));
             }
             Event::Finished(_) => {
                 self.busy = false;
+                self.settle_handoff();
                 told.extend(self.advance(number));
             }
             _ => {}

@@ -125,6 +125,7 @@ request with exactly one `response` carrying the same `id`.
 | `rewind`       | `session`, `turn`                                                                                | `done`          |
 | `restore`      | `session`, `turn`                                                                                | `done`          |
 | `fork_session` | `session`, `turn`                                                                                | `sessions`      |
+| `continue_chat`| `session`, `repository`, `base`, `title`                                                         | `done`          |
 | `choose`       | `session`, `ticket`, `option`                                                                    | `done`          |
 | `answer`       | `session`, `ticket`, `replies`                                                                   | `done`          |
 | `trust`        | `session`, `ticket`, `verdict`                                                                   | `done`          |
@@ -402,6 +403,30 @@ everything said of them, its submodules' paths written from `directory`.
   branch, the head nor the index changes. The agent's next prompt says that
   the files were put back. Fails while a turn is running, or when no files
   were kept before the turn.
+- **`continue_chat`:** continues the chat `session` as a session in a project.
+  The server hands the chat's agent a fixed prompt as an ordinary turn of the
+  chat, so it shows in the chat's events: it asks for a handoff summary written
+  for a reader with none of the conversation, covering the goal, the decisions
+  made and why, what was found, the files in the scratch folder worth reading
+  with their absolute paths, and the next steps. The request is answered `done`
+  once the agent was asked. It fails when `session` is not a chat, when its
+  agent is on a turn or has prompts waiting, when the chat is being continued
+  already, when its scratch folder was removed, or when `repository` holds no
+  git repository. When the turn ends, the server takes the agent's final
+  message, what it said after the last tool it used, and starts a session as
+  `start_session` does: with the chat's agent and the settings that agent last
+  reported, in a worktree of `repository` made from `base`, called `title`,
+  its `text` the line `Continued from the chat "<chat title>".`, an empty line
+  and the message. Nothing of the chat's history or scratch folder is copied.
+  `repository` is a folder on the server that holds the chat, since the
+  summary names files in the chat's scratch folder. The server does all of
+  this whether or not the client that asked is still connected: that client
+  is sent `chat_continued`, or every client connected when it has gone, the
+  others `session_added`, and a client that connects later finds the session
+  in `sessions`. No session is started when
+  the turn was stopped, failed, or ended with the agent having said nothing,
+  or when the chat was closed meanwhile; `chat_continued` then says why. The
+  chat stays as it was and can be prompted and continued again.
 - **`fork_session`:** starts a session that branches off the conversation
   of `session` after the reader's turn `turn`, counted as for `rewind`, and
   the agent's reply to it. The new session works in the same folder, so the
@@ -1044,6 +1069,20 @@ sent to the client that made the change.
 
 A client that was disconnected misses these, so after every connect it asks
 `sessions` and `projects` again.
+
+## How continuing a chat went
+
+```json
+{ "type": "chat_continued", "chat": 3, "started": { "session": 4, … }, "failure": null }
+```
+
+Sent to the client that asked with `continue_chat` when the chat's summary
+turn is over. `started` is the `SessionInfo` of the session that continues the
+chat `chat`, whose events the asking connection already receives, or `null`
+with `failure` saying why no session was started. When the connection that
+asked has gone by then, the message goes to every client connected instead, so
+that the one that asked hears of it once it has connected again; a client that
+connects later still finds the session in `sessions`.
 
 ## Events
 

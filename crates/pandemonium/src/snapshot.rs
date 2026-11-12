@@ -235,6 +235,8 @@ pub enum Shot {
     ChatsHistory,
     /// The menu of a chat, which can be archived or removed.
     ChatMenu,
+    /// A chat with the choice of the project and the base branch to continue it in open.
+    ChatContinue,
     /// The agents and their accounts in the settings window, scrolled down, with Ollama and OpenRouter hidden from new sessions.
     SettingsAccountsHidden,
     /// The agents and their accounts in the settings window, scrolled down, with the box for OpenRouter's API key open.
@@ -3305,6 +3307,18 @@ impl Shot {
             Self::ChatNew => Screen::Workspace(chat_new()),
             Self::Chats => Screen::Workspace(chats()),
             Self::ChatsHistory => Screen::Workspace(chats().after(HISTORY)),
+            Self::ChatContinue => {
+                let state = chats().after(pm_components::continue_chat::CONTINUE);
+                let project = state.continue_project().unwrap_or(0);
+                Screen::Workspace(state.with_branches(
+                    project,
+                    vec![
+                        "main".to_owned(),
+                        "next".to_owned(),
+                        "task/231-titles".to_owned(),
+                    ],
+                ))
+            }
             Self::ChatMenu => {
                 let state = chats();
                 let open = state.open_chats()[0];

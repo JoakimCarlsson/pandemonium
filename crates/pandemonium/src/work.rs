@@ -110,6 +110,8 @@ enum Job {
 enum Pending {
     /// Nothing: the answer only matters if it says the request failed.
     Nothing,
+    /// Whether the server took on continuing the chat with this number in a project.
+    Continue(u64),
     /// What the server on this machine keeps for the work the servers do.
     MachineSettings,
     /// The newest release on a channel.
@@ -868,6 +870,11 @@ impl Work {
                         Pending::Start(session),
                     );
                 }
+                Outgoing::ContinueChat {
+                    session,
+                    project,
+                    base,
+                } => self.continue_chat(model, session, project, base),
                 Outgoing::Prompt {
                     session,
                     text,
@@ -1668,6 +1675,11 @@ impl Work {
                         *screen = std::mem::take(screen).with_debug(debug, view, events);
                     }),
                     Incoming::SessionAdded(info) => self.adopt(model, &host, vec![info]),
+                    Incoming::ChatContinued {
+                        chat,
+                        started,
+                        failure,
+                    } => self.chat_continued(model, &host, chat, started, failure),
                     Incoming::SessionClosed(number) => {
                         if let Some(position) = self.positions.get(&(host.clone(), number)).copied()
                         {
@@ -2238,6 +2250,11 @@ impl Work {
                 }
                 _ => {}
             },
+            Pending::Continue(number) => {
+                if let Response::Failed { message } = response {
+                    self.chat_continued(model, host, number, None, Some(message));
+                }
+            }
             Pending::Close(number) => {
                 if let Some(position) = self.positions.get(&(host.clone(), number)).copied() {
                     let chat =
@@ -2656,7 +2673,72 @@ impl Work {
         }
     }
 
-    /// Adds the sessions of the server of `origin` that the window does not show yet, and starts watching them.
+    /// Asks the server of the chat at `session` to continue it as a session in the project at `project`, in a worktree made from `base`, when the project is on the chat's machine; the session is called what the chat is.
+    fn continue_chat(
+        &mut self,
+        model: &State<Screen>,
+        session: usize,
+        project: usize,
+        base: String,
+    ) {
+        let placement = Self::session_of(model, session);
+        let repository = model.read(|screen| {
+            let Screen::Workspace(state) = screen;
+            let machine = placement.as_ref().map(|placement| &placement.host)?;
+            state
+                .projects
+                .get(project)
+                .filter(|held| held.host() == *machine)
+                .map(|held| held.directory().to_string_lossy().into_owned())
+        });
+        let (Some(placement), Some(repository), Some((host, number))) =
+            (placement, repository, self.numbers.get(&session).cloned())
+        else {
+            model.update(|screen| {
+                *screen = std::mem::take(screen).chat_continued(
+                    session,
+                    None,
+                    Some("the chat or the project is not on a server"),
+                );
+            });
+            return;
+        };
+        self.ask(
+            &host,
+            Request::ContinueChat {
+                session: number,
+                repository,
+                base,
+                title: placement.title,
+            },
+            Pending::Continue(number),
+        );
+    }
+
+    /// Takes in how continuing the chat numbered `chat` on `host` went: the session that continues it is listed and shown, or the chat is told why there is none.
+    fn chat_continued(
+        &mut self,
+        model: &State<Screen>,
+        host: &Host,
+        chat: u64,
+        started: Option<pm_protocol::SessionInfo>,
+        failure: Option<String>,
+    ) {
+        let number = started.as_ref().map(|info| info.session);
+        if let Some(info) = started {
+            self.adopt(model, host, vec![info]);
+        }
+        let Some(position) = self.positions.get(&(host.clone(), chat)).copied() else {
+            return;
+        };
+        let session =
+            number.and_then(|number| self.positions.get(&(host.clone(), number)).copied());
+        model.update(|screen| {
+            *screen = std::mem::take(screen).chat_continued(position, session, failure.as_deref());
+        });
+    }
+
+    /// Adds the sessions of the server of `origin` that the window does not show yet, starts watching them, and takes in what their agents did before the window knew them.
     fn adopt(
         &mut self,
         model: &State<Screen>,
@@ -2707,6 +2789,13 @@ impl Work {
             self.positions.insert((origin.clone(), number), position);
             if let Some(client) = self.links.get(origin).and_then(|link| link.client.as_ref()) {
                 client.watch(number, 0);
+            }
+            for (seq, event) in self
+                .early
+                .remove(&(origin.clone(), number))
+                .unwrap_or_default()
+            {
+                self.heard(model, origin, number, seq, event);
             }
         }
         self.finish_resuming(model, origin);

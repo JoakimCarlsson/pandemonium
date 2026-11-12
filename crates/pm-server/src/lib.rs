@@ -19,6 +19,7 @@ mod extensions;
 mod fetch;
 mod folders;
 mod handler;
+mod handoff;
 mod languages;
 mod library;
 mod listener;

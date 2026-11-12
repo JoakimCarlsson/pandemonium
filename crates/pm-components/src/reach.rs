@@ -23,6 +23,9 @@ impl WorkspaceState {
         for position in 0..self.sessions.len() {
             if self.is_on(&self.sessions[position], host) {
                 self.sessions[position].out_of_reach = !reached;
+                if !reached {
+                    self.sessions[position].handing_over = false;
+                }
             }
         }
         self

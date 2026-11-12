@@ -607,6 +607,8 @@ pub struct Session {
     pub limits: Option<pm_harness::Limits>,
     /// Whether the window has lost its connection to the session's server, so that what its agent does is not heard until the connection is made anew.
     pub out_of_reach: bool,
+    /// Whether the server was asked to continue this chat as a session in a project and has yet to say how that went.
+    pub handing_over: bool,
 }
 
 impl Session {
@@ -669,6 +671,7 @@ impl Session {
             terminal_active: 0,
             shells: Vec::new(),
             out_of_reach: false,
+            handing_over: false,
         }
     }
 

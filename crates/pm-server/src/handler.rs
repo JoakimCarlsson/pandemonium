@@ -225,6 +225,20 @@ fn trying(
     }
 }
 
+/// Whether worktrees can be made of the folder `repository` on this machine.
+///
+/// # Errors
+///
+/// Says that the folder holds no git repository when it holds none.
+pub(crate) fn has_worktrees(repository: &str) -> Result<(), String> {
+    if pm_git::layout(&place(repository)) == pm_git::Layout::Neither {
+        return Err(format!(
+            "{repository} holds no git repository, so it has no worktrees"
+        ));
+    }
+    Ok(())
+}
+
 /// A session made ready for `start_session`, before its agent is started.
 pub(crate) struct Seat {
     /// The number it is held under.
@@ -260,17 +274,15 @@ pub(crate) fn seat(
         (repository, base, submodule, container)
     };
     let reserved = scratch.then(|| core.next_session());
+    if reserved.is_none() && base.is_some() {
+        has_worktrees(repository)?;
+    }
     let mut skipped = Vec::new();
     let (folder, head) = match (reserved, base) {
         (Some(number), _) => {
             let folder = crate::chats::create(number)
                 .map_err(|reason| format!("could not make a folder for the chat: {reason}"))?;
             (folder, None)
-        }
-        (None, Some(_)) if pm_git::layout(&place(repository)) == pm_git::Layout::Neither => {
-            return Err(format!(
-                "{repository} holds no git repository, so it has no worktrees"
-            ));
         }
         (None, Some(base)) => match pm_git::add_worktree(
             &place(repository),
@@ -325,7 +337,7 @@ pub(crate) fn seat(
 
 /// Starts a session, its agent in `submodule` of its folder when one is given, or, when `scratch` is set, a chat in a scratch folder of its own, and hands the agent the first prompt.
 #[allow(clippy::too_many_arguments)]
-fn start_session(
+pub(crate) fn start_session(
     core: &Arc<Core>,
     connection: &Arc<Connection>,
     agent: &str,
@@ -396,6 +408,7 @@ pub(crate) fn close_session(core: &Core, number: u64, discard: bool) -> Response
             .get_mut(&number)
             .expect("the session was just found");
         held.busy = false;
+        held.fail_handoff("the chat was closed");
         let removal = worktree.then(|| {
             (
                 place(&held.meta.repository),
@@ -923,6 +936,12 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             trying(core, session, |held| held.rewind(session, turn))
         }
         Request::ForkSession { session, turn } => fork_session(core, connection, session, turn),
+        Request::ContinueChat {
+            session,
+            repository,
+            base,
+            title,
+        } => crate::handoff::begin(core, connection, session, &repository, &base, &title),
         Request::Restore { session, turn } => {
             trying(core, session, |held| held.restore(session, turn))
         }

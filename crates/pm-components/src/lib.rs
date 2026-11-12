@@ -42,6 +42,7 @@ pub mod compare;
 pub mod composer;
 pub mod conflict;
 pub mod context_menu;
+pub mod continue_chat;
 pub mod debug;
 pub mod debug_panel;
 pub mod diff;
