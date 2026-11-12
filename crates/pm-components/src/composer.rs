@@ -146,7 +146,6 @@ fn setting_menu(state: &WorkspaceState, index: usize, rows: u32, above: f32) -> 
 /// The menu of where new work is done, and the branch a worktree is made from.
 fn location_menu(state: &WorkspaceState) -> Node {
     let worktree = state.location == Location::Worktree;
-    let chosen = state.base.as_ref().or(state.branches.first());
     let mut menu = Popover::new().width(MENU_WIDTH).heading("Run in", None);
     if state.is_repository() {
         menu = menu
@@ -182,18 +181,29 @@ fn location_menu(state: &WorkspaceState) -> Node {
                     .styles([border_t(), border_color(Role::Border), mt(1)])
                     .child(heading("Branch from", None)),
             )
-            .children(state.branches.iter().take(BRANCH_ROWS).enumerate().map(
-                |(position, branch)| {
-                    row(
-                        branch,
-                        "",
-                        chosen == Some(branch),
-                        FocusId(BRANCH_BASE + position as u64),
-                    )
-                },
-            ));
+            .children(branch_rows(&state.branches, state.base.as_ref()));
     }
     menu.over_button(MENU_BODY)
+}
+
+/// The rows choosing the branch a worktree is made from, out of `branches`: `picked` ticked, or the first while none was picked.
+pub(crate) fn branch_rows<'a>(
+    branches: &'a [String],
+    picked: Option<&'a String>,
+) -> impl Iterator<Item = Node> + 'a {
+    let chosen = picked.or(branches.first());
+    branches
+        .iter()
+        .take(BRANCH_ROWS)
+        .enumerate()
+        .map(move |(position, branch)| {
+            row(
+                branch,
+                "",
+                chosen == Some(branch),
+                FocusId(BRANCH_BASE + position as u64),
+            )
+        })
 }
 
 /// The menu of the logins of the chosen agent: its own, each one added, and adding another.
@@ -622,6 +632,13 @@ pub fn composer(
                     chip(&label, Some(IconName::GitFork), LOCATION, open),
                     open.then(|| location_menu(state)),
                 )),
+        );
+    }
+    if let Some(chip) = session.and_then(|chat| crate::continue_chat::chip(state, chat)) {
+        place = Some(
+            node()
+                .styles([flex(), items_center(), gap(1), px(2.5)])
+                .child(chip),
         );
     }
     if state.on_this_computer() && state.agent_has_accounts(state.agent_now()) {

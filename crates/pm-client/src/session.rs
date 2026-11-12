@@ -49,6 +49,15 @@ pub enum Incoming {
     SessionAdded(pm_protocol::SessionInfo),
     /// Another client closed the session with this number.
     SessionClosed(u64),
+    /// How continuing a chat in a project, which this client asked for, went.
+    ChatContinued {
+        /// The chat that was continued.
+        chat: u64,
+        /// The session that continues it, when one was started.
+        started: Option<pm_protocol::SessionInfo>,
+        /// Why no session was started.
+        failure: Option<String>,
+    },
     /// Another client changed the projects; these are the projects now.
     ProjectsChanged(Vec<String>),
     /// Something a shell printed, which has not been reported before.
@@ -537,6 +546,17 @@ fn converse(
                     }
                     ServerMessage::SessionClosed { session } => {
                         let _ = reporter.send(Incoming::SessionClosed(session));
+                    }
+                    ServerMessage::ChatContinued {
+                        chat,
+                        started,
+                        failure,
+                    } => {
+                        let _ = reporter.send(Incoming::ChatContinued {
+                            chat,
+                            started,
+                            failure,
+                        });
                     }
                     ServerMessage::ProjectsChanged { paths } => {
                         let _ = reporter.send(Incoming::ProjectsChanged(paths));

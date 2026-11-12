@@ -55,6 +55,7 @@ pub fn run(settings: Settings) -> std::io::Result<()> {
     std::thread::spawn(move || {
         loop {
             watching.pump();
+            crate::handoff::deliver(&watching);
             BELL.wait(PUMP);
         }
     });

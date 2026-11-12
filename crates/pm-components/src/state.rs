@@ -1159,6 +1159,15 @@ pub enum Outgoing {
         /// The folder.
         directory: String,
     },
+    /// Asks the server of the chat at this position to continue it as a session in a project: its agent writes a handoff summary, and the server starts the session with it.
+    ContinueChat {
+        /// The chat, by position.
+        session: usize,
+        /// The project the session starts in, by position.
+        project: usize,
+        /// The branch the session's worktree is made from.
+        base: String,
+    },
     /// Lists the branches of the repository `directory` on `host`, for the project at `project`.
     Branches {
         /// The project, by position.
@@ -1609,6 +1618,8 @@ pub enum Picker {
     Location,
     /// Which login of the agent is used.
     Account,
+    /// Which project, and from which branch, the open chat is continued in.
+    Continue,
     /// An element of a web page picked for the prompt, by position among those picked.
     Element(usize),
     /// A screenshot or the console of a web page held for the prompt, by position among those held.
@@ -1887,6 +1898,8 @@ pub struct WorkspaceState {
     pub branches: Vec<String>,
     /// The project `branches` was read for.
     pub branches_of: Option<usize>,
+    /// Where the open chat is to be continued, as chosen so far.
+    pub continuing: crate::continue_chat::Choice,
     /// The panel open over the conversation's chips, if one is.
     pub activity: Option<Activity>,
     /// The commands and skills each agent offers behind a slash, by the agent's position, once it has been asked.
@@ -2104,6 +2117,7 @@ impl WorkspaceState {
             base: None,
             branches: Vec::new(),
             branches_of: None,
+            continuing: crate::continue_chat::Choice::default(),
             activity: None,
             agent_commands: vec![Vec::new(); builtin.len()],
             attachments: Vec::new(),
@@ -2846,6 +2860,9 @@ impl WorkspaceState {
             return;
         }
         if self.press_debug(FocusId(id)) {
+            return;
+        }
+        if self.press_continue(FocusId(id)) {
             return;
         }
         if self.press_choice(id) {

@@ -234,6 +234,7 @@ fn main() {
             Some("chats") => Shot::Chats,
             Some("chats-history") => Shot::ChatsHistory,
             Some("chat-menu") => Shot::ChatMenu,
+            Some("chat-continue") => Shot::ChatContinue,
             Some("welcometerminal") => Shot::WelcomeTerminal,
             Some("panes") => Shot::Panes,
             Some("panes-dragging") => Shot::PanesDragging,

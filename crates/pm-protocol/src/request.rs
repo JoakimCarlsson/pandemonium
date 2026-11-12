@@ -263,6 +263,17 @@ pub enum Request {
         /// The turn, by how many of the reader's turns came before it.
         turn: u64,
     },
+    /// Continues a chat as a session in a project: the chat's agent is asked, as a turn of the chat, for a handoff summary, and when it has written one the server starts a session in a worktree of `repository` with the summary as its first prompt. The server does all of it, whether or not the client stays; the client that asked is told how it went with `chat_continued`.
+    ContinueChat {
+        /// The chat.
+        session: u64,
+        /// The folder of the project the session starts in, on the chat's machine.
+        repository: String,
+        /// The branch or commit the session's worktree is made from.
+        base: String,
+        /// What the session is called, which names its worktree folder.
+        title: String,
+    },
     /// Answers the question a session's agent asked.
     Choose {
         /// The session.
