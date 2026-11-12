@@ -118,7 +118,7 @@ impl WorkspaceState {
         if !session.directory.is_empty() {
             return Some(session.directory.clone());
         }
-        let project = self.projects.get(session.project)?;
+        let project = self.project_of(session)?;
         Some(project.directory().to_string_lossy().into_owned())
     }
 

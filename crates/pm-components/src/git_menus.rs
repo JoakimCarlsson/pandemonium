@@ -557,9 +557,12 @@ impl WorkspaceState {
         }
     }
 
-    /// The state after the source control `action` of the keymap, carried out as the panel's own menu does it; any other action leaves it as it is.
+    /// The state after the source control `action` of the keymap, carried out as the panel's own menu does it; any other action leaves it as it is, and so does every action while the panel is about a chat, which has no source control.
     pub fn source_control(mut self, action: pm_editor::Action) -> Self {
         use pm_editor::Action;
+        if self.reviewing_chat() {
+            return self;
+        }
         let command = match action {
             Action::Commit => Command::Commit,
             Action::CommitAndPush => Command::CommitAndPush,

@@ -159,8 +159,15 @@ impl WorkspaceState {
         }
     }
 
-    /// Starts a shell in `folder`, from the root of the folder of the session at `session`, and shows the dock.
+    /// Starts a shell in `folder`, from the root of the folder of the session at `session`, and shows the dock. Nothing is started for a chat whose scratch folder its server has yet to make.
     pub(crate) fn open_terminal_in(&mut self, session: usize, folder: String) {
+        let unplaced = self
+            .sessions
+            .get(session)
+            .is_some_and(|held| held.is_chat() && held.directory.is_empty());
+        if unplaced {
+            return;
+        }
         let (columns, rows) = self.terminal_size;
         if let Some(tab) = self.add_terminal(session, columns, rows) {
             self.terminal = true;
@@ -254,7 +261,7 @@ impl WorkspaceState {
     /// The folder, and the machine it is on, of the session at `session`.
     fn problems_key(&self, session: usize) -> Option<ProblemsKey> {
         let held = self.sessions.get(session)?;
-        let host = self.projects.get(held.project)?.host();
+        let host = self.machine_of(held)?;
         Some((host, held.directory.clone()))
     }
 
@@ -607,12 +614,14 @@ impl WorkspaceState {
             .enumerate()
             .filter(|(_, session)| !session.home)
             .filter_map(|(position, session)| {
-                let project = self.projects.get(session.project)?;
-                if project.host() != *host {
+                if !self.is_on(session, host) {
                     return None;
                 }
                 let root = if session.directory.is_empty() {
-                    project.directory().to_string_lossy().into_owned()
+                    self.project_of(session)?
+                        .directory()
+                        .to_string_lossy()
+                        .into_owned()
                 } else {
                     session.directory.clone()
                 };

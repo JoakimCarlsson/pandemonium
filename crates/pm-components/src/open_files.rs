@@ -287,7 +287,7 @@ impl WorkspaceState {
         self.git.shown = shown;
     }
 
-    /// Makes the open files the ones of the folder the review panel is about: those of the folder left are kept aside, under its session, and those kept aside for the one arrived at are brought back, so every workspace and session shows its own files.
+    /// Makes the open files the ones of the folder the review panel is about: those of the folder left are kept aside, under its session, and those kept aside for the one arrived at are brought back, so every workspace and session shows its own files. A page with no folder, such as the one that starts a chat, keeps nothing aside, and arriving from it still brings back what the folder arrived at had.
     pub(crate) fn sync_files_owner(&mut self) {
         let now = self.review_index();
         if now == self.files_owner {
@@ -315,9 +315,6 @@ impl WorkspaceState {
                     std::mem::take(&mut self.captures),
                 ),
             );
-        } else {
-            self.files_owner = now;
-            return;
         }
         if let Some((viewers, shown)) = now.and_then(|now| self.file_stash.remove(&now)) {
             self.git.viewers = viewers;

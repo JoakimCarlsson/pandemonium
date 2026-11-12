@@ -1644,6 +1644,8 @@ pub enum Page {
     Session(usize),
     /// A prompt to start work in one project, by position.
     New(usize),
+    /// A prompt to start a chat, which belongs to no project.
+    Chat,
     /// The overview of one project, by position: its sessions and its repository.
     Project(usize),
     /// Every session.
@@ -1984,6 +1986,8 @@ pub struct WorkspaceState {
     pub machine: pm_protocol::MachineSettings,
     /// Whether the server on this machine sent what it keeps, so that what is shown is not sent to the servers before.
     pub machine_loaded: bool,
+    /// The machine the chat being started goes to, by destination, or nothing for this one.
+    pub chat_on: Option<String>,
     /// What the settings window keeps beside the settings.
     pub settings_page: crate::settings_state::SettingsPage,
     /// The menu on the tab of an open file, when open.
@@ -2009,10 +2013,15 @@ impl WorkspaceState {
     /// A workspace of `projects` and `sessions`, open on the page for starting work.
     fn with(projects: Vec<Project>, sessions: Vec<Session>) -> Self {
         let builtin = crate::agent_list::AgentEntry::shipped();
+        let page = if projects.is_empty() {
+            Page::Chat
+        } else {
+            Page::New(0)
+        };
         let mut state = Self {
             projects,
             sessions,
-            page: Page::New(0),
+            page,
             tab: Tab::Chat,
             review: true,
             git: GitControls::default(),
@@ -2152,6 +2161,7 @@ impl WorkspaceState {
             window_loaded: false,
             machine: pm_protocol::MachineSettings::default(),
             machine_loaded: false,
+            chat_on: None,
             settings_page: crate::settings_state::SettingsPage::default(),
             recording: None,
             recorded: Vec::new(),
@@ -2202,16 +2212,22 @@ impl WorkspaceState {
         self
     }
 
-    /// How tall the sidebar's list of projects is, in logical pixels.
+    /// How tall the sidebar's list of chats and projects is, in logical pixels.
     fn list_height(&self) -> f32 {
-        (0..self.projects.len())
-            .map(|index| crate::sidebar::project_height(self, index))
-            .sum()
+        crate::sidebar::chats_height(self)
+            + crate::sidebar::HEADING_HEIGHT
+            + (0..self.projects.len())
+                .map(|index| crate::sidebar::project_height(self, index))
+                .sum::<f32>()
     }
 
-    /// Whether the page for starting work is showing, with a project to start it in.
+    /// Whether a page for starting work is showing: the one of a project, or the one that starts a chat.
     pub fn starting(&self) -> bool {
-        matches!(self.page, Page::New(_)) && !self.projects.is_empty()
+        match self.page {
+            Page::New(project) => project < self.projects.len(),
+            Page::Chat => true,
+            _ => false,
+        }
     }
 
     /// How much room the sidebar takes from the left of the window, in logical pixels: its width while it shows and nothing while it is hidden.
@@ -2231,11 +2247,11 @@ impl WorkspaceState {
         }
     }
 
-    /// The project the next new work goes to: the open session's, or the one being started in.
+    /// The project the next new work goes to: the open session's, or the one being started in; the first one while a chat or no project is shown.
     pub fn current_project(&self) -> usize {
         match self.page {
             Page::New(project) | Page::Project(project) => project,
-            _ => self.open().map_or(0, |session| session.project),
+            _ => self.open().and_then(|session| session.project).unwrap_or(0),
         }
     }
 
@@ -2388,6 +2404,7 @@ impl WorkspaceState {
             }
             action if is_picker(action) => return self.folder_picker_pressed(action),
             HISTORY => self.page = Page::History,
+            crate::chats::NEW_CHAT => self.start_chat(),
             crate::extensions::EXTENSIONS => return self.with_extensions_page(),
             action if crate::extensions::is_extensions(action) => {
                 return self.extensions_pressed(action);
@@ -3193,7 +3210,7 @@ impl WorkspaceState {
         if text.is_empty() && sent_files.is_empty() {
             return;
         }
-        let starting = matches!(self.page, Page::New(_));
+        let starting = matches!(self.page, Page::New(_) | Page::Chat);
         let session = match self.page {
             Page::Session(index) => {
                 let Some(session) = self.sessions.get_mut(index) else {
@@ -3213,6 +3230,7 @@ impl WorkspaceState {
                 session.messages.push(message);
                 index
             }
+            Page::New(project) if project >= self.projects.len() => return,
             Page::New(project) => {
                 let title: String = text.chars().take(40).collect();
                 let mut session = Session::started(&title, project, &text);
@@ -3236,6 +3254,20 @@ impl WorkspaceState {
                 self.pane_stash
                     .insert(self.sessions.len() - 1, self.panes.clone());
                 self.hand_over_new_page(project, self.sessions.len() - 1);
+                self.page = Page::Session(self.sessions.len() - 1);
+                self.tab = Tab::Chat;
+                self.sessions.len() - 1
+            }
+            Page::Chat => {
+                let title: String = text.chars().take(40).collect();
+                let mut session = Session::started_chat(&title, self.chat_on.clone(), &text);
+                session.agent = self.agent;
+                session.login = self.login_for_new_work(self.agent).map(str::to_owned);
+                session.messages[0].attachments = sent_files;
+                self.sessions.push(session);
+                self.pane_stash
+                    .insert(self.sessions.len() - 1, self.panes.clone());
+                self.hand_over_new_chat(self.sessions.len() - 1);
                 self.page = Page::Session(self.sessions.len() - 1);
                 self.tab = Tab::Chat;
                 self.sessions.len() - 1
@@ -3679,6 +3711,7 @@ impl WorkspaceState {
                 held.branch = Session::checkout_label(branch, head, held.base.as_deref());
             }
         }
+        self.refresh_files();
         self
     }
 

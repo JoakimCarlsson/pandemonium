@@ -24,6 +24,7 @@ fn session() -> Session {
         login: None,
         submodule: None,
         container: false,
+        chat: false,
     };
     Session::new(
         pm_harness::agents()[0],

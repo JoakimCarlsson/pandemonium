@@ -46,8 +46,9 @@ impl Work {
                 files,
             } => {
                 if let Some((host, directory)) = Self::debug_directory(model, session) {
-                    let project =
-                        Self::session_of(model, session).map(|placement| placement.repository);
+                    let project = Self::session_of(model, session)
+                        .filter(|placement| !placement.chat)
+                        .map(|placement| placement.repository);
                     self.ask(
                         &host,
                         Request::DebugStart {

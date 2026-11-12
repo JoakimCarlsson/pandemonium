@@ -116,7 +116,7 @@ request with exactly one `response` carrying the same `id`.
 | `sign_in`      | `agent`, `login` (optional): a login id, signed in under its own folder and never the agent's default one; without it, the agent's default login, whichever is in use | `done`          |
 | `sign_in_session` | `session` | `done` |
 | `save_key`     | `agent`, `key` (optional), `login` (optional): the API key to keep for an agent signed in with one, or `null` to forget it, in the folder of the added login `login` or the agent's default one; a key in the agent's environment variable still wins | `done` |
-| `start_session`| `agent`, `repository`, `directory`, `title`, `base`, `settings`, `text`, `attachments`, `submodule`, `container` | `started`       |
+| `start_session`| `agent`, `repository`, `directory`, `title`, `base`, `settings`, `text`, `attachments`, `submodule`, `container`, `scratch` (optional, `false` by default) | `started`       |
 | `prompt`       | `session`, `text`, `attachments`, `now` (optional, `false` by default)                           | `done`          |
 | `remove_queued` | `session`, `queued`                                                                            | `done`          |
 | `hold_queue`   | `session`, `held`                                                                                | `done`          |
@@ -282,7 +282,15 @@ everything said of them, its submodules' paths written from `directory`.
 - **`discover`:** starts the agent briefly and returns what it lets the reader
   change (models, modes, effort) and the commands it offers behind a slash.
   It can take several seconds.
-- **`start_session`:** if `base` is given, the server looks it up in the
+- **`start_session`:** with `scratch: true` the session is a chat that belongs
+  to no project: the server makes a folder of its own for it under its data
+  folder, in `chats/<number>/`, which only the user running the server can
+  open, and the agent works there. `repository`, `directory`, `base`,
+  `submodule` and `container` are then not used; `started` gives the folder
+  as `directory`, with no `branch` and no `head`, and the session's
+  `SessionInfo` has `chat: true` and an empty `repository`. The client never
+  names the folder, so a chat works the same on a remote server. Otherwise,
+  if `base` is given, the server looks it up in the
   repository at that moment, fails with `<base> does not exist` when it is
   gone, and otherwise makes a git worktree under
   `<repository>/.pandemonium/worktrees` with that commit checked out on a
@@ -338,7 +346,9 @@ everything said of them, its submodules' paths written from `directory`.
   it is also on the session's base or a remote, and kept otherwise. For a
   folder of repositories every child's worktree and its branch are removed,
   whatever commits the branch has, a child that fails does not stop the rest and is named in the
-  failure, and the folder goes when they are all removed. A later `prompt` opens a closed session
+  failure, and the folder goes when they are all removed. A chat's scratch folder is kept when the chat is closed, so that it can be
+  opened again; with `discard: true` the shells in it are ended and the folder
+  is removed with everything in it, unless another open session works in it. A later `prompt` opens a closed session
   again, and fails when its folder was removed. Other clients are told with `session_closed`.
 - **`rename_session`:** keeps `title` as the session's title, trimmed, and fails when it is empty.
   Every client watching the session is told with a `Titled` event, the one that asked included. The
@@ -1057,12 +1067,16 @@ What an agent does arrives as an `event`, not as a response:
 - A client drops an event whose `seq` it already has, so replays are safe.
 
 A **SessionInfo** is `{session, agent, repository, directory, branch, head,
-base, title, closed, updated, last_seq, running, login, submodule}`. `updated` is milliseconds since the epoch,
+base, title, closed, updated, last_seq, running, login, submodule, chat}`. `updated` is milliseconds since the epoch,
 `last_seq` is the number of the session's latest event, `running` says
 whether its agent is running now, and `login` is the id of the login the
 session runs as, `null` for the agent's own. `submodule` is the path of the
 submodule its agent works in, `null` for the project itself; `directory` is
-still the folder of the whole worktree.
+still the folder of the whole worktree. `chat` is `true` for a chat started
+with `scratch`: it belongs to no project, so `repository` is empty,
+`directory` is the scratch folder the server made for it, and `branch`,
+`head`, `base` and `submodule` are `null`. A server that predates chats leaves
+`chat` out, which reads as `false`.
 
 ### Signing in again during a session
 

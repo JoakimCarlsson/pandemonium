@@ -1,8 +1,9 @@
-//! Tests of closing sessions.
+//! Tests of starting chats and closing sessions.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 use std::process::Command;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use super::*;
@@ -52,6 +53,7 @@ fn session_in(repository: &Path, worktree: &Path) -> Session {
         login: None,
         submodule: None,
         container: false,
+        chat: false,
     };
     Session::new(
         pm_harness::agents()[0],
@@ -128,4 +130,64 @@ fn closing_a_session_ends_only_the_shells_in_its_worktree() {
     forget(first);
     forget(second);
     let _ = std::fs::remove_dir_all(worktree.parent().expect("parent"));
+}
+
+/// The number the chat of these tests goes by, which no real session has.
+const CHAT: u64 = 4_000_000_401;
+
+/// Starting a chat makes a scratch folder of its own under the app's data folder, whatever folders the request names, and lists it as a chat of no project; archiving it keeps the folder, and removing it deletes the folder with what was written there.
+#[test]
+fn a_chat_works_in_a_scratch_folder_of_its_own() {
+    let folder = pm_store::data_directory()
+        .expect("data folder")
+        .join("chats")
+        .join(CHAT.to_string());
+    let _ = std::fs::remove_dir_all(&folder);
+    let core = Core::new();
+    core.number_from(CHAT);
+    let (outbox, _inbox) = std::sync::mpsc::channel();
+    let connection = Arc::new(Connection {
+        outbox: crate::core::Outbox::new(outbox),
+        attached: Mutex::new(HashSet::new()),
+    });
+    let made = seat(
+        &core,
+        pm_harness::agents()[0],
+        "/elsewhere",
+        "/elsewhere",
+        "chat",
+        Some("main"),
+        Some("inner"),
+        true,
+        true,
+    )
+    .unwrap_or_else(|reason| panic!("the chat was not made ready: {reason}"));
+    assert_eq!(made.number, CHAT);
+    assert_eq!(made.folder, folder);
+    assert!(folder.is_dir(), "the server makes the scratch folder");
+    hold_session_as(&core, &connection, made.number, made.session);
+
+    let info = core.info(CHAT).expect("the chat is listed");
+    assert!(info.chat);
+    assert_eq!(info.repository, "");
+    assert_eq!(info.directory, folder.to_string_lossy());
+    assert_eq!(
+        (info.branch, info.head, info.base, info.submodule),
+        (None, None, None, None)
+    );
+
+    std::fs::write(folder.join("note"), "kept").expect("file");
+    assert!(matches!(close_session(&core, CHAT, false), Response::Done));
+    assert!(folder.join("note").is_file(), "archiving keeps the folder");
+
+    assert!(matches!(close_session(&core, CHAT, true), Response::Done));
+    assert!(!folder.exists(), "removing deletes the folder");
+    assert!(
+        !crate::chats::owns(&folder.join("..")),
+        "only a numbered folder is a chat's"
+    );
+    assert!(core.info(CHAT).is_some_and(|info| info.closed));
+
+    forget(CHAT);
+    let _ = std::fs::remove_dir_all(&folder);
 }

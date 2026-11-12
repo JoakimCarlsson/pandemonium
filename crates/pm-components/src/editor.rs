@@ -116,11 +116,7 @@ impl WorkspaceState {
             .sessions
             .iter()
             .enumerate()
-            .filter(|(_, session)| {
-                self.projects
-                    .get(session.project)
-                    .is_some_and(|project| project.host() == *host)
-            })
+            .filter(|(_, session)| self.is_on(session, host))
             .map(|(place, _)| place)
             .collect();
         let waiting: Vec<(usize, String, bool, String)> = self
@@ -183,11 +179,7 @@ impl WorkspaceState {
             .sessions
             .iter()
             .enumerate()
-            .filter(|(_, session)| {
-                self.projects
-                    .get(session.project)
-                    .is_some_and(|project| project.host() == *host)
-            })
+            .filter(|(_, session)| self.is_on(session, host))
             .map(|(place, _)| place)
             .collect();
         let reopened: Vec<Outgoing> = self
@@ -266,13 +258,7 @@ impl WorkspaceState {
             .sessions
             .iter()
             .enumerate()
-            .filter(|(_, session)| {
-                session.directory == directory
-                    && self
-                        .projects
-                        .get(session.project)
-                        .is_some_and(|project| project.host() == *host)
-            })
+            .filter(|(_, session)| session.directory == directory && self.is_on(session, host))
             .map(|(place, _)| place)
             .collect();
         if self.terminal {

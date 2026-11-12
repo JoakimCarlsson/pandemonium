@@ -290,7 +290,7 @@ impl WorkspaceState {
     pub(crate) fn debug_root(&self, session: usize) -> Option<String> {
         let held = self.sessions.get(session)?;
         if held.directory.is_empty() {
-            let project = self.projects.get(held.project)?;
+            let project = self.project_of(held)?;
             return Some(project.directory().to_string_lossy().into_owned());
         }
         Some(held.directory.clone())

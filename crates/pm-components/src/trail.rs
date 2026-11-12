@@ -143,7 +143,7 @@ impl WorkspaceState {
         let page = match place.page {
             Page::Session(index) => index < self.sessions.len(),
             Page::New(project) | Page::Project(project) => project < self.projects.len(),
-            Page::History | Page::Extensions => true,
+            Page::Chat | Page::History | Page::Extensions => true,
         };
         page && place.file.as_ref().is_none_or(|file| {
             let open = || {

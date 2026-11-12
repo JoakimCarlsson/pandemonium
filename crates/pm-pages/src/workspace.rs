@@ -7,7 +7,7 @@ use pm_ui::{Node, node};
 use pm_components::arrange::{
     PROJECT_MENU_NEW, PROJECT_MENU_REMOVE, ProjectMenu, SESSION_MENU_CLOSE,
     SESSION_MENU_COPY_BRANCH, SESSION_MENU_COPY_PATH, SESSION_MENU_OPEN_FOLDER, SESSION_MENU_READ,
-    SESSION_MENU_RENAME, SessionMenu,
+    SESSION_MENU_REMOVE, SESSION_MENU_RENAME, SessionMenu,
 };
 use pm_components::context_menu::{editor_menu, field_menu};
 use pm_components::git_prompts;
@@ -15,7 +15,7 @@ use pm_components::message_menu::message_menu;
 use pm_components::open_files::EDITOR_FIELD;
 use pm_components::title_bar::TITLE_BAR_HEIGHT;
 use pm_components::{Menu, TitleBar, Window};
-use pm_components::{adder, history, plan, review, settings, sidebar, terminal, welcome};
+use pm_components::{adder, history, plan, review, settings, sidebar, terminal};
 
 pub use pm_components::state::{
     ADD_PROJECT, ATTACH, CHAT_SCROLL, DIFF_SCROLL, HISTORY, MENU_SCROLL, Outgoing, PLAN_SCROLL,
@@ -38,7 +38,6 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32, shaper: &mut S
     let plan_width = width - sidebar_width - review_width - main_width;
     let mut over = Vec::new();
     let main = match state.page {
-        _ if state.projects.is_empty() => welcome::no_project(),
         _ if state.paned() => {
             let (main, laid_over) = panes::main_area(state, (width, height), shaper);
             over = laid_over;
@@ -169,38 +168,57 @@ fn project_menu(open: ProjectMenu) -> Node {
         .build()
 }
 
-/// The session menu: its checkout, title, read status and archive action.
+/// The session menu: its checkout, title, read status and archive action. A chat has no branch to copy, and can also be removed for good, with its scratch folder.
 fn session_menu(state: &WorkspaceState, open: SessionMenu) -> Node {
     let held = state.sessions.get(open.session);
     let on_branch = held.is_some_and(|held| held.on_branch);
-    let menu = Menu::new(open.at.0, open.at.1)
-        .item("Copy path", None, SESSION_MENU_COPY_PATH, false)
-        .item(
+    let chat = held.is_some_and(|held| held.is_chat());
+    let mut menu =
+        Menu::new(open.at.0, open.at.1).item("Copy path", None, SESSION_MENU_COPY_PATH, false);
+    if !chat {
+        menu = menu.item(
             "Copy branch name",
             None,
             SESSION_MENU_COPY_BRANCH,
             !on_branch,
+        );
+    }
+    let menu = menu
+        .item(
+            if chat {
+                "Rename chat"
+            } else {
+                "Rename session"
+            },
+            None,
+            SESSION_MENU_RENAME,
+            false,
         )
-        .item("Rename session", None, SESSION_MENU_RENAME, false)
         .item(
             "Open in file manager",
             None,
             SESSION_MENU_OPEN_FOLDER,
             state.is_remote_session(open.session),
         );
-    menu.item(
-        if held.is_some_and(|held| held.unread()) {
-            "Mark as read"
-        } else {
-            "Mark as unread"
-        },
-        None,
-        SESSION_MENU_READ,
-        false,
-    )
-    .separator()
-    .item("Archive", None, SESSION_MENU_CLOSE, false)
-    .build()
+    let menu = menu
+        .item(
+            if held.is_some_and(|held| held.unread()) {
+                "Mark as read"
+            } else {
+                "Mark as unread"
+            },
+            None,
+            SESSION_MENU_READ,
+            false,
+        )
+        .separator()
+        .item("Archive", None, SESSION_MENU_CLOSE, false);
+    if chat {
+        menu.item("Remove", None, SESSION_MENU_REMOVE, false)
+            .build()
+    } else {
+        menu.build()
+    }
 }
 
 /// What the settings window, `width` logical pixels across, shows while settings are open: the title bar that closes it, the sections and the one chosen, the menu of a server and the menu of a field of the window.

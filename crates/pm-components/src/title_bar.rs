@@ -255,10 +255,16 @@ fn control(icon: IconName, id: FocusId, words: &str) -> Node {
 fn whereabouts(state: &WorkspaceState) -> String {
     let project = |index: usize| state.projects.get(index).map(|held| held.name.clone());
     let named = match state.page {
-        Page::Session(index) => state.sessions.get(index).and_then(|session| {
-            let project = project(session.project)?;
-            Some(format!("{project} · {}", session.title))
-        }),
+        Page::Session(index) => {
+            state
+                .sessions
+                .get(index)
+                .and_then(|session| match session.project {
+                    Some(held) => Some(format!("{} · {}", project(held)?, session.title)),
+                    None => Some(format!("Chat · {}", session.title)),
+                })
+        }
+        Page::Chat => Some("New chat".to_owned()),
         Page::New(index) => project(index).map(|name| match &state.new_in {
             Some(submodule) => format!("{name} · {submodule}"),
             None => name,

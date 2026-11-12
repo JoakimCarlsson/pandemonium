@@ -339,6 +339,12 @@ impl Core {
         self.next.fetch_add(1, Ordering::Relaxed)
     }
 
+    /// Numbers new sessions from `next` on, so that a test never takes the number of a session the reader has.
+    #[cfg(test)]
+    pub(crate) fn number_from(&self, next: u64) {
+        self.next.store(next, Ordering::Relaxed);
+    }
+
     /// The number for a new shell.
     pub(crate) fn next_terminal(&self) -> u64 {
         self.next_terminal.fetch_add(1, Ordering::Relaxed)
@@ -410,6 +416,7 @@ impl Core {
                 running: session.chat.is_some(),
                 login: session.meta.login.clone(),
                 submodule: session.meta.submodule.clone(),
+                chat: session.meta.chat,
             })
             .collect();
         infos.sort_by_key(|info| info.session);

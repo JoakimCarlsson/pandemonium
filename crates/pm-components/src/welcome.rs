@@ -1,4 +1,4 @@
-//! The empty page of a new session: pick an agent, then describe the work.
+//! The empty page of a new session or a new chat: pick an agent, then describe the work.
 
 use pm_icon::IconName;
 use pm_input::FocusId;
@@ -13,9 +13,8 @@ use pm_ui::{Node, node, text};
 use crate::Button;
 use crate::button::Variant;
 use crate::composer::composer;
-use crate::parts::line;
 use crate::size::Size;
-use crate::state::{ADD_PROJECT, AGENT_BASE, REVIEW, WorkspaceState};
+use crate::state::{AGENT_BASE, Page, REVIEW, WorkspaceState};
 
 /// A chip naming one agent, filled while it is the one chosen, with how much of its account's allowance is used as its tooltip once the provider has said.
 fn chip(state: &WorkspaceState, index: usize) -> Node {
@@ -36,9 +35,28 @@ fn chip(state: &WorkspaceState, index: usize) -> Node {
     }
 }
 
-/// The page for starting work in a project, naming the project it starts in.
+/// What the page for starting work asks: what to build in the project or the submodule work starts in, or, for a chat, which belongs to no project, what to talk about.
+fn heading(state: &WorkspaceState) -> String {
+    let project = match state.page {
+        Page::Chat => None,
+        _ => state.projects.get(state.current_project()),
+    };
+    match project {
+        Some(project) => format!(
+            "What should we build in {}?",
+            state
+                .new_in
+                .as_deref()
+                .and_then(|submodule| submodule.rsplit('/').next())
+                .unwrap_or(&project.name)
+        ),
+        None => "What would you like to talk about?".to_owned(),
+    }
+}
+
+/// The page for starting work in a project, naming the project it starts in, or for starting a chat, which belongs to none.
 pub fn welcome(state: &WorkspaceState, above: f32, text_width: f32, shaper: &mut Shaper) -> Node {
-    let project = &state.projects[state.current_project()];
+    let reviewable = state.review_session().is_some();
     node()
         .styles([
             flex(),
@@ -51,7 +69,7 @@ pub fn welcome(state: &WorkspaceState, above: f32, text_width: f32, shaper: &mut
             py(10),
             relative(),
         ])
-        .children((!state.review).then(|| {
+        .children((!state.review && reviewable).then(|| {
             Button::icon(IconName::PanelRight, REVIEW).build().styles([
                 absolute(),
                 top(2),
@@ -68,23 +86,13 @@ pub fn welcome(state: &WorkspaceState, above: f32, text_width: f32, shaper: &mut
                     w_full(),
                     max_w_px(680.0),
                 ])
-                .child(
-                    text(format!(
-                        "What should we build in {}?",
-                        state
-                            .new_in
-                            .as_deref()
-                            .and_then(|submodule| submodule.rsplit('/').next())
-                            .unwrap_or(&project.name)
-                    ))
-                    .styles([
-                        text_px(28),
-                        leading_ratio(1.25),
-                        font_semibold(),
-                        tracking_tight(),
-                        text_color(Role::Text),
-                    ]),
-                )
+                .child(text(heading(state)).styles([
+                    text_px(28),
+                    leading_ratio(1.25),
+                    font_semibold(),
+                    tracking_tight(),
+                    text_color(Role::Text),
+                ]))
                 .child(
                     node()
                         .styles([flex(), flex_wrap(), justify_center(), gap(2), w_full()])
@@ -105,32 +113,4 @@ pub fn welcome(state: &WorkspaceState, above: f32, text_width: f32, shaper: &mut
                     shaper,
                 )),
         )
-}
-
-/// The page shown while no project has been added.
-pub fn no_project() -> Node {
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            items_center(),
-            justify_center(),
-            gap(3),
-            flex_1(),
-            min_h(0),
-        ])
-        .child(text("Add a project to get started").styles([
-            text_px(20),
-            leading_ratio(1.25),
-            font_semibold(),
-            tracking_tight(),
-            text_color(Role::Text),
-        ]))
-        .child(line(
-            "Agents work inside a folder or a Git repository.",
-            14,
-            1.4,
-            Role::Muted,
-        ))
-        .child(Button::new("Add project", ADD_PROJECT).build())
 }

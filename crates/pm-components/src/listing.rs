@@ -841,11 +841,10 @@ impl WorkspaceState {
                     .into_iter()
                     .map(|index| {
                         let session = &self.sessions[index];
-                        let project = self
-                            .projects
-                            .get(session.project)
-                            .map_or_else(String::new, |project| project.name.clone());
-                        let beside = format!("{project} · {}", session.age());
+                        let beside = match self.project_of(session) {
+                            Some(project) => format!("{} · {}", project.name, session.age()),
+                            None => format!("Chat · {}", session.age()),
+                        };
                         (Destination::Session(index), session.title.clone(), beside)
                     })
                     .chain(projects)

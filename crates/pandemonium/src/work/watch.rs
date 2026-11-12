@@ -7,14 +7,17 @@ use pm_state::State;
 use super::{Host, Pending, Work};
 
 impl Work {
-    /// The machine and folder of the session the git panel is about, with its position, if one is shown.
+    /// The machine and folder of the session the git panel is about, with its position, if one is shown; nothing for a chat whose scratch folder its server has yet to make.
     fn shown_folder(model: &State<Screen>) -> Option<(usize, Host, String)> {
         model.read(|screen| {
             let Screen::Workspace(state) = screen;
             let position = state.review_index()?;
             let session = state.sessions.get(position)?;
-            let project = state.projects.get(session.project)?;
-            Some((position, project.host(), session.directory.clone()))
+            let host = state.machine_of(session)?;
+            if session.is_chat() && session.directory.is_empty() {
+                return None;
+            }
+            Some((position, host, session.directory.clone()))
         })
     }
 

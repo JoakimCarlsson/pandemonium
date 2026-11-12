@@ -521,8 +521,10 @@ pub struct Session {
     pub scope: u64,
     /// What the task is called.
     pub title: String,
-    /// Which project, by position, it belongs to.
-    pub project: usize,
+    /// Which project, by position, it belongs to, or nothing for a chat, which belongs to none and works in a scratch folder its server made.
+    pub project: Option<usize>,
+    /// The machine a chat is on, by destination, or nothing for this one. A session of a project is on its project's machine and leaves this empty.
+    pub machine: Option<String>,
     /// The branch its worktree is on.
     pub branch: String,
     /// Whether the worktree is on a branch rather than at a bare commit.
@@ -620,7 +622,8 @@ impl Session {
         Self {
             scope: crate::browser_scope::next_scope(),
             title: title.to_owned(),
-            project,
+            project: Some(project),
+            machine: None,
             branch: branch.to_owned(),
             on_branch: !branch.is_empty(),
             tracking: pm_git::Tracking::default(),
@@ -695,6 +698,35 @@ impl Session {
         session.base = base;
         session.agent = agent;
         session
+    }
+
+    /// A chat the server on `machine` held already, working in the scratch folder `directory`: it belongs to no project and has no branch, and its messages come when its events are replayed.
+    pub fn restored_chat(
+        title: &str,
+        machine: Option<String>,
+        directory: &str,
+        agent: usize,
+        closed: bool,
+    ) -> Self {
+        let mut session = Self::restored(title, 0, "", directory, None, agent, closed);
+        session.project = None;
+        session.machine = machine;
+        session
+    }
+
+    /// A chat just handed `prompt`, working on it, called `title`, on `machine`: it belongs to no project, and its scratch folder is not known until its server has made it.
+    pub fn started_chat(title: &str, machine: Option<String>, prompt: &str) -> Self {
+        let mut session = Self::started(title, 0, prompt);
+        session.project = None;
+        session.machine = machine;
+        session.branch = String::new();
+        session.on_branch = false;
+        session
+    }
+
+    /// Whether it is a chat: a conversation that belongs to no project, with no branch, worktree or diff.
+    pub fn is_chat(&self) -> bool {
+        self.project.is_none()
     }
 
     /// The stand-in for the folder of the project at `project`, kept out of every list, that the git panel reads while no session is open.

@@ -129,13 +129,14 @@ fn matching(state: &WorkspaceState) -> Vec<usize> {
 /// Everything the search looks in for the session at `index`, in lower case.
 fn searchable(state: &WorkspaceState, index: usize) -> String {
     let session = &state.sessions[index];
-    let project = &state.projects[session.project];
     format!(
         "{} {} {} {} {}",
         session.title,
         state.agent_look(session.agent).name,
-        project.name,
-        project.host().unwrap_or_default(),
+        state
+            .project_of(session)
+            .map_or("", |project| project.name.as_str()),
+        state.machine_of(session).flatten().unwrap_or_default(),
         session.branch,
     )
     .to_lowercase()
@@ -166,7 +167,13 @@ fn group(state: &WorkspaceState, span: Span, rows: &[usize], now: u64) -> Option
 /// The row of the session at `index`: its title and agent, then where it ran and when.
 fn row(state: &WorkspaceState, index: usize) -> Node {
     let session: &Session = &state.sessions[index];
-    let project = &state.projects[session.project];
+    let project = state
+        .project_of(session)
+        .map_or("", |project| project.name.as_str());
+    let machine = state
+        .machine_of(session)
+        .flatten()
+        .unwrap_or_else(|| LOCAL_MACHINE.to_owned());
     let agent = state.agent_look(session.agent);
     Tile::new(FocusId(SESSION_BASE + index as u64))
         .height(12.0)
@@ -184,11 +191,8 @@ fn row(state: &WorkspaceState, index: usize) -> Node {
                 .child(glyph(agent.icon, 4.0, Role::Muted))
                 .child(line(agent.name, 14, 1.4, Role::Muted).styles([flex_none()])),
         )
-        .child(column(&project.name, PROJECT_WIDTH))
-        .child(column(
-            &project.host().unwrap_or_else(|| LOCAL_MACHINE.to_owned()),
-            MACHINE_WIDTH,
-        ))
+        .child(column(project, PROJECT_WIDTH))
+        .child(column(&machine, MACHINE_WIDTH))
         .child(column(&session.branch, BRANCH_WIDTH))
         .child(column(&session.age(), AGE_WIDTH).styles([pm_style::justify_end()]))
 }

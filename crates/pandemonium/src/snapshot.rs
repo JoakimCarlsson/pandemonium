@@ -227,6 +227,14 @@ pub enum Shot {
     Welcome,
     /// The page for starting work with Ollama and OpenRouter hidden from new sessions.
     WelcomeHidden,
+    /// The window before any project is added: the page that starts a chat, with its composer.
+    ChatNew,
+    /// The workspace with chats listed above the projects, open on one: its conversation, and the files of its scratch folder with no source control.
+    Chats,
+    /// The history with chats among the sessions, their project column empty.
+    ChatsHistory,
+    /// The menu of a chat, which can be archived or removed.
+    ChatMenu,
     /// The agents and their accounts in the settings window, scrolled down, with Ollama and OpenRouter hidden from new sessions.
     SettingsAccountsHidden,
     /// The agents and their accounts in the settings window, scrolled down, with the box for OpenRouter's API key open.
@@ -2268,7 +2276,7 @@ fn submodules() -> WorkspaceState {
     if let Some(session) = state
         .sessions
         .iter_mut()
-        .filter(|session| session.project == 0 && !session.home)
+        .filter(|session| session.project == Some(0) && !session.home)
         .nth(1)
     {
         session.submodule = Some("vendor/inner".to_owned());
@@ -2941,13 +2949,13 @@ impl Shot {
             Self::OutOfReach => {
                 let mut state = workspace();
                 state.sessions[0].status = pm_components::sample::Status::Working;
-                let host = state.projects[state.sessions[0].project].host();
+                let host = state.machine_of(&state.sessions[0]).flatten();
                 Screen::Workspace(state.host_lost(&host))
             }
             Self::SessionStates(unread) => {
                 let mut state = workspace();
                 for session in &mut state.sessions {
-                    session.project = 0;
+                    session.project = Some(0);
                     session.status = pm_components::sample::Status::Idle;
                     session.mark_read();
                 }
@@ -3294,6 +3302,14 @@ impl Shot {
             Self::Dragging => Screen::Workspace(workspace().dragged_over(0, 2, (150.0, 470.0))),
             Self::Welcome => Screen::Workspace(welcome()),
             Self::WelcomeHidden => Screen::Workspace(hiding_local_agents(welcome())),
+            Self::ChatNew => Screen::Workspace(chat_new()),
+            Self::Chats => Screen::Workspace(chats()),
+            Self::ChatsHistory => Screen::Workspace(chats().after(HISTORY)),
+            Self::ChatMenu => {
+                let state = chats();
+                let open = state.open_chats()[0];
+                Screen::Workspace(state.with_session_menu(open, (236.0, 250.0)))
+            }
             Self::SettingsAccountsKey => {
                 let state = welcome();
                 let openrouter = state.agent_position("openrouter").unwrap_or_default();
@@ -4057,6 +4073,46 @@ fn welcome() -> WorkspaceState {
     signed_in(
         WorkspaceState::new(&projects).with_discovery(0, claude_discovery()),
         &["claude-code", "codex", "openrouter", "copilot"],
+    )
+}
+
+/// The window before any project is added, with the agent's settings known: the page that starts a chat.
+fn chat_new() -> WorkspaceState {
+    signed_in(
+        WorkspaceState::new(&[]).with_discovery(0, claude_discovery()),
+        &["claude-code", "codex", "openrouter", "copilot"],
+    )
+}
+
+/// The sample workspace with two chats that belong to no project, open on the first, its review panel listing the files of its scratch folder.
+fn chats() -> WorkspaceState {
+    use pm_components::sample::{Message, Session};
+    let mut state = workspace_sample();
+    let folder = "/home/reader/.local/share/pandemonium/chats/41";
+    let mut explained = Session::restored_chat("Explain borrow checking", None, folder, 0, false);
+    explained.messages = vec![
+        Message::user("Explain borrow checking with a small example I can run."),
+        Message::reply(
+            "A value has one owner, and borrows of it must end before it is moved or changed. I wrote `borrow.rs` with an example that fails to compile and the fix beside it.",
+        ),
+    ];
+    let named = Session::restored_chat(
+        "Name ideas for the release",
+        None,
+        "/home/reader/.local/share/pandemonium/chats/42",
+        0,
+        false,
+    );
+    state.sessions.push(explained);
+    state.sessions.push(named);
+    let open = state.sessions.len() - 2;
+    let state = state.after(FocusId(pm_components::state::SESSION_BASE + open as u64));
+    let key = state.files_of.clone().unwrap_or_default();
+    state.with_files(
+        &key,
+        vec!["borrow.rs".to_owned(), "notes.md".to_owned()],
+        Vec::new(),
+        Vec::new(),
     )
 }
 

@@ -5,6 +5,7 @@
 //! numbered events. An agent keeps running when every client has gone.
 
 mod browser_tools;
+mod chats;
 mod cli;
 mod connection;
 mod conversation;

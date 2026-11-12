@@ -844,6 +844,7 @@ impl App {
                     self.activate(id);
                 }
             }
+            Action::NewChat => self.activate(pm_components::chats::NEW_CHAT),
             Action::AddProject => self.activate(ADD_PROJECT),
             Action::ShowHistory => self.activate(HISTORY),
             Action::ShowExtensions => self.activate(EXTENSIONS),

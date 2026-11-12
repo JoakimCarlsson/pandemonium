@@ -163,13 +163,12 @@ impl WorkspaceState {
             .find(|(_, command)| format!("{}:{}", command.extension, command.id) == name)
     }
 
-    /// The machine and folder the prompt is for: the open session's, or the project being started in.
+    /// The machine and folder the prompt is for: the open session's, or the project being started in. Nothing on the page that starts a chat, nor for a chat just started, whose folder its server has yet to make.
     pub(crate) fn prompt_place(&self) -> Option<(Option<String>, String)> {
         match self.open() {
-            Some(session) => Some((
-                self.projects.get(session.project)?.host(),
-                session.directory.clone(),
-            )),
+            Some(session) if session.is_chat() && session.directory.is_empty() => None,
+            Some(session) => Some((self.machine_of(session)?, session.directory.clone())),
+            None if self.page == Page::Chat => None,
             None => self.projects.get(self.current_project()).map(|project| {
                 (
                     project.host(),
@@ -179,9 +178,17 @@ impl WorkspaceState {
         }
     }
 
-    /// Whether the folder the prompt is for is on the computer the window runs on, where the logins this window keeps apply.
+    /// The machine the prompt is for, by destination, or nothing for this one: the one of the folder the prompt is for, or, while that folder is not known, the one of what the page shows, such as a chat whose scratch folder its server has yet to make.
+    pub(crate) fn prompt_machine(&self) -> Option<String> {
+        match self.prompt_place() {
+            Some((host, _)) => host,
+            None => self.shown_machine(),
+        }
+    }
+
+    /// Whether the prompt is for the computer the window runs on, where the logins this window keeps apply.
     pub fn on_this_computer(&self) -> bool {
-        self.prompt_place().is_none_or(|(host, _)| host.is_none())
+        self.prompt_machine().is_none()
     }
 
     /// Asks for the files of the folder the prompt is for when they are not the ones held or already asked for.
@@ -622,22 +629,36 @@ impl WorkspaceState {
         }
     }
 
-    /// Reads what the page shown needs of its project: on a project's overview its own folder, and on the page for starting work also its branches and who every agent is signed in as, when they are not the ones read already.
+    /// Reads what the page shown needs of its project: on a project's overview its own folder, and on the page for starting work also its branches and who every agent is signed in as, when they are not the ones read already. The page that starts a chat has no project, so it forgets the branches and reads only the agents of the machine the chat goes to.
     pub fn sync_context(&mut self) {
         if let Page::Project(project) = self.page {
             self.read_home(project);
             self.sync_files_owner();
             return;
         }
-        let Page::New(project) = self.page else {
-            self.sync_files_owner();
-            self.homed = None;
-            return;
+        let host = match self.page {
+            Page::New(project) => {
+                self.read_home(project);
+                self.sync_files_owner();
+                self.projects.get(project).map(crate::Project::host)
+            }
+            Page::Chat => {
+                self.sync_files_owner();
+                self.homed = None;
+                self.branches_of = None;
+                self.base = None;
+                self.branches = Vec::new();
+                self.location = Location::Local;
+                Some(self.chat_on.clone())
+            }
+            _ => {
+                self.sync_files_owner();
+                self.homed = None;
+                return;
+            }
         };
-        self.read_home(project);
-        self.sync_files_owner();
-        if let Some(held) = self.projects.get(project) {
-            self.sync_discovery(held.host());
+        if let Some(host) = host {
+            self.sync_discovery(host);
         }
         self.ask_default_accounts();
         let asked = self.defaults.get(self.agent).is_some_and(Option::is_some)
@@ -654,6 +675,9 @@ impl WorkspaceState {
                 naming: None,
             });
         }
+        let Page::New(project) = self.page else {
+            return;
+        };
         let Some(held) = self.projects.get(project) else {
             return;
         };
@@ -955,7 +979,7 @@ impl WorkspaceState {
         });
     }
 
-    /// Adds the sessions the server of `host` holds that belong to the projects here, asks it for the submodules of those projects, and returns each one's position and the server's number for it.
+    /// Adds the sessions the server of `host` holds that belong to the projects here, and its chats, which belong to none, asks it for the submodules of those projects, and returns each one's position and the server's number for it.
     pub fn restore_sessions(
         &mut self,
         host: &Option<String>,
@@ -968,6 +992,21 @@ impl WorkspaceState {
             }
         }
         for info in infos {
+            if info.chat {
+                let agent = self.agent_position_or_retire(&info.agent);
+                let mut chat = crate::sample::Session::restored_chat(
+                    &info.title,
+                    host.clone(),
+                    &info.directory,
+                    agent,
+                    info.closed,
+                );
+                chat.updated_at = info.updated;
+                chat.login = info.login.clone();
+                self.sessions.push(chat);
+                added.push((self.sessions.len() - 1, info.session));
+                continue;
+            }
             let Some(project) = self.projects.iter().position(|held| {
                 held.host() == *host && held.directory().to_string_lossy() == info.repository
             }) else {

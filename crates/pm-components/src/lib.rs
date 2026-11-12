@@ -33,6 +33,7 @@ pub mod card;
 pub mod change_list;
 pub mod changes;
 pub mod chat;
+pub mod chats;
 pub mod checkbox;
 pub mod choices;
 pub mod code_box;

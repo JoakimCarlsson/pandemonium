@@ -335,8 +335,8 @@ impl WorkspaceState {
             Page::New(project) | Page::Project(project) => self
                 .sessions
                 .iter()
-                .position(|session| session.home && session.project == project),
-            Page::History | Page::Extensions => None,
+                .position(|session| session.home && session.project == Some(project)),
+            Page::Chat | Page::History | Page::Extensions => None,
         }
     }
 
@@ -655,9 +655,9 @@ impl WorkspaceState {
         }
     }
 
-    /// Asks for the commits of the graph, of what every reference reaches or only the checked out branch.
+    /// Asks for the commits of the graph, of what every reference reaches or only the checked out branch. Nothing is asked about a chat, which has no commits.
     pub(crate) fn ask_log(&mut self) {
-        if let Some(session) = self.review_index() {
+        if let Some(session) = self.review_index().filter(|_| !self.reviewing_chat()) {
             self.outbox.push(Outgoing::Log {
                 session,
                 all: self.git.graph_all,
@@ -785,10 +785,13 @@ impl WorkspaceState {
         true
     }
 
-    /// Opens or closes the list of branches of the repository the panel works on, asking the server for them when it opens.
+    /// Opens or closes the list of branches of the repository the panel works on, asking the server for them when it opens. A chat has no branches, so nothing opens for one.
     fn toggle_branch_menu(&mut self) {
         if self.git.branch_menu {
             self.git.branch_menu = false;
+            return;
+        }
+        if self.reviewing_chat() {
             return;
         }
         let Some(open) = self.review_index() else {

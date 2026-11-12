@@ -384,8 +384,10 @@ struct Placement {
     agent: usize,
     /// The branch its worktree was made from, when it has one of its own.
     base: Option<String>,
-    /// The folder of the project it belongs to.
+    /// The folder of the project it belongs to, empty for a chat, which belongs to none.
     repository: String,
+    /// Whether it is a chat, which works in a scratch folder its server makes and has no git state to read.
+    chat: bool,
     /// What it is called.
     title: String,
     /// The submodule its agent works in, or nothing for the project itself.
@@ -774,6 +776,9 @@ impl Work {
                     } else {
                         placement.directory
                     };
+                    if root.is_empty() {
+                        continue;
+                    }
                     let directory = if folder.is_empty() {
                         root
                     } else {
@@ -858,6 +863,7 @@ impl Work {
                             attachments: Self::attachments(&files),
                             submodule: placement.submodule,
                             container,
+                            scratch: placement.chat,
                         },
                         Pending::Start(session),
                     );
@@ -2234,11 +2240,15 @@ impl Work {
             },
             Pending::Close(number) => {
                 if let Some(position) = self.positions.get(&(host.clone(), number)).copied() {
+                    let chat =
+                        Self::session_of(model, position).is_some_and(|placement| placement.chat);
                     model.update(|screen| {
                         let taken = std::mem::take(screen);
                         *screen = match response {
                             Response::Done => taken.closed_elsewhere(position),
                             Response::Uncommitted => taken.asking_to_close(position),
+                            Response::Failed { message } if chat => taken
+                                .noted(position, &format!("Could not close the chat: {message}")),
                             Response::Failed { message } => {
                                 taken.git_failed(&format!("Could not close the session: {message}"))
                             }
@@ -2755,13 +2765,22 @@ impl Work {
         model.read(|screen| {
             let Screen::Workspace(state) = screen;
             let held = state.sessions.get(session)?;
-            let project = state.projects.get(held.project)?;
+            let repository = match held.project {
+                Some(project) => state
+                    .projects
+                    .get(project)?
+                    .directory()
+                    .to_string_lossy()
+                    .into_owned(),
+                None => String::new(),
+            };
             Some(Placement {
-                host: project.host(),
+                host: state.machine_of(held)?,
                 directory: held.directory.clone(),
                 agent: held.agent,
                 base: held.base.clone(),
-                repository: project.directory().to_string_lossy().into_owned(),
+                repository,
+                chat: held.is_chat(),
                 title: held.title.clone(),
                 submodule: held.submodule.clone(),
             })
@@ -2785,7 +2804,7 @@ impl Work {
         );
     }
 
-    /// Asks the machine the session at `session` is on for what `make` builds from its folder.
+    /// Asks the machine the session at `session` is on for what `make` builds from its folder; nothing is asked for a chat whose scratch folder its server has yet to make.
     fn ask_in_folder(
         &mut self,
         model: &State<Screen>,
@@ -2793,7 +2812,9 @@ impl Work {
         make: impl FnOnce(String) -> Request,
         pending: Pending,
     ) {
-        if let Some(placement) = Self::session_of(model, session) {
+        if let Some(placement) = Self::session_of(model, session)
+            .filter(|placement| !(placement.chat && placement.directory.is_empty()))
+        {
             self.ask(&placement.host, make(placement.directory), pending);
         }
     }
@@ -2821,11 +2842,14 @@ impl Work {
         }
     }
 
-    /// Looks at the folder of the session at `session` again, for its changes and commits.
+    /// Looks at the folder of the session at `session` again, for its changes and commits. Nothing is asked about a chat, which has no branch, worktree or diff.
     fn refresh(&mut self, model: &State<Screen>, session: usize) {
         let Some(placement) = Self::session_of(model, session) else {
             return;
         };
+        if placement.chat {
+            return;
+        }
         model.update(|screen| *screen = std::mem::take(screen).bases_wanted(session));
         let inspecting = self.links.get(&placement.host).is_some_and(|link| {
             link.waiting

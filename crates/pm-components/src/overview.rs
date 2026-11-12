@@ -116,7 +116,7 @@ fn sessions(state: &WorkspaceState, project: usize) -> Vec<Node> {
     let mut members: Vec<usize> = (0..state.sessions.len())
         .filter(|&index| {
             let session = &state.sessions[index];
-            session.project == project && !session.closed && !session.home
+            session.project == Some(project) && !session.closed && !session.home
         })
         .collect();
     members.sort_by_key(|&index| std::cmp::Reverse(state.sessions[index].updated_at));

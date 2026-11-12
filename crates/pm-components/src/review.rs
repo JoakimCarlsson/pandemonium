@@ -394,8 +394,7 @@ fn repositories(state: &WorkspaceState, session: &Session) -> Option<Node> {
     let name = |repository: &Option<String>| match repository {
         Some(path) => path.clone(),
         None => state
-            .projects
-            .get(session.project)
+            .project_of(session)
             .map_or_else(String::new, |project| project.name.clone()),
     };
     let depth = |repository: &Option<String>| {
@@ -498,8 +497,13 @@ fn branch_button(state: &WorkspaceState, session: &Session, working: bool) -> No
         .build()
 }
 
-/// The review panel for `session`.
+/// The review panel for `session`. A chat has no branch, worktree or diff, so its panel leaves out source control: it lists the files of its scratch folder, or searches them.
 pub fn review(state: &WorkspaceState, session: &Session, height: f32, shaper: &mut Shaper) -> Node {
+    let versioned = !session.is_chat();
+    let shown = match state.review_tab {
+        ReviewTab::Changes if !versioned => ReviewTab::Files,
+        tab => tab,
+    };
     node()
         .styles([
             flex(),
@@ -525,46 +529,48 @@ pub fn review(state: &WorkspaceState, session: &Session, height: f32, shaper: &m
                             min_w_px(0),
                             overflow_hidden(),
                         ])
-                        .child(panel_tab(
-                            "Source Control",
-                            IconName::Git,
-                            REVIEW_CHANGES,
-                            state.review_tab == ReviewTab::Changes,
-                        ))
+                        .children(versioned.then(|| {
+                            panel_tab(
+                                "Source Control",
+                                IconName::Git,
+                                REVIEW_CHANGES,
+                                shown == ReviewTab::Changes,
+                            )
+                        }))
                         .child(panel_tab(
                             "Files",
                             IconName::Folder,
                             REVIEW_FILES,
-                            state.review_tab == ReviewTab::Files,
+                            shown == ReviewTab::Files,
                         ))
                         .child(panel_tab(
                             "Search",
                             IconName::Search,
                             crate::project_search::REVIEW_SEARCH,
-                            state.review_tab == ReviewTab::Search,
+                            shown == ReviewTab::Search,
                         )),
                 )
                 .children(
-                    (state.review_tab == ReviewTab::Changes && !session.changes.is_empty()).then(
-                        || {
-                            Button::icon(IconName::GitCompare, OPEN_DIFF)
-                                .build()
-                                .styles([flex_none()])
-                                .tooltip("Open Diff")
-                        },
-                    ),
+                    (shown == ReviewTab::Changes && !session.changes.is_empty()).then(|| {
+                        Button::icon(IconName::GitCompare, OPEN_DIFF)
+                            .build()
+                            .styles([flex_none()])
+                            .tooltip("Open Diff")
+                    }),
                 ),
         )
-        .child(band(10).child(branch_button(state, session, state.git.working)))
         .children(
-            (state.review_tab == ReviewTab::Changes)
+            versioned.then(|| band(10).child(branch_button(state, session, state.git.working))),
+        )
+        .children(
+            (shown == ReviewTab::Changes)
                 .then(|| repositories(state, session))
                 .flatten(),
         )
-        .child(match state.review_tab {
+        .child(match shown {
             ReviewTab::Changes => changes(state, session, shaper),
             ReviewTab::Files => files(state, height),
             ReviewTab::Search => crate::project_search::panel(state),
         })
-        .children(state.git.branch_menu.then(|| branch_menu(state)))
+        .children((versioned && state.git.branch_menu).then(|| branch_menu(state)))
 }
