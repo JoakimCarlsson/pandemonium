@@ -4,8 +4,8 @@ use pm_harness::Event;
 
 /// One of the reader's turns and what the agent did in it.
 pub(crate) struct Turn {
-    /// The id the harness saves the turn under, which is also the name the files kept before it go by: what the `Prompted` event says, or its number in the log for a turn from before turns had one.
-    pub(crate) id: u64,
+    /// The id the harness saves the turn under, by which it goes back to before the turn and tells of its files: the one the harness gave a turn it started itself, else the one the `Prompted` event says, else the event's number in the log for a turn from before turns had one.
+    pub(crate) saved: String,
     /// Whether the files were kept as they were before it.
     pub(crate) checkpoint: bool,
     /// The turn's `Prompted` event and what the agent did after it, in order.
@@ -66,15 +66,27 @@ fn conversational(event: &Event) -> bool {
     )
 }
 
+/// The id the harness saves a turn under whose `Prompted` event is numbered `seq` in the log and says `turn` and `saved`: the one the harness named it with, else `turn`, else, for a turn from before turns had ids, `seq`.
+fn saved_as(seq: u64, turn: u64, saved: Option<&str>) -> String {
+    match (saved, turn) {
+        (Some(saved), _) => saved.to_owned(),
+        (None, 0) => seq.to_string(),
+        (None, turn) => turn.to_string(),
+    }
+}
+
 /// The reader's turns the log `log` tells, those a rewind dropped left out, oldest first.
 pub(crate) fn turns(log: &[(u64, Event)]) -> Vec<Turn> {
     let mut turns: Vec<Turn> = Vec::new();
     for (seq, event) in log {
         match event {
             Event::Prompted {
-                checkpoint, turn, ..
+                checkpoint,
+                turn,
+                saved,
+                ..
             } => turns.push(Turn {
-                id: if *turn == 0 { *seq } else { *turn },
+                saved: saved_as(*seq, *turn, saved.as_deref()),
                 checkpoint: *checkpoint,
                 events: vec![event.clone()],
             }),
@@ -150,31 +162,26 @@ pub(crate) fn through(log: &[(u64, Event)], turn: u64) -> Option<Vec<(u64, Event
         .chain(kept.iter().flat_map(|turn| turn.events.iter().cloned()))
         .map(|event| match event {
             Event::Prompted {
-                text, files, turn, ..
+                text,
+                files,
+                turn,
+                saved,
+                ..
             } => Event::Prompted {
                 text,
                 files,
                 checkpoint: false,
                 turn,
+                saved,
             },
             other => other,
         });
     Some((1..).zip(events).collect())
 }
 
-/// What goes before the reader's next prompt: the earlier conversation when the agent starts `afresh`, and word of files put back since the last turn.
+/// What goes before the reader's next prompt: the earlier conversation when the agent starts `afresh`, and nothing otherwise. The harness itself tells the agent of files put back since its last turn.
 pub(crate) fn preface(log: &[(u64, Event)], afresh: bool) -> String {
-    let mut preface = String::new();
-    if afresh {
-        preface.push_str(&history(log));
-    }
-    if let Some(turn) = restored(log) {
-        preface.push_str(&format!(
-            "The files were put back as they were before turn {} of this conversation. Your conversation has not gone back with them.\n\n",
-            turn + 1
-        ));
-    }
-    preface
+    if afresh { history(log) } else { String::new() }
 }
 
 /// The earlier conversation, as words handed to an agent started afresh, or nothing when there was none.
@@ -198,12 +205,15 @@ pub(crate) fn from_saved(
     log: &[(u64, Event)],
     saved: &pm_harness::Conversation,
 ) -> Vec<(u64, Event)> {
-    let kept: std::collections::HashMap<u64, bool> = log
+    let kept: std::collections::HashMap<String, bool> = log
         .iter()
         .filter_map(|(seq, event)| match event {
             Event::Prompted {
-                checkpoint, turn, ..
-            } => Some((if *turn == 0 { *seq } else { *turn }, *checkpoint)),
+                checkpoint,
+                turn,
+                saved,
+                ..
+            } => Some((saved_as(*seq, *turn, saved.as_deref()), *checkpoint)),
             _ => None,
         })
         .collect();
@@ -235,11 +245,17 @@ pub(crate) fn from_saved(
     }
     for turn in &saved.turns {
         let id = turn.id.as_deref().and_then(|id| id.parse::<u64>().ok());
+        let named = turn.id.clone().filter(|_| id.is_none());
         events.push(Event::Prompted {
             text: turn.prompt.clone(),
             files: turn.files.clone(),
-            checkpoint: id.and_then(|id| kept.get(&id).copied()).unwrap_or(false),
+            checkpoint: turn
+                .id
+                .as_ref()
+                .and_then(|id| kept.get(id).copied())
+                .unwrap_or(false),
             turn: id.unwrap_or(0),
+            saved: named,
         });
         events.extend(turn.events.iter().cloned().filter_map(Event::from_harness));
         if !matches!(events.last(), Some(Event::Finished(_))) {
@@ -310,7 +326,7 @@ pub(crate) fn to_import(log: &[(u64, Event)], title: &str) -> Option<pm_harness:
                 }
             }
             pm_harness::ImportedTurn {
-                id: turn.id.to_string(),
+                id: turn.saved.clone(),
                 prompt,
                 files,
                 said,
@@ -362,15 +378,6 @@ pub(crate) fn kept_on_disk(event: &Event) -> bool {
         )
 }
 
-/// The turn the files were last put back to before, when that happened after the reader's last turn.
-fn restored(log: &[(u64, Event)]) -> Option<u64> {
-    log.iter().rev().find_map(|(_, event)| match event {
-        Event::Restored { turn, .. } => Some(Some(*turn)),
-        Event::Prompted { .. } => Some(None),
-        _ => None,
-    })?
-}
-
 /// The settings the agent last said it had, as the agent names them and their values, for an agent started afresh.
 pub(crate) fn settings(log: &[(u64, Event)]) -> Vec<(String, String)> {
     log.iter()
@@ -400,6 +407,7 @@ mod tests {
             files: Vec::new(),
             checkpoint,
             turn,
+            saved: None,
         }
     }
 

@@ -121,12 +121,16 @@ fn on_disk(event: &Event) -> Option<Event> {
     }
     Some(match event {
         Event::Prompted {
-            checkpoint, turn, ..
+            checkpoint,
+            turn,
+            saved,
+            ..
         } => Event::Prompted {
             text: String::new(),
             files: Vec::new(),
             checkpoint: *checkpoint,
             turn: *turn,
+            saved: saved.clone(),
         },
         other => other.clone(),
     })

@@ -323,6 +323,8 @@ pub enum Shot {
     RestoredTop,
     /// A finished conversation with the offer to put the files back as they were before its first message open.
     Restoring,
+    /// What the agent changed during the first turn of a finished conversation, each file with the button that takes the change back out.
+    TurnChanges,
     /// A conversation with the details of its steps open.
     Expanded,
     /// A conversation with a slash being typed.
@@ -2943,6 +2945,7 @@ impl Shot {
                         files: Vec::new(),
                         checkpoint: false,
                         turn: 7,
+                        saved: None,
                     })
                     .heard(0, Event::Said("Let me look at the issue tracker.".to_owned()))
                     .heard(0, Event::ToolSignIn(
@@ -3578,6 +3581,7 @@ impl Shot {
             Self::Restored => Screen::Workspace(restored()),
             Self::RestoredTop => Screen::Workspace(restored().scrolled_chat(-2000.0, 2000.0)),
             Self::Restoring => Screen::Workspace(kept().after(FocusId(RESTORE_BASE))),
+            Self::TurnChanges => Screen::Workspace(turn_changes()),
             Self::Picking => Screen::Workspace(welcome().after(FocusId(4200))),
             Self::ManyModels => Screen::Workspace(many_models().after(FocusId(4200))),
             Self::ModelsFiltered => Screen::Workspace(
@@ -4425,6 +4429,7 @@ fn restored() -> WorkspaceState {
         files: Vec::new(),
         checkpoint: false,
         turn,
+        saved: None,
     };
     [
         Event::Settings(claude_settings()),
@@ -4486,17 +4491,64 @@ fn restored() -> WorkspaceState {
 
 /// A finished conversation whose files were kept before its first message, scrolled back to it.
 fn kept() -> WorkspaceState {
-    live(Turn::Finished)
+    let state = live(Turn::Finished);
+    let session = state.open_index().unwrap_or(0);
+    state
         .heard(
-            0,
+            session,
             Event::Prompted {
                 text: "Why does the sidebar lose its scroll position?".to_owned(),
                 files: Vec::new(),
                 checkpoint: true,
                 turn: 0,
+                saved: None,
             },
         )
         .scrolled_chat(-400.0, 400.0)
+}
+
+/// A file a turn changed, at `path`, marked with `letter`, with the lines `diff`.
+fn turn_change(path: &str, letter: char, diff: &str) -> pm_git::Change {
+    pm_git::Change {
+        path: path.to_owned(),
+        diff: diff.to_owned(),
+        words: Vec::new(),
+        staged: false,
+        untracked: false,
+        index: Some(letter),
+        worktree: None,
+        conflicted: false,
+        from: None,
+        submodule: None,
+        repository: None,
+        moved: None,
+        added: 0,
+        removed: 0,
+        lazy: false,
+    }
+}
+
+/// A finished conversation showing what the agent changed during its first turn.
+fn turn_changes() -> WorkspaceState {
+    let state = kept();
+    let session = state.open_index().unwrap();
+    state.revision_opened(
+        session,
+        "Turn 1 changes".to_owned(),
+        Some(0),
+        vec![
+            turn_change(
+                "crates/pm-components/src/sidebar.rs",
+                'M',
+                "@@ -40,6 +40,7 @@\n fn rows(state: &State) -> Vec<Row> {\n     let mut rows = Vec::new();\n-    state.scroll = 0.0;\n+    let kept = state.scroll;\n+    state.scroll = kept.min(state.extent());\n     rows\n }",
+            ),
+            turn_change(
+                "crates/pm-components/src/scroll.rs",
+                'A',
+                "@@ -0,0 +1,4 @@\n+/// How far a list can scroll.\n+pub fn extent(rows: usize, height: f32) -> f32 {\n+    (rows as f32 * ROW - height).max(0.0)\n+}",
+            ),
+        ],
+    )
 }
 
 /// A finished conversation in which the reader sent one 2000-character line with no spaces.
@@ -4508,6 +4560,7 @@ fn long_line() -> WorkspaceState {
         files: Vec::new(),
         checkpoint: false,
         turn: 0,
+        saved: None,
     };
     state
         .heard(

@@ -178,6 +178,7 @@ fn a_turn_the_agent_starts_makes_the_session_busy() {
             files: Vec::new(),
             checkpoint: false,
             turn: 0,
+            saved: None,
         },
     );
     assert!(held.busy);

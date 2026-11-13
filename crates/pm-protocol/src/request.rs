@@ -256,6 +256,23 @@ pub enum Request {
         /// The turn, by how many of the reader's turns came before it.
         turn: u64,
     },
+    /// The files a session's agent changed during the reader's turn `turn`, with their diffs: what the folder held when the turn ended set against what it held before it, or against what it holds now for a turn that has not ended.
+    TurnChanges {
+        /// The session.
+        session: u64,
+        /// The turn, by how many of the reader's turns came before it.
+        turn: u64,
+    },
+    /// Takes what the reader's turn `turn` changed back out of the files of a session's folder, leaving what was done to them since.
+    UndoTurn {
+        /// The session.
+        session: u64,
+        /// The turn, by how many of the reader's turns came before it.
+        turn: u64,
+        /// The files to take the turn's changes out of, from the root of the repository, or every file it changed when there are none.
+        #[serde(default)]
+        paths: Vec<String>,
+    },
     /// Starts a session that branches off a session's conversation after the reader's turn `turn` and its reply. It works in the same folder, and its agent carries on from a copy of the conversation the harness saved up to that point.
     ForkSession {
         /// The session branched off.

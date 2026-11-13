@@ -69,6 +69,7 @@ fn chat(asker: &Arc<Connection>) -> Session {
             files: Vec::new(),
             checkpoint: false,
             turn: 1,
+            saved: None,
         },
     );
     session.busy = true;

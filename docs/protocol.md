@@ -124,6 +124,8 @@ request with exactly one `response` carrying the same `id`.
 | `hurry`        | `session`, `queued`                                                                              | `done`          |
 | `rewind`       | `session`, `turn`                                                                                | `done`          |
 | `restore`      | `session`, `turn`                                                                                | `done`          |
+| `turn_changes` | `session`, `turn`                                                                                | `revision_changes` |
+| `undo_turn`    | `session`, `turn`, `paths` (optional)                                                            | `done`          |
 | `fork_session` | `session`, `turn`                                                                                | `sessions`      |
 | `continue_chat`| `session`, `repository`, `base`, `title`                                                         | `done`          |
 | `choose`       | `session`, `ticket`, `option`                                                                    | `done`          |
@@ -396,14 +398,31 @@ everything said of them, its submodules' paths written from `directory`.
   Fails while a turn is running.
 - **`restore`:** puts the files of the session's folder back as they were
   before the reader's turn `turn`, counted as for `rewind`, and announces it
-  with a `Restored` event. Before every turn in a git repository the server
-  keeps the files, tracked or not but not ignored, under
-  `refs/worktree/pandemonium/sessions/<session>/turns/<id>`, where `id` is
-  the turn's id, which its `Prompted` event carries; the files as they were before a
-  restore are kept under `…/sessions/<session>/before-restore`. Neither the
-  branch, the head nor the index changes. The agent's next prompt says that
-  the files were put back. Fails while a turn is running, or when no files
-  were kept before the turn.
+  with a `Restored` event. The harness keeps the files, tracked or not but
+  not ignored, before and after every turn in a git repository, under git
+  references of its own, and does the putting back; the server asks the
+  session's agent, starting it when it is not running, and answers once the
+  agent has. Neither the branch, the head nor the index changes. The harness
+  tells the agent with its next prompt that the files were put back. Fails
+  while a turn is running, when no files were kept before the turn, or when
+  the agent gives no answer.
+- **`turn_changes`:** the files the agent changed during the reader's turn
+  `turn`, counted as for `rewind`, with their diffs, as `revision_changes`
+  answers them: the files as they were when the turn ended set against the
+  files as they were before it, so the answer holds what shell commands,
+  formatters and generators wrote as well as the agent's own edits, and
+  nothing done after the turn. A turn that is still running is set against
+  the files as they are now. The server asks the session's agent, as for
+  `restore`. Fails when no files were kept before the turn, or none after it.
+- **`undo_turn`:** takes what the reader's turn `turn` changed, as
+  `turn_changes` answers it, back out of the files `paths`, from the root of
+  the repository, or out of every file it changed when `paths` is absent or
+  empty, and announces it with an `Undone` event. Only that change is taken
+  out: what was done to the same files since stays. The server asks the
+  session's agent, as for `restore`, and the harness tells the agent with its
+  next prompt which files changed. Fails, changing nothing, while a turn is
+  running, and when lines the turn changed were changed again since. A file
+  the turn renamed is put back only when both its names are among `paths`.
 - **`continue_chat`:** continues the chat `session` as a session in a project.
   The server hands the chat's agent a fixed prompt as an ordinary turn of the
   chat, so it shows in the chat's events: it asks for a handoff summary written
@@ -1179,11 +1198,12 @@ Events use serde's default form, one key naming the type.
 | `{"Failed": "reason"}`        | The agent could not be started or stopped. A `Halted` comes before it, and it ends an open turn. The next `prompt` starts it again. |
 | `{"Container": "step"}`       | The dev container of the session is coming up: what it is doing now. Cleared when the agent starts.      |
 | `{"Titled": "text"}`          | The session was named, by the reader or by the agent. The server keeps it as the session's `title`.      |
-| `{"Prompted": {text, files, checkpoint, turn}}` | A client handed the agent a turn. Sent to every client watching the session, the one that sent it included. `files` are names. `checkpoint` (absent means `false`) says the files were kept before the turn, so `restore` can put them back. `turn` (absent or 0 means a turn from before turns had ids, which goes by the number of this event) is the id the harness saves the turn under; it names the files kept before the turn, and a rewind or a branch goes back to before a turn by it. |
+| `{"Prompted": {text, files, checkpoint, turn, saved}}` | A client handed the agent a turn. Sent to every client watching the session, the one that sent it included. `files` are names. `checkpoint` (absent means `false`) says the session's folder is in a git repository, so the harness keeps the files before and after the turn and `restore`, `turn_changes` and `undo_turn` work on it. `turn` (absent or 0 means a turn from before turns had ids, which goes by the number of this event) is the id the harness saves the turn under; it names the files kept before the turn, and a rewind or a branch goes back to before a turn by it. `saved` (absent or null on a turn a client handed over) is the id the harness itself gave a turn it started toward the goal, which `turn` is then 0 for; the server uses it in place of `turn`, so such a turn is rewound to, shown, undone and restored like any other. |
 | `{"Queued": {id, text, files}}` | A client wrote while a turn was running, so the prompt waits under `id`, counted per session. `files` are names. Sent again under the same `id` when `edit_queued` changed the text: a client holding that `id` replaces its row. |
 | `{"Unqueued": id}`            | The prompt queued under `id` stopped waiting: it is handed over (a `Prompted` event follows) or dropped.  |
 | `{"Rewound": {turn}}`         | The conversation went back to before the reader's turn `turn`: drop that turn and everything after it.   |
 | `{"Restored": {turn, files}}` | The files were put back as they were before the reader's turn `turn`. `files` are the paths that changed, from the root of the repository. |
+| `{"Undone": {turn, files}}`   | What the reader's turn `turn` changed was taken back out of the files, what was done to them since left in. `files` are the paths that changed, from the root of the repository. |
 | `{"ToolSignIn": "address"}`   | A tool server the agent uses wants the reader to sign in to it with OAuth. Show the address in the conversation and, when the event is live rather than replayed history, open it in the reader's browser. The server's tools come with the next prompt once signed in. |
 
 Shapes used above:

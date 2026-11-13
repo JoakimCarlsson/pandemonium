@@ -864,7 +864,7 @@ impl Work {
                     from,
                     to,
                 },
-                Pending::Revisions(session, label),
+                Pending::Revisions(session, label, None),
             ),
             Outgoing::ReadRevision {
                 session,
@@ -1440,12 +1440,12 @@ impl Work {
                 let problem = format!("{path}: {}", Self::trouble_of(other));
                 model.update(|screen| *screen = std::mem::take(screen).noted(session, &problem));
             }
-            (Pending::Revisions(session, label), Response::RevisionChanges { changes }) => {
+            (Pending::Revisions(session, label, turn), Response::RevisionChanges { changes }) => {
                 model.update(|screen| {
-                    *screen = std::mem::take(screen).revision_opened(session, label, changes);
+                    *screen = std::mem::take(screen).revision_opened(session, label, turn, changes);
                 });
             }
-            (Pending::Revisions(session, label), other) => {
+            (Pending::Revisions(session, label, _), other) => {
                 let problem = format!("{label}: {}", Self::trouble_of(other));
                 model.update(|screen| *screen = std::mem::take(screen).noted(session, &problem));
             }

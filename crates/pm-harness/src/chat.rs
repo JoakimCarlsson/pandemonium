@@ -12,6 +12,7 @@ use crate::inprocess::{Harness, Heard, Stopper};
 
 use crate::agent::Agent;
 use crate::event::{Event, Reply, Verdict};
+use crate::files::FileNews;
 use crate::language::{HubLanguages, LanguageServers};
 
 /// How long the driver waits for the harness before looking at its commands again.
@@ -70,6 +71,23 @@ enum Request {
         /// The value.
         value: String,
     },
+    /// Asks what the turn saved under `turn` changed in the files.
+    Changes {
+        /// The id the turn is saved under.
+        turn: String,
+    },
+    /// Puts the files back as they were before the turn saved under `turn`.
+    Restore {
+        /// The id the turn is saved under.
+        turn: String,
+    },
+    /// Takes what the turn saved under `turn` changed back out of the files `paths`, or of all it changed when there are none.
+    Undo {
+        /// The id the turn is saved under.
+        turn: String,
+        /// The files, from the root of the repository.
+        paths: Vec<String>,
+    },
 }
 
 impl Request {
@@ -98,6 +116,9 @@ impl Request {
             Self::Cancel => Command::Cancel,
             Self::StopSubagent { id } => Command::StopSubagent { id },
             Self::Set { setting, value } => Command::Set { setting, value },
+            Self::Changes { turn } => Command::Changes { turn },
+            Self::Restore { turn } => Command::Restore { turn },
+            Self::Undo { turn, paths } => Command::Undo { turn, paths },
         }
     }
 }
@@ -147,6 +168,8 @@ pub struct Chat {
     requests: Sender<Request>,
     /// What the driver thread reports.
     events: Receiver<Event>,
+    /// What the harness answered about the files of turns.
+    files: Receiver<FileNews>,
     /// The way to end the conversation.
     ending: Arc<Mutex<Ending>>,
     /// The driver thread.
@@ -164,6 +187,7 @@ impl Chat {
     ) -> Self {
         let (requests, received) = mpsc::channel();
         let (queue, events) = mpsc::channel();
+        let (answers, files) = mpsc::channel();
         let ending = Arc::new(Mutex::new(Ending::default()));
         let shared = Arc::clone(&ending);
         let driver = std::thread::spawn(move || {
@@ -172,13 +196,22 @@ impl Chat {
                 notify();
                 sent
             };
-            if let Err(reason) = drive(agent, directory, home, given, &shared, &received, &report) {
+            let answer = |news: FileNews| {
+                let _ = answers.send(news);
+                notify();
+            };
+            let told = Told {
+                report: &report,
+                answer: &answer,
+            };
+            if let Err(reason) = drive(agent, directory, home, given, &shared, &received, &told) {
                 report(Event::Failed(reason));
             }
         });
         Self {
             requests,
             events,
+            files,
             ending,
             driver,
         }
@@ -248,6 +281,33 @@ impl Chat {
         });
     }
 
+    /// Asks what the turn saved under the id `turn` changed in the files; the answer comes with [`Chat::file_news`].
+    pub fn changes(&self, turn: &str) {
+        let _ = self.requests.send(Request::Changes {
+            turn: turn.to_owned(),
+        });
+    }
+
+    /// Puts the files back as they were before the turn saved under the id `turn`; the answer comes with [`Chat::file_news`].
+    pub fn restore(&self, turn: &str) {
+        let _ = self.requests.send(Request::Restore {
+            turn: turn.to_owned(),
+        });
+    }
+
+    /// Takes what the turn saved under the id `turn` changed back out of the files `paths`, or of all it changed when there are none; the answer comes with [`Chat::file_news`].
+    pub fn undo(&self, turn: &str, paths: &[String]) {
+        let _ = self.requests.send(Request::Undo {
+            turn: turn.to_owned(),
+            paths: paths.to_vec(),
+        });
+    }
+
+    /// What the harness answered about the files of turns since the last call, one answer for each request, in the order they were made.
+    pub fn file_news(&self) -> Vec<FileNews> {
+        std::iter::from_fn(|| self.files.try_recv().ok()).collect()
+    }
+
     /// What the agent has done since the last call.
     pub fn events(&self) -> Vec<Event> {
         let mut found = Vec::new();
@@ -258,6 +318,14 @@ impl Chat {
             }
         }
     }
+}
+
+/// Where the driver thread tells what the harness reported.
+struct Told<'a> {
+    /// Takes an event of the conversation, and says whether anyone still listens.
+    report: &'a dyn Fn(Event) -> bool,
+    /// Takes an answer about the files of a turn.
+    answer: &'a dyn Fn(FileNews),
 }
 
 /// Starts a conversation with the harness, opens it and carries it until the chat is dropped or the harness stops.
@@ -272,8 +340,9 @@ fn drive(
     given: Given,
     ending: &Mutex<Ending>,
     requests: &Receiver<Request>,
-    report: &dyn Fn(Event) -> bool,
+    told: &Told,
 ) -> Result<(), String> {
+    let report = told.report;
     if !directory.is_dir() {
         return Err(format!("{} is not a folder", directory.display()));
     }
@@ -321,6 +390,10 @@ fn drive(
                 }
             }
             Heard::Event(event) => {
+                if let Some(news) = FileNews::from_harness(&event) {
+                    (told.answer)(news);
+                    continue;
+                }
                 if matches!(event, omc_wire::Event::Finished(_))
                     && let Some(watch) = &mut watch
                 {

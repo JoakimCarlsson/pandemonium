@@ -284,8 +284,8 @@ enum Pending {
     Version(usize, String, String),
     /// The versions of the conflicted file of the session at this position, at this path.
     Conflict(usize, String),
-    /// The files a commit or a branch changed in the folder of the session at this position, shown under this name.
-    Revisions(usize, String),
+    /// The files a commit or a branch changed in the folder of the session at this position, or its agent during the reader's turn given, shown under this name.
+    Revisions(usize, String, Option<u64>),
     /// The edits that format the file of the session at this position, at this path and version, and whether it is written afterwards.
     Formatted(usize, String, i32, bool),
     /// What the folder of the session at this position can be debugged as.
@@ -992,6 +992,27 @@ impl Work {
                         turn,
                     },
                     Pending::Back(session, "Could not restore the files"),
+                ),
+                Outgoing::TurnChanges { session, turn } => self.ask_session(
+                    session,
+                    |number| Request::TurnChanges {
+                        session: number,
+                        turn,
+                    },
+                    Pending::Revisions(session, format!("Turn {} changes", turn + 1), Some(turn)),
+                ),
+                Outgoing::UndoTurn {
+                    session,
+                    turn,
+                    paths,
+                } => self.ask_session(
+                    session,
+                    |number| Request::UndoTurn {
+                        session: number,
+                        turn,
+                        paths,
+                    },
+                    Pending::Back(session, "Could not undo the turn"),
                 ),
                 Outgoing::Cancel { session } => self.ask_session(
                     session,
@@ -1939,6 +1960,7 @@ impl Work {
                 | Event::SignedOut { .. }
                 | Event::Failed(_)
                 | Event::Restored { .. }
+                | Event::Undone { .. }
         );
         let finished = live && matches!(event, Event::Finished(_));
         if live && let Event::ToolSignIn(address) = &event {

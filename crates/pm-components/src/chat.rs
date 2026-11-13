@@ -26,7 +26,7 @@ use crate::size::Size;
 use crate::state::{
     CHAT_SCROLL, CHAT_TEXT, COPY_BASE, DETAILS_BASE, FORK_BASE, KEEP_FILES, LINK_BASE,
     LINKS_PER_PIECE, LINKS_PER_REPLY, RESTORE_BASE, RESTORE_FILES, REWIND_BASE, TURN_BASE,
-    WorkspaceState,
+    TURN_CHANGES_BASE, WorkspaceState,
 };
 use crate::steps::{question, steps};
 
@@ -84,7 +84,7 @@ fn restore_offer() -> Node {
         )
 }
 
-/// A message the reader wrote, at `index` of `session`: a filled bubble at the right, with buttons under it to write it again and to put the files back as they were before it.
+/// A message the reader wrote, at `index` of `session`: a filled bubble at the right, with buttons under it to show what the turn changed, to put the files back as they were before it and to write it again.
 fn user_message(
     state: &WorkspaceState,
     session: &Session,
@@ -98,6 +98,14 @@ fn user_message(
         true => restore_offer(),
         false => node()
             .styles([self_end(), flex(), items_center(), gap(1)])
+            .children(message.checkpoint.then(|| {
+                message_action(
+                    IconName::GitCompare,
+                    "Show what this turn changed",
+                    TURN_CHANGES_BASE + index as u64,
+                    false,
+                )
+            }))
             .children(message.checkpoint.then(|| {
                 message_action(
                     IconName::History,

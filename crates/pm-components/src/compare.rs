@@ -142,7 +142,7 @@ impl WorkspaceState {
             diff,
         };
         let label = format!("{} ↔ {}", names.0, names.1);
-        self.excerpts_shown(session, Source::Revision { label }, vec![file]);
+        self.excerpts_shown(session, Source::Revision { label, turn: None }, vec![file]);
         self
     }
 

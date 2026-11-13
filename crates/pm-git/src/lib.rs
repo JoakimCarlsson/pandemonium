@@ -7,7 +7,6 @@ use std::process::{Command, Stdio};
 
 mod branching;
 mod carry;
-mod checkpoint;
 mod conflict;
 mod file_log;
 mod github;
@@ -22,7 +21,6 @@ mod worktrees;
 
 pub use branching::{BranchInfo, branch_info, branch_operation};
 pub use carry::carry_changes;
-pub use checkpoint::{checkpoint, restore};
 pub use conflict::{Sides, sides};
 pub use file_log::{Blame, FileCommit, Found, blame, file_history, permalink, search};
 pub use github::{Owner, PullRequest, Repository, owners, pull_request, repositories};
@@ -213,12 +211,21 @@ fn run_indexed(
     }
 }
 
+/// The paths of `listing`, which separates them with nul characters.
+fn nul_separated(listing: &str) -> Vec<String> {
+    listing
+        .split('\0')
+        .filter(|path| !path.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
 /// The paths `git ls-files` lists in `directory` for `arguments`, each exactly as named on disk: the listing is nul separated, so no name is quoted, escaped or split, whatever it holds. Nothing when git fails.
 fn ls_files(directory: &Path, arguments: &[&str]) -> Vec<String> {
     let mut command = vec!["ls-files", "-z"];
     command.extend_from_slice(arguments);
     run(directory, &command)
-        .map(|listing| checkpoint::listed(&listing))
+        .map(|listing| nul_separated(&listing))
         .unwrap_or_default()
 }
 

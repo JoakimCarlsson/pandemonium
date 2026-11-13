@@ -11,6 +11,7 @@ mod agent;
 mod chat;
 mod discover;
 mod event;
+mod files;
 mod history;
 mod inprocess;
 mod language;
@@ -33,6 +34,7 @@ pub use event::{
     Question, Reply, Setting, Skipped, Slash, Standing, Subagent, SubagentState, Tool, ToolState,
     TrustRequest, Usage, Verdict, Worktree,
 };
+pub use files::{FileNews, TurnChange};
 pub use history::{import_saved, rename_saved, saved_conversation};
 pub use language::LanguageServers;
 pub use limits::allowance;

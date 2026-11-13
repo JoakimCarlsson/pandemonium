@@ -934,14 +934,15 @@ impl Screen {
         })
     }
 
-    /// The screen opening the files `changes`, which a commit or a branch changed, as one view named `label`.
+    /// The screen opening the files `changes`, which a commit or a branch changed, or the agent during the reader's turn `turn`, as one view named `label`.
     pub fn revision_opened(
         self,
         session: usize,
         label: String,
+        turn: Option<u64>,
         changes: Vec<pm_git::Change>,
     ) -> Self {
-        self.in_workspace(|state| state.revision_opened(session, label, changes))
+        self.in_workspace(|state| state.revision_opened(session, label, turn, changes))
     }
 
     /// The screen showing a file of the session at `session` read only, as a commit left it.

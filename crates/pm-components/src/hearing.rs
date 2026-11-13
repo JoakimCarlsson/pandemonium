@@ -25,6 +25,7 @@ impl Session {
                 | Event::Failed(_)
                 | Event::SignedOut { .. }
                 | Event::Restored { .. }
+                | Event::Undone { .. }
         ) {
             self.updates += 1;
         }
@@ -98,6 +99,7 @@ impl Session {
             }
             Event::Rewound { turn } => self.rewound(turn),
             Event::Restored { turn, files } => self.files_restored(turn, files.len()),
+            Event::Undone { turn, files } => self.turn_undone(turn, files.len()),
             Event::ToolSignIn(address) => self.sign_in_wanted(&address),
         }
     }
@@ -240,6 +242,17 @@ impl Session {
         let files = if count == 1 { "file" } else { "files" };
         let mut note = Message::reply(&format!(
             "Restored {count} {files} to how they were before turn {}.",
+            turn + 1
+        ));
+        note.duration = Some(String::new());
+        self.messages.push(note);
+    }
+
+    /// Says that what the reader's turn `turn`, counted from nought, changed was taken back out of `count` files.
+    fn turn_undone(&mut self, turn: u64, count: usize) {
+        let files = if count == 1 { "file" } else { "files" };
+        let mut note = Message::reply(&format!(
+            "Undid what turn {} changed in {count} {files}.",
             turn + 1
         ));
         note.duration = Some(String::new());
@@ -694,6 +707,7 @@ mod tests {
             files: Vec::new(),
             checkpoint: false,
             turn: 1,
+            saved: None,
         });
         session.hear(Event::Said("Working on it.".to_owned()));
         session.hear(Event::ToolSignIn(address.to_owned()));
@@ -721,6 +735,7 @@ mod tests {
             files: Vec::new(),
             checkpoint: false,
             turn: 0,
+            saved: None,
         });
         let before = session.messages.len();
         session.hear(Event::SignedOut {
@@ -740,6 +755,7 @@ mod tests {
             files: Vec::new(),
             checkpoint: false,
             turn: 0,
+            saved: None,
         });
         assert_eq!(session.status, Status::Working);
         session.hear(Event::Said("Reply".to_owned()));

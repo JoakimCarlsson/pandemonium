@@ -78,6 +78,9 @@ pub enum Event {
         /// The id the harness saves the turn under, and the name the files kept before it go by; nought for a turn from before turns had one, which goes by the number of this event in the log.
         #[serde(default)]
         turn: u64,
+        /// The id the harness saves the turn under when the harness named the turn itself, as it does for a turn it starts toward the goal, and so the id is not `turn`; the files kept around the turn go by it, and a rewind goes back to before the turn by it.
+        #[serde(default)]
+        saved: Option<String>,
     },
     /// A reader wrote while the agent was on a turn, so their words wait for it, under `id`.
     Queued {
@@ -97,6 +100,13 @@ pub enum Event {
     },
     /// The files of the session's folder were put back as they were before the reader's turn `turn`.
     Restored {
+        /// The turn, by how many of the reader's turns came before it.
+        turn: u64,
+        /// The files that changed, from the root of the repository.
+        files: Vec<String>,
+    },
+    /// What the reader's turn `turn` changed was taken back out of the files of the session's folder, what was done to them since left in.
+    Undone {
         /// The turn, by how many of the reader's turns came before it.
         turn: u64,
         /// The files that changed, from the root of the repository.
@@ -204,6 +214,8 @@ fn stop_came_late(reason: &str) -> bool {
 
 impl Event {
     /// The event the app keeps for what the harness `reported`, or nothing when the app has no use for it: a refusal to stop a subagent that had ended already, and a `/goal` command the agent could not carry out while it worked, are dropped, since the app takes a failure to mean the agent is gone; the goal's own events say how it stands. A turn the harness started itself toward the goal comes as the prompt it started with.
+    ///
+    /// The harness's answers about the files of a turn are not kept here: [`crate::FileNews`] reads them.
     pub fn from_harness(reported: omc_wire::Event) -> Option<Self> {
         use omc_wire::Event as Wire;
         match reported {
@@ -226,16 +238,18 @@ impl Event {
             Wire::LoginUrl(address) => Some(Self::ToolSignIn(address)),
             Wire::LoginCode { .. } | Wire::Resumed(_) | Wire::Language(_) | Wire::Queued(_) => None,
             Wire::Goal(goal) => Some(Self::Goal(goal)),
-            Wire::Continued(text) => Some(Self::Prompted {
-                text,
+            Wire::Continued { prompt, turn } => Some(Self::Prompted {
+                text: prompt,
                 files: Vec::new(),
                 checkpoint: false,
                 turn: 0,
+                saved: Some(turn),
             }),
             Wire::Trust(request) => Some(Self::Trust(request)),
             Wire::Failed(reason) if stop_came_late(&reason) || reason.starts_with("/goal:") => None,
             Wire::Failed(reason) => Some(Self::Failed(reason)),
             Wire::Titled(title) => Some(Self::Titled(title)),
+            Wire::Changes { .. } | Wire::Restored { .. } | Wire::Undone { .. } => None,
         }
     }
 }
@@ -251,12 +265,16 @@ mod tests {
     #[test]
     fn goal_events_become_the_apps() {
         assert_eq!(
-            Event::from_harness(omc_wire::Event::Continued("keep going".into())),
+            Event::from_harness(omc_wire::Event::Continued {
+                prompt: "keep going".into(),
+                turn: "goal-7".into(),
+            }),
             Some(Event::Prompted {
                 text: "keep going".into(),
                 files: Vec::new(),
                 checkpoint: false,
                 turn: 0,
+                saved: Some("goal-7".into()),
             })
         );
         let goal = Goal {

@@ -47,6 +47,15 @@ pub const EXCERPT_OWNER_BASE: u64 = 7_412_000;
 /// One past the last box holding lines of a file that is not the one being edited.
 const EXCERPT_OWNER_END: u64 = 7_413_000;
 
+/// Takes everything the turn shown changed back out of the files.
+pub const EXCERPTS_UNDO_ALL: FocusId = FocusId(7_410_005);
+
+/// The first of the buttons taking what the turn shown changed back out of one file, each following it by the position of the file in the excerpts.
+pub const EXCERPT_UNDO_BASE: u64 = 7_413_000;
+
+/// One past the last button taking a turn's changes back out of one file.
+const EXCERPT_UNDO_END: u64 = 7_414_000;
+
 /// How many lines are shown on each side of a hit.
 const CONTEXT: usize = 2;
 
@@ -142,10 +151,12 @@ pub enum Source {
         /// What the file held in that state.
         text: String,
     },
-    /// The files a commit or a branch changed, shown from their diffs alone.
+    /// The files a commit or a branch changed, or the agent during one turn, shown from their diffs alone.
     Revision {
         /// What the view is called.
         label: String,
+        /// The turn whose changes these are, by how many of the reader's turns came before it, when they are a turn's: its changes can be taken back out of the files.
+        turn: Option<u64>,
     },
     /// A file a merge, a rebase or a cherry-pick stopped on, with the sides to take from.
     Conflict(Box<crate::conflict::Resolver>),
@@ -171,7 +182,7 @@ impl Excerpts {
                 let name = self.files.first().map_or("", |file| name_of(&file.path));
                 format!("Timeline: {name}")
             }
-            Source::Revision { label } => label.clone(),
+            Source::Revision { label, .. } => label.clone(),
             Source::Conflict(resolver) => format!("Resolve: {}", name_of(&resolver.path)),
         }
     }
@@ -230,7 +241,8 @@ pub fn is_excerpt_part(id: FocusId) -> bool {
         || id == EXCERPTS_CLOSE
         || id == EXCERPTS_RESTORE
         || id == EXCERPTS_FOLD_ALL
-        || (EXCERPTS_FILE_BASE..EXCERPT_OWNER_END).contains(&id.0)
+        || id == EXCERPTS_UNDO_ALL
+        || (EXCERPTS_FILE_BASE..EXCERPT_UNDO_END).contains(&id.0)
         || crate::conflict::is_conflict_part(id)
 }
 
@@ -380,6 +392,14 @@ impl WorkspaceState {
             self.excerpts_folded();
             return self;
         }
+        if id == EXCERPTS_UNDO_ALL {
+            self.turn_undone(None);
+            return self;
+        }
+        if (EXCERPT_UNDO_BASE..EXCERPT_UNDO_END).contains(&id.0) {
+            self.turn_undone(Some((id.0 - EXCERPT_UNDO_BASE) as usize));
+            return self;
+        }
         if let Some(index) = self.excerpt_owner_of(id) {
             return self.excerpt_file_shown(index);
         }
@@ -411,6 +431,32 @@ impl WorkspaceState {
             }
             _ => self,
         }
+    }
+
+    /// Asks for what the turn whose changes are shown changed to be taken back out of the file at `place` of the excerpts, or out of every file when there is none, and closes the view, which no longer says what the files hold.
+    fn turn_undone(&mut self, place: Option<usize>) {
+        let (Some(session), Some(excerpts)) = (self.review_index(), self.excerpts.as_ref()) else {
+            return;
+        };
+        let Source::Revision {
+            turn: Some(turn), ..
+        } = excerpts.source
+        else {
+            return;
+        };
+        let paths = match place {
+            Some(place) => match excerpts.files.get(place) {
+                Some(file) => vec![file.path.clone()],
+                None => return,
+            },
+            None => Vec::new(),
+        };
+        self.outbox.push(crate::state::Outgoing::UndoTurn {
+            session,
+            turn,
+            paths,
+        });
+        *self = std::mem::replace(self, Self::new(&[])).excerpts_closed();
     }
 
     /// Moves the excerpts of the file `path` to follow an edit that changed its number of lines by `delta` at line `at`, counted before the edit.
@@ -536,6 +582,14 @@ fn header(
                 row = row.child(line(mark, 11, 1.4, mark_tone(mark)).styles([flex_none()]));
             }
             row = row.child(Tally::new(file.tally.0, file.tally.1).size(11).build());
+            if matches!(excerpts.source, Source::Revision { turn: Some(_), .. }) {
+                row = row.child(
+                    Button::icon(IconName::Undo, FocusId(EXCERPT_UNDO_BASE + position as u64))
+                        .size(Size::Sm)
+                        .build()
+                        .tooltip("Take what this turn changed back out of this file"),
+                );
+            }
         }
     }
     row

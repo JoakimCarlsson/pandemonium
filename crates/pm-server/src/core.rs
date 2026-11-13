@@ -132,6 +132,8 @@ pub(crate) struct Session {
     pub(crate) resume_before: Option<String>,
     /// Where this chat is being continued as a session in a project, from when its agent is asked for the summary until the session is started or given up.
     pub(crate) handoff: Option<crate::handoff::Handoff>,
+    /// The requests waiting for the agent's answer about the files of a turn, the one asked first first; the agent answers them in the order they were asked.
+    pub(crate) file_waiters: VecDeque<Sender<pm_harness::FileNews>>,
 }
 
 impl Session {
@@ -155,6 +157,7 @@ impl Session {
             running_as: None,
             resume_before: None,
             handoff: None,
+            file_waiters: VecDeque::new(),
         }
     }
 
@@ -225,7 +228,7 @@ impl Session {
 
     /// Takes `event`, which the agent of the session numbered `number` reported, into the log, does what it calls for and returns what it noted.
     ///
-    /// A prompt the agent reports is a turn it started itself, toward its goal, so the session is busy until that turn finishes.
+    /// A prompt the agent reports is a turn it started itself, toward its goal, so the session is busy until that turn finishes; it says, as a turn the reader hands over does, whether the harness keeps the files around it.
     ///
     /// When the agent stopped, what it had running stopped with it, so a `Halted` is noted before the `Failed`, as when a turn is ended for it, and the trust request it waited on is dropped. Nothing is noted when `event` only says again what the log said.
     pub(crate) fn take_in(&mut self, number: u64, event: Event) -> Told {
@@ -233,6 +236,22 @@ impl Session {
         if self.repeats(&event) {
             return told;
         }
+        let event = match event {
+            Event::Prompted {
+                text,
+                files,
+                turn,
+                saved,
+                ..
+            } => Event::Prompted {
+                text,
+                files,
+                checkpoint: self.keeps_files(),
+                turn,
+                saved,
+            },
+            other => other,
+        };
         if matches!(event, Event::Failed(_)) {
             told.push((number, self.note(number, &Event::Halted), Event::Halted));
         }
@@ -465,11 +484,18 @@ impl Core {
         }
     }
 
-    /// Takes what the agents did since the last look into the sessions' logs, hands the agents that ended a turn what waits for them and tells the clients.
+    /// Takes what the agents did since the last look into the sessions' logs, hands the agents that ended a turn what waits for them and tells the clients; what an agent answered about the files of a turn goes to the request waiting for it, and a request whose agent is gone stops waiting.
     pub(crate) fn pump(&self) {
         let mut told = Told::new();
         if let Ok(mut sessions) = self.sessions.lock() {
             for (number, session) in sessions.iter_mut() {
+                let Some(chat) = &session.chat else {
+                    session.file_waiters.clear();
+                    continue;
+                };
+                for news in chat.file_news() {
+                    told.extend(session.take_files(*number, news));
+                }
                 let Some(chat) = &session.chat else {
                     continue;
                 };

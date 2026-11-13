@@ -9,7 +9,9 @@ use pm_text::Edit;
 use pm_ui::{Node, node};
 
 use crate::button::Variant;
-use crate::excerpts::{Block, EXCERPTS_FOLD_ALL, ExcerptFile, Source, file_list, restore_button};
+use crate::excerpts::{
+    Block, EXCERPTS_FOLD_ALL, EXCERPTS_UNDO_ALL, ExcerptFile, Source, file_list, restore_button,
+};
 use crate::open_files::Contents;
 use crate::parts::{glyph, line, spacer};
 use crate::sample::{Change, DiffLine, Kind};
@@ -103,9 +105,11 @@ impl<'a> Changes<'a> {
             _ => "",
         };
         let what = match &excerpts.source {
-            Source::Revision { label } => label.clone(),
+            Source::Revision { label, .. } => label.clone(),
             _ => format!("{count} file{} changed", if count == 1 { "" } else { "s" }),
         };
+        let undoes =
+            matches!(&excerpts.source, Source::Revision { turn: Some(_), .. }) && count > 0;
         strip = match self.mode {
             Mode::Timeline => strip
                 .child(glyph(IconName::History, 3.5, Role::Muted))
@@ -122,6 +126,14 @@ impl<'a> Changes<'a> {
                 .child(line(what, 12, 1.4, Role::Muted))
                 .child(Tally::new(added, removed).size(12).build())
                 .child(spacer())
+                .children(undoes.then(|| {
+                    Button::new("Undo turn", EXCERPTS_UNDO_ALL)
+                        .with_icon(IconName::Undo)
+                        .variant(Variant::Ghost)
+                        .size(Size::Sm)
+                        .build()
+                        .tooltip("Take everything this turn changed back out of the files")
+                }))
                 .child(
                     Button::new("Fold all", EXCERPTS_FOLD_ALL)
                         .variant(Variant::Ghost)
@@ -272,11 +284,12 @@ pub(crate) fn lines_between(old: &str, new: &str) -> Vec<DiffLine> {
 }
 
 impl WorkspaceState {
-    /// Opens the files `changes`, which a commit or a branch changed, as one view named `label`, each shown from its diff and none of them edited.
+    /// Opens the files `changes`, which a commit or a branch changed, or the agent during the reader's turn `turn`, as one view named `label`, each shown from its diff and none of them edited.
     pub fn revision_opened(
         mut self,
         session: usize,
         label: String,
+        turn: Option<u64>,
         changes: Vec<pm_git::Change>,
     ) -> Self {
         if self.review_index() != Some(session) {
@@ -294,7 +307,7 @@ impl WorkspaceState {
                 file
             })
             .collect();
-        self.excerpts_shown(session, Source::Revision { label }, files);
+        self.excerpts_shown(session, Source::Revision { label, turn }, files);
         self
     }
 

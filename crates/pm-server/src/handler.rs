@@ -208,6 +208,61 @@ fn telling(core: &Core, number: u64, action: impl FnOnce(&mut Session) -> Told) 
     response
 }
 
+/// How long a request about the files of a turn waits for the agent's answer, which has to start first when it is not running.
+const FILES_WAIT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Has `ask` put a request about the files of a turn to the agent of the session numbered `number`, tells the clients what that noted, and waits, without holding the sessions, for the agent's answer.
+///
+/// # Errors
+///
+/// Says why when there is no such session, the request could not be asked, the agent could not carry it out, or it gave no answer within [`FILES_WAIT`].
+fn asking_files(
+    core: &Core,
+    number: u64,
+    ask: impl FnOnce(&mut Session) -> Result<Told, String>,
+) -> Result<pm_harness::FileNews, String> {
+    let (waiter, answer) = std::sync::mpsc::channel();
+    let told = {
+        let mut sessions = core
+            .sessions
+            .lock()
+            .map_err(|_| "the server is shutting down".to_owned())?;
+        let held = sessions
+            .get_mut(&number)
+            .ok_or_else(|| format!("no session is numbered {number}"))?;
+        let told = ask(held)?;
+        held.file_waiters.push_back(waiter);
+        told
+    };
+    core.tell_all(told);
+    match answer.recv_timeout(FILES_WAIT) {
+        Ok(pm_harness::FileNews::Failed(reason)) => Err(reason),
+        Ok(news) => Ok(news),
+        Err(_) => Err("the agent gave no answer".to_owned()),
+    }
+}
+
+/// The file `change` a turn made, as the files a commit changed are told.
+fn turn_change(change: pm_harness::TurnChange) -> pm_git::Change {
+    pm_git::Change {
+        path: change.path,
+        words: pm_git::words(&change.diff),
+        diff: change.diff,
+        staged: false,
+        untracked: false,
+        index: change.status.chars().next(),
+        worktree: None,
+        conflicted: false,
+        from: change.from,
+        submodule: None,
+        repository: None,
+        moved: None,
+        added: change.added as usize,
+        removed: change.removed as usize,
+        lazy: false,
+    }
+}
+
 /// Runs `action` on the session numbered `number` and tells the clients what it noted, or says why it could not be done.
 fn trying(
     core: &Core,
@@ -504,7 +559,7 @@ fn fork_session(core: &Core, connection: &Arc<Connection>, source: u64, turn: u6
         let mut branch = Session::new(held.agent, held.directory.clone(), log, meta);
         branch.resume_before = conversation::turns(&held.log)
             .get(turn as usize + 1)
-            .map(|next| next.id.to_string());
+            .map(|next| next.saved.clone());
         branch
     };
     let number = core.next_session();
@@ -964,8 +1019,24 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             title,
         } => crate::handoff::begin(core, connection, session, &repository, &base, &title),
         Request::Restore { session, turn } => {
-            trying(core, session, |held| held.restore(session, turn))
+            done(asking_files(core, session, |held| held.ask_restore(session, turn)).map(|_| ()))
         }
+        Request::TurnChanges { session, turn } => {
+            match asking_files(core, session, |held| held.ask_changes(session, turn)) {
+                Ok(pm_harness::FileNews::Changes { files, .. }) => Response::RevisionChanges {
+                    changes: files.into_iter().map(turn_change).collect(),
+                },
+                Ok(_) => failed("the agent answered something else"),
+                Err(reason) => failed(reason),
+            }
+        }
+        Request::UndoTurn {
+            session,
+            turn,
+            paths,
+        } => done(
+            asking_files(core, session, |held| held.ask_undo(session, turn, &paths)).map(|_| ()),
+        ),
         Request::Choose {
             session,
             ticket,

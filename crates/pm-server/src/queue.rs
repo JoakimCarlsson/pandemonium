@@ -197,8 +197,9 @@ impl Session {
         let event = Event::Prompted {
             text: prompt.text.clone(),
             files: prompt.names,
-            checkpoint: self.checkpoint(number, turn),
+            checkpoint: self.keeps_files(),
             turn,
+            saved: None,
         };
         told.push((number, self.note(number, &event), event));
         if afresh {

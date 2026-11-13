@@ -59,6 +59,7 @@ mod tests {
                     files: Vec::new(),
                     checkpoint: false,
                     turn: 1,
+                    saved: None,
                 });
                 session
             })

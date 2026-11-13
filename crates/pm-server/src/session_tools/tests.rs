@@ -207,6 +207,7 @@ fn states_follow_the_log() {
         files: Vec::new(),
         checkpoint: false,
         turn: 1,
+        saved: None,
     };
     let asking = Event::Ask(Permission {
         ticket: 1,

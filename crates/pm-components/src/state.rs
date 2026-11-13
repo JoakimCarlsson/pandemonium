@@ -259,6 +259,9 @@ pub const RESTORE_BASE: u64 = 2_000_000_000_000;
 /// The first of the buttons starting a session that branches off the conversation after one of the agent's replies; the rest follow it.
 pub const FORK_BASE: u64 = 3_000_000_000_000;
 
+/// The first of the buttons showing what the agent changed during the turn one of the reader's messages started; the rest follow it.
+pub const TURN_CHANGES_BASE: u64 = 8_000_000_000_000;
+
 /// The first of the links in the agent's replies; each reply has [`LINKS_PER_REPLY`] after its own base and each piece of it [`LINKS_PER_PIECE`].
 pub const LINK_BASE: u64 = 4_000_000_000_000;
 
@@ -1322,6 +1325,22 @@ pub enum Outgoing {
         session: usize,
         /// The turn, by how many of the reader's turns came before it.
         turn: u64,
+    },
+    /// Asks for the files the agent of a session changed during one of the reader's turns.
+    TurnChanges {
+        /// The session, by position.
+        session: usize,
+        /// The turn, by how many of the reader's turns came before it.
+        turn: u64,
+    },
+    /// Takes what one of the reader's turns changed back out of the files of a session.
+    UndoTurn {
+        /// The session, by position.
+        session: usize,
+        /// The turn, by how many of the reader's turns came before it.
+        turn: u64,
+        /// The files to take the changes out of, or every file the turn changed when there are none.
+        paths: Vec<String>,
     },
     /// Stops the turn the agent of a session is on.
     Cancel {
@@ -2952,6 +2971,8 @@ impl WorkspaceState {
             self.fork(index);
         } else if let Some(index) = position(RESTORE_BASE, self.messages_open()) {
             self.restoring = Some(index);
+        } else if let Some(index) = position(TURN_CHANGES_BASE, self.messages_open()) {
+            self.turn_changes(index);
         } else if let Some(index) = position(TURN_BASE, self.messages_open()) {
             self.toggle_turn(index);
         } else if let Some(index) = position(TREE_BASE, self.files.len() + self.tree_folders.len())
@@ -3092,6 +3113,22 @@ impl WorkspaceState {
         }
         let turn = held.turn_of(index);
         self.outbox.push(Outgoing::Restore { session, turn });
+    }
+
+    /// Asks for what the agent changed during the turn the reader's message at `index` of the open session started, when the files were kept before it.
+    fn turn_changes(&mut self, index: usize) {
+        let Page::Session(session) = self.page else {
+            return;
+        };
+        let held = &self.sessions[session];
+        if held
+            .messages
+            .get(index)
+            .is_some_and(|message| message.from_user && message.checkpoint)
+        {
+            let turn = held.turn_of(index);
+            self.outbox.push(Outgoing::TurnChanges { session, turn });
+        }
     }
 
     /// Shows or hides the steps of the reply at `index` of the open session.
@@ -4161,5 +4198,66 @@ mod tests {
                 .any(|outgoing| matches!(outgoing, Outgoing::StopSubagent { .. })),
             "a second press asks nothing"
         );
+    }
+
+    /// The button under a message whose files were kept asks for what its turn changed, and the view that shows it asks for one file's change, or all of them, to be taken back out, closing itself.
+    #[test]
+    fn a_turn_shows_what_it_changed_and_undoes_it() {
+        let mut state = WorkspaceState::new(&[]).with_project("/work/app");
+        state.sessions.push(Session::started("Test", 0, "Hello"));
+        let open = state.sessions.len() - 1;
+        state.page = Page::Session(open);
+        state.take_outbox();
+        let mut state = state.after(FocusId(TURN_CHANGES_BASE));
+        assert!(
+            !state
+                .take_outbox()
+                .iter()
+                .any(|outgoing| matches!(outgoing, Outgoing::TurnChanges { .. })),
+            "no files were kept"
+        );
+        state.sessions[open].messages[0].checkpoint = true;
+        let mut state = state.after(FocusId(TURN_CHANGES_BASE));
+        assert!(state.take_outbox().iter().any(|outgoing| matches!(
+            outgoing,
+            Outgoing::TurnChanges { session, turn: 0 } if *session == open
+        )));
+
+        let change = |path: &str| pm_git::Change {
+            path: path.to_owned(),
+            diff: "@@ -1 +1 @@\n-a\n+b".to_owned(),
+            words: Vec::new(),
+            staged: false,
+            untracked: false,
+            index: Some('M'),
+            worktree: None,
+            conflicted: false,
+            from: None,
+            submodule: None,
+            repository: None,
+            moved: None,
+            added: 1,
+            removed: 1,
+            lazy: false,
+        };
+        let shown = |state: WorkspaceState| {
+            state.revision_opened(
+                open,
+                "Turn 1 changes".to_owned(),
+                Some(0),
+                vec![change("a.rs"), change("b.rs")],
+            )
+        };
+        let mut state = shown(state).after(FocusId(crate::excerpts::EXCERPT_UNDO_BASE + 1));
+        assert!(state.excerpts.is_none());
+        assert!(state.take_outbox().iter().any(|outgoing| matches!(
+            outgoing,
+            Outgoing::UndoTurn { session, turn: 0, paths } if *session == open && paths == &["b.rs".to_owned()]
+        )));
+        let mut state = shown(state).after(crate::excerpts::EXCERPTS_UNDO_ALL);
+        assert!(state.take_outbox().iter().any(|outgoing| matches!(
+            outgoing,
+            Outgoing::UndoTurn { turn: 0, paths, .. } if paths.is_empty()
+        )));
     }
 }
