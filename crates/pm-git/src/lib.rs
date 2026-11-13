@@ -21,10 +21,11 @@ mod words;
 mod worktrees;
 
 pub use branching::{BranchInfo, branch_info, branch_operation};
+pub use carry::carry_changes;
 pub use checkpoint::{checkpoint, restore};
 pub use conflict::{Sides, sides};
 pub use file_log::{Blame, FileCommit, Found, blame, file_history, permalink, search};
-pub use github::{Owner, Repository, owners, repositories};
+pub use github::{Owner, PullRequest, Repository, owners, pull_request, repositories};
 pub use graph::{Edge, Half, Lanes};
 pub use multirepo::{Layout, child_repositories, layout};
 pub use operation::{Operation, operation, step};

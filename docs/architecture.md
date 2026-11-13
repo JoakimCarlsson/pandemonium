@@ -48,7 +48,9 @@ One crate per layer, each depending only on the layers below it.
   repurpose them.
 - **Server:** `pm-server`: the `pandemonium-server` program. Owns sessions,
   agents, worktrees and uploaded files; writes `server.json` (port and token,
-  readable by the reader alone) under the data folder.
+  readable by the reader alone) under the data folder. Offers agents tool
+  servers on the loopback address: the browser's tools and the tools that start
+  sessions (`docs/agent-sessions.md`).
 - **Client:** `pm-client`: one connection to a server that is dialled again when
   it drops, plus finding and starting the server on this machine.
 - **Transport:** `pm-ssh`: reaches a server on another machine through ssh.

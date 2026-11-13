@@ -138,7 +138,7 @@ fn disabled(agent: Agent, directory: &Path, withheld: &[String]) -> Vec<String> 
         .collect()
 }
 
-/// What `agent` of the session numbered `session` working in `directory` is given: the tool servers the reader keeps on and the browser of the session, and the names of the tools the reader turned off.
+/// What `agent` of the session numbered `session` working in `directory` is given: the tool servers the reader keeps on, the browser of the session and the tools that start sessions, and the names of the tools the reader turned off.
 pub(crate) fn given(agent: Agent, directory: &Path, session: u64) -> pm_harness::Given {
     let withheld = withheld();
     let kept: Vec<McpServer> = servers()
@@ -170,6 +170,15 @@ pub(crate) fn given(agent: Agent, directory: &Path, session: u64) -> pm_harness:
     if let Some((url, token)) = crate::browser_tools::offered(session) {
         tools.push(pm_harness::ToolServer {
             name: "pandemonium-browser".to_owned(),
+            reach: pm_harness::Reach::Http {
+                url,
+                headers: vec![("Authorization".to_owned(), format!("Bearer {token}"))],
+            },
+        });
+    }
+    if let Some((url, token)) = crate::session_tools::offered(session) {
+        tools.push(pm_harness::ToolServer {
+            name: "pandemonium-sessions".to_owned(),
             reach: pm_harness::Reach::Http {
                 url,
                 headers: vec![("Authorization".to_owned(), format!("Bearer {token}"))],

@@ -1,9 +1,9 @@
-//! Carrying the ignored files a project names, such as `.env` or `target/`, into a new worktree.
+//! Carrying files into a new worktree: the ignored files a project names, such as `.env` or `target/`, and the changes not yet committed in the folder it was made from.
 
 use std::fs;
 use std::path::Path;
 
-use crate::{WORKTREES, ignored, ignored_folders};
+use crate::{WORKTREES, ignored, ignored_folders, ls_files, run};
 
 /// Whether `text` is matched by `pattern`, where `*` stands for any run of characters other than `/`.
 fn matches(pattern: &str, text: &str) -> bool {
@@ -81,10 +81,41 @@ pub(crate) fn carry_ignored(
         .collect()
 }
 
+/// Brings the changes not yet committed in `from` into `worktree`, which has the same commit checked out: the changes to tracked files, staged or not, are put in its working files, and every file git does not track and does not ignore is copied, unless something is already there. Returns what could not be brought, each as its path and why.
+pub fn carry_changes(from: &Path, worktree: &Path) -> Vec<(String, String)> {
+    let mut skipped = Vec::new();
+    match run(from, &["stash", "create"]) {
+        Ok(stash) if !stash.trim().is_empty() => {
+            if let Err(reason) = run(worktree, &["stash", "apply", stash.trim()]) {
+                skipped.push(("changes to tracked files".to_owned(), reason));
+            }
+        }
+        Ok(_) => {}
+        Err(reason) => skipped.push(("changes to tracked files".to_owned(), reason)),
+    }
+    skipped.extend(
+        ls_files(from, &["--others", "--exclude-standard"])
+            .into_iter()
+            .filter(|entry| !entry.starts_with(WORKTREES))
+            .filter(|entry| fs::symlink_metadata(worktree.join(entry)).is_err())
+            .filter(|entry| free_of_links(worktree, entry))
+            .filter_map(|entry| {
+                let target = worktree.join(&entry);
+                let made = target
+                    .parent()
+                    .map_or(Ok(()), fs::create_dir_all)
+                    .map_err(|error| error.to_string())
+                    .and_then(|()| copy(&from.join(&entry), &target));
+                made.err().map(|reason| (entry, reason))
+            }),
+    );
+    skipped
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Placement, add_worktree};
+    use crate::{Placement, add_worktree, changes};
     use std::process::Command;
 
     /// Runs `git` with `arguments` in `directory` and expects it to succeed.
@@ -151,6 +182,45 @@ mod tests {
         assert!(!made.path.join("other").exists());
         let plain = add_worktree(&root, "plain", "HEAD", &Placement::default()).unwrap();
         assert!(!plain.path.join(".env").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// Changes to tracked files, staged or not, and new files reach a worktree made from the same commit; files already there are left alone.
+    #[test]
+    fn uncommitted_changes_are_carried_into_a_new_worktree() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../build")
+            .join(format!("carry-changes-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "-q"]);
+        fs::write(root.join("a.rs"), "one\n").unwrap();
+        fs::write(root.join("b.rs"), "two\n").unwrap();
+        git(&root, &["add", "a.rs", "b.rs"]);
+        git(&root, &["commit", "-q", "-m", "first"]);
+        fs::write(root.join("a.rs"), "one changed\n").unwrap();
+        fs::write(root.join("b.rs"), "two staged\n").unwrap();
+        git(&root, &["add", "b.rs"]);
+        fs::create_dir_all(root.join("new")).unwrap();
+        fs::write(root.join("new/c.rs"), "three\n").unwrap();
+        let made = add_worktree(&root, "carried", "HEAD", &Placement::default()).unwrap();
+        assert!(carry_changes(&root, &made.path).is_empty());
+        assert_eq!(
+            fs::read_to_string(made.path.join("a.rs")).unwrap(),
+            "one changed\n"
+        );
+        assert_eq!(
+            fs::read_to_string(made.path.join("b.rs")).unwrap(),
+            "two staged\n"
+        );
+        assert_eq!(
+            fs::read_to_string(made.path.join("new/c.rs")).unwrap(),
+            "three\n"
+        );
+        assert_eq!(changes(&root).len(), changes(&made.path).len());
+        assert_eq!(
+            fs::read_to_string(root.join("a.rs")).unwrap(),
+            "one changed\n"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }

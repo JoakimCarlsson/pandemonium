@@ -54,6 +54,7 @@ fn session_in(repository: &Path, worktree: &Path) -> Session {
         submodule: None,
         container: false,
         chat: false,
+        started_by: None,
     };
     Session::new(
         pm_harness::agents()[0],
@@ -165,7 +166,7 @@ fn a_chat_works_in_a_scratch_folder_of_its_own() {
     assert_eq!(made.number, CHAT);
     assert_eq!(made.folder, folder);
     assert!(folder.is_dir(), "the server makes the scratch folder");
-    hold_session_as(&core, &connection, made.number, made.session);
+    hold_session_as(&core, Some(&connection), made.number, made.session);
 
     let info = core.info(CHAT).expect("the chat is listed");
     assert!(info.chat);

@@ -1,5 +1,6 @@
-//! The accounts, organizations and repositories of the GitHub account the `gh` program is signed in to.
+//! The accounts, organizations and repositories of the GitHub account the `gh` program is signed in to, and the pull requests of a branch.
 
+use std::path::Path;
 use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
@@ -48,10 +49,33 @@ struct Listed {
     ssh_url: String,
 }
 
+/// A pull request of a branch, as GitHub lists it.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct PullRequest {
+    /// Its number in the repository.
+    pub number: u64,
+    /// How it stands, as GitHub writes it: `OPEN`, `CLOSED` or `MERGED`.
+    pub state: String,
+    /// Its web address.
+    pub url: String,
+    /// Whether it is a draft.
+    #[serde(default, rename = "isDraft")]
+    pub draft: bool,
+}
+
 /// Runs `gh` with `arguments`, never asking a question, and returns what it wrote, or what it complained of.
 fn gh(arguments: &[&str]) -> Result<String, String> {
+    gh_in(None, arguments)
+}
+
+/// Runs `gh` with `arguments` in `directory`, or where the server runs when none is given, never asking a question, and returns what it wrote, or what it complained of.
+fn gh_in(directory: Option<&Path>, arguments: &[&str]) -> Result<String, String> {
     let program = pm_tools::installed("gh").unwrap_or_else(|| "gh".into());
-    let output = Command::new(&program)
+    let mut command = Command::new(&program);
+    if let Some(directory) = directory {
+        command.current_dir(directory);
+    }
+    let output = command
         .args(arguments)
         .env("PATH", pm_tools::path_beside(&program))
         .env("GH_PROMPT_DISABLED", "1")
@@ -65,6 +89,30 @@ fn gh(arguments: &[&str]) -> Result<String, String> {
     } else {
         Err(String::from_utf8_lossy(&output.stderr).trim().to_owned())
     }
+}
+
+/// The newest pull request of `branch` in the GitHub repository `directory` is a clone of, open or not; nothing when it has none, or when `gh` cannot say.
+pub fn pull_request(directory: &Path, branch: &str) -> Option<PullRequest> {
+    let listed = gh_in(
+        Some(directory),
+        &[
+            "pr",
+            "list",
+            "--head",
+            branch,
+            "--state",
+            "all",
+            "--limit",
+            "1",
+            "--json",
+            "number,state,url,isDraft",
+        ],
+    )
+    .ok()?;
+    serde_json::from_str::<Vec<PullRequest>>(&listed)
+        .ok()?
+        .into_iter()
+        .next()
 }
 
 /// Whether `gh` is set to clone over ssh.

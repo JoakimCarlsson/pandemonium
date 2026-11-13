@@ -52,6 +52,7 @@ fn chat(asker: &Arc<Connection>) -> Session {
         submodule: None,
         container: false,
         chat: true,
+        started_by: None,
     };
     let mut session = Session::new(pm_harness::agents()[0], PathBuf::new(), Vec::new(), meta);
     session.handoff = Some(Handoff {

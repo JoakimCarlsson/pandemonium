@@ -51,6 +51,7 @@ pub fn run(settings: Settings) -> std::io::Result<()> {
     crate::machine::start_sweeping(core.clone());
     crate::folders::start(core.clone());
     crate::session_servers::start(core.clone());
+    crate::session_tools::start(core.clone());
     let watching = core.clone();
     std::thread::spawn(move || {
         loop {

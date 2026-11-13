@@ -6,23 +6,19 @@
 //! no agent can act for another session.
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Sender, channel};
-use std::sync::{Arc, LazyLock, Mutex, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Duration;
 
 use pm_protocol::ServerMessage;
 use serde_json::{Value, json};
 
 use crate::core::Connection;
+use crate::mcp_endpoint::{Endpoint, failure, tool};
 
 /// How long a call waits for a window to answer.
 const PATIENCE: Duration = Duration::from_secs(90);
-
-/// The most bytes of a request that are read.
-const MOST: usize = 1 << 20;
 
 /// What a window answered a call with.
 pub(crate) struct Reply {
@@ -34,12 +30,8 @@ pub(crate) struct Reply {
     pub(crate) image: Vec<u8>,
 }
 
-/// What the server knows of the tools.
+/// What the server knows of the windows that run the tools.
 struct Tools {
-    /// The address agents are given, once the endpoint listens.
-    endpoint: OnceLock<String>,
-    /// The token of each session, by session number, and the session of each token.
-    tokens: Mutex<Tokens>,
     /// The connections that can run the tools, oldest first.
     runners: Mutex<Vec<Arc<Connection>>>,
     /// The calls waiting for an answer.
@@ -48,59 +40,27 @@ struct Tools {
     next: AtomicU64,
 }
 
-/// The tokens that let sessions in.
-#[derive(Default)]
-struct Tokens {
-    /// The token each session was given.
-    of_session: HashMap<u64, String>,
-    /// The session each token was given to.
-    of_token: HashMap<String, u64>,
-}
-
 /// The one set of tools of this server.
 static TOOLS: LazyLock<Tools> = LazyLock::new(|| Tools {
-    endpoint: OnceLock::new(),
-    tokens: Mutex::new(Tokens::default()),
     runners: Mutex::new(Vec::new()),
     pending: Mutex::new(HashMap::new()),
     next: AtomicU64::new(1),
 });
 
+/// The endpoint agents reach the tools at.
+static ENDPOINT: LazyLock<Endpoint> =
+    LazyLock::new(|| Endpoint::new("pandemonium-browser", definitions, call_tool));
+
 /// The address of the tools and the token of `session`, to be given to the agent of that session when it starts, once any window has said it can run them.
 /// An agent only learns of its tools when it starts, so they are kept on offer while no window is connected: an agent started as a window restarts or reconnects would otherwise never get them, and a call made then says that no window can run them.
 pub(crate) fn offered(session: u64) -> Option<(String, String)> {
-    let address = TOOLS.endpoint.get()?.clone();
-    let mut tokens = TOOLS.tokens.lock().ok()?;
-    if let Some(token) = tokens.of_session.get(&session) {
-        return Some((address, token.clone()));
-    }
-    let token = fresh_token()?;
-    tokens.of_session.insert(session, token.clone());
-    tokens.of_token.insert(token.clone(), session);
-    Some((address, token))
-}
-
-/// A token nobody has been given, or nothing when the system has no randomness to make one.
-fn fresh_token() -> Option<String> {
-    let mut secret = [0u8; 24];
-    getrandom::fill(&mut secret).ok()?;
-    Some(secret.iter().map(|byte| format!("{byte:02x}")).collect())
-}
-
-/// The session `token` was given to.
-fn session_of(token: &str) -> Option<u64> {
-    let tokens = TOOLS.tokens.lock().ok()?;
-    tokens
-        .of_token
-        .iter()
-        .find(|(known, _)| same(known, token))
-        .map(|(_, session)| *session)
+    ENDPOINT.offered(session)
 }
 
 /// Notes that `connection` can, or can no longer, run the tools, and starts the endpoint when the first one can.
 pub(crate) fn set_available(connection: &Arc<Connection>, available: bool) {
     if available {
-        ensure_started();
+        ENDPOINT.start();
     }
     if let Ok(mut runners) = TOOLS.runners.lock() {
         runners.retain(|held| !Arc::ptr_eq(held, connection));
@@ -123,146 +83,9 @@ pub(crate) fn answer(call: u64, reply: Reply) {
     }
 }
 
-/// Starts listening, once.
-fn ensure_started() {
-    if TOOLS.endpoint.get().is_some() {
-        return;
-    }
-    let Ok(listener) = TcpListener::bind(("127.0.0.1", 0)) else {
-        return;
-    };
-    let Ok(local) = listener.local_addr() else {
-        return;
-    };
-    if TOOLS
-        .endpoint
-        .set(format!("http://127.0.0.1:{}/mcp", local.port()))
-        .is_err()
-    {
-        return;
-    }
-    std::thread::spawn(move || {
-        for stream in listener.incoming().flatten() {
-            std::thread::spawn(move || serve(stream));
-        }
-    });
-}
-
-/// Whether the two texts are the same, taking as long to say so whatever they hold.
-fn same(left: &str, right: &str) -> bool {
-    left.len() == right.len()
-        && left
-            .bytes()
-            .zip(right.bytes())
-            .fold(0u8, |difference, (a, b)| difference | (a ^ b))
-            == 0
-}
-
-/// Writes an HTTP answer with `status` and `body`, and ends the connection.
-fn respond(stream: &mut TcpStream, status: &str, body: &str) {
-    let head = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        body.len()
-    );
-    let _ = stream.write_all(head.as_bytes());
-    let _ = stream.write_all(body.as_bytes());
-    let _ = stream.flush();
-}
-
-/// Serves one request of an agent.
-fn serve(mut stream: TcpStream) {
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
-    let Ok(reader) = stream.try_clone() else {
-        return;
-    };
-    let mut reader = BufReader::new(reader);
-    let mut line = String::new();
-    if reader.read_line(&mut line).is_err() || !line.starts_with("POST /mcp") {
-        respond(&mut stream, "404 Not Found", "{}");
-        return;
-    }
-    let (mut length, mut session) = (0usize, None);
-    loop {
-        line.clear();
-        if reader.read_line(&mut line).is_err() {
-            return;
-        }
-        let header = line.trim_end();
-        if header.is_empty() {
-            break;
-        }
-        let Some((name, value)) = header.split_once(':') else {
-            continue;
-        };
-        let value = value.trim();
-        match name.to_ascii_lowercase().as_str() {
-            "content-length" => length = value.parse().unwrap_or(0),
-            "authorization" => {
-                session = value.strip_prefix("Bearer ").and_then(session_of);
-            }
-            _ => {}
-        }
-    }
-    let Some(session) = session else {
-        respond(&mut stream, "401 Unauthorized", "{}");
-        return;
-    };
-    if length > MOST {
-        respond(&mut stream, "413 Payload Too Large", "{}");
-        return;
-    }
-    let mut body = vec![0; length];
-    if reader.read_exact(&mut body).is_err() {
-        return;
-    }
-    let Ok(message) = serde_json::from_slice::<Value>(&body) else {
-        respond(&mut stream, "400 Bad Request", "{}");
-        return;
-    };
-    match handle(&message, session) {
-        Some(answer) => respond(&mut stream, "200 OK", &answer.to_string()),
-        None => respond(&mut stream, "202 Accepted", "{}"),
-    }
-}
-
-/// The answer to one JSON-RPC message of an agent of `session`, or nothing when it is a notification.
-fn handle(message: &Value, session: u64) -> Option<Value> {
-    let id = message.get("id")?.clone();
-    let result = match message["method"].as_str().unwrap_or_default() {
-        "initialize" => json!({
-            "protocolVersion": message["params"]["protocolVersion"]
-                .as_str()
-                .unwrap_or("2025-03-26"),
-            "capabilities": { "tools": {} },
-            "serverInfo": { "name": "pandemonium-browser", "version": env!("CARGO_PKG_VERSION") },
-        }),
-        "tools/list" => json!({ "tools": definitions() }),
-        "tools/call" => call_tool(&message["params"], session),
-        "ping" => json!({}),
-        other => {
-            return Some(json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": { "code": -32601, "message": format!("no method {other}") },
-            }));
-        }
-    };
-    Some(json!({ "jsonrpc": "2.0", "id": id, "result": result }))
-}
-
-/// Runs the tool a `tools/call` of an agent of `session` names in a window and describes what came of it.
-fn call_tool(params: &Value, session: u64) -> Value {
-    let Some(tool) = params["name"].as_str() else {
-        return failure("no tool was named");
-    };
-    if !definitions()
-        .iter()
-        .any(|definition| definition["name"] == tool)
-    {
-        return failure(&format!("there is no tool {tool}"));
-    }
-    let arguments = params["arguments"].to_string();
-    match run(tool, &arguments, session) {
+/// Runs `tool`, which an agent of `session` called with `arguments`, in a window and describes what came of it.
+fn call_tool(tool: &str, arguments: &Value, session: u64) -> Value {
+    match run(tool, &arguments.to_string(), session) {
         Ok(reply) => {
             let mut content = vec![json!({ "type": "text", "text": reply.text })];
             if !reply.image.is_empty() {
@@ -276,11 +99,6 @@ fn call_tool(params: &Value, session: u64) -> Value {
         }
         Err(reason) => failure(&reason),
     }
-}
-
-/// A tool result that says the call failed, for `reason`.
-fn failure(reason: &str) -> Value {
-    json!({ "content": [{ "type": "text", "text": reason }], "isError": true })
 }
 
 /// Sends the call of an agent of `session` to the window that can run it and waits for the answer.
@@ -335,15 +153,6 @@ fn base64(bytes: &[u8]) -> String {
         }
     }
     text
-}
-
-/// A tool the agents are offered: its name, what it does and what it takes.
-fn tool(name: &str, description: &str, properties: &Value, required: &[&str]) -> Value {
-    json!({
-        "name": name,
-        "description": description,
-        "inputSchema": { "type": "object", "properties": properties, "required": required },
-    })
 }
 
 /// The tools the agents are offered.
@@ -621,21 +430,7 @@ fn drag_end(target: &Value, description: &str) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{definitions, ensure_started, offered, session_of};
-
-    /// Each session is given a token of its own, which names that session and no other, and the same session keeps its token.
-    #[test]
-    fn tokens_belong_to_one_session() {
-        ensure_started();
-        let (address, first) = offered(901).unwrap();
-        let (_, second) = offered(902).unwrap();
-        assert!(address.starts_with("http://127.0.0.1:"));
-        assert_ne!(first, second);
-        assert_eq!(offered(901).unwrap().1, first);
-        assert_eq!(session_of(&first), Some(901));
-        assert_eq!(session_of(&second), Some(902));
-        assert_eq!(session_of("not a token"), None);
-    }
+    use super::definitions;
 
     /// The names of the tools, in order.
     fn names() -> Vec<String> {

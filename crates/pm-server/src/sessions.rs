@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 const FOLDER: &str = "sessions";
 
 /// What a session is, apart from what its agent did.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Meta {
     /// The agent that runs it, by its id.
     pub(crate) agent: String,
@@ -44,6 +44,9 @@ pub(crate) struct Meta {
     /// Whether it is a chat that belongs to no project and works in a scratch folder the server made for it.
     #[serde(default)]
     pub(crate) chat: bool,
+    /// The session whose agent started this one, when an agent started it rather than a reader.
+    #[serde(default)]
+    pub(crate) started_by: Option<u64>,
 }
 
 impl Meta {

@@ -325,6 +325,7 @@ pub(crate) fn seat(
         submodule: submodule.map(str::to_owned),
         container,
         chat: scratch,
+        started_by: None,
     };
     let session = Session::new(agent, meta.agent_folder(), Vec::new(), meta);
     Ok(Seat {
@@ -355,17 +356,29 @@ pub(crate) fn start_session(
     let Some(agent) = agent_named(agent) else {
         return failed(format!("no agent is called {agent}"));
     };
+    match seat(
+        core, agent, repository, directory, title, base, submodule, container, scratch,
+    ) {
+        Ok(seated) => start_seated(core, Some(connection), seated, settings, text, attachments),
+        Err(reason) => failed(reason),
+    }
+}
+
+/// Starts the agent of `seated`, a session `seat` made ready, with the `settings` given, holds the session, hands the agent `text` and `attachments` as its first prompt and tells the clients of it; `connection`, the client that asked when one did, watches it and is left out of the telling, as it learns of the session from the answer.
+pub(crate) fn start_seated(
+    core: &Arc<Core>,
+    connection: Option<&Arc<Connection>>,
+    seated: Seat,
+    settings: &[(String, String)],
+    text: &str,
+    attachments: &[Attachment],
+) -> Response {
     let Seat {
         number,
         mut session,
         folder,
         skipped,
-    } = match seat(
-        core, agent, repository, directory, title, base, submodule, container, scratch,
-    ) {
-        Ok(seat) => seat,
-        Err(reason) => return failed(reason),
-    };
+    } = seated;
     let (branch, head) = (session.meta.branch.clone(), session.meta.head.clone());
     session.start_agent(number, &crate::machine::with_mode(settings));
     hold_session_as(core, connection, number, session);
@@ -485,6 +498,7 @@ fn fork_session(core: &Core, connection: &Arc<Connection>, source: u64, turn: u6
             title: format!("{} (branch)", held.meta.title),
             closed: false,
             updated: now(),
+            started_by: None,
             ..held.meta.clone()
         };
         let mut branch = Session::new(held.agent, held.directory.clone(), log, meta);
@@ -495,8 +509,8 @@ fn fork_session(core: &Core, connection: &Arc<Connection>, source: u64, turn: u6
     };
     let number = core.next_session();
     crate::sessions::copy_history(source, number);
-    hold_session_as(core, connection, number, branch);
-    announce(core, connection, number);
+    hold_session_as(core, Some(connection), number, branch);
+    announce(core, Some(connection), number);
     match core.info(number) {
         Some(info) => Response::Sessions {
             sessions: vec![info],
@@ -505,8 +519,13 @@ fn fork_session(core: &Core, connection: &Arc<Connection>, source: u64, turn: u6
     }
 }
 
-/// Holds `session` under `number`, which the caller took from the core, keeps it and its log on disk and has `connection` watch it.
-fn hold_session_as(core: &Core, connection: &Arc<Connection>, number: u64, session: Session) {
+/// Holds `session` under `number`, which the caller took from the core, keeps it and its log on disk and has `connection` watch it, when one is given.
+fn hold_session_as(
+    core: &Core,
+    connection: Option<&Arc<Connection>>,
+    number: u64,
+    session: Session,
+) {
     sessions::save_meta(number, &session.meta);
     for (seq, event) in &session.log {
         sessions::append(number, *seq, event);
@@ -514,15 +533,17 @@ fn hold_session_as(core: &Core, connection: &Arc<Connection>, number: u64, sessi
     if let Ok(mut held) = core.sessions.lock() {
         held.insert(number, session);
     }
-    if let Ok(mut attached) = connection.attached.lock() {
+    if let Some(connection) = connection
+        && let Ok(mut attached) = connection.attached.lock()
+    {
         attached.insert(number);
     }
 }
 
-/// Tells every client but `connection` of the session numbered `number`.
-fn announce(core: &Core, connection: &Arc<Connection>, number: u64) {
+/// Tells every client but `connection`, when one is given, of the session numbered `number`.
+fn announce(core: &Core, connection: Option<&Arc<Connection>>, number: u64) {
     if let Some(info) = core.info(number) {
-        core.broadcast(&ServerMessage::SessionAdded { info }, Some(connection));
+        core.broadcast(&ServerMessage::SessionAdded { info }, connection);
     }
 }
 

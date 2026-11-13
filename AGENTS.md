@@ -107,6 +107,8 @@ come from that tag, which catches a local override and a stale lock.
 - Use [docs/protocol.md](docs/protocol.md) for requests, events and reconnects;
   [docs/extensions.md](docs/extensions.md) for extension packages;
   [docs/browser.md](docs/browser.md) for the embedded browser and its helper;
-  and [docs/performance.md](docs/performance.md) for performance work.
+  [docs/agent-sessions.md](docs/agent-sessions.md) for the tools that let
+  agents start sessions; and [docs/performance.md](docs/performance.md) for
+  performance work.
 - Keep project instructions in `AGENTS.md`. Keep project descriptions, crate
   inventories and long explanations in the reference docs.

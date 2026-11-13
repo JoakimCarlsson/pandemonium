@@ -33,6 +33,7 @@ fn session(log: Vec<(u64, Event)>) -> Session {
         submodule: None,
         container: false,
         chat: false,
+        started_by: None,
     };
     Session::new(pm_harness::agents()[0], PathBuf::new(), log, meta)
 }
