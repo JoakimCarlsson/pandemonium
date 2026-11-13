@@ -15,6 +15,9 @@ const REFRESH: Duration = Duration::from_secs(300);
 /// How soon after the last time it is asked after again when a turn has just ended; providers rate limit these questions.
 const AFTER_TURN: Duration = Duration::from_secs(45);
 
+/// How soon after a question that got no answer it is asked again, which happens when several conversations start at once and the provider turns some of their questions away.
+const AFTER_FAILURE: Duration = Duration::from_secs(20);
+
 /// Asks the provider of one conversation's agent how much of the account's allowance is used, on threads of their own, and holds the answers until they are collected.
 pub(crate) struct Watch {
     /// The provider asked.
@@ -27,6 +30,8 @@ pub(crate) struct Watch {
     heard: Receiver<Event>,
     /// Whether a thread is asking now.
     asking: Arc<AtomicBool>,
+    /// Whether the last question got no answer.
+    failed: Arc<AtomicBool>,
     /// When the provider was last asked.
     asked: Option<Instant>,
 }
@@ -45,6 +50,7 @@ impl Watch {
                     answers,
                     heard,
                     asking: Arc::new(AtomicBool::new(false)),
+                    failed: Arc::new(AtomicBool::new(false)),
                     asked: None,
                 }
             })
@@ -60,10 +66,13 @@ impl Watch {
         self.asked = Some(Instant::now());
         let (provider, home) = (self.provider, self.home.clone());
         let (answers, asking) = (self.answers.clone(), Arc::clone(&self.asking));
+        let failed = Arc::clone(&self.failed);
         let spawned = std::thread::Builder::new()
             .name("harness-limits".to_owned())
             .spawn(move || {
-                if let Some(limits) = fetch(provider, home) {
+                let limits = fetch(provider, home);
+                failed.store(limits.is_none(), Ordering::Release);
+                if let Some(limits) = limits {
                     let _ = answers.send(Event::Limits(Allowance(limits)));
                 }
                 asking.store(false, Ordering::Release);
@@ -73,9 +82,13 @@ impl Watch {
         }
     }
 
-    /// Asks again for no reason but that time has passed.
+    /// Asks again for no reason but that time has passed, sooner when the last question got no answer.
     pub(crate) fn tick(&mut self) {
-        self.ask(REFRESH);
+        if self.failed.load(Ordering::Acquire) {
+            self.ask(AFTER_FAILURE);
+        } else {
+            self.ask(REFRESH);
+        }
     }
 
     /// Asks again because a turn has just ended, which is when the allowance has moved.

@@ -652,7 +652,13 @@ pub fn composer(
     }
     let strip = strip.child(spacer());
     let strip = strip.children(match session {
-        Some(session) => usage::usage_rings(session),
+        Some(session) => usage::rings_of(
+            session.context.as_ref(),
+            session
+                .limits
+                .as_ref()
+                .or_else(|| state.allowance_of(session.agent, session.login.as_deref())),
+        ),
         None => usage::rings_of(
             None,
             state.allowance_of(state.agent, state.login_for_new_work(state.agent)),
