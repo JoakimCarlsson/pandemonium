@@ -198,7 +198,7 @@ fn history(log: &[(u64, Event)]) -> String {
     history
 }
 
-/// The log of a session with its conversation taken from what the harness saved: the turns the harness has, each as the events a live turn would have told, in place of the ones the log holds; what the harness does not know of, such as queued prompts, stays where it was. The choices the harness saved for the settings are put into the last list of settings the log holds.
+/// The log of a session with its conversation taken from what the harness saved: the turns the harness has, each as the events a live turn would have told, in place of the ones the log holds; what the harness does not know of, such as queued prompts, stays where it was. The choices the harness saved for the settings are put into the last list of settings the log holds, and what the harness says the conversation cost takes the place of what the log says.
 ///
 /// A turn keeps the id the harness saved it under, and whether its files were kept is carried over from the log. A turn the harness dropped, because it was stopped or failed, is gone from the result. The events are numbered again from one.
 pub(crate) fn from_saved(
@@ -224,12 +224,14 @@ pub(crate) fn from_saved(
     let offered = !saved.offered.is_empty();
     let commanded = offered || !saved.commands.is_empty();
     let measured = saved.window.is_some();
+    let costed = saved.spent.is_some();
     let other = |event: &Event| {
         !conversational(event)
             && !matches!(event, Event::Prompted { .. } | Event::Rewound { .. })
             && !(offered && matches!(event, Event::Settings(_)))
             && !(commanded && matches!(event, Event::Commands(_)))
             && !(measured && matches!(event, Event::Used(_)))
+            && !(costed && matches!(event, Event::Spent(_)))
     };
     let mut events: Vec<Event> = log[..first]
         .iter()
@@ -243,6 +245,7 @@ pub(crate) fn from_saved(
     if commanded {
         events.push(Event::Commands(saved.commands.clone()));
     }
+    events.extend(saved.spent.clone().map(Event::Spent));
     for turn in &saved.turns {
         let id = turn.id.as_deref().and_then(|id| id.parse::<u64>().ok());
         let named = turn.id.clone().filter(|_| id.is_none());
@@ -365,7 +368,7 @@ fn choose_settings(events: &mut [Event], chosen: &[(String, String)]) {
     }
 }
 
-/// Whether `event` is kept in the log on disk: what the harness saves with the conversation, such as its turns, its name, what can be set, the commands it offers and how full its context is, is not, and neither is a subagent starting or ending, which matters only while the agent that started it runs.
+/// Whether `event` is kept in the log on disk: what the harness saves with the conversation, such as its turns, its name, what can be set, the commands it offers, how full its context is and what it cost, is not, and neither is a subagent starting or ending, which matters only while the agent that started it runs.
 pub(crate) fn kept_on_disk(event: &Event) -> bool {
     !conversational(event)
         && !matches!(
@@ -374,6 +377,7 @@ pub(crate) fn kept_on_disk(event: &Event) -> bool {
                 | Event::Settings(_)
                 | Event::Commands(_)
                 | Event::Used(_)
+                | Event::Spent(_)
                 | Event::Subagent(_)
         )
 }
@@ -506,6 +510,33 @@ mod tests {
         assert_eq!(settings[1].current, "default");
     }
 
+    /// What the harness says the conversation cost replaces what the log says, and a harness that says nothing leaves the log's figure.
+    #[test]
+    fn the_saved_cost_replaces_the_logs() {
+        let cost = |micros: u64| {
+            Event::Spent(pm_harness::Spent {
+                models: vec![pm_harness::ModelSpend {
+                    model: "m".to_owned(),
+                    requests: 1,
+                    cost: Some(micros),
+                    ..pm_harness::ModelSpend::default()
+                }],
+            })
+        };
+        let log = vec![(1, cost(5))];
+        let Event::Spent(newer) = cost(9) else {
+            panic!("not a cost");
+        };
+        let saved = pm_harness::Conversation {
+            spent: Some(newer),
+            ..Default::default()
+        };
+        let rebuilt = from_saved(&log, &saved);
+        assert_eq!(rebuilt, vec![(1, cost(9))]);
+        let silent = pm_harness::Conversation::default();
+        assert_eq!(from_saved(&log, &silent), vec![(1, cost(5))]);
+    }
+
     /// What the harness saves with the conversation is not written to the log on disk, and what is the server's own is.
     #[test]
     fn only_the_servers_own_events_are_kept_on_disk() {
@@ -519,6 +550,7 @@ mod tests {
             size: 2,
             written: 0,
         })));
+        assert!(!kept_on_disk(&Event::Spent(pm_harness::Spent::default())));
         assert!(kept_on_disk(&prompted("x", 1, true)));
         assert!(kept_on_disk(&Event::Rewound { turn: 0 }));
         assert!(kept_on_disk(&Event::Queued {

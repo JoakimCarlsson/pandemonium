@@ -278,7 +278,7 @@ impl Session {
         told
     }
 
-    /// Whether `event` only says again what the last context usage in the log said.
+    /// Whether `event` only says again what the last context usage, or the last cost, in the log said.
     pub(crate) fn repeats(&self, event: &Event) -> bool {
         let last = |kind: fn(&Event) -> bool| {
             self.log
@@ -289,6 +289,7 @@ impl Session {
         };
         match event {
             Event::Used(_) => last(|held| matches!(held, Event::Used(_))) == Some(event),
+            Event::Spent(_) => last(|held| matches!(held, Event::Spent(_))) == Some(event),
             _ => false,
         }
     }

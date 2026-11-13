@@ -120,6 +120,7 @@ pub mod sidebar;
 pub mod sign_in_code;
 pub mod size;
 pub mod source_actions;
+pub mod spend;
 pub mod state;
 pub mod stepper;
 pub mod steps;

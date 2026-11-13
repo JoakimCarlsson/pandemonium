@@ -30,9 +30,9 @@ pub use chat::{Chat, Given, Notify};
 pub use discover::discover;
 pub use event::{
     Allowance, Alternative, Background, Choice, Diff, Discovery, Event, Goal, GoalState, Input,
-    Inquiry, Kind, Limit, LimitUnit, Limits, Merge, Part, Permission, Pick, PlanStep, Progress,
-    Question, Reply, Setting, Skipped, Slash, Standing, Subagent, SubagentState, Tool, ToolState,
-    TrustRequest, Usage, Verdict, Worktree,
+    Inquiry, Kind, Limit, LimitUnit, Limits, Merge, ModelSpend, Part, Permission, Pick, PlanStep,
+    Progress, Question, Reply, Setting, Skipped, Slash, Spent, Standing, Subagent, SubagentState,
+    Tool, ToolState, TrustRequest, Usage, Verdict, Worktree, dollars,
 };
 pub use files::{FileNews, TurnChange};
 pub use history::{import_saved, rename_saved, saved_conversation};

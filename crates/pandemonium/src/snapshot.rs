@@ -3524,6 +3524,33 @@ impl Shot {
                     )
                     .heard(
                         last,
+                        Event::Spent(pm_harness::Spent {
+                            models: vec![
+                                pm_harness::ModelSpend {
+                                    model: "claude-opus-4-5".to_owned(),
+                                    requests: 14,
+                                    input: 2_100,
+                                    output: 9_400,
+                                    cache_read: 1_180_000,
+                                    cache_write: 96_000,
+                                    cost: Some(1_435_500),
+                                    missed: 310_000,
+                                },
+                                pm_harness::ModelSpend {
+                                    model: "claude-haiku-4-5".to_owned(),
+                                    requests: 6,
+                                    input: 41_000,
+                                    output: 3_200,
+                                    cache_read: 0,
+                                    cache_write: 0,
+                                    cost: Some(57_000),
+                                    missed: 0,
+                                },
+                            ],
+                        }),
+                    )
+                    .heard(
+                        last,
                         Event::Limits(pm_harness::Allowance(pm_harness::Limits {
                             provider: "claude".to_owned(),
                             plan: None,

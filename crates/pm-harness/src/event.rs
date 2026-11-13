@@ -4,9 +4,9 @@ use serde_json::{Value, json};
 
 pub use omc_wire::{
     Alternative, Background, Choice, Diff, Goal, GoalState, Input, Inquiry, Kind, Limit, LimitUnit,
-    Limits, Merge, Part, Permission, Pick, PlanStep, Progress, Question, Reply, Setting, Skipped,
-    Slash, Standing, Subagent, SubagentState, Tool, ToolState, TrustRequest, Usage, Verdict,
-    Worktree,
+    Limits, Merge, ModelSpend, Part, Permission, Pick, PlanStep, Progress, Question, Reply,
+    Setting, Skipped, Slash, Spent, Standing, Subagent, SubagentState, Tool, ToolState,
+    TrustRequest, Usage, Verdict, Worktree, dollars,
 };
 
 /// What an account has used of its allowance, as the event that carries it holds it.
@@ -127,6 +127,8 @@ pub enum Event {
     Limits(Allowance),
     /// The conversation's goal was set, or how it stands changed; a cleared goal says so with its state.
     Goal(Goal),
+    /// What the conversation has cost so far, whole, for each model it asked.
+    Spent(Spent),
 }
 
 /// What an agent says about itself when a conversation is opened.
@@ -222,6 +224,7 @@ impl Event {
             Wire::Settings(settings) => Some(Self::Settings(settings)),
             Wire::Commands(commands) => Some(Self::Commands(commands)),
             Wire::Used(usage) => Some(Self::Used(usage)),
+            Wire::Spent(spent) => Some(Self::Spent(spent)),
             Wire::Started(part) => Some(Self::Started(part)),
             Wire::Said(text) => Some(Self::Said(text)),
             Wire::Thought(text) => Some(Self::Thought(text)),

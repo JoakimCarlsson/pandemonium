@@ -1180,6 +1180,7 @@ Events use serde's default form, one key naming the type.
 | `{"Settings": [Setting]}`     | What can be changed and how it stands now. Replaces the earlier list.                                     |
 | `{"Commands": [Slash]}`       | The commands and skills offered behind a slash, named alike, which the agent loads when a prompt starts with the name. Replaces the earlier list. |
 | `{"Used": {"used", "size"}}`  | How many tokens the context holds and how many it takes in all. Replaces the earlier count.               |
+| `{"Spent": {"models": [ModelSpend]}}` | What the conversation has cost so far, whole, for each model it asked, subagents included. Replaces the earlier figures. Not kept on disk: the harness saves it with the conversation. |
 | `{"Said": "text"}`            | More of the agent's reply. Append it to the reply so far.                                                 |
 | `{"Thought": "text"}`         | More of the agent's reasoning. Append it.                                                                 |
 | `{"Tool": Tool}`              | A tool the agent is using. Later events with the same `id` update it.                                     |
@@ -1208,6 +1209,10 @@ Events use serde's default form, one key naming the type.
 
 Shapes used above:
 
+- **ModelSpend:** `{model, requests, input, output, cache_read, cache_write, cost, missed}`.
+  The four token counts are sums over the model's `requests`. `cost` is in
+  millionths of a US dollar at the model's list prices, null when its prices
+  are not known; `missed` is how much of it was paid for cache misses.
 - **Setting:** `{id, category, name, current, picks: [{value, name, description}]}`.
   `category` is `model`, `mode`, `thought_level` or something else. Change one
   with `set` and a `value` from `picks`.

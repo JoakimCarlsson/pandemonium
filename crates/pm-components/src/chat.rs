@@ -307,7 +307,7 @@ fn agent_message(
     reply.group().selectable(CHAT_TEXT)
 }
 
-/// The strip above the conversation: its status, title, branch and agent.
+/// The strip above the conversation: its status, title, branch, agent and what it has cost.
 fn header(state: &WorkspaceState, session: &Session) -> Node {
     let mut strip = node()
         .styles([
@@ -360,7 +360,7 @@ fn header(state: &WorkspaceState, session: &Session) -> Node {
         12,
         Role::Subtle,
     ));
-    strip
+    strip.children(crate::spend::cost_of(session))
 }
 
 /// Whether the frame just drawn left messages far back unbuilt for a later frame, so another frame is wanted; asking clears the answer.

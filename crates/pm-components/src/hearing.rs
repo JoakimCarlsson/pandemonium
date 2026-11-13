@@ -37,6 +37,7 @@ impl Session {
             }
             Event::Commands(commands) => self.commands = commands,
             Event::Used(usage) => self.context = Some(usage),
+            Event::Spent(spent) => self.spent = Some(spent),
             Event::Limits(allowance) => self.limits = Some(allowance.0),
             Event::Goal(goal) => {
                 self.goal = (goal.state != pm_harness::GoalState::Cleared).then_some(goal);
