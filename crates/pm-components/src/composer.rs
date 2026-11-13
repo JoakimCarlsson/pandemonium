@@ -20,9 +20,10 @@ use crate::popover::{anchored, heading, row};
 use crate::sample::Session;
 use crate::size::Size;
 use crate::state::{
-    ACCOUNT, ACCOUNT_BASE, AGENT_TOGGLE, ATTACH, ATTACHED_BASE, BRANCH_BASE, EFFORT_BASE, LOCATION,
-    Location, MENTION, MENU_BODY, MENU_FILTER, MENU_PICK_BASE, MENU_SCROLL, PLACE_BASE, PROMPT,
-    Picker, SEND, SEND_NOW, SETTING_BASE, SLASH_BASE, SLASH_BUTTON, STOP, WorkspaceState,
+    ACCOUNT, ACCOUNT_BASE, AGENT_TOGGLE, ATTACH, ATTACHED_BASE, BRANCH_BASE, EFFORT_BASE,
+    GOAL_BASE, GOAL_CHIP, LOCATION, Location, MENTION, MENU_BODY, MENU_FILTER, MENU_PICK_BASE,
+    MENU_SCROLL, PLACE_BASE, PROMPT, Picker, SEND, SEND_NOW, SETTING_BASE, SLASH_BASE,
+    SLASH_BUTTON, STOP, WorkspaceState,
 };
 use crate::usage;
 use crate::{Button, Checkbox, Input, Stepper, button, checkbox, input};
@@ -241,6 +242,55 @@ fn account_menu(state: &WorkspaceState) -> Node {
         FocusId(ACCOUNT_BASE + 1 + logins.len() as u64),
     )
     .over_button(MENU_BODY)
+}
+
+/// What the goal chip says of `goal`: how it stands, and how much of its budget is used when it has one.
+fn goal_label(goal: &pm_harness::Goal) -> String {
+    use pm_harness::GoalState;
+    let state = match goal.state {
+        GoalState::Active => "Goal",
+        GoalState::Paused => "Goal paused",
+        GoalState::BudgetLimited => "Goal out of budget",
+        GoalState::Complete => "Goal done",
+        GoalState::Cleared => "No goal",
+    };
+    match goal.budget {
+        Some(budget) => format!(
+            "{state} · {}k/{}k",
+            goal.used.div_ceil(1000),
+            budget.div_ceil(1000)
+        ),
+        None => state.to_owned(),
+    }
+}
+
+/// The menu of the goal chip: the objective and why the goal stands as it does, then pausing it while it is active, resuming it while it is paused, and clearing it.
+fn goal_menu(goal: &pm_harness::Goal) -> Node {
+    use pm_harness::GoalState;
+    let mut menu = Popover::new().width(MENU_WIDTH).heading("Goal", None).row(
+        &goal.objective,
+        goal.note.as_deref().unwrap_or(""),
+        false,
+        MENU_BODY,
+    );
+    if goal.state == GoalState::Active {
+        menu = menu.row(
+            "Pause",
+            "Finish this turn and start no more",
+            false,
+            FocusId(GOAL_BASE),
+        );
+    }
+    if goal.state == GoalState::Paused {
+        menu = menu.row(
+            "Resume",
+            "Go on working toward it",
+            false,
+            FocusId(GOAL_BASE + 1),
+        );
+    }
+    menu.row("Clear", "Forget the goal", false, FocusId(GOAL_BASE + 2))
+        .over_button_end(MENU_BODY)
 }
 
 /// The line under the models that sets how hard the agent thinks: its name and a track with a stop for each level.
@@ -648,6 +698,13 @@ pub fn composer(
         strip = strip.child(anchored(
             chip(&label, Some(IconName::CircleUser), ACCOUNT, open),
             open.then(|| account_menu(state)),
+        ));
+    }
+    if let Some(goal) = session.and_then(|session| session.goal.as_ref()) {
+        let open = state.picker == Some(Picker::Goal);
+        strip = strip.child(anchored(
+            chip(&goal_label(goal), Some(IconName::Target), GOAL_CHIP, open),
+            open.then(|| goal_menu(goal)),
         ));
     }
     let strip = strip.child(spacer());

@@ -8,10 +8,11 @@ use crate::captures::{CAPTURE_BASE, CAPTURE_REMOVE_BASE, MOST_CAPTURES};
 use crate::elements::{ELEMENT_BASE, ELEMENT_REMOVE_BASE, MOST_ELEMENTS};
 use crate::state::{
     ACCOUNT, ACCOUNT_BASE, AGENT_TOGGLE, APPROVALS_CHIP, ATTACHED_BASE, Activity, BRANCH_BASE,
-    DETAILS_BASE, EFFORT_BASE, LOCATION, Location, MENTION, MENU_BODY, MENU_FILTER,
-    MENU_FILTER_PICK, MENU_PICK_BASE, MENU_PICK_ROOM, Outgoing, PICK_BASE, PLACE_BASE, PLAN_CHIP,
-    Page, Picker, SETTING_BASE, SHELLS_CHIP, SLASH_BASE, SLASH_BUTTON, STEP_BASE,
-    SUBAGENT_STOP_BASE, SUBAGENT_STOP_ROOM, SUBAGENTS_CHIP, WorkspaceState, prompt_field,
+    DETAILS_BASE, EFFORT_BASE, GOAL_BASE, GOAL_CHIP, GOAL_COMMANDS, LOCATION, Location, MENTION,
+    MENU_BODY, MENU_FILTER, MENU_FILTER_PICK, MENU_PICK_BASE, MENU_PICK_ROOM, Outgoing, PICK_BASE,
+    PLACE_BASE, PLAN_CHIP, Page, Picker, SETTING_BASE, SHELLS_CHIP, SLASH_BASE, SLASH_BUTTON,
+    STEP_BASE, SUBAGENT_STOP_BASE, SUBAGENT_STOP_ROOM, SUBAGENTS_CHIP, WorkspaceState,
+    prompt_field,
 };
 
 /// How tall one value of a menu is, in logical pixels.
@@ -57,6 +58,7 @@ impl WorkspaceState {
             || (MENU_PICK_BASE..MENU_PICK_BASE + MENU_PICK_ROOM as u64).contains(&id)
             || action == ACCOUNT
             || (ACCOUNT_BASE..ACCOUNT_BASE + 50).contains(&id)
+            || action == GOAL_CHIP
             || (SETTING_BASE..SETTING_BASE + 10).contains(&id)
             || (ELEMENT_BASE..ELEMENT_BASE + MOST_ELEMENTS as u64).contains(&id)
             || (CAPTURE_BASE..CAPTURE_BASE + MOST_CAPTURES as u64).contains(&id)
@@ -583,6 +585,23 @@ impl WorkspaceState {
         self
     }
 
+    /// Sends the open session's agent the goal command at `index` of [`GOAL_COMMANDS`] and closes the menu; while the agent works, the server hands it over at once, and otherwise the agent answers it as a turn of its own.
+    fn command_goal(&mut self, index: usize) {
+        self.picker = None;
+        let (Page::Session(session), Some(command)) = (self.page, GOAL_COMMANDS.get(index)) else {
+            return;
+        };
+        if self.sessions.get(session).is_none() {
+            return;
+        }
+        self.outbox.push(Outgoing::Prompt {
+            session,
+            text: (*command).to_owned(),
+            files: Vec::new(),
+            now: false,
+        });
+    }
+
     /// How much of its allowance the account of the agent at `agent`, under the added login `login` or its own, has used, when the provider has said.
     pub fn allowance_of(&self, agent: usize, login: Option<&str>) -> Option<&pm_harness::Limits> {
         self.allowances.get(&(agent, login.map(str::to_owned)))
@@ -782,6 +801,10 @@ impl WorkspaceState {
             self.picker = (self.picker != Some(Picker::Account)).then_some(Picker::Account);
         } else if let Some(index) = within(ACCOUNT_BASE, 50) {
             self.pick_account(index);
+        } else if id == GOAL_CHIP.0 {
+            self.picker = (self.picker != Some(Picker::Goal)).then_some(Picker::Goal);
+        } else if let Some(index) = within(GOAL_BASE, GOAL_COMMANDS.len()) {
+            self.command_goal(index);
         } else if id == PLAN_CHIP.0 {
             self.activity = (self.activity != Some(Activity::Plan)).then_some(Activity::Plan);
         } else if id == APPROVALS_CHIP.0 {

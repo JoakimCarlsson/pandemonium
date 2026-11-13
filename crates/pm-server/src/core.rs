@@ -225,6 +225,8 @@ impl Session {
 
     /// Takes `event`, which the agent of the session numbered `number` reported, into the log, does what it calls for and returns what it noted.
     ///
+    /// A prompt the agent reports is a turn it started itself, toward its goal, so the session is busy until that turn finishes.
+    ///
     /// When the agent stopped, what it had running stopped with it, so a `Halted` is noted before the `Failed`, as when a turn is ended for it, and the trust request it waited on is dropped. Nothing is noted when `event` only says again what the log said.
     pub(crate) fn take_in(&mut self, number: u64, event: Event) -> Told {
         let mut told = Told::new();
@@ -251,6 +253,7 @@ impl Session {
                 self.settle_handoff();
                 told.extend(self.advance(number));
             }
+            Event::Prompted { .. } => self.busy = true,
             _ => {}
         }
         told

@@ -301,6 +301,10 @@ pub enum Shot {
     QueuedEditing,
     /// A conversation with the context ring in the prompt box.
     Usage,
+    /// A conversation working toward a goal with a budget, its chip in the prompt box.
+    Goal,
+    /// The same conversation with the goal's menu open.
+    GoalMenu,
     /// The page for starting work, with how much of its allowance each agent's account has used.
     Allowances,
     /// A conversation with the model menu open.
@@ -3541,6 +3545,8 @@ impl Shot {
                     )
             )
             }
+            Self::Goal => Screen::Workspace(goal()),
+            Self::GoalMenu => Screen::Workspace(goal().after(pm_components::state::GOAL_CHIP)),
             Self::Allowances => {
                 let used = |five: f64, week: f64| {
                     let window = |label: &str, name: &str, fraction: f64| {
@@ -4316,6 +4322,22 @@ enum Turn {
     Background,
     /// The agent finished it like [`Turn::Background`], its subagents working in git worktrees of their own and a third one ended.
     Isolated,
+}
+
+/// A finished conversation whose agent works toward a goal with a budget of two million tokens, a fifth of it used.
+fn goal() -> WorkspaceState {
+    let state = live(Turn::Finished);
+    let last = state.sessions.len() - 1;
+    state.heard(
+        last,
+        Event::Goal(pm_harness::Goal {
+            objective: "Make every test in the workspace pass".to_owned(),
+            state: pm_harness::GoalState::Active,
+            budget: Some(2_000_000),
+            used: 412_000,
+            note: None,
+        }),
+    )
 }
 
 /// A conversation on a turn, with two prompts waiting behind it and a third being written.

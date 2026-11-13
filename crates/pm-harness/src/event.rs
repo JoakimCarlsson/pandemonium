@@ -3,9 +3,10 @@
 use serde_json::{Value, json};
 
 pub use omc_wire::{
-    Alternative, Background, Choice, Diff, Input, Inquiry, Kind, Limit, LimitUnit, Limits, Merge,
-    Part, Permission, Pick, PlanStep, Progress, Question, Reply, Setting, Skipped, Slash, Standing,
-    Subagent, SubagentState, Tool, ToolState, TrustRequest, Usage, Verdict, Worktree,
+    Alternative, Background, Choice, Diff, Goal, GoalState, Input, Inquiry, Kind, Limit, LimitUnit,
+    Limits, Merge, Part, Permission, Pick, PlanStep, Progress, Question, Reply, Setting, Skipped,
+    Slash, Standing, Subagent, SubagentState, Tool, ToolState, TrustRequest, Usage, Verdict,
+    Worktree,
 };
 
 /// What an account has used of its allowance, as the event that carries it holds it.
@@ -114,6 +115,8 @@ pub enum Event {
     ToolSignIn(String),
     /// How much of the account's allowance the provider says is used, as it stood when it was asked.
     Limits(Allowance),
+    /// The conversation's goal was set, or how it stands changed; a cleared goal says so with its state.
+    Goal(Goal),
 }
 
 /// What an agent says about itself when a conversation is opened.
@@ -200,7 +203,7 @@ fn stop_came_late(reason: &str) -> bool {
 }
 
 impl Event {
-    /// The event the app keeps for what the harness `reported`, or nothing when the app has no use for it: a refusal to stop a subagent that had ended already is dropped, since the app takes a failure to mean the agent is gone.
+    /// The event the app keeps for what the harness `reported`, or nothing when the app has no use for it: a refusal to stop a subagent that had ended already, and a `/goal` command the agent could not carry out while it worked, are dropped, since the app takes a failure to mean the agent is gone; the goal's own events say how it stands. A turn the harness started itself toward the goal comes as the prompt it started with.
     pub fn from_harness(reported: omc_wire::Event) -> Option<Self> {
         use omc_wire::Event as Wire;
         match reported {
@@ -222,8 +225,15 @@ impl Event {
             Wire::SignedIn => Some(Self::SignedIn),
             Wire::LoginUrl(address) => Some(Self::ToolSignIn(address)),
             Wire::LoginCode { .. } | Wire::Resumed(_) | Wire::Language(_) | Wire::Queued(_) => None,
+            Wire::Goal(goal) => Some(Self::Goal(goal)),
+            Wire::Continued(text) => Some(Self::Prompted {
+                text,
+                files: Vec::new(),
+                checkpoint: false,
+                turn: 0,
+            }),
             Wire::Trust(request) => Some(Self::Trust(request)),
-            Wire::Failed(reason) if stop_came_late(&reason) => None,
+            Wire::Failed(reason) if stop_came_late(&reason) || reason.starts_with("/goal:") => None,
             Wire::Failed(reason) => Some(Self::Failed(reason)),
             Wire::Titled(title) => Some(Self::Titled(title)),
         }
@@ -236,6 +246,37 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+
+    /// A turn the harness starts itself toward the goal comes as the prompt it started with, the goal as the app's goal event, and a `/goal` command it could not carry out is dropped.
+    #[test]
+    fn goal_events_become_the_apps() {
+        assert_eq!(
+            Event::from_harness(omc_wire::Event::Continued("keep going".into())),
+            Some(Event::Prompted {
+                text: "keep going".into(),
+                files: Vec::new(),
+                checkpoint: false,
+                turn: 0,
+            })
+        );
+        let goal = Goal {
+            objective: "ship".into(),
+            state: GoalState::Active,
+            budget: None,
+            used: 0,
+            note: None,
+        };
+        assert_eq!(
+            Event::from_harness(omc_wire::Event::Goal(goal.clone())),
+            Some(Event::Goal(goal))
+        );
+        assert_eq!(
+            Event::from_harness(omc_wire::Event::Failed(
+                "/goal: the goal is not active".into()
+            )),
+            None
+        );
+    }
 
     /// The sign-in page a tool server wants opened, which the harness sends during a conversation as a line of its wire protocol, becomes the app's sign-in event, and survives the trip through the session log's encoding.
     #[test]

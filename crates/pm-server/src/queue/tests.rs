@@ -149,3 +149,38 @@ fn a_held_queue_hands_nothing_over_until_its_holder_lets_go() {
     assert_eq!(held.held_by, None);
     assert_eq!(held.queue[0].prompt.text, "mine");
 }
+
+/// Showing, pausing, clearing and budgeting the goal are handed to a working agent at once; setting or resuming it, and other prompts, wait.
+#[test]
+fn goal_commands_that_start_no_turn_steer_at_once() {
+    for text in ["/goal", " /goal pause", "/goal clear", "/goal budget 2m"] {
+        assert!(steers_goal(text), "{text}");
+    }
+    for text in [
+        "/goal resume",
+        "/goal ship it",
+        "/goal pause the build",
+        "fix it",
+    ] {
+        assert!(!steers_goal(text), "{text}");
+    }
+}
+
+/// A prompt the agent reports, a turn it started itself toward its goal, makes the session busy, so that prompts sent meanwhile wait for it.
+#[test]
+fn a_turn_the_agent_starts_makes_the_session_busy() {
+    let _forget = Forget;
+    let mut held = session();
+    held.take_in(
+        NUMBER,
+        Event::Prompted {
+            text: "Keep working toward the goal".into(),
+            files: Vec::new(),
+            checkpoint: false,
+            turn: 0,
+        },
+    );
+    assert!(held.busy);
+    held.take_in(NUMBER, Event::Finished(None));
+    assert!(!held.busy);
+}

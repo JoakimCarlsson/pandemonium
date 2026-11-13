@@ -631,6 +631,8 @@ pub struct Session {
     pub context: Option<pm_harness::Usage>,
     /// How much of the account's allowance the provider says is used, once it has said.
     pub limits: Option<pm_harness::Limits>,
+    /// The goal the agent works toward across turns, while one is set.
+    pub goal: Option<pm_harness::Goal>,
     /// Whether the window has lost its connection to the session's server, so that what its agent does is not heard until the connection is made anew.
     pub out_of_reach: bool,
     /// Whether the server was asked to continue this chat as a session in a project and has yet to say how that went.
@@ -680,6 +682,7 @@ impl Session {
             settings: Vec::new(),
             context: None,
             limits: None,
+            goal: None,
             commands: Vec::new(),
             login: None,
             signed_out: None,

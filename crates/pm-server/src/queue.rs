@@ -30,6 +30,12 @@ impl Session {
         if !self.busy {
             return self.hand(number, prompt);
         }
+        if steers_goal(&prompt.text)
+            && let Some(chat) = &self.chat
+        {
+            chat.prompt(&prompt.text, &prompt.paths, self.next_turn_id(), "");
+            return Told::new();
+        }
         let id = self.next_queued;
         self.next_queued += 1;
         let event = Event::Queued {
@@ -216,6 +222,15 @@ impl Session {
             chat.cancel();
         }
     }
+}
+
+/// Whether `text` is a `/goal` command the agent carries out at once while it works, starting no turn: showing the goal, pausing, clearing or budgeting it. Setting and resuming it start a turn, so they wait like any prompt.
+pub(crate) fn steers_goal(text: &str) -> bool {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    matches!(
+        words.as_slice(),
+        ["/goal"] | ["/goal", "pause" | "clear"] | ["/goal", "budget", _]
+    )
 }
 
 #[cfg(test)]

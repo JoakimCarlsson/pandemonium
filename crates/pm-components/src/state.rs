@@ -311,6 +311,15 @@ pub const ACCOUNT: FocusId = FocusId(4291);
 /// The first of the rows choosing the account; the rest follow it.
 pub const ACCOUNT_BASE: u64 = 4700;
 
+/// The chip showing the goal the agent works toward, which opens what can be done with it.
+pub const GOAL_CHIP: FocusId = FocusId(4292);
+
+/// The first of the rows of the goal's menu, pausing, resuming and clearing it, in that order.
+pub const GOAL_BASE: u64 = 4760;
+
+/// What the rows of the goal's menu send to the agent, in the order they follow [`GOAL_BASE`].
+pub const GOAL_COMMANDS: [&str; 3] = ["/goal pause", "/goal resume", "/goal clear"];
+
 pub const SLASH_BUTTON: FocusId = FocusId(4280);
 
 /// The first of the lines folding the steps of a reply; the rest follow it.
@@ -1631,6 +1640,8 @@ pub enum Picker {
     Location,
     /// Which login of the agent is used.
     Account,
+    /// What is done with the goal the agent works toward.
+    Goal,
     /// Which project, and from which branch, the open chat is continued in.
     Continue,
     /// An element of a web page picked for the prompt, by position among those picked.
