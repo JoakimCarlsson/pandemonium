@@ -73,7 +73,7 @@ impl Quick {
             Self::Symbols => "Go to a symbol in the project",
             Self::Outline => "Go to a symbol in the file",
             Self::Search => "Search the text of the project",
-            Self::Sessions => "Go to a session, or a project to start one in",
+            Self::Sessions => "Search sessions and chats; Ctrl+Enter starts a session with it",
         }
     }
 
@@ -181,7 +181,7 @@ pub enum Items {
         /// How many of `matched` were used recently.
         recent: usize,
     },
-    /// The sessions of every project, the latest changed first, then the projects to start one in, narrowed by what is typed, to go to one.
+    /// The sessions of every project, those waiting for the reader first while nothing is typed and else the latest changed first, then the projects to start one in, narrowed by what is typed, with the chats whose conversations hold it, to go to one.
     Sessions {
         /// Each place to go to, with its name and what is said beside it.
         sessions: Vec<(Destination, String, String)>,
@@ -189,6 +189,8 @@ pub enum Items {
         filter: Field,
         /// The sessions that match, best first, by place among `sessions`.
         matched: Vec<usize>,
+        /// A preview of the message that matched what is typed, for each session the servers found by what was said in it, by place among `sessions`.
+        found: Vec<(usize, String)>,
     },
     /// The line of the file shown to go to, by the number typed.
     Line {
@@ -822,41 +824,17 @@ impl WorkspaceState {
                 }
             }
             Quick::Sessions => {
-                let shown = match self.page {
-                    crate::state::Page::Session(index) => Some(index),
-                    _ => None,
-                };
-                let mut order: Vec<usize> = (0..self.sessions.len())
-                    .filter(|index| Some(*index) != shown && !self.sessions[*index].closed)
-                    .collect();
-                order.sort_by_key(|index| std::cmp::Reverse(self.sessions[*index].updated_at));
-                let projects = self.projects.iter().enumerate().map(|(index, project)| {
-                    (
-                        Destination::Project(index),
-                        project.name.clone(),
-                        String::new(),
-                    )
-                });
-                let sessions: Vec<(Destination, String, String)> = order
-                    .into_iter()
-                    .map(|index| {
-                        let session = &self.sessions[index];
-                        let beside = match self.project_of(session) {
-                            Some(project) => format!("{} · {}", project.name, session.age()),
-                            None => format!("Chat · {}", session.age()),
-                        };
-                        (Destination::Session(index), session.title.clone(), beside)
-                    })
-                    .chain(projects)
-                    .collect();
+                let sessions = self.session_destinations();
                 if sessions.is_empty() {
                     problem = Some("Add a project to start a session".to_owned());
                 }
                 let matched = matching_sessions(&sessions, &query);
+                self.chats_asked(&query);
                 Items::Sessions {
                     sessions,
                     filter,
                     matched,
+                    found: Vec::new(),
                 }
             }
             Quick::Commands => {
@@ -1078,8 +1056,19 @@ impl WorkspaceState {
                 ..
             } => (*matched, *count) = matching_recent_files(paths, &query, &recent_files),
             Items::Sessions {
-                sessions, matched, ..
-            } => *matched = matching_sessions(sessions, &query),
+                sessions,
+                matched,
+                found,
+                ..
+            } => {
+                *matched = matching_sessions(sessions, &query);
+                found.clear();
+                if !query.trim().is_empty() {
+                    self.outbox.push(Outgoing::SearchChats {
+                        query: query.clone(),
+                    });
+                }
+            }
             Items::Choices {
                 choosing,
                 choices,

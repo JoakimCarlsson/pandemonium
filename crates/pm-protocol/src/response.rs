@@ -590,6 +590,11 @@ pub enum Response {
         /// Its path on the server's machine.
         path: String,
     },
+    /// The sessions whose titles or conversations hold what a `search_chats` looked for, best first.
+    ChatsFound {
+        /// The sessions found.
+        hits: Vec<crate::ChatHit>,
+    },
     /// The newest pull request of the branch asked about, or nothing when it has none or `gh` could not say.
     PullRequest {
         /// The pull request.

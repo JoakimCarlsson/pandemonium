@@ -234,6 +234,8 @@ enum Pending {
     Problems(usize),
     /// The symbols of the project of the session at this position matching this query.
     Symbols(usize, String),
+    /// The sessions whose titles or conversations hold this query, as the server of one machine found them.
+    Chats(String),
     /// The file of the session at this position, at this path, as the last commit holds it.
     Base(usize, String),
     /// Where the thing at a place of the file of the session at this position, at this path and version, is used.
@@ -2621,6 +2623,7 @@ impl Work {
             | Pending::Definitions(..)
             | Pending::Base(..)
             | Pending::Symbols(..)
+            | Pending::Chats(_)
             | Pending::Problems(_)
             | Pending::Blame(..)
             | Pending::Highlights(..)

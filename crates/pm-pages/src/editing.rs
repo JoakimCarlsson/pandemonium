@@ -339,6 +339,11 @@ impl Screen {
         self.in_workspace(|state| state.with_symbols(session, query, locations))
     }
 
+    /// The screen after a server found `hits`, the sessions at these positions whose titles or conversations hold `query`.
+    pub fn with_chats(self, query: &str, hits: Vec<(usize, pm_protocol::ChatHit)>) -> Self {
+        self.in_workspace(|state| state.with_chats(query, hits))
+    }
+
     /// The screen listing the items of the outline of the file shown at `at`.
     pub fn outline_requested(self, at: (f32, f32)) -> Self {
         self.in_workspace(|state| state.outline_requested(at))

@@ -241,6 +241,7 @@ request with exactly one `response` carrying the same `id`.
 | `definition`   | `directory`, `path`, `version`, `position`, `seek` (optional)                                    | `definitions`   |
 | `workspace_symbols` | `directory`, `path`, `query`                                                                | `definitions`   |
 | `search_files` | `directory`, `query`, `regex` (optional), `case` (optional)                                      | `definitions`   |
+| `search_chats` | `query`, `limit` (optional)                                                                     | `chats_found`, with `hits` |
 | `problems`     | `directory`                                                                                      | `problems`      |
 | `blame`        | `directory`, `path`, `line`                                                                      | `blamed`        |
 | `highlights`   | `directory`, `path`, `version`, `position`                                                       | `highlights`    |
@@ -1008,6 +1009,16 @@ everything said of them, its submodules' paths written from `directory`.
   tracked or not but not ignored, that hold `query`, as typed or as a regular
   expression when `regex`, matching case only when `case`; as `definitions`
   with `line` holding each line, at most 500 of them.
+- **`search_chats`:** the sessions the server holds, closed ones included,
+  whose titles or conversations hold every word of `query`, ignoring case, as
+  `chats_found` with `hits`, best first and at most `limit` of them (50 when
+  not given). Each hit names the `session`, the `field` its best match was in
+  (`title`, `prompt` for a message the reader sent, or `reply` for what the
+  agent said), a one-line `preview` of the text around the match, and a
+  `score`, higher being better: a title beats a message, a phrase found whole
+  beats words found apart, words found at their start beat words found inside
+  others, and a newer session wins a tie. A session is listed once, by its
+  best match. An empty query finds nothing.
 - **`workspace_symbols`:** the symbols of the folder whose names match
   `query`, as the language server of the open file `path` finds them, those
   defined inside the folder, or in a folder attached to its language server's

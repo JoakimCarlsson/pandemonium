@@ -1587,6 +1587,13 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             },
             Err(reason) => failed(reason),
         },
+        Request::SearchChats { query, limit } => Response::ChatsFound {
+            hits: crate::chat_index::search_core(
+                core,
+                &query,
+                limit.unwrap_or(crate::chat_index::DEFAULT_LIMIT),
+            ),
+        },
         Request::WorkspaceSymbols {
             directory,
             path,

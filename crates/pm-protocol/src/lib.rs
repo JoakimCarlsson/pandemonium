@@ -2,6 +2,7 @@
 
 mod address;
 mod bytes;
+mod chat_search;
 mod credential;
 mod debug;
 mod extensions;
@@ -17,6 +18,7 @@ pub use address::{
     CONTAINER_SCHEME, DIRECT_SCHEME, Route, SSH_SCHEME, TUNNEL_SCHEME, WSL_SCHEME, escape_folder,
     host_of, is_destination, route_of, unescape_folder,
 };
+pub use chat_search::{ChatField, ChatHit};
 pub use credential::{Build, Credential, Target};
 pub use debug::{DebugAction, DebugAdapter, DebugFile, DebugInfo, DebugProcess, DebugScenario};
 pub use extensions::{

@@ -1343,6 +1343,14 @@ pub enum Request {
         /// What the reader decided.
         verdict: pm_harness::Verdict,
     },
+    /// The sessions the server holds whose titles or conversations hold every word of a query, best first.
+    SearchChats {
+        /// What is looked for: words that must each be found, ignoring case.
+        query: String,
+        /// How many sessions to answer at most; a default the server picks when nothing.
+        #[serde(default)]
+        limit: Option<usize>,
+    },
     /// The newest pull request of a branch, open or not, with its checks and review, from the GitHub repository the folder is a clone of.
     PullRequest {
         /// The folder.

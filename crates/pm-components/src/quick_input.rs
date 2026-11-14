@@ -25,6 +25,9 @@ pub const QUICK_SHOWN: usize = 16;
 /// How tall a row is, in logical pixels.
 const ROW: f32 = 22.0;
 
+/// How wide the title of a session is when a preview of the message that matched follows it, in logical pixels.
+const PREVIEWED_TITLE: f32 = 170.0;
+
 /// How tall the field is, in logical pixels: as tall as the command center it lies over.
 pub const FIELD_HEIGHT: f32 = 28.0;
 
@@ -195,7 +198,9 @@ fn row(listing: &Listing, place: usize, index: usize, picked: bool) -> Node {
             });
             (cells, group)
         }
-        Items::Sessions { sessions, .. } => {
+        Items::Sessions {
+            sessions, found, ..
+        } => {
             let project = |index: usize| {
                 sessions
                     .get(index)
@@ -209,11 +214,29 @@ fn row(listing: &Listing, place: usize, index: usize, picked: bool) -> Node {
             let cells = sessions
                 .get(index)
                 .map_or_else(Vec::new, |(_, title, beside)| {
-                    let mut cells = vec![marked(title, query)];
+                    let preview = found
+                        .iter()
+                        .find(|(place, _)| *place == index)
+                        .map(|(_, preview)| preview);
+                    let mut cells = match preview {
+                        Some(preview) => vec![
+                            node()
+                                .styles([flex_none(), overflow_hidden(), w_px(PREVIEWED_TITLE)])
+                                .child(marked(title, query)),
+                            node()
+                                .styles([flex_1(), min_w_px(0), overflow_hidden()])
+                                .child(line(preview.clone(), 12, 1.4, Role::Muted)),
+                        ],
+                        None => vec![marked(title, query)],
+                    };
                     cells.extend(group.map(|(said, _)| separator(said)));
+                    let beside = match preview {
+                        Some(_) => beside.rsplit(" · ").next().unwrap_or_default(),
+                        None => beside.as_str(),
+                    };
                     if !beside.is_empty() {
                         cells.push(node().styles([flex_none()]).child(line(
-                            beside.clone(),
+                            beside.to_owned(),
                             12,
                             1.4,
                             Role::Subtle,

@@ -138,6 +138,7 @@ fn main() {
             Some("run-buttons") => Shot::RunButtons,
             Some("toolchains") => Shot::Toolchains,
             Some("sessions") => Shot::Sessions,
+            Some("chat-search") => Shot::ChatSearch,
             Some("quickhelp") => Shot::QuickHelp,
             Some("themes") => Shot::Themes,
             Some("goline") => Shot::GoLine,

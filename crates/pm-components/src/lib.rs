@@ -97,6 +97,7 @@ pub mod pull_request_bar;
 pub mod queued;
 pub mod quick_choices;
 pub mod quick_input;
+pub mod quick_sessions;
 mod reach;
 pub mod review;
 pub mod sample;

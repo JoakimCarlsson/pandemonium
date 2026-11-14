@@ -513,6 +513,8 @@ pub enum Shot {
     Toolchains,
     /// The same file with the list of the other sessions open.
     Sessions,
+    /// The same file with the list of sessions open on a search that found chats by what was said in them, each with a preview of the message.
+    ChatSearch,
     /// The same file with the quick input listing what can be typed first.
     QuickHelp,
     /// The same file with the quick input listing the themes.
@@ -1122,6 +1124,44 @@ fn sample_tasks() -> Vec<pm_protocol::Task> {
         task("npm: build", "npm run build", "build", "package.json"),
         task("npm: dev", "npm run dev", "run", "package.json"),
     ]
+}
+
+/// The sample file with the list of sessions open on `restore`, which the servers found in the titles and conversations of some of them.
+fn chat_search() -> WorkspaceState {
+    let hit = |position: usize, field: pm_protocol::ChatField, preview: &str| {
+        (
+            position,
+            pm_protocol::ChatHit {
+                session: position as u64,
+                field,
+                preview: preview.to_owned(),
+                score: 0,
+            },
+        )
+    };
+    code()
+        .sessions_requested((340.0, 0.0))
+        .listing_filtered(Edit::Paste("restore".to_owned()))
+        .with_chats(
+            "restore",
+            vec![
+                hit(
+                    1,
+                    pm_protocol::ChatField::Prompt,
+                    "Make restore save the current state first, so a restore can be undone",
+                ),
+                hit(
+                    2,
+                    pm_protocol::ChatField::Reply,
+                    "…the worktree is removed before restore runs, which is why the files vanish…",
+                ),
+                hit(
+                    3,
+                    pm_protocol::ChatField::Reply,
+                    "Restoring the scroll position now waits for the first frame…",
+                ),
+            ],
+        )
 }
 
 /// The toolchains a machine with rustup, two Node.js versions and a virtual environment has.
@@ -2856,6 +2896,7 @@ impl Shot {
                     .with_toolchains(0, sample_toolchains()),
             ),
             Self::Sessions => Screen::Workspace(code().sessions_requested((340.0, 0.0))),
+            Self::ChatSearch => Screen::Workspace(chat_search()),
             Self::Commands => Screen::Workspace(
                 code()
                     .command_used(pm_editor::Action::FileFinder)

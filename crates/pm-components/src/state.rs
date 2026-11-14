@@ -499,6 +499,11 @@ pub enum Outgoing {
         /// What is looked for.
         query: String,
     },
+    /// Asks the server of every machine for the sessions whose titles or conversations hold some text.
+    SearchChats {
+        /// What is looked for.
+        query: String,
+    },
     /// Asks the language server of a file of the session at this position for the symbols of the project matching a query.
     WorkspaceSymbols {
         /// The session, by position.
@@ -2374,6 +2379,9 @@ impl WorkspaceState {
         if let Some(row) = crate::listing::listing_row_of(action) {
             return self.listing_taken(Some(row));
         }
+        if action == crate::quick_sessions::LISTING_PROMPT {
+            return self.listing_prompted();
+        }
         if action == crate::listing::LISTING_TAKE {
             return self.listing_taken(None);
         }
@@ -2749,6 +2757,7 @@ impl WorkspaceState {
         match id {
             PROMPT => Some(SEND_NOW),
             COMMIT_MESSAGE => Some(COMMIT),
+            crate::listing::LISTING_FILTER => Some(crate::quick_sessions::LISTING_PROMPT),
             _ => None,
         }
     }

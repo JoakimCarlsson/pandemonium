@@ -372,6 +372,7 @@ impl Work {
                     Pending::ProjectSearch(session, asked, case, regex),
                 );
             }
+            Outgoing::SearchChats { query } => self.ask_chats(&query),
             Outgoing::SearchFiles { session, query } => {
                 let asked = query.clone();
                 self.ask_in_folder(
@@ -1231,6 +1232,21 @@ impl Work {
                         .with_project_search(session, &query, case, regex, hits);
                 });
             }
+            (Pending::Chats(query), response) => {
+                let hits = match response {
+                    Response::ChatsFound { hits } => hits,
+                    _ => Vec::new(),
+                };
+                let placed: Vec<(usize, pm_protocol::ChatHit)> = hits
+                    .into_iter()
+                    .filter_map(|hit| {
+                        self.positions
+                            .get(&(host.clone(), hit.session))
+                            .map(|position| (*position, hit))
+                    })
+                    .collect();
+                model.update(|screen| *screen = std::mem::take(screen).with_chats(&query, placed));
+            }
             (Pending::Symbols(session, query), response) => {
                 let locations = match response {
                     Response::Definitions { locations } => locations,
@@ -1513,6 +1529,26 @@ impl Work {
                 model.update(|screen| *screen = std::mem::take(screen).with_grammar(language))
             }
             Err(reason) => eprintln!("the grammar of {language} could not be loaded: {reason}"),
+        }
+    }
+
+    /// Asks the server of this machine, and of every machine a session the window knows is on, for the sessions whose titles or conversations hold `query`; each answers on its own.
+    fn ask_chats(&mut self, query: &str) {
+        let mut hosts: Vec<Host> = vec![None];
+        for (host, _) in self.numbers.values() {
+            if !hosts.contains(host) {
+                hosts.push(host.clone());
+            }
+        }
+        for host in hosts {
+            self.ask(
+                &host,
+                Request::SearchChats {
+                    query: query.to_owned(),
+                    limit: None,
+                },
+                Pending::Chats(query.to_owned()),
+            );
         }
     }
 }
