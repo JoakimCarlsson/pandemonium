@@ -637,6 +637,14 @@ fn attach(core: &Core, connection: &Arc<Connection>, number: u64, after: u64) ->
     Response::Done
 }
 
+/// The answer listing the model servers `listed`, or saying why they could not be read or changed.
+fn model_servers_answer(listed: Result<Vec<pm_harness::ModelServer>, String>) -> Response {
+    match listed {
+        Ok(servers) => Response::ModelServers { servers },
+        Err(reason) => failed(reason),
+    }
+}
+
 /// What the request `request` of `connection` comes to.
 pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Request) -> Response {
     match request {
@@ -865,6 +873,23 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             servers.retain(|server| server.extension.is_none());
             saved_list("mcp-servers", &servers)
         }
+        Request::ModelServers => model_servers_answer(pm_harness::model_servers()),
+        Request::SaveModelServer { server } => {
+            model_servers_answer(pm_harness::save_model_server(server))
+        }
+        Request::RemoveModelServer { id } => {
+            model_servers_answer(pm_harness::remove_model_server(&id))
+        }
+        Request::FindModels { server } => match pm_harness::find_models(server) {
+            Ok(models) => Response::FoundModels {
+                models,
+                error: None,
+            },
+            Err(reason) => Response::FoundModels {
+                models: Vec::new(),
+                error: Some(reason),
+            },
+        },
         Request::WatchFolders { directories } => {
             core.folders.watch(connection, directories);
             Response::Done

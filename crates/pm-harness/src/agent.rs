@@ -5,7 +5,7 @@
 //! here, so a provider added to the harness is offered without a change to
 //! the app.
 
-use std::sync::OnceLock;
+use std::sync::{PoisonError, RwLock};
 
 use omc_wire::{ProviderInfo, SignIn};
 
@@ -13,6 +13,12 @@ use crate::product::Product;
 
 /// The ids the app kept agents under before its list came from the harness, by the provider each stands for, so that saved sessions and logins still find their agent.
 const KEPT_IDS: [(&str, &str); 1] = [("claude", "claude-code")];
+
+/// What a provider needs set besides its API key before it can be reached, by provider id, in the words a settings page shows.
+const SETUP_EXTRAS: [(&str, &str); 1] = [(
+    "azure",
+    "Set AZURE_OPENAI_ENDPOINT or AZURE_OPENAI_RESOURCE_NAME to the resource, and AZURE_OPENAI_DEPLOYMENT to the deployments to offer.",
+)];
 
 /// One agent the app knows how to run.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -31,6 +37,10 @@ pub struct Agent {
     pub key_env: &'static [String],
     /// The cloud credentials the provider is reached with and where they come from, such as Google Cloud's, when it reads those instead of signing in here.
     pub credentials: Option<&'static str>,
+    /// Whether the provider is a model server the user declared rather than one the harness has built in.
+    pub server: bool,
+    /// The models a declared server was given to offer, in order; empty for a built-in provider and for a server whose models are asked of it.
+    pub models: &'static [String],
 }
 
 impl Agent {
@@ -45,6 +55,28 @@ impl Agent {
             sign_in: info.sign_in,
             key_env: &info.key_env,
             credentials: info.credentials.as_deref(),
+            server: info.server,
+            models: &info.models,
+        }
+    }
+
+    /// What the reader sets up for the agent to be reached, in words a settings page shows: the environment variables its API key is read from, and anything else its provider needs; nothing for an agent that needs no setting up.
+    pub fn setup_hint(&self) -> Option<String> {
+        let key = match self.key_env {
+            [] => None,
+            [only] => Some(format!("Reads its key from {only}.")),
+            [first @ .., last] => Some(format!(
+                "Reads its key from {} or {last}.",
+                first.join(", ")
+            )),
+        };
+        let extra = SETUP_EXTRAS
+            .iter()
+            .find(|(provider, _)| *provider == self.provider)
+            .map(|(_, extra)| (*extra).to_owned());
+        match (key, extra) {
+            (Some(key), Some(extra)) => Some(format!("{key} {extra}")),
+            (key, extra) => key.or(extra),
         }
     }
 }
@@ -57,17 +89,29 @@ fn kept_id(provider: &'static str) -> &'static str {
         .map_or(provider, |(_, id)| id)
 }
 
-/// Every agent the app offers, one per provider of the harness, in the harness's order.
+/// The agents of this process as last read from the harness, or nothing before they are first asked for.
+static AGENTS: RwLock<Option<&'static [Agent]>> = RwLock::new(None);
+
+/// Every agent the app offers, one per provider of the harness, in the harness's order: the built-in providers, then the model servers the user declared.
 pub fn agents() -> &'static [Agent] {
-    static PROVIDERS: OnceLock<Vec<ProviderInfo>> = OnceLock::new();
-    static AGENTS: OnceLock<Vec<Agent>> = OnceLock::new();
-    AGENTS.get_or_init(|| {
-        PROVIDERS
-            .get_or_init(omc_session::providers)
+    let read = *AGENTS.read().unwrap_or_else(PoisonError::into_inner);
+    read.unwrap_or_else(refresh_agents)
+}
+
+/// Reads the harness's providers again, so that a model server declared or taken out since is offered or left out from now on, and returns the agents as they now stand.
+///
+/// The list read before stays valid for whoever holds it: it is left in memory, which costs a few hundred bytes each time the declared servers change.
+pub fn refresh_agents() -> &'static [Agent] {
+    let providers: &'static [ProviderInfo] = Box::leak(omc_session::providers().into_boxed_slice());
+    let listed: &'static [Agent] = Box::leak(
+        providers
             .iter()
             .map(Agent::of)
-            .collect()
-    })
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+    );
+    *AGENTS.write().unwrap_or_else(PoisonError::into_inner) = Some(listed);
+    listed
 }
 
 /// The agent the app keeps under `id`, when it offers one.
@@ -113,5 +157,29 @@ mod tests {
         );
         assert_eq!(agent("ollama").unwrap().credentials, None);
         assert!(agent("nothing").is_none());
+    }
+
+    /// Gemini, OpenAI and Azure are offered by the names the harness gives them, as built-in providers, each saying where its key is read from, and Azure what else it needs.
+    #[test]
+    fn cloud_model_providers_are_offered_with_hints() {
+        let gemini = agent("gemini").unwrap();
+        assert!(!gemini.server);
+        assert_eq!(gemini.sign_in, SignIn::ApiKey);
+        assert_eq!(
+            gemini.setup_hint().as_deref(),
+            Some("Reads its key from GEMINI_API_KEY or GOOGLE_API_KEY.")
+        );
+        assert_eq!(
+            agent("openai").unwrap().setup_hint().as_deref(),
+            Some("Reads its key from OPENAI_API_KEY.")
+        );
+        let azure = agent("azure").unwrap();
+        assert!(
+            azure
+                .setup_hint()
+                .is_some_and(|hint| hint.contains("AZURE_OPENAI_API_KEY")
+                    && hint.contains("AZURE_OPENAI_ENDPOINT"))
+        );
+        assert_eq!(agent("ollama").unwrap().setup_hint(), None);
     }
 }

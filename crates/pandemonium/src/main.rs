@@ -281,6 +281,7 @@ fn main() {
             Some("turn-changes") => Shot::TurnChanges,
             Some("picking") => Shot::Picking,
             Some("many-models") => Shot::ManyModels,
+            Some("server-models") => Shot::ServerModels,
             Some("models-filtered") => Shot::ModelsFiltered,
             Some("expanded") => Shot::Expanded,
             Some("slashing") => Shot::Slashing,

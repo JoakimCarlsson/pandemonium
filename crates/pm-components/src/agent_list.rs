@@ -11,6 +11,8 @@ pub struct AgentEntry {
     pub id: String,
     /// What a row calls it.
     pub name: String,
+    /// Whether it stands for a model server the reader declared rather than a provider the harness has built in.
+    pub server: bool,
 }
 
 impl AgentEntry {
@@ -21,6 +23,7 @@ impl AgentEntry {
             .map(|agent| Self {
                 id: agent.id.to_owned(),
                 name: agent.name.to_owned(),
+                server: agent.server,
             })
             .collect()
     }
@@ -36,14 +39,20 @@ pub struct AgentLook {
 }
 
 /// The glyphs of the providers that have one of their own, by provider id; every other agent is drawn with [`IconName::Terminal`].
-const PROVIDER_ICONS: [(&str, IconName); 3] = [
+const PROVIDER_ICONS: [(&str, IconName); 6] = [
     ("claude", IconName::Sparkles),
     ("copilot", IconName::Git),
     ("openrouter", IconName::Globe),
+    ("openai", IconName::Zap),
+    ("azure", IconName::Zap),
+    ("gemini", IconName::Lightbulb),
 ];
 
-/// The glyph an agent is drawn with: the one of its provider, or a terminal when the provider has none of its own.
+/// The glyph an agent is drawn with: a plug for a model server the reader declared, the one of its provider, or a terminal when the provider has none of its own.
 pub fn agent_icon(agent: &AgentEntry) -> IconName {
+    if agent.server {
+        return IconName::Plug;
+    }
     pm_harness::agent(&agent.id)
         .and_then(|offered| {
             PROVIDER_ICONS
@@ -189,6 +198,7 @@ impl WorkspaceState {
         let record = AgentEntry {
             id: id.to_owned(),
             name: id.to_owned(),
+            server: false,
         };
         self.settings_servers.retired.push(record);
         self.agent_slots() + self.settings_servers.retired.len() - 1

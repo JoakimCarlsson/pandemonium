@@ -146,6 +146,10 @@ request with exactly one `response` carrying the same `id`.
 | `save_choices` | `choices`: `[[agent, setting, value]]`                                                           | `done`          |
 | `mcp_servers`  | none                                                                                             | `mcp_servers`   |
 | `save_mcp_servers`| `servers`: `[{name, target, env, description, website, enabled, extension}]`, `env`: `[[name, value]]`                                     | `done`          |
+| `model_servers` | none                                                                                            | `model_servers` |
+| `save_model_server` | `server`: `{id, label, base_url, wire, api_key_env, api_key, has_api_key, headers, default_model, models, replay_reasoning}` | `model_servers` |
+| `remove_model_server` | `id`                                                                                      | `model_servers` |
+| `find_models`  | `server`: as in `save_model_server`                                                              | `found_models`  |
 | `library`      | `agent`, `directory`                                                                             | `library`       |
 | `tool_sets`    | `agent`                                                                                          | `tool_sets`     |
 | `save_withheld`| `keys`: `[string]`                                                                               | `done`          |
@@ -532,6 +536,19 @@ everything said of them, its submodules' paths written from `directory`.
   when it begins with `http://` or `https://`, and `env` is then the headers it
   is sent; otherwise it is the command that starts it, and `env` its environment.
   Every new session is started with the tool servers saved at that moment that are `enabled`; `description` and `website` are optional and `enabled` is true when missing.
+- **`model_servers`:** the OpenAI-compatible servers declared on the server's
+  machine, such as a company gateway or a local vLLM, kept in the harness's
+  `providers.json`. Each is offered as an agent whose id is the server's `id`,
+  after the built-in ones, so `discover`, `start` and the model picker treat it
+  as any other agent. `wire` is `chat_completions` or `responses`; `models` is
+  the fixed list offered, or empty to ask the server. A key is never sent back:
+  `has_api_key` says whether one is saved. `save_model_server` keeps the saved
+  key when `api_key` is null and removes it when it is empty, and answers with
+  the servers as they then stand, as `remove_model_server` does; a server that is
+  not valid, or an `id` no server has, answers `failed`. `find_models` asks a
+  server, saved or not, for its models (with the saved key when `api_key` is
+  null) and answers `found_models`, with `error` set and `models` empty when it
+  could not be reached.
 - **`create_customization`:** writes a new skill, instruction file or agent
   definition on the server's machine from a short template, and answers
   `created` with the `path` written. `name` is lowercase letters, digits and
@@ -1061,6 +1078,8 @@ embedded context, and anything else as a link to the stored file.
 | `projects`   | `paths`, `saved`                                          |
 | `choices`    | `choices`: `[[agent, setting, value]]`                    |
 | `mcp_servers` | `servers`: `[{name, target, env, description, website, enabled, extension}]`          |
+| `model_servers` | `servers`: `[{id, label, base_url, wire, api_key_env, api_key, has_api_key, headers, default_model, models, replay_reasoning}]`, `api_key` always null |
+| `found_models` | `models`: `[string]` in the server's order, `error`: why the server could not be asked, or null |
 | `library`    | `product`, `items`, `withheld`, as described under `library` above |
 | `tool_sets`  | `product`, `sets`, `withheld`, as described under `library` above |
 | `machine_settings` | `settings`: `{git, history, agents, shell, languages, extensions, servers}`, as `save_machine_settings` takes them |

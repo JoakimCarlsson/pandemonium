@@ -873,6 +873,22 @@ pub enum Outgoing {
     },
     /// Has the server keep these as the tool servers every agent is started with.
     SaveMcpServers(Vec<pm_protocol::McpServer>),
+    /// Asks the server for the model servers declared on its machine.
+    ModelServers,
+    /// Has the server keep this model server, in place of the one with the same id.
+    SaveModelServer(Box<pm_harness::ModelServer>),
+    /// Has the server take the model server `id` out.
+    RemoveModelServer {
+        /// The id of the server.
+        id: String,
+    },
+    /// Asks the server which models this model server offers, the answer coming back under `ticket`.
+    FindModels {
+        /// The number the answer is matched to the question by.
+        ticket: u64,
+        /// The server to ask.
+        server: Box<pm_harness::ModelServer>,
+    },
     /// Lists what the agent at `agent` is given in the project at `project`: its skills, instructions, agent definitions and hooks.
     Library {
         /// The agent, by position.
@@ -2596,6 +2612,7 @@ impl WorkspaceState {
             id if crate::settings_agents::is_key_field(id) => self.key_edited(id, edit),
             id if crate::settings_pages::is_setting_field(id) => self.setting_edited(id, edit),
             id if crate::settings_machines::is_machine_field(id) => self.machine_edited(id, edit),
+            id if crate::settings_models::is_model_field(id) => self.model_edited(id, edit),
             crate::settings::SETTINGS_FIND => {
                 self.settings_page.find.apply(edit);
                 self.settings_servers.scroll = 0.0;
@@ -2661,6 +2678,7 @@ impl WorkspaceState {
             id if crate::settings_agents::is_key_field(id) => self.key_field(id),
             id if crate::settings_pages::is_setting_field(id) => self.setting_field(id),
             id if crate::settings_machines::is_machine_field(id) => self.machine_field(id),
+            id if crate::settings_models::is_model_field(id) => self.model_field(id),
             crate::settings::SETTINGS_FIND => Some(&self.settings_page.find),
             crate::settings::SETTINGS_KEYMAP_FIND => Some(&self.settings_page.keymap_find),
             OTHER => self.other_field(),
@@ -2701,6 +2719,7 @@ impl WorkspaceState {
             || crate::settings_agents::is_key_field(id)
             || crate::settings_pages::is_setting_field(id)
             || crate::settings_machines::is_machine_field(id)
+            || crate::settings_models::is_model_field(id)
             || id == crate::settings::SETTINGS_FIND
             || id == crate::settings::SETTINGS_KEYMAP_FIND
     }
@@ -2740,6 +2759,7 @@ impl WorkspaceState {
             id if crate::settings_machines::is_machine_field(id) => {
                 crate::settings_machines::MACHINE_SAVE
             }
+            id if crate::settings_models::is_model_field(id) => crate::settings_models::MODEL_SAVE,
             id if let Some(submit) = crate::settings_pages::list_submit_of(id) => submit,
             id if crate::settings_pages::is_setting_field(id)
                 || id == crate::settings::SETTINGS_FIND

@@ -210,11 +210,20 @@ pub const ACCOUNT_COLUMNS: usize = 5;
 /// The buttons of the added accounts, [`ACCOUNT_COLUMNS`] to a login, by the login's place in the list of logins.
 pub const ACCOUNT_CONTROLS: IdRange = DEFAULT_USES.after(2000 * ACCOUNT_COLUMNS as u64);
 
+/// The buttons that open the form of each declared model server, by its place in the list.
+pub const MODEL_SERVER_EDITS: IdRange = ACCOUNT_CONTROLS.after(500);
+
+/// The buttons that take each declared model server out, by its place in the list.
+pub const MODEL_SERVER_REMOVES: IdRange = MODEL_SERVER_EDITS.after(500);
+
+/// The boxes that list each model a server was found to offer in its form, by the model's place in what was found.
+pub const FOUND_MODEL_PICKS: IdRange = MODEL_SERVER_REMOVES.after(2000);
+
 /// The names after the last run, left free for runs added later; a new run goes before it.
-pub const SPARE: IdRange = ACCOUNT_CONTROLS.after(SETTINGS_END - ACCOUNT_CONTROLS.end());
+pub const SPARE: IdRange = FOUND_MODEL_PICKS.after(SETTINGS_END - FOUND_MODEL_PICKS.end());
 
 /// Every run of the window, in the order they are laid out.
-pub const RANGES: [IdRange; 30] = [
+pub const RANGES: [IdRange; 33] = [
     SINGLES,
     MACHINE_REACHES,
     DRAFT_SCOPES,
@@ -244,11 +253,14 @@ pub const RANGES: [IdRange; 30] = [
     SET_FOLDS,
     DEFAULT_USES,
     ACCOUNT_CONTROLS,
+    MODEL_SERVER_EDITS,
+    MODEL_SERVER_REMOVES,
+    FOUND_MODEL_PICKS,
     SPARE,
 ];
 
 /// Every control there is one of, which must each lie in [`SINGLES`] and differ from the others.
-pub const SINGLE_IDS: [FocusId; 43] = [
+pub const SINGLE_IDS: [FocusId; 54] = [
     crate::settings::SETTINGS_CLOSE,
     crate::settings::SETTINGS_ADD,
     crate::settings::SETTINGS_SAVE,
@@ -292,6 +304,17 @@ pub const SINGLE_IDS: [FocusId; 43] = [
     crate::settings_drafts::DRAFT_NAME,
     crate::settings_drafts::DRAFT_DESCRIPTION,
     crate::settings_drafts::DRAFT_CREATE,
+    crate::settings_models::MODEL_ADD,
+    crate::settings_models::MODEL_SAVE,
+    crate::settings_models::MODEL_CANCEL,
+    crate::settings_models::MODEL_NAME,
+    crate::settings_models::MODEL_URL,
+    crate::settings_models::MODEL_KEY,
+    crate::settings_models::MODEL_KEY_ENV,
+    crate::settings_models::MODEL_LIST,
+    crate::settings_models::MODEL_FIND,
+    crate::settings_models::MODEL_WIRE_CHAT,
+    crate::settings_models::MODEL_WIRE_RESPONSES,
 ];
 
 /// Whether `ranges` start at [`SETTINGS_START`], each where the one before it ends, none empty, and the last ending at [`SETTINGS_END`].

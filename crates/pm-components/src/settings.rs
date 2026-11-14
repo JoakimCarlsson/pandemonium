@@ -143,6 +143,8 @@ pub enum Section {
     AgentServers,
     /// The tool servers every agent is started with.
     McpServers,
+    /// The OpenAI-compatible model servers the reader declared, each offered as an agent.
+    ModelServers,
     /// How many of each kind of customization agents are given in the project.
     Customizations,
     /// The skills agents are given.
@@ -163,7 +165,7 @@ pub enum Section {
 
 impl Section {
     /// Every section, in the order the list shows them, each followed by the ones inside it.
-    pub const ALL: [Section; 25] = [
+    pub const ALL: [Section; 26] = [
         Section::General,
         Section::Appearance,
         Section::Editor,
@@ -182,6 +184,7 @@ impl Section {
         Section::Agents,
         Section::AgentServers,
         Section::McpServers,
+        Section::ModelServers,
         Section::Customizations,
         Section::Skills,
         Section::Instructions,
@@ -214,6 +217,7 @@ impl Section {
             Self::Agents => "Agents",
             Self::AgentServers => "Agents and accounts",
             Self::McpServers => "MCP Servers",
+            Self::ModelServers => "Model Servers",
             Self::Customizations => "Overview",
             Self::Skills => "Skills",
             Self::Instructions => "Instructions",
@@ -244,6 +248,7 @@ impl Section {
             Self::Agents => IconName::Sparkles,
             Self::AgentServers => IconName::Folder,
             Self::McpServers => IconName::Plug,
+            Self::ModelServers => IconName::Zap,
             Self::Customizations
             | Self::Skills
             | Self::Instructions
@@ -258,6 +263,7 @@ impl Section {
         match self {
             Self::AgentServers
             | Self::McpServers
+            | Self::ModelServers
             | Self::Customizations
             | Self::Skills
             | Self::Instructions
@@ -327,6 +333,7 @@ impl WorkspaceState {
         self.settings_page.fields.clear();
         self.fill_fields();
         self.outbox.push(crate::state::Outgoing::LoadServers);
+        self.outbox.push(crate::state::Outgoing::ModelServers);
         self.outbox.push(crate::state::Outgoing::Extensions);
         self.read_library();
         if self.window.general.check_updates && self.settings_page.release.is_none() {
@@ -350,6 +357,7 @@ impl WorkspaceState {
         self.settings_servers.key_form = None;
         self.settings_servers.name_form = None;
         self.settings_page.server_form = None;
+        self.settings_page.models.form = None;
         self.settings_page.library.draft = None;
         self.settings_page.picker = None;
         self.recording = None;
@@ -370,6 +378,9 @@ impl WorkspaceState {
             SETTINGS_CLOSE if self.settings_servers.name_form.is_some() => {
                 self.settings_servers.name_form = None;
             }
+            SETTINGS_CLOSE if self.settings_page.models.form.is_some() => {
+                self.settings_page.models.form = None;
+            }
             SETTINGS_CLOSE if self.settings_page.server_form.is_some() => {
                 self.settings_page.server_form = None;
             }
@@ -388,6 +399,7 @@ impl WorkspaceState {
             action if self.setting_pressed(action) => {}
             action if self.keymap_pressed(action) => {}
             action if self.machines_pressed(action) => {}
+            action if self.models_pressed(action) => {}
             action if self.languages_pressed(action) => {}
             action
                 if self.draft_pressed(
@@ -416,6 +428,9 @@ impl WorkspaceState {
         self.settings_page.picker = None;
         self.recording = None;
         self.section_changed();
+        if section == Section::ModelServers {
+            self.outbox.push(crate::state::Outgoing::ModelServers);
+        }
         if section == Section::AgentServers {
             self.ask_default_accounts();
             self.ask_login_identities();

@@ -291,6 +291,7 @@ impl Event {
             Wire::HandedOff { prompt, turn } => Some(Self::HandedOff { prompt, turn }),
             Wire::Titled(title) => Some(Self::Titled(title)),
             Wire::Changes { .. } | Wire::Restored { .. } | Wire::Undone { .. } => None,
+            Wire::Servers(_) | Wire::FoundModels { .. } => None,
         }
     }
 }

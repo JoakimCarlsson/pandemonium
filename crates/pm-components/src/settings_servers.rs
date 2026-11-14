@@ -218,6 +218,7 @@ impl WorkspaceState {
         self.settings_servers.name_form = None;
         self.settings_servers.menu = None;
         self.settings_page.server_form = None;
+        self.settings_page.models.form = None;
         self.settings_page.library.draft = None;
         self.settings_servers.scroll = 0.0;
         self.settings_servers.search = Field::default();
@@ -594,6 +595,7 @@ fn summary(section: Section) -> &'static str {
         Section::McpServers => {
             "An open standard that lets AI use external tools and services. MCP servers provide tools for file operations, databases, APIs, and more."
         }
+        Section::ModelServers => crate::settings_models::SUMMARY,
         Section::Servers => {
             "The servers the window works with: the one on this machine, and ones reached at their address, over ssh, inside WSL or a dev container, or through a tunnel."
         }
@@ -690,14 +692,19 @@ pub(crate) fn body(state: &WorkspaceState, section: Section, room: f32) -> Node 
             .child(crate::settings_pages::page_rows(state, section, room))
             .child(line("Explore", 15, 1.4, Role::Text).styles([pm_style::font_medium()]))
             .children(
-                [Section::AgentServers, Section::McpServers]
-                    .map(|part| card(part, count_of(state, part))),
+                [
+                    Section::AgentServers,
+                    Section::McpServers,
+                    Section::ModelServers,
+                ]
+                .map(|part| card(part, count_of(state, part))),
             ),
         Section::Servers => inner
             .child(about)
             .children(crate::settings_machines::body(state, room)),
         Section::AgentServers => crate::settings_agents::body(state, inner, room),
         Section::McpServers => list(state, section, inner, room),
+        Section::ModelServers => crate::settings_models::body(state, inner, room),
         Section::Customizations
         | Section::Skills
         | Section::Instructions
@@ -744,6 +751,7 @@ fn count_of(state: &WorkspaceState, section: Section) -> String {
     match section {
         Section::AgentServers => format!("{} available", state.offered_agents().len()),
         Section::McpServers => format!("{} installed", state.settings_servers.tools.len()),
+        Section::ModelServers => crate::settings_models::count(state),
         _ => String::new(),
     }
 }
@@ -797,6 +805,7 @@ pub(crate) fn card(section: Section, count: String) -> Node {
             match section {
                 Section::AgentServers => "The agents that can be started, and their accounts.",
                 Section::McpServers => "Tool servers every agent is started with.",
+                Section::ModelServers => "OpenAI-compatible servers offered as agents.",
                 other if crate::settings_library::lists(other) => {
                     crate::settings_library::blurb(other)
                 }

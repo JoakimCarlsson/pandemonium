@@ -663,8 +663,8 @@ fn account_rows(state: &WorkspaceState, index: usize, id: &str, signing: Signing
     rows
 }
 
-/// The card of the agent at `index`: its header, then its accounts, each signed in or given a key of its own.
-fn agent_card(state: &WorkspaceState, index: usize) -> Option<Node> {
+/// The card of the agent at `index`, `room` logical pixels across: its header, what the reader sets up for it when it needs something, then its accounts, each signed in or given a key of its own.
+fn agent_card(state: &WorkspaceState, index: usize, room: f32) -> Option<Node> {
     let entry = state.settings_servers.agents.get(index)?;
     let agent = pm_harness::agent(&entry.id);
     let sign_in = agent.map(|agent| agent.sign_in);
@@ -678,6 +678,17 @@ fn agent_card(state: &WorkspaceState, index: usize) -> Option<Node> {
         keyed,
         credentials,
     )];
+    let hint = if entry.server {
+        Some("A model server declared on the Model Servers page.".to_owned())
+    } else {
+        agent.and_then(|agent| agent.setup_hint())
+    };
+    if let Some(hint) = hint {
+        rows.push(inner_row().child(crate::settings_servers::wrapped_note(
+            &hint,
+            (room - ROW_INSET as f32 * 4.0 - 24.0).max(160.0),
+        )));
+    }
     let signing = Signing {
         signs_in: sign_in.is_some_and(SignIn::has_accounts),
         keyed,
@@ -694,7 +705,7 @@ pub(crate) fn body(state: &WorkspaceState, page: Node, room: f32) -> Node {
         "Every agent the harness offers. New sessions offer the ones signed in; switch one off to leave it out even then. Its sessions and accounts stay. An agent can keep several accounts, such as one per organisation; new sessions use the one marked in use. Skills, instructions, tools, memory and conversations are shared by every account and every agent.",
         room,
     ))
-    .children((0..state.agent_slots()).filter_map(|index| agent_card(state, index)))
+    .children((0..state.agent_slots()).filter_map(|index| agent_card(state, index, room)))
 }
 
 /// Whether `id` names the box for an API key or the one for an account's name.

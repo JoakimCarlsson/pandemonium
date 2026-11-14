@@ -41,6 +41,8 @@ pub struct SettingsPage {
     pub server_form: Option<crate::settings_machines::MachineForm>,
     /// What the pages of what agents are given hold.
     pub library: crate::settings_library::Library,
+    /// The model servers declared on the server, and the form one is declared or changed with.
+    pub models: crate::settings_models::ModelServers,
 }
 
 /// The settings the window edits, held together so one setting can be copied from one set to another.

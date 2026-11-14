@@ -60,7 +60,7 @@ const NARROW_WIDTH: u32 = 640;
 const NARROW_HEIGHT: u32 = 420;
 
 /// The name of the shot of each section of the settings window, after `settings-`.
-pub const SETTINGS_SHOTS: [(&str, Section); 25] = [
+pub const SETTINGS_SHOTS: [(&str, Section); 26] = [
     ("general", Section::General),
     ("appearance", Section::Appearance),
     ("editor", Section::Editor),
@@ -79,6 +79,7 @@ pub const SETTINGS_SHOTS: [(&str, Section); 25] = [
     ("agents", Section::Agents),
     ("agent-servers", Section::AgentServers),
     ("mcp-servers", Section::McpServers),
+    ("model-servers", Section::ModelServers),
     ("customizations", Section::Customizations),
     ("skills", Section::Skills),
     ("instructions", Section::Instructions),
@@ -397,6 +398,10 @@ pub enum Shot {
     SettingsDraft(bool),
     /// The settings panel on the MCP servers inside Agents, with one installed, the registry's offers and the menu of the installed one open.
     SettingsMcp,
+    /// The settings panel on the model servers inside Agents, with two declared, the form of the second open and the models it was found to offer listed, two of them ticked, at its narrowest when the flag is set.
+    SettingsModelServers(bool),
+    /// The page for starting work on a declared model server, with the menu of the models it offers open.
+    ServerModels,
     /// The settings panel on the Agent Servers inside Agents, with the form for adding one open.
     SettingsForm,
     /// The settings panel on the Agent Servers inside Agents, with two accounts added to the first agent, at its narrowest when the flag is set.
@@ -2615,6 +2620,7 @@ impl Shot {
                 | Self::SettingsMachine(_)
                 | Self::SettingsCompact(_)
                 | Self::SettingsMcp
+                | Self::SettingsModelServers(_)
                 | Self::SettingsDraft(_)
                 | Self::SettingsForm
                 | Self::SettingsAccounts(_)
@@ -2635,6 +2641,7 @@ impl Shot {
                 | Self::SettingsPicker(true)
                 | Self::SettingsMachine(true)
                 | Self::SettingsDraft(true)
+                | Self::SettingsModelServers(true)
                 | Self::SettingsCompact(true)
                 | Self::SettingsAccounts(true)
                 | Self::SettingsAccountsCloud(true)
@@ -2663,6 +2670,7 @@ impl Shot {
             "accounts-hidden" => Some(Self::SettingsAccountsHidden),
             "accounts-key" => Some(Self::SettingsAccountsKey),
             "mcp" => Some(Self::SettingsMcp),
+            "model-servers-found" => Some(Self::SettingsModelServers(narrow)),
             "skills-new" => Some(Self::SettingsDraft(narrow)),
             slug => SETTINGS_SHOTS
                 .iter()
@@ -3853,6 +3861,30 @@ impl Shot {
                     )
                     .scrolled_settings(if narrow { 260.0 } else { 0.0 }, 2000.0),
             ),
+            Self::SettingsModelServers(narrow) => Screen::Workspace(
+                welcome()
+                    .after(SETTINGS)
+                    .after(Section::ModelServers.id())
+                    .with_model_servers(model_servers())
+                    .after(pm_components::settings_ids::MODEL_SERVER_EDITS.at(1))
+                    .after(pm_components::settings_models::MODEL_FIND)
+                    .with_found_models(
+                        0,
+                        Ok([
+                            "qwen3-coder-30b",
+                            "gpt-oss-120b",
+                            "devstral-3",
+                            "glm-5.3-air",
+                            "llama-5-70b",
+                        ]
+                        .map(str::to_owned)
+                        .to_vec()),
+                    )
+                    .after(pm_components::settings_ids::FOUND_MODEL_PICKS.at(0))
+                    .after(pm_components::settings_ids::FOUND_MODEL_PICKS.at(2))
+                    .scrolled_settings(if narrow { 520.0 } else { 220.0 }, 2000.0),
+            ),
+            Self::ServerModels => Screen::Workspace(server_models().after(FocusId(4200))),
             Self::SettingsMcp => Screen::Workspace(
                 welcome()
                     .after(SETTINGS)
@@ -5732,6 +5764,65 @@ pub fn write_browser(path: &Path, url: &str, tools: bool, interact: bool) -> Res
 /// `state` with Ollama and OpenRouter hidden from new sessions, as the settings keep it.
 fn hiding_local_agents(mut state: WorkspaceState) -> WorkspaceState {
     state.machine.agents.hidden = vec!["ollama".to_owned(), "openrouter".to_owned()];
+    state
+}
+
+/// Two model servers as the server declares them: a gateway with a saved key and a fixed list of models, and a local server whose models are asked of it.
+fn model_servers() -> Vec<pm_harness::ModelServer> {
+    let server = |id: &str, label: &str, base_url: &str, models: &[&str]| pm_harness::ModelServer {
+        id: id.to_owned(),
+        label: Some(label.to_owned()),
+        base_url: base_url.to_owned(),
+        wire: pm_harness::ServerWire::ChatCompletions,
+        api_key_env: Vec::new(),
+        api_key: None,
+        has_api_key: false,
+        headers: Vec::new(),
+        default_model: None,
+        models: models.iter().map(|model| (*model).to_owned()).collect(),
+        replay_reasoning: false,
+    };
+    let mut gateway = server(
+        "gateway",
+        "Company Gateway",
+        "https://llm.example.com/v1",
+        &["gpt-6.1-terra", "claude-opus-5.5", "gemini-4-pro"],
+    );
+    gateway.wire = pm_harness::ServerWire::Responses;
+    gateway.has_api_key = true;
+    let mut local = server("local-vllm", "Local vLLM", "http://localhost:8000/v1", &[]);
+    local.api_key_env = vec!["VLLM_API_KEY".to_owned()];
+    vec![gateway, local]
+}
+
+/// The page for starting work on the declared Company Gateway, the only agent signed in, offering the models it was given.
+fn server_models() -> WorkspaceState {
+    let here = std::env::current_dir().unwrap_or_default();
+    let projects: Vec<Project> = Project::from_source(&here.to_string_lossy())
+        .into_iter()
+        .collect();
+    let state = WorkspaceState::new(&projects).with_model_servers(model_servers());
+    let place = state.agent_position("gateway").unwrap_or_default();
+    let picks: Vec<Pick> = model_servers()[0]
+        .models
+        .iter()
+        .map(|model| Pick {
+            value: model.clone(),
+            name: model.clone(),
+            description: String::new(),
+        })
+        .collect();
+    let mut discovery = claude_discovery();
+    if let Some(model) = discovery
+        .settings
+        .iter_mut()
+        .find(|setting| setting.category == "model")
+    {
+        model.current = picks[0].value.clone();
+        model.picks = picks;
+    }
+    let mut state = signed_in(state.with_discovery(place, discovery), &["gateway"]);
+    state.agent = place;
     state
 }
 

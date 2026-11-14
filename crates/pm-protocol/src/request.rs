@@ -1376,4 +1376,70 @@ pub enum Request {
         #[serde(default)]
         plan: Vec<String>,
     },
+    /// The model servers declared on the server's machine: OpenAI-compatible servers each offered as an agent of its own, without their keys.
+    ModelServers,
+    /// Adds a model server, or replaces the one with the same id, on the server's machine; answered with the servers as they then stand.
+    SaveModelServer {
+        /// The server. Without `api_key` it keeps the key saved for its id, and with an empty one it has none.
+        server: pm_harness::ModelServer,
+    },
+    /// Takes the model server `id` off the server's machine; answered with the servers left.
+    RemoveModelServer {
+        /// The id of the server.
+        id: String,
+    },
+    /// The models a model server offers, saved or not, asked of it now: those it was given, or those it lists.
+    FindModels {
+        /// The server to ask. Without `api_key` it is asked with the key saved for its id.
+        server: pm_harness::ModelServer,
+    },
+}
+
+#[cfg(test)]
+/// Tests for how requests are written.
+mod tests {
+    use super::*;
+
+    /// A server described with every field of the requests about model servers.
+    fn gateway() -> pm_harness::ModelServer {
+        pm_harness::ModelServer {
+            id: "gateway".to_owned(),
+            label: Some("Gateway".to_owned()),
+            base_url: "http://localhost:8000/v1".to_owned(),
+            wire: pm_harness::ServerWire::Responses,
+            api_key_env: vec!["GATEWAY_KEY".to_owned()],
+            api_key: Some("secret".to_owned()),
+            has_api_key: false,
+            headers: Vec::new(),
+            default_model: None,
+            models: vec!["qwen3-coder".to_owned()],
+            replay_reasoning: false,
+        }
+    }
+
+    /// Every request about model servers is written under its own name and read back as it was.
+    #[test]
+    fn model_server_requests_round_trip() {
+        for (request, name) in [
+            (Request::ModelServers, "model_servers"),
+            (
+                Request::SaveModelServer { server: gateway() },
+                "save_model_server",
+            ),
+            (
+                Request::RemoveModelServer {
+                    id: "gateway".to_owned(),
+                },
+                "remove_model_server",
+            ),
+            (Request::FindModels { server: gateway() }, "find_models"),
+        ] {
+            let text = serde_json::to_string(&request).unwrap();
+            let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(value["request"], name);
+            assert_eq!(serde_json::from_str::<Request>(&text).unwrap(), request);
+        }
+        let saved = serde_json::to_value(Request::SaveModelServer { server: gateway() }).unwrap();
+        assert_eq!(saved["server"]["wire"], "responses");
+    }
 }

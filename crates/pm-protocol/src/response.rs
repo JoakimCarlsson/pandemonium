@@ -610,6 +610,19 @@ pub enum Response {
         /// The code host's page for opening a new pull request, filled in with the drafted title and body, for the client to open when the host's program could not open it.
         compare: Option<String>,
     },
+    /// The model servers declared on the server's machine, in the order they are offered, after a `model_servers`, `save_model_server` or `remove_model_server`; no key is sent back, only whether one is saved.
+    ModelServers {
+        /// Every server, in order.
+        servers: Vec<pm_harness::ModelServer>,
+    },
+    /// The models a model server offers, in answer to a `find_models`.
+    FoundModels {
+        /// The model ids, in the order the server gave them; empty when it could not be asked.
+        models: Vec<String>,
+        /// Why the server could not be asked, or nothing when it was.
+        #[serde(default)]
+        error: Option<String>,
+    },
 }
 
 #[cfg(test)]
@@ -635,5 +648,58 @@ mod tests {
             let text = serde_json::to_string(&answer).unwrap();
             assert_eq!(serde_json::from_str::<Response>(&text).unwrap(), answer);
         }
+    }
+    /// The answers about model servers are written under their own names and read back as they were, with a missing error read as none.
+    #[test]
+    fn model_server_answers_round_trip() {
+        let server = pm_harness::ModelServer {
+            id: "box".to_owned(),
+            label: None,
+            base_url: "http://localhost:1234/v1".to_owned(),
+            wire: pm_harness::ServerWire::ChatCompletions,
+            api_key_env: Vec::new(),
+            api_key: None,
+            has_api_key: true,
+            headers: Vec::new(),
+            default_model: None,
+            models: Vec::new(),
+            replay_reasoning: false,
+        };
+        for (answer, name) in [
+            (
+                Response::ModelServers {
+                    servers: vec![server],
+                },
+                "model_servers",
+            ),
+            (
+                Response::FoundModels {
+                    models: vec!["a".to_owned(), "b".to_owned()],
+                    error: None,
+                },
+                "found_models",
+            ),
+            (
+                Response::FoundModels {
+                    models: Vec::new(),
+                    error: Some("refused".to_owned()),
+                },
+                "found_models",
+            ),
+        ] {
+            let text = serde_json::to_string(&answer).unwrap();
+            let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(value["response"], name);
+            assert_eq!(serde_json::from_str::<Response>(&text).unwrap(), answer);
+        }
+        let bare: Response =
+            serde_json::from_str(r#"{"response":"found_models","models":["m"]}"#).unwrap();
+        assert_eq!(
+            bare,
+            Response::FoundModels {
+                models: vec!["m".to_owned()],
+                error: None
+            }
+        );
     }
 }

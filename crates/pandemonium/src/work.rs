@@ -120,6 +120,10 @@ enum Pending {
     Update,
     /// The tool servers every agent is started with.
     McpServers,
+    /// The model servers declared on this machine's server, as they stand after a change or as they were asked for.
+    ModelServers,
+    /// The models a model server offers, asked for under this ticket.
+    FoundModels(u64),
     /// The tool servers the public registry offered for this search.
     Tools(String),
     /// The agent with this id told what it lets the reader change.
@@ -1500,6 +1504,24 @@ impl Work {
                 Outgoing::SaveMcpServers(servers) => {
                     self.ask(&None, Request::SaveMcpServers { servers }, Pending::Nothing)
                 }
+                Outgoing::ModelServers => {
+                    self.ask(&None, Request::ModelServers, Pending::ModelServers)
+                }
+                Outgoing::SaveModelServer(server) => self.ask(
+                    &None,
+                    Request::SaveModelServer { server: *server },
+                    Pending::ModelServers,
+                ),
+                Outgoing::RemoveModelServer { id } => self.ask(
+                    &None,
+                    Request::RemoveModelServer { id },
+                    Pending::ModelServers,
+                ),
+                Outgoing::FindModels { ticket, server } => self.ask(
+                    &None,
+                    Request::FindModels { server: *server },
+                    Pending::FoundModels(ticket),
+                ),
                 Outgoing::Library {
                     agent,
                     project,
@@ -2135,6 +2157,37 @@ impl Work {
                 if let Response::McpServers { servers } = response {
                     Self::in_workspace(model, |state| state.with_mcp_servers(servers));
                 }
+            }
+            Pending::ModelServers => match response {
+                Response::ModelServers { servers } => {
+                    let mut agents = Vec::new();
+                    Self::in_workspace(model, |state| {
+                        let state = state.with_model_servers(servers);
+                        agents = state
+                            .settings_servers
+                            .agents
+                            .iter()
+                            .map(|agent| agent.id.clone())
+                            .collect();
+                        state
+                    });
+                    self.agents = agents;
+                }
+                other => {
+                    let reason = Self::trouble_of(other);
+                    Self::in_workspace(model, |state| state.with_model_servers_failed(reason));
+                }
+            },
+            Pending::FoundModels(ticket) => {
+                let answer = match response {
+                    Response::FoundModels {
+                        error: Some(reason),
+                        ..
+                    } => Err(reason),
+                    Response::FoundModels { models, .. } => Ok(models),
+                    other => Err(Self::trouble_of(other)),
+                };
+                Self::in_workspace(model, |state| state.with_found_models(ticket, answer));
             }
             Pending::Tools(query) => {
                 let answer = match response {
