@@ -663,6 +663,10 @@ pub struct Session {
     pub out_of_reach: bool,
     /// Whether the server was asked to continue this chat as a session in a project and has yet to say how that went.
     pub handing_over: bool,
+    /// The newest pull request of its branch, once its server has said it has one.
+    pub pull_request: Option<pm_git::PullRequestStatus>,
+    /// What is being done to its branch's pull request, while something is.
+    pub pull_busy: Option<&'static str>,
 }
 
 impl Session {
@@ -728,6 +732,8 @@ impl Session {
             shells: Vec::new(),
             out_of_reach: false,
             handing_over: false,
+            pull_request: None,
+            pull_busy: None,
         }
     }
 

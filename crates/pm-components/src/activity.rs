@@ -33,7 +33,7 @@ fn chip(label: impl Into<String>, id: FocusId) -> Button {
 }
 
 /// The plan the agent keeps, the latest one of its replies, if it keeps one.
-fn latest_plan(session: &Session) -> Option<&[pm_harness::PlanStep]> {
+pub(crate) fn latest_plan(session: &Session) -> Option<&[pm_harness::PlanStep]> {
     session
         .messages
         .iter()

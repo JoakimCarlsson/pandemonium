@@ -69,7 +69,7 @@ fn gh(arguments: &[&str]) -> Result<String, String> {
 }
 
 /// Runs `gh` with `arguments` in `directory`, or where the server runs when none is given, never asking a question, and returns what it wrote, or what it complained of.
-fn gh_in(directory: Option<&Path>, arguments: &[&str]) -> Result<String, String> {
+pub(crate) fn gh_in(directory: Option<&Path>, arguments: &[&str]) -> Result<String, String> {
     let program = pm_tools::installed("gh").unwrap_or_else(|| "gh".into());
     let mut command = Command::new(&program);
     if let Some(directory) = directory {

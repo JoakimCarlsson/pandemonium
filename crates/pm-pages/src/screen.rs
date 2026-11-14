@@ -899,6 +899,31 @@ impl Screen {
         }
     }
 
+    /// The screen after the server said the branch of the session at `session` has `request` as its newest pull request, or none.
+    pub fn with_pull_request(
+        self,
+        session: usize,
+        request: Option<pm_git::PullRequestStatus>,
+    ) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.with_pull_request(session, request)),
+        }
+    }
+
+    /// The screen after the server acted on the pull request of the session at `session`, which stands as `request` afterwards unless the action failed for `failure`.
+    pub fn pull_request_done(
+        self,
+        session: usize,
+        request: Option<pm_git::PullRequestStatus>,
+        failure: Option<String>,
+    ) -> Self {
+        match self {
+            Self::Workspace(state) => {
+                Self::Workspace(state.pull_request_done(session, request, failure))
+            }
+        }
+    }
+
     /// The screen after the remote answered the request of the session at `session`.
     pub fn remote_done(self, session: usize, failure: Option<String>) -> Self {
         match self {

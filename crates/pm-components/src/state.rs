@@ -1520,6 +1520,17 @@ pub enum Outgoing {
         /// The commit, by its abbreviated name.
         commit: String,
     },
+    /// Pushes the branch of a session or acts on its pull request.
+    PullRequestAction {
+        /// The session, by position.
+        session: usize,
+        /// What to do, as `pull_request_action` names it.
+        action: &'static str,
+        /// The title a new pull request is given.
+        title: String,
+        /// The steps of the session's latest plan.
+        plan: Vec<String>,
+    },
     /// Fetches, pulls or pushes the repository the folder of a session is in, or syncs it.
     Sync {
         /// The session, by position.

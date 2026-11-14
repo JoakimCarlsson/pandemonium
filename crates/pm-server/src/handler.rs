@@ -2064,6 +2064,30 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             directory,
             operation,
         } => done(pm_git::remote(&place(&directory), &operation)),
+        Request::PullRequest { directory, branch } => Response::PullRequest {
+            request: pm_git::pull_request_status(&place(&directory), &branch),
+        },
+        Request::PullRequestAction {
+            directory,
+            branch,
+            base,
+            action,
+            title,
+            plan,
+        } => match pm_git::pull_request_action(
+            &place(&directory),
+            &branch,
+            base.as_deref(),
+            &action,
+            &title,
+            &plan,
+        ) {
+            Ok(outcome) => Response::PullRequestActed {
+                request: outcome.request,
+                compare: outcome.compare,
+            },
+            Err(message) => Response::Failed { message },
+        },
         Request::BranchInfo { directory, branch } => {
             let info = pm_git::branch_info(&place(&directory), branch.as_deref());
             Response::BranchInfo {

@@ -1343,4 +1343,29 @@ pub enum Request {
         /// What the reader decided.
         verdict: pm_harness::Verdict,
     },
+    /// The newest pull request of a branch, open or not, with its checks and review, from the GitHub repository the folder is a clone of.
+    PullRequest {
+        /// The folder.
+        directory: String,
+        /// The branch.
+        branch: String,
+    },
+    /// Pushes a branch or acts on its pull request: `push`, `create`, `create_draft`, `update`, `ready`, `merge`, `squash`, `rebase`, `reopen` or `delete_branch`.
+    PullRequestAction {
+        /// The folder, which has the branch checked out.
+        directory: String,
+        /// The branch.
+        branch: String,
+        /// The branch it was made from, which a new pull request is to be merged into; the repository's default branch when nothing.
+        #[serde(default)]
+        base: Option<String>,
+        /// What to do.
+        action: String,
+        /// The title a new pull request is given; the first commit's subject when empty.
+        #[serde(default)]
+        title: String,
+        /// The steps of the session's plan, listed in the body drafted for `create`, `create_draft` and `update`.
+        #[serde(default)]
+        plan: Vec<String>,
+    },
 }

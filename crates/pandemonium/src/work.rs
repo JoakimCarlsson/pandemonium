@@ -166,6 +166,10 @@ enum Pending {
     Commit(usize, bool),
     /// The remote answered the session at this position, which asked it to fetch, pull, push or sync.
     Remote(usize),
+    /// The newest pull request of the branch of the session at this position.
+    PullRequest(usize),
+    /// The server acted on the pull request of the branch of the session at this position.
+    PullRequestActed(usize),
     /// What the controls over branches and remotes asked about the repository of the session at this position, and the branch they asked about.
     BranchInfo(usize, Option<String>),
     /// The commits of the repository of the session at this position.
@@ -1124,6 +1128,29 @@ impl Work {
                     |directory| Request::CherryPick { directory, commit },
                     Pending::Git(session, "cherry-pick"),
                 ),
+                Outgoing::PullRequestAction {
+                    session,
+                    action,
+                    title,
+                    plan,
+                } => {
+                    if let Some(placement) = Self::session_of(model, session)
+                        && let Some(branch) = Self::branch_of(model, session)
+                    {
+                        self.ask(
+                            &placement.host,
+                            Request::PullRequestAction {
+                                directory: placement.directory,
+                                branch,
+                                base: placement.base,
+                                action: action.to_owned(),
+                                title,
+                                plan,
+                            },
+                            Pending::PullRequestActed(session),
+                        );
+                    }
+                }
                 Outgoing::Sync { session, operation } => self.ask_in_repository(
                     model,
                     session,
@@ -2510,6 +2537,28 @@ impl Work {
                 });
                 self.refresh(model, session);
             }
+            Pending::PullRequest(session) => {
+                if let Response::PullRequest { request } = response {
+                    model.update(|screen| {
+                        *screen = std::mem::take(screen).with_pull_request(session, request);
+                    });
+                }
+            }
+            Pending::PullRequestActed(session) => {
+                let (request, compare) = match response {
+                    Response::PullRequestActed { request, compare } => (request, compare),
+                    _ => (None, None),
+                };
+                if let Some(address) = compare
+                    && let Err(reason) = pm_harness::open_address(&address)
+                {
+                    eprintln!("could not open the page to open a pull request on: {reason}");
+                }
+                model.update(|screen| {
+                    *screen = std::mem::take(screen).pull_request_done(session, request, failure);
+                });
+                self.refresh(model, session);
+            }
             Pending::BranchInfo(session, branch) => {
                 if let Response::BranchInfo {
                     remotes,
@@ -2906,6 +2955,18 @@ impl Work {
         })
     }
 
+    /// The branch the session at `session` has checked out, or nothing when it is at a bare commit or not known.
+    fn branch_of(model: &State<Screen>, session: usize) -> Option<String> {
+        model.read(|screen| {
+            let Screen::Workspace(state) = screen;
+            state
+                .sessions
+                .get(session)
+                .filter(|held| held.on_branch && !held.branch.is_empty())
+                .map(|held| held.branch.clone())
+        })
+    }
+
     /// Asks the machine the session at `session` is on for what `make` builds from the folder of the repository the git panel works on: the session's folder, or the submodule picked in it.
     fn ask_in_repository(
         &mut self,
@@ -3002,6 +3063,21 @@ impl Work {
             },
             Pending::SubmoduleHeads(session),
         );
+        let asking_pull = self.links.get(&placement.host).is_some_and(|link| {
+            link.waiting
+                .values()
+                .any(|pending| matches!(pending, Pending::PullRequest(held) if *held == session))
+        });
+        if !asking_pull && let Some(branch) = Self::branch_of(model, session) {
+            self.ask(
+                &placement.host,
+                Request::PullRequest {
+                    directory: placement.directory.clone(),
+                    branch,
+                },
+                Pending::PullRequest(session),
+            );
+        }
         if let Some(all) = log {
             let submodule = model.read(|screen| screen.repository_of(session));
             self.ask(

@@ -738,7 +738,11 @@ impl WorkspaceState {
             self.press_menu_row(row as usize);
             return true;
         }
-        if self.press_prompt(action) || self.press_tree(action) || self.press_files(action) {
+        if self.press_prompt(action)
+            || self.press_tree(action)
+            || self.press_files(action)
+            || self.press_pull_request(action)
+        {
             return true;
         }
         match action {

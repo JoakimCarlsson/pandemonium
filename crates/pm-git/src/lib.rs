@@ -14,6 +14,7 @@ mod graph;
 mod multirepo;
 mod operation;
 mod places;
+mod pull_requests;
 mod revision;
 mod submodule;
 mod words;
@@ -28,6 +29,12 @@ pub use graph::{Edge, Half, Lanes};
 pub use multirepo::{Layout, child_repositories, layout};
 pub use operation::{Operation, operation, step};
 pub use places::{clone, folders};
+pub use pull_requests::{
+    Check, CheckState, Draft, Outcome, PullRequestStatus, ReviewDecision, base_name, compare_url,
+    compose, create_arguments, delete_arguments, edit_arguments, github_slug, merge_arguments,
+    parse_list, pull_request_action, pull_request_status, ready_arguments, reopen_arguments,
+    status_arguments, template,
+};
 pub use revision::revision_changes;
 pub use submodule::{populate, submodule_heads, submodules};
 pub use words::{Words, words};
@@ -1661,5 +1668,7 @@ pub fn cherry_pick(directory: &Path, commit: &str) -> Result<(), String> {
 mod base_tests;
 #[cfg(test)]
 mod listing_tests;
+#[cfg(test)]
+mod pull_request_tests;
 #[cfg(test)]
 mod remote_tests;

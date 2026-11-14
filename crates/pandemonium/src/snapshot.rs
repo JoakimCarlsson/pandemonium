@@ -105,6 +105,8 @@ pub enum Shot {
     SignInCode,
     /// A session whose agent was at work when the window lost its connection to the agent's server.
     OutOfReach,
+    /// A session whose branch has an open pull request, with checks passed, failed and running and changes asked for, under its header.
+    PullRequest,
     /// The workspace asking whether to close the window while agents are working.
     Quitting,
     /// The workspace telling of a newer release in its title bar.
@@ -2959,6 +2961,32 @@ impl Shot {
                 "https://github.com/login/device".to_owned(),
                 "ABCD-1234".to_owned(),
             )),
+            Self::PullRequest => {
+                let mut state = workspace();
+                let check = |name: &str, state: pm_git::CheckState| pm_git::Check {
+                    name: name.to_owned(),
+                    state,
+                    url: String::new(),
+                };
+                state.sessions[0].base = Some("main".to_owned());
+                state.sessions[0].pull_request = Some(pm_git::PullRequestStatus {
+                    number: 231,
+                    title: "Save and restore session checkpoints".to_owned(),
+                    state: "OPEN".to_owned(),
+                    url: "https://github.com/example/pandemonium/pull/231".to_owned(),
+                    draft: false,
+                    review: pm_git::ReviewDecision::ChangesRequested,
+                    checks: vec![
+                        check("build", pm_git::CheckState::Passed),
+                        check("test", pm_git::CheckState::Passed),
+                        check("lint", pm_git::CheckState::Failed),
+                        check("snapshots", pm_git::CheckState::Pending),
+                    ],
+                    head: "4f2a9c1".to_owned(),
+                    base: "main".to_owned(),
+                });
+                Screen::Workspace(state)
+            }
             Self::OutOfReach => {
                 let mut state = workspace();
                 state.sessions[0].status = pm_components::sample::Status::Working;

@@ -590,6 +590,18 @@ pub enum Response {
         /// Its path on the server's machine.
         path: String,
     },
+    /// The newest pull request of the branch asked about, or nothing when it has none or `gh` could not say.
+    PullRequest {
+        /// The pull request.
+        request: Option<pm_git::PullRequestStatus>,
+    },
+    /// What came of a `pull_request_action`.
+    PullRequestActed {
+        /// How the branch's pull request stands afterwards, or nothing when it has none.
+        request: Option<pm_git::PullRequestStatus>,
+        /// GitHub's compare page, filled in with the drafted title and body, for the client to open when `gh` could not open the pull request.
+        compare: Option<String>,
+    },
 }
 
 #[cfg(test)]

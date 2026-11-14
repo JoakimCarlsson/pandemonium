@@ -166,6 +166,8 @@ request with exactly one `response` carrying the same `id`.
 | `sync`         | `directory`, `operation`                                                                         | `done`          |
 | `branch_info`  | `directory`, `branch` (optional)                                                                 | `branch_info`   |
 | `branch_operation` | `directory`, `action`, `branch`, `target` (optional), `remote` (optional), `with_remote` (default false) | `done`      |
+| `pull_request` | `directory`, `branch`                                                                           | `pull_request`  |
+| `pull_request_action` | `directory`, `branch`, `action`, `base` (optional), `title` (optional), `plan` (optional) | `pull_request_acted` |
 | `cherry_pick`  | `directory`, `commit`                                                                            | `done`          |
 | `stashes`      | `directory`                                                                                      | `stashes`       |
 | `stash`        | `directory`, `action`, `index`, `message`                                                        | `done`          |
@@ -725,6 +727,24 @@ everything said of them, its submodules' paths written from `directory`.
   `standing` and `inspected` and finished with `step`. The checked out branch
   cannot be deleted, and a branch checked out in another worktree can be neither
   renamed nor deleted. A folder of repositories runs it in each child.
+- **`pull_request`:** the newest pull request of `branch`, open or not, as
+  `gh` lists it in the folder, or null when it has none or `gh` is missing or
+  signed out.
+- **`pull_request_action`:** `action` is `push` (push `branch`, publishing it
+  when it follows nothing), `create` or `create_draft` (push, then open a pull
+  request into `base`, without its remote's name, or update the body of the
+  open one), `update` (push and redraft the body of the open one; its title is
+  left alone), `ready` (mark the open draft ready for review), `merge`,
+  `squash` or `rebase` (merge the open one that way, only while its head is
+  the commit last seen), `reopen` (the closed one) or `delete_branch` (delete
+  `branch` from its remote, leased to the commit last fetched, refused while
+  an open pull request needs it). A drafted body lists the steps of `plan`,
+  the subjects of the commits since `base` and then the repository's pull
+  request template. The title is `title`, or the first commit's subject. When
+  `gh` cannot open the pull request and the remote is on GitHub,
+  `pull_request_acted` carries `compare`, GitHub's compare page filled in with
+  the draft, for the client to open. A branch named like an option, or the
+  same as `base`, is refused.
 - **`create_branch`:** makes the branch `name` at the commit the folder is at
   and checks it out.
 - **`create_entry`:** makes an empty file, or a folder when `folder`, at
@@ -1081,6 +1101,8 @@ embedded context, and anything else as a link to the stored file.
 | `conflict`   | `files`: `{ours, theirs, base, merged, language}`: what each side of a conflicted file holds, each text or null for a side that has no such file, `merged` the file as the working folder holds it with the markers git wrote, `language` as of `file` |
 | `revision_changes` | `changes`: `[{path, diff, staged, untracked, index, worktree, conflicted, from}]`, as of `inspected`, for each file a commit or a branch changed |
 | `address`    | `url`: the web address of the file, at the line when one is given, on the host of the repository's remote, at the commit checked out |
+| `pull_request` | `request`: `{number, title, state, url, draft, review, checks, head, base}` or null; `state` is `OPEN`, `CLOSED` or `MERGED`, `review` is `None`, `Required`, `Approved` or `ChangesRequested`, `checks` is `[{name, state, url}]` with `state` `Pending`, `Passed`, `Failed` or `Skipped`, and `head` is the commit the pull request's head is at |
+| `pull_request_acted` | `request`: as of `pull_request`, how it stands afterwards; `compare`: GitHub's compare page to open in a browser, or null |
 
 ## Changes other clients make
 

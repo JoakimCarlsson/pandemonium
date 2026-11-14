@@ -93,6 +93,7 @@ pub mod preview;
 pub mod problems_panel;
 pub mod project;
 pub mod project_search;
+pub mod pull_request_bar;
 pub mod queued;
 pub mod quick_choices;
 pub mod quick_input;

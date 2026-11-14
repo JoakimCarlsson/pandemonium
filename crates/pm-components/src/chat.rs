@@ -468,6 +468,7 @@ pub fn chat(
     node()
         .styles([flex(), flex_col(), flex_1(), min_w_px(0), min_h(0)])
         .child(header(state, session))
+        .children(crate::pull_request_bar::bar(session))
         .child(
             node()
                 .styles([
