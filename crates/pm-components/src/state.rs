@@ -3295,7 +3295,9 @@ impl WorkspaceState {
     /// Hands the prompt to the agent: as the next message of the open
     /// session, or as the first of a new one. While the agent is on a turn
     /// the server queues it, or, `now`, stops the turn and hands it over in
-    /// its place. While a waiting prompt is being edited, it saves the edit instead.
+    /// its place. A question asked on the side with `/btw` is handed over
+    /// as a queued prompt is, shown as nothing until its answer comes. While
+    /// a waiting prompt is being edited, it saves the edit instead.
     fn send(&mut self, now: bool) {
         if self.editing_queued.is_some() {
             self.save_queued_edit();
@@ -3329,7 +3331,8 @@ impl WorkspaceState {
                 if session.signed_out.is_some() {
                     return;
                 }
-                if session.status == Status::Working {
+                if session.status == Status::Working || pm_harness::aside_question(&text).is_some()
+                {
                     self.queue(index, text, now);
                     return;
                 }

@@ -51,7 +51,7 @@ impl Turn {
     }
 }
 
-/// Whether `event` belongs to the conversation itself, rather than to the queue, to going back or to what the agent offers.
+/// Whether `event` belongs to the conversation itself, rather than to the queue, to going back, to what the agent offers or to questions asked on the side; a hand-over belongs to the turn it happened in.
 fn conversational(event: &Event) -> bool {
     matches!(
         event,
@@ -63,6 +63,7 @@ fn conversational(event: &Event) -> bool {
             | Event::Plan(_)
             | Event::Finished(_)
             | Event::Failed(_)
+            | Event::HandedOff { .. }
     )
 }
 
@@ -655,5 +656,34 @@ mod tests {
         rewound.push((14, Event::Rewound { turn: 1 }));
         assert_eq!(to_import(&rewound, "").unwrap().turns.len(), 1);
         assert!(to_import(&[], "x").is_none());
+    }
+
+    /// An answer on the side is kept in the log on disk but never told to an agent started afresh, while a hand-over belongs to the turn it happened in and is told as nothing of its own.
+    #[test]
+    fn an_aside_stays_out_of_the_conversation() {
+        let aside = Event::Aside {
+            question: "why?".to_owned(),
+            answer: "because".to_owned(),
+            failed: false,
+        };
+        let handed = Event::HandedOff {
+            prompt: "carry on".to_owned(),
+            turn: "handoff-1".to_owned(),
+        };
+        assert!(kept_on_disk(&aside));
+        assert!(!kept_on_disk(&handed));
+        let log: Vec<(u64, Event)> = vec![
+            (1, prompted("one", 1, false)),
+            (2, Event::Said("a".to_owned())),
+            (3, aside),
+            (4, handed.clone()),
+            (5, Event::Finished(None)),
+        ];
+        let held = turns(&log);
+        assert_eq!(held.len(), 1);
+        assert!(held[0].events.contains(&handed));
+        let told = preface(&log, true);
+        assert!(told.contains("Reader:\none") && told.contains("Agent:\na"));
+        assert!(!told.contains("because") && !told.contains("carry on"));
     }
 }

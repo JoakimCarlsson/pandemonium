@@ -59,6 +59,11 @@ enum Request {
     },
     /// Stops the turn that is running.
     Cancel,
+    /// Asks `question` on the side, which the agent answers while any turn goes on.
+    Btw {
+        /// What the reader asks.
+        question: String,
+    },
     /// Stops one subagent, and the subagents it started, while the turn goes on.
     StopSubagent {
         /// The id a `Subagent` event gave it.
@@ -114,6 +119,7 @@ impl Request {
             Self::Trust { ticket, verdict } => Command::Trust { ticket, verdict },
             Self::Rename { title } => Command::Rename { title },
             Self::Cancel => Command::Cancel,
+            Self::Btw { question } => Command::Btw { question },
             Self::StopSubagent { id } => Command::StopSubagent { id },
             Self::Set { setting, value } => Command::Set { setting, value },
             Self::Changes { turn } => Command::Changes { turn },
@@ -264,6 +270,13 @@ impl Chat {
     /// Stops the turn that is running.
     pub fn cancel(&self) {
         let _ = self.requests.send(Request::Cancel);
+    }
+
+    /// Asks the agent `question` on the side: it answers with an [`Event::Aside`] from the conversation as it stood when its last turn ended, and neither the question nor the answer becomes part of the conversation; a turn that is running goes on.
+    pub fn btw(&self, question: &str) {
+        let _ = self.requests.send(Request::Btw {
+            question: question.to_owned(),
+        });
     }
 
     /// Stops the subagent a `Subagent` event named `id`, and the subagents it started; the others and the turn go on, and the agent is told the reader stopped it. Nothing happens when it has ended already.

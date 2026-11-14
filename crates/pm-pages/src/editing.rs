@@ -197,6 +197,26 @@ impl Screen {
         self.in_workspace(|state| state.agent_category_requested(category, at))
     }
 
+    /// The screen with the agent of the session shown asked to answer the reader's last prompt again.
+    pub fn retry_requested(self) -> Self {
+        self.in_workspace(|state| state.retry_requested())
+    }
+
+    /// The screen with the agent of the session shown asked to start its conversation afresh.
+    pub fn fresh_requested(self) -> Self {
+        self.in_workspace(|state| state.fresh_requested())
+    }
+
+    /// The screen with the prompt of the session shown starting a hand-over to a new conversation.
+    pub fn handoff_requested(self) -> Self {
+        self.in_workspace(|state| state.handoff_requested())
+    }
+
+    /// The screen with the prompt of the session shown starting a question to ask on the side.
+    pub fn btw_requested(self) -> Self {
+        self.in_workspace(|state| state.btw_requested())
+    }
+
     /// The screen with the menu of the session shown pressed on its row `row`.
     pub fn session_command(self, row: pm_input::FocusId) -> Self {
         self.in_workspace(|state| state.session_command(row))

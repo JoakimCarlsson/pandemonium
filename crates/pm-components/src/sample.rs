@@ -344,6 +344,22 @@ pub struct Message {
     pub attachments: Vec<String>,
     /// Whether the server kept the files as they were before the reader's turn, so they can be put back.
     pub checkpoint: bool,
+    /// What the message notes beside the conversation, when it is a note rather than a turn's message.
+    pub side: Option<Side>,
+}
+
+/// A note shown in the conversation that is not one of its turns.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Side {
+    /// The agent's answer, in the message's text, to a question the reader asked on the side, which is not part of the conversation; `failed` when the text says why there is no answer.
+    Aside {
+        /// What the reader asked, or nothing when it was not told.
+        question: String,
+        /// Whether the question could not be answered.
+        failed: bool,
+    },
+    /// The conversation was handed over to a new one, which starts with the prompt in the message's text.
+    HandedOff,
 }
 
 /// A question of a form the reader answered, with the answer, or nothing when it was skipped.
@@ -510,7 +526,15 @@ impl Message {
             said: Vec::new(),
             attachments: Vec::new(),
             checkpoint: false,
+            side: None,
         }
+    }
+
+    /// A finished note beside the conversation, `side`, that says `text`.
+    pub fn note(side: Side, text: &str) -> Self {
+        let mut note = Self::new(false, text, Vec::new(), Some(String::new()));
+        note.side = Some(side);
+        note
     }
 
     /// The pieces of the text in the order the agent said them among its steps, each with how many steps came before it; the whole text after every step when it was not told piece by piece.

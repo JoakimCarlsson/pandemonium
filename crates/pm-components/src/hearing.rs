@@ -5,7 +5,7 @@ use std::time::Instant;
 use pm_harness::{Event, Kind as ToolKind, Tool, ToolState};
 
 use crate::draft::Draft;
-use crate::sample::{Message, Queued, Session, Shell, Status, Step, Thought, ToolUse};
+use crate::sample::{Message, Queued, Session, Shell, Side, Status, Step, Thought, ToolUse};
 
 impl Session {
     /// Takes in what the agent did.
@@ -102,7 +102,38 @@ impl Session {
             Event::Restored { turn, files } => self.files_restored(turn, files.len()),
             Event::Undone { turn, files } => self.turn_undone(turn, files.len()),
             Event::ToolSignIn(address) => self.sign_in_wanted(&address),
+            Event::Aside {
+                question,
+                answer,
+                failed,
+            } => self.aside(question, &answer, failed),
+            Event::HandedOff { prompt, .. } => self.handed_off(&prompt),
         }
+    }
+
+    /// Notes the agent's `answer` to `question`, asked on the side, or why there is none when it `failed`, beside the conversation: before the reply being written, if any, so that the reply stays whole.
+    fn aside(&mut self, question: String, answer: &str, failed: bool) {
+        let note = Message::note(Side::Aside { question, failed }, answer);
+        let writing = self
+            .messages
+            .last()
+            .is_some_and(|last| !last.from_user && last.duration.is_none());
+        match writing {
+            true => self.messages.insert(self.messages.len() - 1, note),
+            false => self.messages.push(note),
+        }
+    }
+
+    /// Marks where the conversation was handed over to a new one, which starts with `prompt`: the reply that wrote the prompt ends, and the new turn's reply follows the mark.
+    fn handed_off(&mut self, prompt: &str) {
+        if let Some(last) = self
+            .messages
+            .last_mut()
+            .filter(|last| !last.from_user && last.duration.is_none())
+        {
+            last.duration = Some(String::new());
+        }
+        self.messages.push(Message::note(Side::HandedOff, prompt));
     }
 
     /// Takes in a command or task left running starting, or ending.
@@ -134,6 +165,8 @@ impl Session {
     /// Takes in a subagent starting, which gives the call that shows it the id it is stopped by, or ending, which takes that id away.
     ///
     /// The call is the one the subagent's events are filed under: the `task` call that started it, or, when that call started several, its step of the call, which the harness numbers as the id does after its last `/`.
+    ///
+    /// A subagent in the background, such as a long-lived one an `agent_spawn` call started, keeps its call at work after the call itself returned, so it stays listed among the subagents until it ends; its ending ends the call and what the call was still doing.
     fn subagent(&mut self, subagent: &pm_harness::Subagent) {
         let own = subagent.id.rsplit(':').next().unwrap_or(&subagent.id);
         let shown = match own.rsplit_once('/') {
@@ -141,12 +174,21 @@ impl Session {
             None => subagent.call.clone(),
         };
         let running = subagent.state == pm_harness::SubagentState::Running;
+        let mut settled = None;
         for tool in self.tools_mut().filter(|tool| tool.id == shown) {
+            if !running && tool.outlasts_the_turn() && tool.state == ToolState::Running {
+                tool.state = ToolState::Done;
+                tool.seconds = Some(tool.started.elapsed().as_secs());
+                settled = Some(tool.id.clone());
+            }
             tool.stop = running.then(|| crate::sample::Stop {
                 id: subagent.id.clone(),
                 background: subagent.background,
                 asked: false,
             });
+        }
+        if let Some(id) = settled {
+            self.settle_beneath(&id, ToolState::Done);
         }
     }
 
@@ -367,7 +409,7 @@ impl Session {
 
     /// Records what the agent said about a tool: a new step, or more about one it has.
     ///
-    /// A tool of a subagent that goes on after the turn ended joins the reply of its subagent, not a reply of its own.
+    /// A tool of a subagent that goes on after the turn ended joins the reply of its subagent, not a reply of its own. A call that started a subagent in the background stays at work when the call returns, until the subagent ends.
     fn use_tool(&mut self, tool: Tool) {
         let id = tool.id.clone();
         let carrying = self
@@ -400,7 +442,8 @@ impl Session {
                 if let Some(kind) = tool.kind {
                     held.kind = kind;
                 }
-                if let Some(state) = tool.state.filter(|_| !carrying) {
+                let outlives_call = held.outlasts_the_turn() && held.is_working_agent();
+                if let Some(state) = tool.state.filter(|_| !carrying && !outlives_call) {
                     if held.state == ToolState::Running && state != ToolState::Running {
                         held.seconds = Some(held.started.elapsed().as_secs());
                         ended = Some(state);
@@ -801,5 +844,85 @@ mod tests {
             .map(|(_, _, tool)| tool.id.as_str())
             .collect();
         assert_eq!(agents, ["t1"]);
+    }
+
+    /// A long-lived subagent an `agent_spawn` call started stays at work, with its button, after the call returns and its turn ends, and the call ends when the subagent is stopped.
+    #[test]
+    fn a_long_lived_subagent_stays_listed_until_stopped() {
+        let mut session = Session::started("Test", 0, "Hello");
+        session.hear(spawned("s1", None, "tester"));
+        let long_lived = |state| {
+            Event::Subagent(pm_harness::Subagent {
+                id: "s1".to_owned(),
+                call: "s1".to_owned(),
+                agent: "tester".to_owned(),
+                label: "Test every change".to_owned(),
+                model: None,
+                background: true,
+                state,
+            })
+        };
+        session.hear(long_lived(pm_harness::SubagentState::Running));
+        session.hear(spawned("s1:r", Some("s1"), "tester"));
+        session.hear(Event::Tool(pm_harness::Tool {
+            id: "s1".to_owned(),
+            title: None,
+            kind: None,
+            state: Some(ToolState::Done),
+            target: None,
+            diff: None,
+            output: Some("tester".to_owned()),
+            parent: None,
+            agent: None,
+            worktree: None,
+        }));
+        session.hear(Event::Finished(None));
+        assert_eq!(stops(&session), [("s1", "s1")]);
+
+        session.hear(long_lived(pm_harness::SubagentState::Stopped));
+        assert!(stops(&session).is_empty());
+        assert!(
+            session
+                .subagents()
+                .into_iter()
+                .all(|(_, _, tool)| tool.state == ToolState::Done)
+        );
+    }
+
+    /// An answer on the side is noted beside the conversation, before the reply being written so that the reply stays whole, and a hand-over ends the reply that wrote it and marks where the new conversation's reply follows.
+    #[test]
+    fn asides_and_hand_overs_are_noted_beside_the_conversation() {
+        let mut session = Session::started("Test", 0, "Hello");
+        session.hear(Event::Said("Working on".to_owned()));
+        session.hear(Event::Aside {
+            question: "why?".to_owned(),
+            answer: "because".to_owned(),
+            failed: false,
+        });
+        session.hear(Event::Said(" it".to_owned()));
+        let last = session.messages.len() - 1;
+        assert_eq!(session.messages[last].text, "Working on it");
+        assert_eq!(
+            session.messages[last - 1].side,
+            Some(Side::Aside {
+                question: "why?".to_owned(),
+                failed: false,
+            })
+        );
+        assert_eq!(session.messages[last - 1].text, "because");
+
+        session.hear(Event::HandedOff {
+            prompt: "Carry on with the parser".to_owned(),
+            turn: "handoff-1".to_owned(),
+        });
+        session.hear(Event::Said("On it".to_owned()));
+        session.hear(Event::Finished(None));
+        let last = session.messages.len() - 1;
+        assert_eq!(session.messages[last].text, "On it");
+        assert_eq!(session.messages[last - 1].side, Some(Side::HandedOff));
+        assert_eq!(session.messages[last - 1].text, "Carry on with the parser");
+        assert_eq!(session.messages[last - 2].text, "Working on it");
+        assert!(session.messages[last - 2].duration.is_some());
+        assert_eq!(session.status, Status::Idle);
     }
 }

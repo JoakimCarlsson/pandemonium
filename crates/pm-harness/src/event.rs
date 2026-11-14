@@ -129,6 +129,23 @@ pub enum Event {
     Goal(Goal),
     /// What the conversation has cost so far, whole, for each model it asked.
     Spent(Spent),
+    /// The agent answered a question the reader asked on the side with `/btw`, which is not part of the conversation and is never told to the agent again; or, when `failed` is set, could not, and `answer` says why.
+    Aside {
+        /// What the reader asked, or nothing when the question could not be answered.
+        question: String,
+        /// What the agent answered, or why it could not.
+        answer: String,
+        /// Whether the question could not be answered.
+        #[serde(default)]
+        failed: bool,
+    },
+    /// The agent handed the work over to a new conversation, which starts afresh with `prompt` as its first turn; that turn's events follow.
+    HandedOff {
+        /// The prompt the agent wrote to hand the conversation over.
+        prompt: String,
+        /// The id the harness saved the new conversation's first turn under.
+        turn: String,
+    },
 }
 
 /// What an agent says about itself when a conversation is opened.
@@ -214,8 +231,17 @@ fn stop_came_late(reason: &str) -> bool {
     reason.starts_with("no subagent ") && reason.ends_with(" is running")
 }
 
+/// Whether `reason` is the harness refusing `/retry`, `/fresh` or `/handoff`, or saying it had nothing to answer again: the agent goes on as it was, so the turn the command was sent as ends with the reason rather than the agent being taken for gone.
+fn refused_restart(reason: &str) -> bool {
+    ["/retry ", "/fresh ", "/handoff "]
+        .iter()
+        .any(|command| reason.starts_with(command))
+}
+
 impl Event {
     /// The event the app keeps for what the harness `reported`, or nothing when the app has no use for it: a refusal to stop a subagent that had ended already, and a `/goal` command the agent could not carry out while it worked, are dropped, since the app takes a failure to mean the agent is gone; the goal's own events say how it stands. A turn the harness started itself toward the goal comes as the prompt it started with.
+    ///
+    /// The answer to a question asked on the side becomes an aside, and a refusal to answer one a failed aside rather than a failure of the agent; a refused `/retry`, `/fresh` or `/handoff` ends the turn it was sent as.
     ///
     /// The harness's answers about the files of a turn are not kept here: [`crate::FileNews`] reads them.
     pub fn from_harness(reported: omc_wire::Event) -> Option<Self> {
@@ -250,7 +276,19 @@ impl Event {
             }),
             Wire::Trust(request) => Some(Self::Trust(request)),
             Wire::Failed(reason) if stop_came_late(&reason) || reason.starts_with("/goal:") => None,
+            Wire::Failed(reason) if reason.starts_with("/btw ") => Some(Self::Aside {
+                question: String::new(),
+                answer: reason,
+                failed: true,
+            }),
+            Wire::Failed(reason) if refused_restart(&reason) => Some(Self::Finished(Some(reason))),
             Wire::Failed(reason) => Some(Self::Failed(reason)),
+            Wire::Aside { question, answer } => Some(Self::Aside {
+                question,
+                answer,
+                failed: false,
+            }),
+            Wire::HandedOff { prompt, turn } => Some(Self::HandedOff { prompt, turn }),
             Wire::Titled(title) => Some(Self::Titled(title)),
             Wire::Changes { .. } | Wire::Restored { .. } | Wire::Undone { .. } => None,
         }
@@ -297,6 +335,56 @@ mod tests {
             )),
             None
         );
+    }
+
+    /// An answer on the side becomes the app's aside and a question that could not be answered a failed one; a hand-over is kept with its prompt, and a refused `/retry` ends the turn instead of taking the agent for gone; each survives the session log's encoding.
+    #[test]
+    fn asides_and_hand_overs_become_the_apps() {
+        let aside = Event::from_harness(omc_wire::Event::Aside {
+            question: "why?".into(),
+            answer: "because".into(),
+        });
+        assert_eq!(
+            aside,
+            Some(Event::Aside {
+                question: "why?".into(),
+                answer: "because".into(),
+                failed: false,
+            })
+        );
+        assert_eq!(
+            Event::from_harness(omc_wire::Event::Failed(
+                "/btw could not be answered: offline".into()
+            )),
+            Some(Event::Aside {
+                question: String::new(),
+                answer: "/btw could not be answered: offline".into(),
+                failed: true,
+            })
+        );
+        let handed = Event::from_harness(omc_wire::Event::HandedOff {
+            prompt: "carry on".into(),
+            turn: "handoff-1".into(),
+        });
+        assert_eq!(
+            handed,
+            Some(Event::HandedOff {
+                prompt: "carry on".into(),
+                turn: "handoff-1".into(),
+            })
+        );
+        assert_eq!(
+            Event::from_harness(omc_wire::Event::Failed(
+                "/retry has no prompt to answer again".into()
+            )),
+            Some(Event::Finished(Some(
+                "/retry has no prompt to answer again".into()
+            )))
+        );
+        for kept in [aside, handed] {
+            let line = serde_json::to_string(&kept).unwrap();
+            assert_eq!(serde_json::from_str::<Option<Event>>(&line).unwrap(), kept);
+        }
     }
 
     /// The sign-in page a tool server wants opened, which the harness sends during a conversation as a line of its wire protocol, becomes the app's sign-in event, and survives the trip through the session log's encoding.

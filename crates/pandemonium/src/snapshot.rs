@@ -305,6 +305,8 @@ pub enum Shot {
     Goal,
     /// The same conversation with the goal's menu open.
     GoalMenu,
+    /// A finished conversation with an answer to a question asked on the side, then handed over to a new conversation, whose first reply follows the mark.
+    Aside,
     /// The page for starting work, with how much of its allowance each agent's account has used.
     Allowances,
     /// A conversation with the model menu open.
@@ -3577,6 +3579,7 @@ impl Shot {
             }
             Self::Goal => Screen::Workspace(goal()),
             Self::GoalMenu => Screen::Workspace(goal().after(pm_components::state::GOAL_CHIP)),
+            Self::Aside => Screen::Workspace(aside()),
             Self::Allowances => {
                 let used = |five: f64, week: f64| {
                     let window = |label: &str, name: &str, fraction: f64| {
@@ -4353,6 +4356,36 @@ enum Turn {
     Background,
     /// The agent finished it like [`Turn::Background`], its subagents working in git worktrees of their own and a third one ended.
     Isolated,
+}
+
+/// A finished conversation in which the reader asked a question on the side, then had the work handed over to a new conversation, which has started on it.
+fn aside() -> WorkspaceState {
+    let state = live(Turn::Finished);
+    let last = state.sessions.len() - 1;
+    let state = state
+        .heard(
+            last,
+            Event::Aside {
+                question: "Which file keeps the sidebar's scroll offset?".to_owned(),
+                answer: "`crates/pm-components/src/state.rs`, in `sidebar_scroll`. It is clamped when the list is rebuilt.".to_owned(),
+                failed: false,
+            },
+        )
+        .edited(
+            PROMPT,
+            Edit::Paste("/handoff Add a test for the clamp".to_owned()),
+        )
+        .after(SEND);
+    [
+        Event::HandedOff {
+            prompt: "The sidebar lost its scroll position because the offset was clamped against a height measured before the list was rebuilt; the clamp now uses the new height. Add a test in pm-components that rebuilds the list and checks the offset is kept.".to_owned(),
+            turn: "handoff-1".to_owned(),
+        },
+        Event::Said("I'll add the test next to the other sidebar tests.".to_owned()),
+        Event::Finished(None),
+    ]
+    .into_iter()
+    .fold(state, |state, event| state.heard(last, event))
 }
 
 /// A finished conversation whose agent works toward a goal with a budget of two million tokens, a fifth of it used.

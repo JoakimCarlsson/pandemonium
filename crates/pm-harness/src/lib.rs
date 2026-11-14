@@ -21,6 +21,7 @@ mod login;
 mod mcp;
 mod product;
 mod profile;
+mod slash;
 mod tool_registry;
 mod web;
 
@@ -46,5 +47,6 @@ pub use omc_wire::PastTurn;
 pub use omc_wire::{Imported, ImportedTurn};
 pub use omc_wire::{Reach, SignIn, ToolServer};
 pub use product::Product;
+pub use slash::{BTW, FRESH, HANDOFF, RETRY, aside_question, btw_prompt, handoff_prompt};
 pub use tool_registry::{Listing, search as search_tools};
 pub use web::{is_web_address, open as open_address};

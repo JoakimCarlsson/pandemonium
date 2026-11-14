@@ -25,8 +25,13 @@ pub(crate) struct Waiting {
 }
 
 impl Session {
-    /// Hands `prompt` to the agent of this session, numbered `number`, or queues it behind the turn the agent is on; with `now`, stops that turn and puts the prompt first.
+    /// Hands `prompt` to the agent of this session, numbered `number`, or queues it behind the turn the agent is on; with `now`, stops that turn and puts the prompt first. A question asked on the side is handed over at once, turn or not.
     pub(crate) fn submit(&mut self, number: u64, prompt: Prompt, now: bool) -> Told {
+        if let Some(question) = pm_harness::aside_question(&prompt.text) {
+            let question = question.to_owned();
+            crate::uploads::discard(&prompt.paths);
+            return self.ask_aside(number, &question);
+        }
         if !self.busy {
             return self.hand(number, prompt);
         }
@@ -213,6 +218,26 @@ impl Session {
         if let Some(chat) = &self.chat {
             chat.prompt(&prompt.text, &prompt.paths, turn, &preface);
             self.busy = true;
+        }
+        told
+    }
+
+    /// Asks the agent of this session, numbered `number`, `question` on the side, starting the agent when it is not running: the question is neither queued nor noted as a turn, a turn the agent is on goes on, and the answer comes as an aside.
+    fn ask_aside(&mut self, number: u64, question: &str) -> Told {
+        let told = if self.chat.is_none() {
+            let told = self.drop_trust(number);
+            let settings = if crate::sessions::has_history(number) {
+                Vec::new()
+            } else {
+                conversation::settings(&self.log)
+            };
+            self.start_agent(number, &settings);
+            told
+        } else {
+            Told::new()
+        };
+        if let Some(chat) = &self.chat {
+            chat.btw(question);
         }
         told
     }

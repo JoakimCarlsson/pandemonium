@@ -880,6 +880,26 @@ impl App {
             Action::RewindConversation => self.choose(Choosing::Rewind),
             Action::ForkConversation => self.choose(Choosing::Fork),
             Action::RestoreFiles => self.choose(Choosing::Restore),
+            Action::RetryReply => {
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).retry_requested());
+                self.deliver();
+            }
+            Action::StartFresh => {
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).fresh_requested());
+                self.deliver();
+            }
+            Action::HandOffConversation => {
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).handoff_requested());
+                self.focus.focus(PROMPT);
+            }
+            Action::AskOnTheSide => {
+                self.model
+                    .update(|screen| *screen = std::mem::take(screen).btw_requested());
+                self.focus.focus(PROMPT);
+            }
             Action::CycleMode => self
                 .model
                 .update(|screen| *screen = std::mem::take(screen).mode_cycled()),

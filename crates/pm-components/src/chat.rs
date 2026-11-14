@@ -3,10 +3,10 @@
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
-    Radius, Role, bg, border_b, border_color, cursor_pointer, flex, flex_1, flex_col, flex_none,
-    font_mono, gap, h, items_center, leading_ratio, max_w_px, mb, min_h, min_w_px, mt, opacity,
-    overflow_hidden, pb, px, py, rounded, rounded_full, self_end, self_start, size, text_color,
-    text_px, w_full,
+    Radius, Role, bg, border, border_b, border_color, cursor_pointer, flex, flex_1, flex_col,
+    flex_none, font_mono, gap, h, items_center, leading_ratio, max_w_px, mb, min_h, min_w_px, mt,
+    opacity, overflow_hidden, pb, px, py, rounded, rounded_full, self_end, self_start, size,
+    text_color, text_px, w_full,
 };
 use pm_text::Shaper;
 use pm_ui::{Node, node, text};
@@ -20,7 +20,7 @@ use crate::input;
 use crate::inquiry::{answered, inquiry};
 use crate::parts::{clipped, glyph, line};
 use crate::queued::queued;
-use crate::sample::{Session, Status};
+use crate::sample::{Session, Side, Status};
 use crate::sidebar::status_icon;
 use crate::size::Size;
 use crate::state::{
@@ -151,7 +151,54 @@ fn user_message(
         .selectable(CHAT_TEXT)
 }
 
-/// A reply from the agent: the steps it took, what it says, the points it lists and how long it took.
+/// A note beside the conversation that says `content`: an answer to a question asked on the side, framed apart from the turns since it is not part of the conversation, or the mark where the conversation was handed over to a new one, with the prompt the new one starts with.
+fn side_note(side: &Side, content: &str, width: f32, shaper: &mut Shaper) -> Node {
+    let (icon, heading, asked) = match side {
+        Side::Aside { question, failed } => (
+            IconName::Message,
+            if *failed {
+                "Asked on the side · no answer"
+            } else {
+                "Asked on the side · not part of the conversation"
+            },
+            Some(question.as_str()).filter(|question| !question.is_empty()),
+        ),
+        Side::HandedOff => (
+            IconName::ArrowRight,
+            "Handed over to a new conversation, which starts with",
+            None,
+        ),
+    };
+    let inner = width - 34.0;
+    let body = match side {
+        Side::Aside { failed: true, .. } => paragraph(content, Role::Danger, inner, shaper),
+        Side::Aside { .. } => Markdown::new(content, inner).build(shaper),
+        Side::HandedOff => paragraph(content, Role::Muted, inner, shaper),
+    };
+    node()
+        .styles([
+            flex(),
+            flex_col(),
+            gap(2),
+            px(4),
+            py(3),
+            rounded(Radius::Xl),
+            border(),
+            border_color(Role::Border),
+        ])
+        .child(
+            node()
+                .styles([flex(), items_center(), gap(2)])
+                .child(glyph(icon, 3.5, Role::Subtle))
+                .child(line(heading, 12, 1.4, Role::Subtle)),
+        )
+        .children(asked.map(|question| paragraph(question, Role::Muted, inner, shaper)))
+        .child(body)
+        .group()
+        .selectable(CHAT_TEXT)
+}
+
+/// A reply from the agent: the steps it took, what it says, the points it lists and how long it took; a note beside the conversation shows as one.
 fn agent_message(
     state: &WorkspaceState,
     session: &Session,
@@ -160,6 +207,9 @@ fn agent_message(
     shaper: &mut Shaper,
 ) -> Node {
     let message = &session.messages[index];
+    if let Some(side) = &message.side {
+        return side_note(side, &message.text, width, shaper);
+    }
     let mut reply = node().styles([flex(), flex_col(), gap(3)]);
     let open = !message.steps.is_empty()
         && message

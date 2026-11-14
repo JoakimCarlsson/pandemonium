@@ -81,6 +81,14 @@ pub enum Action {
     ForkConversation,
     /// Lists the reader's messages, to put the files back as they were before one.
     RestoreFiles,
+    /// Asks the agent to answer the reader's last prompt again, its last reply taken back.
+    RetryReply,
+    /// Starts the agent's conversation afresh, keeping its settings.
+    StartFresh,
+    /// Has the agent hand the work over to a new conversation it writes the first prompt of.
+    HandOffConversation,
+    /// Starts a question to ask the agent on the side, which is not part of the conversation.
+    AskOnTheSide,
     /// Gives the keyboard to the prompt.
     FocusPrompt,
     /// Closes the tab shown.
@@ -417,7 +425,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, in the order the keymap lists them.
-    pub const ALL: [Self; 200] = [
+    pub const ALL: [Self; 204] = [
         Self::CommandPalette,
         Self::OpenSettings,
         Self::GoToSession,
@@ -452,6 +460,10 @@ impl Action {
         Self::RewindConversation,
         Self::ForkConversation,
         Self::RestoreFiles,
+        Self::RetryReply,
+        Self::StartFresh,
+        Self::HandOffConversation,
+        Self::AskOnTheSide,
         Self::FocusPrompt,
         Self::CloseTab,
         Self::CloseOtherTabs,
@@ -657,6 +669,10 @@ impl Action {
             Self::RewindConversation => "rewind_conversation",
             Self::ForkConversation => "fork_conversation",
             Self::RestoreFiles => "restore_files",
+            Self::RetryReply => "retry_reply",
+            Self::StartFresh => "start_fresh",
+            Self::HandOffConversation => "hand_off_conversation",
+            Self::AskOnTheSide => "ask_on_the_side",
             Self::FocusPrompt => "focus_prompt",
             Self::CloseTab => "close_tab",
             Self::CloseOtherTabs => "close_other_tabs",
@@ -863,6 +879,10 @@ impl Action {
             Self::RewindConversation => "Rewind Conversation",
             Self::ForkConversation => "Fork Conversation",
             Self::RestoreFiles => "Restore Files",
+            Self::RetryReply => "Retry Last Reply",
+            Self::StartFresh => "Start Conversation Afresh",
+            Self::HandOffConversation => "Hand Off to a New Conversation",
+            Self::AskOnTheSide => "Ask on the Side",
             Self::FocusPrompt => "Focus Prompt",
             Self::CloseTab => "Close Tab",
             Self::CloseOtherTabs => "Close Other Tabs",
@@ -1050,6 +1070,10 @@ impl Action {
             Self::CloneRepository => "new workspace project",
             Self::OpenSettings => "preferences configure",
             Self::CommandPalette => "command palette",
+            Self::RetryReply => "retry regenerate answer again",
+            Self::StartFresh => "fresh clear new context reset",
+            Self::HandOffConversation => "handoff hand over new conversation",
+            Self::AskOnTheSide => "btw by the way side question",
             _ => "",
         }
     }
@@ -1072,6 +1096,10 @@ impl Action {
             | Self::RewindConversation
             | Self::ForkConversation
             | Self::RestoreFiles
+            | Self::RetryReply
+            | Self::StartFresh
+            | Self::HandOffConversation
+            | Self::AskOnTheSide
             | Self::FocusPrompt => "Session",
             Self::CloseTab
             | Self::CloseOtherTabs
@@ -1288,6 +1316,10 @@ impl Action {
                 | Self::RewindConversation
                 | Self::ForkConversation
                 | Self::RestoreFiles
+                | Self::RetryReply
+                | Self::StartFresh
+                | Self::HandOffConversation
+                | Self::AskOnTheSide
                 | Self::FocusPrompt
                 | Self::CloseTab
                 | Self::CloseOtherTabs
@@ -1532,6 +1564,10 @@ fn own() -> &'static [(Action, &'static [&'static str])] {
         (RewindConversation, &[]),
         (ForkConversation, &[]),
         (RestoreFiles, &[]),
+        (RetryReply, &[]),
+        (StartFresh, &[]),
+        (HandOffConversation, &[]),
+        (AskOnTheSide, &[]),
         (FocusPrompt, &[]),
         (CloseTab, &["ctrl+w"]),
         (CloseOtherTabs, &[]),

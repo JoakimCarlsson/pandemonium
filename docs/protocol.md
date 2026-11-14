@@ -366,6 +366,14 @@ everything said of them, its submodules' paths written from `directory`.
   waited longest is handed over: an `Unqueued` event, then `Prompted`. With
   `now: true` the prompt goes to the front of the queue and the running turn is
   stopped, so it is handed over as soon as the agent ends the turn.
+  A prompt that starts with `/btw` asks the agent the question after it on
+  the side: it is handed over at once, turn or not, is neither queued nor
+  noted as a turn, and its files are dropped; the answer comes as an `Aside`
+  event. `/retry`, `/fresh` and `/handoff [goal]` are prompts like any other:
+  the agent answers the last prompt again, starts its conversation afresh, or
+  hands the work over to a new conversation (a `HandedOff` event, then the new
+  conversation's first turn). When the agent refuses one of them the turn ends
+  with a `Finished` carrying the reason, and the agent keeps running.
 - **`hurry`:** moves the queued prompt whose `Queued` event gave it the id
   `queued` to the front of the queue and stops the running turn, as `now`
   does for a new prompt. Fails when no prompt waits under that id.
@@ -1185,7 +1193,7 @@ Events use serde's default form, one key naming the type.
 | `{"Thought": "text"}`         | More of the agent's reasoning. Append it.                                                                 |
 | `{"Tool": Tool}`              | A tool the agent is using. Later events with the same `id` update it.                                     |
 | `{"Background": {id, label, running}}` | A command or task went on running beyond its call (`running` true), or ended (false). `id` is the handle the agent knows it by; for a command left running by a turn it is the `id` of its `Tool`. The agent is still at work while any runs, though the turn is over. |
-| `{"Subagent": {id, call, agent, label, model, background, state}}` | A subagent started (`state` is `Running`), or ended (`Finished`, `Failed` or `Stopped`). `id` names it for `stop_subagent`; `call` is the `id` of the `Tool` of the call that started it. When that call started several, `id` ends in `/` and its place, and its own `Tool` is `call`, `:` and that place. Not kept on disk, so it is not replayed after the server restarts. |
+| `{"Subagent": {id, call, agent, label, model, background, state}}` | A subagent started (`state` is `Running`), or ended (`Finished`, `Failed` or `Stopped`). `id` names it for `stop_subagent`; `call` is the `id` of the `Tool` of the call that started it. When that call started several, `id` ends in `/` and its place, and its own `Tool` is `call`, `:` and that place. A subagent in the background, such as a long-lived one an `agent_spawn` call started, outlives its call: show the call as at work until the subagent ends. Not kept on disk, so it is not replayed after the server restarts. |
 | `{"Halted": null}`            | The turn was stopped or failed: nothing the agent had running goes on. A `Finished`, `SignedOut` or `Failed` follows.              |
 | `{"Plan": [PlanStep]}`        | The agent's plan, whole. Replaces the earlier one.                                                        |
 | `{"Ask": Permission}`         | The agent waits for an answer: send `choose` with the `ticket` and the `id` of a choice.                  |
@@ -1205,6 +1213,8 @@ Events use serde's default form, one key naming the type.
 | `{"Rewound": {turn}}`         | The conversation went back to before the reader's turn `turn`: drop that turn and everything after it.   |
 | `{"Restored": {turn, files}}` | The files were put back as they were before the reader's turn `turn`. `files` are the paths that changed, from the root of the repository. |
 | `{"Undone": {turn, files}}`   | What the reader's turn `turn` changed was taken back out of the files, what was done to them since left in. `files` are the paths that changed, from the root of the repository. |
+| `{"Aside": {question, answer, failed}}` | The agent answered `question`, asked on the side with a `/btw` prompt, with `answer`. It is not part of the conversation: show it beside the turns, and it is never told to the agent again. `failed` (absent means `false`) says there is no answer, `answer` saying why, and `question` is then empty. Kept on disk. |
+| `{"HandedOff": {prompt, turn}}` | The agent handed the work over to a new conversation after a `/handoff` prompt: its conversation started afresh, and the turn that follows, which starts with `prompt`, is the new conversation's first; `turn` is the id the harness saved it under. Show a mark between the two. Part of the turn it came in. |
 | `{"ToolSignIn": "address"}`   | A tool server the agent uses wants the reader to sign in to it with OAuth. Show the address in the conversation and, when the event is live rather than replayed history, open it in the reader's browser. The server's tools come with the next prompt once signed in. |
 
 Shapes used above:
