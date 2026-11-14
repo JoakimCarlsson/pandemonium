@@ -127,3 +127,37 @@ One crate per layer, each depending only on the layers below it.
 - **Binary:** `pandemonium`: the event loop, the window and the threads that
   talk to the servers. It wires the layers and implements none of them.
 - **Not built yet** (one doc comment each): `pm-session`, `pm-review`.
+
+## Code hosts
+
+The pull request bar works through `pm-git`, which keeps what every code host
+shares apart from what differs between them:
+
+- `pull_requests.rs` holds the shared workflow: drafting a title and body from
+  the session's plan, the branch's commits and the repository's template,
+  checking the branch is safe to act on, pushing, deleting the remote branch,
+  and `CodeHost`, what a client is told of the host so it can name it.
+- `review_host.rs` holds the `ReviewHost` trait, the `HOSTS` list and
+  `detect`, which takes the publishing remote's address (`origin`, or the first
+  remote) apart and asks each host whether it recognizes it. A remote no host
+  recognizes is unsupported: the bar then offers only Push, and every other
+  action fails with "this code host is not supported yet".
+- `github/review.rs` is the one implementation today: GitHub on github.com,
+  `*.ghe.com` and self-hosted GitHub Enterprise servers, through `gh`.
+
+To add a host, such as GitLab or Azure DevOps:
+
+1. Write a module, such as `gitlab/review.rs`, with a unit struct that
+   implements `ReviewHost`: its `kind` (the stable name on the wire), `name`
+   and `review_noun` (`merge request`, which the bar shows), `recognizes` for
+   its remotes, `templates` for where it keeps description templates, `status`
+   mapping its states to `OPEN`, `CLOSED` and `MERGED` and its checks and
+   approvals to `CheckState` and `ReviewDecision`, the actions (`create`,
+   `update_body`, `mark_ready`, `merge`, `reopen`), and `new_review_url` for its
+   web page when its program is missing. `delete_remote_branch` has a default
+   that pushes the deletion with `git`.
+2. Add it to `HOSTS` in `review_host.rs`.
+3. Give it tests beside it, like `github/review/tests.rs`.
+
+Nothing in the protocol, the server or the window changes: they carry
+`PullRequestStatus` and `CodeHost` whatever the host.

@@ -667,6 +667,8 @@ pub struct Session {
     pub pull_request: Option<pm_git::PullRequestStatus>,
     /// What is being done to its branch's pull request, while something is.
     pub pull_busy: Option<&'static str>,
+    /// The code host its repository's remote is on, once its server has said.
+    pub code_host: Option<pm_git::CodeHost>,
 }
 
 impl Session {
@@ -734,6 +736,7 @@ impl Session {
             handing_over: false,
             pull_request: None,
             pull_busy: None,
+            code_host: None,
         }
     }
 

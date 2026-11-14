@@ -729,8 +729,10 @@ everything said of them, its submodules' paths written from `directory`.
   cannot be deleted, and a branch checked out in another worktree can be neither
   renamed nor deleted. A folder of repositories runs it in each child.
 - **`pull_request`:** the newest pull request of `branch`, open or not, as
-  `gh` lists it in the folder, or null when it has none or `gh` is missing or
-  signed out.
+  the code host of the folder's publishing remote (`origin`, or the first
+  remote) lists it, or null when it has none, the host is not supported, or
+  its program is missing or signed out. GitHub, on github.com or a GitHub
+  Enterprise server, is the one supported host today; it is read through `gh`.
 - **`pull_request_action`:** `action` is `push` (push `branch`, publishing it
   when it follows nothing), `create` or `create_draft` (push, then open a pull
   request into `base`, without its remote's name, or update the body of the
@@ -741,11 +743,13 @@ everything said of them, its submodules' paths written from `directory`.
   `branch` from its remote, leased to the commit last fetched, refused while
   an open pull request needs it). A drafted body lists the steps of `plan`,
   the subjects of the commits since `base` and then the repository's pull
-  request template. The title is `title`, or the first commit's subject. When
-  `gh` cannot open the pull request and the remote is on GitHub,
-  `pull_request_acted` carries `compare`, GitHub's compare page filled in with
-  the draft, for the client to open. A branch named like an option, or the
-  same as `base`, is refused.
+  request template, from where the host keeps it. The title is `title`, or the
+  first commit's subject. When the host's program cannot open the pull request,
+  `pull_request_acted` carries `compare`, the host's page for opening one
+  filled in with the draft, for the client to open. A branch named like an
+  option, or the same as `base`, is refused. On a host that is not supported,
+  only `push` is done; every other action fails with "this code host is not
+  supported yet".
 - **`create_branch`:** makes the branch `name` at the commit the folder is at
   and checks it out.
 - **`create_entry`:** makes an empty file, or a folder when `folder`, at
@@ -1112,8 +1116,8 @@ embedded context, and anything else as a link to the stored file.
 | `conflict`   | `files`: `{ours, theirs, base, merged, language}`: what each side of a conflicted file holds, each text or null for a side that has no such file, `merged` the file as the working folder holds it with the markers git wrote, `language` as of `file` |
 | `revision_changes` | `changes`: `[{path, diff, staged, untracked, index, worktree, conflicted, from}]`, as of `inspected`, for each file a commit or a branch changed |
 | `address`    | `url`: the web address of the file, at the line when one is given, on the host of the repository's remote, at the commit checked out |
-| `pull_request` | `request`: `{number, title, state, url, draft, review, checks, head, base}` or null; `state` is `OPEN`, `CLOSED` or `MERGED`, `review` is `None`, `Required`, `Approved` or `ChangesRequested`, `checks` is `[{name, state, url}]` with `state` `Pending`, `Passed`, `Failed` or `Skipped`, and `head` is the commit the pull request's head is at |
-| `pull_request_acted` | `request`: as of `pull_request`, how it stands afterwards; `compare`: GitHub's compare page to open in a browser, or null |
+| `pull_request` | `request`: `{number, title, state, url, draft, review, checks, head, base, checks_url}` or null; `state` is `OPEN`, `CLOSED` or `MERGED`, whatever the host, `review` is `None`, `Required`, `Approved` or `ChangesRequested`, `checks` is `[{name, state, url}]` with `state` `Pending`, `Passed`, `Failed` or `Skipped`, `head` is the commit the pull request's head is at, and `checks_url` (optional, empty when the host has no such page) the page of its checks; `host` (optional, missing from older servers): `{kind, name, review_noun, supported}`, the code host of the remote, `kind` its stable name such as `github` (empty when not supported), `name` its name, or the remote's machine when not supported, `review_noun` what it calls a pull request, and `supported` false when only pushing can be offered |
+| `pull_request_acted` | `request`: as of `pull_request`, how it stands afterwards; `compare`: the host's page for opening a pull request, to open in a browser, or null |
 
 ## Changes other clients make
 

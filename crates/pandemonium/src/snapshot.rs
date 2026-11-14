@@ -107,6 +107,8 @@ pub enum Shot {
     OutOfReach,
     /// A session whose branch has an open pull request, with checks passed, failed and running and changes asked for, under its header.
     PullRequest,
+    /// A session whose repository's remote is on a code host that is not supported, which offers only pushing under its header.
+    PullRequestUnsupported,
     /// The workspace asking whether to close the window while agents are working.
     Quitting,
     /// The workspace telling of a newer release in its title bar.
@@ -3025,7 +3027,14 @@ impl Shot {
                     ],
                     head: "4f2a9c1".to_owned(),
                     base: "main".to_owned(),
+                    checks_url: String::new(),
                 });
+                Screen::Workspace(state)
+            }
+            Self::PullRequestUnsupported => {
+                let mut state = workspace();
+                state.sessions[0].base = Some("main".to_owned());
+                state.sessions[0].code_host = Some(pm_git::CodeHost::unsupported("gitlab.com"));
                 Screen::Workspace(state)
             }
             Self::OutOfReach => {

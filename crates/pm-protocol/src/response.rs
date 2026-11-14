@@ -595,16 +595,19 @@ pub enum Response {
         /// The sessions found.
         hits: Vec<crate::ChatHit>,
     },
-    /// The newest pull request of the branch asked about, or nothing when it has none or `gh` could not say.
+    /// The newest pull request of the branch asked about, or nothing when it has none, its code host is not supported, or the host could not say.
     PullRequest {
         /// The pull request.
         request: Option<pm_git::PullRequestStatus>,
+        /// The code host the repository's remote is on, so the client can name it and offer only what it supports; nothing from a server that does not say.
+        #[serde(default)]
+        host: Option<pm_git::CodeHost>,
     },
     /// What came of a `pull_request_action`.
     PullRequestActed {
         /// How the branch's pull request stands afterwards, or nothing when it has none.
         request: Option<pm_git::PullRequestStatus>,
-        /// GitHub's compare page, filled in with the drafted title and body, for the client to open when `gh` could not open the pull request.
+        /// The code host's page for opening a new pull request, filled in with the drafted title and body, for the client to open when the host's program could not open it.
         compare: Option<String>,
     },
 }

@@ -1351,7 +1351,7 @@ pub enum Request {
         #[serde(default)]
         limit: Option<usize>,
     },
-    /// The newest pull request of a branch, open or not, with its checks and review, from the GitHub repository the folder is a clone of.
+    /// The newest pull request of a branch, open or not, with its checks and review, from the code host the repository the folder is a clone of is on, and which host that is.
     PullRequest {
         /// The folder.
         directory: String,

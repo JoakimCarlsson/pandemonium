@@ -899,14 +899,17 @@ impl Screen {
         }
     }
 
-    /// The screen after the server said the branch of the session at `session` has `request` as its newest pull request, or none.
+    /// The screen after the server said the branch of the session at `session` has `request` as its newest pull request, or none, on the code host `host`, when it said which.
     pub fn with_pull_request(
         self,
         session: usize,
         request: Option<pm_git::PullRequestStatus>,
+        host: Option<pm_git::CodeHost>,
     ) -> Self {
         match self {
-            Self::Workspace(state) => Self::Workspace(state.with_pull_request(session, request)),
+            Self::Workspace(state) => {
+                Self::Workspace(state.with_pull_request(session, request, host))
+            }
         }
     }
 

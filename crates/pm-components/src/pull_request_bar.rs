@@ -1,6 +1,6 @@
-//! The bar under a session's header that tells how the pull request of its branch stands, with its checks and review, and offers what can be done next: push, open, update, mark ready, merge, reopen, and delete the branch from its remote.
+//! The bar under a session's header that tells how the pull request of its branch stands, with its checks and review, and offers what can be done next: push, open, update, mark ready, merge, reopen, and delete the branch from its remote. It names the review as the code host its repository is on does, and offers only pushing when that host is not supported.
 
-use pm_git::{CheckState, PullRequestStatus, ReviewDecision};
+use pm_git::{CheckState, CodeHost, PullRequestStatus, ReviewDecision};
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
@@ -17,7 +17,7 @@ use crate::sample::Session;
 use crate::size::Size;
 use crate::state::{Outgoing, Page, WorkspaceState};
 
-/// Opens the pull request on GitHub.
+/// Opens the pull request on its code host.
 pub const PULL_OPEN: FocusId = FocusId(7_414_000);
 
 /// Pushes the branch.
@@ -54,6 +54,33 @@ fn shows(session: &Session) -> bool {
         && session.on_branch
         && !session.branch.is_empty()
         && (session.base.is_some() || session.pull_request.is_some())
+}
+
+/// What the code host of `session` calls a review, in lower case: `pull request` until its server says otherwise.
+fn noun(session: &Session) -> &str {
+    session
+        .code_host
+        .as_ref()
+        .map_or("pull request", CodeHost::noun)
+}
+
+/// `words` with the first letter of each word in upper case, such as `Pull Request`.
+fn title_case(words: &str) -> String {
+    words
+        .split(' ')
+        .map(|word| {
+            let mut letters = word.chars();
+            letters.next().map_or_else(String::new, |first| {
+                first.to_uppercase().chain(letters).collect()
+            })
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The code host of `session` when its server said it is one whose reviews cannot be read or acted on.
+fn unsupported(session: &Session) -> Option<&CodeHost> {
+    session.code_host.as_ref().filter(|host| !host.supported)
 }
 
 /// The badge naming the pull request's number and how it stands, in the colour of that.
@@ -159,11 +186,15 @@ fn action(label: &str, id: FocusId, main: bool) -> Node {
 /// The buttons for what can be done to the branch of `session` and its pull request, as that stands.
 fn actions(session: &Session) -> Vec<Node> {
     let ahead = session.tracking.upstream.is_none() || session.tracking.ahead > 0;
+    if unsupported(session).is_some() {
+        return vec![action("Push", PULL_PUSH, true)];
+    }
+    let noun = title_case(noun(session));
     match &session.pull_request {
         None => vec![
             action("Create Draft", PULL_CREATE_DRAFT, false),
-            action("Create Pull Request", PULL_CREATE, true)
-                .tooltip("Push and Open a Pull Request"),
+            action(&format!("Create {noun}"), PULL_CREATE, true)
+                .tooltip(format!("Push and Open a {noun}")),
         ],
         Some(request) if request.is_open() => {
             let mut buttons = Vec::new();
@@ -204,8 +235,24 @@ pub fn bar(session: &Session) -> Option<Node> {
         border_b(),
         border_color(Role::Border),
     ]);
-    match &session.pull_request {
-        Some(request) => {
+    let host_name = session
+        .code_host
+        .as_ref()
+        .map(|host| host.name.as_str())
+        .filter(|name| !name.is_empty());
+    match (&session.pull_request, unsupported(session)) {
+        (_, Some(host)) => {
+            let said = if host.name.is_empty() {
+                "This code host is not supported yet".to_owned()
+            } else {
+                format!("{} is not supported yet", host.name)
+            };
+            strip = strip
+                .child(glyph(IconName::GitCompare, 3.5, Role::Muted))
+                .child(line(said, 12, 1.4, Role::Muted))
+                .child(spacer());
+        }
+        (Some(request), None) => {
             strip = strip
                 .child(
                     Button::new("", PULL_OPEN)
@@ -214,16 +261,19 @@ pub fn bar(session: &Session) -> Option<Node> {
                         .mark(state_badge(request))
                         .build()
                         .styles([flex_none(), rounded(Radius::Md)])
-                        .tooltip(format!("Open on GitHub: {}", request.title)),
+                        .tooltip(match host_name {
+                            Some(name) => format!("Open on {name}: {}", request.title),
+                            None => format!("Open: {}", request.title),
+                        }),
                 )
                 .child(checks(request))
                 .children(review(request))
                 .child(spacer());
         }
-        None => {
+        (None, None) => {
             strip = strip
                 .child(glyph(IconName::GitCompare, 3.5, Role::Muted))
-                .child(line("No pull request", 12, 1.4, Role::Muted))
+                .child(line(format!("No {}", noun(session)), 12, 1.4, Role::Muted))
                 .child(spacer());
         }
     }
@@ -245,7 +295,7 @@ impl WorkspaceState {
                     .open()
                     .and_then(|session| session.pull_request.as_ref())
                     .map(|request| match action {
-                        PULL_CHECKS => format!("{}/checks", request.url),
+                        PULL_CHECKS if !request.checks_url.is_empty() => request.checks_url.clone(),
                         _ => request.url.clone(),
                     });
                 if let Some(address) = address {
@@ -254,7 +304,7 @@ impl WorkspaceState {
                 return true;
             }
             PULL_PUSH => ("push", "Pushing…"),
-            PULL_CREATE => ("create", "Opening the pull request…"),
+            PULL_CREATE => ("create", "Opening…"),
             PULL_CREATE_DRAFT => ("create_draft", "Opening the draft…"),
             PULL_UPDATE => ("update", "Updating…"),
             PULL_READY => ("ready", "Marking ready…"),
@@ -287,10 +337,18 @@ impl WorkspaceState {
         true
     }
 
-    /// The state after the server said the branch of the session at `session` has `request` as its newest pull request, or none.
-    pub fn with_pull_request(mut self, session: usize, request: Option<PullRequestStatus>) -> Self {
+    /// The state after the server said the branch of the session at `session` has `request` as its newest pull request, or none, on the code host `host`, when it said which.
+    pub fn with_pull_request(
+        mut self,
+        session: usize,
+        request: Option<PullRequestStatus>,
+        host: Option<CodeHost>,
+    ) -> Self {
         if let Some(held) = self.sessions.get_mut(session) {
             held.pull_request = request;
+            if host.is_some() {
+                held.code_host = host;
+            }
         }
         self
     }
@@ -302,15 +360,17 @@ impl WorkspaceState {
         request: Option<PullRequestStatus>,
         failure: Option<String>,
     ) -> Self {
+        let mut said = "pull request".to_owned();
         if let Some(held) = self.sessions.get_mut(session) {
             held.pull_busy = None;
+            said = noun(held).to_owned();
             if failure.is_none() {
                 held.pull_request = request;
             }
         }
         match failure {
             Some(message) => {
-                self.git_failed(&format!("Could not do that to the pull request: {message}"))
+                self.git_failed(&format!("Could not do that to the {said}: {message}"))
             }
             None => self,
         }

@@ -15,6 +15,7 @@ mod multirepo;
 mod operation;
 mod places;
 mod pull_requests;
+mod review_host;
 mod revision;
 mod submodule;
 mod words;
@@ -30,11 +31,11 @@ pub use multirepo::{Layout, child_repositories, layout};
 pub use operation::{Operation, operation, step};
 pub use places::{clone, folders};
 pub use pull_requests::{
-    Check, CheckState, Draft, Outcome, PullRequestStatus, ReviewDecision, base_name, compare_url,
-    compose, create_arguments, delete_arguments, edit_arguments, github_slug, merge_arguments,
-    parse_list, pull_request_action, pull_request_status, ready_arguments, reopen_arguments,
-    status_arguments, template,
+    Check, CheckState, CodeHost, Draft, Outcome, PullRequestStatus, ReviewDecision, UNSUPPORTED,
+    base_name, code_host, code_host_of, compose, delete_arguments, pull_request_action,
+    pull_request_status, template,
 };
+pub use review_host::{MergeStrategy, RemoteAddress, ReviewHost, TemplatePlaces, detect};
 pub use revision::revision_changes;
 pub use submodule::{populate, submodule_heads, submodules};
 pub use words::{Words, words};

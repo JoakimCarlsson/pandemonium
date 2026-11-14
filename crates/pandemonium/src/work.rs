@@ -2540,9 +2540,9 @@ impl Work {
                 self.refresh(model, session);
             }
             Pending::PullRequest(session) => {
-                if let Response::PullRequest { request } = response {
+                if let Response::PullRequest { request, host } = response {
                     model.update(|screen| {
-                        *screen = std::mem::take(screen).with_pull_request(session, request);
+                        *screen = std::mem::take(screen).with_pull_request(session, request, host);
                     });
                 }
             }

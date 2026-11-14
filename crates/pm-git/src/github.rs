@@ -1,9 +1,11 @@
-//! The accounts, organizations and repositories of the GitHub account the `gh` program is signed in to, and the pull requests of a branch.
+//! GitHub, through the `gh` program: the accounts, organizations and repositories of the account it is signed in to, the pull requests of a branch, and, in [`review`], GitHub as a host of reviews.
 
 use std::path::Path;
 use std::process::{Command, Stdio};
 
 use serde::{Deserialize, Serialize};
+
+pub(crate) mod review;
 
 /// An account whose repositories can be listed: the signed-in one or an organization it belongs to.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

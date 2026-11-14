@@ -1,21 +1,17 @@
-//! The pull request of a branch on GitHub: how it stands, with its checks and its review, and what can be done to it through the `gh` program. A new one is drafted from the session's plan, the branch's commits and the repository's template; when `gh` cannot open it, GitHub's compare page, filled in, is offered instead.
+//! The review of a branch, a pull request on GitHub or its like elsewhere, whatever service hosts it: how it stands, with its checks and its decision, and what can be done to it. What every service shares lives here: drafting a title and body from the session's plan, the branch's commits and the repository's template, checking the branch is safe to act on, and pushing it. What differs is asked of the [`ReviewHost`] the repository's remote is on; when none is, only pushing is offered.
 
 use std::fs;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::github::gh_in;
-
-/// The fields of a pull request `gh` is asked for.
-const FIELDS: &str =
-    "number,title,state,url,isDraft,reviewDecision,statusCheckRollup,headRefOid,baseRefName";
+use crate::review_host::{MergeStrategy, RemoteAddress, ReviewHost, TemplatePlaces, detect};
 
 /// The most bytes of a template that are read.
 const TEMPLATE_BYTES: usize = 16 * 1024;
 
-/// The longest the address of a compare page may grow to, in characters; GitHub refuses requests much longer than this.
-const COMPARE_LENGTH: usize = 4000;
+/// What the failure says when the repository's remote is on a service no [`ReviewHost`] supports.
+pub const UNSUPPORTED: &str = "this code host is not supported yet";
 
 /// How one check run on the head of a pull request stands.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -37,7 +33,7 @@ pub struct Check {
     pub name: String,
     /// How it stands.
     pub state: CheckState,
-    /// The page that tells about it, empty when GitHub gave none.
+    /// The page that tells about it, empty when the host gave none.
     #[serde(default)]
     pub url: String,
 }
@@ -45,7 +41,7 @@ pub struct Check {
 /// What the reviewers decided about a pull request.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub enum ReviewDecision {
-    /// Nothing: the repository asks for no review, or GitHub did not say.
+    /// Nothing: the repository asks for no review, or the host did not say.
     #[default]
     None,
     /// A review is needed before it can be merged.
@@ -63,7 +59,7 @@ pub struct PullRequestStatus {
     pub number: u64,
     /// Its title.
     pub title: String,
-    /// How it stands, as GitHub writes it: `OPEN`, `CLOSED` or `MERGED`.
+    /// How it stands, whatever the host: `OPEN`, `CLOSED` or `MERGED`, which each host maps its own states to.
     pub state: String,
     /// Its web address.
     pub url: String,
@@ -71,12 +67,15 @@ pub struct PullRequestStatus {
     pub draft: bool,
     /// What the reviewers decided.
     pub review: ReviewDecision,
-    /// The checks on its head, in the order GitHub lists them.
+    /// The checks on its head, in the order the host lists them.
     pub checks: Vec<Check>,
     /// The commit its head is at.
     pub head: String,
     /// The branch it is to be merged into.
     pub base: String,
+    /// The page that lists its checks, empty when the host has none apart from its own page.
+    #[serde(default)]
+    pub checks_url: String,
 }
 
 impl PullRequestStatus {
@@ -109,8 +108,56 @@ impl PullRequestStatus {
 pub struct Outcome {
     /// How the pull request stands afterwards, or nothing when the branch has none.
     pub request: Option<PullRequestStatus>,
-    /// GitHub's compare page, filled in with the drafted title and body, to open in a browser when `gh` could not open the pull request itself.
+    /// The host's web page for opening a new review, filled in with the drafted title and body, to open in a browser when the host's program could not open it itself.
     pub compare: Option<String>,
+}
+
+/// The service a repository's reviews are on, as a client is told of it so it can name it and offer only what it supports.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct CodeHost {
+    /// The service's short, stable name, such as `github`; empty when it is not supported.
+    #[serde(default)]
+    pub kind: String,
+    /// The service's name as the reader knows it, such as `GitHub`, or the machine the remote is on when it is not supported; empty when the repository has no remote.
+    #[serde(default)]
+    pub name: String,
+    /// What the service calls a review, in lower case, such as `pull request`.
+    #[serde(default)]
+    pub review_noun: String,
+    /// Whether its reviews can be read and acted on; when not, only pushing is offered.
+    #[serde(default)]
+    pub supported: bool,
+}
+
+impl CodeHost {
+    /// What a client is told of `host`.
+    pub fn of(host: &dyn ReviewHost) -> Self {
+        Self {
+            kind: host.kind().to_owned(),
+            name: host.name().to_owned(),
+            review_noun: host.review_noun().to_owned(),
+            supported: true,
+        }
+    }
+
+    /// A service no [`ReviewHost`] supports, named `name`, such as the machine its remote is on.
+    pub fn unsupported(name: &str) -> Self {
+        Self {
+            kind: String::new(),
+            name: name.to_owned(),
+            review_noun: "pull request".to_owned(),
+            supported: false,
+        }
+    }
+
+    /// What the service calls a review, or `pull request` when it did not say.
+    pub fn noun(&self) -> &str {
+        if self.review_noun.is_empty() {
+            "pull request"
+        } else {
+            &self.review_noun
+        }
+    }
 }
 
 /// The title and body a pull request is opened or updated with.
@@ -120,205 +167,6 @@ pub struct Draft {
     pub title: String,
     /// The body, in markdown.
     pub body: String,
-}
-
-/// A pull request as `gh` lists it.
-#[derive(Deserialize)]
-struct Listed {
-    /// Its number.
-    number: u64,
-    /// Its title.
-    #[serde(default)]
-    title: String,
-    /// How it stands.
-    state: String,
-    /// Its web address.
-    url: String,
-    /// Whether it is a draft.
-    #[serde(default, rename = "isDraft")]
-    draft: bool,
-    /// What the reviewers decided, empty or missing when nothing is asked of them.
-    #[serde(default, rename = "reviewDecision")]
-    review: Option<String>,
-    /// The check runs and commit statuses on its head.
-    #[serde(default, rename = "statusCheckRollup")]
-    rollup: Option<Vec<Rolled>>,
-    /// The commit its head is at.
-    #[serde(default, rename = "headRefOid")]
-    head: String,
-    /// The branch it is to be merged into.
-    #[serde(default, rename = "baseRefName")]
-    base: String,
-}
-
-/// A check run or a commit status as `gh` lists it: a check run has a name, a status and a conclusion; a commit status has a context and a state.
-#[derive(Deserialize)]
-struct Rolled {
-    /// The name of a check run.
-    #[serde(default)]
-    name: Option<String>,
-    /// The context of a commit status.
-    #[serde(default)]
-    context: Option<String>,
-    /// Where a check run is: `QUEUED`, `IN_PROGRESS` or `COMPLETED`.
-    #[serde(default)]
-    status: Option<String>,
-    /// How a completed check run ended.
-    #[serde(default)]
-    conclusion: Option<String>,
-    /// How a commit status stands.
-    #[serde(default)]
-    state: Option<String>,
-    /// The page of a check run.
-    #[serde(default, rename = "detailsUrl")]
-    details: Option<String>,
-    /// The page of a commit status.
-    #[serde(default, rename = "targetUrl")]
-    target: Option<String>,
-}
-
-/// How `rolled` stands, from the status and conclusion of a check run or the state of a commit status.
-fn check_state(rolled: &Rolled) -> CheckState {
-    if let Some(status) = rolled.status.as_deref() {
-        if status != "COMPLETED" {
-            return CheckState::Pending;
-        }
-        return match rolled.conclusion.as_deref().unwrap_or_default() {
-            "SUCCESS" => CheckState::Passed,
-            "NEUTRAL" | "SKIPPED" => CheckState::Skipped,
-            "" => CheckState::Pending,
-            _ => CheckState::Failed,
-        };
-    }
-    match rolled.state.as_deref().unwrap_or_default() {
-        "SUCCESS" => CheckState::Passed,
-        "PENDING" | "EXPECTED" | "" => CheckState::Pending,
-        _ => CheckState::Failed,
-    }
-}
-
-/// The decision GitHub writes as `review`.
-fn review_of(review: Option<&str>) -> ReviewDecision {
-    match review.unwrap_or_default() {
-        "APPROVED" => ReviewDecision::Approved,
-        "CHANGES_REQUESTED" => ReviewDecision::ChangesRequested,
-        "REVIEW_REQUIRED" => ReviewDecision::Required,
-        _ => ReviewDecision::None,
-    }
-}
-
-/// The first pull request of what `gh pr list --json` wrote, or nothing when it listed none.
-///
-/// # Errors
-///
-/// Fails when `listed` is not a list of pull requests.
-pub fn parse_list(listed: &str) -> Result<Option<PullRequestStatus>, String> {
-    let found: Vec<Listed> = serde_json::from_str(listed)
-        .map_err(|error| format!("gh answered with something unreadable: {error}"))?;
-    Ok(found.into_iter().next().map(|listed| PullRequestStatus {
-        number: listed.number,
-        title: listed.title,
-        state: listed.state,
-        url: listed.url,
-        draft: listed.draft,
-        review: review_of(listed.review.as_deref()),
-        checks: listed
-            .rollup
-            .unwrap_or_default()
-            .iter()
-            .map(|rolled| Check {
-                name: rolled
-                    .name
-                    .clone()
-                    .or_else(|| rolled.context.clone())
-                    .unwrap_or_default(),
-                state: check_state(rolled),
-                url: rolled
-                    .details
-                    .clone()
-                    .or_else(|| rolled.target.clone())
-                    .unwrap_or_default(),
-            })
-            .collect(),
-        head: listed.head,
-        base: listed.base,
-    }))
-}
-
-/// The arguments of `gh` that list the newest pull request of `branch`, open or not, with its checks and review.
-pub fn status_arguments(branch: &str) -> Vec<String> {
-    [
-        "pr", "list", "--head", branch, "--state", "all", "--limit", "1", "--json", FIELDS,
-    ]
-    .map(str::to_owned)
-    .to_vec()
-}
-
-/// The arguments of `gh` that open a pull request of `branch` into `base`, or into the repository's default branch when there is no base, with `draft`'s title and body, as a draft when `as_draft`.
-pub fn create_arguments(
-    branch: &str,
-    base: Option<&str>,
-    draft: &Draft,
-    as_draft: bool,
-) -> Vec<String> {
-    let mut arguments = vec!["pr".to_owned(), "create".to_owned()];
-    if let Some(base) = base {
-        arguments.extend(["--base".to_owned(), base.to_owned()]);
-    }
-    arguments.extend([
-        "--head".to_owned(),
-        branch.to_owned(),
-        "--title".to_owned(),
-        draft.title.clone(),
-        "--body".to_owned(),
-        draft.body.clone(),
-    ]);
-    if as_draft {
-        arguments.push("--draft".to_owned());
-    }
-    arguments
-}
-
-/// The arguments of `gh` that replace the body of the pull request `number` with `body`; its title is left alone, so a rename made on GitHub stays.
-pub fn edit_arguments(number: u64, body: &str) -> Vec<String> {
-    vec![
-        "pr".to_owned(),
-        "edit".to_owned(),
-        number.to_string(),
-        "--body".to_owned(),
-        body.to_owned(),
-    ]
-}
-
-/// The arguments of `gh` that mark the draft pull request `number` ready for review.
-pub fn ready_arguments(number: u64) -> Vec<String> {
-    vec!["pr".to_owned(), "ready".to_owned(), number.to_string()]
-}
-
-/// The arguments of `gh` that reopen the closed pull request `number`.
-pub fn reopen_arguments(number: u64) -> Vec<String> {
-    vec!["pr".to_owned(), "reopen".to_owned(), number.to_string()]
-}
-
-/// The arguments of `gh` that merge the pull request `number` by `method`, `merge`, `squash` or `rebase`, only while its head is still at `head`. The branch is never deleted by `gh`, which would also delete the local branch a worktree has checked out.
-///
-/// # Errors
-///
-/// Fails when `method` is none of the three.
-pub fn merge_arguments(number: u64, method: &str, head: &str) -> Result<Vec<String>, String> {
-    if !matches!(method, "merge" | "squash" | "rebase") {
-        return Err(format!("{method} is not a way to merge a pull request"));
-    }
-    let mut arguments = vec![
-        "pr".to_owned(),
-        "merge".to_owned(),
-        number.to_string(),
-        format!("--{method}"),
-    ];
-    if !head.is_empty() {
-        arguments.extend(["--match-head-commit".to_owned(), head.to_owned()]);
-    }
-    Ok(arguments)
 }
 
 /// The arguments of `git` that delete `branch` from `remote`, naming the full reference so a tag of the same name is never the one deleted, and, when the remote branch was last seen at `tip`, only while it is still there.
@@ -339,68 +187,6 @@ pub fn base_name(base: &str, remotes: &[String]) -> String {
         .find_map(|remote| base.strip_prefix(&format!("{remote}/")))
         .unwrap_or(base)
         .to_owned()
-}
-
-/// The `owner/name` of the GitHub repository at `url`, over https or ssh, or nothing when it is not on GitHub.
-pub fn github_slug(url: &str) -> Option<String> {
-    let url = url.trim();
-    let path = url
-        .strip_prefix("git@github.com:")
-        .or_else(|| url.strip_prefix("ssh://git@github.com/"))
-        .or_else(|| url.strip_prefix("https://github.com/"))
-        .or_else(|| url.strip_prefix("http://github.com/"))
-        .or_else(|| {
-            url.strip_prefix("https://")
-                .and_then(|rest| rest.split_once("@github.com/"))
-                .map(|(_, path)| path)
-        })?;
-    let path = path.trim_end_matches('/');
-    let path = path.strip_suffix(".git").unwrap_or(path);
-    let mut parts = path.split('/');
-    match (parts.next(), parts.next(), parts.next()) {
-        (Some(owner), Some(name), None) if !owner.is_empty() && !name.is_empty() => {
-            Some(format!("{owner}/{name}"))
-        }
-        _ => None,
-    }
-}
-
-/// `text` with every byte but the unreserved ones of a URL percent-encoded.
-fn encode(text: &str) -> String {
-    text.bytes()
-        .map(|byte| match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                (byte as char).to_string()
-            }
-            _ => format!("%{byte:02X}"),
-        })
-        .collect()
-}
-
-/// GitHub's page comparing `branch` with `base` in the repository `slug`, or with its default branch when there is no base, set to open a pull request with `draft`'s title and as much of its body, cut between characters, as keeps the address within [`COMPARE_LENGTH`].
-pub fn compare_url(slug: &str, base: Option<&str>, branch: &str, draft: &Draft) -> String {
-    let range = match base {
-        Some(base) => format!("{}...{}", encode(base), encode(branch)),
-        None => encode(branch),
-    };
-    let start = format!(
-        "https://github.com/{slug}/compare/{range}?quick_pull=1&title={}",
-        encode(&draft.title)
-    );
-    let room = COMPARE_LENGTH.saturating_sub(start.len() + "&body=".len());
-    let mut body = String::new();
-    for character in draft.body.chars() {
-        let encoded = encode(&character.to_string());
-        if body.len() + encoded.len() > room {
-            break;
-        }
-        body.push_str(&encoded);
-    }
-    if body.is_empty() {
-        start
-    } else {
-        format!("{start}&body={body}")
-    }
 }
 
 /// The title and body of a pull request: `title` when it says anything, or the first commit's subject; the body lists the `plan`'s steps and the `commits`' subjects and ends with the repository's `template`.
@@ -431,9 +217,9 @@ pub fn compose(title: &str, plan: &[String], commits: &[String], template: Optio
     }
 }
 
-/// The text of the repository's pull request template: `pull_request_template.md`, in any case, in `.github`, the root or `docs`, or else the first by name in `.github/PULL_REQUEST_TEMPLATE`; nothing when it has none.
-pub fn template(directory: &Path) -> Option<String> {
-    let named = [".github", "", "docs"].iter().find_map(|folder| {
+/// The text of the repository's review template, found in `places`: the single template, in any case, in the first of its folders that has one, or else the first markdown file by name in its folder of templates; nothing when it has none.
+pub fn template(directory: &Path, places: &TemplatePlaces) -> Option<String> {
+    let named = places.folders.iter().find_map(|folder| {
         fs::read_dir(directory.join(folder))
             .ok()?
             .flatten()
@@ -441,12 +227,15 @@ pub fn template(directory: &Path) -> Option<String> {
             .find(|path| {
                 path.is_file()
                     && path.file_name().is_some_and(|name| {
-                        name.to_string_lossy().to_lowercase() == "pull_request_template.md"
+                        name.to_string_lossy().to_lowercase() == places.file.to_lowercase()
                     })
             })
     });
     let path = named.or_else(|| {
-        let mut listed: Vec<_> = fs::read_dir(directory.join(".github/PULL_REQUEST_TEMPLATE"))
+        if places.collection.is_empty() {
+            return None;
+        }
+        let mut listed: Vec<_> = fs::read_dir(directory.join(places.collection))
             .ok()?
             .flatten()
             .map(|entry| entry.path())
@@ -461,25 +250,23 @@ pub fn template(directory: &Path) -> Option<String> {
     Some(text)
 }
 
-/// The draft of a pull request of the branch `directory` has checked out: from `title`, the `plan`'s steps, the commits since `base` and the repository's template.
-pub fn draft(directory: &Path, base: Option<&str>, title: &str, plan: &[String]) -> Draft {
+/// The draft of a review of the branch `directory` has checked out: from `title`, the `plan`'s steps, the commits since `base` and the template found in `places`.
+pub fn draft(
+    directory: &Path,
+    base: Option<&str>,
+    title: &str,
+    plan: &[String],
+    places: &TemplatePlaces,
+) -> Draft {
     let commits = base
         .map(|base| crate::commits_since(directory, base))
         .unwrap_or_default();
-    compose(title, plan, &commits, template(directory).as_deref())
-}
-
-/// Runs `gh` with `arguments` in `directory`.
-fn gh_owned(directory: &Path, arguments: &[String]) -> Result<String, String> {
-    let borrowed: Vec<&str> = arguments.iter().map(String::as_str).collect();
-    gh_in(Some(directory), &borrowed)
-}
-
-/// The newest pull request of `branch`, open or not, with its checks and review, in the GitHub repository `directory` is a clone of; nothing when it has none, or when `gh` cannot say.
-pub fn pull_request_status(directory: &Path, branch: &str) -> Option<PullRequestStatus> {
-    gh_owned(directory, &status_arguments(branch))
-        .ok()
-        .and_then(|listed| parse_list(&listed).ok().flatten())
+    compose(
+        title,
+        plan,
+        &commits,
+        template(directory, places).as_deref(),
+    )
 }
 
 /// The remote a branch is published to: `origin`, or the first remote.
@@ -492,11 +279,43 @@ fn publishing_remote(directory: &Path) -> Option<String> {
         .cloned()
 }
 
-/// Acts on the pull request of `branch`, which `directory` has checked out and which was made from `base`: `push` publishes the branch; `create` and `create_draft` push it and open a pull request, or update the open one, drafted from `title`, the `plan`'s steps, the commits and the template, and offer GitHub's compare page when `gh` cannot; `update` pushes and redrafts the body of the open one; `ready` marks a draft ready for review; `merge`, `squash` and `rebase` merge the open one, as long as its head is where it was seen; `reopen` reopens a closed one; and `delete_branch` deletes the branch from its remote once no open pull request needs it.
+/// The address of the remote a branch of `directory` is published to, or nothing when it has no remote.
+fn remote_url(directory: &Path) -> Option<String> {
+    let remote = publishing_remote(directory)?;
+    crate::run(directory, &["remote", "get-url", &remote])
+        .ok()
+        .map(|url| url.trim().to_owned())
+        .filter(|url| !url.is_empty())
+}
+
+/// The service the remote at `url` is on, as a client is told of it: the supported one that recognizes it, or an unsupported one named after the machine the remote is on.
+pub fn code_host_of(url: Option<&str>) -> CodeHost {
+    match url.and_then(detect) {
+        Some(host) => CodeHost::of(host),
+        None => CodeHost::unsupported(
+            &url.and_then(RemoteAddress::parse)
+                .map(|address| address.host)
+                .unwrap_or_default(),
+        ),
+    }
+}
+
+/// The service the reviews of the repository `directory` is a clone of are on, from its publishing remote's address.
+pub fn code_host(directory: &Path) -> CodeHost {
+    code_host_of(remote_url(directory).as_deref())
+}
+
+/// The newest review of `branch`, open or not, with its checks and decision, on the service the repository `directory` is a clone of is hosted on; nothing when it has none, when the service is not supported, or when it cannot say.
+pub fn pull_request_status(directory: &Path, branch: &str) -> Option<PullRequestStatus> {
+    let url = remote_url(directory)?;
+    detect(&url)?.status(directory, branch)
+}
+
+/// Acts on the review of `branch`, which `directory` has checked out and which was made from `base`, on the service its remote is on: `push` publishes the branch; `create` and `create_draft` push it and open a review, or update the open one, drafted from `title`, the `plan`'s steps, the commits and the template, and offer the service's page for a new review when its program cannot open one; `update` pushes and redrafts the body of the open one; `ready` marks a draft ready for review; `merge`, `squash` and `rebase` merge the open one, as long as its head is where it was seen; `reopen` reopens a closed one; and `delete_branch` deletes the branch from its remote once no open review needs it. On a service no [`ReviewHost`] supports, only `push` is done.
 ///
 /// # Errors
 ///
-/// Fails when the branch name could be mistaken for an option, when the branch is its own base, when the pull request is not in a state the action needs, or with what `git` or `gh` complained of.
+/// Fails when the branch name could be mistaken for an option, when the branch is its own base, when the service is not supported and the action is not `push`, when the review is not in a state the action needs, or with what `git` or the service complained of.
 pub fn pull_request_action(
     directory: &Path,
     branch: &str,
@@ -517,74 +336,79 @@ pub fn pull_request_action(
             "{branch} is the branch this one was made from; make a branch of its own first"
         ));
     }
-    let current = pull_request_status(directory, branch);
+    let url = remote_url(directory);
+    let Some(host) = url.as_deref().and_then(detect) else {
+        return match action {
+            "push" => {
+                crate::remote(directory, "push")?;
+                Ok(Outcome::default())
+            }
+            _ => Err(UNSUPPORTED.to_owned()),
+        };
+    };
+    let noun = host.review_noun();
+    let no_open = || format!("this branch has no open {noun}");
+    let current = host.status(directory, branch);
     let open = current.as_ref().filter(|request| request.is_open());
     let mut compare = None;
     match action {
         "push" => crate::remote(directory, "push")?,
         "create" | "create_draft" | "update" => {
             crate::remote(directory, "push")?;
-            let draft = draft(directory, base.as_deref(), title, plan);
+            let draft = draft(directory, base.as_deref(), title, plan, &host.templates());
             match (open, action) {
-                (Some(request), _) => {
-                    gh_owned(directory, &edit_arguments(request.number, &draft.body))?;
-                }
-                (None, "update") => return Err("this branch has no open pull request".to_owned()),
+                (Some(request), _) => host.update_body(directory, request, &draft.body)?,
+                (None, "update") => return Err(no_open()),
                 (None, _) => {
-                    let arguments =
-                        create_arguments(branch, base.as_deref(), &draft, action == "create_draft");
-                    if let Err(failure) = gh_owned(directory, &arguments)
-                        && pull_request_status(directory, branch)
-                            .is_none_or(|request| !request.is_open())
+                    if let Err(failure) = host.create(
+                        directory,
+                        branch,
+                        base.as_deref(),
+                        &draft,
+                        action == "create_draft",
+                    ) && host
+                        .status(directory, branch)
+                        .is_none_or(|request| !request.is_open())
                     {
-                        let slug = publishing_remote(directory)
-                            .and_then(|remote| {
-                                crate::run(directory, &["remote", "get-url", "--push", &remote])
-                                    .ok()
+                        let page = url
+                            .as_deref()
+                            .and_then(RemoteAddress::parse)
+                            .and_then(|address| {
+                                host.new_review_url(&address, base.as_deref(), branch, &draft)
                             })
-                            .and_then(|url| github_slug(&url))
                             .ok_or(failure)?;
-                        compare = Some(compare_url(&slug, base.as_deref(), branch, &draft));
+                        compare = Some(page);
                     }
                 }
             }
         }
-        "ready" => {
-            let request = open.ok_or("this branch has no open pull request")?;
-            gh_owned(directory, &ready_arguments(request.number))?;
-        }
+        "ready" => host.mark_ready(directory, open.ok_or_else(no_open)?)?,
         "merge" | "squash" | "rebase" => {
-            let request = open.ok_or("this branch has no open pull request")?;
-            gh_owned(
-                directory,
-                &merge_arguments(request.number, action, &request.head)?,
-            )?;
+            let request = open.ok_or_else(no_open)?;
+            host.merge(directory, request, MergeStrategy::parse(action)?)?;
         }
         "reopen" => {
             let request = current
                 .as_ref()
                 .filter(|request| request.is_closed())
-                .ok_or("this branch has no closed pull request")?;
-            gh_owned(directory, &reopen_arguments(request.number))?;
+                .ok_or_else(|| format!("this branch has no closed {noun}"))?;
+            host.reopen(directory, request)?;
         }
         "delete_branch" => {
             if open.is_some() {
-                return Err(
-                    "an open pull request still needs this branch; deleting it would close the pull request"
-                        .to_owned(),
-                );
+                return Err(format!(
+                    "an open {noun} still needs this branch; deleting it would close the {noun}"
+                ));
             }
             let remote = publishing_remote(directory)
                 .ok_or("this repository has no remote to delete the branch from")?;
             let tip = crate::resolve(directory, &format!("refs/remotes/{remote}/{branch}"));
-            let arguments = delete_arguments(&remote, branch, tip.as_deref());
-            let borrowed: Vec<&str> = arguments.iter().map(String::as_str).collect();
-            crate::run(directory, &borrowed)?;
+            host.delete_remote_branch(directory, &remote, branch, tip.as_deref())?;
         }
-        other => return Err(format!("{other} is not something to do to a pull request")),
+        other => return Err(format!("{other} is not something to do to a {noun}")),
     }
     Ok(Outcome {
-        request: pull_request_status(directory, branch),
+        request: host.status(directory, branch),
         compare,
     })
 }

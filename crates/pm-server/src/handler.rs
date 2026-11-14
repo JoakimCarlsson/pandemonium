@@ -2071,9 +2071,13 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             directory,
             operation,
         } => done(pm_git::remote(&place(&directory), &operation)),
-        Request::PullRequest { directory, branch } => Response::PullRequest {
-            request: pm_git::pull_request_status(&place(&directory), &branch),
-        },
+        Request::PullRequest { directory, branch } => {
+            let folder = place(&directory);
+            Response::PullRequest {
+                request: pm_git::pull_request_status(&folder, &branch),
+                host: Some(pm_git::code_host(&folder)),
+            }
+        }
         Request::PullRequestAction {
             directory,
             branch,
