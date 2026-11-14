@@ -219,11 +219,24 @@ pub const MODEL_SERVER_REMOVES: IdRange = MODEL_SERVER_EDITS.after(500);
 /// The boxes that list each model a server was found to offer in its form, by the model's place in what was found.
 pub const FOUND_MODEL_PICKS: IdRange = MODEL_SERVER_REMOVES.after(2000);
 
+/// The controls of each model slot, [`crate::settings_slots::SLOT_COLUMNS`] to a slot, by the slot's place on the models page.
+pub const SLOT_CONTROLS: IdRange =
+    FOUND_MODEL_PICKS.after(100 * crate::settings_slots::SLOT_COLUMNS as u64);
+
+/// The controls of each backup of each model slot, [`crate::settings_slots::BACKUP_COLUMNS`] to a backup, [`crate::settings_slots::MOST_BACKUPS`] backups to a slot.
+pub const BACKUP_CONTROLS: IdRange = SLOT_CONTROLS.after(
+    100 * (crate::settings_slots::MOST_BACKUPS * crate::settings_slots::BACKUP_COLUMNS) as u64,
+);
+
+/// The controls of each preset of the models page, [`crate::settings_slots::PRESET_COLUMNS`] to a preset, by its place in the list.
+pub const PRESET_CONTROLS: IdRange =
+    BACKUP_CONTROLS.after(200 * crate::settings_slots::PRESET_COLUMNS as u64);
+
 /// The names after the last run, left free for runs added later; a new run goes before it.
-pub const SPARE: IdRange = FOUND_MODEL_PICKS.after(SETTINGS_END - FOUND_MODEL_PICKS.end());
+pub const SPARE: IdRange = PRESET_CONTROLS.after(SETTINGS_END - PRESET_CONTROLS.end());
 
 /// Every run of the window, in the order they are laid out.
-pub const RANGES: [IdRange; 33] = [
+pub const RANGES: [IdRange; 36] = [
     SINGLES,
     MACHINE_REACHES,
     DRAFT_SCOPES,
@@ -256,11 +269,14 @@ pub const RANGES: [IdRange; 33] = [
     MODEL_SERVER_EDITS,
     MODEL_SERVER_REMOVES,
     FOUND_MODEL_PICKS,
+    SLOT_CONTROLS,
+    BACKUP_CONTROLS,
+    PRESET_CONTROLS,
     SPARE,
 ];
 
 /// Every control there is one of, which must each lie in [`SINGLES`] and differ from the others.
-pub const SINGLE_IDS: [FocusId; 54] = [
+pub const SINGLE_IDS: [FocusId; 61] = [
     crate::settings::SETTINGS_CLOSE,
     crate::settings::SETTINGS_ADD,
     crate::settings::SETTINGS_SAVE,
@@ -315,6 +331,13 @@ pub const SINGLE_IDS: [FocusId; 54] = [
     crate::settings_models::MODEL_FIND,
     crate::settings_models::MODEL_WIRE_CHAT,
     crate::settings_models::MODEL_WIRE_RESPONSES,
+    crate::settings_slots::SLOTS_SCOPE_USER,
+    crate::settings_slots::SLOTS_SCOPE_PROJECT,
+    crate::settings_slots::SLOT_NEW_NAME,
+    crate::settings_slots::SLOT_ADD,
+    crate::settings_slots::PRESET_NAME,
+    crate::settings_slots::PRESET_SAVE,
+    crate::settings_slots::SLOTS_PROVIDER,
 ];
 
 /// Whether `ranges` start at [`SETTINGS_START`], each where the one before it ends, none empty, and the last ending at [`SETTINGS_END`].

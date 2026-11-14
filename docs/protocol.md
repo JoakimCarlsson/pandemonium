@@ -150,6 +150,7 @@ request with exactly one `response` carrying the same `id`.
 | `save_model_server` | `server`: `{id, label, base_url, wire, api_key_env, api_key, has_api_key, headers, default_model, models, replay_reasoning}` | `model_servers` |
 | `remove_model_server` | `id`                                                                                      | `model_servers` |
 | `find_models`  | `server`: as in `save_model_server`                                                              | `found_models`  |
+| `model_slots`  | `session`: number or null, `change`: `SlotChange` or null                                        | `model_slots`   |
 | `library`      | `agent`, `directory`                                                                             | `library`       |
 | `tool_sets`    | `agent`                                                                                          | `tool_sets`     |
 | `save_withheld`| `keys`: `[string]`                                                                               | `done`          |
@@ -549,6 +550,20 @@ everything said of them, its submodules' paths written from `directory`.
   server, saved or not, for its models (with the saved key when `api_key` is
   null) and answers `found_models`, with `error` set and `models` empty when it
   could not be reached.
+- **`model_slots`:** the harness's model slots, the named jobs a conversation
+  asks a model for (`main`, `fast`, `plan`, `subagent`, `review`, `vision` and
+  any the reader adds), and its presets. With `change` it first makes that
+  change, one of `{"set": {name, scope, model, backups, provider}}`,
+  `{"clear": {name, scope, provider}}`, `{"save_preset": {name, effort}}`,
+  `{"apply_preset": {name, scope}}` or `{"delete_preset": {name}}`, where
+  `scope` is `User` or `Project` and `model` and each backup is a selector such
+  as `claude/haiku:low`. `provider`, optional, names the provider id whose
+  assignment changes, such as `codex`; left out or null, the change is to the
+  assignment every provider without its own uses. With the `session` of a running agent it goes through
+  that agent's conversation, which also sees the trusted project's file, and the
+  agent then sends a `Slots` event; otherwise only the user's file and the
+  environment are seen and a `Project` change answers `failed`. Answers
+  `model_slots`, or `failed` with the harness's reason when a change is refused.
 - **`create_customization`:** writes a new skill, instruction file or agent
   definition on the server's machine from a short template, and answers
   `created` with the `path` written. `name` is lowercase letters, digits and
@@ -1080,6 +1095,7 @@ embedded context, and anything else as a link to the stored file.
 | `mcp_servers` | `servers`: `[{name, target, env, description, website, enabled, extension}]`          |
 | `model_servers` | `servers`: `[{id, label, base_url, wire, api_key_env, api_key, has_api_key, headers, default_model, models, replay_reasoning}]`, `api_key` always null |
 | `found_models` | `models`: `[string]` in the server's order, `error`: why the server could not be asked, or null |
+| `model_slots` | `slots`: `[{name, model, backups, resolved, source, inherited, suggested, providers}]`, built-in slots first; `model` and `backups` are the any-provider assignment, `resolved` and `source` are for the conversation's provider, and `source` is `Environment`, `Project`, `User` or `Main`; `providers`: `[{provider, model, backups, suggested}]`, one per signed-in provider and per provider with an assignment of its own; `presets`: `[{name, slots: [{name, model, backups, providers}], effort}]` |
 | `library`    | `product`, `items`, `withheld`, as described under `library` above |
 | `tool_sets`  | `product`, `sets`, `withheld`, as described under `library` above |
 | `machine_settings` | `settings`: `{git, history, agents, shell, languages, extensions, servers}`, as `save_machine_settings` takes them |
@@ -1271,6 +1287,8 @@ Events use serde's default form, one key naming the type.
 | `{"Undone": {turn, files}}`   | What the reader's turn `turn` changed was taken back out of the files, what was done to them since left in. `files` are the paths that changed, from the root of the repository. |
 | `{"Aside": {question, answer, failed}}` | The agent answered `question`, asked on the side with a `/btw` prompt, with `answer`. It is not part of the conversation: show it beside the turns, and it is never told to the agent again. `failed` (absent means `false`) says there is no answer, `answer` saying why, and `question` is then empty. Kept on disk. |
 | `{"HandedOff": {prompt, turn}}` | The agent handed the work over to a new conversation after a `/handoff` prompt: its conversation started afresh, and the turn that follows, which starts with `prompt`, is the new conversation's first; `turn` is the id the harness saved it under. Show a mark between the two. Part of the turn it came in. |
+| `{"Slots": [slot]}`           | The conversation's model slots as they stand, each as in the `model_slots` answer; sent when the agent starts and after a change made through it. Offer each slot but `main` in the model picker as `@name`. Not kept on disk. |
+| `{"ModelFallback": {slot, from, to, reason}}` | The model `from` of `slot` kept failing in a way another model may not, such as being overloaded, so the rest of the turn asks the slot's backup `to`; `reason` is the provider's first line. Show a small notice in the conversation. Part of the turn it came in. |
 | `{"ToolSignIn": "address"}`   | A tool server the agent uses wants the reader to sign in to it with OAuth. Show the address in the conversation and, when the event is live rather than replayed history, open it in the reader's browser. The server's tools come with the next prompt once signed in. |
 
 Shapes used above:

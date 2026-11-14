@@ -188,7 +188,17 @@ fn agent(found: &AgentDefinition) -> Item {
             .map(|path| path.display().to_string())
             .unwrap_or_default(),
         tools: found.tools.clone().unwrap_or_default(),
+        model: model_named(found.model.as_deref()),
         ..Item::default()
+    }
+}
+
+/// The model a row of an agent definition names, from the definition's `model`: nothing for `inherit`, the model of the session that starts it; `@subagent` when it names none, as the harness then asks the `subagent` slot; otherwise the model as written, such as `haiku` or `@fast`.
+fn model_named(model: Option<&str>) -> String {
+    match model {
+        Some("inherit") => String::new(),
+        Some(model) => model.to_owned(),
+        None => "@subagent".to_owned(),
     }
 }
 
@@ -197,6 +207,14 @@ fn agent(found: &AgentDefinition) -> Item {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    /// A definition that inherits shows the session's model, one with none the `subagent` slot, and one naming a model or slot shows it.
+    #[test]
+    fn models_are_named_as_the_harness_reads_them() {
+        assert_eq!(model_named(Some("inherit")), "");
+        assert_eq!(model_named(None), "@subagent");
+        assert_eq!(model_named(Some("@fast")), "@fast");
+    }
 
     /// The files that replace or add to crab's prompt are listed with the instructions, and every row says whose folder it is kept in.
     #[test]

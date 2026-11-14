@@ -875,6 +875,13 @@ pub enum Outgoing {
     SaveMcpServers(Vec<pm_protocol::McpServer>),
     /// Asks the server for the model servers declared on its machine.
     ModelServers,
+    /// Has the harness make `change` to the model slots, when there is one, then tell the slots and presets: through the agent of the session at `session` when there is one, which also sees its project's file.
+    ModelSlots {
+        /// The session, by position, whose agent is asked.
+        session: Option<usize>,
+        /// The change to make first.
+        change: Option<pm_harness::SlotChange>,
+    },
     /// Has the server keep this model server, in place of the one with the same id.
     SaveModelServer(Box<pm_harness::ModelServer>),
     /// Has the server take the model server `id` out.
@@ -2613,6 +2620,7 @@ impl WorkspaceState {
             id if crate::settings_pages::is_setting_field(id) => self.setting_edited(id, edit),
             id if crate::settings_machines::is_machine_field(id) => self.machine_edited(id, edit),
             id if crate::settings_models::is_model_field(id) => self.model_edited(id, edit),
+            id if crate::settings_slots::is_slot_field(id) => self.slot_edited(id, edit),
             crate::settings::SETTINGS_FIND => {
                 self.settings_page.find.apply(edit);
                 self.settings_servers.scroll = 0.0;
@@ -2679,6 +2687,7 @@ impl WorkspaceState {
             id if crate::settings_pages::is_setting_field(id) => self.setting_field(id),
             id if crate::settings_machines::is_machine_field(id) => self.machine_field(id),
             id if crate::settings_models::is_model_field(id) => self.model_field(id),
+            id if crate::settings_slots::is_slot_field(id) => self.slot_field(id),
             crate::settings::SETTINGS_FIND => Some(&self.settings_page.find),
             crate::settings::SETTINGS_KEYMAP_FIND => Some(&self.settings_page.keymap_find),
             OTHER => self.other_field(),
@@ -2720,6 +2729,7 @@ impl WorkspaceState {
             || crate::settings_pages::is_setting_field(id)
             || crate::settings_machines::is_machine_field(id)
             || crate::settings_models::is_model_field(id)
+            || crate::settings_slots::is_slot_field(id)
             || id == crate::settings::SETTINGS_FIND
             || id == crate::settings::SETTINGS_KEYMAP_FIND
     }
@@ -2760,6 +2770,9 @@ impl WorkspaceState {
                 crate::settings_machines::MACHINE_SAVE
             }
             id if crate::settings_models::is_model_field(id) => crate::settings_models::MODEL_SAVE,
+            id if crate::settings_slots::is_slot_field(id) => {
+                crate::settings_slots::slot_submit(id)
+            }
             id if let Some(submit) = crate::settings_pages::list_submit_of(id) => submit,
             id if crate::settings_pages::is_setting_field(id)
                 || id == crate::settings::SETTINGS_FIND

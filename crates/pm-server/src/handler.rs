@@ -645,6 +645,36 @@ fn model_servers_answer(listed: Result<Vec<pm_harness::ModelServer>, String>) ->
     }
 }
 
+/// How long a running agent is given to answer a question about the model slots.
+const SLOT_PATIENCE: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Makes `change` to the model slots, when there is one, and reads the slots and the presets: through the conversation of `session` when its agent runs, which also sees its trusted project's file, or else through a conversation of the harness's own.
+fn model_slots(
+    core: &Core,
+    session: Option<u64>,
+    change: Option<pm_harness::SlotChange>,
+) -> Response {
+    let asked = session.and_then(|number| {
+        let sessions = core.sessions.lock().ok()?;
+        let chat = sessions.get(&number)?.chat.as_ref()?;
+        Some(chat.slots(change.clone()))
+    });
+    let answer = match asked {
+        Some(answer) => answer
+            .recv_timeout(SLOT_PATIENCE)
+            .map_err(|_| "the agent did not answer about its model slots".to_owned())
+            .and_then(|answer| answer),
+        None => pm_harness::model_slots(change),
+    };
+    match answer {
+        Ok(book) => Response::ModelSlots {
+            slots: book.slots,
+            presets: book.presets,
+        },
+        Err(reason) => failed(reason),
+    }
+}
+
 /// What the request `request` of `connection` comes to.
 pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Request) -> Response {
     match request {
@@ -880,6 +910,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
         Request::RemoveModelServer { id } => {
             model_servers_answer(pm_harness::remove_model_server(&id))
         }
+        Request::ModelSlots { session, change } => model_slots(core, session, change),
         Request::FindModels { server } => match pm_harness::find_models(server) {
             Ok(models) => Response::FoundModels {
                 models,

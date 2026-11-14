@@ -33,8 +33,19 @@ impl Session {
             Event::Container(step) => self.container = Some(step),
             Event::Settings(settings) => {
                 self.container = None;
-                self.settings = settings;
+                self.settings = crate::slot_picks::with_slot_picks(settings, &self.slots);
             }
+            Event::Slots(slots) => {
+                self.settings =
+                    crate::slot_picks::with_slot_picks(std::mem::take(&mut self.settings), &slots);
+                self.slots = slots;
+            }
+            Event::ModelFallback {
+                slot,
+                from,
+                to,
+                reason,
+            } => self.fell_back(Side::Fallback { slot, from, to }, &reason),
             Event::Commands(commands) => self.commands = commands,
             Event::Used(usage) => self.context = Some(usage),
             Event::Spent(spent) => self.spent = Some(spent),
@@ -113,7 +124,11 @@ impl Session {
 
     /// Notes the agent's `answer` to `question`, asked on the side, or why there is none when it `failed`, beside the conversation: before the reply being written, if any, so that the reply stays whole.
     fn aside(&mut self, question: String, answer: &str, failed: bool) {
-        let note = Message::note(Side::Aside { question, failed }, answer);
+        self.beside(Message::note(Side::Aside { question, failed }, answer));
+    }
+
+    /// Puts `note` beside the conversation: before the reply being written, if any, so that the reply stays whole.
+    fn beside(&mut self, note: Message) {
         let writing = self
             .messages
             .last()
@@ -122,6 +137,11 @@ impl Session {
             true => self.messages.insert(self.messages.len() - 1, note),
             false => self.messages.push(note),
         }
+    }
+
+    /// Notes that the turn moved to a backup model, `side` saying which, for `reason`, beside the conversation.
+    fn fell_back(&mut self, side: Side, reason: &str) {
+        self.beside(Message::note(side, reason));
     }
 
     /// Marks where the conversation was handed over to a new one, which starts with `prompt`: the reply that wrote the prompt ends, and the new turn's reply follows the mark.
@@ -886,6 +906,52 @@ mod tests {
                 .subagents()
                 .into_iter()
                 .all(|(_, _, tool)| tool.state == ToolState::Done)
+        );
+    }
+
+    /// A move to a backup model is noted beside the reply being written, which stays whole, and the slots the agent tells are offered in its model picker as `@name`.
+    #[test]
+    fn fallbacks_and_slots_are_heard() {
+        let mut session = Session::started("Test", 0, "Hello");
+        session.hear(Event::Settings(vec![pm_harness::Setting {
+            id: "model".to_owned(),
+            category: "model".to_owned(),
+            name: "Model".to_owned(),
+            current: "opus".to_owned(),
+            picks: Vec::new(),
+        }]));
+        session.hear(Event::Said("Working".to_owned()));
+        session.hear(Event::ModelFallback {
+            slot: "main".to_owned(),
+            from: "opus".to_owned(),
+            to: "openai/gpt-5".to_owned(),
+            reason: "529 overloaded".to_owned(),
+        });
+        session.hear(Event::Said(" on".to_owned()));
+        let last = session.messages.len() - 1;
+        assert_eq!(session.messages[last].text, "Working on");
+        assert_eq!(
+            session.messages[last - 1].side,
+            Some(Side::Fallback {
+                slot: "main".to_owned(),
+                from: "opus".to_owned(),
+                to: "openai/gpt-5".to_owned(),
+            })
+        );
+        session.hear(Event::Slots(vec![pm_harness::SlotInfo {
+            name: "fast".to_owned(),
+            model: Some("claude/haiku".to_owned()),
+            backups: Vec::new(),
+            resolved: Some("claude/haiku".to_owned()),
+            source: pm_harness::SlotSource::User,
+            inherited: false,
+            suggested: None,
+            providers: Vec::new(),
+        }]));
+        assert_eq!(session.settings[0].picks[0].value, "@fast");
+        assert_eq!(
+            session.settings[0].picks[0].description,
+            "Uses claude/haiku"
         );
     }
 

@@ -596,6 +596,7 @@ fn summary(section: Section) -> &'static str {
             "An open standard that lets AI use external tools and services. MCP servers provide tools for file operations, databases, APIs, and more."
         }
         Section::ModelServers => crate::settings_models::SUMMARY,
+        Section::ModelSlots => crate::settings_slots::SUMMARY,
         Section::Servers => {
             "The servers the window works with: the one on this machine, and ones reached at their address, over ssh, inside WSL or a dev container, or through a tunnel."
         }
@@ -696,6 +697,7 @@ pub(crate) fn body(state: &WorkspaceState, section: Section, room: f32) -> Node 
                     Section::AgentServers,
                     Section::McpServers,
                     Section::ModelServers,
+                    Section::ModelSlots,
                 ]
                 .map(|part| card(part, count_of(state, part))),
             ),
@@ -705,6 +707,7 @@ pub(crate) fn body(state: &WorkspaceState, section: Section, room: f32) -> Node 
         Section::AgentServers => crate::settings_agents::body(state, inner, room),
         Section::McpServers => list(state, section, inner, room),
         Section::ModelServers => crate::settings_models::body(state, inner, room),
+        Section::ModelSlots => crate::settings_slots::body(state, inner, room),
         Section::Customizations
         | Section::Skills
         | Section::Instructions
@@ -752,6 +755,7 @@ fn count_of(state: &WorkspaceState, section: Section) -> String {
         Section::AgentServers => format!("{} available", state.offered_agents().len()),
         Section::McpServers => format!("{} installed", state.settings_servers.tools.len()),
         Section::ModelServers => crate::settings_models::count(state),
+        Section::ModelSlots => crate::settings_slots::count(state),
         _ => String::new(),
     }
 }
@@ -806,6 +810,7 @@ pub(crate) fn card(section: Section, count: String) -> Node {
                 Section::AgentServers => "The agents that can be started, and their accounts.",
                 Section::McpServers => "Tool servers every agent is started with.",
                 Section::ModelServers => "OpenAI-compatible servers offered as agents.",
+                Section::ModelSlots => "The model each kind of work asks, with backups.",
                 other if crate::settings_library::lists(other) => {
                     crate::settings_library::blurb(other)
                 }

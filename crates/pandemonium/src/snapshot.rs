@@ -60,7 +60,7 @@ const NARROW_WIDTH: u32 = 640;
 const NARROW_HEIGHT: u32 = 420;
 
 /// The name of the shot of each section of the settings window, after `settings-`.
-pub const SETTINGS_SHOTS: [(&str, Section); 26] = [
+pub const SETTINGS_SHOTS: [(&str, Section); 27] = [
     ("general", Section::General),
     ("appearance", Section::Appearance),
     ("editor", Section::Editor),
@@ -80,6 +80,7 @@ pub const SETTINGS_SHOTS: [(&str, Section); 26] = [
     ("agent-servers", Section::AgentServers),
     ("mcp-servers", Section::McpServers),
     ("model-servers", Section::ModelServers),
+    ("models", Section::ModelSlots),
     ("customizations", Section::Customizations),
     ("skills", Section::Skills),
     ("instructions", Section::Instructions),
@@ -400,6 +401,10 @@ pub enum Shot {
     SettingsMcp,
     /// The settings panel on the model servers inside Agents, with two declared, the form of the second open and the models it was found to offer listed, two of them ticked, at its narrowest when the flag is set.
     SettingsModelServers(bool),
+    /// The settings panel on the model slots inside Agents, with slots set, inherited and suggested, backups and one preset, scrolled down to the suggestion, the slot of the reader's own and the preset; at its narrowest when the flag is set, from the top.
+    SettingsModelSlots(bool),
+    /// A conversation whose turn moved to a backup model when its own was overloaded, with the notice in the chat.
+    ModelFallback,
     /// The page for starting work on a declared model server, with the menu of the models it offers open.
     ServerModels,
     /// The settings panel on the Agent Servers inside Agents, with the form for adding one open.
@@ -2621,6 +2626,7 @@ impl Shot {
                 | Self::SettingsCompact(_)
                 | Self::SettingsMcp
                 | Self::SettingsModelServers(_)
+                | Self::SettingsModelSlots(_)
                 | Self::SettingsDraft(_)
                 | Self::SettingsForm
                 | Self::SettingsAccounts(_)
@@ -2642,6 +2648,7 @@ impl Shot {
                 | Self::SettingsMachine(true)
                 | Self::SettingsDraft(true)
                 | Self::SettingsModelServers(true)
+                | Self::SettingsModelSlots(true)
                 | Self::SettingsCompact(true)
                 | Self::SettingsAccounts(true)
                 | Self::SettingsAccountsCloud(true)
@@ -2671,6 +2678,7 @@ impl Shot {
             "accounts-key" => Some(Self::SettingsAccountsKey),
             "mcp" => Some(Self::SettingsMcp),
             "model-servers-found" => Some(Self::SettingsModelServers(narrow)),
+            "model-slots" => Some(Self::SettingsModelSlots(narrow)),
             "skills-new" => Some(Self::SettingsDraft(narrow)),
             slug => SETTINGS_SHOTS
                 .iter()
@@ -3884,6 +3892,14 @@ impl Shot {
                     .after(pm_components::settings_ids::FOUND_MODEL_PICKS.at(2))
                     .scrolled_settings(if narrow { 520.0 } else { 220.0 }, 2000.0),
             ),
+            Self::SettingsModelSlots(_) => Screen::Workspace(
+                welcome()
+                    .after(SETTINGS)
+                    .after(Section::ModelSlots.id())
+                    .with_model_slots(model_slots())
+                    .scrolled_settings(0.0, 2000.0),
+            ),
+            Self::ModelFallback => Screen::Workspace(model_fallback()),
             Self::ServerModels => Screen::Workspace(server_models().after(FocusId(4200))),
             Self::SettingsMcp => Screen::Workspace(
                 welcome()
@@ -4466,6 +4482,116 @@ enum Turn {
     Background,
     /// The agent finished it like [`Turn::Background`], its subagents working in git worktrees of their own and a third one ended.
     Isolated,
+}
+
+/// The model slots and presets the models page shows: `main` inheriting with a backup, `fast` set from the user's file with backups, `plan` set by the project, `vision` inheriting with a suggestion, `subagent` and `review` inheriting, a slot of the reader's own from the environment, and one preset.
+fn model_slots() -> pm_harness::SlotBook {
+    use pm_harness::SlotSource::{Environment, Main, Project, User};
+    let slot = |name: &str,
+                model: Option<&str>,
+                backups: &[&str],
+                source: pm_harness::SlotSource,
+                suggested: Option<&str>| pm_harness::SlotInfo {
+        name: name.to_owned(),
+        model: model.map(str::to_owned),
+        backups: backups.iter().map(|backup| (*backup).to_owned()).collect(),
+        resolved: Some(model.unwrap_or("claude-opus-4-5").to_owned()),
+        source,
+        inherited: model.is_none(),
+        suggested: suggested.map(str::to_owned),
+        providers: Vec::new(),
+    };
+    let assigned =
+        |provider: &str, model: Option<&str>, backups: &[&str], suggested: Option<&str>| {
+            pm_harness::SlotProvider {
+                provider: provider.to_owned(),
+                model: model.map(str::to_owned),
+                backups: backups.iter().map(|backup| (*backup).to_owned()).collect(),
+                suggested: suggested.map(str::to_owned),
+            }
+        };
+    let mut slots = vec![
+        slot("main", None, &["openai/gpt-5"], Main, None),
+        slot(
+            "fast",
+            Some("claude/haiku-4-5:low"),
+            &["openai/gpt-5-mini", "ollama/qwen3-coder:30b"],
+            User,
+            None,
+        ),
+        slot("plan", Some("claude/opus-4-5:high"), &[], Project, None),
+        slot("subagent", None, &[], Main, None),
+        slot("review", None, &[], Main, None),
+        slot("vision", None, &[], Main, Some("openai/gpt-5-mini")),
+        slot("docs", Some("claude/sonnet-4-5"), &[], Environment, None),
+    ];
+    slots[1].providers = vec![
+        assigned(
+            "claude",
+            Some("claude/haiku-4-5:low"),
+            &["claude/sonnet-4-5"],
+            None,
+        ),
+        assigned(
+            "codex",
+            Some("codex/gpt-5-mini:low"),
+            &["codex/gpt-5-nano"],
+            None,
+        ),
+    ];
+    slots[2].providers = vec![
+        assigned("claude", Some("claude/opus-4-5:high"), &[], None),
+        assigned("codex", None, &[], None),
+    ];
+    slots[5].providers = vec![
+        assigned("claude", None, &[], Some("claude/haiku-4-5")),
+        assigned("codex", None, &[], Some("codex/gpt-5-mini")),
+    ];
+    pm_harness::SlotBook {
+        slots,
+        presets: vec![pm_harness::PresetInfo {
+            name: "cheap".to_owned(),
+            slots: vec![
+                pm_harness::PresetSlot {
+                    name: "fast".to_owned(),
+                    model: Some("claude/haiku-4-5".to_owned()),
+                    backups: Vec::new(),
+                    providers: Vec::new(),
+                },
+                pm_harness::PresetSlot {
+                    name: "plan".to_owned(),
+                    model: Some("claude/sonnet-4-5".to_owned()),
+                    backups: Vec::new(),
+                    providers: Vec::new(),
+                },
+            ],
+            effort: Some("low".to_owned()),
+        }],
+    }
+}
+
+/// A conversation whose agent was answering when its model was overloaded, so the rest of the turn asked the `main` slot's backup, with the notice of the switch beside the reply.
+fn model_fallback() -> WorkspaceState {
+    let state = live(Turn::Finished)
+        .edited(
+            PROMPT,
+            Edit::Paste("Now add a test for the clamp".to_owned()),
+        )
+        .after(SEND);
+    let last = state.sessions.len() - 1;
+    [
+        Event::Said("I'll start with the sidebar tests.".to_owned()),
+        Event::ModelFallback {
+            slot: "main".to_owned(),
+            from: "claude-opus-4-5".to_owned(),
+            to: "openai/gpt-5".to_owned(),
+            reason: "provider returned 529: overloaded".to_owned(),
+        },
+        Event::Said(" The test rebuilds the list and checks the offset is kept.".to_owned()),
+        Event::Finished(None),
+    ]
+    .into_iter()
+    .fold(state, |state, event| state.heard(last, event))
 }
 
 /// A finished conversation in which the reader asked a question on the side, then had the work handed over to a new conversation, which has started on it.

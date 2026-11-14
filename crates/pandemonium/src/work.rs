@@ -122,6 +122,8 @@ enum Pending {
     McpServers,
     /// The model servers declared on this machine's server, as they stand after a change or as they were asked for.
     ModelServers,
+    /// The model slots and presets, after a change to them or not.
+    ModelSlots,
     /// The models a model server offers, asked for under this ticket.
     FoundModels(u64),
     /// The tool servers the public registry offered for this search.
@@ -1504,6 +1506,27 @@ impl Work {
                 Outgoing::SaveMcpServers(servers) => {
                     self.ask(&None, Request::SaveMcpServers { servers }, Pending::Nothing)
                 }
+                Outgoing::ModelSlots { session, change } => {
+                    let host = session.and_then(|session| self.numbers.get(&session).cloned());
+                    match host {
+                        Some((host, number)) => self.ask(
+                            &host,
+                            Request::ModelSlots {
+                                session: Some(number),
+                                change,
+                            },
+                            Pending::ModelSlots,
+                        ),
+                        None => self.ask(
+                            &None,
+                            Request::ModelSlots {
+                                session: None,
+                                change,
+                            },
+                            Pending::ModelSlots,
+                        ),
+                    }
+                }
                 Outgoing::ModelServers => {
                     self.ask(&None, Request::ModelServers, Pending::ModelServers)
                 }
@@ -2176,6 +2199,16 @@ impl Work {
                 other => {
                     let reason = Self::trouble_of(other);
                     Self::in_workspace(model, |state| state.with_model_servers_failed(reason));
+                }
+            },
+            Pending::ModelSlots => match response {
+                Response::ModelSlots { slots, presets } => {
+                    let book = pm_harness::SlotBook { slots, presets };
+                    Self::in_workspace(model, |state| state.with_model_slots(book));
+                }
+                other => {
+                    let reason = Self::trouble_of(other);
+                    Self::in_workspace(model, |state| state.with_model_slots_failed(reason));
                 }
             },
             Pending::FoundModels(ticket) => {

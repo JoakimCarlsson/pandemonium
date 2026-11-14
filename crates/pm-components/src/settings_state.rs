@@ -43,6 +43,8 @@ pub struct SettingsPage {
     pub library: crate::settings_library::Library,
     /// The model servers declared on the server, and the form one is declared or changed with.
     pub models: crate::settings_models::ModelServers,
+    /// The model slots and presets, and what the models page has open.
+    pub slots: crate::settings_slots::ModelSlots,
 }
 
 /// The settings the window edits, held together so one setting can be copied from one set to another.

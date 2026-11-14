@@ -168,12 +168,13 @@ fn side_note(side: &Side, content: &str, width: f32, shaper: &mut Shaper) -> Nod
             "Handed over to a new conversation, which starts with",
             None,
         ),
+        Side::Fallback { .. } => (IconName::Zap, "Switched to a backup model", None),
     };
     let inner = width - 34.0;
     let body = match side {
         Side::Aside { failed: true, .. } => paragraph(content, Role::Danger, inner, shaper),
         Side::Aside { .. } => Markdown::new(content, inner).build(shaper),
-        Side::HandedOff => paragraph(content, Role::Muted, inner, shaper),
+        Side::HandedOff | Side::Fallback { .. } => paragraph(content, Role::Muted, inner, shaper),
     };
     node()
         .styles([
@@ -207,6 +208,9 @@ fn agent_message(
     shaper: &mut Shaper,
 ) -> Node {
     let message = &session.messages[index];
+    if let Some(Side::Fallback { from, to, .. }) = &message.side {
+        return crate::fallback::fallback_notice(from, to, &message.text);
+    }
     if let Some(side) = &message.side {
         return side_note(side, &message.text, width, shaper);
     }

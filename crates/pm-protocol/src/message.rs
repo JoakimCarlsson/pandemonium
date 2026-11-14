@@ -172,3 +172,51 @@ pub enum ServerMessage {
         code: String,
     },
 }
+
+#[cfg(test)]
+/// Tests for how the server's messages are written.
+mod tests {
+    use super::*;
+
+    /// A fallback to a backup model and the slots a conversation told are written as session events and read back as they were.
+    #[test]
+    fn slot_events_round_trip() {
+        for event in [
+            Event::ModelFallback {
+                slot: "main".to_owned(),
+                from: "claude-opus-4-5".to_owned(),
+                to: "openai/gpt-5".to_owned(),
+                reason: "provider returned 529: overloaded".to_owned(),
+            },
+            Event::Slots(vec![pm_harness::SlotInfo {
+                name: "fast".to_owned(),
+                model: Some("claude/haiku:low".to_owned()),
+                backups: vec!["openai/gpt-5-mini".to_owned()],
+                resolved: Some("claude/haiku:low".to_owned()),
+                source: pm_harness::SlotSource::User,
+                inherited: false,
+                suggested: None,
+                providers: Vec::new(),
+            }]),
+        ] {
+            let message = ServerMessage::Event {
+                session: 2,
+                seq: 7,
+                event,
+            };
+            let text = serde_json::to_string(&message).unwrap();
+            assert_eq!(
+                serde_json::from_str::<ServerMessage>(&text).unwrap(),
+                message
+            );
+        }
+        let text = serde_json::to_value(Event::ModelFallback {
+            slot: "plan".to_owned(),
+            from: "a".to_owned(),
+            to: "b".to_owned(),
+            reason: "overloaded".to_owned(),
+        })
+        .unwrap();
+        assert_eq!(text["ModelFallback"]["to"], "b");
+    }
+}

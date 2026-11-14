@@ -23,6 +23,7 @@ mod model_servers;
 mod product;
 mod profile;
 mod slash;
+mod slots;
 mod tool_registry;
 mod web;
 
@@ -51,5 +52,9 @@ pub use omc_wire::{Reach, SignIn, ToolServer};
 pub use omc_wire::{Server as ModelServer, ServerWire};
 pub use product::Product;
 pub use slash::{BTW, FRESH, HANDOFF, RETRY, aside_question, btw_prompt, handoff_prompt};
+pub use slots::{
+    BUILT_IN_SLOTS, PresetInfo, PresetSlot, SlotBook, SlotChange, SlotInfo, SlotProvider,
+    SlotScope, SlotSource, model_slots, slot_purpose,
+};
 pub use tool_registry::{Listing, search as search_tools};
 pub use web::{is_web_address, open as open_address};

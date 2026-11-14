@@ -272,6 +272,7 @@ fn main() {
             Some("goal") => Shot::Goal,
             Some("goal-menu") => Shot::GoalMenu,
             Some("aside") => Shot::Aside,
+            Some("model-fallback") => Shot::ModelFallback,
             Some("allowances") => Shot::Allowances,
             Some("kept") => Shot::Kept,
             Some("long-line") => Shot::LongLine,

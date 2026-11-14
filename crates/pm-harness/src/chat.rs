@@ -14,6 +14,7 @@ use crate::agent::Agent;
 use crate::event::{Event, Reply, Verdict};
 use crate::files::FileNews;
 use crate::language::{HubLanguages, LanguageServers};
+use crate::slots::{SlotBook, SlotChange};
 
 /// How long the driver waits for the harness before looking at its commands again.
 const LISTEN: Duration = Duration::from_millis(20);
@@ -129,6 +130,14 @@ impl Request {
     }
 }
 
+/// A question about the model slots handed to the driver thread: the change to make first, if any, and where the slots and presets as they then stand, or why they are not, are sent.
+struct SlotAsk {
+    /// The change to make before the slots are read.
+    change: Option<SlotChange>,
+    /// Where the answer goes.
+    reply: Sender<Result<SlotBook, String>>,
+}
+
 /// The way to end the conversation once it is started, and whether the chat was stopped, shared by a chat and its driver thread.
 #[derive(Default)]
 struct Ending {
@@ -176,6 +185,8 @@ pub struct Chat {
     events: Receiver<Event>,
     /// What the harness answered about the files of turns.
     files: Receiver<FileNews>,
+    /// Where questions about the model slots go to the driver thread.
+    slot_asks: Sender<SlotAsk>,
     /// The way to end the conversation.
     ending: Arc<Mutex<Ending>>,
     /// The driver thread.
@@ -194,6 +205,7 @@ impl Chat {
         let (requests, received) = mpsc::channel();
         let (queue, events) = mpsc::channel();
         let (answers, files) = mpsc::channel();
+        let (slot_asks, asked) = mpsc::channel();
         let ending = Arc::new(Mutex::new(Ending::default()));
         let shared = Arc::clone(&ending);
         let driver = std::thread::spawn(move || {
@@ -210,7 +222,11 @@ impl Chat {
                 report: &report,
                 answer: &answer,
             };
-            if let Err(reason) = drive(agent, directory, home, given, &shared, &received, &told) {
+            let inbox = Inbox {
+                requests: &received,
+                slot_asks: &asked,
+            };
+            if let Err(reason) = drive(agent, directory, home, given, &shared, &inbox, &told) {
                 report(Event::Failed(reason));
             }
         });
@@ -218,6 +234,7 @@ impl Chat {
             requests,
             events,
             files,
+            slot_asks,
             ending,
             driver,
         }
@@ -316,6 +333,13 @@ impl Chat {
         });
     }
 
+    /// Makes `change` to the model slots, when there is one, in the files this conversation sees, its trusted project's included, then reads the slots and the presets; the answer comes on the receiver given back, and the slots also come as an [`Event::Slots`] of the conversation.
+    pub fn slots(&self, change: Option<SlotChange>) -> Receiver<Result<SlotBook, String>> {
+        let (reply, answer) = mpsc::channel();
+        let _ = self.slot_asks.send(SlotAsk { change, reply });
+        answer
+    }
+
     /// What the harness answered about the files of turns since the last call, one answer for each request, in the order they were made.
     pub fn file_news(&self) -> Vec<FileNews> {
         std::iter::from_fn(|| self.files.try_recv().ok()).collect()
@@ -341,6 +365,51 @@ struct Told<'a> {
     answer: &'a dyn Fn(FileNews),
 }
 
+/// Where the driver thread takes what the reader hands the agent from.
+struct Inbox<'a> {
+    /// The reader's requests.
+    requests: &'a Receiver<Request>,
+    /// The questions about the model slots.
+    slot_asks: &'a Receiver<SlotAsk>,
+}
+
+/// What the driver thread does with what the harness reports besides its answers about the slots: the app's language servers that answer its questions about code, where those answers go, and the watch on the agent's limits.
+struct Hearing<'a> {
+    /// The app's language servers, when the agent is given them.
+    languages: Option<Arc<HubLanguages>>,
+    /// Where the answers to the harness's language questions go.
+    answers: Sender<Command>,
+    /// The watch on the agent's allowance, when it has one.
+    watch: Option<crate::limits::Watch>,
+    /// Where events and answers about files are told.
+    told: &'a Told<'a>,
+}
+
+impl Hearing<'_> {
+    /// Takes in `event`, which the harness reported, and says whether anyone still listens.
+    fn hear(&mut self, event: omc_wire::Event) -> bool {
+        if let omc_wire::Event::Language(request) = event {
+            if let Some(languages) = &self.languages {
+                answer_language(languages.clone(), request, self.answers.clone());
+            }
+            return true;
+        }
+        if let Some(news) = FileNews::from_harness(&event) {
+            (self.told.answer)(news);
+            return true;
+        }
+        if matches!(event, omc_wire::Event::Finished(_))
+            && let Some(watch) = &mut self.watch
+        {
+            watch.turn_ended();
+        }
+        match Event::from_harness(event) {
+            Some(event) => (self.told.report)(event),
+            None => true,
+        }
+    }
+}
+
 /// Starts a conversation with the harness, opens it and carries it until the chat is dropped or the harness stops.
 ///
 /// # Errors
@@ -352,10 +421,9 @@ fn drive(
     home: Option<PathBuf>,
     given: Given,
     ending: &Mutex<Ending>,
-    requests: &Receiver<Request>,
+    inbox: &Inbox,
     told: &Told,
 ) -> Result<(), String> {
-    let report = told.report;
     if !directory.is_dir() {
         return Err(format!("{} is not a folder", directory.display()));
     }
@@ -370,51 +438,54 @@ fn drive(
         }
         ending.stopper = Some(harness.stopper());
     }
-    let mut watch = crate::limits::Watch::of(agent, home.clone());
+    let watch = crate::limits::Watch::of(agent, home.clone());
     let (opening, languages) = opening(agent, directory, home, given);
     let (answers, answered) = mpsc::channel();
     harness.send(&Command::Open(opening))?;
+    harness.send(&Command::Slots)?;
     if let Some(languages) = &languages {
         warm(languages.clone());
     }
+    let mut hearing = Hearing {
+        languages,
+        answers,
+        watch,
+        told,
+    };
     loop {
-        if let Some(watch) = &mut watch {
+        if let Some(watch) = &mut hearing.watch {
             watch.tick();
             for event in watch.heard() {
-                if !report(event) {
+                if !(told.report)(event) {
                     return Ok(());
                 }
             }
         }
         loop {
-            match requests.try_recv() {
+            match inbox.requests.try_recv() {
                 Ok(request) => harness.send(&request.command())?,
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => return Ok(()),
+            }
+        }
+        while let Ok(ask) = inbox.slot_asks.try_recv() {
+            let (answer, heard) = crate::slots::exchange(&mut harness, ask.change);
+            let _ = ask.reply.send(answer);
+            for event in heard {
+                if !hearing.hear(event) {
+                    return Ok(());
+                }
             }
         }
         while let Ok(answer) = answered.try_recv() {
             harness.send(&answer)?;
         }
         match harness.listen(LISTEN) {
-            Heard::Event(omc_wire::Event::Language(request)) => {
-                if let Some(languages) = &languages {
-                    answer_language(languages.clone(), request, answers.clone());
-                }
-            }
             Heard::Event(event) => {
-                if let Some(news) = FileNews::from_harness(&event) {
-                    (told.answer)(news);
-                    continue;
+                if matches!(event, omc_wire::Event::Settings(_)) {
+                    harness.send(&Command::Slots)?;
                 }
-                if matches!(event, omc_wire::Event::Finished(_))
-                    && let Some(watch) = &mut watch
-                {
-                    watch.turn_ended();
-                }
-                if let Some(event) = Event::from_harness(event)
-                    && !report(event)
-                {
+                if !hearing.hear(event) {
                     return Ok(());
                 }
             }

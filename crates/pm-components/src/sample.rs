@@ -360,6 +360,15 @@ pub enum Side {
     },
     /// The conversation was handed over to a new one, which starts with the prompt in the message's text.
     HandedOff,
+    /// The model of a slot kept failing, so the rest of the turn asks a backup; the message's text says why.
+    Fallback {
+        /// The slot whose backup is used, such as `main`.
+        slot: String,
+        /// The model that failed.
+        from: String,
+        /// The backup asked instead.
+        to: String,
+    },
 }
 
 /// A question of a form the reader answered, with the answer, or nothing when it was skipped.
@@ -617,8 +626,10 @@ pub struct Session {
     pub comments: Vec<Comment>,
     /// The messages of the commits made from it, oldest first.
     pub commits: Vec<String>,
-    /// What can be changed about the conversation, once the agent has said.
+    /// What can be changed about the conversation, once the agent has said; the model's picks end with the model slots, named as `@name`.
     pub settings: Vec<Setting>,
+    /// The model slots of the conversation, as the agent last told them.
+    pub slots: Vec<pm_harness::SlotInfo>,
     /// The commands and skills the agent offers behind a slash.
     pub commands: Vec<Slash>,
     /// The id of the login its agent runs as, or nothing for the agent's own.
@@ -712,6 +723,7 @@ impl Session {
             comments: Vec::new(),
             commits: Vec::new(),
             settings: Vec::new(),
+            slots: Vec::new(),
             context: None,
             limits: None,
             goal: None,

@@ -623,6 +623,13 @@ pub enum Response {
         #[serde(default)]
         error: Option<String>,
     },
+    /// The model slots and the presets as they stand, after a `model_slots`.
+    ModelSlots {
+        /// Every slot, the built-in ones first, then the reader's by name.
+        slots: Vec<pm_harness::SlotInfo>,
+        /// Every preset, by name.
+        presets: Vec<pm_harness::PresetInfo>,
+    },
 }
 
 #[cfg(test)]
@@ -701,5 +708,37 @@ mod tests {
                 error: None
             }
         );
+    }
+
+    /// The answer about the model slots is written under its own name, with each slot's source and suggestion, and read back as it was.
+    #[test]
+    fn model_slot_answers_round_trip() {
+        let answer = Response::ModelSlots {
+            slots: vec![pm_harness::SlotInfo {
+                name: "vision".to_owned(),
+                model: None,
+                backups: Vec::new(),
+                resolved: Some("claude-opus-4-5".to_owned()),
+                source: pm_harness::SlotSource::Main,
+                inherited: true,
+                suggested: Some("openai/gpt-5-mini".to_owned()),
+                providers: Vec::new(),
+            }],
+            presets: vec![pm_harness::PresetInfo {
+                name: "cheap".to_owned(),
+                slots: vec![pm_harness::PresetSlot {
+                    name: "fast".to_owned(),
+                    model: Some("claude/haiku".to_owned()),
+                    backups: Vec::new(),
+                    providers: Vec::new(),
+                }],
+                effort: Some("low".to_owned()),
+            }],
+        };
+        let text = serde_json::to_string(&answer).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["response"], "model_slots");
+        assert_eq!(value["slots"][0]["source"], "Main");
+        assert_eq!(serde_json::from_str::<Response>(&text).unwrap(), answer);
     }
 }

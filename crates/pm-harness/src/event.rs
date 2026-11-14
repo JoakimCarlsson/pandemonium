@@ -146,6 +146,19 @@ pub enum Event {
         /// The id the harness saved the new conversation's first turn under.
         turn: String,
     },
+    /// The model slots of the conversation as they stand: each slot's model, its backups, the model it resolves to and where that comes from. Not part of any turn.
+    Slots(Vec<omc_wire::SlotInfo>),
+    /// A request to the model of `slot` kept failing in a way another model may not, so the rest of the turn asks the slot's backup `to` instead of `from`; `reason` is the first line of the failure.
+    ModelFallback {
+        /// The slot whose backup is used, such as `main`.
+        slot: String,
+        /// The model that failed.
+        from: String,
+        /// The model asked for the rest of the turn.
+        to: String,
+        /// Why the request failed, as the provider said.
+        reason: String,
+    },
 }
 
 /// What an agent says about itself when a conversation is opened.
@@ -291,7 +304,19 @@ impl Event {
             Wire::HandedOff { prompt, turn } => Some(Self::HandedOff { prompt, turn }),
             Wire::Titled(title) => Some(Self::Titled(title)),
             Wire::Changes { .. } | Wire::Restored { .. } | Wire::Undone { .. } => None,
-            Wire::Servers(_) | Wire::FoundModels { .. } => None,
+            Wire::Servers(_) | Wire::FoundModels { .. } | Wire::Presets(_) => None,
+            Wire::Slots(slots) => Some(Self::Slots(slots)),
+            Wire::ModelFallback {
+                slot,
+                from,
+                to,
+                reason,
+            } => Some(Self::ModelFallback {
+                slot,
+                from,
+                to,
+                reason,
+            }),
         }
     }
 }

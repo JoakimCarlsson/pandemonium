@@ -1393,6 +1393,15 @@ pub enum Request {
         /// The server to ask. Without `api_key` it is asked with the key saved for its id.
         server: pm_harness::ModelServer,
     },
+    /// Makes `change` to the model slots, when there is one, then reads the slots and the presets; answered with `model_slots`. With a `session` whose agent runs, it goes through that agent's conversation, which also sees the trusted project's file; otherwise only the user's file and the environment are seen, and a change to the project's file fails.
+    ModelSlots {
+        /// The session whose conversation is asked, when there is one.
+        #[serde(default)]
+        session: Option<u64>,
+        /// The change to make first.
+        #[serde(default)]
+        change: Option<pm_harness::SlotChange>,
+    },
 }
 
 #[cfg(test)]
@@ -1441,5 +1450,33 @@ mod tests {
         }
         let saved = serde_json::to_value(Request::SaveModelServer { server: gateway() }).unwrap();
         assert_eq!(saved["server"]["wire"], "responses");
+    }
+
+    /// A request about the model slots is written under its own name with its change, and read back as it was; one without a session or change reads as asking for the slots alone.
+    #[test]
+    fn model_slot_requests_round_trip() {
+        let request = Request::ModelSlots {
+            session: Some(4),
+            change: Some(pm_harness::SlotChange::Set {
+                name: "fast".to_owned(),
+                scope: pm_harness::SlotScope::Project,
+                model: Some("claude/haiku:low".to_owned()),
+                backups: vec!["openai/gpt-5-mini".to_owned()],
+                provider: Some("codex".to_owned()),
+            }),
+        };
+        let text = serde_json::to_string(&request).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["request"], "model_slots");
+        assert_eq!(value["change"]["set"]["scope"], "Project");
+        assert_eq!(serde_json::from_str::<Request>(&text).unwrap(), request);
+        let bare: Request = serde_json::from_str(r#"{"request":"model_slots"}"#).unwrap();
+        assert_eq!(
+            bare,
+            Request::ModelSlots {
+                session: None,
+                change: None
+            }
+        );
     }
 }

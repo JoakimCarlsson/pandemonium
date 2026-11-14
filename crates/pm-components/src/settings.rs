@@ -145,6 +145,8 @@ pub enum Section {
     McpServers,
     /// The OpenAI-compatible model servers the reader declared, each offered as an agent.
     ModelServers,
+    /// The model slots: which model each kind of work asks, with backups, and the presets that set them all.
+    ModelSlots,
     /// How many of each kind of customization agents are given in the project.
     Customizations,
     /// The skills agents are given.
@@ -165,7 +167,7 @@ pub enum Section {
 
 impl Section {
     /// Every section, in the order the list shows them, each followed by the ones inside it.
-    pub const ALL: [Section; 26] = [
+    pub const ALL: [Section; 27] = [
         Section::General,
         Section::Appearance,
         Section::Editor,
@@ -185,6 +187,7 @@ impl Section {
         Section::AgentServers,
         Section::McpServers,
         Section::ModelServers,
+        Section::ModelSlots,
         Section::Customizations,
         Section::Skills,
         Section::Instructions,
@@ -218,6 +221,7 @@ impl Section {
             Self::AgentServers => "Agents and accounts",
             Self::McpServers => "MCP Servers",
             Self::ModelServers => "Model Servers",
+            Self::ModelSlots => "Models",
             Self::Customizations => "Overview",
             Self::Skills => "Skills",
             Self::Instructions => "Instructions",
@@ -249,6 +253,7 @@ impl Section {
             Self::AgentServers => IconName::Folder,
             Self::McpServers => IconName::Plug,
             Self::ModelServers => IconName::Zap,
+            Self::ModelSlots => IconName::Sparkles,
             Self::Customizations
             | Self::Skills
             | Self::Instructions
@@ -264,6 +269,7 @@ impl Section {
             Self::AgentServers
             | Self::McpServers
             | Self::ModelServers
+            | Self::ModelSlots
             | Self::Customizations
             | Self::Skills
             | Self::Instructions
@@ -358,6 +364,7 @@ impl WorkspaceState {
         self.settings_servers.name_form = None;
         self.settings_page.server_form = None;
         self.settings_page.models.form = None;
+        self.settings_page.slots.picking = None;
         self.settings_page.library.draft = None;
         self.settings_page.picker = None;
         self.recording = None;
@@ -368,6 +375,9 @@ impl WorkspaceState {
         match action {
             SETTINGS_CLOSE if self.settings_page.picker.is_some() => {
                 self.settings_page.picker = None;
+            }
+            SETTINGS_CLOSE if self.settings_page.slots.picking.is_some() => {
+                self.settings_page.slots.picking = None;
             }
             SETTINGS_CLOSE if self.settings_servers.form.is_some() => {
                 self.settings_servers.form = None;
@@ -396,6 +406,7 @@ impl WorkspaceState {
                 self.settings_page.find = pm_text::Field::default();
                 self.settings_servers.scroll = 0.0;
             }
+            action if self.slots_pressed(action) => {}
             action if self.setting_pressed(action) => {}
             action if self.keymap_pressed(action) => {}
             action if self.machines_pressed(action) => {}
@@ -426,10 +437,14 @@ impl WorkspaceState {
         self.settings = Some(section);
         self.settings_page.find = pm_text::Field::default();
         self.settings_page.picker = None;
+        self.settings_page.slots.picking = None;
         self.recording = None;
         self.section_changed();
         if section == Section::ModelServers {
             self.outbox.push(crate::state::Outgoing::ModelServers);
+        }
+        if section == Section::ModelSlots {
+            self.ask_model_slots();
         }
         if section == Section::AgentServers {
             self.ask_default_accounts();
