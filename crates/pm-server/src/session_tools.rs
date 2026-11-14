@@ -340,7 +340,7 @@ pub(crate) fn plan(asked: &Asked, caller: &Caller, projects: &[String]) -> Resul
         ),
         None => {
             return Err(format!(
-                "{repository} holds several repositories, so name `base_branch`"
+                "{repository} holds several repositories, so name `base_branch`, one reference or `repository=reference` entries separated by commas"
             ));
         }
     };
@@ -699,7 +699,7 @@ fn definitions() -> Vec<Value> {
                 "prompt": { "type": "string", "description": "The new session's first prompt, written to stand on its own." },
                 "title": { "type": "string", "description": "What the session is called; it names its worktree and branch. Made from the prompt when left out." },
                 "where": { "type": "string", "enum": ["worktree", "local", "chat"], "description": "Where it works; worktree when left out." },
-                "base_branch": { "type": "string", "description": "The branch or commit its worktree is made from, instead of what this session has checked out." },
+                "base_branch": { "type": "string", "description": "The branch or commit its worktree is made from, instead of what this session has checked out. In a project of several repositories, `repository=reference` entries separated by commas, with at most one bare reference for the rest." },
                 "carry_changes": { "type": "boolean", "description": "Whether the changes not committed where the worktree is made from are carried into it; true when left out. Has no effect with base_branch." },
                 "project": { "type": "string", "description": "The project it works in, by folder or folder name; this session's project when left out." },
                 "container": { "type": "boolean", "description": "Whether its agent runs in the project's dev container; as this session when left out." },

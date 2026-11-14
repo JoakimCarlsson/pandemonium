@@ -501,6 +501,25 @@ fn members(repository: &Path) -> Result<Vec<String>, String> {
     }
 }
 
+/// What `base` names for `member`, one of [`members`].
+///
+/// `base` is one reference, or a comma-separated list for a folder of several repositories: `name=reference` entries for the repositories that differ, and at most one bare reference for the rest. A repository no entry names and that has no bare reference falls back to the whole of `base`.
+fn base_for<'a>(member: &str, base: &'a str) -> &'a str {
+    let mut bare = None;
+    for entry in base
+        .split(',')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+    {
+        match entry.split_once('=') {
+            Some((name, reference)) if name.trim() == member => return reference.trim(),
+            Some(_) => {}
+            None => bare = bare.or(Some(entry)),
+        }
+    }
+    bare.unwrap_or(base)
+}
+
 /// The folder of `member`, one of [`members`], inside `root`.
 fn folder_in(root: &Path, member: &str) -> PathBuf {
     if member.is_empty() {
@@ -523,7 +542,7 @@ fn named(member: &str, text: &str) -> String {
 ///
 /// For a folder that holds several repositories the worktree is a folder, and each repository gets a worktree of its own in it under the repository's name, all on the one branch. When one of them cannot be made, those made before it are removed again and the one that failed is named.
 ///
-/// `base` is looked up in each repository now, so a branch deleted a moment ago is refused rather than assumed.
+/// `base` is looked up in each repository now, so a branch deleted a moment ago is refused rather than assumed. For a folder of several repositories it may name a different reference for each, as [`base_for`] describes.
 pub fn add_worktree(
     repository: &Path,
     title: &str,
@@ -534,8 +553,9 @@ pub fn add_worktree(
     let mut heads = members
         .iter()
         .map(|member| {
-            resolve(&folder_in(repository, member), base)
-                .ok_or_else(|| named(member, &format!("{base} does not exist")))
+            let wanted = base_for(member, base);
+            resolve(&folder_in(repository, member), wanted)
+                .ok_or_else(|| named(member, &format!("{wanted} does not exist")))
         })
         .collect::<Result<Vec<String>, String>>()?;
     if placement.root.is_none() && members.len() == 1 && members[0].is_empty() {
@@ -694,7 +714,7 @@ pub fn remove_worktree(
                 &folder_in(repository, member),
                 &folder_in(path, member),
                 branch,
-                base,
+                base.map(|base| base_for(member, base)),
                 !members[0].is_empty(),
             )
             .err()
@@ -1637,6 +1657,8 @@ pub fn cherry_pick(directory: &Path, commit: &str) -> Result<(), String> {
     run(directory, &["cherry-pick", commit]).map(|_| ())
 }
 
+#[cfg(test)]
+mod base_tests;
 #[cfg(test)]
 mod listing_tests;
 #[cfg(test)]

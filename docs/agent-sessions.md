@@ -28,7 +28,7 @@ name has.
 
 | `where` | Folder | Notes |
 | --- | --- | --- |
-| `worktree` (the default) | a worktree and branch of its own | Made from what the starting session has checked out, its branch or commit, with the changes it has not committed carried over: changes to tracked files, staged or not, become unstaged changes, and files git neither tracks nor ignores are copied. `carry_changes: false` starts from the commit alone. `base_branch` makes it from that branch or commit instead and carries nothing. A project that holds several repositories needs `base_branch`. |
+| `worktree` (the default) | a worktree and branch of its own | Made from what the starting session has checked out, its branch or commit, with the changes it has not committed carried over: changes to tracked files, staged or not, become unstaged changes, and files git neither tracks nor ignores are copied. `carry_changes: false` starts from the commit alone. `base_branch` makes it from that branch or commit instead and carries nothing. A project that holds several repositories needs `base_branch`, which may name a reference for each repository, as `one=main,two=next`, with at most one bare reference for the rest. |
 | `local` | the project's own folder | Refused while any session's agent runs in that folder, the starting session's included, since two agents in one folder overwrite each other's work. |
 | `chat` | a scratch folder of its own | Belongs to no project, like a chat started from the window. For research and questions that change no code. |
 
