@@ -235,6 +235,10 @@ It draws the sample workspace in the dark theme; `light` draws it light, and
 welcome page of a new session in the first project, `chat` for a new chat,
 `history`, `extensions` or `overview` for that page, and `update` or
 `sign-in` draws the update dialog or the sign-in code dialog over it.
+`status` shows a failure in the status bar, `session-menu` the open
+session's menu in the sidebar, `rename` its rename dialog, `discard` the
+question before its uncommitted changes are thrown away, and `quitting` the
+question before the window closes on working agents.
 `approve`, `inquiry`, `trust` and `continue` show a card waiting on the
 reader. `code` opens sample files in the editor and `diff` the Diff tab;
 `git-menu`, `git-source`, `git-confirm` and `branch-menu` open the Git

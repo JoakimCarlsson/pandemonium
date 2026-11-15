@@ -22,8 +22,9 @@ const COMMIT_WIDTH: f32 = 64.0;
 
 /// The groups the sessions fall in, in the order the overview shows them,
 /// each with its heading.
-const GROUPS: [(SessionStatus, &str); 5] = [
+const GROUPS: [(SessionStatus, &str); 6] = [
     (SessionStatus::NeedsInput, "Needs input"),
+    (SessionStatus::OutOfReach, "Out of reach"),
     (SessionStatus::Error, "Error"),
     (SessionStatus::Unread, "Unread"),
     (SessionStatus::Working, "Working"),
@@ -95,6 +96,7 @@ fn session_row(session: &Session, at: Vec<usize>, actions: &Actions) {
             SessionStatus::Working => Leading::Spinner,
             SessionStatus::NeedsInput => Leading::Attention,
             SessionStatus::Error => Leading::Failed,
+            SessionStatus::OutOfReach => Leading::Icon(phosphor::LINK_BREAK),
         })
         .code_column(session.branch.clone(), BRANCH_WIDTH)
         .end_column(session.age.clone(), AGE_WIDTH)

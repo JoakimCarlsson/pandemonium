@@ -5,7 +5,7 @@
 use std::rc::Rc;
 
 use rustle::prelude::*;
-use rustle::{Key, basic_text_area};
+use rustle::{Key, TextFieldOptions, basic_text_field_in, remember_focus};
 
 use crate::button::{Button, ButtonVariant};
 use crate::card::{Card, CardVariant};
@@ -54,7 +54,7 @@ pub struct ComposerCommand {
     pub description: String,
 }
 
-/// A menu of the composer, open when it is first drawn.
+/// A menu of the composer, open when it is first drawn and whenever it, or the number asking for it, changes.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ComposerMenu {
     /// The menu of the toolbar setting with this id.
@@ -131,6 +131,10 @@ pub struct Composer {
     callbacks: ComposerCallbacks,
     /// Text put into the composer once each time it changes, such as a command to finish.
     prefill: Option<String>,
+    /// A number that, each time it changes, puts the keyboard in the composer.
+    focus_request: u64,
+    /// A number that, each time it changes, opens the menu given with [`Composer::menu`] again.
+    menu_request: u64,
 }
 
 impl Composer {
@@ -149,7 +153,21 @@ impl Composer {
             modifier: Modifier::new(),
             callbacks: ComposerCallbacks::default(),
             prefill: None,
+            focus_request: 0,
+            menu_request: 0,
         }
+    }
+
+    /// The composer opening its menu given with [`Composer::menu`] again whenever `request` differs from the number it was last given, even when the menu asked for is the same.
+    pub fn menu_request(mut self, request: u64) -> Self {
+        self.menu_request = request;
+        self
+    }
+
+    /// The composer taking the keyboard whenever `request` differs from the number it was last given.
+    pub fn focus_request(mut self, request: u64) -> Self {
+        self.focus_request = request;
+        self
     }
 
     /// The composer filled with `prefill` whenever it is given anew.
@@ -289,6 +307,18 @@ impl Composer {
         }
         let initial = self.menu.clone();
         let menu = remember(move || initial);
+        let asked_menu = remember(|| (self.menu.clone(), self.menu_request));
+        let asked = (self.menu.clone(), self.menu_request);
+        if asked_menu.get() != asked {
+            asked_menu.set(asked);
+            menu.set(self.menu.clone());
+        }
+        let focus = remember_focus();
+        let asked_focus = remember(|| self.focus_request);
+        if asked_focus.get() != self.focus_request {
+            asked_focus.set(self.focus_request);
+            focus.request_focus();
+        }
         let slash_closed = remember(|| None::<String>);
         let focused = remember(|| false);
         let height = match self.variant {
@@ -395,7 +425,16 @@ impl Composer {
                         }
                         let style = Label::new("").wrap().style();
                         LOCAL_TEXT_STYLE.provide(style, || {
-                            basic_text_area(Modifier::new().fill_max_size(), &state);
+                            basic_text_field_in(
+                                Modifier::new().fill_max_size().clip(),
+                                Modifier::new(),
+                                &state,
+                                &focus,
+                                TextFieldOptions {
+                                    multiline: true,
+                                    ..TextFieldOptions::default()
+                                },
+                            );
                         });
                         if let Some(ComposerMenu::Field(across, down)) = field_menu.get() {
                             let closer = field_menu.clone();

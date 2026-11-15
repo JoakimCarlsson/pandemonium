@@ -1,6 +1,6 @@
 //! The sidebar: navigation, the made-up projects' notice before real ones
 //! exist, every project with its nested submodules, its sessions and a
-//! "New session" row, each project with its menu and dragged to reorder,
+//! "New session" row, each project and session with its menu, projects dragged to reorder,
 //! the adder that adds a project, and the chats that belong to none.
 
 use std::rc::Rc;
@@ -12,7 +12,8 @@ use pm_components::{
     Tile, TileVariant, project_colour,
 };
 use pm_shell::{
-    AddStep, Page, Project, ProjectAction, ProjectReach, Session, SessionStatus, Workspace,
+    AddStep, Page, Project, ProjectAction, ProjectReach, Session, SessionCommand, SessionStatus,
+    Workspace,
 };
 
 use crate::actions::{Actions, Destination};
@@ -308,6 +309,8 @@ fn session_row(
     actions: &Actions,
 ) {
     let open = actions.open_session.clone();
+    let menu = actions.session.clone();
+    let id = session.id;
     let selected = workspace.open.as_ref() == Some(&at);
     Tile::new(session.title.clone())
         .leading(status_mark(session.status))
@@ -315,8 +318,51 @@ fn session_row(
         .indent((depth + 1) as f32 * NEST)
         .size(Size::Xs)
         .selected(selected)
+        .hover_icon(phosphor::DOTS_THREE)
+        .on_hover_icon(move || menu(SessionCommand::Menu(Some(id))))
         .on_click(move || open(at.clone()))
         .show();
+    if workspace.session_menu == Some(id) {
+        session_menu(session, actions);
+    }
+}
+
+/// The menu of `session`, hung under its row: rename, copy its folder or branch, show its folder, and close it.
+fn session_menu(session: &Session, actions: &Actions) {
+    let id = session.id;
+    let act = |command: SessionCommand| {
+        let session = actions.session.clone();
+        move || session(command.clone())
+    };
+    let mut menu = Menu::new()
+        .offset(24.0, 0.0)
+        .width(210.0)
+        .on_dismiss(act(SessionCommand::Menu(None)))
+        .icon_item(
+            phosphor::PENCIL_SIMPLE,
+            "Rename",
+            act(SessionCommand::Rename(id)),
+        )
+        .icon_item(
+            phosphor::COPY,
+            "Copy path",
+            act(SessionCommand::CopyPath(id)),
+        );
+    if !session.branch.is_empty() {
+        menu = menu.icon_item(
+            phosphor::GIT_BRANCH,
+            "Copy branch name",
+            act(SessionCommand::CopyBranch(id)),
+        );
+    }
+    menu.icon_item(
+        phosphor::FOLDER_OPEN,
+        "Open folder",
+        act(SessionCommand::OpenFolder(id)),
+    )
+    .separator()
+    .destructive_item(phosphor::X, "Close session", act(SessionCommand::Close(id)))
+    .show();
 }
 
 /// The mark a session's row leads with for `status`.
@@ -327,5 +373,6 @@ fn status_mark(status: SessionStatus) -> Leading {
         SessionStatus::Working => Leading::Spinner,
         SessionStatus::NeedsInput => Leading::Attention,
         SessionStatus::Error => Leading::Failed,
+        SessionStatus::OutOfReach => Leading::Icon(phosphor::LINK_BREAK),
     }
 }

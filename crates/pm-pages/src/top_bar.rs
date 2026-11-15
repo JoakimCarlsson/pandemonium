@@ -89,12 +89,28 @@ pub fn top_bar(workspace: &Workspace, actions: &Actions) {
                                     .show();
                                 spacer(Modifier::new().width(pm_components::spacing(8.0)));
                             }
-                            panel_button(actions, phosphor::SIDEBAR_SIMPLE, Panel::Sidebar);
-                            panel_button(actions, phosphor::SQUARE_HALF_BOTTOM, Panel::Dock);
-                            panel_button(actions, phosphor::SIDEBAR, Panel::Right);
+                            panel_button(
+                                actions,
+                                phosphor::SIDEBAR_SIMPLE,
+                                Panel::Sidebar,
+                                workspace.sidebar_open,
+                            );
+                            panel_button(
+                                actions,
+                                phosphor::SQUARE_HALF_BOTTOM,
+                                Panel::Dock,
+                                workspace.dock_open,
+                            );
+                            panel_button(
+                                actions,
+                                phosphor::SIDEBAR,
+                                Panel::Right,
+                                workspace.right_open,
+                            );
                             let navigate = actions.navigate.clone();
                             IconButton::new(phosphor::GEAR_SIX)
                                 .size(Size::Sm)
+                                .tooltip("Settings")
                                 .on_click(move || navigate(Destination::Settings))
                                 .show();
                             spacer(Modifier::new().width(pm_components::spacing(12.0)));
@@ -153,7 +169,11 @@ fn place_name(workspace: &Workspace) -> String {
 fn trail_button(actions: &Actions, glyph: Icon, action: WindowAction, enabled: bool) {
     let scheme = color_scheme();
     let window = actions.window.clone();
-    let mut button = IconButton::new(glyph).size(Size::Sm);
+    let label = match action {
+        WindowAction::Back => "Go back",
+        _ => "Go forward",
+    };
+    let mut button = IconButton::new(glyph).size(Size::Sm).tooltip(label);
     if !enabled {
         button = button.tint(scheme.on_surface_variant);
     }
@@ -181,18 +201,31 @@ fn open_project(workspace: &Workspace) -> String {
 #[track_caller]
 fn window_button(actions: &Actions, glyph: Icon, action: WindowAction) {
     let window = actions.window.clone();
+    let label = match action {
+        WindowAction::Minimise => "Minimise",
+        WindowAction::Maximise => "Maximise or restore",
+        _ => "Close",
+    };
     IconButton::new(glyph)
         .size(Size::Sm)
+        .tooltip(label)
         .on_click(move || window(action))
         .show();
 }
 
-/// A small button showing or hiding `panel`.
+/// A small button showing or hiding `panel`, shown switched on while `open`.
 #[track_caller]
-fn panel_button(actions: &Actions, glyph: Icon, panel: Panel) {
+fn panel_button(actions: &Actions, glyph: Icon, panel: Panel, open: bool) {
     let toggle = actions.toggle.clone();
+    let label = match panel {
+        Panel::Sidebar => "Toggle the sidebar",
+        Panel::Dock => "Toggle the bottom panel",
+        Panel::Right => "Toggle the right panel",
+    };
     IconButton::new(glyph)
         .size(Size::Sm)
+        .active(open)
+        .tooltip(label)
         .on_click(move || toggle(panel))
         .show();
 }

@@ -10,6 +10,7 @@ use pm_terminal::{Cell, Color as CellColour, Flags, indexed};
 use rustle::prelude::*;
 use rustle::{KeyEvent, Offset, PointerButton, layout_text};
 
+use crate::key_bindings::{KeyBindings, key_bindings};
 use crate::option_list::OptionList;
 use crate::size::Size;
 use crate::terminal_keys::{TerminalCommand, TerminalShortcut, key_bytes, terminal_shortcut};
@@ -231,8 +232,9 @@ impl TerminalView {
                 let menu = menu.clone();
                 move |event| menu.set(Some(event.position))
             })
-            .focusable(&focus, move |event| {
-                key_pressed(&callbacks, event, application_cursor, rows)
+            .focusable(&focus, {
+                let bindings = key_bindings();
+                move |event| key_pressed(&callbacks, &bindings, event, application_cursor, rows)
             })
             .cursor(CursorIcon::Text);
         let screen = Screen {
@@ -278,14 +280,16 @@ impl TerminalView {
     }
 }
 
-/// Hands the key `event` to the terminal's shortcuts first, then to the shell; returns whether either took it.
+/// Hands the key `event` to the terminal's shortcuts in `bindings` first, then to the shell; returns whether either took it.
 fn key_pressed(
     callbacks: &Callbacks,
+    bindings: &KeyBindings,
     event: &KeyEvent,
     application_cursor: bool,
     rows: usize,
 ) -> bool {
-    match terminal_shortcut(event) {
+    match terminal_shortcut(event, bindings) {
+        Some(TerminalShortcut::Swallowed) => return true,
         Some(TerminalShortcut::Command(command)) => {
             if let Some(on_command) = &callbacks.on_command {
                 on_command(command);

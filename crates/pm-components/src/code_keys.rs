@@ -1,7 +1,10 @@
 //! What a key pressed in the code editor asks for, before the document is
 //! asked how to do it, and the keystroke vim reads for the same key.
 
+use pm_editor::{Action, Seek};
 use pm_text::Motion;
+
+use crate::key_bindings::{Bound, KeyBindings};
 use pm_vim::{Key as VimKey, Keystroke};
 use rustle::{Key, KeyEvent};
 
@@ -92,7 +95,67 @@ pub(crate) enum Command {
     Format,
 }
 
-/// What `event` asks the code editor for, or nothing for a key it leaves alone.
+impl Command {
+    /// What the keymap's `action` asks the code editor for, when it is something the editor does.
+    pub(crate) fn of_action(action: Action) -> Option<Self> {
+        Some(match action {
+            Action::Undo => Self::Undo,
+            Action::Redo => Self::Redo,
+            Action::ToggleComment => Self::ToggleComment,
+            Action::Indent => Self::Indent,
+            Action::Outdent => Self::Outdent,
+            Action::MoveLineUp => Self::MoveLines(false),
+            Action::MoveLineDown => Self::MoveLines(true),
+            Action::DuplicateLineUp => Self::DuplicateLines(false),
+            Action::DuplicateLineDown => Self::DuplicateLines(true),
+            Action::DeleteLine => Self::DeleteLines,
+            Action::ExpandSelection => Self::GrowSelection,
+            Action::ShrinkSelection => Self::ShrinkSelection,
+            Action::SelectLine => Self::SelectLine,
+            Action::JoinLines => Self::JoinLines,
+            Action::GoToDefinition => Self::Seek(Seek::Definition),
+            Action::GoToDeclaration => Self::Seek(Seek::Declaration),
+            Action::GoToTypeDefinition => Self::Seek(Seek::TypeDefinition),
+            Action::GoToImplementation => Self::Seek(Seek::Implementation),
+            Action::FindReferences => Self::Seek(Seek::References),
+            Action::IncomingCalls => Self::Seek(Seek::IncomingCalls),
+            Action::Rename => Self::Rename,
+            Action::Format | Action::FormatSelection => Self::Format,
+            Action::CodeActions => Self::CodeActions,
+            Action::Hover => Self::Hover,
+            Action::Complete => Self::Complete,
+            Action::SignatureHelp => Self::Signature,
+            _ => return None,
+        })
+    }
+
+    /// Whether the keymap's `action` is one the code editor does itself.
+    pub(crate) fn keymapped(action: Action) -> bool {
+        Self::of_action(action).is_some()
+    }
+}
+
+/// What the keymap in `bindings` asks the code editor for on `event`: a command of its own, the key taken for a binding of several or of the window, or nothing when the keymap binds nothing to it.
+pub(crate) fn keymapped(event: &KeyEvent, bindings: &KeyBindings) -> Keyed {
+    match bindings.press(event, Command::keymapped) {
+        Bound::Action(action) => Command::of_action(action).map_or(Keyed::Nothing, Keyed::Command),
+        Bound::Taken => Keyed::Taken,
+        Bound::Nothing => Keyed::Nothing,
+    }
+}
+
+/// What the keymap made of a key pressed in the code editor.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Keyed {
+    /// A command of the editor's own.
+    Command(Command),
+    /// The key is taken: part of a binding of several, or of the window.
+    Taken,
+    /// The keymap binds nothing to it.
+    Nothing,
+}
+
+/// What `event` asks the code editor for when the keymap binds nothing to it, or nothing for a key it leaves alone: typing, moving, the clipboard, saving, finding and the other keys every editor has.
 pub(crate) fn command(event: &KeyEvent) -> Option<Command> {
     if !event.pressed {
         return None;
@@ -105,11 +168,6 @@ pub(crate) fn command(event: &KeyEvent) -> Option<Command> {
     };
     if ctrl {
         return match (letter, &event.key) {
-            (Some(' '), _) if shift => Some(Command::Signature),
-            (Some(' '), _) => Some(Command::Complete),
-            (Some('.'), _) => Some(Command::CodeActions),
-            (Some('k'), _) if !shift => Some(Command::Hover),
-            (_, Key::F(12)) => Some(Command::Seek(pm_editor::Seek::Implementation)),
             (Some('s'), _) => Some(Command::Save),
             (Some('f'), _) => Some(Command::Find),
             (Some('h'), _) => Some(Command::Replace),
@@ -121,10 +179,6 @@ pub(crate) fn command(event: &KeyEvent) -> Option<Command> {
             (Some('c'), _) => Some(Command::Copy),
             (Some('x'), _) => Some(Command::Cut),
             (Some('v'), _) => Some(Command::Paste),
-            (Some('l'), _) => Some(Command::SelectLine),
-            (Some('j'), _) => Some(Command::JoinLines),
-            (Some('k'), _) if shift => Some(Command::DeleteLines),
-            (Some('/'), _) => Some(Command::ToggleComment),
             (Some('\\'), _) | (Some('|'), _) if shift => Some(Command::MatchingBracket),
             (_, Key::Enter) => Some(Command::OpenLine(shift)),
             (_, Key::Backspace) => Some(Command::BackspaceWord),
@@ -141,21 +195,11 @@ pub(crate) fn command(event: &KeyEvent) -> Option<Command> {
             (Key::Character(text), true) if text.eq_ignore_ascii_case("o") => {
                 Some(Command::OrganizeImports)
             }
-            (Key::Character(text), true) if text.eq_ignore_ascii_case("f") => Some(Command::Format),
             (Key::Character(text), true) if text == "." || text == ">" => Some(Command::FixAll),
-            (Key::ArrowUp, false) => Some(Command::MoveLines(false)),
-            (Key::ArrowDown, false) => Some(Command::MoveLines(true)),
-            (Key::ArrowUp, true) => Some(Command::DuplicateLines(false)),
-            (Key::ArrowDown, true) => Some(Command::DuplicateLines(true)),
-            (Key::ArrowRight, true) => Some(Command::GrowSelection),
-            (Key::ArrowLeft, true) => Some(Command::ShrinkSelection),
             _ => None,
         };
     }
     match &event.key {
-        Key::F(12) if shift => Some(Command::Seek(pm_editor::Seek::References)),
-        Key::F(12) => Some(Command::Seek(pm_editor::Seek::Definition)),
-        Key::F(2) => Some(Command::Rename),
         Key::Enter => Some(Command::Newline),
         Key::Tab if shift => Some(Command::Outdent),
         Key::Tab => Some(Command::Indent),

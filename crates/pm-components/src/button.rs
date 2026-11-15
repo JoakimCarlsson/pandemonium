@@ -4,6 +4,7 @@ use std::rc::Rc;
 
 use rustle::prelude::*;
 
+use crate::focus_ring::remember_focus_ring;
 use crate::label::Label;
 use crate::size::Size;
 use rustle::color_scheme;
@@ -128,19 +129,32 @@ impl Button {
         } else {
             tint
         };
+        let ring = remember_focus_ring();
+        let outline = if ring.shown() {
+            scheme.primary
+        } else {
+            Color::TRANSPARENT
+        };
         let mut modifier = self
             .modifier
             .height(height)
             .background_rounded(fill, 6.0)
+            .border(1.5, outline, 6.0)
             .padding_xy(padding, 0.0)
             .on_hover({
                 let hovered = hovered.clone();
                 move |inside| hovered.set(inside)
             });
         if let (Some(on_click), false) = (self.on_click.clone(), self.disabled) {
-            modifier = modifier
-                .cursor(CursorIcon::Pointer)
-                .clickable(move || on_click());
+            let pressed = on_click.clone();
+            let clicked = ring.clone();
+            modifier = ring.focusable(
+                modifier.cursor(CursorIcon::Pointer).clickable(move || {
+                    clicked.clicked();
+                    on_click()
+                }),
+                move || pressed(),
+            );
         }
         row_arranged(
             modifier,

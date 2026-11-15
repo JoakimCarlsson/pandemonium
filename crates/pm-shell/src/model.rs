@@ -66,8 +66,18 @@ pub struct Workspace {
     pub tasks: TaskList,
     /// How debugging the folder the dock follows stands.
     pub debug: DebugModel,
-    /// A line telling why the server cannot be reached, when it cannot.
+    /// A line telling what last went wrong, such as why the server cannot be reached or why a request failed, until the reader dismisses it.
     pub status: Option<String>,
+    /// The session whose menu is open in the sidebar, when one is.
+    pub session_menu: Option<u64>,
+    /// The session being renamed and the title typed so far, while its dialog shows.
+    pub renaming: Option<Renaming>,
+    /// The session the reader asked to close although its worktree has changes not committed, while the question shows.
+    pub closing: Option<u64>,
+    /// How many agents work, while the question before the window closes on them shows.
+    pub quitting: Option<usize>,
+    /// Whether the reader said to close the window although agents work.
+    pub quit_confirmed: bool,
     /// The welcome page for starting new work, while it is shown instead of a session.
     pub starting: Option<Start>,
     /// The agents new work can be started with, in the order the welcome page lists them.
@@ -110,6 +120,15 @@ pub struct Workspace {
     pub picker: Option<FolderPicker>,
     /// Whether the projects shown are made up, standing in until the reader adds real ones.
     pub sample: bool,
+}
+
+/// A session being given a new title.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Renaming {
+    /// The server's number for it.
+    pub session: u64,
+    /// The title typed so far.
+    pub title: String,
 }
 
 /// How big the panels the reader resizes with sashes are, in logical pixels.
@@ -255,6 +274,8 @@ pub enum SessionStatus {
     NeedsInput,
     /// It failed.
     Error,
+    /// It runs on another machine whose server cannot be reached now, so how it stands is not known.
+    OutOfReach,
 }
 
 /// The tabs of the right panel.

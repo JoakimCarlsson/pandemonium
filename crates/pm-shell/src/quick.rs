@@ -62,6 +62,10 @@ pub enum Choosing {
     History,
     /// What the language servers report wrong with the project's files.
     Problems,
+    /// The reader's turns of the open session, to branch a new session off before.
+    Fork,
+    /// The reader's turns of the open session, to put its files back as they were before.
+    Restore,
 }
 
 /// One row of the quick input.
@@ -230,6 +234,14 @@ pub enum QuickOutcome {
     Settings,
     /// Saves the settings changed.
     SettingsChanged,
+    /// Puts this text on the system clipboard.
+    Copy(String),
+    /// Shows this folder of this machine in the desktop's file manager.
+    OpenFolder(String),
+    /// Closes the window, asking first when the settings say so.
+    Quit,
+    /// Switches between the light and the dark appearance, from the one showing.
+    ToggleTheme,
 }
 
 impl QuickInput {
@@ -268,6 +280,8 @@ impl QuickInput {
             Some(Choosing::Actions) => "Take a code action",
             Some(Choosing::History) => "Put back a saved state of the file",
             Some(Choosing::Problems) => "Go to a problem",
+            Some(Choosing::Fork) => "Branch a new session off before a turn",
+            Some(Choosing::Restore) => "Put the files back as they were before a turn",
             None => "Search files by name, > commands, # symbols, @ outline, % text",
         }
     }

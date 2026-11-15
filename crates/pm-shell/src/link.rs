@@ -6,9 +6,11 @@
 
 mod composer_requests;
 mod conversation_requests;
+mod sessions;
 
 pub use conversation_requests::ConversationCommand;
 pub use keys::KeyOutcome;
+pub use sessions::SessionCommand;
 
 use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -125,7 +127,11 @@ enum Ask {
     RemoteSessions(String),
     /// Something a form of the settings window sent.
     Form,
-    /// Nothing that needs handling.
+    /// Branching a new session off a turn of the open one, which opens once the server made it.
+    Fork,
+    /// Closing the session the window numbers so, which asks before throwing away changes not committed.
+    Close(u64),
+    /// Nothing that needs handling but a failure, which the status bar shows.
     Nothing,
 }
 
@@ -875,6 +881,8 @@ impl Link {
                 self.navigate(Page::Session(session));
             }
             (Ask::Start, Response::Failed { message }) => self.workspace.status = Some(message),
+            (Ask::Fork, response) => self.answer_fork(response),
+            (Ask::Close(session), response) => self.answer_close(session, response),
             (Ask::Submodules(path), Response::Submodules { paths }) => {
                 self.submodules.insert(path, paths);
                 self.rebuild();
@@ -981,6 +989,7 @@ impl Link {
                     offer.run = UpdateRun::Idle;
                 }
             }
+            (_, Response::Failed { message }) => self.workspace.status = Some(message),
             _ => {}
         }
     }
@@ -1194,6 +1203,7 @@ fn show_thread(workspace: &mut Workspace, thread: &Thread) {
             elements: kept.composer.elements,
             captures: kept.composer.captures,
             menu: kept.composer.menu,
+            asked: kept.composer.asked,
             ..thread.extras.composer.clone()
         },
         ..thread.extras.clone()

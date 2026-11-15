@@ -134,7 +134,7 @@ impl Link {
                     )
                 })
                 .collect(),
-            Choosing::Rewind => self
+            Choosing::Rewind | Choosing::Fork | Choosing::Restore => self
                 .workspace
                 .conversation
                 .iter()
@@ -402,6 +402,28 @@ impl Link {
                 let session = self.watched?;
                 self.ask(
                     Request::Rewind {
+                        session,
+                        turn: place as u64,
+                    },
+                    Ask::Nothing,
+                );
+                None
+            }
+            Choosing::Fork => {
+                let session = self.watched?;
+                self.ask(
+                    Request::ForkSession {
+                        session,
+                        turn: place as u64,
+                    },
+                    Ask::Fork,
+                );
+                None
+            }
+            Choosing::Restore => {
+                let session = self.watched?;
+                self.ask(
+                    Request::Restore {
                         session,
                         turn: place as u64,
                     },

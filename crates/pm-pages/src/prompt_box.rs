@@ -39,6 +39,8 @@ pub fn prompt_box(workspace: &Workspace, actions: &Actions, width: f32) {
             pm_shell::ComposerMenu::Setting(id) => ComposerMenu::Setting(id.clone()),
             pm_shell::ComposerMenu::Field(across, down) => ComposerMenu::Field(*across, *down),
         }))
+        .menu_request(composer.asked)
+        .focus_request(composer.asked)
         .modifier(Modifier::new().width(width));
     prompt = with_settings(prompt, workspace);
     for command in &composer.commands {

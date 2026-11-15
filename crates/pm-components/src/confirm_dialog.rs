@@ -11,6 +11,7 @@ use crate::label::{Label, LabelVariant};
 use crate::size::Size;
 use crate::text_input::TextInput;
 use rustle::color_scheme;
+use rustle::{Key, Modifiers};
 
 /// How a confirmation reads.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -106,7 +107,7 @@ impl ConfirmDialog {
         self
     }
 
-    /// The question calling `on_cancel` when cancelled or clicked outside.
+    /// The question calling `on_cancel` when cancelled, clicked outside, or Escape is pressed in it.
     pub fn on_cancel(mut self, on_cancel: impl Fn() + 'static) -> Self {
         self.on_cancel = Some(Rc::new(on_cancel));
         self
@@ -123,6 +124,7 @@ impl ConfirmDialog {
             Size::Lg => 440.0,
         };
         let cancel = self.on_cancel.clone();
+        let escape = self.on_cancel.clone();
         let confirm = self.on_confirm.clone();
         stack_aligned(
             Modifier::new()
@@ -132,6 +134,13 @@ impl ConfirmDialog {
                     if let Some(cancel) = &cancel {
                         cancel();
                     }
+                })
+                .on_key_event(move |event| match &escape {
+                    Some(escape) if event.is(Key::Escape, Modifiers::NONE) => {
+                        escape();
+                        true
+                    }
+                    _ => false,
                 }),
             BoxAlignment::Center,
             move || {

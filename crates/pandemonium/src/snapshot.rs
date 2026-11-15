@@ -41,6 +41,11 @@ const WORDS: &[&str] = &[
     "continue",
     "update",
     "sign-in",
+    "status",
+    "session-menu",
+    "rename",
+    "discard",
+    "quitting",
     "problems",
     "tasks",
     "debug",
@@ -254,6 +259,7 @@ pub fn run(arguments: &[String]) -> i32 {
     if words.contains(&"sign-in") {
         workspace.sign_in = Some(pm_shell::sample_sign_in());
     }
+    show_session_state(&mut workspace, &words);
     if let Some(sample) = browser_named(&words) {
         workspace.browser = Some(pm_shell::sample_browser(sample));
         workspace.open_files.tab = pm_shell::SessionTab::Browser;
@@ -265,6 +271,32 @@ pub fn run(arguments: &[String]) -> i32 {
         light,
         path,
     )
+}
+
+/// Shows in `workspace` the bars and questions about sessions `words` name: `status` a failure in the status bar, `session-menu` the open session's menu, `rename` its rename dialog, `discard` the question before its changes are thrown away, and `quitting` the question before the window closes on working agents.
+fn show_session_state(workspace: &mut pm_shell::Workspace, words: &[&str]) {
+    let open = workspace
+        .open
+        .as_ref()
+        .and_then(|at| pm_shell::session_at(&workspace.projects, at))
+        .map(|session| (session.id, session.title.clone()));
+    if words.contains(&"status") {
+        workspace.status = Some("Could not save notes.md: permission denied".to_owned());
+    }
+    if let Some((id, title)) = open {
+        if words.contains(&"session-menu") {
+            workspace.session_menu = Some(id);
+        }
+        if words.contains(&"rename") {
+            workspace.renaming = Some(pm_shell::Renaming { session: id, title });
+        }
+        if words.contains(&"discard") {
+            workspace.closing = Some(id);
+        }
+    }
+    if words.contains(&"quitting") {
+        workspace.quitting = Some(2);
+    }
 }
 
 /// Draws `content` at `size` into the PNG at `path`, in the light theme when

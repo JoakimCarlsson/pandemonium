@@ -4,17 +4,17 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use pm_components::{AppTheme, TerminalCommand};
+use pm_components::{AppTheme, KeyBindings, TerminalCommand, provide_key_bindings};
 use pm_pages::{
     Actions, Destination, PICKER_SIZE, Panel, PickerActions, SETTINGS_SIZE, SettingsActions,
     SignInAction, UpdateAction, WindowAction, folder_picker_page, settings_page, workspace_page,
 };
 use pm_shell::{
     AddStep, BrowserAction, Link, Page, PickerAction, ProjectAction, QuickAction, QuickOutcome,
-    SettingsChange,
+    SessionCommand, SettingsChange,
 };
 use rustle::prelude::*;
-use rustle::{ResizeEdge, current_window, set_external_handler};
+use rustle::{ResizeEdge, WindowHandle, current_window, set_external_handler};
 
 /// The window's first size, in logical pixels.
 const SIZE: (f32, f32) = (1636.0, 720.0);
@@ -47,6 +47,7 @@ fn root(link: &Rc<RefCell<Link>>) {
     let installed = remember(|| false);
     if !installed.get() {
         installed.set(true);
+        install_close_handler(link, &revision);
         let link = link.clone();
         let revision = revision.clone();
         set_external_handler(move || {
@@ -71,13 +72,63 @@ fn root(link: &Rc<RefCell<Link>>) {
     let actions = actions(link, &revision, &settings_open);
     let workspace = link.borrow().workspace().clone();
     let theme = window_theme(link);
-    framed(|| workspace_page(&workspace, theme, &actions));
+    let bindings = key_bindings(link, &revision, &settings_open);
+    framed(|| provide_key_bindings(bindings, || workspace_page(&workspace, theme, &actions)));
     if settings_open.get() {
         settings_window(link, &revision, &settings_open);
     }
     if workspace.picker.is_some() {
         picker_window(link, &revision);
     }
+}
+
+/// Has the main window, when it is about to close by its own button, a key or the desktop, ask first while agents work and the settings say so, and otherwise shut the browser down and write the layout before it goes.
+fn install_close_handler(link: &Rc<RefCell<Link>>, revision: &State<u64>) {
+    let link = link.clone();
+    let revision = revision.clone();
+    rustle::set_close_handler(move || {
+        let Ok(mut held) = link.try_borrow_mut() else {
+            return false;
+        };
+        if !held.may_close() {
+            drop(held);
+            revision.update(|value| *value += 1);
+            return false;
+        }
+        held.shutdown_browser();
+        save_view(held.workspace());
+        true
+    });
+}
+
+/// The keymap the settings make, handed to the controls holding the keyboard, built again only when the bindings changed; the actions that work everywhere it hands back are done on `link` like the window's own keys.
+fn key_bindings(
+    link: &Rc<RefCell<Link>>,
+    revision: &State<u64>,
+    settings_open: &State<bool>,
+) -> KeyBindings {
+    let keymap = link.borrow().settings().editor.keymap();
+    let kept = remember(|| None::<KeyBindings>);
+    if let Some(bindings) = kept.get().filter(|bindings| *bindings.keymap() == keymap) {
+        return bindings;
+    }
+    let link = link.clone();
+    let revision = revision.clone();
+    let settings_open = settings_open.clone();
+    let handle = current_window();
+    let bindings = KeyBindings::new(keymap, move |action| {
+        let Ok(mut held) = link.try_borrow_mut() else {
+            return;
+        };
+        if let Some(outcome) = held.run_action(action) {
+            take_outcome(&mut held, outcome, &settings_open, handle);
+            save_view(held.workspace());
+        }
+        drop(held);
+        revision.update(|value| *value += 1);
+    });
+    kept.set(Some(bindings.clone()));
+    bindings
 }
 
 /// Draws `content` inside the self-drawn frame every window shares: the
@@ -466,6 +517,7 @@ fn actions(
     let address = change.clone();
     let browser = browser_action(link, revision, &change);
     let closing = link.clone();
+    let settings_open_kept = settings_open.clone();
     let settings_open = settings_open.clone();
     let resized = {
         let link = link.clone();
@@ -477,6 +529,8 @@ fn actions(
         }
     };
     let handle = current_window();
+    let bump = revision.clone();
+    let session = session_action(link, revision, settings_open_kept.clone());
     Actions {
         open_session: Rc::new(move |at| open(&|link| link.open_session(at.clone()))),
         new_session: Rc::new(move |at| new_session(&|link| link.new_session(at.clone()))),
@@ -535,9 +589,14 @@ fn actions(
         window: Rc::new(move |action| match action {
             WindowAction::Minimise => handle.minimize(),
             WindowAction::Maximise => handle.toggle_maximize(),
-            WindowAction::Close => {
-                closing.borrow_mut().shutdown_browser();
-                std::process::exit(0)
+            WindowAction::Close => handle.close(),
+            WindowAction::ConfirmClose => {
+                closing.borrow_mut().confirm_close(true);
+                handle.close();
+            }
+            WindowAction::CancelClose => {
+                closing.borrow_mut().confirm_close(false);
+                bump.update(|value| *value += 1);
             }
             WindowAction::Drag => handle.drag_window(),
             WindowAction::Back => trail(&|link| link.back()),
@@ -618,7 +677,27 @@ fn actions(
         quick,
         shortcut,
         projects: Rc::new(move |action| projects(&|link| link.project_action(action.clone()))),
+        session,
     }
+}
+
+/// What the sidebar's session menu, the session dialogs and the status bar ask: done on `link`, then whatever it asks of the window beyond the link, such as copying, and the layout saved and `revision` bumped.
+fn session_action(
+    link: &Rc<RefCell<Link>>,
+    revision: &State<u64>,
+    settings_open: State<bool>,
+) -> Rc<dyn Fn(SessionCommand)> {
+    let link = link.clone();
+    let revision = revision.clone();
+    let handle = current_window();
+    Rc::new(move |command| {
+        let mut held = link.borrow_mut();
+        let outcome = held.session_command(command);
+        take_outcome(&mut held, outcome, &settings_open, handle);
+        save_view(held.workspace());
+        drop(held);
+        revision.update(|value| *value += 1);
+    })
 }
 
 /// The browser pane's action: the pointer, keys, sizes and focus handed to a page change the link without saving the layout, composing again only when a picture or a tab changed; everything else goes through `change`.
@@ -655,18 +734,24 @@ fn quick_action(
     let link = link.clone();
     let revision = revision.clone();
     let settings_open = settings_open.clone();
+    let handle = current_window();
     Rc::new(move |action| {
         let mut held = link.borrow_mut();
         let outcome = held.quick(action);
-        take_outcome(&mut held, outcome, &settings_open);
+        take_outcome(&mut held, outcome, &settings_open, handle);
         save_view(held.workspace());
         drop(held);
         revision.update(|value| *value += 1);
     })
 }
 
-/// Does what `outcome` of a quick input row or a key asks of the window beyond `link`: opens a file, opens the settings window through `settings_open`, or saves the settings.
-fn take_outcome(link: &mut Link, outcome: Option<QuickOutcome>, settings_open: &State<bool>) {
+/// Does what `outcome` of a quick input row, a key or a menu asks of the window `handle` beyond `link`: opens a file, opens the settings window through `settings_open`, saves the settings, copies text, shows a folder, switches the appearance or closes the window.
+fn take_outcome(
+    link: &mut Link,
+    outcome: Option<QuickOutcome>,
+    settings_open: &State<bool>,
+    handle: WindowHandle,
+) {
     match outcome {
         Some(QuickOutcome::OpenFile(path, None)) => link.open_file(path),
         Some(QuickOutcome::OpenFile(path, Some(line))) => link.open_location(path, line),
@@ -679,7 +764,34 @@ fn take_outcome(link: &mut Link, outcome: Option<QuickOutcome>, settings_open: &
             settings_open.set(true);
         }
         Some(QuickOutcome::SettingsChanged) => save_settings(link.settings()),
+        Some(QuickOutcome::Copy(text)) => {
+            if let Some(clipboard) = rustle::clipboard() {
+                clipboard.set_text(&text);
+            }
+        }
+        Some(QuickOutcome::OpenFolder(folder)) => {
+            rustle::open_url(&format!("file://{folder}"));
+        }
+        Some(QuickOutcome::ToggleTheme) => {
+            let dark = window_theme_is_dark(link);
+            link.settings_mut().window.appearance.theme_mode = if dark {
+                pm_config::ThemeMode::Light
+            } else {
+                pm_config::ThemeMode::Dark
+            };
+            save_settings(link.settings());
+        }
+        Some(QuickOutcome::Quit) => handle.close(),
         None => {}
+    }
+}
+
+/// Whether the appearance the settings of `link` choose is dark now, following the desktop while they say so.
+fn window_theme_is_dark(link: &Link) -> bool {
+    match link.settings().window.appearance.theme_mode {
+        pm_config::ThemeMode::Dark => true,
+        pm_config::ThemeMode::Light => false,
+        pm_config::ThemeMode::System => rustle::is_system_in_dark_theme(),
     }
 }
 
@@ -692,13 +804,14 @@ fn shortcut(
     let link = link.clone();
     let revision = revision.clone();
     let settings_open = settings_open.clone();
+    let handle = current_window();
     Rc::new(move |chord| {
         let mut held = link.borrow_mut();
         let pressed = held.press_key(&chord);
         if !pressed.taken {
             return false;
         }
-        take_outcome(&mut held, pressed.outcome, &settings_open);
+        take_outcome(&mut held, pressed.outcome, &settings_open, handle);
         save_view(held.workspace());
         drop(held);
         revision.update(|value| *value += 1);

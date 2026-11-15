@@ -95,9 +95,9 @@ pub use git::{
 pub use git_sample::sample_git;
 pub use grammar::{installed_grammar, learn_grammar};
 pub use history::{PastSession, Span};
-pub use link::{ConversationCommand, KeyOutcome, Link, age, session_at};
+pub use link::{ConversationCommand, KeyOutcome, Link, SessionCommand, age, session_at};
 pub use model::{
-    AgentChoice, Commit, DockTab, PanelSizes, Project, ProjectReach, RightTab, Session,
+    AgentChoice, Commit, DockTab, PanelSizes, Project, ProjectReach, Renaming, RightTab, Session,
     SessionStatus, Start, Workspace,
 };
 pub use open_files::{

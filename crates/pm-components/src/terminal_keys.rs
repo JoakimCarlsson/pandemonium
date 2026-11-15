@@ -1,6 +1,9 @@
 //! What the keys pressed in a terminal send the shell.
 
+use pm_editor::Action;
 use rustle::{Key, KeyEvent};
+
+use crate::key_bindings::{Bound, KeyBindings};
 
 /// The modifier number the extended forms of a key carry: one, plus one for shift, two for alt and four for control.
 fn modifier_code(event: &KeyEvent) -> u8 {
@@ -96,26 +99,38 @@ pub enum TerminalShortcut {
     Command(TerminalCommand),
     /// Scrolls a window's height back, when positive, or forward.
     Page(i32),
+    /// Part of a binding of several chords, which does nothing yet.
+    Swallowed,
 }
 
-/// The terminal's own shortcut `event` stands for: control and shift with C, V or A, and shift with Page Up or Page Down.
-pub fn terminal_shortcut(event: &KeyEvent) -> Option<TerminalShortcut> {
+impl TerminalCommand {
+    /// The command the keymap's `action` asks of a terminal, when it is one.
+    pub fn of_action(action: Action) -> Option<Self> {
+        match action {
+            Action::TerminalCopy => Some(Self::Copy),
+            Action::TerminalPaste => Some(Self::Paste),
+            Action::TerminalSelectAll => Some(Self::SelectAll),
+            Action::TerminalClear => Some(Self::Clear),
+            _ => None,
+        }
+    }
+}
+
+/// The terminal's own shortcut `event` stands for: the terminal commands the keymap in `bindings` binds to it, and shift with Page Up or Page Down; `None` when the keys are the shell's.
+///
+/// A chord that starts or breaks off a binding of several is taken as nothing at all, so it reaches neither the shell nor the window.
+pub fn terminal_shortcut(event: &KeyEvent, bindings: &KeyBindings) -> Option<TerminalShortcut> {
     if !event.pressed {
         return None;
     }
-    let modifiers = event.modifiers;
-    if modifiers.ctrl
-        && modifiers.shift
-        && !modifiers.alt
-        && let Key::Character(text) = &event.key
-    {
-        return match text.to_lowercase().as_str() {
-            "c" => Some(TerminalShortcut::Command(TerminalCommand::Copy)),
-            "v" => Some(TerminalShortcut::Command(TerminalCommand::Paste)),
-            "a" => Some(TerminalShortcut::Command(TerminalCommand::SelectAll)),
-            _ => None,
-        };
+    match bindings.press_own(event, |action| TerminalCommand::of_action(action).is_some()) {
+        Bound::Action(action) => {
+            return TerminalCommand::of_action(action).map(TerminalShortcut::Command);
+        }
+        Bound::Taken => return Some(TerminalShortcut::Swallowed),
+        Bound::Nothing => {}
     }
+    let modifiers = event.modifiers;
     if modifiers.shift && !modifiers.ctrl && !modifiers.alt {
         return match event.key {
             Key::PageUp => Some(TerminalShortcut::Page(1)),
@@ -188,7 +203,7 @@ mod tests {
         assert_eq!(key_bytes(&shifted, false), Some(b"\x1b[1;2A".to_vec()));
     }
 
-    /// Control and shift with C copy, and shift with Page Up pages back.
+    /// The keymap's control and shift with C copies, shift with Page Up pages back, and the window's chords are left to the shell.
     #[test]
     fn shortcuts_are_caught() {
         let copy = KeyEvent::press(
@@ -199,14 +214,26 @@ mod tests {
                 ..Modifiers::NONE
             },
         );
+        let bindings = KeyBindings::default();
         assert_eq!(
-            terminal_shortcut(&copy),
+            terminal_shortcut(&copy, &bindings),
             Some(TerminalShortcut::Command(TerminalCommand::Copy))
         );
         let page = KeyEvent::press(Key::PageUp, Modifiers::SHIFT);
-        assert_eq!(terminal_shortcut(&page), Some(TerminalShortcut::Page(1)));
+        assert_eq!(
+            terminal_shortcut(&page, &bindings),
+            Some(TerminalShortcut::Page(1))
+        );
         let plain = KeyEvent::press(Key::PageUp, Modifiers::NONE);
-        assert_eq!(terminal_shortcut(&plain), None);
+        assert_eq!(terminal_shortcut(&plain, &bindings), None);
+        let window = KeyEvent::press(
+            Key::Character("r".to_owned()),
+            Modifiers {
+                ctrl: true,
+                ..Modifiers::NONE
+            },
+        );
+        assert_eq!(terminal_shortcut(&window, &bindings), None);
     }
 
     /// Enter sends a carriage return and lone modifiers send nothing.

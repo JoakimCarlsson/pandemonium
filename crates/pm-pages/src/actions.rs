@@ -6,8 +6,8 @@ use pm_components::ServerAsk;
 use pm_components::{TerminalCommand, TerminalSelection};
 use pm_shell::{
     BrowserAction, ComposerAction, ConversationCommand, DebugCommand, DockTab, FileAction,
-    GitAction, InquiryReply, ProjectAction, QuickAction, RightTab, SearchAction, TabAction,
-    TreeAction, TrustVerdict,
+    GitAction, InquiryReply, ProjectAction, QuickAction, RightTab, SearchAction, SessionCommand,
+    TabAction, TreeAction, TrustVerdict,
 };
 
 /// The callbacks the pages call; the shell decides what each does.
@@ -113,10 +113,12 @@ pub struct Actions {
     pub search: Rc<dyn Fn(SearchAction)>,
     /// Does something in the quick input.
     pub quick: Rc<dyn Fn(QuickAction)>,
-    /// Takes a chord pressed anywhere in the window, written as the settings write it, such as `ctrl+shift+p`, and says whether the keymap took it.
+    /// Takes a chord pressed anywhere in the window, written as the settings write it, such as `ctrl+shift+p`, or `escape`, and says whether the keymap, or for Escape the dialog or menu on top, took it.
     pub shortcut: Rc<dyn Fn(String) -> bool>,
     /// Arranges the sidebar's projects, or works the adder or the folder picker.
     pub projects: Rc<dyn Fn(ProjectAction)>,
+    /// Does something to a whole session, such as closing or renaming it, or dismisses the status bar.
+    pub session: Rc<dyn Fn(SessionCommand)>,
 }
 
 /// What the newer-release button and the update dialog ask for.
@@ -184,6 +186,10 @@ pub enum WindowAction {
     Forward,
     /// Start moving the window with the pointer.
     Drag,
+    /// Close although agents work, answering the question asked first.
+    ConfirmClose,
+    /// Stay open, answering the question asked before closing on working agents.
+    CancelClose,
 }
 
 impl Actions {
@@ -242,6 +248,7 @@ impl Actions {
             quick: Rc::new(|_| {}),
             shortcut: Rc::new(|_| false),
             projects: Rc::new(|_| {}),
+            session: Rc::new(|_| {}),
         }
     }
 }
