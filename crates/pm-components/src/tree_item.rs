@@ -64,6 +64,8 @@ pub struct TreeItem {
     editor: Option<Editor>,
     /// What a click does.
     on_click: Option<Rc<dyn Fn()>>,
+    /// What a click does, told the modifier keys held, in place of `on_click`.
+    on_pick: Option<Rc<dyn Fn(Modifiers)>>,
     /// What a secondary click does.
     on_menu: Option<Rc<dyn Fn()>>,
     /// The path it carries when dragged.
@@ -87,6 +89,7 @@ impl TreeItem {
             size: Size::Sm,
             editor: None,
             on_click: None,
+            on_pick: None,
             on_menu: None,
             drag: None,
             on_drop: None,
@@ -139,6 +142,12 @@ impl TreeItem {
             on_submit: Rc::new(on_submit),
             on_cancel: Rc::new(on_cancel),
         });
+        self
+    }
+
+    /// The row calling `on_pick` with the modifier keys held when clicked, such as Ctrl or Shift to choose several rows.
+    pub fn on_pick(mut self, on_pick: impl Fn(Modifiers) + 'static) -> Self {
+        self.on_pick = Some(Rc::new(on_pick));
         self
     }
 
@@ -216,7 +225,11 @@ impl TreeItem {
         if let Some(on_menu) = self.on_menu.clone() {
             modifier = modifier.on_context_menu(move |_| on_menu());
         }
-        if let Some(on_click) = self.on_click.clone() {
+        if let Some(on_pick) = self.on_pick.clone() {
+            modifier = modifier
+                .cursor(CursorIcon::Pointer)
+                .on_primary_click(move |event| on_pick(event.modifiers));
+        } else if let Some(on_click) = self.on_click.clone() {
             modifier = modifier
                 .cursor(CursorIcon::Pointer)
                 .clickable(move || on_click());

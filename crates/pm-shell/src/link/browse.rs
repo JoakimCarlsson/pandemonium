@@ -5,7 +5,9 @@
 use pm_protocol::{Request, Response};
 
 use super::{Ask, Link, expand_home};
-use crate::file_tree::{EditKind, FileTree, TreeAction, TreeEdit, join, name_of, parent_of};
+use crate::file_tree::{
+    EditKind, FileTree, Held, PickHow, TreeAction, TreeEdit, join, name_of, name_problem, parent_of,
+};
 use crate::model::RightTab;
 use crate::search::{SearchAction, SearchHit};
 
@@ -93,8 +95,35 @@ impl Link {
                 }
                 self.workspace.tree.selected = Some(path);
             }
-            TreeAction::Select(path) => tree.selected = Some(path),
+            TreeAction::Select(path) => {
+                tree.picked.clear();
+                tree.selected = Some(path);
+            }
+            TreeAction::Pick(path, how) => {
+                let changes = self.workspace.git.changes.clone();
+                self.pick_entry(path, how, &changes);
+            }
+            TreeAction::Hold { cut } => {
+                let paths = tree.chosen();
+                tree.held = (!paths.is_empty()).then_some(Held { paths, cut });
+            }
+            TreeAction::Paste => self.paste_entries(),
+            TreeAction::RenameChosen => {
+                if let Some(path) = tree.selected.clone().filter(|path| !path.is_empty()) {
+                    self.tree(TreeAction::StartRename(path));
+                }
+            }
+            TreeAction::RemoveChosen => {
+                if let Some(path) = tree.chosen().into_iter().next() {
+                    tree.removing = Some(path);
+                }
+            }
             TreeAction::Menu(path) => {
+                if let Some(path) = &path
+                    && !tree.is_chosen(path)
+                {
+                    tree.picked.clear();
+                }
                 if let Some(path) = &path {
                     tree.selected = Some(path.clone()).filter(|path| !path.is_empty());
                 }
@@ -135,7 +164,13 @@ impl Link {
             TreeAction::Remove(path) => {
                 tree.removing = None;
                 let directory = tree.root.clone();
-                self.change_entry(Request::RemoveEntry { directory, path });
+                for path in tree.with_chosen(path) {
+                    self.change_entry(Request::RemoveEntry {
+                        directory: directory.clone(),
+                        path,
+                    });
+                }
+                self.workspace.tree.picked.clear();
             }
             TreeAction::Duplicate(from) => {
                 tree.menu = None;
@@ -148,35 +183,24 @@ impl Link {
                 });
             }
             TreeAction::Move { from, into } => {
-                let inside = into == from || into.starts_with(&format!("{from}/"));
-                if inside || parent_of(&from) == into {
-                    return;
-                }
-                let directory = tree.root.clone();
-                let to = join(&into, name_of(&from));
-                self.change_entry(Request::RenameEntry {
-                    directory,
-                    from,
-                    to,
-                });
+                let entries = tree.with_chosen(from);
+                self.put_entries(entries, &into, false);
             }
             TreeAction::Import { into, file } => {
-                let directory = tree.root.clone();
                 let Some(name) = file
                     .file_name()
                     .map(|name| name.to_string_lossy().into_owned())
                 else {
                     return;
                 };
-                match std::fs::read(&file) {
-                    Ok(data) => self.change_entry(Request::ImportFile {
-                        directory,
-                        path: join(&into, &name),
-                        data,
-                    }),
-                    Err(error) => {
-                        self.workspace.status = Some(format!("Could not read {name}: {error}"))
-                    }
+                let path = tree.free_path(&into, &name, &[]);
+                if !into.is_empty() {
+                    tree.expanded.insert(into);
+                }
+                let mut skipped = Vec::new();
+                self.import_entry(&file, path, &mut skipped);
+                if !skipped.is_empty() {
+                    self.workspace.status = Some(format!("Left out: {}", skipped.join("; ")));
                 }
             }
             TreeAction::Refresh => self.load_files(),
@@ -191,7 +215,11 @@ impl Link {
             return;
         };
         let name = editing.text.trim().to_owned();
-        if name.is_empty() {
+        if let Some(problem) = name_problem(&name) {
+            if !name.is_empty() {
+                self.workspace.status = Some(problem.to_owned());
+                tree.editing = Some(editing);
+            }
             return;
         }
         let directory = tree.root.clone();
@@ -219,6 +247,134 @@ impl Link {
             }
         };
         self.change_entry(request);
+    }
+
+    /// Chooses `path` along with the entries already chosen: toggled in or out, or every row from the last chosen to it.
+    fn pick_entry(&mut self, path: String, how: PickHow, changes: &[crate::git::ChangedFile]) {
+        let tree = &mut self.workspace.tree;
+        match how {
+            PickHow::Toggle => {
+                if tree.selected.as_deref() == Some(path.as_str()) {
+                    tree.selected = tree.picked.pop_first();
+                } else if !tree.picked.remove(&path) {
+                    if let Some(previous) = tree.selected.take() {
+                        tree.picked.insert(previous);
+                    }
+                    tree.selected = Some(path);
+                }
+            }
+            PickHow::Range => {
+                let rows: Vec<String> =
+                    tree.rows(changes).into_iter().map(|row| row.path).collect();
+                let from = tree
+                    .selected
+                    .as_ref()
+                    .and_then(|selected| rows.iter().position(|row| row == selected));
+                let to = rows.iter().position(|row| *row == path);
+                if let (Some(from), Some(to)) = (from, to) {
+                    let (low, high) = (from.min(to), from.max(to));
+                    tree.picked = rows[low..=high].iter().cloned().collect();
+                    tree.picked.remove(&path);
+                }
+                tree.selected = Some(path);
+            }
+        }
+    }
+
+    /// Moves or copies the entries held into the folder chosen, under free names.
+    fn paste_entries(&mut self) {
+        let tree = &mut self.workspace.tree;
+        let Some(held) = tree.held.clone() else {
+            return;
+        };
+        let into = tree.target_folder();
+        if held.cut {
+            tree.held = None;
+        }
+        self.put_entries(held.paths, &into, !held.cut);
+    }
+
+    /// Moves `entries` into the folder `into`, or copies them there when `copy`, and unfolds it; an entry moved to where it is, or into itself, stays put.
+    fn put_entries(&mut self, entries: Vec<String>, into: &str, copy: bool) {
+        let tree = &mut self.workspace.tree;
+        let directory = tree.root.clone();
+        if !into.is_empty() {
+            tree.expanded.insert(into.to_owned());
+        }
+        let mut taken = Vec::new();
+        let mut requests = Vec::new();
+        for from in entries {
+            let inside = into == from || into.starts_with(&format!("{from}/"));
+            if inside {
+                continue;
+            }
+            if copy {
+                requests.push(Request::CopyEntry {
+                    directory: directory.clone(),
+                    from,
+                    into: into.to_owned(),
+                });
+                continue;
+            }
+            if parent_of(&from) == into {
+                continue;
+            }
+            let to = tree.free_path(into, name_of(&from), &taken);
+            taken.push(to.clone());
+            requests.push(Request::RenameEntry {
+                directory: directory.clone(),
+                from,
+                to,
+            });
+        }
+        tree.picked.clear();
+        for request in requests {
+            self.change_entry(request);
+        }
+    }
+
+    /// Brings the file or folder at `source` on this machine into the folder at `path`, folders with everything in them; what can't be read is added to `skipped`.
+    fn import_entry(&mut self, source: &std::path::Path, path: String, skipped: &mut Vec<String>) {
+        let directory = self.workspace.tree.root.clone();
+        let metadata = match std::fs::metadata(source) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                skipped.push(format!("{}: {error}", source.display()));
+                return;
+            }
+        };
+        if !metadata.is_dir() {
+            match std::fs::read(source) {
+                Ok(data) => self.change_entry(Request::ImportFile {
+                    directory,
+                    path,
+                    data,
+                }),
+                Err(error) => skipped.push(format!("{}: {error}", source.display())),
+            }
+            return;
+        }
+        let mut children: Vec<std::fs::DirEntry> = match std::fs::read_dir(source) {
+            Ok(children) => children.flatten().collect(),
+            Err(error) => {
+                skipped.push(format!("{}: {error}", source.display()));
+                return;
+            }
+        };
+        children.sort_by_key(std::fs::DirEntry::file_name);
+        self.change_entry(Request::CreateEntry {
+            directory,
+            path: path.clone(),
+            folder: true,
+        });
+        for child in children {
+            let is_link = child.file_type().is_ok_and(|kind| kind.is_symlink());
+            if is_link {
+                continue;
+            }
+            let below = join(&path, &child.file_name().to_string_lossy());
+            self.import_entry(&child.path(), below, skipped);
+        }
     }
 
     /// Sends `request`, which changes an entry, and lists the folder again once it is done.
