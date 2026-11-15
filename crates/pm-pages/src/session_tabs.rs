@@ -119,6 +119,7 @@ fn buttons(files: &OpenFiles, shown: SessionTab, actions: &Actions) {
     let open = actions.browser.clone();
     IconButton::new(phosphor::GLOBE)
         .size(Size::Xs)
+        .tooltip("Open the browser")
         .active(shown == SessionTab::Browser)
         .on_click(move || open(BrowserAction::Open))
         .show();
@@ -126,6 +127,11 @@ fn buttons(files: &OpenFiles, shown: SessionTab, actions: &Actions) {
     let is_split = files.split.is_some();
     IconButton::new(phosphor::SQUARE_SPLIT_HORIZONTAL)
         .size(Size::Xs)
+        .tooltip(if is_split {
+            "Close the split"
+        } else {
+            "Split the editor"
+        })
         .active(is_split)
         .on_click(move || {
             split(if is_split {
@@ -199,6 +205,7 @@ fn file_tab(files: &OpenFiles, index: usize, shown: SessionTab, actions: &Action
         Tab::new(name)
             .icon(glyph)
             .icon_tint(tint)
+            .tooltip(path.clone())
             .size(Size::Xs)
             .selected(shown == SessionTab::File(index))
             .pinned(pinned)

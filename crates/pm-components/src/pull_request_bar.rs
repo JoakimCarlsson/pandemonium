@@ -180,6 +180,7 @@ impl PullRequestBar {
                     let on_action = self.on_action.clone();
                     IconButton::new(phosphor::ARROW_SQUARE_OUT)
                         .size(Size::Xs)
+                        .tooltip("Open in browser")
                         .on_click(move || {
                             if let Some(on_action) = &on_action {
                                 on_action("open".to_owned());

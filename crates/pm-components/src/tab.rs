@@ -47,6 +47,8 @@ pub struct Tab {
     pinned: bool,
     /// The colour of its icon in place of its words' colour.
     icon_tint: Option<Color>,
+    /// What a label shows while the pointer rests on it; none without.
+    tooltip: Option<String>,
 }
 
 impl Tab {
@@ -66,6 +68,7 @@ impl Tab {
             on_double_click: None,
             pinned: false,
             icon_tint: None,
+            tooltip: None,
         }
     }
 
@@ -146,6 +149,12 @@ impl Tab {
         self
     }
 
+    /// The tab showing `tooltip` in a label while the pointer rests on it.
+    pub fn tooltip(mut self, tooltip: impl Into<String>) -> Self {
+        self.tooltip = Some(tooltip.into());
+        self
+    }
+
     /// Emits the tab.
     #[track_caller]
     pub fn show(self) {
@@ -196,35 +205,42 @@ impl Tab {
         } else {
             Arrangement::SpacedBy(crate::spacing(6.0))
         };
-        row_arranged(modifier, arrangement, Alignment::Center, move || {
-            if let Some(glyph) = &self.icon {
-                icon(
-                    glyph.clone(),
-                    glyph_size(self.size),
-                    self.icon_tint.unwrap_or(tint),
-                );
-            }
-            if !self.label.is_empty() {
-                let label = Label::new(self.label.clone())
-                    .variant(LabelVariant::Body)
-                    .colour(tint)
-                    .size(Size::Sm);
-                let style = TextStyle {
-                    italic: self.preview,
-                    ..label.style()
-                };
-                text_styled(Modifier::new(), self.label.clone(), style);
-            }
-            if closable {
-                close_mark(
-                    self.on_close.clone(),
-                    self.dirty,
-                    self.pinned,
-                    self.selected || hovered.get(),
-                    glyph_size(self.size),
-                );
-            }
-        });
+        let hint = self.tooltip.clone();
+        let tab = move || {
+            row_arranged(modifier, arrangement, Alignment::Center, move || {
+                if let Some(glyph) = &self.icon {
+                    icon(
+                        glyph.clone(),
+                        glyph_size(self.size),
+                        self.icon_tint.unwrap_or(tint),
+                    );
+                }
+                if !self.label.is_empty() {
+                    let label = Label::new(self.label.clone())
+                        .variant(LabelVariant::Body)
+                        .colour(tint)
+                        .size(Size::Sm);
+                    let style = TextStyle {
+                        italic: self.preview,
+                        ..label.style()
+                    };
+                    text_styled(Modifier::new(), self.label.clone(), style);
+                }
+                if closable {
+                    close_mark(
+                        self.on_close.clone(),
+                        self.dirty,
+                        self.pinned,
+                        self.selected || hovered.get(),
+                        glyph_size(self.size),
+                    );
+                }
+            });
+        };
+        match &hint {
+            Some(label) => tooltip(label, tab),
+            None => tab(),
+        }
     }
 }
 

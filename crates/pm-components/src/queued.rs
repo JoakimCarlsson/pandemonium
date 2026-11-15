@@ -236,6 +236,7 @@ fn waiting_row(prompt: Waiting, callbacks: &Callbacks, editing: &State<Option<u6
             if let Some(hurry) = callbacks.on_hurry.clone() {
                 IconButton::new(phosphor::ARROW_UP)
                     .size(Size::Xs)
+                    .tooltip("Send next")
                     .on_click(move || hurry(id))
                     .show();
             }
@@ -244,6 +245,7 @@ fn waiting_row(prompt: Waiting, callbacks: &Callbacks, editing: &State<Option<u6
                 let start = editing.clone();
                 IconButton::new(phosphor::PENCIL_SIMPLE)
                     .size(Size::Xs)
+                    .tooltip("Edit")
                     .on_click(move || {
                         start.set(Some(id));
                         if let Some(hold) = &hold {
@@ -255,6 +257,7 @@ fn waiting_row(prompt: Waiting, callbacks: &Callbacks, editing: &State<Option<u6
             if let Some(remove) = callbacks.on_remove.clone() {
                 IconButton::new(phosphor::TRASH)
                     .size(Size::Xs)
+                    .tooltip("Remove")
                     .on_click(move || remove(id))
                     .show();
             }

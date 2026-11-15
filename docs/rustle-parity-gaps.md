@@ -674,45 +674,50 @@ reads the value.
 ## 11. Dock: terminal, problems, tasks and debugger
 
 **P1**
-- **Terminal font size, family, cursor, scrollback and copy on select are
-  ignored.**
+- ~~**Terminal font size, family, cursor, scrollback and copy on select are
+  ignored.**~~ **FIXED:** size, cursor shape, scrollback and copy on select
+  are applied; the terminal uses the code font.
 - **Shells aren't re-attached after a reconnect or restart,** and each launch
   leaves the last launch's shells running on the server.
-- **Problem rows can't be pressed,** and Problems covers only open files and
-  isn't scoped to the folder.
-- **Watches can't be added or removed.** `SetWatches` is never sent.
+- ~~**Problem rows can't be pressed,** and Problems covers only open files and
+  isn't scoped to the folder.~~ **FIXED:** rows open the file at the line and
+  Problems is scoped to the session folder; it still covers only open files.
+- ~~**Watches can't be added or removed.** `SetWatches` is never sent.~~
+  **FIXED.**
 
 **P2**
 - **Debugger:**
-  - Pausing doesn't reveal the line, and picking a frame doesn't either.
+  - ~~Pausing doesn't reveal the line, and picking a frame doesn't either.~~
+    **FIXED.**
   - The paused line isn't marked in the gutter.
   - Breakpoints are keyed by relative path only, so they leak across projects.
-  - The toggle-breakpoint key does nothing.
+  - ~~The toggle-breakpoint key does nothing.~~ **FIXED.**
   - Inline values are a stand-in: the first six variables, with no
     `InlineValues` request.
   - No attach to process.
-  - Starting doesn't switch to the Debug tab.
-  - The console has no colours and doesn't stick to the end.
-  - The controls ignore the program's state and have no tooltips.
+  - ~~Starting doesn't switch to the Debug tab.~~ **FIXED.**
+  - The console has no colours. ~~It doesn't stick to the end.~~ **FIXED.**
+  - ~~The controls ignore the program's state and have no tooltips.~~
+    **FIXED.**
 - **Tasks:**
   - Rerun just opens the tab.
   - No run gutter marks, lenses or runnable picker.
   - No toolchain picker.
   - Tasks and debug starts send `project: None`.
-- **Terminal menu:** "Add to chat" and "Kill" are gone, and there are no
-  disabled states or key labels.
+- ~~**Terminal menu:** "Add to chat" and "Kill" are gone, and there are no
+  disabled states or key labels.~~ **FIXED.**
 - **Terminal input:**
   - No Ctrl+click links.
   - No IME preedit.
   - ~~**Paste doesn't strip control characters, so a paste can escape bracketed
     paste mode** (`pm-shell/src/terminal.rs:170-177`).~~ **FIXED:** control
     characters other than tab and return are dropped, with a test.
-  - A new or picked shell doesn't take focus.
+  - ~~A new or picked shell doesn't take focus.~~ **FIXED.**
 
 **P3**
-- Typing doesn't clear the selection.
-- Shift+PgUp pages a full screen instead of rows−1.
-- The Problems count includes hints.
+- ~~Typing doesn't clear the selection.~~ **FIXED.**
+- ~~Shift+PgUp pages a full screen instead of rows−1.~~ **FIXED.**
+- ~~The Problems count includes hints.~~ **FIXED.**
 - Problem rows show the full path and message.
 - Expensive scopes can't be opened.
 - Variable layout is flat.
@@ -731,33 +736,33 @@ reads the value.
   settings page shows no status.~~ **FIXED:** the Embedded browser row shows it.
 
 **P2**
-- The keymap preview handler beats the page's keys (#6).
-- Mouse back and forward don't navigate.
-- The camera button takes a screenshot instead of opening the capture menu.
-- Area capture has no mode state, highlight or cancel.
-- Switching tabs leaves the old tab in pick mode.
-- The address bar freezes once you type without pressing Enter
-  (`link/browser.rs:61-65`, `browser.rs:211`).
-- The permission prompt's Allow button may stay greyed out: no recompose after
-  `ALLOW_DELAY` (`web.rs:720-726`).
-- The find bar has no Escape or Shift+Enter.
-- The developer tools can squash the page (range up to 2000).
-- The lock button has no tooltips or disabled state on agent tabs.
-- Opening the browser doesn't focus the address bar.
+- ~~The keymap preview handler beats the page's keys (#6).~~ **FIXED.**
+- ~~Mouse back and forward don't navigate.~~ **FIXED.**
+- ~~The camera button takes a screenshot instead of opening the capture menu.~~ **FIXED.**
+- ~~Area capture has no mode state, highlight or cancel.~~ **FIXED.**
+- ~~Switching tabs leaves the old tab in pick mode.~~ **FIXED.**
+- ~~The address bar freezes once you type without pressing Enter
+  (`link/browser.rs:61-65`, `browser.rs:211`).~~ **FIXED.**
+- ~~The permission prompt's Allow button may stay greyed out: no recompose after
+  `ALLOW_DELAY` (`web.rs:720-726`).~~ **FIXED.**
+- ~~The find bar has no Escape or Shift+Enter.~~ **FIXED.**
+- ~~The developer tools can squash the page (range up to 2000).~~ **FIXED.**
+- ~~The lock button has no tooltips or disabled state on agent tabs.~~ **FIXED.**
+- ~~Opening the browser doesn't focus the address bar.~~ **FIXED.**
 
 **P3**
-- The tab strip has no agent look, tooltip or scroll to the active tab.
-- No toolbar tooltips.
+- ~~The tab strip has no agent look, tooltip or scroll to the active tab.~~ **FIXED.**
+- ~~No toolbar tooltips.~~ **FIXED.**
 - Right-click isn't forwarded to the page.
 - No focus handoff after menu commands or element picks.
-- Reopening find doesn't select the old query.
+- ~~Reopening find doesn't select the old query.~~ **FIXED.**
 - The find bar doesn't fit narrow pages.
-- The menu isn't clamped horizontally.
-- "Open in default browser" errors are swallowed.
-- Shortcut key-ups leak to the page.
-- An agent's first navigate doesn't show the pane.
+- ~~The menu isn't clamped horizontally.~~ **FIXED.**
+- ~~"Open in default browser" errors are swallowed.~~ **FIXED.**
+- ~~Shortcut key-ups leak to the page.~~ **FIXED.**
+- ~~An agent's first navigate doesn't show the pane.~~ **FIXED.**
 - Restore changes the agents' default tab.
-- `supported()` is no longer checked.
+- ~~`supported()` is no longer checked.~~ **FIXED.**
 
 **OK:** the engine pipeline, agent tools and origin restriction, safety
 prompts, zoom, clear data, per-session scoping and restore.

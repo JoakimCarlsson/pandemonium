@@ -188,6 +188,7 @@ fn list(actions: &SettingsActions, setting: Setting, lines: Vec<String>) {
                                             .show();
                                         IconButton::new(phosphor::TRASH)
                                             .size(Size::Xs)
+                                            .tooltip("Remove")
                                             .on_click(
                                                 actions.send(SettingsChange::RemoveLine(
                                                     setting, place,

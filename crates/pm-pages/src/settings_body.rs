@@ -340,6 +340,7 @@ fn servers(model: &SettingsModel, actions: &SettingsActions, layout: Layout) {
                     .trailing(move || {
                         IconButton::new(phosphor::TRASH)
                             .size(Size::Xs)
+                            .tooltip("Remove the server")
                             .on_click(remove)
                             .show();
                     })

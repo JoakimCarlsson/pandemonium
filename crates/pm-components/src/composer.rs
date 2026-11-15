@@ -602,6 +602,7 @@ fn toolbar(
             let browse = callbacks.on_browse.clone();
             IconButton::new(phosphor::PLUS)
                 .size(Size::Xs)
+                .tooltip("Attach files")
                 .on_click(move || {
                     if let Some(browse) = &browse {
                         browse();
@@ -611,6 +612,7 @@ fn toolbar(
             let at = state.clone();
             IconButton::new(phosphor::AT)
                 .size(Size::Xs)
+                .tooltip("Mention a file")
                 .on_click(move || at.set_text(with_trigger(&at.text(), '@')))
                 .show();
             let slash = state.clone();
@@ -695,6 +697,7 @@ fn send_buttons(
         IconButton::new(phosphor::STOP)
             .variant(IconButtonVariant::Primary)
             .size(Size::Xs)
+            .tooltip("Stop")
             .tint(scheme.background)
             .on_click(move || {
                 if let Some(stop) = &stop {
@@ -708,6 +711,7 @@ fn send_buttons(
         let now = send.clone();
         IconButton::new(phosphor::LIGHTNING)
             .size(Size::Xs)
+            .tooltip("Send now")
             .on_click(move || now(true))
             .show();
     }
@@ -719,6 +723,7 @@ fn send_buttons(
     })
     .variant(IconButtonVariant::Primary)
     .size(Size::Xs)
+    .tooltip(if working { "Queue message" } else { "Send" })
     .tint(if empty {
         scheme.surface_container_high
     } else {

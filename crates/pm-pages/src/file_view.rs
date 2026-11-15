@@ -352,7 +352,8 @@ fn file_menu(index: usize, others: &[(usize, String)], actions: &Actions) {
     for (other, path) in others.iter().take(6) {
         menu = menu.item(path.clone(), act(FileAction::CompareWith(*other)));
     }
-    menu.separator()
+    menu.item("Another file…", act(FileAction::ChooseCompare))
+        .separator()
         .item("Organize imports", act(FileAction::OrganizeImports))
         .hint("Shift+Alt+O")
         .item("Fix all", act(FileAction::FixAll))
@@ -406,6 +407,11 @@ fn file_header(file: &OpenFile, index: usize, around: &Around, actions: &Actions
                     phosphor::EYE
                 })
                 .size(Size::Xs)
+                .tooltip(if rendered {
+                    "Show source"
+                } else {
+                    "Show preview"
+                })
                 .active(rendered)
                 .on_click(move || toggle(TabAction::ToggleRendered(index)))
                 .show();
@@ -424,6 +430,7 @@ fn file_header(file: &OpenFile, index: usize, around: &Around, actions: &Actions
             column_with(Modifier::new(), move || {
                 IconButton::new(phosphor::DOTS_THREE)
                     .size(Size::Xs)
+                    .tooltip("More actions")
                     .active(menu_open)
                     .on_click(move || {
                         open(TabAction::Menu(if menu_open {

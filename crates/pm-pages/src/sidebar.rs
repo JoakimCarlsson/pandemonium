@@ -130,6 +130,7 @@ fn workspaces_heading(workspace: &Workspace, actions: &Actions) {
                 .show();
             IconButton::new(phosphor::PLUS)
                 .size(Size::Xs)
+                .tooltip("Add a project")
                 .active(opened)
                 .on_click(move || open(ProjectAction::Adding((!opened).then_some(AddStep::Choose))))
                 .show();

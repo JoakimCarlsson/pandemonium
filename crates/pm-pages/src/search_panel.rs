@@ -40,24 +40,28 @@ pub fn search_panel(workspace: &Workspace, actions: &Actions) {
                 let case = actions.search.clone();
                 IconButton::new(phosphor::TEXT_AA)
                     .size(Size::Xs)
+                    .tooltip("Match case")
                     .active(search.case)
                     .on_click(move || case(SearchAction::Case))
                     .show();
                 let regex = actions.search.clone();
                 IconButton::new(phosphor::ASTERISK)
                     .size(Size::Xs)
+                    .tooltip("Use regular expression")
                     .active(search.regex)
                     .on_click(move || regex(SearchAction::Regex))
                     .show();
                 let edit = actions.search.clone();
                 IconButton::new(phosphor::PENCIL_SIMPLE)
                     .size(Size::Xs)
+                    .tooltip("Replace")
                     .active(search.editing)
                     .on_click(move || edit(SearchAction::Edit))
                     .show();
                 let tab = actions.file_tab.clone();
                 IconButton::new(phosphor::ARROW_SQUARE_OUT)
                     .size(Size::Xs)
+                    .tooltip("Open in editor")
                     .on_click(move || tab(TabAction::Open(SessionTab::Excerpts)))
                     .show();
             },
