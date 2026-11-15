@@ -2,7 +2,9 @@
 //! provided through a composition local by [`crate::app_theme`] so every
 //! editor in every window follows the settings as soon as they change.
 
-use pm_editor::{CursorShape, DiagnosticsShown, EditorSettings, SoftWrap};
+use pm_editor::{
+    CursorShape, DiagnosticsShown, EditorSettings, FindInSelection, LightbulbShown, SoftWrap,
+};
 use rustle::CompositionLocal;
 
 /// The editor settings the code editor reads while it draws and takes keys.
@@ -78,6 +80,34 @@ pub struct CodeLook {
     pub format_on_type: bool,
     /// How bad a problem must be to be marked in the text.
     pub diagnostics: DiagnosticsShown,
+    /// Whether the caret's line says who last changed it.
+    pub inline_blame: bool,
+    /// Whether the words that changed inside a changed line of a diff are drawn apart.
+    pub word_diff: bool,
+    /// Whether stepping past the last match of the find bar goes round to the first.
+    pub search_wrap: bool,
+    /// Whether the find bar opens on the selected text.
+    pub seed_search: bool,
+    /// Whether a query with an upper-case letter in it matches case even with the case toggle off.
+    pub smartcase: bool,
+    /// When the find bar, as it opens, looks only in the selection.
+    pub find_in_selection: FindInSelection,
+    /// Where the lightbulb stands when changes are offered at the caret.
+    pub lightbulb: LightbulbShown,
+    /// Whether selected text can be dragged to another place.
+    pub drag_and_drop: bool,
+    /// Whether the rest of a completion, such as its documentation, is asked for as it is chosen.
+    pub completion_docs: bool,
+    /// Whether the minimap's edge marks matches, problems and breakpoints.
+    pub scrollbar_marks: bool,
+    /// Whether the text scrolls on past its last line until that line is at the top.
+    pub scroll_beyond: bool,
+    /// Whether brackets are coloured by how deep they nest.
+    pub bracket_colors: bool,
+    /// Whether values that look private, such as keys in a `.env` file, are hidden until the caret is on their line.
+    pub redact: bool,
+    /// Whether the arrows move the caret through right-to-left text the way they point on screen.
+    pub visual_caret: bool,
 }
 
 impl Default for CodeLook {
@@ -92,6 +122,24 @@ impl CodeLook {
     pub fn with_git_gutter(self, shown: bool) -> Self {
         Self {
             git_gutter: self.git_gutter && shown,
+            ..self
+        }
+    }
+
+    /// This look with the caret's line blamed only when `blamed` holds as well as the editor's own setting, and the changed words of a diff drawn apart only when `word_diff` holds.
+    pub fn with_git_marks(self, blamed: bool, word_diff: bool) -> Self {
+        Self {
+            inline_blame: self.inline_blame && blamed,
+            word_diff,
+            ..self
+        }
+    }
+
+    /// This look with indentation `tab_size` columns wide and made of tabs as `hard_tabs` says, each only when given.
+    pub fn with_indent(self, tab_size: Option<usize>, hard_tabs: Option<bool>) -> Self {
+        Self {
+            tab_size: tab_size.or(self.tab_size),
+            hard_tabs: hard_tabs.or(self.hard_tabs),
             ..self
         }
     }
@@ -144,6 +192,20 @@ impl CodeLook {
             format_on_save: settings.format_on_save,
             format_on_type: settings.format_on_type,
             diagnostics: settings.diagnostics,
+            inline_blame: settings.inline_blame,
+            word_diff: true,
+            search_wrap: settings.search_wrap,
+            seed_search: settings.seed_search_from_selection,
+            smartcase: settings.smartcase,
+            find_in_selection: settings.auto_find_in_selection,
+            lightbulb: settings.lightbulb,
+            drag_and_drop: settings.drag_and_drop,
+            completion_docs: settings.completion_documentation,
+            scrollbar_marks: settings.scrollbar_marks,
+            scroll_beyond: settings.scroll_beyond_last_line,
+            bracket_colors: settings.bracket_colors,
+            redact: settings.redact_private_values,
+            visual_caret: settings.visual_caret_movement,
         }
     }
 }
@@ -151,6 +213,11 @@ impl CodeLook {
 /// The code look in effect, as the editor comes until [`crate::app_theme`] provides another.
 pub(crate) static LOCAL_CODE_LOOK: CompositionLocal<CodeLook> =
     CompositionLocal::new(CodeLook::default);
+
+/// Emits `content` with `look` as the code look in effect, such as one a file's language changes.
+pub fn provide_code_look(look: CodeLook, content: impl FnOnce()) {
+    LOCAL_CODE_LOOK.provide(look, content)
+}
 
 /// The code look in effect at this point of the composition.
 pub fn code_look() -> CodeLook {

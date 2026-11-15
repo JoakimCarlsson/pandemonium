@@ -897,24 +897,32 @@ fn graph_row(git: &GitSummary, commit: &GraphCommit, columns: usize, actions: &A
                     send(actions, GitAction::Checkout(branch.clone())),
                 );
             }
-            menu.icon_item(
-                phosphor::GIT_DIFF,
-                "Show changes",
-                send(
-                    actions,
-                    GitAction::ShowRevision {
-                        title: format!("Commit {} \u{2014} {}", commit.id, commit.summary),
-                        from: None,
-                        to: commit.id.clone(),
-                    },
-                ),
-            )
-            .icon_item(
-                phosphor::GIT_COMMIT,
-                format!("Check out {}", commit.id),
-                send(actions, GitAction::Checkout(commit.id.clone())),
-            )
-            .show();
+            menu = menu
+                .icon_item(
+                    phosphor::GIT_DIFF,
+                    "Show changes",
+                    send(
+                        actions,
+                        GitAction::ShowRevision {
+                            title: format!("Commit {} \u{2014} {}", commit.id, commit.summary),
+                            from: None,
+                            to: commit.id.clone(),
+                        },
+                    ),
+                )
+                .icon_item(
+                    phosphor::GIT_COMMIT,
+                    format!("Check out {}", commit.id),
+                    send(actions, GitAction::Checkout(commit.id.clone())),
+                );
+            if !head {
+                menu = menu.icon_item(
+                    phosphor::GIT_PULL_REQUEST,
+                    format!("Cherry-pick into {}", git.branch),
+                    send(actions, GitAction::CherryPick(commit.id.clone())),
+                );
+            }
+            menu.show();
         }
     });
 }

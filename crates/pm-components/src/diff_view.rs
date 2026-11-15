@@ -446,6 +446,7 @@ fn half(half: Half, view: &DiffView, look: &Look) {
         words: half
             .words
             .iter()
+            .filter(|_| crate::code_look().word_diff)
             .map(|(start, end)| (*start).min(text.len())..(*end).min(text.len()))
             .collect(),
         word_colour: match half.side {

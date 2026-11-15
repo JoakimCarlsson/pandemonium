@@ -43,12 +43,16 @@ impl Link {
                 self.rebuild();
             }
             ProjectAction::Adding(step) => {
-                let machines =
-                    FolderPicker::open(None, &self.settings.window.servers.known).machines;
+                let servers = &self.settings.window.servers;
+                let machines = FolderPicker::open(None, &servers.known).machines;
+                let first = Adder {
+                    machine: servers.default_target().map(pm_config::KnownServer::host),
+                    ..Adder::default()
+                };
                 self.workspace.adder = step.map(|step| Adder {
                     step,
                     machines,
-                    ..self.workspace.adder.clone().unwrap_or_default()
+                    ..self.workspace.adder.clone().unwrap_or(first)
                 });
             }
             ProjectAction::CloneUnder(under) => {

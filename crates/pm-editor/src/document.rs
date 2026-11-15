@@ -192,6 +192,8 @@ pub struct Document {
     pub(crate) bulb: Option<crate::bulb::Bulb>,
     /// The selected text being carried to another place, while it is.
     pub(crate) drag: Option<crate::drag::Carried>,
+    /// Who last changed a line and when, as the line, counted from 0, and the words drawn after it, while git said so for the caret's line.
+    pub blame: Option<(usize, String)>,
 }
 
 /// The kind of highlight a name a language server calls `kind` is drawn as.
@@ -286,6 +288,7 @@ impl Document {
             find_scope: None,
             bulb: None,
             drag: None,
+            blame: None,
         }
     }
 

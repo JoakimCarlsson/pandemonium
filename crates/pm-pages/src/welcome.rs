@@ -207,6 +207,7 @@ fn place_choice(start: &Start) -> ComposerChoice {
         current: current.to_owned(),
         picks: PLACES
             .iter()
+            .filter(|(value, _, _)| *value != "container" || start.has_container || start.container)
             .map(|(value, name, description)| ComposerPick {
                 value: (*value).to_owned(),
                 name: (*name).to_owned(),

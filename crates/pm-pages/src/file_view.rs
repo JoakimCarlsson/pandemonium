@@ -28,6 +28,8 @@ struct Around {
     others: Vec<(usize, String)>,
     /// The language not installed that reads the file, when there is one.
     offer: Option<Extension>,
+    /// How many columns a level of indentation is and whether it is a tab, as the settings of the file's language say, each when they say.
+    indent: (Option<usize>, Option<bool>),
 }
 
 /// Emits the open file at `index` of `workspace`'s open files, if it is
@@ -51,9 +53,18 @@ pub fn open_file_view(workspace: &Workspace, index: usize, actions: &Actions) ->
         offer: workspace
             .extensions
             .as_deref()
-            .filter(|_| !language_known && file.body == FileBody::Text)
+            .filter(|_| !language_known && !files.offers_withheld && file.body == FileBody::Text)
             .and_then(|extensions| language_offer(extensions, &file.path, &files.declined))
             .cloned(),
+        indent: file
+            .document
+            .0
+            .borrow()
+            .language
+            .as_ref()
+            .and_then(|language| files.indents.get(language))
+            .copied()
+            .unwrap_or_default(),
     };
     file_view(file, index, files.vim, &workspace.debug, &around, actions);
     true
@@ -101,7 +112,13 @@ fn file_view(
                         .modifier(Modifier::new().fill_max_width().weight(1.0))
                         .show(),
                     FileBody::Text if file.is_markdown() && file.rendered => rendered(&file),
-                    FileBody::Text => editor(&file, index, vim, &debug, &actions),
+                    FileBody::Text => {
+                        let (tab_size, hard_tabs) = around.indent;
+                        let look = pm_components::code_look().with_indent(tab_size, hard_tabs);
+                        pm_components::provide_code_look(look, || {
+                            editor(&file, index, vim, &debug, &actions)
+                        });
+                    }
                 },
             );
         },

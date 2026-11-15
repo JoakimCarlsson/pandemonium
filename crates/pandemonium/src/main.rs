@@ -8,6 +8,7 @@ mod notify;
 mod performance;
 mod snapshot;
 mod snapshot_appearance;
+mod store_writer;
 mod window;
 
 /// Opens the window and runs it until it is closed; given `--version`, prints

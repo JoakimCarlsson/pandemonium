@@ -87,7 +87,7 @@ fn bar_row() -> Modifier {
 pub(crate) fn find_bar(handle: &Handle, find: &FindBar) {
     let (count, at, problem) = {
         let document = handle.document.borrow();
-        match document.find_all(&find.query) {
+        match found(&document, &find.query, &handle.code) {
             Ok(matches) => (matches.len(), document.selected_match(&matches), None),
             Err(problem) => (0, None, Some(problem)),
         }
@@ -248,7 +248,7 @@ fn select_first(handle: &Handle) {
     };
     let edit = {
         let document = handle.document.borrow();
-        let matches = document.find_all(&find.query).unwrap_or_default();
+        let matches = found(&document, &find.query, &handle.code).unwrap_or_default();
         document.first_match_edit(&matches)
     };
     handle.apply(edit);
@@ -261,8 +261,8 @@ fn step(handle: &Handle, back: bool) {
     };
     let edit = {
         let document = handle.document.borrow();
-        let matches = document.find_all(&find.query).unwrap_or_default();
-        document.next_match_edit(&matches, back)
+        let matches = found(&document, &find.query, &handle.code).unwrap_or_default();
+        document.next_match_edit_with(&matches, back, handle.code.search_wrap)
     };
     handle.apply(edit);
 }
@@ -274,17 +274,35 @@ fn replace(handle: &Handle, all: bool) {
     };
     let edit = {
         let document = handle.document.borrow();
-        let matches = document.find_all(&find.query).unwrap_or_default();
+        let query = effective_query(&find.query, &handle.code);
+        let matches = found(&document, &find.query, &handle.code).unwrap_or_default();
         if all {
-            document.replace_all_edit(&find.query, &matches, &find.replacement)
+            document.replace_all_edit(&query, &matches, &find.replacement)
         } else {
-            document.replace_edit(&find.query, &matches, &find.replacement)
+            document.replace_edit(&query, &matches, &find.replacement)
         }
     };
     handle.apply(edit);
     if !all {
         step(handle, false);
     }
+}
+
+/// `query` as the find bar uses it under `code`: matching case when smart case is on and the text holds an upper-case letter.
+pub(crate) fn effective_query(query: &Query, code: &crate::CodeLook) -> Query {
+    Query {
+        case: query.case || (code.smartcase && query.text.chars().any(char::is_uppercase)),
+        ..query.clone()
+    }
+}
+
+/// Every stretch of `document` the find bar's `query` finds under `code`, inside the stretch finding is limited to when it is; why the query cannot be used when it cannot.
+pub(crate) fn found(
+    document: &pm_editor::Document,
+    query: &Query,
+    code: &crate::CodeLook,
+) -> Result<Vec<std::ops::Range<usize>>, String> {
+    document.find_all_within(&effective_query(query, code), document.find_scope())
 }
 
 /// Emits the go-to-line bar over the editor `handle` draws, holding `typed`.

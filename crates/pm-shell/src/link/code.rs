@@ -26,6 +26,8 @@ pub(super) enum CodeAsk {
     /// What the folder holds of the open file at this path in this folder
     /// after something outside the editor changed the folder.
     Reload(String, String),
+    /// Who last changed this line, counted from 0, of the file at this path in this folder.
+    Blame(String, String, usize),
 }
 
 impl Link {
@@ -181,8 +183,81 @@ impl Link {
         let Some(file) = self.workspace.open_files.files.get(index) else {
             return;
         };
-        let synced = file.document.0.borrow().synced;
-        if self.settings.editor.format_on_save && synced {
+        let (synced, language) = {
+            let document = file.document.0.borrow();
+            (
+                document.synced,
+                document.language.clone().unwrap_or_default(),
+            )
+        };
+        let editor = &self.settings.editor;
+        let preferences = self.settings.machine.language(&language);
+        let mut kinds = Vec::new();
+        if preferences
+            .organize_imports_on_save
+            .unwrap_or(editor.organize_imports_on_save)
+        {
+            kinds.push(pm_editor::ORGANIZE_IMPORTS.to_owned());
+        }
+        if preferences
+            .fix_all_on_save
+            .unwrap_or(editor.fix_all_on_save)
+        {
+            kinds.push(pm_editor::FIX_ALL.to_owned());
+        }
+        if synced && !kinds.is_empty() {
+            self.save_action(index, kinds);
+            return;
+        }
+        self.format_then_write(index);
+    }
+
+    /// Takes the first change of the first kind of `kinds` the language server offers for the whole open file at `index`, then the next kind, and formats and writes the file once none are left.
+    pub(super) fn save_action(&mut self, index: usize, mut kinds: Vec<String>) {
+        let Some(file) = self.workspace.open_files.files.get(index) else {
+            return;
+        };
+        if kinds.is_empty() {
+            self.format_then_write(index);
+            return;
+        }
+        let kind = kinds.remove(0);
+        let (directory, path) = (file.directory.clone(), file.path.clone());
+        let (version, span) = {
+            let document = file.document.0.borrow();
+            (document.version, document.whole_span())
+        };
+        self.ask(
+            Request::CodeActions {
+                directory: directory.clone(),
+                path: path.clone(),
+                version,
+                span,
+                only: Some(vec![kind]),
+            },
+            Ask::Server(super::lsp::ServerFor::SaveAction(directory, path, kinds)),
+        );
+    }
+
+    /// Formats the open file at `index` when the settings, or those of its language, say saving formats, then writes it.
+    pub(super) fn format_then_write(&mut self, index: usize) {
+        let Some(file) = self.workspace.open_files.files.get(index) else {
+            return;
+        };
+        let (synced, language) = {
+            let document = file.document.0.borrow();
+            (
+                document.synced,
+                document.language.clone().unwrap_or_default(),
+            )
+        };
+        let format = self
+            .settings
+            .machine
+            .language(&language)
+            .format_on_save
+            .unwrap_or(self.settings.editor.format_on_save);
+        if format && synced {
             let (directory, path) = (file.directory.clone(), file.path.clone());
             let version = file.document.0.borrow().version;
             self.ask(
@@ -358,10 +433,8 @@ impl Link {
                         .text()
                         .to_owned();
                     let saved = text.unwrap_or_default();
-                    self.show_comparison(
-                        index,
-                        crate::open_files::Comparison::between("Saved", &saved, &edited),
-                    );
+                    let comparison = self.comparison("Saved", &saved, &edited);
+                    self.show_comparison(index, comparison);
                 }
             }
             (
@@ -374,10 +447,50 @@ impl Link {
                     self.take_reloaded(index, text);
                 }
             }
+            (CodeAsk::Blame(directory, path, line), Response::Blamed { blame }) => {
+                if let Some(index) = files.position(&directory, &path) {
+                    files.files[index].document.0.borrow_mut().blame =
+                        blame_line(&blame).map(|said| (line, said));
+                }
+            }
+            (CodeAsk::Blame(directory, path, _), Response::Failed { .. }) => {
+                if let Some(index) = files.position(&directory, &path) {
+                    files.files[index].document.0.borrow_mut().blame = None;
+                }
+            }
             (CodeAsk::Save(_, path), Response::Failed { message }) => {
                 self.workspace.status = Some(format!("Could not save {path}: {message}"));
             }
             _ => {}
         }
     }
+}
+
+impl Link {
+    /// Asks git who last changed line `line`, counted from 0, of the open file at `index`, for the words drawn after the caret's line.
+    pub(super) fn ask_blame(&mut self, index: usize, line: usize) {
+        let Some(file) = self.workspace.open_files.files.get(index) else {
+            return;
+        };
+        let (directory, path) = (file.directory.clone(), file.path.clone());
+        file.document.0.borrow_mut().blame = None;
+        self.ask(
+            Request::Blame {
+                directory: directory.clone(),
+                path: path.clone(),
+                line: line + 1,
+            },
+            Ask::Code(CodeAsk::Blame(directory, path, line)),
+        );
+    }
+}
+
+/// What the caret's line says of `blame`: who changed it, how long ago and the commit's first line, or nothing for a line not committed yet.
+fn blame_line(blame: &pm_git::Blame) -> Option<String> {
+    if blame.id.is_empty() {
+        return None;
+    }
+    let then = u64::try_from(blame.when).unwrap_or_default() * 1000;
+    let ago = super::age(super::now_ms().saturating_sub(then));
+    Some(format!("{}, {ago} • {}", blame.author, blame.summary))
 }

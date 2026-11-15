@@ -141,6 +141,8 @@ enum Ask {
     Discover(String),
     /// The branches of the repository at this folder, for the welcome page.
     StartBranches(String),
+    /// Whether the folder has a dev container set up, for the welcome page.
+    StartContainer(String),
     /// Nothing that needs handling but a failure, which the status bar shows.
     Nothing,
 }
@@ -228,6 +230,8 @@ pub struct Link {
     recent_files: Vec<String>,
     /// The titles of the commands run lately from the quick input, the latest first.
     recent_commands: Vec<String>,
+    /// Whether the link changed the window's or the editor's settings itself since the window last saved them.
+    settings_changed: bool,
 }
 
 impl Link {
@@ -287,6 +291,7 @@ impl Link {
             identities: HashMap::new(),
             recent_files: Vec::new(),
             recent_commands: Vec::new(),
+            settings_changed: false,
         }
     }
 
@@ -388,6 +393,27 @@ impl Link {
         &mut self.settings
     }
 
+    /// Whether the link changed the settings itself since this was last asked, so the window saves them.
+    pub fn take_settings_changed(&mut self) -> bool {
+        std::mem::take(&mut self.settings_changed)
+    }
+
+    /// Hands what the window's settings decide to the parts of the workspace that follow them, once they are read and after each change.
+    pub fn follow_settings(&mut self) {
+        self.workspace.open_files.vim = self.settings.editor.vim_mode;
+        let general = &self.settings.window.general;
+        self.workspace.open_files.offers_withheld = !general.offer_languages;
+        self.workspace.open_files.declined = general.declined_languages.clone();
+        self.workspace.open_files.indents = self
+            .settings
+            .machine
+            .languages
+            .iter()
+            .filter(|(_, held)| held.tab_size.is_some() || held.hard_tabs.is_some())
+            .map(|(language, held)| (language.clone(), (held.tab_size, held.hard_tabs)))
+            .collect();
+    }
+
     /// Readies the settings window as it opens: names the agent and the project its customizations are read for, the open session's or else the first, on whichever machine it lives, and asks the server for what its pages list.
     pub fn open_settings(&mut self) {
         let agent = self
@@ -429,6 +455,7 @@ impl Link {
             }
             self.send(request);
         }
+        self.follow_settings();
         self.change_dock(|_| {});
     }
 
@@ -823,7 +850,9 @@ impl Link {
                 if self.settings.window.general.check_updates {
                     self.send(release_request(self.settings.window.general.channel));
                 }
+                self.send(Request::ExtensionAssets);
                 self.change_dock(Dock::connected);
+                self.reopen_for_server();
             }
             Incoming::Disconnected(reason) => self.workspace.status = Some(reason),
             Incoming::Response { id, response } => {
@@ -918,9 +947,13 @@ impl Link {
             (ask @ (Ask::SessionSlots(_) | Ask::SessionAllowance(_)), response) => {
                 self.composer_answer(ask, response)
             }
-            (ask @ (Ask::Identity(_) | Ask::Discover(_) | Ask::StartBranches(_)), response) => {
-                self.start_answer(ask, response)
-            }
+            (
+                ask @ (Ask::Identity(_)
+                | Ask::Discover(_)
+                | Ask::StartBranches(_)
+                | Ask::StartContainer(_)),
+                response,
+            ) => self.start_answer(ask, response),
             (
                 ask @ (Ask::Files(_) | Ask::Entry | Ask::Search(_) | Ask::Quick(_) | Ask::Branches),
                 response,
@@ -993,7 +1026,10 @@ impl Link {
             (Ask::Server(purpose), response) => self.answer_server(purpose, response),
             (Ask::Excerpt(excerpt), response) => self.answer_excerpt(excerpt, response),
             (Ask::Listing(choosing), response) => self.answer_listing(choosing, response),
-            (ask, response) => self.answer_settings(ask, response),
+            (ask, response) => {
+                self.answer_settings(ask, response);
+                self.follow_settings();
+            }
         }
     }
 
@@ -1272,6 +1308,20 @@ impl Link {
             show_thread(&mut self.workspace, thread);
         }
         self.rebuild();
+        if finishing && !replayed {
+            self.review_finished(session);
+        }
+    }
+
+    /// Opens the session numbered `session` on what it changed, when the settings say a finished turn opens its review.
+    fn review_finished(&mut self, session: u64) {
+        if self.settings.window.agents.on_finish != pm_config::Finish::OpenReview {
+            return;
+        }
+        if self.watched != Some(session) {
+            self.navigate(Page::Session(session));
+        }
+        self.workspace.open_files.tab = crate::open_files::SessionTab::Diff;
     }
 }
 

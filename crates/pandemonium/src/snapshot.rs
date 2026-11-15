@@ -234,6 +234,7 @@ pub fn run(arguments: &[String]) -> i32 {
     };
     if let Some(mut start) = start {
         start.place_menu = words.contains(&"welcome-place");
+        start.has_container = true;
         if words.contains(&"welcome-branch") {
             start.worktree = true;
             start.branches = vec!["main".to_owned(), "feature/search".to_owned()];

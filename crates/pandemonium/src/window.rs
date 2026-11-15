@@ -26,7 +26,10 @@ pub fn run() {
     let settings = connected.settings_mut();
     settings.editor = load_editor_settings();
     settings.window = load_window_settings();
-    connected.restore(load_view());
+    if settings.window.general.launch == pm_config::Launch::Restore {
+        connected.restore(load_view());
+    }
+    connected.follow_settings();
     let link = Rc::new(RefCell::new(connected));
     let options = WindowOptions {
         title: "Pandemonium".to_owned(),
@@ -56,7 +59,7 @@ fn root(link: &Rc<RefCell<Link>>) {
                 revision.update(|value| *value += 1);
             }
             for title in link.take_finished() {
-                agent_finished(&title);
+                agent_finished(&link.settings().window.agents, &title);
             }
             if let Some(staged) = link.take_staged()
                 && let Err(reason) = install_update(&staged)
@@ -96,7 +99,10 @@ fn install_close_handler(link: &Rc<RefCell<Link>>, revision: &State<u64>) {
             return false;
         }
         held.shutdown_browser();
-        save_view(held.workspace());
+        let view = pm_shell::View::of(held.workspace()).write();
+        if let Err(error) = crate::store_writer::save_now(VIEW, &view) {
+            eprintln!("pandemonium: could not save the layout: {error}");
+        }
         true
     });
 }
@@ -122,7 +128,7 @@ fn key_bindings(
         };
         if let Some(outcome) = held.run_action(action) {
             take_outcome(&mut held, outcome, &settings_open, handle);
-            save_view(held.workspace());
+            save_after(&mut held);
         }
         drop(held);
         revision.update(|value| *value += 1);
@@ -255,16 +261,10 @@ fn load_window_settings() -> pm_config::WindowSettings {
         .unwrap_or_default()
 }
 
-/// Writes the editor's and the window's own settings in `model` to their files when they differ from what the files hold.
+/// Has the editor's and the window's own settings in `model` written to their files, off the UI thread, when they changed.
 fn save_settings(model: &pm_shell::SettingsModel) {
-    let editor = model.editor.write();
-    if pm_store::load_text(EDITOR_SETTINGS).as_deref() != Some(editor.as_str()) {
-        let _ = pm_store::save_text(EDITOR_SETTINGS, &editor);
-    }
-    let window = model.window.write();
-    if pm_store::load_text(WINDOW_SETTINGS).as_deref() != Some(window.as_str()) {
-        let _ = pm_store::save_text(WINDOW_SETTINGS, &window);
-    }
+    crate::store_writer::save(EDITOR_SETTINGS, model.editor.write());
+    crate::store_writer::save(WINDOW_SETTINGS, model.window.write());
 }
 
 /// The installed font families, and those among them made for code, judged by their names.
@@ -295,22 +295,26 @@ fn load_view() -> pm_shell::View {
         .unwrap_or_default()
 }
 
-/// Writes the layout `workspace` shows to its file when it differs from what the file holds.
+/// Has the layout `workspace` shows written to its file, off the UI thread, when it changed.
 fn save_view(workspace: &pm_shell::Workspace) {
-    let view = pm_shell::View::of(workspace).write();
-    if pm_store::load_text(VIEW).as_deref() != Some(view.as_str()) {
-        let _ = pm_store::save_text(VIEW, &view);
+    crate::store_writer::save(VIEW, pm_shell::View::of(workspace).write());
+}
+
+/// Saves what changed after an action on `link`: the layout, and the settings when the link changed them itself.
+fn save_after(link: &mut Link) {
+    if link.take_settings_changed() {
+        save_settings(link.settings());
     }
+    save_view(link.workspace());
 }
 
 /// The file the window keeps its settings in.
 const WINDOW_SETTINGS: &str = "window-settings.json";
 
 /// Tells the reader the agent of the session titled `title` finished its
-/// turn, the way the window settings say.
-fn agent_finished(title: &str) {
-    let settings = load_window_settings();
-    if let Some(notice) = pm_shell::finish_notice(&settings.agents, title) {
+/// turn, the way the agent settings `settings` say.
+fn agent_finished(settings: &pm_config::AgentSettings, title: &str) {
+    if let Some(notice) = pm_shell::finish_notice(settings, title) {
         crate::notify::tell(notice.how, &notice.title, &notice.body);
     }
 }
@@ -459,7 +463,7 @@ fn actions(
         let revision = revision.clone();
         let change: Change = Rc::new(move |change: &dyn Fn(&mut Link)| {
             change(&mut link.borrow_mut());
-            save_view(link.borrow().workspace());
+            save_after(&mut link.borrow_mut());
             revision.update(|value| *value += 1);
         });
         change
@@ -706,7 +710,7 @@ fn session_action(
         let mut held = link.borrow_mut();
         let outcome = held.session_command(command);
         take_outcome(&mut held, outcome, &settings_open, handle);
-        save_view(held.workspace());
+        save_after(&mut held);
         drop(held);
         revision.update(|value| *value += 1);
     })
@@ -751,7 +755,7 @@ fn quick_action(
         let mut held = link.borrow_mut();
         let outcome = held.quick(action);
         take_outcome(&mut held, outcome, &settings_open, handle);
-        save_view(held.workspace());
+        save_after(&mut held);
         drop(held);
         revision.update(|value| *value += 1);
     })
@@ -824,7 +828,7 @@ fn shortcut(
             return false;
         }
         take_outcome(&mut held, pressed.outcome, &settings_open, handle);
-        save_view(held.workspace());
+        save_after(&mut held);
         drop(held);
         revision.update(|value| *value += 1);
         true
