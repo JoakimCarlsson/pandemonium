@@ -86,9 +86,14 @@ impl Link {
             .map(|(host, _)| host.to_owned());
         let workspace = &mut self.workspace;
         workspace.shelf.swap(&mut workspace.browser, scope);
+        let had = workspace.browser.is_some();
         let answer = self.browser_tool(call, host, tool, arguments);
         let workspace = &mut self.workspace;
+        let opened = !had && workspace.browser.is_some();
         workspace.shelf.swap(&mut workspace.browser, shown);
+        if opened && scope == shown {
+            workspace.open_files.tab = crate::open_files::SessionTab::Browser;
+        }
         if let Some(answer) = answer {
             self.browser_answer(call, answer, Vec::new());
         }

@@ -64,9 +64,18 @@ impl Link {
                 tab.editing = true;
             }
             BrowserAction::Go => browser.go(host),
-            BrowserAction::Back => browser.queue(Command::Back),
-            BrowserAction::Forward => browser.queue(Command::Forward),
-            BrowserAction::Reload => browser.queue(Command::Reload),
+            BrowserAction::Back => {
+                browser.shown_mut().editing = false;
+                browser.queue(Command::Back);
+            }
+            BrowserAction::Forward => {
+                browser.shown_mut().editing = false;
+                browser.queue(Command::Forward);
+            }
+            BrowserAction::Reload => {
+                browser.shown_mut().editing = false;
+                browser.queue(Command::Reload);
+            }
             BrowserAction::HardReload => browser.queue(Command::HardReload),
             BrowserAction::NewTab => {
                 browser.open_tab("about:blank", host, false, true);
@@ -89,11 +98,18 @@ impl Link {
             BrowserAction::FindClose => browser.shown_mut().find_closed(),
             BrowserAction::Zoom(step) => browser.queue(Command::Zoom(step)),
             BrowserAction::Menu(at) => {
-                browser.menu = at.map(|at| crate::browser::BrowserMenu { at });
+                browser.menu = at.map(|at| crate::browser::BrowserMenu { at, capture: false });
             }
+            BrowserAction::CaptureMenu => {
+                browser.menu = Some(crate::browser::BrowserMenu {
+                    at: (-1.0, 0.0),
+                    capture: true,
+                });
+            }
+            BrowserAction::CancelArea => browser.shown_mut().stop_area(),
             BrowserAction::Command(command) => page_command(browser, command),
             BrowserAction::Pick => toggle_pick(browser),
-            BrowserAction::Capture(kind) => browser.queue(Command::Capture(kind)),
+            BrowserAction::Capture(kind) => capture(browser, kind),
             BrowserAction::ClearConfirm => {
                 if std::mem::take(&mut browser.clearing) {
                     browser.queue(Command::ClearData);
@@ -119,8 +135,13 @@ impl Link {
         }
     }
 
-    /// Opens the browser on `address`, or on the page a dev server is usually at, and shows it; an open browser loads `address` in the tab shown.
+    /// Opens the browser on `address`, or on the page a dev server is usually at, and shows it; an open browser loads `address` in the tab shown. Says in the status line why not when the browser cannot run on this machine.
     pub fn open_browser(&mut self, address: Option<&str>) {
+        if !pm_browser::install::supported() {
+            self.workspace.status =
+                Some("The embedded browser cannot run on this machine.".to_owned());
+            return;
+        }
         let host = self.browser_host();
         match (self.workspace.browser.as_mut(), address) {
             (Some(browser), Some(address)) => browser.shown_mut().load(address, host),
@@ -288,10 +309,10 @@ fn page_command(browser: &mut Browser, command: PageCommand) {
         PageCommand::ClearData => browser.clearing = true,
         PageCommand::Inspect => browser.show_tools(),
         PageCommand::PickElement => toggle_pick(browser),
-        PageCommand::Screenshot => browser.queue(Command::Capture(CaptureKind::Screenshot)),
-        PageCommand::FullPage => browser.queue(Command::Capture(CaptureKind::FullPage)),
-        PageCommand::Area => browser.queue(Command::Capture(CaptureKind::Area)),
-        PageCommand::Console => browser.queue(Command::Capture(CaptureKind::Console)),
+        PageCommand::Screenshot => capture(browser, CaptureKind::Screenshot),
+        PageCommand::FullPage => capture(browser, CaptureKind::FullPage),
+        PageCommand::Area => capture(browser, CaptureKind::Area),
+        PageCommand::Console => capture(browser, CaptureKind::Console),
     }
 }
 
@@ -301,4 +322,14 @@ fn toggle_pick(browser: &mut Browser) {
     tab.picking = !tab.picking;
     let picking = tab.picking;
     browser.queue(Command::Pick(picking));
+}
+
+/// Takes the capture `kind` of the page of the tab shown of `browser` for the prompt, closing the menu; an area starts the mode in which the reader drags it.
+fn capture(browser: &mut Browser, kind: CaptureKind) {
+    browser.menu = None;
+    if kind == CaptureKind::Area {
+        browser.shown_mut().start_area();
+    } else {
+        browser.queue(Command::Capture(kind));
+    }
 }

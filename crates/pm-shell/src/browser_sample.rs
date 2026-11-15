@@ -82,7 +82,12 @@ pub fn sample_browser(sample: BrowserSample) -> Browser {
                 counted: true,
             });
         }
-        BrowserSample::Menu => browser.menu = Some(BrowserMenu { at: (220.0, 90.0) }),
+        BrowserSample::Menu => {
+            browser.menu = Some(BrowserMenu {
+                at: (220.0, 90.0),
+                capture: false,
+            })
+        }
         BrowserSample::Tools => {
             browser.tools = true;
             browser.tools_width = 420.0;

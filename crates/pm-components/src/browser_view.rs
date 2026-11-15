@@ -1,11 +1,11 @@
 //! The window of a web page: the newest picture the page painted, drawn to fill its area, which hands the page the pointer and, while it holds focus, the keyboard, and tells how big it is laid out.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use pm_browser::{Button, Cursor, Frame, Modifiers as Held, PageInput};
 use rustle::prelude::*;
-use rustle::{Key, KeyEvent, PointerButton, PointerEvent, PointerPhase};
+use rustle::{Key, KeyEvent, PhysicalKey, PointerButton, PointerEvent, PointerPhase};
 
 use crate::browser_keys::{BrowserShortcut, browser_shortcut, held, page_key};
 use crate::key_bindings::{Bound, KeyBindings, key_bindings};
@@ -49,6 +49,9 @@ impl Callbacks {
         }
     }
 }
+
+/// The keys whose press the browser or the keymap took, so their release is kept from the page too.
+type Taken = Rc<RefCell<Vec<PhysicalKey>>>;
 
 /// A page's window with a variant and a size.
 #[derive(Clone)]
@@ -190,6 +193,9 @@ impl BrowserView {
         let menu = callbacks.on_menu.clone();
         let wheel = callbacks.clone();
         let keys = callbacks.clone();
+        let back = callbacks.clone();
+        let forward = callbacks.clone();
+        let taken: Taken = remember(|| Rc::new(RefCell::new(Vec::new()))).get();
         let modifier = self
             .modifier
             .background(background)
@@ -226,6 +232,12 @@ impl BrowserView {
                     Held::MIDDLE_BUTTON,
                 );
             })
+            .on_pointer_button(PointerButton::Back, move |event| {
+                history_button(&back, event, BrowserShortcut::Back);
+            })
+            .on_pointer_button(PointerButton::Forward, move |event| {
+                history_button(&forward, event, BrowserShortcut::Forward);
+            })
             .on_secondary_click(move |event| {
                 if let Some(menu) = &menu {
                     menu(event.position.x, event.position.y);
@@ -246,7 +258,7 @@ impl BrowserView {
             })
             .focusable(&focus, {
                 let bindings = key_bindings();
-                move |event| key_event(&keys, &bindings, event)
+                move |event| key_event(&keys, &bindings, &taken, event)
             })
             .cursor(cursor_icon(self.cursor));
         let placeholder = self.placeholder;
@@ -317,18 +329,57 @@ fn button_event(
     }
 }
 
-/// Hands `event` to the browser's own keys first, then to the keymap in `bindings`, which takes the chords bound to what the window does everywhere, then to the page; returns whether any took it.
-fn key_event(callbacks: &Callbacks, bindings: &KeyBindings, event: &KeyEvent) -> bool {
+/// Runs `shortcut` through `callbacks` when the back or forward button of the mouse, as `event` tells, is pressed.
+fn history_button(callbacks: &Callbacks, event: &PointerEvent, shortcut: BrowserShortcut) {
+    if event.phase == PointerPhase::Press
+        && let Some(on_shortcut) = &callbacks.on_shortcut
+    {
+        on_shortcut(shortcut);
+    }
+}
+
+/// Whether `event` is a chord of editing text, such as copy, paste, select all or undo, which the page takes before the keymap does.
+fn editing_chord(event: &KeyEvent) -> bool {
+    let modifiers = event.modifiers;
+    if !(modifiers.ctrl || modifiers.meta) || modifiers.alt {
+        return false;
+    }
+    match &event.key {
+        Key::Character(text) => matches!(
+            text.to_ascii_lowercase().as_str(),
+            "a" | "c" | "v" | "x" | "y" | "z"
+        ),
+        _ => false,
+    }
+}
+
+/// Hands `event` to the browser's own keys first, then to the keymap in `bindings`, which takes the chords bound to what the window does everywhere except those of editing text, then to the page; the release of a key whose press was taken, as `taken` remembers, is kept from the page. Returns whether any took it.
+fn key_event(
+    callbacks: &Callbacks,
+    bindings: &KeyBindings,
+    taken: &Taken,
+    event: &KeyEvent,
+) -> bool {
+    if !event.pressed {
+        let mut pressed = taken.borrow_mut();
+        if let Some(index) = pressed.iter().position(|key| *key == event.physical_key) {
+            pressed.remove(index);
+            return true;
+        }
+    }
     if let Some(shortcut) = browser_shortcut(event) {
         if let Some(on_shortcut) = &callbacks.on_shortcut {
             on_shortcut(shortcut);
         }
+        taken.borrow_mut().push(event.physical_key);
         return true;
     }
     let modifiers = event.modifiers;
     if (modifiers.ctrl || modifiers.alt || modifiers.meta)
+        && !editing_chord(event)
         && bindings.press(event, |_| false) == Bound::Taken
     {
+        taken.borrow_mut().push(event.physical_key);
         return true;
     }
     if event.key == Key::Other {

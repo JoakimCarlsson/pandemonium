@@ -183,8 +183,8 @@ fn is_local(host: &str) -> bool {
     matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "0.0.0.0")
 }
 
-/// Carries out a command that needs only the page.
-fn page_command(page: &View, command: Command) {
+/// Carries out a command that needs only the page; returns why it failed, when it did.
+fn page_command(page: &View, command: Command) -> Option<String> {
     match command {
         Command::Cut => page.edit(EditAction::Cut),
         Command::Copy => page.edit(EditAction::Copy),
@@ -205,14 +205,14 @@ fn page_command(page: &View, command: Command) {
             ZoomStep::Out => ZoomAction::Out,
             ZoomStep::Reset => ZoomAction::Reset,
         }),
-        Command::OpenExternal => {
-            let _ = pm_harness::open_address(&page.address());
-        }
+        Command::OpenExternal => return pm_harness::open_address(&page.address()).err(),
         Command::ClearData => page.clear_data(),
         Command::Pick(on) => page.pick(on),
         Command::Capture(kind) => page.capture(kind),
+        Command::PickArea(on) => page.pick_area(on),
         Command::Load(_) | Command::OpenTools | Command::CloseTools => {}
     }
+    None
 }
 
 impl Web {
@@ -300,9 +300,11 @@ impl Web {
         self.resolve(address, host)
     }
 
-    /// Whether the browser is turned on in `general` and installed, so pages can be shown.
+    /// Whether the browser is turned on in `general`, can run on this machine and is installed, so pages can be shown.
     pub fn ready(general: &GeneralSettings) -> bool {
-        general.embedded_browser && pm_browser::install::installed()
+        general.embedded_browser
+            && pm_browser::install::supported()
+            && pm_browser::install::installed()
     }
 
     /// Takes in a size the pane gave a page's window.
@@ -600,8 +602,12 @@ impl Web {
                     self.tools_sized = None;
                 }
                 other => {
-                    if let Some(page) = self.pages.get(&tab) {
-                        page_command(&page.view, other);
+                    if let Some(reason) = self
+                        .pages
+                        .get(&tab)
+                        .and_then(|page| page_command(&page.view, other))
+                    {
+                        self.attachments.push(Attachment::Failed(reason));
                     }
                 }
             }
@@ -738,6 +744,7 @@ impl Web {
             self.results.extend(view.take_tool_results());
             let picked = view.take_pick();
             let captures = view.take_captures();
+            let captured_any = !captures.is_empty();
             if let Some(element) = picked.clone().flatten() {
                 self.attachments
                     .push(Attachment::Element(picked_element(&element, &address)));
@@ -781,6 +788,13 @@ impl Web {
                         tab.pointer = pointer;
                         changed = true;
                     }
+                    if tab.safety.note_ready(now) {
+                        changed = true;
+                    }
+                    if !address.is_empty() && tab.seen != address {
+                        tab.seen.clone_from(&address);
+                        tab.editing = false;
+                    }
                     if !tab.editing && !address.is_empty() && tab.address != address {
                         tab.address.clone_from(&address);
                         changed = true;
@@ -795,6 +809,10 @@ impl Web {
                     }
                     for notice in notices {
                         tab.safety.take_notice(notice, now);
+                        changed = true;
+                    }
+                    if captured_any && tab.area {
+                        tab.area = false;
                         changed = true;
                     }
                     if picked.is_some() && tab.picking {

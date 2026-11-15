@@ -139,6 +139,8 @@ pub struct Safety {
     pub answers: Vec<Answer>,
     /// The question showing and when it first showed, which is when [`ALLOW_DELAY`] starts.
     shown: Option<(u64, Instant)>,
+    /// Whether the window was told that Allow of the question showing became ready.
+    ready_told: bool,
 }
 
 impl Safety {
@@ -160,10 +162,25 @@ impl Safety {
     fn track(&mut self, now: Instant) {
         let first = self.questions.first().map(|asked| asked.id);
         match (first, self.shown) {
-            (None, _) => self.shown = None,
+            (None, _) => {
+                self.shown = None;
+                self.ready_told = false;
+            }
             (Some(id), Some((counted, _))) if id == counted => {}
-            (Some(id), _) => self.shown = Some((id, now)),
+            (Some(id), _) => {
+                self.shown = Some((id, now));
+                self.ready_told = false;
+            }
         }
+    }
+
+    /// Whether Allow of the question showing became ready at `now` since last asked, so the prompt must be drawn again.
+    pub fn note_ready(&mut self, now: Instant) -> bool {
+        if self.ready_told || !self.allow_ready(now) {
+            return false;
+        }
+        self.ready_told = true;
+        true
     }
 
     /// Whether pressing Allow does anything at the time `now`: the first question has been showing for [`ALLOW_DELAY`].
