@@ -131,6 +131,8 @@ enum Ask {
     RemoteSessions(String),
     /// Something a form of the settings window sent.
     Form,
+    /// Signing an agent in, whose code dialog closes once the server answers.
+    SignIn,
     /// Branching a new session off a turn of the open one, which opens once the server made it.
     Fork,
     /// Closing the session the window numbers so, which asks before throwing away changes not committed.
@@ -163,11 +165,11 @@ impl Ask {
             Request::Accounts
             | Request::SetAccounts { .. }
             | Request::SaveKey { .. }
-            | Request::SignIn { .. }
             | Request::SearchTools { .. }
             | Request::FindModels { .. }
             | Request::CreateCustomization { .. } => Self::Form,
             Request::SaveModelServer { .. } => Self::ModelServers,
+            Request::SignIn { .. } => Self::SignIn,
             Request::PullRequest { .. } | Request::PullRequestAction { .. } => Self::PullRequest,
             _ => Self::Nothing,
         }
@@ -1184,6 +1186,12 @@ impl Link {
                 };
             }
             (Ask::LatestRelease, _) => settings.release = Some(Release::Unknown),
+            (Ask::SignIn, response) => {
+                self.workspace.sign_in = None;
+                for request in self.settings.take_form_answer(response) {
+                    self.send(request);
+                }
+            }
             (Ask::Form, response) => {
                 for request in settings.take_form_answer(response) {
                     self.send(request);
@@ -1201,7 +1209,20 @@ impl Link {
                     offer.run = UpdateRun::Idle;
                 }
             }
-            (_, Response::Failed { message }) => self.workspace.status = Some(message),
+            (ask, Response::Failed { message }) => {
+                let settings = &mut self.settings;
+                match ask {
+                    Ask::Library | Ask::ToolSets => settings.library_loaded = true,
+                    Ask::McpServers => settings.mcp_loaded = true,
+                    Ask::ModelServers => settings.model_servers_loaded = true,
+                    Ask::ModelSlots => settings.slots_loaded = true,
+                    Ask::MachineSettings => settings.machine_loaded = true,
+                    Ask::Extensions => settings.extensions_loaded = true,
+                    _ => {}
+                }
+                settings.failure = Some(message.clone());
+                self.workspace.status = Some(message);
+            }
             _ => {}
         }
     }

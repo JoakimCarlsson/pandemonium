@@ -323,6 +323,7 @@ fn keymap(model: &SettingsModel, actions: &SettingsActions, layout: Layout) {
 
 /// Emits the servers page: where new projects go, then this machine and every server the window knows, and the form adding one.
 fn servers(model: &SettingsModel, actions: &SettingsActions, layout: Layout) {
+    let form = ServerForm::remember();
     page_rows(model, actions, Section::Servers, layout);
     heading("Servers", model.window.servers.known.len() + 1);
     boxed(|| {
@@ -333,32 +334,101 @@ fn servers(model: &SettingsModel, actions: &SettingsActions, layout: Layout) {
         for (place, server) in model.window.servers.known.iter().enumerate() {
             key(place, || {
                 Divider::new().show();
-                let remove = actions.send(SettingsChange::RemoveServer(place));
+                let remove = std::rc::Rc::new(actions.send(SettingsChange::RemoveServer(place)));
+                let filling = form.clone();
+                let held = server.clone();
                 CardRow::new(server.name.clone())
                     .icon(phosphor::HARD_DRIVES)
                     .detail(reach_of(server))
                     .trailing(move || {
+                        let filling = filling.clone();
+                        let held = held.clone();
+                        IconButton::new(phosphor::PENCIL_SIMPLE)
+                            .size(Size::Xs)
+                            .tooltip("Edit")
+                            .on_click(move || filling.fill(&held))
+                            .show();
                         IconButton::new(phosphor::TRASH)
                             .size(Size::Xs)
-                            .on_click(remove)
+                            .tooltip("Remove")
+                            .on_click({
+                                let remove = remove.clone();
+                                move || remove()
+                            })
                             .show();
                     })
                     .show();
             });
         }
     });
-    server_form(actions, layout);
+    server_form(model, actions, layout, &form);
 }
 
-/// Emits the form adding a server: its name, how it is reached, its address, and for a server reached straight or through a tunnel the token it lets the window in with.
-fn server_form(actions: &SettingsActions, layout: Layout) {
-    let name = remember(String::new);
-    let address = remember(String::new);
-    let token = remember(String::new);
-    let reach = remember(|| 0_usize);
-    SectionHeader::new("Add a server")
-        .variant(SectionHeaderVariant::Group)
-        .show();
+/// What the form adding or changing a server holds.
+#[derive(Clone)]
+struct ServerForm {
+    /// The server's name.
+    name: State<String>,
+    /// Where it is reached.
+    address: State<String>,
+    /// The token it lets the window in with.
+    token: State<String>,
+    /// The place of how it is reached among [`REACHES`].
+    reach: State<usize>,
+}
+
+impl ServerForm {
+    /// The form remembered at the call site, empty at first.
+    #[track_caller]
+    fn remember() -> Self {
+        Self {
+            name: remember(String::new),
+            address: remember(String::new),
+            token: remember(String::new),
+            reach: remember(|| 0_usize),
+        }
+    }
+
+    /// Fills the form with what `server` holds, to change it.
+    fn fill(&self, server: &pm_config::KnownServer) {
+        self.name.set(server.name.clone());
+        self.address.set(server.address.clone());
+        self.token.set(server.token.clone());
+        self.reach.set(
+            REACHES
+                .iter()
+                .position(|(how, _)| *how == server.reach)
+                .unwrap_or(0),
+        );
+    }
+}
+
+/// Emits the form adding a server, or changing the one `form` names when its name is a known server's: its name, how it is reached, its address, which is required, and for a server reached straight or through a tunnel the token it lets the window in with.
+fn server_form(
+    model: &SettingsModel,
+    actions: &SettingsActions,
+    layout: Layout,
+    form: &ServerForm,
+) {
+    let ServerForm {
+        name,
+        address,
+        token,
+        reach,
+    } = form.clone();
+    let known = model
+        .window
+        .servers
+        .known
+        .iter()
+        .any(|server| server.name == name.get().trim());
+    SectionHeader::new(if known {
+        "Change the server"
+    } else {
+        "Add a server"
+    })
+    .variant(SectionHeaderVariant::Group)
+    .show();
     column_arranged(
         Modifier::new().fill_max_width(),
         Arrangement::SpacedBy(pm_components::spacing(8.0)),
@@ -413,9 +483,13 @@ fn server_form(actions: &SettingsActions, layout: Layout) {
             let change = actions.change.clone();
             let (name, address, reach, token) =
                 (name.clone(), address.clone(), reach.clone(), token.clone());
-            let ready = !name.get().trim().is_empty();
-            Button::new("Add Server")
-                .icon(phosphor::PLUS)
+            let ready = !name.get().trim().is_empty() && !address.get().trim().is_empty();
+            Button::new(if known { "Save Server" } else { "Add Server" })
+                .icon(if known {
+                    phosphor::CHECK
+                } else {
+                    phosphor::PLUS
+                })
                 .variant(ButtonVariant::Primary)
                 .disabled(!ready)
                 .on_click(move || {
