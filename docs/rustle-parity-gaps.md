@@ -44,22 +44,22 @@ polish.
 | 1 | **Most settings are ignored.** Appearance (interface font and size, code font and size, line height, density), every Editor page, and Terminal font size, cursor, scrollback and copy-on-select are saved but never read. `window_theme` maps only `theme_mode`. `AppTheme::with_interface_font`, `with_code_font` and `with_density` have no callers. `pm_config::Density` is never converted to `pm_components::Density`. | `pandemonium/src/window.rs:185-191`, `pm-components/src/app_theme.rs:224-275` | `old: pandemonium/src/app.rs:330-355,713-725`, `scene.rs:18-39` |
 | 2 | **Theme families are gone.** The Light theme and Dark theme rows were removed from the catalog, the Dusk theme and extension themes are gone, and the theme quick-pick lists only light, dark and system. | `pm-shell/src/settings_catalog.rs:266`, `link/quick_input.rs:123` | `old: settings_catalog.rs:55-58`, `pm-theme/src/builtin.rs:72-169` |
 | 3 | **Icons look pixelated and small.** Rustle tessellates icon paths with no MSAA and a 0.8 px fringe that only fades outward, so sub-pixel Phosphor strokes alias. Origins are not pixel-snapped. Pandemonium sizes glyphs off the 12/14/16 grid (9, 10, 11, 13, 15 px) and centres them on half pixels. The old build rasterised SVGs with resvg into anti-aliased masks at `size × scale`. | rustle `rustle-wgpu/src/path.rs:24,121,182,363`; `pm-components/src/icon_button.rs:88-123`, `checkbox.rs:92-119` | `old: pm-icon/src/svg.rs:56-72`, `pm-renderer/src/renderer.rs:876-889` |
-| 4 | **The editor and terminal ignore the keymap.** Only window-wide actions go through it. Editor keys are hard-coded in `code_keys`, so keymap presets and custom bindings do nothing in the editor or terminal. | `pm-components/src/code_keys.rs:96-175`, `terminal_keys.rs:102-127` | `old: app/code.rs:410-498,589-1006`, `app/terminal.rs:122-148` |
-| 5 | **About 55 window-wide keymap actions do nothing.** `run_action` ends in `_ => return None`. Affected: tabs (close, close others, pin, next/previous), panes (split, focus), zoom, ToggleTheme, git stash/amend/continue/abort/skip/create branch, agent mode/model/allow/reject, session rename/archive/copy path, Quit, FocusPrompt, and others. | `pm-shell/src/link/keys.rs:123` | `old: app/code.rs:829-1006` |
-| 6 | **The root key handler takes chords from the terminal and browser.** The keymap runs in `on_preview_key_event`, before the focused child, so Ctrl+R/N/P/T/E never reach a shell, and any binding overrides keys typed in a web page. | `pm-pages/src/workspace.rs:79,155-158` | `old: app.rs:2085-2097`, `app/browser.rs:667-702` |
-| 7 | **Error messages are never shown.** `Workspace.status` is written by about 25 failure paths (disconnect, start, save, LSP, file tree, listing, browser) and read by nothing. `answer_settings` and other answer handlers drop `Response::Failed` in catch-alls. Prompt, Cancel, Set, Answer, Trust, Rewind, Fork, SaveMcpServers, ModelServers and other failures vanish silently. | `pm-shell/src/model.rs:70`, `link.rs:153,916-919,981` | `old: work.rs:2080-2083,2374,2389` |
-| 8 | **A failed turn leaves the session stuck.** `Event::Failed` never calls `end_turn`, so the session stays Working. Tool steps are never closed on Finished, Halted or Failed and keep their running mark. | `pm-shell/src/thread.rs:157-160,274-287` | `old: hearing.rs:80-84,252-260` |
+| 4 | **FIXED.** `KeyBindings` in `pm-components/src/key_bindings.rs` hands the keymap to the editor and terminal; verified by unit tests (`own_bindings_reach_the_editor`, `shortcuts_are_caught`) and live: Ctrl+R in a shell reaches bash (reverse-i-search). **The editor and terminal ignore the keymap.** Only window-wide actions go through it. Editor keys are hard-coded in `code_keys`, so keymap presets and custom bindings do nothing in the editor or terminal. | `pm-components/src/code_keys.rs:96-175`, `terminal_keys.rs:102-127` | `old: app/code.rs:410-498,589-1006`, `app/terminal.rs:122-148` |
+| 5 | **FIXED (mostly).** `link/keys.rs` does every window-wide action except the few listed in section 3; verified by `window_actions_are_done` and the live Ctrl+Shift+P/Escape check. **About 55 window-wide keymap actions do nothing.** `run_action` ends in `_ => return None`. Affected: tabs (close, close others, pin, next/previous), panes (split, focus), zoom, ToggleTheme, git stash/amend/continue/abort/skip/create branch, agent mode/model/allow/reject, session rename/archive/copy path, Quit, FocusPrompt, and others. | `pm-shell/src/link/keys.rs:123` | `old: app/code.rs:829-1006` |
+| 6 | **FIXED.** the root handler is `on_key_event`; verified live: Ctrl+R in a focused shell opened bash's reverse search, not the session picker. **The root key handler takes chords from the terminal and browser.** The keymap runs in `on_preview_key_event`, before the focused child, so Ctrl+R/N/P/T/E never reach a shell, and any binding overrides keys typed in a web page. | `pm-pages/src/workspace.rs:79,155-158` | `old: app.rs:2085-2097`, `app/browser.rs:667-702` |
+| 7 | **FIXED.** `Workspace.status` shows in a dismissible status bar and every unhandled `Response::Failed` lands there; verified by `failures_reach_the_status_bar` and the `status` snapshot. **Error messages are never shown.** `Workspace.status` is written by about 25 failure paths (disconnect, start, save, LSP, file tree, listing, browser) and read by nothing. `answer_settings` and other answer handlers drop `Response::Failed` in catch-alls. Prompt, Cancel, Set, Answer, Trust, Rewind, Fork, SaveMcpServers, ModelServers and other failures vanish silently. | `pm-shell/src/model.rs:70`, `link.rs:153,916-919,981` | `old: work.rs:2080-2083,2374,2389` |
+| 8 | **FIXED.** failures and halts end the turn and settle running steps; verified by `failures_end_the_turn`. **A failed turn leaves the session stuck.** `Event::Failed` never calls `end_turn`, so the session stays Working. Tool steps are never closed on Finished, Halted or Failed and keep their running mark. | `pm-shell/src/thread.rs:157-160,274-287` | `old: hearing.rs:80-84,252-260` |
 | 9 | **Closing a modified file discards it without asking.** This covers Close, Close others, Close all and Ctrl+W. Unsaved text, carets and open tabs are also no longer saved across restarts. | `pm-shell/src/open_files.rs:532-562`, `pm-shell/src/view.rs:53-72` | `old: open_files.rs:632-640`, `view.rs:47-65,588-617` |
-| 10 | **Closing the window doesn't ask, and the browser isn't shut down.** The title-bar Close calls `process::exit(0)`, and the confirm-close setting is ignored. A desktop close skips `shutdown_browser` and the view flush. | `pandemonium/src/window.rs:536-539` | `old: app/frame.rs:144-155`, `app.rs:2272-2276,2410` |
+| 10 | **FIXED.** Close goes through `set_close_handler`, which asks while agents work (confirm_close), shuts the browser and writes the view; verified by `closing_on_working_agents_asks_first`, the `quitting` snapshot, and live: the title-bar Close closed the window. **Closing the window doesn't ask, and the browser isn't shut down.** The title-bar Close calls `process::exit(0)`, and the confirm-close setting is ignored. A desktop close skips `shutdown_browser` and the view flush. | `pandemonium/src/window.rs:536-539` | `old: app/frame.rs:144-155`, `app.rs:2272-2276,2410` |
 | 11 | **Diagnostics never reach the editor.** There are no squiggles, no problem colour on line numbers, no problems in the hover card, no scrollbar marks and no next/previous problem. Problems only lists open files, and pressing a problem row does nothing. | `link.rs:798-803`, `code_editor.rs:1631-1825`, `pm-pages/src/problems_panel.rs:32-47` | `old: editor.rs:250-273`, `viewer.rs:257-267`, `dock.rs:253-343` |
 | 12 | **Long lines are cut off.** There is no horizontal scroll and no word wrap in the editor or the diff (compare `new-code.png` and `new-diff.png`). The old build wrapped them. | `code_editor.rs:1426-1458`, `diff_view.rs` | `old: viewer.rs:826-860`, `diff.rs` |
-| 13 | **Shells are lost on reconnect or restart.** `Terminals` and `AttachTerminal` are never sent, `watch_terminal` is never called, shells are never adopted or closed, and missed output is never caught up. This breaks the AGENTS.md reconnect rule. | `pm-shell/src/dock.rs:136-141` | `old: dock.rs:509-520`, `work.rs:2121-2143` |
-| 14 | **Remote machines lose most server messages.** `link/remote.rs` passes on only six message kinds. BrowserCall (a remote agent's browser tool hangs), Diagnostics, FolderChanged, ExtensionsChanged and ChatContinued are dropped. Remote sessions also show no "out of reach" state; they keep spinning as Working. | `pm-shell/src/link/remote.rs:202`, `model.rs` (`SessionStatus`) | `old: work.rs:1752-1843`, `reach.rs:12-32` |
-| 15 | **Customizations, clone and the machines form ignore remote machines.** The library and `SaveWithheld` always go to the local server. Clone has no destination or machine. The machines form has no token field, so token-protected servers can't be reached. | `link.rs:359`, `settings_change.rs:110-119,240-274`, `link/projects.rs:80-98` | `old: settings_library.rs:137-174`, `settings_machines.rs:243-250`, `adder.rs:540-604` |
+| 13 | **FIXED.** the dock asks `Terminals` on first connect, adopts the shells and replays them with `watch_terminal`; the client re-attaches on reconnect. Verified by `shells_of_the_server_are_taken_up`. **Shells are lost on reconnect or restart.** `Terminals` and `AttachTerminal` are never sent, `watch_terminal` is never called, shells are never adopted or closed, and missed output is never caught up. This breaks the AGENTS.md reconnect rule. | `pm-shell/src/dock.rs:136-141` | `old: dock.rs:509-520`, `work.rs:2121-2143` |
+| 14 | **FIXED.** `link/remote.rs` passes every message on and `machines.rs` renumbers browser calls, diagnostics, folder changes, served pages and continued chats; unreachable machines' sessions show an out-of-reach mark. Verified by build and the existing remote tests. **Remote machines lose most server messages.** `link/remote.rs` passes on only six message kinds. BrowserCall (a remote agent's browser tool hangs), Diagnostics, FolderChanged, ExtensionsChanged and ChatContinued are dropped. Remote sessions also show no "out of reach" state; they keep spinning as Working. | `pm-shell/src/link/remote.rs:202`, `model.rs` (`SessionStatus`) | `old: work.rs:1752-1843`, `reach.rs:12-32` |
+| 15 | **FIXED.** the clone form has a folder and machine, the machines form a token field, and the library's tool sets and withheld keys go to the open project's machine; verified by the `clone` and `settings-servers` snapshots. **Customizations, clone and the machines form ignore remote machines.** The library and `SaveWithheld` always go to the local server. Clone has no destination or machine. The machines form has no token field, so token-protected servers can't be reached. | `link.rs:359`, `settings_change.rs:110-119,240-274`, `link/projects.rs:80-98` | `old: settings_library.rs:137-174`, `settings_machines.rs:243-250`, `adder.rs:540-604` |
 | 16 | **Context menus are missing.** The editor menu (18 commands), the text-field menu outside the composer, the session and chat menus in the sidebar (rename, close, copy path or branch, mark unread, open folder, remove chat), and the right-click menu on chat messages are all gone. `Tile` has no secondary-click hook. | `code_editor.rs`, `text_input.rs`, `pm-components/src/tile.rs:206-284` | `old: context_menu.rs:156-336`, `arrange.rs:17-36,142-204`, `message_menu.rs:45-102` |
-| 17 | **Sessions can't be closed or renamed.** `CloseSession` and `RenameSession` are never sent. A fork made in this window doesn't appear until a reconnect, because the `Started` reply is dropped (`Ask::Nothing`). | `pm-pages/src/actions.rs`, `link/conversation_requests.rs:161` | `old: work.rs:819-852,998` |
-| 18 | **Tooltips are almost all gone.** The new code has one `tooltip(` call (`usage_ring.rs:94`), and `IconButton` has no tooltip API. The title bar, git panel, browser, find bar, file header, debug controls, sidebar status marks and agent chips all lost theirs. | `pm-components/src/icon_button.rs:22-37` | `old: pm-ui/src/tooltip.rs`; title bar alone had 11 |
-| 19 | **There is no keyboard focus ring and no keyboard operation of controls.** Buttons, checkboxes, switches, segmented controls, selects, steppers and menus can't be focused or driven by keys. `Dialog` and `ConfirmDialog` don't close on Escape. The folder picker and adder have no arrow or Enter keys. | `button.rs:131-144`, `menu.rs:269-298`, `dialog.rs:82-111`, `confirm_dialog.rs` | `old: button.rs:253-313`, `settings.rs:20-92`, `folder_picker.rs:308-348` |
+| 17 | **FIXED.** the session menu in the sidebar renames, closes (asking before discarding uncommitted changes), copies and opens folders; forks open at once. Verified by `closing_with_changes_asks_first`, `forks_open_at_once`, `renaming_changes_the_title` and the `session-menu`, `rename`, `discard` snapshots. **Sessions can't be closed or renamed.** `CloseSession` and `RenameSession` are never sent. A fork made in this window doesn't appear until a reconnect, because the `Started` reply is dropped (`Ask::Nothing`). | `pm-pages/src/actions.rs`, `link/conversation_requests.rs:161` | `old: work.rs:819-852,998` |
+| 18 | **PARTLY FIXED.** `IconButton::tooltip` exists and the title bar uses it; verified live (hovering Close shows its tooltip). Tooltips elsewhere are still missing. **Tooltips are almost all gone.** The new code has one `tooltip(` call (`usage_ring.rs:94`), and `IconButton` has no tooltip API. The title bar, git panel, browser, find bar, file header, debug controls, sidebar status marks and agent chips all lost theirs. | `pm-components/src/icon_button.rs:22-37` | `old: pm-ui/src/tooltip.rs`; title bar alone had 11 |
+| 19 | **PARTLY FIXED.** buttons and icon buttons take focus with Tab, show a ring and press on Enter/Space; `Dialog` and `ConfirmDialog` close on Escape, and Escape closes the top dialog or menu. Verified by `window_actions_are_done` and live Tab/Escape. Checkboxes, switches, selects, steppers, menus and the folder picker still lack keys. **There is no keyboard focus ring and no keyboard operation of controls.** Buttons, checkboxes, switches, segmented controls, selects, steppers and menus can't be focused or driven by keys. `Dialog` and `ConfirmDialog` don't close on Escape. The folder picker and adder have no arrow or Enter keys. | `button.rs:131-144`, `menu.rs:269-298`, `dialog.rs:82-111`, `confirm_dialog.rs` | `old: button.rs:253-313`, `settings.rs:20-92`, `folder_picker.rs:308-348` |
 | 20 | **Typing behaviour ignores its settings, and features are missing.** Typing ignores tab size, hard tabs, auto-close, auto-indent and comment extension. Format on save, code actions on save, auto save, snippets and Emmet on Tab, folding, multi-caret (Ctrl+D, Alt+click, column select), case and sort commands, and the line-copy fallback are gone. | `code_editor.rs:669-855`, `link/code.rs:100-117`, `code_text.rs:14` | `old: editor.rs:353-684`, `line_edits.rs:20-157`, `app/code.rs:165-199` |
 | 21 | **The composer is reduced.** The `+`, `@` and `/` toolbar buttons do nothing. `@` file mentions are gone. A prompt made only of attachments can't be sent. The box doesn't grow past one line. Signed-out sessions show no "Sign in again" bar. Account and Goal chips are inert. Shift+Tab mode cycling is gone. | `pm-components/src/composer.rs:294-320,471-477`, `prompt_box.rs:116`, `thread.rs:156` | `old: composer.rs:353-412,592-631`, `input.rs:254-354`, `choices.rs:784-968` |
 | 22 | **The start page drops what you chose.** `StartSession` sends empty `settings` and `attachments` and `base: "HEAD"`. The welcome composer can't take attachments. Agents aren't filtered to visible, signed-in ones. | `pm-shell/src/link.rs:524-537`, `pm-pages/src/welcome.rs:85,99-116` | `old: choices.rs:523-535,757-761`, `agent_list.rs:106-126` |
@@ -232,9 +232,15 @@ reads the value.
 ## 3. Window, title bar and app loop
 
 **P1**
-- **The root preview key handler takes chords before the terminal and the
-  browser page** (top 30, #6).
-- **About 55 keymap actions are unhandled** (top 30, #5). Handled ones:
+- FIXED: **The root preview key handler takes chords before the terminal and the
+  browser page** (top 30, #6). Verified live in a virtual KWin.
+- FIXED (mostly): **About 55 keymap actions are unhandled** (top 30, #5). Still
+  undone: ToggleReadOnly, CopyPermalink, OpenPermalink, FileHistory,
+  OpenTerminalHere, OutgoingCalls, ShowSupertypes, ShowSubtypes,
+  ToggleBreakpoint, CopyWithoutIndentation, CursorUndo/Redo and the editor's
+  GoBack/GoForward; splits only make the fixed left/right split, and stash
+  apply/pop/drop act on the newest stash. Verified by `window_actions_are_done`.
+  Was: Handled ones:
   CommandPalette, FileFinder, ProjectSymbols, Outline, GoToSession,
   ChangeTheme, ChangeKeymap, Problems, CheckoutBranch, RewindConversation,
   OpenSettings, NewSession, NewChat, ShowHistory, ShowExtensions,
@@ -244,7 +250,8 @@ reads the value.
   StageAll, UnstageAll, Fetch, Pull, PullRebase, Push, ForcePush and Sync.
   ToggleSourceControl, SearchProject, RunTask, RerunTask, StartDebugging and
   AttachDebugger only open a panel.
-- **Close quits without asking** (top 30, #10).
+- FIXED: **Close quits without asking** (top 30, #10). Verified by
+  `closing_on_working_agents_asks_first` and live.
 - **The saved view lost most of what it kept.** Gone: open files (caret,
   scroll, unsaved text), the prompt draft, the focused field, read receipts,
   unfolded folders, recent commands, graph and plan sizes, the maximised
@@ -265,18 +272,27 @@ reads the value.
 - **macOS lost its native traffic lights.** The window is undecorated on every
   platform.
 - **The title bar has no tooltips** and no "Update languages" button.
+  Tooltips FIXED (verified live); the button is still missing, and tooltips
+  at the window's right edge are clipped because Rustle's `tooltip` always
+  hangs below-start.
 - **Resize grips misbehave.** They stay active when maximised and sit on the
   far edge of the X11 shadow band (`window.rs:93-105,286-343`).
 - **"Open on launch" is ignored.**
 
 **P3**
-- Panel toggles don't show their filled state (see `icons-zoom.png`).
+- FIXED: Panel toggles don't show their filled state (see `icons-zoom.png`);
+  they now show `active` while open (snapshots).
 - The command centre is fixed at 330 px and its text is wrong on welcome pages.
 - No border around the floating frame.
 - No 6-hour update recheck, and the update installs on the UI thread.
 - The app id is hard-coded.
 - AltGr chords may be read as shortcuts (`key_recorder.rs:103-115`).
-- The keymap is rebuilt on every keystroke.
+- Chords are named by the character typed, as in the old build, so on a
+  Nordic layout Ctrl+` arrives as `ctrl+§` and does not toggle the terminal
+  (seen live in a virtual KWin); only control characters fall back to the
+  key's US sign.
+- The keymap is rebuilt on every keystroke. Partly FIXED: the bindings handed
+  to controls are kept until the keymap changes; `press_key` still rebuilds.
 - Startup timings and `--snapshot-browser` are gone.
 
 ---
@@ -780,18 +796,22 @@ prompts, zoom, clear data, per-session scoping and restore.
 ## 14. Client link and protocol coverage
 
 **P1**
-- **`Workspace.status` has no reader,** so about 25 error paths are invisible.
-- **Catch-alls drop `Response::Failed`** for every `Ask::Nothing` request:
+- FIXED: **`Workspace.status` has no reader,** so about 25 error paths are
+  invisible. The status bar shows it (`status` snapshot).
+- FIXED: **Catch-alls drop `Response::Failed`** for every `Ask::Nothing` request
+  (verified by `failures_reach_the_status_bar`); attachments are still cleared
+  before the send. Was:
   Prompt, Cancel, Set, the queue actions, Choose, Answer, Trust, Rewind, Fork,
   ContinueChat, SaveProjects and WatchFolders (`link.rs:153,981`). Prompt
   attachments are also cleared before the send, so they are lost if it fails.
 - **Requests never sent:**
-  - CloseSession, RenameSession
+  - FIXED: CloseSession, RenameSession (session tests and snapshots)
   - Restore, UndoTurn, TurnChanges, StopSubagent
   - SetSessionAccount, SignInSession, Identity, Discover, SaveChoices
-  - Stash, Stashes, CherryPick, Step, SubmoduleHeads, DevContainer
+  - Stash and Step are now sent from keys; Stashes, CherryPick,
+    SubmoduleHeads, DevContainer are not
   - Owners, Repositories
-  - Terminals, AttachTerminal
+  - FIXED: Terminals, AttachTerminal (`shells_of_the_server_are_taken_up`)
   - InspectExtension, InstallExtension, GrantExtension, RunExtensionCommand,
     ExtensionAssets
   - Blame, Problems, FoldingRanges, LinkedRanges, DocumentLinks, ResolveLink,
@@ -799,16 +819,18 @@ prompts, zoom, clear data, per-session scoping and restore.
   - RunnableTasks, RunRunnable, Toolchains, SelectToolchain
   - DebugProcesses, DebugAttach
   - SearchChats, CreatePromptFile
-- **Remote servers:** BrowserCall, Diagnostics, FolderChanged,
-  TerminalServing, SessionServing, ExtensionsChanged and ChatContinued are
-  dropped (`link/remote.rs:202`).
+- FIXED: **Remote servers:** BrowserCall, Diagnostics, FolderChanged,
+  TerminalServing, SessionServing and ChatContinued are passed on with their
+  numbers and folders mapped; ExtensionsChanged of other machines is left out
+  on purpose, since the window lists this machine's extensions. Was dropped
+  (`link/remote.rs:202`).
 
 **P2**
 - Agent events dropped at `thread.rs:254`: ToolSignIn, Restored, Undone,
   Limits, Goal, Slots and Container.
 - Git is never refreshed on Finished, Failed, Restored or Undone.
-- On reconnect, nothing re-announces BrowserAvailable to remote hosts (it is
-  sent locally only), re-opens LSP documents, or re-asks extension assets.
+- On reconnect, nothing re-opens LSP documents or re-asks extension assets.
+  BrowserAvailable is now announced to each remote host when it connects.
 - Disconnect only sets the (unread) status. `Link::ask` drops requests while
   there is no client, with no backlog (`link.rs:731-734`).
 - `open_branch` searches local sessions only, so pull requests never work for
@@ -822,6 +844,7 @@ prompts, zoom, clear data, per-session scoping and restore.
   - `web.rs:209`: open address
   - `notify.rs:75`
   - `link/quick_input.rs:357-363`: discarded `QuickOutcome`
+  - FIXED: `window.rs`'s title-bar Close no longer calls `process::exit`
 - **Unused fields:** `Workspace.draft` (`model.rs:44`) is never written or
   read.
 - **No-op closures in shipped UI:**
