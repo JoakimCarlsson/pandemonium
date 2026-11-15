@@ -328,9 +328,26 @@ mod tests {
             command(&KeyEvent::typed("é", plain)),
             Some(Command::Type("é".into()))
         );
+    }
+
+    /// Carets, folding and problems come through the keymap: Ctrl+D adds the next occurrence and F8 goes to the next problem.
+    #[test]
+    fn keymap_reaches_editor_commands() {
+        let bindings = KeyBindings::new(
+            pm_editor::Keymap::new(pm_editor::Preset::default(), &Default::default()),
+            |_| {},
+        );
+        let ctrl = Modifiers {
+            ctrl: true,
+            ..Modifiers::default()
+        };
         assert_eq!(
-            command(&press(Key::Character("d".into()), ctrl)),
-            Some(Command::AddNextOccurrence)
+            keymapped(&press(Key::Character("d".into()), ctrl), &bindings),
+            Keyed::Command(Command::AddNextOccurrence)
+        );
+        assert_eq!(
+            keymapped(&press(Key::F(8), Modifiers::default()), &bindings),
+            Keyed::Command(Command::NextProblem(true))
         );
     }
 

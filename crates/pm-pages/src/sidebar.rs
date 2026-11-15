@@ -405,11 +405,7 @@ fn session_menu(session: &Session, indent: f32, chat: bool, actions: &Actions) {
             act(SessionCommand::Remove(id)),
         )
     } else {
-        menu.destructive_item(
-            phosphor::X,
-            "Close session",
-            act(SessionCommand::Close(id)),
-        )
+        menu.destructive_item(phosphor::X, "Close session", act(SessionCommand::Close(id)))
     };
     menu.show();
 }
