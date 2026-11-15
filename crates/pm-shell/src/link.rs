@@ -6,7 +6,9 @@
 
 mod composer_requests;
 mod conversation_requests;
+mod session_requests;
 mod start_requests;
+pub use session_requests::SessionAction;
 pub use start_requests::BASE_SETTING;
 
 pub use conversation_requests::ConversationCommand;
@@ -133,6 +135,8 @@ enum Ask {
     Discover(String),
     /// The branches of the repository at this folder, for the welcome page.
     StartBranches(String),
+    /// Closing the session with this number.
+    Closed(u64),
     /// Nothing that needs handling.
     Nothing,
 }
@@ -853,6 +857,7 @@ impl Link {
             (ask @ (Ask::SessionSlots(_) | Ask::SessionAllowance(_)), response) => {
                 self.composer_answer(ask, response)
             }
+            (Ask::Closed(session), response) => self.closed(session, response),
             (ask @ (Ask::Identity(_) | Ask::Discover(_) | Ask::StartBranches(_)), response) => {
                 self.start_answer(ask, response)
             }
@@ -1049,6 +1054,7 @@ impl Link {
                 .map(|thread| thread.status(info.running))
                 .unwrap_or_default(),
             branch: info.branch.clone().unwrap_or_default(),
+            directory: info.directory.clone(),
         };
         self.workspace.projects = self
             .paths

@@ -1,7 +1,8 @@
 //! The sidebar: navigation, the made-up projects' notice before real ones
 //! exist, every project with its nested submodules, its sessions and a
 //! "New session" row, each project with its menu and dragged to reorder,
-//! the adder that adds a project, and the chats that belong to none.
+//! the adder that adds a project, and the chats that belong to none; each
+//! session and chat with a menu on right click and renamed in its row.
 
 use std::rc::Rc;
 
@@ -9,10 +10,11 @@ use rustle::prelude::*;
 
 use pm_components::{
     Avatar, Button, ButtonVariant, IconButton, Label, LabelVariant, Leading, Menu, Notice, Size,
-    Tile, TileVariant, project_colour,
+    TextInput, Tile, TileVariant, project_colour,
 };
 use pm_shell::{
-    AddStep, Page, Project, ProjectAction, ProjectReach, Session, SessionStatus, Workspace,
+    AddStep, Page, Project, ProjectAction, ProjectReach, Session, SessionAction, SessionStatus,
+    Workspace,
 };
 
 use crate::actions::{Actions, Destination};
@@ -149,13 +151,8 @@ fn chats(workspace: &Workspace, actions: &Actions) {
         key(chat.id, || {
             let open = actions.reopen_session.clone();
             let id = chat.id;
-            Tile::new(chat.title.clone())
-                .leading(status_mark(chat.status))
-                .trailing(chat.age.clone())
-                .size(Size::Xs)
-                .selected(workspace.page == Page::Session(id) && workspace.starting.is_none())
-                .on_click(move || open(id))
-                .show();
+            let selected = workspace.page == Page::Session(id) && workspace.starting.is_none();
+            session_tile(chat, 0.0, selected, true, workspace, actions, move || open(id));
         });
     }
 }
@@ -309,14 +306,143 @@ fn session_row(
 ) {
     let open = actions.open_session.clone();
     let selected = workspace.open.as_ref() == Some(&at);
+    session_tile(
+        session,
+        (depth + 1) as f32 * NEST,
+        selected,
+        false,
+        workspace,
+        actions,
+        move || open(at.clone()),
+    );
+}
+
+/// Emits the row of `session`, indented `indent`, a chat when `chat`,
+/// calling `on_open` when clicked; or the field renaming it, and its menu
+/// while open.
+fn session_tile(
+    session: &Session,
+    indent: f32,
+    selected: bool,
+    chat: bool,
+    workspace: &Workspace,
+    actions: &Actions,
+    on_open: impl Fn() + 'static,
+) {
+    let id = session.id;
+    if let Some((_, title)) = workspace
+        .renaming
+        .as_ref()
+        .filter(|(renaming, _)| *renaming == id)
+    {
+        rename_field(title, indent, actions);
+        return;
+    }
+    let menu = actions.session.clone();
     Tile::new(session.title.clone())
         .leading(status_mark(session.status))
         .trailing(session.age.clone())
-        .indent((depth + 1) as f32 * NEST)
+        .indent(indent)
         .size(Size::Xs)
         .selected(selected)
-        .on_click(move || open(at.clone()))
+        .on_click(on_open)
+        .on_menu(move || menu(SessionAction::Menu(Some(id))))
         .show();
+    if workspace.session_menu == Some(id) {
+        session_menu(session, indent, chat, actions);
+    }
+}
+
+/// Emits the field renaming a session, holding `title`, indented `indent`.
+fn rename_field(title: &str, indent: f32, actions: &Actions) {
+    let (change, submit, cancel) = (
+        actions.session.clone(),
+        actions.session.clone(),
+        actions.session.clone(),
+    );
+    TextInput::new(title)
+        .autofocus()
+        .size(Size::Sm)
+        .modifier(
+            Modifier::new()
+                .fill_max_width()
+                .padding_each(indent, 2.0, 0.0, 2.0)
+                .on_key_event(move |event| {
+                    let escape = event.pressed && event.key == rustle::Key::Escape;
+                    if escape {
+                        cancel(SessionAction::CancelRename);
+                    }
+                    escape
+                }),
+        )
+        .on_change(move |text| change(SessionAction::RenameText(text)))
+        .on_submit(move |_| submit(SessionAction::CommitRename))
+        .show();
+}
+
+/// The menu of `session`, a chat when `chat`, hung under its row indented `indent`.
+fn session_menu(session: &Session, indent: f32, chat: bool, actions: &Actions) {
+    let id = session.id;
+    let act = |action: SessionAction| {
+        let run = actions.session.clone();
+        move || run(action.clone())
+    };
+    let copy = |text: String| {
+        let close = actions.session.clone();
+        move || {
+            if let Some(clipboard) = rustle::clipboard() {
+                clipboard.set_text(&text);
+            }
+            close(SessionAction::Menu(None));
+        }
+    };
+    let close = actions.session.clone();
+    let mut menu = Menu::new()
+        .offset(indent + 8.0, 0.0)
+        .width(220.0)
+        .on_dismiss(move || close(SessionAction::Menu(None)))
+        .icon_item(
+            phosphor::PENCIL_SIMPLE,
+            "Rename",
+            act(SessionAction::StartRename(id)),
+        )
+        .icon_item(
+            phosphor::ENVELOPE_SIMPLE,
+            if session.status == SessionStatus::Unread {
+                "Mark as read"
+            } else {
+                "Mark as unread"
+            },
+            act(SessionAction::ToggleRead(id)),
+        );
+    if !session.directory.is_empty() {
+        menu = menu.icon_item(
+            phosphor::COPY,
+            "Copy path",
+            copy(session.directory.clone()),
+        );
+        if !session.directory.starts_with("ssh://") {
+            menu = menu.icon_item(
+                phosphor::FOLDER_OPEN,
+                "Open folder",
+                act(SessionAction::OpenFolder(id)),
+            );
+        }
+    }
+    if !chat && !session.branch.is_empty() {
+        menu = menu.icon_item(
+            phosphor::GIT_BRANCH,
+            "Copy branch name",
+            copy(session.branch.clone()),
+        );
+    }
+    menu = menu.separator();
+    menu = if chat {
+        menu.destructive_item(phosphor::TRASH, "Remove chat", act(SessionAction::Remove(id)))
+    } else {
+        menu.icon_item(phosphor::ARCHIVE, "Close session", act(SessionAction::Close(id)))
+    };
+    menu.show();
 }
 
 /// The mark a session's row leads with for `status`.

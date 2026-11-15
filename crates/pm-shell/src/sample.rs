@@ -35,6 +35,7 @@ fn session(id: u64, title: &str, age: &str) -> Session {
         age: age.to_owned(),
         status: SessionStatus::Idle,
         branch: "main".to_owned(),
+        directory: format!("~/repos/sample-{id}"),
     }
 }
 
@@ -115,6 +116,8 @@ pub fn sample_workspace() -> Workspace {
             session(13, "Compare tokio and smol", "2d ago"),
         ],
         project_menu: None,
+        session_menu: None,
+        renaming: None,
         adder: None,
         picker: None,
         sample: false,

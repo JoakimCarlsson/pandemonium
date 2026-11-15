@@ -111,6 +111,9 @@ const WORDS: &[&str] = &[
     "browser-notice",
     "browser-pick",
     "project-menu",
+    "session-menu",
+    "chat-menu",
+    "session-rename",
     "adder",
     "clone",
     "clone-failed",
@@ -143,7 +146,7 @@ const WORDS: &[&str] = &[
 /// [tab-menu|tab-steps|split|excerpts|update-tab]
 /// [files|search|search-edit|quick[-<list>]|file-menu|file-delete]
 /// [browser[-find|-menu|-tools|-ask|-cert|-clear|-notice|-pick]]
-/// [project-menu|adder|clone|clone-failed|sample|remote]
+/// [project-menu|session-menu|chat-menu|session-rename|adder|clone|clone-failed|sample|remote]
 /// [picker|picker-remote|picker-failed] [form]
 /// [composer[-model|-slash|-queued|-attached|-field|-mention]|welcome-place|welcome-branch]
 /// [signed-out]
@@ -316,6 +319,21 @@ fn show_projects(workspace: &mut pm_shell::Workspace, words: &[&str]) {
             .projects
             .get(2)
             .map(|project| project.path.clone());
+    }
+    let first_session = workspace
+        .projects
+        .iter()
+        .flat_map(|project| &project.sessions)
+        .next()
+        .map(|session| (session.id, session.title.clone()));
+    if words.contains(&"session-menu") {
+        workspace.session_menu = first_session.as_ref().map(|(id, _)| *id);
+    }
+    if words.contains(&"chat-menu") {
+        workspace.session_menu = workspace.chats.first().map(|chat| chat.id);
+    }
+    if words.contains(&"session-rename") {
+        workspace.renaming = first_session;
     }
     if words.contains(&"adder") {
         workspace.adder = Some(pm_shell::Adder::default());

@@ -175,6 +175,7 @@ impl Link {
                             .map(|thread| thread.status(info.running))
                             .unwrap_or_default(),
                         branch: info.branch.clone().unwrap_or_default(),
+                        directory: super::routes::address_on(host, &info.directory),
                     }
                 })
                 .collect();

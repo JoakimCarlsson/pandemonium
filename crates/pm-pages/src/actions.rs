@@ -6,7 +6,8 @@ use pm_components::ServerAsk;
 use pm_components::{TerminalCommand, TerminalSelection};
 use pm_shell::{
     BrowserAction, ComposerAction, ConversationCommand, DebugCommand, DockTab, FileAction,
-    GitAction, InquiryReply, ProjectAction, QuickAction, RightTab, SearchAction, TabAction,
+    GitAction, InquiryReply, ProjectAction, QuickAction, RightTab, SearchAction, SessionAction,
+    TabAction,
     TreeAction, TrustVerdict,
 };
 
@@ -117,6 +118,8 @@ pub struct Actions {
     pub shortcut: Rc<dyn Fn(String) -> bool>,
     /// Arranges the sidebar's projects, or works the adder or the folder picker.
     pub projects: Rc<dyn Fn(ProjectAction)>,
+    /// Does what the menu of a session or chat in the sidebar asks.
+    pub session: Rc<dyn Fn(SessionAction)>,
 }
 
 /// What the newer-release button and the update dialog ask for.
@@ -242,6 +245,7 @@ impl Actions {
             quick: Rc::new(|_| {}),
             shortcut: Rc::new(|_| false),
             projects: Rc::new(|_| {}),
+            session: Rc::new(|_| {}),
         }
     }
 }

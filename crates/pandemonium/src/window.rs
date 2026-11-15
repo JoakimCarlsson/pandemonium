@@ -454,6 +454,7 @@ fn actions(
     let projects = change.clone();
     let adding = change.clone();
     let composed = change.clone();
+    let sessions = change.clone();
     let quick = quick_action(link, revision, settings_open);
     let shortcut = shortcut(link, revision, settings_open);
     let dock_actions = dock_actions(&change);
@@ -628,6 +629,7 @@ fn actions(
         quick,
         shortcut,
         projects: Rc::new(move |action| projects(&|link| link.project_action(action.clone()))),
+        session: Rc::new(move |action| sessions(&|link| link.session_action(action.clone()))),
     }
 }
 

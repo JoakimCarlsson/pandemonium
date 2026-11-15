@@ -48,6 +48,8 @@ pub struct Thread {
     updates: u64,
     /// How many ended turns have been read.
     read_through: u64,
+    /// Whether the reader marked it unread, whatever has been read.
+    unread: bool,
     /// The model slots the agent's harness holds, offered as `@slot` in the model picker.
     slots: Vec<SlotInfo>,
 }
@@ -424,6 +426,17 @@ impl Thread {
     /// Marks every ended turn as read.
     pub fn mark_read(&mut self) {
         self.read_through = self.updates;
+        self.unread = false;
+    }
+
+    /// Marks it unread until it is read again.
+    pub fn mark_unread(&mut self) {
+        self.unread = true;
+    }
+
+    /// Whether a turn ended that has not been read, or the reader marked it unread.
+    pub fn is_unread(&self) -> bool {
+        self.updates > self.read_through || self.unread
     }
 
     /// The mark the sidebar shows, given whether the server says the agent runs.
@@ -432,7 +445,7 @@ impl Thread {
             SessionStatus::NeedsInput
         } else if self.working || running {
             SessionStatus::Working
-        } else if self.updates > self.read_through {
+        } else if self.is_unread() {
             if self.failed {
                 SessionStatus::Error
             } else {

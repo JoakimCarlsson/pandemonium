@@ -106,6 +106,10 @@ pub struct Workspace {
     pub chats: Vec<Session>,
     /// The address of the project whose menu is open, when one is.
     pub project_menu: Option<String>,
+    /// The session or chat whose menu is open in the sidebar, by its number.
+    pub session_menu: Option<u64>,
+    /// The session or chat being renamed in the sidebar, by its number, with the title typed so far.
+    pub renaming: Option<(u64, String)>,
     /// The adder, while it is open.
     pub adder: Option<Adder>,
     /// The folder picker, while its window is open.
@@ -253,6 +257,8 @@ pub struct Session {
     pub status: SessionStatus,
     /// The branch its worktree is on, or empty.
     pub branch: String,
+    /// The folder its agent works in, as `ssh://host/folder` on another machine, or empty.
+    pub directory: String,
 }
 
 /// What a session is doing, shown as its leading mark.
