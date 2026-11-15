@@ -63,6 +63,10 @@ impl Link {
                 }
                 None => self.workspace.status = Some("No commit holds this file yet.".to_owned()),
             },
+            FileAction::ChooseCompare => {
+                self.workspace.open_files.tab = SessionTab::File(index);
+                self.open_choices(Choosing::CompareFile);
+            }
             FileAction::CompareWith(other) => {
                 let Some(other) = self.workspace.open_files.files.get(other) else {
                     return;
@@ -108,6 +112,24 @@ impl Link {
             text,
             self.settings.editor.compare_ignore_whitespace,
         )
+    }
+
+    /// Reads the file at `other` of the shown file's folder from the server, to compare the shown file with it.
+    pub(super) fn compare_with_file(&mut self, other: String) {
+        let Some(file) = self.workspace.open_files.shown() else {
+            return;
+        };
+        let directory = file.directory.clone();
+        let path = file.path.clone();
+        self.ask(
+            Request::ReadFile {
+                directory: directory.clone(),
+                path: other.clone(),
+                head: false,
+                revision: None,
+            },
+            Ask::Code(CodeAsk::CompareFile(directory, path, other)),
+        );
     }
 
     /// Shows `comparison` in place of the text of the open file at `index`,

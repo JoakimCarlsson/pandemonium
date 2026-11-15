@@ -212,7 +212,10 @@ impl Link {
                     self.workspace.status = Some(format!("Left out: {}", skipped.join("; ")));
                 }
             }
-            TreeAction::Refresh => self.load_files(),
+            TreeAction::Refresh => {
+                self.load_files();
+                self.git(crate::git::GitAction::Refresh);
+            }
             TreeAction::CollapseAll => tree.expanded.clear(),
         }
     }

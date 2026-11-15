@@ -40,6 +40,7 @@ pub fn welcome_page(workspace: &Workspace, start: &Start, actions: &Actions) {
                     || {
                         IconButton::new(phosphor::GLOBE)
                             .size(Size::Sm)
+                            .tooltip("Open the browser")
                             .on_click(move || open(BrowserAction::Open))
                             .show();
                     },
@@ -118,6 +119,8 @@ fn welcome_composer(workspace: &Workspace, start: &Start, actions: &Actions) {
     let place = actions.composer.clone();
     let mut composer = Composer::new("Describe a task, ask a question, or type / for commands")
         .variant(ComposerVariant::Start)
+        .prefill(workspace.extras.prefill.clone())
+        .focus_request(workspace.extras.composer.asked)
         .menu(
             start
                 .place_menu

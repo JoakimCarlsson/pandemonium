@@ -174,6 +174,7 @@ fn title_strip(actions: &PickerActions) {
             row_with(Modifier::new().on_press(keep_press), || {
                 IconButton::new(phosphor::X)
                     .size(Size::Sm)
+                    .tooltip("Close")
                     .on_click(close)
                     .show();
             });
@@ -244,16 +245,19 @@ fn trail(picker: &FolderPicker, actions: &PickerActions) {
         || {
             IconButton::new(phosphor::ARROW_LEFT)
                 .size(Size::Sm)
+                .tooltip("Back")
                 .active(!picker.back.is_empty())
                 .on_click(doing(actions, PickerAction::Back))
                 .show();
             IconButton::new(phosphor::ARROW_RIGHT)
                 .size(Size::Sm)
+                .tooltip("Forward")
                 .active(!picker.forward.is_empty())
                 .on_click(doing(actions, PickerAction::Forward))
                 .show();
             IconButton::new(phosphor::ARROW_UP)
                 .size(Size::Sm)
+                .tooltip("Up one folder")
                 .on_click(doing(actions, PickerAction::Up))
                 .show();
             spacer(Modifier::new().width(pm_components::spacing(6.0)));

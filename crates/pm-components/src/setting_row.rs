@@ -118,6 +118,7 @@ impl SettingRow {
                     if let Some(on_reset) = on_reset {
                         IconButton::new(phosphor::ARROW_COUNTER_CLOCKWISE)
                             .size(Size::Xs)
+                            .tooltip("Reset to default")
                             .on_click(move || on_reset())
                             .show();
                     }

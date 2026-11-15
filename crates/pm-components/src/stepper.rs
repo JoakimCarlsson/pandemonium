@@ -99,6 +99,7 @@ impl Stepper {
             || {
                 IconButton::new(phosphor::MINUS)
                     .size(Size::Xs)
+                    .tooltip("Decrease")
                     .on_click(move || {
                         if let Some(step) = &smaller {
                             step(-1);
@@ -108,6 +109,7 @@ impl Stepper {
                 Label::new(shown).show();
                 IconButton::new(phosphor::PLUS)
                     .size(Size::Xs)
+                    .tooltip("Increase")
                     .on_click(move || {
                         if let Some(step) = &bigger {
                             step(1);

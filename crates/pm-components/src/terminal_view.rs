@@ -11,7 +11,7 @@ use rustle::prelude::*;
 use rustle::{KeyEvent, Offset, PointerButton, layout_text};
 
 use crate::key_bindings::{KeyBindings, key_bindings};
-use crate::option_list::OptionList;
+use crate::menu::Menu;
 use crate::size::Size;
 use crate::terminal_keys::{TerminalCommand, TerminalShortcut, key_bytes, terminal_shortcut};
 use rustle::{ColorScheme, color_scheme};
@@ -37,12 +37,14 @@ pub struct TerminalSelection {
     pub clicks: u32,
 }
 
-/// The entries of the menu the secondary button opens, in order, with the command each runs.
-const MENU: [(&str, TerminalCommand); 4] = [
-    ("Copy", TerminalCommand::Copy),
-    ("Paste", TerminalCommand::Paste),
-    ("Select all", TerminalCommand::SelectAll),
-    ("Clear", TerminalCommand::Clear),
+/// The entries of the menu the secondary button opens, in order, each with its icon and whether a hairline follows it.
+const MENU: [(TerminalCommand, Icon, bool); 6] = [
+    (TerminalCommand::AddToChat, phosphor::CHAT_TEXT, true),
+    (TerminalCommand::Copy, phosphor::COPY, false),
+    (TerminalCommand::Paste, phosphor::CLIPBOARD_TEXT, false),
+    (TerminalCommand::SelectAll, phosphor::SELECTION_ALL, true),
+    (TerminalCommand::Clear, phosphor::TRASH, true),
+    (TerminalCommand::Kill, phosphor::X_CIRCLE, false),
 ];
 
 /// How soon a press must follow the last on the same cell to count as the next in a row.
@@ -78,6 +80,8 @@ pub struct TerminalView {
     variant: TerminalViewVariant,
     /// Its size, which sets the type size.
     size: Size,
+    /// What names the shell shown; the view takes the keyboard each time it changes.
+    focus_key: Option<u64>,
     /// The modifier it is laid out with.
     modifier: Modifier,
     /// What it tells of what the reader does.
@@ -94,6 +98,7 @@ impl TerminalView {
             application_cursor: false,
             variant: TerminalViewVariant::Plain,
             size: Size::Sm,
+            focus_key: None,
             modifier: Modifier::new(),
             callbacks: Callbacks::default(),
         }
@@ -126,6 +131,12 @@ impl TerminalView {
     /// The view at `size`.
     pub fn size(mut self, size: Size) -> Self {
         self.size = size;
+        self
+    }
+
+    /// The view taking the keyboard whenever `key`, which names the shell shown, changes, so a new or picked shell can be typed in at once.
+    pub fn focus_key(mut self, key: Option<u64>) -> Self {
+        self.focus_key = key;
         self
     }
 
@@ -193,7 +204,14 @@ impl TerminalView {
         let style = self.style();
         let cell = cell_size(&style);
         let focus = remember_focus();
+        let asked_focus = remember(|| self.focus_key);
+        if asked_focus.get() != self.focus_key {
+            asked_focus.set(self.focus_key);
+            focus.request_focus();
+        }
         let focused = focus.is_focused();
+        let marked = self.selection.is_some();
+        let bindings = key_bindings();
         let menu = remember(|| None::<Offset>);
         let pointer = Pointer {
             anchor: remember(|| None::<(usize, usize)>),
@@ -233,7 +251,7 @@ impl TerminalView {
                 move |event| menu.set(Some(event.position))
             })
             .focusable(&focus, {
-                let bindings = key_bindings();
+                let bindings = bindings.clone();
                 move |event| key_pressed(&callbacks, &bindings, event, application_cursor, rows)
             })
             .cursor(CursorIcon::Text);
@@ -254,30 +272,56 @@ impl TerminalView {
             });
             if let Some(at) = menu.get() {
                 stack_with(Modifier::new().offset(at.x, at.y), || {
-                    let close = menu.clone();
-                    let picked = menu.clone();
-                    popup(
-                        move || close.set(None),
-                        move || {
-                            OptionList::new(
-                                MENU.iter().map(|(label, _)| (*label).to_owned()).collect(),
-                                None,
-                            )
-                            .size(Size::Xs)
-                            .modifier(Modifier::new().width(160.0))
-                            .on_pick(move |place| {
-                                picked.set(None);
-                                if let Some(on_command) = &on_command {
-                                    on_command(MENU[place].1);
-                                }
-                            })
-                            .show();
-                        },
-                    );
+                    terminal_menu(&menu, &bindings, marked, on_command.clone());
                 });
             }
         });
     }
+}
+
+/// Emits the menu of a terminal view open at `menu`: each command with the first keys `bindings` give it, those that act on marked text greyed out unless `marked`; choosing one closes it and hands it to `on_command`.
+fn terminal_menu(
+    menu: &State<Option<Offset>>,
+    bindings: &KeyBindings,
+    marked: bool,
+    on_command: Option<Rc<dyn Fn(TerminalCommand)>>,
+) {
+    let close = menu.clone();
+    let mut list = Menu::new()
+        .size(Size::Xs)
+        .width(220.0)
+        .offset(0.0, 0.0)
+        .on_dismiss(move || close.set(None));
+    for (command, glyph, split) in MENU {
+        list = if command.needs_selection() && !marked {
+            list.disabled_item(glyph, command.label())
+        } else if command == TerminalCommand::Kill {
+            let picked = menu.clone();
+            let on_command = on_command.clone();
+            list.destructive_item(glyph, command.label(), move || {
+                picked.set(None);
+                if let Some(on_command) = &on_command {
+                    on_command(command);
+                }
+            })
+        } else {
+            let picked = menu.clone();
+            let on_command = on_command.clone();
+            list.icon_item(glyph, command.label(), move || {
+                picked.set(None);
+                if let Some(on_command) = &on_command {
+                    on_command(command);
+                }
+            })
+        };
+        if let Some(keys) = bindings.keymap().label(command.action()) {
+            list = list.hint(keys);
+        }
+        if split {
+            list = list.separator();
+        }
+    }
+    list.show();
 }
 
 /// Hands the key `event` to the terminal's shortcuts in `bindings` first, then to the shell; returns whether either took it.
@@ -298,7 +342,7 @@ fn key_pressed(
         }
         Some(TerminalShortcut::Page(pages)) => {
             if let Some(on_scroll) = &callbacks.on_scroll {
-                on_scroll(pages * rows.max(1) as i32);
+                on_scroll(pages * rows.saturating_sub(1).max(1) as i32);
             }
             return true;
         }

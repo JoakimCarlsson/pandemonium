@@ -99,6 +99,10 @@ pub struct Dock {
     adopted: bool,
     /// The shells taken up from the server, whose output the connection is to replay and follow, by number.
     watches: Vec<u64>,
+    /// The file, whole or from the folder, and the line counted from 1, the debugger asks to be shown, until the link takes it.
+    reveal: Option<(String, usize)>,
+    /// Whether the program paused and the place it paused at is still to be shown, once its frames arrive.
+    reveal_pending: bool,
 }
 
 impl Default for Dock {
@@ -127,6 +131,8 @@ impl Default for Dock {
             scrollback: pm_config::SCROLLBACK,
             adopted: false,
             watches: Vec::new(),
+            reveal: None,
+            reveal_pending: false,
         }
     }
 }
@@ -170,6 +176,31 @@ impl Dock {
     /// Takes the shells taken up from the server since the last call, whose output the connection is to replay from the start and follow.
     pub fn take_watches(&mut self) -> Vec<u64> {
         std::mem::take(&mut self.watches)
+    }
+
+    /// Takes the file and line, counted from 1, the debugger asked to show since the last call: where the program paused, or the frame picked.
+    pub fn take_reveal(&mut self) -> Option<(String, usize)> {
+        self.reveal.take()
+    }
+
+    /// Asks for the place of `frame` of the session `debug`, or its first frame when none, to be shown, and returns whether it had one.
+    fn reveal_frame(&mut self, debug: u64, frame: Option<i64>) -> bool {
+        let Some(view) = self.debugs.get(&debug).map(|debugged| &debugged.view) else {
+            return false;
+        };
+        let found = match frame {
+            Some(id) => view.frames.iter().find(|candidate| candidate.id == id),
+            None => view.selected_frame().or(view.frames.first()),
+        };
+        let place = found.and_then(|found| {
+            let path = found.path.as_ref()?;
+            Some((path.to_string_lossy().into_owned(), found.line + 1))
+        });
+        let had = place.is_some();
+        if had {
+            self.reveal = place;
+        }
+        had
     }
 
     /// Takes up `terminals`, the shells the server holds that the dock does not know, as tabs of the folders they run in, then starts the place's shell when none of them runs there.
@@ -340,6 +371,13 @@ impl Dock {
         }
     }
 
+    /// Ends the shown shell and drops its tab.
+    pub fn kill_shown(&mut self) {
+        if let Some(key) = self.shown.get(&self.place).copied() {
+            self.close(key);
+        }
+    }
+
     /// Types `data` into the shown shell, scrolled to the end, starting a new shell in its place when it ended.
     pub fn input(&mut self, data: Vec<u8>) {
         let Some(shell) = self.current() else {
@@ -353,6 +391,7 @@ impl Dock {
             return;
         }
         shell.back = 0;
+        shell.emulator.clear_selection();
         if let Some(terminal) = shell.id {
             self.send(Request::TerminalInput { terminal, data }, DockAsk::Nothing);
         }
@@ -585,7 +624,10 @@ impl Dock {
             DebugCommand::StepIn => DebugAction::StepIn,
             DebugCommand::StepOut => DebugAction::StepOut,
             DebugCommand::Stop => DebugAction::Stop,
-            DebugCommand::SelectFrame(frame) => DebugAction::SelectFrame { frame },
+            DebugCommand::SelectFrame(frame) => {
+                self.reveal_frame(debug, Some(frame));
+                DebugAction::SelectFrame { frame }
+            }
             DebugCommand::Evaluate(expression) => DebugAction::Evaluate { expression },
             DebugCommand::Expand(reference) => {
                 if !self.expanded.remove(&reference) {
@@ -594,8 +636,50 @@ impl Dock {
                 }
                 return;
             }
+            DebugCommand::AddWatch(expression) => {
+                let expression = expression.trim().to_owned();
+                let mut watches = self.watch_list(debug);
+                if expression.is_empty() || watches.contains(&expression) {
+                    return;
+                }
+                watches.push(expression);
+                self.set_watches(debug, watches);
+                return;
+            }
+            DebugCommand::RemoveWatch(expression) => {
+                let mut watches = self.watch_list(debug);
+                watches.retain(|watched| *watched != expression);
+                self.set_watches(debug, watches);
+                return;
+            }
         };
         self.send(Request::DebugDo { debug, action }, DockAsk::Nothing);
+    }
+
+    /// The watch expressions of the session `debug`.
+    fn watch_list(&self, debug: u64) -> Vec<String> {
+        self.debugs
+            .get(&debug)
+            .map(|debugged| debugged.view.watches.clone())
+            .unwrap_or_default()
+    }
+
+    /// Replaces the watch expressions of the session `debug` with `watches`, here at once and on the server.
+    fn set_watches(&mut self, debug: u64, watches: Vec<String>) {
+        if let Some(debugged) = self.debugs.get_mut(&debug) {
+            debugged.view.watches.clone_from(&watches);
+            debugged
+                .view
+                .watched
+                .retain(|watched| watches.contains(&watched.expression));
+        }
+        self.send(
+            Request::DebugDo {
+                debug,
+                action: DebugAction::SetWatches { watches },
+            },
+            DockAsk::Nothing,
+        );
     }
 
     /// Asks the session `debug` for the variables behind `reference` unless they are known or asked for.
@@ -650,10 +734,10 @@ impl Dock {
 
     /// Takes in what the session `debug` looks like now and what happened in it.
     pub fn debug_update(&mut self, debug: u64, view: DebugView, events: Vec<DebugEvent>) {
-        if events
+        let paused = events
             .iter()
-            .any(|event| matches!(event, DebugEvent::Paused(_)))
-        {
+            .any(|event| matches!(event, DebugEvent::Paused(_)));
+        if paused {
             self.asked.clear();
             self.expanded.clear();
         }
@@ -668,6 +752,12 @@ impl Dock {
             .map(|debugged| debugged.folder.clone())
             .unwrap_or_else(|| self.place.clone());
         self.take_view(debug, folder, view);
+        if paused {
+            self.reveal_pending = true;
+        }
+        if self.reveal_pending && self.followed == Some(debug) && self.reveal_frame(debug, None) {
+            self.reveal_pending = false;
+        }
     }
 
     /// Keeps `view` for the session `debug` in `folder`, follows it when none is, and asks for the variables of its scopes.
@@ -803,7 +893,15 @@ impl Dock {
             .find(|shell| Some(shell.key) == shown)
             .map(Shell::screen)
             .unwrap_or_default();
-        let mut problems: Vec<Problem> = self.diagnostics.values().flatten().cloned().collect();
+        let place = self.place.trim_end_matches('/');
+        let mut problems: Vec<Problem> = self
+            .diagnostics
+            .iter()
+            .filter(|((folder, _), _)| {
+                place.starts_with('~') || folder.trim_end_matches('/') == place
+            })
+            .flat_map(|(_, found)| found.iter().cloned())
+            .collect();
         problems.sort_by(|left, right| {
             (left.severity, &left.path, left.line).cmp(&(right.severity, &right.path, right.line))
         });

@@ -290,7 +290,7 @@ fn walk(root: &Path, directory: &Path, apart: &[String], limit: usize, found: &m
     }
 }
 
-/// The files of the folder `directory`, as paths from it, at most `limit` of them: those a repository and its submodules track and still hold, or do not ignore, those of each repository in a folder that holds repositories together with the files lying outside them, or, in a folder with none, every file but those in hidden and bulky folders.
+/// The files of the folder `directory`, as paths from it, at most `limit` of them: those a repository and its submodules track and still hold on disk or do not ignore, those of each repository in a folder that holds repositories together with the files lying outside them, or, in a folder with none, every file but those in hidden and bulky folders.
 pub fn files(directory: &Path, limit: usize) -> Vec<String> {
     match layout(directory) {
         Layout::Repositories(children) => {
@@ -307,11 +307,10 @@ pub fn files(directory: &Path, limit: usize) -> Vec<String> {
     }
     let submodules = submodule::own_submodules(directory);
     let untracked = ["--others", "--exclude-standard"];
-    let deleted: std::collections::HashSet<String> =
-        ls_files(directory, &["--deleted"]).into_iter().collect();
     let mut found: Vec<String> = ls_files(directory, &["--cached", "--recurse-submodules"])
         .into_iter()
-        .filter(|path| !submodules.contains(path) && !deleted.contains(path))
+        .filter(|path| !submodules.contains(path))
+        .filter(|path| directory.join(path).symlink_metadata().is_ok())
         .chain(ls_files(directory, &untracked))
         .collect();
     for path in &submodules {

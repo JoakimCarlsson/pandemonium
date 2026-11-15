@@ -162,6 +162,7 @@ impl Step {
                     if let Some(on_stop) = on_stop {
                         IconButton::new(phosphor::STOP)
                             .size(Size::Xs)
+                            .tooltip("Stop")
                             .on_click(move || on_stop())
                             .show();
                     }

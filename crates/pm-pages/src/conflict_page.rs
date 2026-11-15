@@ -69,6 +69,7 @@ pub fn conflict_page(conflict: &ConflictView, actions: &Actions) {
                 let git = actions.git.clone();
                 IconButton::new(phosphor::X)
                     .size(Size::Xs)
+                    .tooltip("Close")
                     .on_click(move || git(GitAction::CloseDiff))
                     .show();
             },

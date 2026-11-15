@@ -740,6 +740,7 @@ fn note_box(note: &DiffNote, place: usize, view: &DiffView) {
             if let Some(remove) = remove {
                 IconButton::new(phosphor::X)
                     .size(Size::Xs)
+                    .tooltip("Remove note")
                     .on_click(move || remove(place))
                     .show();
             }

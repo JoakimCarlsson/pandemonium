@@ -140,6 +140,7 @@ fn title_strip(actions: &SettingsActions) {
             row_with(Modifier::new().on_press(keep_press), || {
                 IconButton::new(phosphor::X)
                     .size(Size::Sm)
+                    .tooltip("Close settings")
                     .on_click(move || close())
                     .show();
             });

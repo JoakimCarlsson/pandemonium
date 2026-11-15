@@ -117,18 +117,27 @@ pub(crate) fn find_bar(handle: &Handle, find: &FindBar) {
                     })
                     .on_submit(move |_| step(&submitted, false))
                     .show();
-                toggle(&handle, phosphor::TEXT_AA, find.query.case, |query| {
-                    query.case = !query.case
-                });
+                toggle(
+                    &handle,
+                    phosphor::TEXT_AA,
+                    "Match case",
+                    find.query.case,
+                    |query| query.case = !query.case,
+                );
                 toggle(
                     &handle,
                     phosphor::BRACKETS_SQUARE,
+                    "Match whole word",
                     find.query.word,
                     |query| query.word = !query.word,
                 );
-                toggle(&handle, phosphor::ASTERISK, find.query.regex, |query| {
-                    query.regex = !query.regex
-                });
+                toggle(
+                    &handle,
+                    phosphor::ASTERISK,
+                    "Use regular expression",
+                    find.query.regex,
+                    |query| query.regex = !query.regex,
+                );
                 let summary = match (&problem, count, at) {
                     (Some(problem), _, _) => problem.clone(),
                     (None, 0, _) if find.query.text.is_empty() => String::new(),
@@ -144,16 +153,19 @@ pub(crate) fn find_bar(handle: &Handle, find: &FindBar) {
                 let back = handle.clone();
                 IconButton::new(phosphor::ARROW_UP)
                     .size(Size::Xs)
+                    .tooltip("Previous match")
                     .on_click(move || step(&back, true))
                     .show();
                 let forward = handle.clone();
                 IconButton::new(phosphor::ARROW_DOWN)
                     .size(Size::Xs)
+                    .tooltip("Next match")
                     .on_click(move || step(&forward, false))
                     .show();
                 let switch = handle.clone();
                 IconButton::new(phosphor::SWAP)
                     .size(Size::Xs)
+                    .tooltip("Toggle replace")
                     .active(find.replacing)
                     .on_click(move || {
                         switch.bars.update(|bars| {
@@ -166,6 +178,7 @@ pub(crate) fn find_bar(handle: &Handle, find: &FindBar) {
                 let close = handle.clone();
                 IconButton::new(phosphor::X)
                     .size(Size::Xs)
+                    .tooltip("Close")
                     .on_click(move || {
                         close.bars.update(|bars| bars.find = None);
                         close.focus_text();
@@ -218,12 +231,13 @@ fn replace_row(handle: &Handle, find: &FindBar) {
     );
 }
 
-/// Emits a toggle of the find bar showing `glyph`, lit when `on`, which
-/// changes the query with `flip`.
-fn toggle(handle: &Handle, glyph: Icon, on: bool, flip: fn(&mut Query)) {
+/// Emits a toggle of the find bar showing `glyph` with the tooltip `label`,
+/// lit when `on`, which changes the query with `flip`.
+fn toggle(handle: &Handle, glyph: Icon, label: &str, on: bool, flip: fn(&mut Query)) {
     let handle = handle.clone();
     IconButton::new(glyph)
         .size(Size::Xs)
+        .tooltip(label)
         .active(on)
         .on_click(move || {
             handle.bars.update(|bars| {
@@ -341,6 +355,7 @@ pub(crate) fn go_to_bar(handle: &Handle, typed: &str) {
             let close = handle.clone();
             IconButton::new(phosphor::X)
                 .size(Size::Xs)
+                .tooltip("Close")
                 .on_click(move || {
                     close.bars.update(|bars| bars.go_to = None);
                     close.focus_text();

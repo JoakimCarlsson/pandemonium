@@ -33,6 +33,8 @@ pub enum ChangeRowVariant {
 struct RowAction {
     /// Its icon.
     icon: Icon,
+    /// What it does, shown while the pointer rests on it.
+    label: String,
     /// What a click does.
     on_click: Rc<dyn Fn()>,
 }
@@ -137,10 +139,17 @@ impl ChangeRow {
         self
     }
 
-    /// The row showing a button with `icon` under the pointer that calls `on_click`.
-    pub fn action(mut self, icon: Icon, on_click: impl Fn() + 'static) -> Self {
+    /// The row showing a button with `icon` and the tooltip `label` under the
+    /// pointer that calls `on_click`.
+    pub fn action(
+        mut self,
+        icon: Icon,
+        label: impl Into<String>,
+        on_click: impl Fn() + 'static,
+    ) -> Self {
         self.actions.push(RowAction {
             icon,
+            label: label.into(),
             on_click: Rc::new(on_click),
         });
         self
@@ -269,9 +278,11 @@ impl ChangeRow {
                     for (place, action) in self.actions.iter().enumerate() {
                         let on_click = action.on_click.clone();
                         let glyph = action.icon.clone();
+                        let label = action.label.clone();
                         key(place, || {
                             IconButton::new(glyph)
                                 .size(Size::Xs)
+                                .tooltip(label.clone())
                                 .on_click(move || on_click())
                                 .show();
                         });

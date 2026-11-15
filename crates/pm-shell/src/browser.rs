@@ -84,6 +84,8 @@ pub enum Command {
     Pick(bool),
     /// Take a screenshot of the page, or read its console, for the prompt.
     Capture(CaptureKind),
+    /// Turn on or off the mode in which the reader drags a rectangle over the page to take a picture of it.
+    PickArea(bool),
 }
 
 /// A picture a page painted, compared by which paint it is rather than by its pixels.
@@ -131,6 +133,8 @@ impl PageSearch {
 pub struct BrowserMenu {
     /// Where it opened, in logical pixels from the page's corner.
     pub at: (f32, f32),
+    /// Whether it is the menu of the camera button, which lists the captures, rather than the page's own.
+    pub capture: bool,
 }
 
 /// One tab of the browser: its page, address and zoom, and what the reader and the agents may do to it.
@@ -142,6 +146,8 @@ pub struct BrowserTab {
     pub address: String,
     /// Whether the reader is typing in the address bar, so the page's own address does not overwrite it.
     pub editing: bool,
+    /// The page's own address as last reported, so a navigation ends the reader's editing.
+    pub seen: String,
     /// The title of the page.
     pub title: String,
     /// The newest picture of the page.
@@ -166,6 +172,8 @@ pub struct BrowserTab {
     pub locked: bool,
     /// Whether the reader is picking an element of the page for the prompt.
     pub picking: bool,
+    /// Whether the reader is dragging a rectangle over the page to take a picture of it.
+    pub area: bool,
 }
 
 impl BrowserTab {
@@ -175,6 +183,7 @@ impl BrowserTab {
             id,
             address: address.to_owned(),
             editing: false,
+            seen: String::new(),
             title: String::new(),
             page: None,
             pointer: Cursor::Arrow,
@@ -187,6 +196,7 @@ impl BrowserTab {
             agent,
             locked: false,
             picking: false,
+            area: false,
         }
     }
 
@@ -210,6 +220,20 @@ impl BrowserTab {
         address.clone_into(&mut self.address);
         self.editing = false;
         self.commands.push(Command::Load(address.to_owned()));
+    }
+
+    /// Starts the mode in which the reader drags a rectangle over the page to take a picture of it.
+    pub fn start_area(&mut self) {
+        self.area = true;
+        self.commands.push(Command::Capture(CaptureKind::Area));
+    }
+
+    /// Ends the mode in which the reader drags a rectangle over the page, when it is on, without a picture.
+    pub fn stop_area(&mut self) {
+        if self.area {
+            self.area = false;
+            self.commands.push(Command::PickArea(false));
+        }
     }
 
     /// Shows the bar for finding in the page and looks for the text looked for last again.
@@ -458,8 +482,19 @@ impl Browser {
             return;
         }
         self.menu = None;
+        self.stop_picking();
         self.active = index;
         self.follow_tools();
+    }
+
+    /// Ends picking an element of the page of the tab shown, as when the reader leaves it.
+    fn stop_picking(&mut self) {
+        let tab = self.shown_mut();
+        if tab.picking {
+            tab.picking = false;
+            tab.commands.push(Command::Pick(false));
+        }
+        tab.stop_area();
     }
 
     /// Opens the developer tools on the tab shown when they are open, and so closes them on the one left.

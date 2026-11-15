@@ -141,6 +141,7 @@ fn mcp_servers(model: &SettingsModel, actions: &SettingsActions) {
                 if !from_extension {
                     IconButton::new(phosphor::TRASH)
                         .size(Size::Xs)
+                        .tooltip("Remove")
                         .on_click(remove)
                         .show();
                 }
@@ -181,6 +182,7 @@ fn model_servers(model: &SettingsModel, actions: &SettingsActions) {
             row.trailing(move || {
                 IconButton::new(phosphor::TRASH)
                     .size(Size::Xs)
+                    .tooltip("Remove the model server")
                     .on_click(remove)
                     .show();
             })

@@ -281,6 +281,7 @@ fn trouble(git: &GitSummary, actions: &Actions) {
                     .show();
                 IconButton::new(phosphor::X)
                     .size(Size::Xs)
+                    .tooltip("Dismiss")
                     .on_click(send(actions, GitAction::Dismiss))
                     .show();
             },
@@ -308,14 +309,17 @@ fn changes_section(git: &GitSummary, actions: &Actions) {
                 IconButton::new(phosphor::CHECK)
                     .size(Size::Xs)
                     .disabled(!can_commit)
+                    .tooltip("Commit")
                     .on_click(commit)
                     .show();
                 IconButton::new(phosphor::ARROWS_CLOCKWISE)
                     .size(Size::Xs)
+                    .tooltip("Refresh")
                     .on_click(refresh)
                     .show();
                 IconButton::new(phosphor::DOTS_THREE)
                     .size(Size::Xs)
+                    .tooltip("More actions")
                     .on_click(source)
                     .show();
             })
@@ -369,6 +373,7 @@ fn changes_section(git: &GitSummary, actions: &Actions) {
 /// The main button under the commit message, with the commit menu beside it.
 fn primary_row(git: &GitSummary, actions: &Actions) {
     let primary = git.primary();
+    let busy = matches!(primary, Primary::Busy(_));
     let (label, glyph, enabled) = match &primary {
         Primary::Commit { ready } => (
             if git.changes.is_empty() {
@@ -407,11 +412,13 @@ fn primary_row(git: &GitSummary, actions: &Actions) {
                     })
                     .size(Size::Xs)
                     .disabled(!enabled)
+                    .spinning(busy)
                     .modifier(Modifier::new().weight(1.0))
                     .on_click(send(actions, GitAction::Primary))
                     .show();
                 IconButton::new(phosphor::CARET_DOWN)
                     .size(Size::Xs)
+                    .tooltip("More commit actions")
                     .active(commit_menu)
                     .on_click(send(
                         actions,
@@ -785,11 +792,13 @@ fn change_row(
         ))
         .action(
             phosphor::FILE_TEXT,
+            "Open file",
             send(actions, GitAction::Open(path.clone())),
         );
     if !change.untracked || change.staged {
         row = row.action(
             phosphor::ARROW_COUNTER_CLOCKWISE,
+            "Discard changes",
             send(actions, GitAction::Discard(acting.clone())),
         );
     }
@@ -800,6 +809,7 @@ fn change_row(
             } else {
                 phosphor::PLUS
             },
+            if staged { "Unstage" } else { "Stage" },
             send(actions, GitAction::Stage(acting.clone(), !staged)),
         );
     }
@@ -876,18 +886,22 @@ fn graph_section(git: &GitSummary, actions: &Actions) {
                     .show();
                 IconButton::new(phosphor::CLOUD_ARROW_DOWN)
                     .size(Size::Xs)
+                    .tooltip("Fetch")
                     .on_click(fetch)
                     .show();
                 IconButton::new(phosphor::ARROW_DOWN)
                     .size(Size::Xs)
+                    .tooltip("Pull")
                     .on_click(pull)
                     .show();
                 IconButton::new(phosphor::ARROW_UP)
                     .size(Size::Xs)
+                    .tooltip("Push")
                     .on_click(push)
                     .show();
                 IconButton::new(phosphor::ARROWS_CLOCKWISE)
                     .size(Size::Xs)
+                    .tooltip("Refresh")
                     .on_click(refresh)
                     .show();
             })

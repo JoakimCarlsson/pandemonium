@@ -17,6 +17,8 @@ pub enum FileAction {
     CompareSaved,
     /// Compares the file with what the last commit holds of it.
     CompareCommitted,
+    /// Lists the files of the project, to compare the file with one.
+    ChooseCompare,
     /// Compares the file with the open file at this position.
     CompareWith(usize),
     /// Has the language server sort the file's imports.

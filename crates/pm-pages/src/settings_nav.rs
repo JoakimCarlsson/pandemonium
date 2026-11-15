@@ -83,6 +83,7 @@ pub(crate) fn navigation(model: &Rc<SettingsModel>, actions: &SettingsActions, l
                     if searching {
                         IconButton::new(phosphor::X)
                             .size(Size::Xs)
+                            .tooltip("Clear the search")
                             .on_click(actions.send(SettingsChange::Find(String::new())))
                             .show();
                     }

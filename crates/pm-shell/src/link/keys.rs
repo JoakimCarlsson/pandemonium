@@ -62,9 +62,9 @@ impl Link {
         };
         let keymap = self.keymap();
         let before = std::mem::take(&mut self.chords);
-        match keymap.press_among(&before, &chord, Action::everywhere) {
+        match keymap.press_among(&before, &chord, window_wide) {
             Pressed::Waiting => {
-                let shared = keymap.press_among(&before, &chord, |action| !action.everywhere())
+                let shared = keymap.press_among(&before, &chord, |action| !window_wide(action))
                     != Pressed::Nothing;
                 self.chords = before;
                 self.chords.push(chord);
@@ -157,6 +157,7 @@ impl Link {
             Action::StepOver => self.debug_command(DebugCommand::StepOver),
             Action::StepInto => self.debug_command(DebugCommand::StepIn),
             Action::StepOut => self.debug_command(DebugCommand::StepOut),
+            Action::ToggleBreakpoint => self.toggle_breakpoint_here(),
             Action::ToggleSourceControl => self.show_right(RightTab::Git),
             Action::SearchProject => self.show_right(RightTab::Search),
             Action::OpenBrowser => self.open_browser(None),
@@ -276,6 +277,16 @@ impl Link {
                     self.file_tab(TabAction::Keep(index));
                 }
             }
+            Action::CompareWithFile => {
+                if let Some(index) = shown {
+                    self.file_action(index, FileAction::ChooseCompare);
+                }
+            }
+            Action::CompareWithSaved => {
+                if let Some(index) = shown {
+                    self.file_action(index, FileAction::CompareSaved);
+                }
+            }
             Action::RevealInProject => {
                 if let Some(index) = shown {
                     self.file_action(index, FileAction::Reveal);
@@ -355,7 +366,7 @@ impl Link {
     }
 
     /// Asks the composer of the open session to take the keyboard.
-    fn focus_prompt(&mut self) {
+    pub(super) fn focus_prompt(&mut self) {
         self.workspace.extras.composer.menu = None;
         self.workspace.extras.composer.asked += 1;
     }
@@ -454,6 +465,22 @@ impl Link {
         false
     }
 
+    /// Sets a breakpoint on the caret's line of the file shown, or takes the one there away; nothing when no file shows.
+    fn toggle_breakpoint_here(&mut self) {
+        let SessionTab::File(index) = self.workspace.open_files.tab else {
+            return;
+        };
+        let Some(file) = self.workspace.open_files.files.get(index) else {
+            return;
+        };
+        let path = file.path.clone();
+        let line = {
+            let document = file.document.0.borrow();
+            document.line_of(document.field.caret())
+        };
+        self.toggle_breakpoint(path, line);
+    }
+
     /// Opens the dock on `tab`.
     fn show_dock(&mut self, tab: DockTab) {
         self.workspace.dock_open = true;
@@ -465,6 +492,11 @@ impl Link {
         self.workspace.right_open = true;
         self.choose_right_tab(tab);
     }
+}
+
+/// Whether the window's keys take `action` wherever the keyboard is: the actions that work everywhere, and setting a breakpoint, which the editor leaves to the window.
+fn window_wide(action: Action) -> bool {
+    action.everywhere() || action == Action::ToggleBreakpoint
 }
 
 #[cfg(test)]

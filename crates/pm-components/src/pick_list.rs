@@ -76,6 +76,8 @@ pub struct PickList {
     on_move: Option<Rc<dyn Fn(isize)>>,
     /// What Escape does.
     on_close: Option<Rc<dyn Fn()>>,
+    /// What Control or Command with Enter does.
+    on_prompt: Option<Rc<dyn Fn()>>,
 }
 
 impl PickList {
@@ -96,6 +98,7 @@ impl PickList {
             on_pick: None,
             on_move: None,
             on_close: None,
+            on_prompt: None,
         }
     }
 
@@ -177,6 +180,12 @@ impl PickList {
         self
     }
 
+    /// The list calling `on_prompt` when Control or Command and Enter are pressed.
+    pub fn on_prompt(mut self, on_prompt: impl Fn() + 'static) -> Self {
+        self.on_prompt = Some(Rc::new(on_prompt));
+        self
+    }
+
     /// Emits the list.
     #[track_caller]
     pub fn show(self) {
@@ -198,6 +207,7 @@ impl PickList {
             let on_move = self.on_move.clone();
             let on_pick = self.on_pick.clone();
             let on_close = self.on_close.clone();
+            let on_prompt = self.on_prompt.clone();
             let listed = !self.items.is_empty();
             move |event: &KeyEvent| {
                 let call_move = |by: isize| {
@@ -211,6 +221,13 @@ impl PickList {
                 }
                 if event.is(Key::ArrowUp, Modifiers::NONE) {
                     return call_move(-1);
+                }
+                if let Some(on_prompt) = &on_prompt
+                    && (event.is(Key::Enter, Modifiers::CTRL)
+                        || event.is(Key::Enter, Modifiers::META))
+                {
+                    on_prompt();
+                    return true;
                 }
                 if event.is(Key::Enter, Modifiers::NONE) {
                     if let (Some(on_pick), true) = (&on_pick, listed) {
@@ -244,8 +261,12 @@ impl PickList {
                     })
                     .show();
             });
+            let wheel = self.on_move.clone();
             column_with(
-                Modifier::new().fill_max_width().padding_xy(6.0, 0.0),
+                Modifier::new()
+                    .fill_max_width()
+                    .pointer_input(move |input| wheel_moved(input, wheel.as_deref()))
+                    .padding_xy(6.0, 0.0),
                 || {
                     if self.items.is_empty() {
                         Label::new(self.empty.clone())
@@ -274,6 +295,17 @@ impl PickList {
             }
         });
     }
+}
+
+/// Moves the row chosen one step for each turn of the wheel in `input` through `on_move`, saying whether it was a wheel turn.
+fn wheel_moved(input: &PointerInput, on_move: Option<&dyn Fn(isize)>) -> bool {
+    if input.phase != PointerInputPhase::Scroll || input.scroll_delta.y == 0.0 {
+        return false;
+    }
+    if let Some(on_move) = on_move {
+        on_move(if input.scroll_delta.y < 0.0 { 1 } else { -1 });
+    }
+    true
 }
 
 /// One row of the list, `height` tall, highlighted when `chosen`, calling `on_click` when pressed.

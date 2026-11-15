@@ -221,4 +221,8 @@ pub enum DebugCommand {
     Expand(i64),
     /// Asks what an expression comes to.
     Evaluate(String),
+    /// Adds this expression to the watches.
+    AddWatch(String),
+    /// Takes this expression out of the watches.
+    RemoveWatch(String),
 }

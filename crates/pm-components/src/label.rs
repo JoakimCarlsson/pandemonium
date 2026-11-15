@@ -34,6 +34,8 @@ pub struct Label {
     colour: Option<Color>,
     /// Whether it wraps instead of ending in an ellipsis.
     wrap: bool,
+    /// Whether it is underlined, as a link is.
+    underline: bool,
     /// The modifier it is laid out with.
     modifier: Modifier,
 }
@@ -47,6 +49,7 @@ impl Label {
             size: Size::Sm,
             colour: None,
             wrap: false,
+            underline: false,
             modifier: Modifier::new(),
         }
     }
@@ -72,6 +75,12 @@ impl Label {
     /// The label wrapping onto more lines.
     pub fn wrap(mut self) -> Self {
         self.wrap = true;
+        self
+    }
+
+    /// The label underlined, as a link is.
+    pub fn underline(mut self) -> Self {
+        self.underline = true;
         self
     }
 
@@ -121,6 +130,7 @@ impl Label {
                 interface.family
             },
             max_lines: (!self.wrap).then_some(1),
+            underline: self.underline,
             ..TextStyle::default()
         }
     }

@@ -5,7 +5,7 @@
 use rustle::prelude::*;
 
 use pm_components::{IconButton, Label, LabelVariant, Size, Tab, TerminalView};
-use pm_shell::{DockTab, Workspace};
+use pm_shell::{DockTab, ProblemSeverity, Workspace};
 
 use crate::actions::{Actions, Panel};
 use crate::debug_panel::debug_panel;
@@ -37,11 +37,20 @@ pub fn dock(workspace: &Workspace, actions: &Actions) {
     );
 }
 
-/// What the tab of `tab` reads, with the number of problems on the Problems tab.
-fn tab_label(tab: DockTab, workspace: &Workspace) -> String {
+/// The number the Problems tab shows in its badge: the problems that are not hints, when there are any.
+fn problem_count(tab: DockTab, workspace: &Workspace) -> Option<usize> {
+    let counted = workspace
+        .problems
+        .iter()
+        .filter(|problem| problem.severity != ProblemSeverity::Hint)
+        .count();
+    (tab == DockTab::Problems && counted > 0).then_some(counted)
+}
+
+/// What the tab of `tab` reads.
+fn tab_label(tab: DockTab) -> String {
     match tab {
-        DockTab::Problems if workspace.problems.is_empty() => "Problems".to_owned(),
-        DockTab::Problems => format!("Problems {}", workspace.problems.len()),
+        DockTab::Problems => "Problems".to_owned(),
         DockTab::Terminal => "Terminal".to_owned(),
         DockTab::Tasks => "Tasks".to_owned(),
         DockTab::Debug => "Debug".to_owned(),
@@ -53,8 +62,8 @@ fn tab_bar(workspace: &Workspace, actions: &Actions) {
     row_arranged(
         Modifier::new()
             .fill_max_width()
-            .height(30.0)
-            .padding_xy(8.0, 0.0),
+            .height(pm_components::row_height(40.0))
+            .padding_xy(12.0, 0.0),
         Arrangement::SpacedBy(pm_components::spacing(2.0)),
         Alignment::Center,
         || {
@@ -66,8 +75,9 @@ fn tab_bar(workspace: &Workspace, actions: &Actions) {
             ] {
                 key(format!("{tab:?}"), || {
                     let choose = actions.dock_tab.clone();
-                    Tab::new(tab_label(tab, workspace))
-                        .size(Size::Xs)
+                    Tab::new(tab_label(tab))
+                        .count(problem_count(tab, workspace))
+                        .size(Size::Sm)
                         .selected(workspace.dock_tab == tab)
                         .on_click(move || choose(tab))
                         .show();
@@ -157,6 +167,7 @@ fn terminal(workspace: &Workspace, actions: &Actions) {
         .selection(screen.selection)
         .application_cursor(screen.application_cursor)
         .size(Size::Sm)
+        .focus_key(workspace.terminal_shown)
         .modifier(Modifier::new().fill_max_size())
         .on_input(move |bytes| input(bytes))
         .on_resize(move |columns, rows| resize(columns, rows))

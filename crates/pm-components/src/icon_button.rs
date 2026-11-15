@@ -1,15 +1,16 @@
-//! A square button holding one icon.
+//! A square button holding one icon: lit under the pointer with a short
+//! colour transition, faint with a not-allowed cursor while disabled, and
+//! turning while busy.
 
 use std::rc::Rc;
 
 use rustle::prelude::*;
 
+use crate::app_theme::extended_colors;
 use crate::focus_ring::remember_focus_ring;
 use crate::size::Size;
+use crate::spinner::spinning_icon;
 use rustle::color_scheme;
-
-/// How opaque the icon of a disabled button is, out of 255.
-const DISABLED_ALPHA: u8 = 90;
 
 /// How an icon button is drawn.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -36,13 +37,18 @@ pub struct IconButton {
     tint: Option<Color>,
     /// Whether it shows as switched on.
     active: bool,
-    /// Whether it is greyed out and ignores clicks.
-    disabled: bool,
     /// What a click does.
     on_click: Option<Rc<dyn Fn()>>,
     /// What the label shown while the pointer rests on it says, when it shows one.
     tooltip: Option<String>,
+    /// Whether it is faint and ignores clicks.
+    disabled: bool,
+    /// Whether its glyph turns, while what it does is under way.
+    spinning: bool,
 }
+
+/// How long an icon button's colours take to follow the pointer, in milliseconds.
+const FADE: u64 = 120;
 
 impl IconButton {
     /// A ghost button showing `icon`.
@@ -53,10 +59,17 @@ impl IconButton {
             size: Size::Sm,
             tint: None,
             active: false,
-            disabled: false,
             on_click: None,
             tooltip: None,
+            disabled: false,
+            spinning: false,
         }
+    }
+
+    /// The button with its glyph turning while `spinning`.
+    pub fn spinning(mut self, spinning: bool) -> Self {
+        self.spinning = spinning;
+        self
     }
 
     /// The button showing `tooltip` in a label while the pointer rests on it.
@@ -114,6 +127,7 @@ impl IconButton {
             Size::Lg => (36.0, 16.0),
         };
         let fill = match self.variant {
+            IconButtonVariant::Primary if lit => extended_colors().accent_hover,
             IconButtonVariant::Primary => scheme.on_surface_variant,
             IconButtonVariant::Filled => scheme.surface_container_highest,
             IconButtonVariant::Ghost if self.active || lit => scheme.surface_container_high,
@@ -124,11 +138,8 @@ impl IconButton {
             _ if self.active || lit => scheme.on_surface,
             _ => scheme.on_surface_variant,
         });
-        let tint = if self.disabled {
-            Color::rgba(tint.r, tint.g, tint.b, DISABLED_ALPHA)
-        } else {
-            tint
-        };
+        let fill = animate_color_as_state(fill, tween(FADE)).get();
+        let tint = animate_color_as_state(tint, tween(FADE)).get();
         let radius = if self.variant == IconButtonVariant::Primary {
             side / 2.0
         } else {
@@ -148,7 +159,10 @@ impl IconButton {
                 let hovered = hovered.clone();
                 move |inside| hovered.set(inside)
             });
-        if let (Some(on_click), false) = (self.on_click, self.disabled) {
+        if self.disabled {
+            modifier = modifier.alpha(0.4).cursor(CursorIcon::NotAllowed);
+        } else if let Some(on_click) = self.on_click {
+            modifier = modifier.cursor(CursorIcon::Pointer);
             let pressed = on_click.clone();
             let clicked = ring_state.clone();
             modifier = ring_state.focusable(
@@ -160,9 +174,14 @@ impl IconButton {
             );
         }
         let icon_glyph = self.icon;
+        let spinning = self.spinning;
         let button = move || {
             stack_aligned(modifier, BoxAlignment::Center, move || {
-                icon(icon_glyph, glyph, tint);
+                if spinning {
+                    spinning_icon(icon_glyph, glyph, tint);
+                } else {
+                    icon(icon_glyph, glyph, tint);
+                }
             });
         };
         match &self.tooltip {

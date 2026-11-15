@@ -899,7 +899,7 @@ impl Link {
         self.prompt(text, false);
     }
 
-    /// Changes the dock with `change`, sends what it asks of the server, has the connection replay and follow the shells it took up, and shows how it stands.
+    /// Changes the dock with `change`, sends what it asks of the server, has the connection replay and follow the shells it took up, shows how it stands, and opens the place the debugger asked to show.
     fn change_dock(&mut self, change: impl FnOnce(&mut Dock)) {
         self.dock
             .set_scrollback(self.settings.window.terminal.scrollback);
@@ -913,6 +913,9 @@ impl Link {
             }
         }
         self.dock.publish(&mut self.workspace);
+        if let Some((path, line)) = self.dock.take_reveal() {
+            self.open_location(path, line);
+        }
     }
 
     /// Types `data` into the dock's shell, starting a new shell first when the last one ended.
@@ -979,6 +982,27 @@ impl Link {
         self.change_dock(Dock::clear);
     }
 
+    /// Puts the text marked in the shown shell into the composer as a fenced block, shows the chat and gives the composer the keyboard; nothing when no text is marked.
+    pub fn add_terminal_to_chat(&mut self) {
+        let Some(text) = self
+            .dock
+            .selected_text()
+            .filter(|text| !text.trim().is_empty())
+        else {
+            return;
+        };
+        self.workspace.extras.prefill = Some(format!("```\n{}\n```\n", text.trim_end()));
+        self.file_tab(crate::open_files::TabAction::Select(
+            crate::open_files::SessionTab::Chat,
+        ));
+        self.focus_prompt();
+    }
+
+    /// Ends the shown shell and drops its tab.
+    pub fn kill_terminal(&mut self) {
+        self.change_dock(Dock::kill_shown);
+    }
+
     /// Runs the task at `index` of the Tasks tab in a new shell tab, and shows the terminal.
     pub fn run_task(&mut self, index: usize) {
         self.change_dock(|dock| dock.run_task(index));
@@ -990,9 +1014,11 @@ impl Link {
         self.change_dock(Dock::refresh);
     }
 
-    /// Starts debugging the dock's folder as the scenario at `index`.
+    /// Starts debugging the dock's folder as the scenario at `index`, and shows the Debug tab.
     pub fn debug_start(&mut self, index: usize) {
         self.change_dock(|dock| dock.debug_start(index));
+        self.workspace.dock_open = true;
+        self.workspace.dock_tab = crate::model::DockTab::Debug;
     }
 
     /// Does `command` to the debugging session the dock follows.

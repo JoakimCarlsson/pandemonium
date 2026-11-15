@@ -50,16 +50,16 @@ pub fn session_view(workspace: &Workspace, actions: &Actions) {
                 session_tabs(workspace, actions);
                 match workspace.open_files.right_tab() {
                     Some(right) => split_panes(workspace, right, actions),
-                    None => row_with(Modifier::new().fill_max_width().weight(1.0), || {
+                    None => stack_with(Modifier::new().fill_max_width().weight(1.0), || {
                         column_with(
                             Modifier::new()
-                                .fill_max_height()
-                                .weight(1.0)
+                                .fill_max_size()
                                 .drop_target(dropped_on(actions, Pane::Left)),
                             || pane_content(workspace, workspace.open_files.tab, actions),
                         );
                         spacer(
                             Modifier::new()
+                                .align(BoxAlignment::CenterEnd)
                                 .width(SIDE_DROP)
                                 .fill_max_height()
                                 .drop_target(dropped_on(actions, Pane::Right)),
@@ -114,9 +114,9 @@ fn unsaved_dialog(workspace: &Workspace, actions: &Actions) {
         .show();
 }
 
-/// How wide the strip at the right edge of an unsplit view is, onto which a
-/// tab is dropped to show it to the side.
-const SIDE_DROP: f32 = 6.0;
+/// How wide the zone over the right edge of an unsplit view is, onto which a
+/// tab is dropped to show it to the side; while a tab is carried it is lit up.
+const SIDE_DROP: f32 = 120.0;
 
 /// What a tab dropped on `pane` does: shows the tab there.
 fn dropped_on(actions: &Actions, pane: Pane) -> impl Fn(&dyn std::any::Any) + 'static {
@@ -227,6 +227,7 @@ fn pane_bar(workspace: &Workspace, pane: Pane, tab: SessionTab, focused: bool, a
                 let close = close.clone();
                 IconButton::new(phosphor::X)
                     .size(Size::Xs)
+                    .tooltip("Close the split")
                     .on_click(move || close(TabAction::Unsplit))
                     .show();
             }

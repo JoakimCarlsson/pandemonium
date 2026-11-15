@@ -23,6 +23,8 @@ pub(super) enum CodeAsk {
     Base(String, String),
     /// What the folder holds of the file at this path in this folder, to compare its editor with.
     Compare(String, String),
+    /// What the folder holds of the file at the third path, to compare the open file at the second path in the first folder with.
+    CompareFile(String, String, String),
     /// What the folder holds of the open file at this path in this folder
     /// after something outside the editor changed the folder.
     Reload(String, String),
@@ -475,6 +477,22 @@ impl Link {
                     let saved = text.unwrap_or_default();
                     let comparison = self.comparison("Saved", &saved, &edited);
                     self.show_comparison(index, comparison);
+                }
+            }
+            (CodeAsk::CompareFile(directory, path, other), Response::File { text, .. }) => {
+                if let Some(index) = files.position(&directory, &path) {
+                    let edited = files.files[index]
+                        .document
+                        .0
+                        .borrow()
+                        .field
+                        .text()
+                        .to_owned();
+                    let held = text.unwrap_or_default();
+                    self.show_comparison(
+                        index,
+                        crate::open_files::Comparison::between(other, &held, &edited),
+                    );
                 }
             }
             (

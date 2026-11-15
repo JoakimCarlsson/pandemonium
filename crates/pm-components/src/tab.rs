@@ -16,6 +16,9 @@ pub enum TabVariant {
     Chip,
     /// An icon only, as in the right panel's header.
     Icon,
+    /// A folder tab standing on the strip's bottom edge, rounded at the top
+    /// and filled with the surface when chosen, as over the session view.
+    Strip,
 }
 
 /// A tab with a variant and a size.
@@ -47,6 +50,10 @@ pub struct Tab {
     pinned: bool,
     /// The colour of its icon in place of its words' colour.
     icon_tint: Option<Color>,
+    /// What a label shows while the pointer rests on it; none without.
+    tooltip: Option<String>,
+    /// A number shown in a round badge after the label, such as how many problems there are.
+    count: Option<usize>,
 }
 
 impl Tab {
@@ -66,6 +73,8 @@ impl Tab {
             on_double_click: None,
             pinned: false,
             icon_tint: None,
+            tooltip: None,
+            count: None,
         }
     }
 
@@ -146,6 +155,18 @@ impl Tab {
         self
     }
 
+    /// The tab with `count` in a round badge after its label, when there is one.
+    pub fn count(mut self, count: Option<usize>) -> Self {
+        self.count = count;
+        self
+    }
+
+    /// The tab showing `tooltip` in a label while the pointer rests on it.
+    pub fn tooltip(mut self, tooltip: impl Into<String>) -> Self {
+        self.tooltip = Some(tooltip.into());
+        self
+    }
+
     /// Emits the tab.
     #[track_caller]
     pub fn show(self) {
@@ -157,9 +178,14 @@ impl Tab {
             Size::Md => (32.0, 10.0),
             Size::Lg => (36.0, 12.0),
         };
+        let (height, padding) = match self.variant {
+            TabVariant::Strip => (STRIP_TAB_HEIGHT, 12.0),
+            _ => (height, padding),
+        };
         let (height, padding) = (crate::row_height(height), crate::spacing(padding));
         let fill = match (self.variant, self.selected, hovered.get()) {
             (TabVariant::Chip, true, _) => scheme.secondary_container,
+            (TabVariant::Strip, true, _) => scheme.surface_container,
             (_, _, true) => scheme.surface_container_high,
             _ => Color::TRANSPARENT,
         };
@@ -169,9 +195,15 @@ impl Tab {
             scheme.on_surface_variant
         };
         let width = (self.variant == TabVariant::Icon).then_some(height);
-        let mut modifier = Modifier::new()
-            .height(height)
-            .background_rounded(fill, 6.0)
+        let fill = animate_color_as_state(fill, tween(FADE)).get();
+        let modifier = match self.variant {
+            TabVariant::Strip => Modifier::new()
+                .height(height)
+                .clip_rounded_corners(8.0, 8.0, 0.0, 0.0)
+                .background(fill),
+            _ => Modifier::new().height(height).background_rounded(fill, 6.0),
+        };
+        let mut modifier = modifier
             .on_hover({
                 let hovered = hovered.clone();
                 move |inside| hovered.set(inside)
@@ -196,37 +228,77 @@ impl Tab {
         } else {
             Arrangement::SpacedBy(crate::spacing(6.0))
         };
-        row_arranged(modifier, arrangement, Alignment::Center, move || {
-            if let Some(glyph) = &self.icon {
-                icon(
-                    glyph.clone(),
-                    glyph_size(self.size),
-                    self.icon_tint.unwrap_or(tint),
-                );
-            }
-            if !self.label.is_empty() {
-                let label = Label::new(self.label.clone())
-                    .variant(LabelVariant::Body)
-                    .colour(tint)
-                    .size(Size::Sm);
-                let style = TextStyle {
-                    italic: self.preview,
-                    ..label.style()
-                };
-                text_styled(Modifier::new(), self.label.clone(), style);
-            }
-            if closable {
-                close_mark(
-                    self.on_close.clone(),
-                    self.dirty,
-                    self.pinned,
-                    self.selected || hovered.get(),
-                    glyph_size(self.size),
-                );
-            }
-        });
+        let hint = self.tooltip.clone();
+        let tab = move || {
+            row_arranged(modifier, arrangement, Alignment::Center, move || {
+                if let Some(glyph) = &self.icon {
+                    icon(
+                        glyph.clone(),
+                        glyph_size(self.size),
+                        self.icon_tint.unwrap_or(tint),
+                    );
+                }
+                if !self.label.is_empty() {
+                    let label = Label::new(self.label.clone())
+                        .variant(LabelVariant::Body)
+                        .colour(tint)
+                        .size(Size::Sm);
+                    let style = TextStyle {
+                        italic: self.preview,
+                        ..label.style()
+                    };
+                    text_styled(Modifier::new(), self.label.clone(), style);
+                }
+                if let Some(count) = self.count {
+                    count_badge(count, self.selected);
+                }
+                if closable {
+                    close_mark(
+                        self.on_close.clone(),
+                        self.dirty,
+                        self.pinned,
+                        self.selected || hovered.get(),
+                        glyph_size(self.size),
+                    );
+                }
+            });
+        };
+        match &hint {
+            Some(label) => crate::tip::tip(label, tab),
+            None => tab(),
+        }
     }
 }
+
+/// Emits `count` in a small round badge, brighter on a chosen tab when `chosen`.
+fn count_badge(count: usize, chosen: bool) {
+    let scheme = color_scheme();
+    let side = crate::interface_font().sized(16.0);
+    let (fill, ink) = if chosen {
+        (scheme.on_surface, scheme.surface)
+    } else {
+        (scheme.on_surface_variant, scheme.surface)
+    };
+    stack_aligned(
+        Modifier::new()
+            .height(side)
+            .width((side).max(side * 0.5 + 7.0 * count.to_string().len() as f32))
+            .background_rounded(fill, side / 2.0),
+        BoxAlignment::Center,
+        move || {
+            Label::new(count.to_string())
+                .colour(ink)
+                .size(Size::Xs)
+                .show();
+        },
+    );
+}
+
+/// How tall a strip tab is, in logical pixels, before density.
+pub const STRIP_TAB_HEIGHT: f32 = 40.0;
+
+/// How long a tab's fill takes to follow the pointer, in milliseconds.
+const FADE: u64 = 120;
 
 /// Emits the end of a closable tab: a dot while `dirty` and not hovered, a pin
 /// while `pinned` and not hovered, otherwise a cross calling `on_close` that

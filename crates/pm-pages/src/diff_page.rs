@@ -104,6 +104,7 @@ pub fn diff_page(workspace: &Workspace, path: &str, actions: &Actions) {
                     let discard_path = change.path.clone();
                     IconButton::new(phosphor::ARROW_COUNTER_CLOCKWISE)
                         .size(Size::Xs)
+                        .tooltip("Discard changes")
                         .on_click(move || {
                             git_action(GitAction::Discard(vec![discard_path.clone()]))
                         })
@@ -116,15 +117,22 @@ pub fn diff_page(workspace: &Workspace, path: &str, actions: &Actions) {
                     phosphor::ROWS
                 })
                 .size(Size::Xs)
+                .tooltip(if unified.get() {
+                    "Show side by side"
+                } else {
+                    "Show unified"
+                })
                 .on_click(move || flip.set(!flip.get()))
                 .show();
-                for (glyph, target) in
-                    [(phosphor::ARROW_UP, previous), (phosphor::ARROW_DOWN, next)]
-                {
+                for (glyph, label, target) in [
+                    (phosphor::ARROW_UP, "Previous change", previous),
+                    (phosphor::ARROW_DOWN, "Next change", next),
+                ] {
                     let git_action = actions.git.clone();
                     key(format!("{glyph:?}"), || {
                         IconButton::new(glyph)
                             .size(Size::Xs)
+                            .tooltip(label)
                             .on_click(move || {
                                 if let Some(target) = &target {
                                     git_action(GitAction::Open(target.clone()));
@@ -136,6 +144,7 @@ pub fn diff_page(workspace: &Workspace, path: &str, actions: &Actions) {
                 let git_action = actions.git.clone();
                 IconButton::new(phosphor::X)
                     .size(Size::Xs)
+                    .tooltip("Close")
                     .on_click(move || git_action(GitAction::CloseDiff))
                     .show();
             },

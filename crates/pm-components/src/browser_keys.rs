@@ -26,6 +26,10 @@ pub enum BrowserShortcut {
     NewTab,
     /// Closes the tab shown.
     CloseTab,
+    /// Goes back one page, as the back button of the mouse does.
+    Back,
+    /// Goes forward one page, as the forward button of the mouse does.
+    Forward,
 }
 
 /// What `event` does in the browser while a page has the keyboard, if it is a key the browser takes: with Control or Command, `F` finds, `G` steps through the matches, `=`, `-` and `0` zoom, `R` reloads and with Shift reloads without the cache, `T` opens a new tab and `W` closes the tab; and `F3`, `F5` and Control `F5` do the same on their own.

@@ -1333,6 +1333,8 @@ impl Action {
                 | Self::CopyPath
                 | Self::CopyRelativePath
                 | Self::RevealInProject
+                | Self::CompareWithSaved
+                | Self::CompareWithFile
                 | Self::SplitRight
                 | Self::SplitLeft
                 | Self::SplitUp

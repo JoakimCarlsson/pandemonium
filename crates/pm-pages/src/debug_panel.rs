@@ -13,11 +13,14 @@ use pm_shell::{DebugCommand, DebugModel, DebugSession, DebugStanding, DebugVaria
 
 use crate::actions::Actions;
 
-/// How wide the column of the stack, or of the scenarios, is.
-const STACK_WIDTH: f32 = 260.0;
+/// The share of the tab's width the column of the stack takes.
+const STACK_SHARE: f32 = 0.32;
 
-/// How wide the column of the breakpoints, watches and console is.
-const SIDE_WIDTH: f32 = 320.0;
+/// The share of the tab's width the column of the variables, or of the scenarios, takes.
+const VARIABLES_SHARE: f32 = 0.33;
+
+/// The share of the tab's width the column of the breakpoints, watches and console takes.
+const SIDE_SHARE: f32 = 0.35;
 
 /// Emits the Debug tab for `model`.
 pub fn debug_panel(model: &DebugModel, actions: &Actions) {
@@ -44,54 +47,58 @@ fn scrolling(modifier: Modifier, content: impl FnOnce()) {
 
 /// The scenarios the folder can be debugged as, each starting a session when pressed.
 fn scenarios(model: &DebugModel, actions: &Actions) {
-    scrolling(Modifier::new().weight(1.0), || {
-        if let Some(error) = &model.error {
-            Label::new(error.clone())
-                .colour(color_scheme().error)
-                .size(Size::Xs)
-                .show();
-        }
-        if !model.loaded {
-            Label::new("Open a session to debug its folder.")
-                .variant(LabelVariant::Subtle)
-                .size(Size::Xs)
-                .show();
-            return;
-        }
-        if model.scenarios.is_empty() {
-            Label::new("Nothing in the folder can be debugged.")
-                .variant(LabelVariant::Subtle)
-                .size(Size::Xs)
-                .show();
-        }
-        for (index, scenario) in model.scenarios.iter().enumerate() {
-            key(index, || {
-                let start = actions.debug_start.clone();
-                let note = if scenario.installed {
-                    scenario.adapter.clone()
-                } else {
-                    format!("{} (not installed)", scenario.adapter)
-                };
-                ListRow::new(scenario.label.clone())
-                    .leading(Leading::Icon(phosphor::BUG))
-                    .note(note)
-                    .variant(if scenario.installed {
-                        ListRowVariant::Plain
-                    } else {
-                        ListRowVariant::Dimmed
-                    })
+    scrolling(
+        Modifier::new().weight(STACK_SHARE + VARIABLES_SHARE),
+        || {
+            if let Some(error) = &model.error {
+                Label::new(error.clone())
+                    .colour(color_scheme().error)
                     .size(Size::Xs)
-                    .on_click(move || start(index))
                     .show();
-            });
-        }
-    });
+            }
+            if !model.loaded {
+                Label::new("Open a session to debug its folder.")
+                    .variant(LabelVariant::Subtle)
+                    .size(Size::Xs)
+                    .show();
+                return;
+            }
+            if model.scenarios.is_empty() {
+                Label::new("Nothing in the folder can be debugged.")
+                    .variant(LabelVariant::Subtle)
+                    .size(Size::Xs)
+                    .show();
+            }
+            for (index, scenario) in model.scenarios.iter().enumerate() {
+                key(index, || {
+                    let start = actions.debug_start.clone();
+                    let note = if scenario.installed {
+                        scenario.adapter.clone()
+                    } else {
+                        format!("{} (not installed)", scenario.adapter)
+                    };
+                    ListRow::new(scenario.label.clone())
+                        .leading(Leading::Icon(phosphor::BUG))
+                        .note(note)
+                        .variant(if scenario.installed {
+                            ListRowVariant::Plain
+                        } else {
+                            ListRowVariant::Dimmed
+                        })
+                        .size(Size::Xs)
+                        .on_click(move || start(index))
+                        .show();
+                });
+            }
+        },
+    );
 }
 
 /// The session's controls over its stack, and its variables beside them.
 fn session_columns(session: &DebugSession, actions: &Actions) {
-    scrolling(Modifier::new().width(STACK_WIDTH), || {
+    scrolling(Modifier::new().weight(STACK_SHARE), || {
         controls(session, actions);
+        heading("Call stack");
         for frame in &session.frames {
             key(frame.id, || {
                 let choose = actions.debug_command.clone();
@@ -110,7 +117,8 @@ fn session_columns(session: &DebugSession, actions: &Actions) {
             });
         }
     });
-    scrolling(Modifier::new().weight(1.0), || {
+    scrolling(Modifier::new().weight(VARIABLES_SHARE), || {
+        heading("Variables");
         if session.scopes.is_empty() {
             Label::new(match session.standing {
                 DebugStanding::Stopped => "The frame has no variables.",
@@ -134,7 +142,16 @@ fn session_columns(session: &DebugSession, actions: &Actions) {
     });
 }
 
-/// The buttons that drive the session, and how it stands.
+/// A muted heading over a column of the tab, reading `title`.
+fn heading(title: &str) {
+    Label::new(title)
+        .variant(LabelVariant::Muted)
+        .size(Size::Xs)
+        .modifier(Modifier::new().padding_xy(4.0, 4.0))
+        .show();
+}
+
+/// The buttons that drive the session, each with a tooltip and enabled only while the program stands where it applies, and how it stands.
 fn controls(session: &DebugSession, actions: &Actions) {
     row_arranged(
         Modifier::new().fill_max_width().height(28.0),
@@ -142,24 +159,46 @@ fn controls(session: &DebugSession, actions: &Actions) {
         Alignment::Center,
         || {
             let running = session.standing == DebugStanding::Running;
+            let paused = session.standing == DebugStanding::Stopped;
             let ended = session.standing == DebugStanding::Ended;
             let buttons = [
                 if running {
-                    (phosphor::PAUSE, DebugCommand::Pause)
+                    (phosphor::PAUSE, DebugCommand::Pause, "Pause", true)
                 } else {
-                    (phosphor::PLAY, DebugCommand::Continue)
+                    (phosphor::PLAY, DebugCommand::Continue, "Continue", paused)
                 },
-                (phosphor::ARROW_BEND_DOWN_RIGHT, DebugCommand::StepOver),
-                (phosphor::ARROW_DOWN, DebugCommand::StepIn),
-                (phosphor::ARROW_UP, DebugCommand::StepOut),
-                (phosphor::STOP, DebugCommand::Stop),
+                (
+                    phosphor::ARROW_BEND_DOWN_RIGHT,
+                    DebugCommand::StepOver,
+                    "Step over",
+                    paused,
+                ),
+                (
+                    phosphor::ARROW_DOWN,
+                    DebugCommand::StepIn,
+                    "Step into",
+                    paused,
+                ),
+                (
+                    phosphor::ARROW_UP,
+                    DebugCommand::StepOut,
+                    "Step out",
+                    paused,
+                ),
+                (phosphor::STOP, DebugCommand::Stop, "Stop", true),
             ];
             if !ended {
-                for (glyph, command) in buttons {
+                for (glyph, command, tip, enabled) in buttons {
                     let send = actions.debug_command.clone();
                     IconButton::new(glyph)
                         .size(Size::Xs)
-                        .on_click(move || send(command.clone()))
+                        .tooltip(tip)
+                        .disabled(!enabled)
+                        .on_click(move || {
+                            if enabled {
+                                send(command.clone())
+                            }
+                        })
                         .show();
                 }
             }
@@ -190,7 +229,8 @@ fn variable_row(variable: &DebugVariableEntry, actions: &Actions) {
     };
     let leading = Leading::Custom(Rc::new(move || {
         let scheme = color_scheme();
-        row_with(Modifier::new().padding_xy(depth as f32 * 12.0, 0.0), || {
+        row_with(Modifier::new(), || {
+            spacer(Modifier::new().width(depth as f32 * 12.0));
             match &caret {
                 Some(glyph) => icon(glyph.clone(), 12.0, scheme.on_surface_variant),
                 None => spacer(Modifier::new().width(pm_components::spacing(12.0))),
@@ -201,7 +241,7 @@ fn variable_row(variable: &DebugVariableEntry, actions: &Actions) {
         .leading(leading)
         .size(Size::Xs);
     if let Some(kind) = &variable.kind {
-        row = row.end_column(kind.clone(), 120.0);
+        row = row.end_column(kind.clone(), 64.0);
     }
     if variable.reference != 0 {
         let expand = actions.debug_command.clone();
@@ -211,78 +251,148 @@ fn variable_row(variable: &DebugVariableEntry, actions: &Actions) {
     row.show();
 }
 
-/// The breakpoints, then the watches, the console and the box that evaluates an expression while a session runs.
+/// The breakpoints and the watches over the console, then the box that evaluates an expression while a session runs.
 fn side_column(model: &DebugModel, actions: &Actions) {
-    scrolling(Modifier::new().width(SIDE_WIDTH), || {
-        Label::new("Breakpoints")
-            .variant(LabelVariant::Muted)
-            .size(Size::Xs)
-            .show();
-        if model.breakpoints.is_empty() {
-            Label::new("No breakpoints are set.")
-                .variant(LabelVariant::Subtle)
-                .size(Size::Xs)
-                .show();
-        }
-        for breakpoint in &model.breakpoints {
-            key((breakpoint.path.clone(), breakpoint.line), || {
-                let toggle = actions.toggle_breakpoint.clone();
-                let path = breakpoint.path.clone();
-                let line = breakpoint.line;
-                let tone = match breakpoint.verified {
-                    Some(false) => color_scheme().on_surface_variant,
-                    _ => color_scheme().error,
-                };
-                ListRow::new(format!("{}:{}", breakpoint.path, line + 1))
-                    .leading(Leading::Custom(Rc::new(move || {
-                        icon(phosphor::CIRCLE, 12.0, tone)
-                    })))
-                    .end_column("Remove", 60.0)
-                    .size(Size::Xs)
-                    .on_click(move || toggle(path.clone(), line))
-                    .show();
-            });
-        }
+    column_with(Modifier::new().weight(SIDE_SHARE).fill_max_height(), || {
+        let scroll = remember_scroll_state();
+        column_with(
+            Modifier::new()
+                .fill_max_width()
+                .weight(1.0)
+                .clip()
+                .vertical_scroll(&scroll),
+            || {
+                breakpoints(model, actions);
+                if let Some(session) = &model.session {
+                    watches(session, actions);
+                }
+            },
+        );
         let Some(session) = &model.session else {
             return;
         };
-        for (expression, value) in &session.watches {
-            key(expression.clone(), || {
-                Label::new(format!("{expression} = {value}"))
-                    .variant(LabelVariant::Code)
-                    .size(Size::Xs)
-                    .show();
-            });
-        }
-        for (index, line) in session.console.iter().enumerate() {
-            key(index, || {
-                Label::new(line.clone())
-                    .variant(LabelVariant::Code)
-                    .size(Size::Xs)
-                    .show();
-            });
-        }
+        heading("Console");
+        console(&session.console);
         if session.standing != DebugStanding::Ended {
             evaluate_box(actions);
         }
     });
 }
 
+/// The breakpoints set, each taken away when pressed.
+fn breakpoints(model: &DebugModel, actions: &Actions) {
+    Label::new("Breakpoints")
+        .variant(LabelVariant::Muted)
+        .size(Size::Xs)
+        .show();
+    if model.breakpoints.is_empty() {
+        Label::new("No breakpoints are set.")
+            .variant(LabelVariant::Subtle)
+            .size(Size::Xs)
+            .show();
+    }
+    for breakpoint in &model.breakpoints {
+        key((breakpoint.path.clone(), breakpoint.line), || {
+            let toggle = actions.toggle_breakpoint.clone();
+            let path = breakpoint.path.clone();
+            let line = breakpoint.line;
+            let tone = match breakpoint.verified {
+                Some(false) => color_scheme().on_surface_variant,
+                _ => color_scheme().error,
+            };
+            ListRow::new(format!("{}:{}", breakpoint.path, line + 1))
+                .leading(Leading::Custom(Rc::new(move || {
+                    icon(phosphor::CIRCLE, 12.0, tone)
+                })))
+                .end_column("Remove", 60.0)
+                .size(Size::Xs)
+                .on_click(move || toggle(path.clone(), line))
+                .show();
+        });
+    }
+}
+
+/// The watch expressions of `session` with what each comes to and a button that takes it away, then a box that adds one.
+fn watches(session: &DebugSession, actions: &Actions) {
+    Label::new("Watches")
+        .variant(LabelVariant::Muted)
+        .size(Size::Xs)
+        .show();
+    for (expression, value) in &session.watches {
+        key(expression.clone(), || {
+            row_arranged(
+                Modifier::new().fill_max_width(),
+                Arrangement::SpacedBy(pm_components::spacing(4.0)),
+                Alignment::Center,
+                || {
+                    Label::new(format!("{expression} = {value}"))
+                        .variant(LabelVariant::Code)
+                        .size(Size::Xs)
+                        .show();
+                    spacer(Modifier::new().weight(1.0));
+                    let remove = actions.debug_command.clone();
+                    let watched = expression.clone();
+                    IconButton::new(phosphor::X)
+                        .size(Size::Xs)
+                        .tooltip("Remove watch")
+                        .on_click(move || remove(DebugCommand::RemoveWatch(watched.clone())))
+                        .show();
+                },
+            );
+        });
+    }
+    entry_box(
+        "Add a watch expression",
+        actions.debug_command.clone(),
+        DebugCommand::AddWatch,
+    );
+}
+
+/// The console's lines, kept scrolled to the newest unless the reader scrolled up.
+fn console(lines: &[String]) {
+    let list = remember_lazy_list_state();
+    list.set_stick_to_end(true);
+    lazy_list_keyed(
+        Modifier::new().fill_max_width().weight(1.0).clip(),
+        &list,
+        lines.len(),
+        |index| index,
+        |index| {
+            Label::new(lines[index].clone())
+                .variant(LabelVariant::Code)
+                .size(Size::Xs)
+                .show();
+        },
+    );
+}
+
 /// A box that asks what the expression typed in it comes to.
 fn evaluate_box(actions: &Actions) {
+    entry_box(
+        "Evaluate an expression",
+        actions.debug_command.clone(),
+        DebugCommand::Evaluate,
+    );
+}
+
+/// A code box reading `placeholder` that hands what is typed in it, made into a command by `make`, to `send` on Enter, then empties.
+fn entry_box(
+    placeholder: &'static str,
+    send: Rc<dyn Fn(DebugCommand)>,
+    make: fn(String) -> DebugCommand,
+) {
     let typed = remember(String::new);
     let change = typed.clone();
     let clear = typed.clone();
-    let evaluate = actions.debug_command.clone();
     TextInput::new(typed.get())
-        .placeholder("Evaluate an expression")
+        .placeholder(placeholder)
         .size(Size::Xs)
         .code()
         .modifier(Modifier::new().fill_max_width())
         .on_change(move |text| change.set(text))
         .on_submit(move |text| {
             if !text.trim().is_empty() {
-                evaluate(DebugCommand::Evaluate(text));
+                send(make(text));
                 clear.set(String::new());
             }
         })

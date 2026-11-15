@@ -5,7 +5,9 @@ use std::rc::Rc;
 
 use crate::text_menu::TextMenu;
 use rustle::prelude::*;
-use rustle::{TextFieldOptions, basic_text_field_in, remember_focus};
+use rustle::{
+    Key, KeyEvent, TextFieldOptions, TextFieldState, basic_text_field_in, remember_focus,
+};
 
 use crate::label::{Label, LabelVariant};
 use crate::size::Size;
@@ -43,6 +45,12 @@ pub struct TextInput {
     on_submit: Option<Rc<dyn Fn(String)>>,
     /// Whether it takes the keyboard when it first shows.
     autofocus: bool,
+    /// Whether it marks all of its text when it takes the keyboard on first showing.
+    select_on_focus: bool,
+    /// What Escape does.
+    on_escape: Option<Rc<dyn Fn()>>,
+    /// What Shift+Enter does, given the text, instead of what Enter does.
+    on_shift_submit: Option<Rc<dyn Fn(String)>>,
 }
 
 impl TextInput {
@@ -58,7 +66,28 @@ impl TextInput {
             on_change: None,
             on_submit: None,
             autofocus: false,
+            select_on_focus: false,
+            on_escape: None,
+            on_shift_submit: None,
         }
+    }
+
+    /// The box marking all of its text when it takes the keyboard on first showing.
+    pub fn select_on_focus(mut self) -> Self {
+        self.select_on_focus = true;
+        self
+    }
+
+    /// The box calling `on_escape` when Escape is pressed in it.
+    pub fn on_escape(mut self, on_escape: impl Fn() + 'static) -> Self {
+        self.on_escape = Some(Rc::new(on_escape));
+        self
+    }
+
+    /// The box calling `on_shift_submit` with its text when Shift+Enter is pressed in it, instead of what Enter does.
+    pub fn on_shift_submit(mut self, on_shift_submit: impl Fn(String) + 'static) -> Self {
+        self.on_shift_submit = Some(Rc::new(on_shift_submit));
+        self
     }
 
     /// The box taking the keyboard when it first shows.
@@ -119,6 +148,9 @@ impl TextInput {
         if self.autofocus && !focused_once.get() {
             focused_once.set(true);
             focus.request_focus();
+            if self.select_on_focus {
+                state.select_all();
+            }
         }
         let given: Rc<RefCell<String>> =
             remember(|| Rc::new(RefCell::new(self.value.clone()))).get();
@@ -156,12 +188,21 @@ impl TextInput {
         let empty = state.text().is_empty();
         let placeholder = self.placeholder;
         let variant = self.variant;
+        let mut modifier = self.modifier;
+        if self.on_escape.is_some() || self.on_shift_submit.is_some() {
+            let escape = self.on_escape.clone();
+            let shift_submit = self.on_shift_submit.clone();
+            let keyed = state.clone();
+            modifier = modifier.on_preview_key_event(move |event| {
+                key_handled(event, escape.as_deref(), shift_submit.as_deref(), &keyed)
+            });
+        }
         let mut style = Label::new("").size(self.size).style();
         if self.code {
             style.font_family = crate::code_font().family;
         }
         row_arranged(
-            self.modifier
+            modifier
                 .height(height)
                 .background_rounded(fill, 6.0)
                 .border(1.0, scheme.outline_variant, 6.0)
@@ -192,5 +233,28 @@ impl TextInput {
                 );
             },
         );
+    }
+}
+
+/// Carries out Escape with `escape` and Shift+Enter with `shift_submit`, given the text of `state`; returns whether `event` was one of them and so is used up.
+fn key_handled(
+    event: &KeyEvent,
+    escape: Option<&dyn Fn()>,
+    shift_submit: Option<&dyn Fn(String)>,
+    state: &TextFieldState,
+) -> bool {
+    if !event.pressed {
+        return false;
+    }
+    match (&event.key, escape, shift_submit) {
+        (Key::Escape, Some(escape), _) => {
+            escape();
+            true
+        }
+        (Key::Enter, _, Some(shift_submit)) if event.modifiers.shift => {
+            shift_submit(state.text());
+            true
+        }
+        _ => false,
     }
 }

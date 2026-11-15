@@ -8,7 +8,7 @@
 
 use pm_editor::{Action, Keymap};
 
-use crate::model::{Project, Workspace};
+use crate::model::{Project, SessionStatus, Workspace};
 
 /// The most rows the quick input lists.
 pub const QUICK_ROWS: usize = 60;
@@ -30,6 +30,8 @@ pub struct QuickInput {
     pub commands: Vec<QuickItem>,
     /// The files opened lately from the quick input, the latest first.
     pub recent_files: Vec<String>,
+    /// The sessions whose conversations hold what is typed, as the server found them, best first: each session's number and a stretch of what matched.
+    pub chats: Vec<(u64, String)>,
 }
 
 /// What the quick input lists, by the prefix typed.
@@ -104,6 +106,8 @@ pub enum Choosing {
     Related(pm_lsp::Seek),
     /// The commits that changed the open file, to compare it with the file as one of them left it.
     Commits,
+    /// The files of the project, to compare the open file with one.
+    CompareFile,
 }
 
 /// One row of the quick input.
@@ -164,6 +168,10 @@ pub enum QuickPick {
     Action(Action),
     /// Types the prefix into the field.
     Prefix(String),
+    /// Shows the welcome page for a new session in the project at the index path.
+    NewSession(Vec<usize>),
+    /// Compares the open file with the file at this path of the project.
+    Compare(String),
     /// Chooses the toolchain a language of the open project starts with.
     Toolchain {
         /// The language, by family.
@@ -333,6 +341,8 @@ pub enum QuickAction {
     Move(isize),
     /// Picks the row at the place, or the row chosen.
     Pick(Option<usize>),
+    /// Starts a new session whose first prompt is what is typed, when sessions are listed; otherwise picks the row chosen.
+    Prompt,
     /// Closes it.
     Close,
 }
@@ -386,7 +396,9 @@ impl QuickInput {
     /// What the field says while nothing is typed.
     pub fn placeholder(&self) -> &'static str {
         match self.choosing {
-            Some(Choosing::Session) => "Switch to a session",
+            Some(Choosing::Session) => {
+                "Search sessions and chats; Ctrl+Enter starts a session with it"
+            }
             Some(Choosing::Theme) => "Choose an appearance",
             Some(Choosing::Keymap) => "Choose a keymap",
             Some(Choosing::Setting) => "Open a settings page",
@@ -410,6 +422,7 @@ impl QuickInput {
             Some(Choosing::Related(pm_lsp::Seek::Subtypes)) => "Go to a subtype",
             Some(Choosing::Related(_)) => "Go to a place found",
             Some(Choosing::Commits) => "Compare with the file as a commit left it",
+            Some(Choosing::CompareFile) => "Compare with a file of this project",
             None => match self.mode() {
                 QuickMode::Line => "Go to a line by its number",
                 QuickMode::Help => "Type a prefix, or select one",
@@ -426,7 +439,8 @@ pub fn quick_items(workspace: &Workspace) -> Vec<QuickItem> {
     };
     let needle = quick.needle();
     let mut items = match quick.choosing {
-        Some(Choosing::Session) => ranked(session_items(&workspace.projects, ""), needle),
+        Some(Choosing::Session) => session_list(&workspace.projects, needle, &quick.chats),
+        Some(Choosing::CompareFile) => ranked(compare_items(workspace), needle),
         Some(_) => ranked(quick.found.clone(), needle),
         None => match quick.mode() {
             QuickMode::Files => ranked(
@@ -436,7 +450,11 @@ pub fn quick_items(workspace: &Workspace) -> Vec<QuickItem> {
             QuickMode::Commands => ranked(quick.commands.clone(), needle),
             QuickMode::Line => line_items(workspace, needle),
             QuickMode::Help => ranked(help_items(), needle),
-            QuickMode::Symbols | QuickMode::Outline | QuickMode::Text => quick.found.clone(),
+            QuickMode::Outline => match outline_items(workspace) {
+                local if local.is_empty() => quick.found.clone(),
+                local => ranked(local, needle),
+            },
+            QuickMode::Symbols | QuickMode::Text => quick.found.clone(),
         },
     };
     items.truncate(QUICK_ROWS);
@@ -462,6 +480,21 @@ fn file_items(paths: &[String], recent: &[String]) -> Vec<QuickItem> {
                     line: None,
                 },
             }
+        })
+        .collect()
+}
+
+/// A row for each file of the project but the open one, picking which compares the open file with it.
+fn compare_items(workspace: &Workspace) -> Vec<QuickItem> {
+    let shown = workspace.open_files.shown().map(|file| file.path.as_str());
+    file_items(&workspace.tree.paths, &[])
+        .into_iter()
+        .filter_map(|mut item| match item.pick {
+            QuickPick::Open { path, .. } if Some(path.as_str()) != shown => {
+                item.pick = QuickPick::Compare(path);
+                Some(item)
+            }
+            _ => None,
         })
         .collect()
 }
@@ -534,6 +567,40 @@ fn line_items(workspace: &Workspace, needle: &str) -> Vec<QuickItem> {
     }]
 }
 
+/// A row for each item the grammar's outline query finds in the open file, indented by depth, without asking a language server.
+pub fn outline_items(workspace: &Workspace) -> Vec<QuickItem> {
+    let Some(file) = workspace.open_files.shown() else {
+        return Vec::new();
+    };
+    let document = file.document.0.borrow();
+    let Some(syntax) = &document.syntax else {
+        return Vec::new();
+    };
+    let text = document.field.text();
+    syntax
+        .outline(text)
+        .into_iter()
+        .map(|entry| {
+            let line = document.line_of(entry.name_start) + 1;
+            QuickItem {
+                title: entry.name,
+                detail: format!(
+                    "{}{} · line {line}",
+                    "  ".repeat(entry.depth),
+                    entry.context
+                ),
+                kind: QuickKind::Symbol,
+                keys: None,
+                matched: Vec::new(),
+                pick: QuickPick::Open {
+                    path: file.path.clone(),
+                    line: Some(line),
+                },
+            }
+        })
+        .collect()
+}
+
 /// A row for each prefix the quick input understands.
 fn help_items() -> Vec<QuickItem> {
     PREFIXES
@@ -549,13 +616,59 @@ fn help_items() -> Vec<QuickItem> {
         .collect()
 }
 
-/// A row for each session of `projects` and the projects inside them, named under `outer`.
-fn session_items(projects: &[Project], outer: &str) -> Vec<QuickItem> {
-    session_rows(projects, outer, &[])
+/// The rows the session chooser lists for `needle`: the sessions waiting for the reader first, then those whose titles match, then those whose conversations hold it as `chats` found them, with what matched beside them; then a row to start a new session in each top project.
+fn session_list(projects: &[Project], needle: &str, chats: &[(u64, String)]) -> Vec<QuickItem> {
+    let mut rows = session_rows(projects, "", &[]);
+    rows.sort_by_key(|(_, status, _)| !waits_for_reader(*status));
+    let ids: Vec<(u64, QuickItem)> = rows
+        .iter()
+        .map(|(id, _, item)| (*id, item.clone()))
+        .collect();
+    let mut items = ranked(rows.into_iter().map(|(_, _, item)| item).collect(), needle);
+    for (session, preview) in chats {
+        let Some((_, item)) = ids.iter().find(|(id, _)| id == session) else {
+            continue;
+        };
+        if items.iter().any(|held| held.pick == item.pick) {
+            continue;
+        }
+        let mut found = item.clone();
+        found.detail = format!("{} · {preview}", found.detail);
+        items.push(found);
+    }
+    let starts = projects
+        .iter()
+        .enumerate()
+        .map(|(place, project)| QuickItem {
+            title: format!("New session in {}", project.name),
+            detail: if needle.is_empty() {
+                String::new()
+            } else {
+                "Ctrl+Enter starts it with what is typed".to_owned()
+            },
+            kind: QuickKind::Command,
+            keys: None,
+            matched: Vec::new(),
+            pick: QuickPick::NewSession(vec![place]),
+        });
+    items.extend(starts);
+    items
 }
 
-/// The session rows of `projects`, whose index paths start with `prefix`.
-fn session_rows(projects: &[Project], outer: &str, prefix: &[usize]) -> Vec<QuickItem> {
+/// Whether a session in `status` waits for the reader: it needs an answer, holds something unread or failed.
+fn waits_for_reader(status: SessionStatus) -> bool {
+    matches!(
+        status,
+        SessionStatus::NeedsInput | SessionStatus::Unread | SessionStatus::Error
+    )
+}
+
+/// The session rows of `projects`, named under `outer`, whose index paths start with `prefix`, each with the session's number and how it stands.
+fn session_rows(
+    projects: &[Project],
+    outer: &str,
+    prefix: &[usize],
+) -> Vec<(u64, SessionStatus, QuickItem)> {
     let mut items = Vec::new();
     for (index, project) in projects.iter().enumerate() {
         let mut here = prefix.to_vec();
@@ -568,14 +681,24 @@ fn session_rows(projects: &[Project], outer: &str, prefix: &[usize]) -> Vec<Quic
         for (place, session) in project.sessions.iter().enumerate() {
             let mut at = here.clone();
             at.push(place);
-            items.push(QuickItem {
-                title: session.title.clone(),
-                detail: format!("{name} · {}", session.age),
-                kind: QuickKind::Session,
-                keys: None,
-                matched: Vec::new(),
-                pick: QuickPick::Session(at),
-            });
+            let waiting = match session.status {
+                SessionStatus::NeedsInput => "Needs input · ",
+                SessionStatus::Unread => "Unread · ",
+                SessionStatus::Error => "Failed · ",
+                _ => "",
+            };
+            items.push((
+                session.id,
+                session.status,
+                QuickItem {
+                    title: session.title.clone(),
+                    detail: format!("{waiting}{name} · {}", session.age),
+                    kind: QuickKind::Session,
+                    keys: None,
+                    matched: Vec::new(),
+                    pick: QuickPick::Session(at),
+                },
+            ));
         }
         items.extend(session_rows(&project.children, &name, &here));
     }

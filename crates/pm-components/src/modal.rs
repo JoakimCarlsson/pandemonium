@@ -17,7 +17,7 @@ pub enum ModalVariant {
     /// In the middle of the window, for a question or a form.
     #[default]
     Centred,
-    /// Near the top, under the command centre, for the quick input.
+    /// Over the command centre at the top, without dimming the window, for the quick input.
     Top,
 }
 
@@ -93,7 +93,11 @@ impl Modal {
         let width = self.width.unwrap_or(width);
         let (alignment, top) = match self.variant {
             ModalVariant::Centred => (BoxAlignment::Center, 0.0),
-            ModalVariant::Top => (BoxAlignment::TopCenter, 56.0),
+            ModalVariant::Top => (BoxAlignment::TopCenter, 3.0),
+        };
+        let scrim = match self.variant {
+            ModalVariant::Centred => Color::rgba(0, 0, 0, 110),
+            ModalVariant::Top => Color::TRANSPARENT,
         };
         let title = self.title;
         let message = self.message;
@@ -101,7 +105,7 @@ impl Modal {
             Modifier::new()
                 .fill_max_size()
                 .z_index_unclipped(2)
-                .background(Color::rgba(0, 0, 0, 110))
+                .background(scrim)
                 .clickable_plain(move || on_dismiss())
                 .on_key_event(move |event| {
                     if event.is(Key::Escape, Modifiers::NONE) {

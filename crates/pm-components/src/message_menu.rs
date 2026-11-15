@@ -129,6 +129,7 @@ impl MessageMenu {
                 MessageMenuVariant::Caret => phosphor::CARET_DOWN,
             })
             .size(self.size)
+            .tooltip("More actions")
             .active(open.get())
             .on_click(move || toggle.set(!toggle.get()))
             .show();

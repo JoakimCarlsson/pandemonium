@@ -200,4 +200,8 @@ pub enum BrowserAction {
     Pick,
     /// Attaches a screenshot of the page, or its console, to the prompt.
     Capture(CaptureKind),
+    /// Opens the menu of the captures below the camera button.
+    CaptureMenu,
+    /// Ends dragging a rectangle over the page without a picture.
+    CancelArea,
 }

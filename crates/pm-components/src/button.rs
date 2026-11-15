@@ -1,12 +1,16 @@
-//! A button with an optional icon and a label.
+//! A button with an optional icon and a label: lit under the pointer with a
+//! short colour transition, faint with a not-allowed cursor while disabled,
+//! with a turning glyph while busy and a tooltip while the pointer rests.
 
 use std::rc::Rc;
 
 use rustle::prelude::*;
 
+use crate::app_theme::extended_colors;
 use crate::focus_ring::remember_focus_ring;
 use crate::label::Label;
 use crate::size::Size;
+use crate::spinner::spinning_icon;
 use rustle::color_scheme;
 
 /// How a button is drawn.
@@ -21,7 +25,17 @@ pub enum ButtonVariant {
     Primary,
     /// The danger fill, for throwing work away.
     Danger,
+    /// A hairline outline with no fill.
+    Outline,
+    /// Underlined text, like a link.
+    Link,
 }
+
+/// How long a button's colours take to follow the pointer, in milliseconds.
+const FADE: u64 = 120;
+
+/// How opaque a disabled button is drawn.
+const DISABLED_ALPHA: f32 = 0.4;
 
 /// A button with a variant and a size.
 #[derive(Clone)]
@@ -42,6 +56,14 @@ pub struct Button {
     modifier: Modifier,
     /// What a click does.
     on_click: Option<Rc<dyn Fn()>>,
+    /// Whether its glyph turns, while what it does is under way.
+    spinning: bool,
+    /// What the label shows while the pointer rests on it.
+    tooltip: Option<String>,
+    /// Whether it is drawn chosen, as one of a set.
+    selected: bool,
+    /// Whether its ends are fully rounded.
+    round: bool,
 }
 
 impl Button {
@@ -56,12 +78,48 @@ impl Button {
             disabled: false,
             modifier: Modifier::new(),
             on_click: None,
+            spinning: false,
+            tooltip: None,
+            selected: false,
+            round: false,
         }
+    }
+
+    /// The button with its glyph turning while `spinning`, for work under way.
+    pub fn spinning(mut self, spinning: bool) -> Self {
+        self.spinning = spinning;
+        self
+    }
+
+    /// The button showing `tooltip` in a label while the pointer rests on it.
+    pub fn tooltip(mut self, tooltip: impl Into<String>) -> Self {
+        self.tooltip = Some(tooltip.into());
+        self
+    }
+
+    /// The button drawn chosen when `selected`.
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
+
+    /// The button with fully rounded ends when `round`.
+    pub fn round(mut self, round: bool) -> Self {
+        self.round = round;
+        self
     }
 
     /// The button leading with `icon`.
     pub fn icon(mut self, icon: Icon) -> Self {
         self.icon = Some(icon);
+        self
+    }
+
+    /// The button leading with `icon` when `shown`.
+    pub fn icon_when(mut self, shown: bool, icon: Icon) -> Self {
+        if shown {
+            self.icon = Some(icon);
+        }
         self
     }
 
@@ -114,39 +172,27 @@ impl Button {
             Size::Lg => (38.0, 16.0, 16.0),
         };
         let (height, padding) = (crate::row_height(height), crate::spacing(padding));
-        let (fill, tint) = match self.variant {
-            ButtonVariant::Primary => (scheme.primary, scheme.on_primary),
-            ButtonVariant::Danger => (scheme.error, scheme.on_primary),
-            ButtonVariant::Secondary if lit => {
-                (scheme.surface_container_highest, scheme.on_surface)
-            }
-            ButtonVariant::Secondary => (scheme.surface_container_high, scheme.on_surface_variant),
-            ButtonVariant::Ghost if lit => (scheme.surface_container_high, scheme.on_surface),
-            ButtonVariant::Ghost => (Color::TRANSPARENT, scheme.on_surface_variant),
-        };
-        let tint = if self.disabled {
-            scheme.on_surface_variant
-        } else {
-            tint
-        };
+        let (fill, tint, edge) = self.look(lit);
+        let fill = animate_color_as_state(fill, tween(FADE)).get();
+        let tint = animate_color_as_state(tint, tween(FADE)).get();
         let ring = remember_focus_ring();
-        let outline = if ring.shown() {
-            scheme.primary
-        } else {
-            Color::TRANSPARENT
-        };
+        let radius = if self.round { height / 2.0 } else { 6.0 };
+        let outline = if ring.shown() { scheme.primary } else { edge };
         let mut modifier = self
             .modifier
             .height(height)
-            .alpha(if self.disabled { 0.45 } else { 1.0 })
-            .background_rounded(fill, 6.0)
-            .border(1.5, outline, 6.0)
+            .background_rounded(fill, radius)
+            .border(if ring.shown() { 1.5 } else { 1.0 }, outline, radius)
             .padding_xy(padding, 0.0)
             .on_hover({
                 let hovered = hovered.clone();
                 move |inside| hovered.set(inside)
             });
-        if let (Some(on_click), false) = (self.on_click.clone(), self.disabled) {
+        if self.disabled {
+            modifier = modifier
+                .alpha(DISABLED_ALPHA)
+                .cursor(CursorIcon::NotAllowed);
+        } else if let Some(on_click) = self.on_click.clone() {
             let pressed = on_click.clone();
             let clicked = ring.clone();
             modifier = ring.focusable(
@@ -157,28 +203,109 @@ impl Button {
                 move || pressed(),
             );
         }
-        row_arranged(
-            modifier,
-            Arrangement::Center,
-            Alignment::Center,
-            move || {
-                row_arranged(
-                    Modifier::new(),
-                    Arrangement::SpacedBy(crate::spacing(6.0)),
-                    Alignment::Center,
-                    move || {
-                        if let Some(glyph_icon) = &self.icon {
-                            icon(glyph_icon.clone(), glyph, tint);
-                        }
-                        if !self.label.is_empty() {
-                            Label::new(self.label.clone()).colour(tint).show();
-                        }
-                        if let Some(glyph_icon) = &self.trailing_icon {
-                            icon(glyph_icon.clone(), glyph - 2.0, tint);
-                        }
-                    },
-                );
-            },
-        );
+        let spinning = self.spinning;
+        let link = self.variant == ButtonVariant::Link;
+        let (lead, label, trailing) = (self.icon, self.label, self.trailing_icon);
+        let body = move || {
+            row_arranged(
+                modifier,
+                Arrangement::Center,
+                Alignment::Center,
+                move || {
+                    row_arranged(
+                        Modifier::new(),
+                        Arrangement::SpacedBy(crate::spacing(6.0)),
+                        Alignment::Center,
+                        move || {
+                            if let Some(glyph_icon) = &lead {
+                                if spinning && trailing.is_none() {
+                                    spinning_icon(glyph_icon.clone(), glyph, tint);
+                                } else {
+                                    icon(glyph_icon.clone(), glyph, tint);
+                                }
+                            }
+                            if !label.is_empty() {
+                                let mut text = Label::new(label.clone()).colour(tint);
+                                if link {
+                                    text = text.underline();
+                                }
+                                text.show();
+                            }
+                            if let Some(glyph_icon) = &trailing {
+                                if spinning {
+                                    spinning_icon(glyph_icon.clone(), glyph - 2.0, tint);
+                                } else {
+                                    icon(glyph_icon.clone(), glyph - 2.0, tint);
+                                }
+                            }
+                        },
+                    );
+                },
+            );
+        };
+        match &self.tooltip {
+            Some(text) => crate::tip::tip(text, body),
+            None => body(),
+        }
+    }
+
+    /// The fill, the colour of the words and glyphs, and the outline of the button, lit under the pointer when `lit`.
+    fn look(&self, lit: bool) -> (Color, Color, Color) {
+        let scheme = color_scheme();
+        let extended = extended_colors();
+        let chosen = self.selected && lit;
+        match self.variant {
+            ButtonVariant::Primary if lit => {
+                (extended.accent_hover, scheme.on_primary, Color::TRANSPARENT)
+            }
+            ButtonVariant::Primary => (scheme.primary, scheme.on_primary, Color::TRANSPARENT),
+            ButtonVariant::Danger => (scheme.error, scheme.on_error, Color::TRANSPARENT),
+            ButtonVariant::Secondary if lit || chosen => (
+                scheme.surface_container_highest,
+                scheme.on_surface,
+                Color::TRANSPARENT,
+            ),
+            ButtonVariant::Secondary => (
+                scheme.surface_container_high,
+                scheme.on_surface,
+                Color::TRANSPARENT,
+            ),
+            ButtonVariant::Outline => (
+                if lit {
+                    scheme.surface_container_high
+                } else {
+                    Color::TRANSPARENT
+                },
+                scheme.on_surface,
+                if self.selected {
+                    scheme.on_surface_variant
+                } else {
+                    scheme.outline_variant
+                },
+            ),
+            ButtonVariant::Link => (
+                Color::TRANSPARENT,
+                if lit {
+                    scheme.on_surface
+                } else {
+                    scheme.primary
+                },
+                Color::TRANSPARENT,
+            ),
+            ButtonVariant::Ghost if lit || self.selected => (
+                if self.selected {
+                    scheme.secondary_container
+                } else {
+                    scheme.surface_container_high
+                },
+                scheme.on_surface,
+                Color::TRANSPARENT,
+            ),
+            ButtonVariant::Ghost => (
+                Color::TRANSPARENT,
+                scheme.on_surface_variant,
+                Color::TRANSPARENT,
+            ),
+        }
     }
 }

@@ -82,6 +82,8 @@ fn typed(event: &KeyEvent) -> Option<Vec<u8>> {
 /// Something a terminal does on its own when asked from its menu or a shortcut, rather than typing into the shell.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TerminalCommand {
+    /// Puts the marked text in the composer of the open session.
+    AddToChat,
     /// Puts the marked text on the clipboard.
     Copy,
     /// Types the clipboard's text into the shell.
@@ -90,6 +92,8 @@ pub enum TerminalCommand {
     SelectAll,
     /// Clears the window and what is kept above it.
     Clear,
+    /// Ends the shell and drops its tab.
+    Kill,
 }
 
 /// A shortcut of the terminal itself, caught before the keys go to the shell.
@@ -97,7 +101,7 @@ pub enum TerminalCommand {
 pub enum TerminalShortcut {
     /// A command the menu also offers.
     Command(TerminalCommand),
-    /// Scrolls a window's height back, when positive, or forward.
+    /// Scrolls a window's height less one line back, when positive, or forward.
     Page(i32),
     /// Part of a binding of several chords, which does nothing yet.
     Swallowed,
@@ -107,12 +111,43 @@ impl TerminalCommand {
     /// The command the keymap's `action` asks of a terminal, when it is one.
     pub fn of_action(action: Action) -> Option<Self> {
         match action {
+            Action::TerminalAddToChat => Some(Self::AddToChat),
             Action::TerminalCopy => Some(Self::Copy),
             Action::TerminalPaste => Some(Self::Paste),
             Action::TerminalSelectAll => Some(Self::SelectAll),
             Action::TerminalClear => Some(Self::Clear),
+            Action::KillTerminal => Some(Self::Kill),
             _ => None,
         }
+    }
+
+    /// The keymap's action for the command, whose keys its menu row shows.
+    pub fn action(self) -> Action {
+        match self {
+            Self::AddToChat => Action::TerminalAddToChat,
+            Self::Copy => Action::TerminalCopy,
+            Self::Paste => Action::TerminalPaste,
+            Self::SelectAll => Action::TerminalSelectAll,
+            Self::Clear => Action::TerminalClear,
+            Self::Kill => Action::KillTerminal,
+        }
+    }
+
+    /// What its menu row reads.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::AddToChat => "Add to chat",
+            Self::Copy => "Copy",
+            Self::Paste => "Paste",
+            Self::SelectAll => "Select all",
+            Self::Clear => "Clear",
+            Self::Kill => "Kill",
+        }
+    }
+
+    /// Whether the command acts on the marked text, so does nothing while none is marked.
+    pub fn needs_selection(self) -> bool {
+        matches!(self, Self::AddToChat | Self::Copy)
     }
 }
 

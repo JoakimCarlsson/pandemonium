@@ -499,9 +499,10 @@ reads the value.
   read-only, the absolute path, permalinks, Reveal in file manager or project,
   Pin and Open in terminal. Nothing is ever disabled, and "Copy path" copies
   the relative path.
-- The pane tree is a fixed pair, side by side or (split up and down) stacked. ~~The divider can't be dragged.~~ **FIXED.** A
+- The pane tree is a fixed pair, side by side or (split up and down) stacked. ~~The divider can't be dragged.~~ **FIXED.** ~~A
   tab drag shows no overlay or ghost. The open-to-the-side drop strip is 6 px
-  wide. The split menu is gone.
+  wide.~~ **FIXED:** drop zones light up, the carried tab follows the pointer,
+  and the side zone is 120 px over the view's right edge. The split menu is gone.
 - Next and previous skip the browser tab, and the tab keys only work while
   focus is in the session column.
 - Reopen loses the caret and scroll. Deleted or renamed files keep their tabs.
@@ -520,8 +521,8 @@ reads the value.
 - ~~Every file tab gets `FILE_TEXT`.~~ **FIXED.**
 - The Excerpts tab has a fixed title.
 - No empty-pane state.
-- `Tab` has no tooltip, agent variant or lock mark, and the close cross only
-  shows on hover.
+- ~~`Tab` has no tooltip~~ **FIXED** (file tabs show their path), agent variant or lock mark, and the close cross only
+  shows on hover. The session strip is the old 48 px strip of top-rounded tabs again.
 
 ---
 
@@ -663,9 +664,12 @@ reads the value.
 - **Project search needs Enter;** there is no search as you type.
 - **Quick input:**
   - ~~A fixed list of 25 commands with hard-coded key labels.~~ **FIXED.**
-  - Outline needs typing and the language server.
+  - ~~Outline needs typing and the language server.~~ **FIXED:** `@` lists the
+    grammar's outline of the open file at once, and only falls back to the
+    language server when the grammar has no outline.
   - ~~`:` go to line and `?` help are gone.~~ **FIXED.**
-  - Ctrl+Enter no longer starts a new session.
+  - ~~Ctrl+Enter no longer starts a new session.~~ **FIXED:** in the session
+    chooser it opens the welcome page with what is typed as the prompt.
   - The agent-setting, restore, fork and runnable choosers are gone.
     ~~Debug, task and toolchain~~ **FIXED.**
 - **The folder picker only adds projects** (no clone-into or extension
@@ -674,22 +678,27 @@ reads the value.
 
 **P2**
 - **Tree:**
-  - No menu on empty space.
-  - No copy path or reveal.
+  - ~~No menu on empty space.~~ **FIXED:** new file or folder, paste, copy
+    path, refresh and collapse.
+  - ~~No copy path~~ **FIXED** (absolute and relative) or reveal.
   - ~~Names aren't validated.~~ **FIXED.**
   - Rename leaves the viewer on the old path.
-  - Weak drag feedback: no target highlight, ghost or Ctrl to copy.
-  - Refresh doesn't refresh git.
-  - Every row is rebuilt each frame (up to 20k).
+  - ~~Weak drag feedback: no target highlight, ghost~~ **FIXED** or Ctrl to copy.
+  - ~~Refresh doesn't refresh git.~~ **FIXED.**
+  - ~~Every row is rebuilt each frame (up to 20k).~~ **FIXED:** only the rows
+    near the view are composed (`lazy_list_keyed`).
+  - Files deleted but still tracked stayed listed. **FIXED:** the listing
+    leaves out paths missing on disk.
 - **Search:** ignores `seed_search_from_selection`, has no clear button, no
   tooltips, and lost its empty and error states.
 - **Quick input:**
   - No group headings. ~~No recents.~~ **FIXED.**
   - Files are capped at 60.
-  - No compare-with-file mode.
+  - ~~No compare-with-file mode.~~ **FIXED:** "Another file…" in the file menu
+    and the Compare Active File With… action list the project's files.
   - The `%` highlight length is wrong (`link/quick_input.rs:252`).
-  - Chat search and session ordering by attention are gone, as are the "New
-    session in…" rows.
+  - ~~Chat search and session ordering by attention are gone, as are the "New
+    session in…" rows.~~ **FIXED.**
   - No "Create branch".
   - The current choice isn't preselected.
   - Rewind lists oldest first.
@@ -697,15 +706,14 @@ reads the value.
   - History has no commits.
 - **Folder picker:** stale replies can show the wrong folder, and
   Back/Forward/Up are never disabled.
-- **Popovers** aren't kept inside the window, and menus have no keys or
-  pressed state.
+- ~~**Popovers** aren't kept inside the window~~ **FIXED**, and menus have no keys.
 - **Dialogs:** `Dialog` and `ConfirmDialog` ignore Escape and Enter.
 - **The update dialog** only checks the blocker after Install is pressed.
 
 **P3**
 - Case-sensitive sort.
 - The menu sits at a fixed offset instead of at the pointer.
-- No wheel scrolling in the quick input.
+- ~~No wheel scrolling in the quick input.~~ **FIXED.**
 - Per-chooser empty texts are gone.
 - Places lost Desktop, Documents and Downloads.
 - The update date is shown raw, and "Later" shows while installing.
@@ -715,48 +723,54 @@ reads the value.
 ## 11. Dock: terminal, problems, tasks and debugger
 
 **P1**
-- **Terminal font size, family, cursor, scrollback and copy on select are
-  ignored.**
+- ~~**Terminal font size, family, cursor, scrollback and copy on select are
+  ignored.**~~ **FIXED:** size, cursor shape, scrollback and copy on select
+  are applied; the terminal uses the code font.
 - **Shells aren't re-attached after a reconnect or restart,** and each launch
   leaves the last launch's shells running on the server.
-- **Problem rows can't be pressed,** and Problems covers only open files and
-  isn't scoped to the folder.
-- **Watches can't be added or removed.** `SetWatches` is never sent.
+- ~~**Problem rows can't be pressed,** and Problems covers only open files and
+  isn't scoped to the folder.~~ **FIXED:** rows open the file at the line and
+  Problems is scoped to the session folder; it still covers only open files.
+- ~~**Watches can't be added or removed.** `SetWatches` is never sent.~~
+  **FIXED.**
 
 **P2**
 - **Debugger:**
-  - Pausing doesn't reveal the line, and picking a frame doesn't either.
+  - ~~Pausing doesn't reveal the line, and picking a frame doesn't either.~~
+    **FIXED.**
   - The paused line isn't marked in the gutter.
   - Breakpoints are keyed by relative path only, so they leak across projects.
-  - The toggle-breakpoint key does nothing.
+  - ~~The toggle-breakpoint key does nothing.~~ **FIXED.**
   - Inline values are a stand-in: the first six variables, with no
     `InlineValues` request.
   - No attach to process.
-  - Starting doesn't switch to the Debug tab.
-  - The console has no colours and doesn't stick to the end.
-  - The controls ignore the program's state and have no tooltips.
+  - ~~Starting doesn't switch to the Debug tab.~~ **FIXED.**
+  - The console has no colours. ~~It doesn't stick to the end.~~ **FIXED.**
+  - ~~The controls ignore the program's state and have no tooltips.~~
+    **FIXED.**
 - **Tasks:**
   - Rerun just opens the tab.
   - No run gutter marks, lenses or runnable picker.
   - No toolchain picker.
   - Tasks and debug starts send `project: None`.
-- **Terminal menu:** "Add to chat" and "Kill" are gone, and there are no
-  disabled states or key labels.
+- ~~**Terminal menu:** "Add to chat" and "Kill" are gone, and there are no
+  disabled states or key labels.~~ **FIXED.**
 - **Terminal input:**
   - No Ctrl+click links.
   - No IME preedit.
   - ~~**Paste doesn't strip control characters, so a paste can escape bracketed
     paste mode** (`pm-shell/src/terminal.rs:170-177`).~~ **FIXED:** control
     characters other than tab and return are dropped, with a test.
-  - A new or picked shell doesn't take focus.
+  - ~~A new or picked shell doesn't take focus.~~ **FIXED.**
 
 **P3**
-- Typing doesn't clear the selection.
-- Shift+PgUp pages a full screen instead of rows−1.
-- The Problems count includes hints.
+- ~~Typing doesn't clear the selection.~~ **FIXED.**
+- ~~Shift+PgUp pages a full screen instead of rows−1.~~ **FIXED.**
+- ~~The Problems count includes hints.~~ **FIXED.**
 - Problem rows show the full path and message.
 - Expensive scopes can't be opened.
-- Variable layout is flat.
+- Variable layout is flat. The tab's three columns now share its width, under
+  Call stack, Variables and Console headings, as the old tab had.
 - Debug starts ignore the open file.
 
 ---
@@ -772,33 +786,33 @@ reads the value.
   settings page shows no status.~~ **FIXED:** the Embedded browser row shows it.
 
 **P2**
-- The keymap preview handler beats the page's keys (#6).
-- Mouse back and forward don't navigate.
-- The camera button takes a screenshot instead of opening the capture menu.
-- Area capture has no mode state, highlight or cancel.
-- Switching tabs leaves the old tab in pick mode.
-- The address bar freezes once you type without pressing Enter
-  (`link/browser.rs:61-65`, `browser.rs:211`).
-- The permission prompt's Allow button may stay greyed out: no recompose after
-  `ALLOW_DELAY` (`web.rs:720-726`).
-- The find bar has no Escape or Shift+Enter.
-- The developer tools can squash the page (range up to 2000).
-- The lock button has no tooltips or disabled state on agent tabs.
-- Opening the browser doesn't focus the address bar.
+- ~~The keymap preview handler beats the page's keys (#6).~~ **FIXED.**
+- ~~Mouse back and forward don't navigate.~~ **FIXED.**
+- ~~The camera button takes a screenshot instead of opening the capture menu.~~ **FIXED.**
+- ~~Area capture has no mode state, highlight or cancel.~~ **FIXED.**
+- ~~Switching tabs leaves the old tab in pick mode.~~ **FIXED.**
+- ~~The address bar freezes once you type without pressing Enter
+  (`link/browser.rs:61-65`, `browser.rs:211`).~~ **FIXED.**
+- ~~The permission prompt's Allow button may stay greyed out: no recompose after
+  `ALLOW_DELAY` (`web.rs:720-726`).~~ **FIXED.**
+- ~~The find bar has no Escape or Shift+Enter.~~ **FIXED.**
+- ~~The developer tools can squash the page (range up to 2000).~~ **FIXED.**
+- ~~The lock button has no tooltips or disabled state on agent tabs.~~ **FIXED.**
+- ~~Opening the browser doesn't focus the address bar.~~ **FIXED.**
 
 **P3**
-- The tab strip has no agent look, tooltip or scroll to the active tab.
-- No toolbar tooltips.
+- ~~The tab strip has no agent look, tooltip or scroll to the active tab.~~ **FIXED.**
+- ~~No toolbar tooltips.~~ **FIXED.**
 - Right-click isn't forwarded to the page.
 - No focus handoff after menu commands or element picks.
-- Reopening find doesn't select the old query.
+- ~~Reopening find doesn't select the old query.~~ **FIXED.**
 - The find bar doesn't fit narrow pages.
-- The menu isn't clamped horizontally.
-- "Open in default browser" errors are swallowed.
-- Shortcut key-ups leak to the page.
-- An agent's first navigate doesn't show the pane.
+- ~~The menu isn't clamped horizontally.~~ **FIXED.**
+- ~~"Open in default browser" errors are swallowed.~~ **FIXED.**
+- ~~Shortcut key-ups leak to the page.~~ **FIXED.**
+- ~~An agent's first navigate doesn't show the pane.~~ **FIXED.**
 - Restore changes the agents' default tab.
-- `supported()` is no longer checked.
+- ~~`supported()` is no longer checked.~~ **FIXED.**
 
 **OK:** the engine pipeline, agent tools and origin restriction, safety
 prompts, zoom, clear data, per-session scoping and restore.
@@ -818,25 +832,32 @@ prompts, zoom, clear data, per-session scoping and restore.
 - ~~**File-type icons no longer come from `languages/*/icon.svg` or icon-theme
   extensions.**~~ **FIXED:** the SVGs are read into outlines once and tinted. A hard-coded Phosphor table replaced them, and the server's
   `icon_themes` go unused (`file_icon.rs:84-127`).
-- **No focus ring or keyboard focus on any control.**
-- **Tooltips are missing everywhere.**
-- **Interface font, code font and density are never applied.**
+- ~~**No focus ring or keyboard focus on any control.**~~ **FIXED:** buttons,
+  icon buttons and their kin take Tab focus and draw a ring.
+- ~~**Tooltips are missing everywhere.**~~ **FIXED:** every icon-only button,
+  the browser toolbar and the file tabs have one.
+- ~~**Interface font, code font and density are never applied.**~~ **FIXED**
+  (`window_theme.rs`).
 
 **P2**
-- No pressed state on any control.
-- Disabled buttons keep their fill; the old ones dropped to 40% opacity with a
-  not-allowed cursor.
-- Button variants Outline, Link and Field, and the selected, round, monospace
-  and width options, are gone.
-- The AccentHover and Sidebar colour roles are gone, so primary buttons don't
-  light up on hover.
-- The Subtle and Comment colours changed (`#666666` → `#707070`,
-  `#6f7378` → `#7a7e83`).
+- ~~No pressed state on any control.~~ **FIXED:** Rustle darkens the pressed
+  clickable area.
+- ~~Disabled buttons keep their fill; the old ones dropped to 40% opacity with a
+  not-allowed cursor.~~ **FIXED** for `Button` and `IconButton`.
+- Button variants ~~Outline, Link~~ **FIXED** and Field, and the ~~selected, round~~
+  **FIXED**, monospace and width options, are gone.
+- ~~The AccentHover and Sidebar colour roles are gone, so primary buttons don't
+  light up on hover.~~ **FIXED:** `ExtendedColors` carries both.
+- ~~The Subtle and Comment colours changed (`#666666` → `#707070`,
+  `#6f7378` → `#7a7e83`).~~ **FIXED.**
 - ~~Folders are grey instead of gold (`#d9a95b`).~~ **FIXED.**
-- Spinning icons (busy states) are gone everywhere.
+- ~~Spinning icons (busy states) are gone everywhere.~~ **FIXED:** `spinner`,
+  `spinning_icon` and `.spinning()` on buttons; the Git button and extension
+  installs spin.
 
 **P3**
-- No colour transitions.
+- ~~No colour transitions.~~ **FIXED:** buttons, icon buttons and tabs fade
+  their colours over 120 ms.
 - Figures are rasterised at a fixed 2× instead of the window scale
   (`figures.rs:22,328`).
 - Button and icon-button heights changed (28/32/36/40 → 22/26/32/38).
