@@ -2,7 +2,9 @@
 //! icons, a menu of tree actions on each entry, names typed in place for new
 //! and renamed entries, entries dragged onto folders and files dropped from
 //! other applications imported; F2, Delete and the clipboard keys act on the
-//! entries chosen, and Ctrl or Shift with a click chooses several.
+//! entries chosen, and Ctrl or Shift with a click chooses several. Only the
+//! rows near the view are composed, and a secondary click on empty space
+//! opens the menu of the folder's root.
 
 use std::rc::Rc;
 
@@ -27,18 +29,26 @@ pub fn files_panel(workspace: &Workspace, actions: &Actions) {
             note("Listing files…");
             return;
         }
-        let scroll = remember_scroll_state();
+        let list = remember_lazy_list_state();
+        let rows = tree.rows(&workspace.git.changes);
+        let top = new_entry_at(tree, "");
+        let lead = usize::from(top.is_some());
+        let count = lead + rows.len() + 1;
+        let root_menu = actions.tree.clone();
         let import = actions.tree.clone();
         let moved = actions.tree.clone();
         let keys = actions.tree.clone();
         let focus = remember_focus();
         let naming = tree.editing.is_some();
-        column_with(
+        if tree.menu.as_deref() == Some("") {
+            root_menu_popup(tree, actions);
+        }
+        lazy_list_keyed(
             Modifier::new()
                 .fill_max_width()
                 .weight(1.0)
                 .focusable(&focus, move |event| !naming && tree_key(event, &keys))
-                .vertical_scroll(&scroll)
+                .on_context_menu(move |_| root_menu(TreeAction::Menu(Some(String::new()))))
                 .on_file_drop(move |file| {
                     import(TreeAction::Import {
                         into: String::new(),
@@ -54,14 +64,19 @@ pub fn files_panel(workspace: &Workspace, actions: &Actions) {
                     }
                 })
                 .padding_xy(4.0, 0.0),
-            || {
-                if let Some(depth) = new_entry_at(tree, "") {
-                    key("new-entry", || editor_row(tree, depth, actions));
-                }
-                for row in tree.rows(&workspace.git.changes) {
-                    key(row.path.clone(), || entry(tree, &row, actions));
-                }
-                spacer(Modifier::new().height(pm_components::spacing(24.0)));
+            &list,
+            count,
+            |place| match place.checked_sub(lead).and_then(|at| rows.get(at)) {
+                Some(row) => row.path.clone(),
+                None if place < lead => "\u{0}new-entry".to_owned(),
+                None => "\u{0}end".to_owned(),
+            },
+            |place| match place.checked_sub(lead).and_then(|at| rows.get(at)) {
+                Some(row) => entry(tree, row, actions),
+                None => match top.filter(|_| place < lead) {
+                    Some(depth) => editor_row(tree, depth, actions),
+                    None => spacer(Modifier::new().height(pm_components::spacing(24.0))),
+                },
             },
         );
     });
@@ -175,7 +190,7 @@ fn entry(tree: &FileTree, row: &TreeRow, actions: &Actions) {
         item(row, actions);
     }
     if tree.menu.as_deref() == Some(row.path.as_str()) {
-        entry_menu(row, actions);
+        entry_menu(&tree.root, row, actions);
     }
     if row.folder
         && let Some(depth) = new_entry_at(tree, &row.path)
@@ -265,8 +280,18 @@ fn editor_row(tree: &FileTree, depth: usize, actions: &Actions) {
 }
 
 /// The menu of tree actions on `row`, hung under it.
-fn entry_menu(row: &TreeRow, actions: &Actions) {
+fn entry_menu(root: &str, row: &TreeRow, actions: &Actions) {
     let close = actions.tree.clone();
+    let root = root.to_owned();
+    let copy = |text: String| {
+        let tree = actions.tree.clone();
+        move || {
+            if let Some(board) = rustle::clipboard() {
+                board.set_text(&text);
+            }
+            tree(TreeAction::Menu(None));
+        }
+    };
     let act = |action: TreeAction| {
         let tree = actions.tree.clone();
         move || tree(action.clone())
@@ -331,6 +356,17 @@ fn entry_menu(row: &TreeRow, actions: &Actions) {
         .icon_item(phosphor::CLIPBOARD, "Paste", act(TreeAction::Paste))
         .hint("Ctrl+V")
         .separator()
+        .icon_item(
+            phosphor::LINK,
+            "Copy path",
+            copy(format!("{}/{path}", root.trim_end_matches('/'))),
+        )
+        .icon_item(
+            phosphor::LINK_SIMPLE,
+            "Copy relative path",
+            copy(path.clone()),
+        )
+        .separator()
         .destructive_item(
             phosphor::TRASH,
             "Delete",
@@ -338,6 +374,57 @@ fn entry_menu(row: &TreeRow, actions: &Actions) {
         )
         .hint("Delete");
     menu.show();
+}
+
+/// The menu of the folder's root, opened by a secondary click on empty space: new entries at the root, paste, refresh, collapse and copying the folder's path.
+fn root_menu_popup(tree: &FileTree, actions: &Actions) {
+    let close = actions.tree.clone();
+    let act = |action: TreeAction| {
+        let tree = actions.tree.clone();
+        move || tree(action.clone())
+    };
+    let root = tree.root.clone();
+    let copied = actions.tree.clone();
+    Menu::new()
+        .offset(24.0, 28.0)
+        .on_dismiss(move || close(TreeAction::Menu(None)))
+        .icon_item(
+            phosphor::FILE_PLUS,
+            "New file",
+            act(TreeAction::StartCreate {
+                parent: String::new(),
+                folder: false,
+            }),
+        )
+        .icon_item(
+            phosphor::FOLDER_PLUS,
+            "New folder",
+            act(TreeAction::StartCreate {
+                parent: String::new(),
+                folder: true,
+            }),
+        )
+        .separator()
+        .icon_item(phosphor::CLIPBOARD, "Paste", act(TreeAction::Paste))
+        .hint("Ctrl+V")
+        .separator()
+        .icon_item(phosphor::LINK, "Copy path", move || {
+            if let Some(board) = rustle::clipboard() {
+                board.set_text(&root);
+            }
+            copied(TreeAction::Menu(None));
+        })
+        .icon_item(
+            phosphor::ARROWS_CLOCKWISE,
+            "Refresh",
+            act(TreeAction::Refresh),
+        )
+        .icon_item(
+            phosphor::ARROWS_IN_SIMPLE,
+            "Collapse all",
+            act(TreeAction::CollapseAll),
+        )
+        .show();
 }
 
 /// A muted line in place of the tree.
