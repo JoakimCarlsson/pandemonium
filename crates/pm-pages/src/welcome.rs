@@ -207,6 +207,11 @@ fn place_choice(start: &Start) -> ComposerChoice {
         current: current.to_owned(),
         picks: PLACES
             .iter()
+            .filter(|(value, _, _)| match *value {
+                "worktree" => !start.branches.is_empty(),
+                "container" => start.container_offered && !start.branches.is_empty(),
+                _ => true,
+            })
             .map(|(value, name, description)| ComposerPick {
                 value: (*value).to_owned(),
                 name: (*name).to_owned(),

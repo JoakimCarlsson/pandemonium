@@ -159,10 +159,10 @@ impl Link {
             ConversationCommand::Retry => self.send_prompt(pm_harness::RETRY.to_owned()),
             ConversationCommand::Afresh => self.send_prompt(pm_harness::FRESH.to_owned()),
             ConversationCommand::HandOver => {
-                self.workspace.extras.prefill = Some(format!("{} ", pm_harness::HANDOFF));
+                self.prefill(format!("{} ", pm_harness::HANDOFF));
             }
             ConversationCommand::SideQuestion => {
-                self.workspace.extras.prefill = Some(format!("{} ", pm_harness::BTW));
+                self.prefill(format!("{} ", pm_harness::BTW));
             }
             ConversationCommand::Rewind(turn) => {
                 self.ask(Request::Rewind { session, turn }, Ask::Nothing)

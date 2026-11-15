@@ -37,6 +37,7 @@ pub fn prompt_box(workspace: &Workspace, actions: &Actions, width: f32) {
     let send = actions.send_prompt.clone();
     let mut prompt = Composer::new("Reply to the agent, or type / for commands")
         .prefill(workspace.extras.prefill.clone())
+        .prefill_request(workspace.extras.prefills)
         .working(composer.working)
         .menu(composer.menu.as_ref().map(|menu| match menu {
             pm_shell::ComposerMenu::Setting(id) => ComposerMenu::Setting(id.clone()),
@@ -197,7 +198,7 @@ pub(crate) fn choice_of(setting: &ConversationSetting) -> ComposerChoice {
     };
     ComposerChoice {
         icon,
-        label: setting.current_name().to_owned(),
+        label: setting.current_name().replace(" (recommended)", ""),
         id: setting.id.clone(),
         heading: setting.name.clone(),
         current: setting.current.clone(),

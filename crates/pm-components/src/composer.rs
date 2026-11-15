@@ -146,6 +146,8 @@ pub struct Composer {
     callbacks: ComposerCallbacks,
     /// Text put into the composer once each time it changes, such as a command to finish.
     prefill: Option<String>,
+    /// A number that, each time it changes, puts [`Composer::prefill`] into the composer again, even when the text is the same.
+    prefill_request: u64,
     /// A number that, each time it changes, puts the keyboard in the composer.
     focus_request: u64,
     /// A number that, each time it changes, opens the menu given with [`Composer::menu`] again.
@@ -170,6 +172,7 @@ impl Composer {
             modifier: Modifier::new(),
             callbacks: ComposerCallbacks::default(),
             prefill: None,
+            prefill_request: 0,
             mentions: Rc::new(Vec::new()),
             focus_request: 0,
             menu_request: 0,
@@ -209,6 +212,12 @@ impl Composer {
     /// The composer calling `on_cycle_mode` when Shift+Tab is pressed in it.
     pub fn on_cycle_mode(mut self, on_cycle_mode: impl Fn() + 'static) -> Self {
         self.callbacks.on_cycle_mode = Some(Rc::new(on_cycle_mode));
+        self
+    }
+
+    /// The composer filling in its prefill again whenever `request` differs from the number it was last given.
+    pub fn prefill_request(mut self, request: u64) -> Self {
+        self.prefill_request = request;
         self
     }
 
@@ -340,12 +349,13 @@ impl Composer {
     pub fn show(self) {
         let scheme = color_scheme();
         let state = remember_text_field_state("");
-        let filled = remember(|| None::<String>);
-        if self.prefill != filled.get() {
+        let filled = remember(|| (None::<String>, 0u64));
+        let asked_fill = (self.prefill.clone(), self.prefill_request);
+        if asked_fill != filled.get() {
             if let Some(text) = &self.prefill {
                 state.set_text(text.clone());
             }
-            filled.set(self.prefill.clone());
+            filled.set(asked_fill);
         }
         let initial = self.menu.clone();
         let menu = remember(move || initial);
@@ -362,7 +372,6 @@ impl Composer {
             focus.request_focus();
         }
         let slash_closed = remember(|| None::<String>);
-        let focused = remember(|| false);
         let least = match self.variant {
             ComposerVariant::Reply => 22.0,
             ComposerVariant::Start => 54.0,
@@ -494,7 +503,7 @@ impl Composer {
         Card::new()
             .variant(CardVariant::Outlined)
             .size(Size::Md)
-            .focused(focused.get() || !empty)
+            .focused(focus.is_focused() || !empty)
             .modifier(modifier)
             .show(move || {
                 if slash_open {
@@ -638,6 +647,7 @@ fn toolbar(
         || {
             let browse = callbacks.on_browse.clone();
             IconButton::new(phosphor::PLUS)
+                .tooltip("Attach files")
                 .size(Size::Xs)
                 .on_click(move || {
                     if let Some(browse) = &browse {
@@ -647,6 +657,7 @@ fn toolbar(
                 .show();
             let at = state.clone();
             IconButton::new(phosphor::AT)
+                .tooltip("Mention a file")
                 .size(Size::Xs)
                 .on_click(move || at.set_text(with_trigger(&at.text(), '@')))
                 .show();
@@ -730,6 +741,7 @@ fn send_buttons(
     if working && empty {
         let stop = callbacks.on_stop.clone();
         IconButton::new(phosphor::STOP)
+            .tooltip("Stop the turn")
             .variant(IconButtonVariant::Primary)
             .size(Size::Xs)
             .tint(scheme.background)
@@ -744,6 +756,7 @@ fn send_buttons(
     if working && callbacks.on_send_now.is_some() {
         let now = send.clone();
         IconButton::new(phosphor::LIGHTNING)
+            .tooltip("Send now, stopping the turn")
             .size(Size::Xs)
             .on_click(move || now(true))
             .show();
@@ -753,6 +766,11 @@ fn send_buttons(
         phosphor::QUEUE
     } else {
         phosphor::ARROW_UP
+    })
+    .tooltip(if working {
+        "Queue behind the turn"
+    } else {
+        "Send"
     })
     .variant(IconButtonVariant::Primary)
     .size(Size::Xs)

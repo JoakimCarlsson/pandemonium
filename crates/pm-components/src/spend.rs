@@ -86,8 +86,14 @@ impl SpendStrip {
         if self.variant == SpendVariant::Filled {
             modifier = modifier.background_rounded(scheme.surface_container_high, 10.0);
         }
+        let breakdown = self
+            .models
+            .iter()
+            .map(|(name, cost, tokens)| format!("{name}: {cost}, {tokens}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         column_with(Modifier::new(), move || {
-            row_arranged(
+            let row = || row_arranged(
                 modifier,
                 Arrangement::SpacedBy(crate::spacing(6.0)),
                 Alignment::Center,
@@ -105,6 +111,11 @@ impl SpendStrip {
                     }
                 },
             );
+            if breakdown.is_empty() || open.get() {
+                row();
+            } else {
+                tooltip(&breakdown, row);
+            }
             if open.get() {
                 for (name, cost, tokens) in &self.models {
                     row_arranged(

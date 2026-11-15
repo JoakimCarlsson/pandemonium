@@ -72,7 +72,7 @@ impl Link {
     /// queued behind the one it is on.
     pub fn prompt(&mut self, text: String, now: bool) {
         let Some(session) = self.watched else {
-            self.workspace.extras.prefill = Some(text);
+            self.prefill(text);
             return;
         };
         self.workspace.extras.prefill = None;
@@ -114,6 +114,12 @@ impl Link {
         );
     }
 
+    /// Puts `text` in the open composer, even when it is what was put there last.
+    pub(super) fn prefill(&mut self, text: String) {
+        self.workspace.extras.prefill = Some(text);
+        self.workspace.extras.prefills += 1;
+    }
+
     /// Takes the server's `response` to the prompt whose attachments are kept under `kept`: forgets them once it was taken, and otherwise shows why it failed and, while its session is still open, puts its text and attachments back into the composer.
     pub(super) fn answer_prompt(&mut self, kept: u64, response: Response) {
         let Some(unsent) = self.unsent.remove(&kept) else {
@@ -134,7 +140,7 @@ impl Link {
         composer.files.splice(0..0, unsent.files);
         composer.elements.splice(0..0, unsent.elements);
         composer.captures.splice(0..0, unsent.captures);
-        self.workspace.extras.prefill = Some(unsent.text);
+        self.prefill(unsent.text);
     }
 
     /// Puts the login the open session runs as into the account chip, with the named logins of its agent it offers; a session of another machine offers none, since its logins are that machine's.

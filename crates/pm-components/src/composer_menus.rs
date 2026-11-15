@@ -12,7 +12,7 @@ use crate::menu::Menu;
 use crate::size::Size;
 use crate::text_menu::TextMenu;
 
-/// How many commands the slash menu lists at most.
+/// How many commands the slash menu shows at once; the arrow keys step through the rest.
 const COMMANDS_SHOWN: usize = 8;
 
 /// How far a menu stays clear of what opened it, in logical pixels.
@@ -46,7 +46,6 @@ impl CommandMenu {
         commands
             .iter()
             .filter(|command| command.name.to_lowercase().starts_with(&word))
-            .take(COMMANDS_SHOWN)
             .cloned()
             .collect()
     }
@@ -56,12 +55,13 @@ impl CommandMenu {
     pub(crate) fn show(self) {
         let mut menu = Menu::new()
             .heading("Commands")
-            .highlighted(Some(self.highlighted))
             .size(Size::Xs)
             .width(360.0)
             .above(true)
             .offset(0.0, GAP + 12.0);
-        for command in self.commands {
+        let (first, lit) = window(self.commands.len(), self.highlighted, COMMANDS_SHOWN);
+        menu = menu.highlighted(Some(lit));
+        for command in self.commands.into_iter().skip(first).take(COMMANDS_SHOWN) {
             let on_pick = self.on_pick.clone();
             let name = command.name.clone();
             menu = menu
@@ -73,8 +73,19 @@ impl CommandMenu {
     }
 }
 
-/// How many files the mention menu lists at most.
+/// How many files the mention menu shows at once.
 const MENTIONS_SHOWN: usize = 8;
+
+/// How many files the mention menu can step through.
+const MENTIONS_LISTED: usize = 50;
+
+/// The first of `count` entries a list showing `shown` at once starts at so that the entry at `highlighted` is in view, and that entry's place among those shown.
+fn window(count: usize, highlighted: usize, shown: usize) -> (usize, usize) {
+    let first = highlighted
+        .saturating_sub(shown.saturating_sub(1))
+        .min(count.saturating_sub(shown));
+    (first, highlighted - first)
+}
 
 /// The word being typed at the end of `text`, when it starts with an `@`, without the `@` and in lower case.
 pub(crate) fn mention_query(text: &str) -> Option<String> {
@@ -117,7 +128,7 @@ impl MentionMenu {
             .filter(|path| path.to_lowercase().contains(query))
             .collect();
         found.sort_by_key(|path| !name(path));
-        found.into_iter().take(MENTIONS_SHOWN).cloned().collect()
+        found.into_iter().take(MENTIONS_LISTED).cloned().collect()
     }
 
     /// Emits the menu.
@@ -125,12 +136,13 @@ impl MentionMenu {
     pub(crate) fn show(self) {
         let mut menu = Menu::new()
             .heading("Files")
-            .highlighted(Some(self.highlighted))
             .size(Size::Xs)
             .width(360.0)
             .above(true)
             .offset(0.0, GAP + 12.0);
-        for path in self.paths {
+        let (first, lit) = window(self.paths.len(), self.highlighted, MENTIONS_SHOWN);
+        menu = menu.highlighted(Some(lit));
+        for path in self.paths.into_iter().skip(first).take(MENTIONS_SHOWN) {
             let on_pick = self.on_pick.clone();
             let picked = path.clone();
             menu = menu.icon_item(phosphor::FILE, path, move || on_pick(picked.clone()));
@@ -259,5 +271,15 @@ mod tests {
             MentionMenu::matching(&paths, "main"),
             ["main.rs", "src/domain.rs"]
         );
+    }
+
+    /// A long list scrolls so the entry the keys point at stays in view.
+    #[test]
+    fn the_window_follows_the_highlight() {
+        assert_eq!(window(20, 0, 8), (0, 0));
+        assert_eq!(window(20, 7, 8), (0, 7));
+        assert_eq!(window(20, 12, 8), (5, 7));
+        assert_eq!(window(20, 19, 8), (12, 7));
+        assert_eq!(window(3, 2, 8), (0, 2));
     }
 }

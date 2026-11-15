@@ -15,6 +15,23 @@ use crate::conversation::{
 use crate::model::SessionStatus;
 use crate::translate;
 
+/// What became of a model that failed, in a few words, as `reason`, the provider's first line, says: overloaded, rate limited, out of reach, or failing.
+fn fallback_cause(reason: &str) -> &'static str {
+    let reason = reason.to_lowercase();
+    if reason.contains("overload") || reason.contains("529") {
+        "was overloaded"
+    } else if reason.contains("rate limit") || reason.contains("429") {
+        "was rate limited"
+    } else if ["not found", "unavailable", "404", "503"]
+        .iter()
+        .any(|word| reason.contains(word))
+    {
+        "could not be reached"
+    } else {
+        "kept failing"
+    }
+}
+
 /// `millis` milliseconds as a reader says it: `0.4s` under a second, `12s` under a minute, `3m 5s` under an hour and `1h 2m` beyond.
 fn duration(millis: u64) -> String {
     let seconds = millis / 1000;
@@ -236,13 +253,13 @@ impl Thread {
             ),
             Event::Spent(spent) => self.extras.spend = Some(translate::spend(&spent)),
             Event::ModelFallback {
-                slot,
+                slot: _,
                 from,
                 to,
                 reason,
             } => self.notice(
                 NoticeKind::Fallback,
-                format!("Switched {slot} from {from} to its backup {to}"),
+                format!("Switched to {to}: {from} {}", fallback_cause(&reason)),
                 reason,
             ),
             Event::Aside {

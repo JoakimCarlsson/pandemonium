@@ -326,7 +326,9 @@ pub struct TrustAsk {
     pub ticket: u64,
     /// The folder asked about.
     pub root: String,
-    /// Why it asks: never trusted, changed since, or declined before.
+    /// The card's heading, as the trust of the project stands.
+    pub title: String,
+    /// Why it asks and what the agent goes without, warning of hooks, which run commands.
     pub reason: String,
     /// What was left out: each kind, such as `Hook`, and name.
     pub skipped: Vec<(String, String)>,
@@ -399,6 +401,8 @@ pub struct Extras {
     pub chat: bool,
     /// Text to put in the composer, such as a conversation command to finish.
     pub prefill: Option<String>,
+    /// How many times text was put in the composer, so that the same text put there twice is put there again.
+    pub prefills: u64,
     /// What the composer shows besides the text being written.
     pub composer: crate::composer::ComposerState,
     /// Why the session's account needs signing in again, while it does.

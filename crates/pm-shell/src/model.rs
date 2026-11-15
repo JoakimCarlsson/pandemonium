@@ -230,6 +230,8 @@ pub struct Start {
     pub branches: Vec<String>,
     /// The branch a worktree is made from, or nothing for what is checked out.
     pub base: Option<String>,
+    /// Whether the folder holds a dev container its agent can run in.
+    pub container_offered: bool,
 }
 
 /// An agent new work can be started with.

@@ -217,6 +217,9 @@ fn waiting_row(prompt: Waiting, callbacks: &Callbacks, editing: &State<Option<u6
                             }),
                     )
                     .on_submit(move |text| {
+                        if text.trim().is_empty() {
+                            return;
+                        }
                         done.set(None);
                         if let Some(save) = &save {
                             save(id, text);
@@ -226,15 +229,22 @@ fn waiting_row(prompt: Waiting, callbacks: &Callbacks, editing: &State<Option<u6
                 return;
             }
             let mut line = prompt.text.lines().next().unwrap_or_default().to_owned();
+            if prompt.text.lines().nth(1).is_some() {
+                line.push('…');
+            }
             if !prompt.files.is_empty() {
                 line.push_str(&format!(" · {} attached", prompt.files.len()));
             }
-            Label::new(line)
-                .size(size)
-                .modifier(Modifier::new().weight(1.0).clip())
-                .show();
+            let mut whole = prompt.text.clone();
+            for file in &prompt.files {
+                whole.push_str(&format!("\n📎 {file}"));
+            }
+            row_with(Modifier::new().weight(1.0).clip(), || {
+                tooltip(&whole, || Label::new(line).size(size).show());
+            });
             if let Some(hurry) = callbacks.on_hurry.clone() {
                 IconButton::new(phosphor::ARROW_UP)
+                    .tooltip("Send now, stopping the turn")
                     .size(Size::Xs)
                     .on_click(move || hurry(id))
                     .show();
@@ -243,6 +253,7 @@ fn waiting_row(prompt: Waiting, callbacks: &Callbacks, editing: &State<Option<u6
                 let hold = callbacks.on_hold.clone();
                 let start = editing.clone();
                 IconButton::new(phosphor::PENCIL_SIMPLE)
+                    .tooltip("Edit")
                     .size(Size::Xs)
                     .on_click(move || {
                         start.set(Some(id));
@@ -254,6 +265,7 @@ fn waiting_row(prompt: Waiting, callbacks: &Callbacks, editing: &State<Option<u6
             }
             if let Some(remove) = callbacks.on_remove.clone() {
                 IconButton::new(phosphor::TRASH)
+                    .tooltip("Remove")
                     .size(Size::Xs)
                     .on_click(move || remove(id))
                     .show();

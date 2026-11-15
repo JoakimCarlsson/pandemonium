@@ -44,7 +44,13 @@ impl Link {
                 Request::Branches {
                     directory: directory.clone(),
                 },
-                Ask::StartBranches(directory),
+                Ask::StartBranches(directory.clone()),
+            );
+            self.ask(
+                Request::DevContainer {
+                    directory: directory.clone(),
+                },
+                Ask::StartContainer(directory),
             );
         }
         self.discover_agent();
@@ -193,6 +199,20 @@ impl Link {
                     && current.as_deref() == Some(directory.as_str())
                 {
                     start.branches = names;
+                }
+            }
+            (Ask::StartContainer(directory), Response::DevContainer { configured }) => {
+                let current = self
+                    .workspace
+                    .starting
+                    .as_ref()
+                    .and_then(|start| start.at.clone())
+                    .and_then(|at| self.placement(&at))
+                    .map(|(folder, _)| folder);
+                if let Some(start) = &mut self.workspace.starting
+                    && current.as_deref() == Some(directory.as_str())
+                {
+                    start.container_offered = configured;
                 }
             }
             _ => {}

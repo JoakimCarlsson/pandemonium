@@ -336,7 +336,6 @@ fn diff_placeholder() {
 /// The header naming the session, its branch, its agent and its account.
 fn session_header(workspace: &Workspace) {
     let scheme = color_scheme();
-    let extended = extended_colors();
     row_arranged(
         Modifier::new()
             .fill_max_width()
@@ -346,16 +345,21 @@ fn session_header(workspace: &Workspace) {
         Arrangement::SpacedBy(pm_components::spacing(8.0)),
         Alignment::Center,
         || {
-            spacer(
-                Modifier::new()
-                    .size(7.0, 7.0)
-                    .border(1.0, extended.subtle, 3.5),
-            );
+            let status = workspace
+                .open
+                .as_ref()
+                .and_then(|at| pm_shell::session_at(&workspace.projects, at))
+                .map(|session| session.status)
+                .unwrap_or_default();
+            status_dot(status);
             Label::new(workspace.title.clone())
                 .modifier(Modifier::new().weight(1.0))
                 .show();
             if !workspace.branch.is_empty() {
                 header_chip(phosphor::GIT_BRANCH, &workspace.branch);
+            }
+            if !workspace.model.is_empty() {
+                header_chip(phosphor::SPARKLE, &workspace.model);
             }
             if !workspace.agent.is_empty() {
                 Label::new(workspace.agent.clone())
@@ -368,6 +372,34 @@ fn session_header(workspace: &Workspace) {
             }
         },
     );
+}
+
+/// Emits the mark of the header saying how the open session stands as `status` says: turning while its agent works, filled in the accent when something is unread, in the danger tone when it failed, in the warning tone when it waits on the reader, broken when its server is out of reach, and an outline when it is idle.
+fn status_dot(status: SessionStatus) {
+    let scheme = color_scheme();
+    let extended = extended_colors();
+    let fill = match status {
+        SessionStatus::Working => {
+            circular_progress_indicator_indeterminate(9.0);
+            return;
+        }
+        SessionStatus::OutOfReach => {
+            icon(phosphor::LINK_BREAK, 12.0, scheme.on_surface_variant);
+            return;
+        }
+        SessionStatus::Unread => scheme.primary,
+        SessionStatus::Error => scheme.error,
+        SessionStatus::NeedsInput => extended.warning,
+        SessionStatus::Idle => {
+            spacer(
+                Modifier::new()
+                    .size(7.0, 7.0)
+                    .border(1.0, extended.subtle, 3.5),
+            );
+            return;
+        }
+    };
+    spacer(Modifier::new().size(7.0, 7.0).background_rounded(fill, 3.5));
 }
 
 /// Emits a small rounded chip of the header showing `glyph` and `text`.
@@ -551,11 +583,11 @@ fn status_line(workspace: &Workspace) {
 /// The strip saying what the conversation cost.
 fn spend_strip(spend: &SpendSummary) {
     let dollars = |cost: Option<f64>| match cost {
-        Some(cost) => format!("${cost:.2}"),
+        Some(cost) => cents(cost),
         None => "unpriced".to_owned(),
     };
     let total = match (spend.cost, spend.partial) {
-        (Some(cost), true) => format!("at least ${cost:.2}"),
+        (Some(cost), true) => format!("at least {}", cents(cost)),
         (cost, _) => dollars(cost),
     };
     let mut strip = SpendStrip::new(total).detail(format!(
@@ -571,6 +603,15 @@ fn spend_strip(spend: &SpendSummary) {
         );
     }
     strip.show();
+}
+
+/// `cost` in dollars to the cent, such as `$1.20`, or `<$0.01` for a cost above nothing that rounds to no cent.
+fn cents(cost: f64) -> String {
+    if cost > 0.0 && cost < 0.005 {
+        "<$0.01".to_owned()
+    } else {
+        format!("${cost:.2}")
+    }
 }
 
 /// `count` shortened with `k` or `M`, such as `412k`.

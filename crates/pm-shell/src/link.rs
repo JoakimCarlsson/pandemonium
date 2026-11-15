@@ -141,6 +141,8 @@ enum Ask {
     Discover(String),
     /// The branches of the repository at this folder, for the welcome page.
     StartBranches(String),
+    /// Whether the folder at this path holds a dev container, for the welcome page.
+    StartContainer(String),
     /// The GitHub accounts the machine with this host, or this one, is signed in to, for the clone form.
     Owners(Option<String>),
     /// The GitHub repositories of this owner, as the machine with this host, or this one, lists them, for the clone form.
@@ -731,8 +733,9 @@ impl Link {
             self.workspace.title = info.title.clone();
         }
         self.workspace.branch = info
+            .filter(|info| !info.chat)
             .and_then(|info| info.branch.clone())
-            .unwrap_or_else(|| "main".to_owned());
+            .unwrap_or_default();
         self.workspace.agent = info.map(|info| info.agent.clone()).unwrap_or_default();
         self.workspace.starting = None;
         self.workspace.continuing = Default::default();
@@ -996,7 +999,13 @@ impl Link {
             (ask @ (Ask::SessionSlots(_) | Ask::SessionAllowance(_)), response) => {
                 self.composer_answer(ask, response)
             }
-            (ask @ (Ask::Identity(_) | Ask::Discover(_) | Ask::StartBranches(_)), response) => {
+            (
+                ask @ (Ask::Identity(_)
+                | Ask::Discover(_)
+                | Ask::StartBranches(_)
+                | Ask::StartContainer(_)),
+                response,
+            ) => {
                 self.start_answer(ask, response)
             }
             (
@@ -1395,6 +1404,7 @@ fn show_thread(workspace: &mut Workspace, thread: &Thread) {
         pull_request: kept.pull_request,
         chat: kept.chat,
         prefill: kept.prefill,
+        prefills: kept.prefills,
         composer: ComposerState {
             files: kept.composer.files,
             elements: kept.composer.elements,

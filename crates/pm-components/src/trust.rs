@@ -38,6 +38,8 @@ pub enum TrustVariant {
 pub struct TrustCard {
     /// The folder asked about.
     root: String,
+    /// Its heading, or nothing for `Trust <root>?`.
+    title: Option<String>,
     /// Why it asks.
     reason: String,
     /// What was left out: each kind and name.
@@ -55,6 +57,7 @@ impl TrustCard {
     pub fn new(root: impl Into<String>) -> Self {
         Self {
             root: root.into(),
+            title: None,
             reason: String::new(),
             skipped: Vec::new(),
             on_answer: None,
@@ -63,7 +66,13 @@ impl TrustCard {
         }
     }
 
-    /// The card saying why it asks.
+    /// The card headed `title` in place of `Trust <root>?`.
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    /// The card saying why it asks and what the agent goes without.
     pub fn reason(mut self, reason: impl Into<String>) -> Self {
         self.reason = reason.into();
         self
@@ -117,17 +126,18 @@ impl TrustCard {
                     Alignment::Center,
                     || {
                         icon(phosphor::SHIELD_WARNING, 16.0, tint);
-                        Label::new(format!("Trust {}?", self.root))
+                        Label::new(
+                            self.title
+                                .clone()
+                                .unwrap_or_else(|| format!("Trust {}?", self.root)),
+                        )
                             .variant(LabelVariant::Heading)
                             .size(self.size)
                             .show();
                     },
                 );
                 if !self.reason.is_empty() {
-                    Label::new(format!(
-                        "{} Until it is trusted, the agent works without what the project brings:",
-                        self.reason
-                    ))
+                    Label::new(self.reason.clone())
                     .variant(LabelVariant::Muted)
                     .size(self.size)
                     .wrap()
