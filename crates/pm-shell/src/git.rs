@@ -9,8 +9,17 @@ use crate::review::{ConflictSide, ConflictView, LineNote, Revision};
 /// The git state of a worktree, as the right panel shows it.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GitSummary {
-    /// The folder the panel works on, as the session names it, or empty when no session is open.
+    /// The folder the panel works on, as the session names it, or empty when no session is open;
+    /// a submodule's folder inside the session's while one is picked.
     pub folder: String,
+    /// The session's own folder, which holds the submodules the panel can be pointed at.
+    pub root: String,
+    /// The checked out submodules of the session's folder, nested ones
+    /// included, as their path from it and the branch, or `@` and the
+    /// commit, each has checked out.
+    pub submodules: Vec<(String, String)>,
+    /// The submodule the panel works on, by its path from the session's folder, while one is picked.
+    pub submodule: Option<String>,
     /// The branch the session's worktree was made from, when it has one.
     pub base: Option<String>,
     /// The checked out branch, or empty on a detached head.
@@ -219,6 +228,8 @@ pub enum GitMenu {
     Source,
     /// The stashes, each to apply, pop or drop.
     Stashes,
+    /// The repositories the panel can work on: the session's own and its submodules.
+    Repositories,
     /// The menu on a commit of the graph.
     History(String),
 }
@@ -380,6 +391,9 @@ pub enum GitAction {
     /// Saves the changes in a new stash, or applies, pops or drops the stash
     /// with the index: `push`, `apply`, `pop` or `drop`.
     Stash(String, Option<usize>),
+    /// Points the panel at the submodule at the path from the session's
+    /// folder, or at the session's own repository when nothing is given.
+    Repository(Option<String>),
 }
 
 /// What the main button under the commit message does.

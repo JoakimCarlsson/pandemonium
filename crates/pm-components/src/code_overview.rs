@@ -36,6 +36,8 @@ pub(crate) struct Marks {
     pub(crate) breakpoints: Vec<usize>,
     /// The line the caret is on.
     pub(crate) caret: usize,
+    /// Lines with an error, marked when the flag is set, or a warning.
+    pub(crate) problems: Vec<(usize, bool)>,
 }
 
 /// The first line of the file the minimap draws at its top, for a minimap
@@ -178,6 +180,19 @@ fn paint(
             MARKS_WIDTH - 2.0,
             2.0,
             extended.warning,
+        );
+    }
+    for (line, error) in &marks.problems {
+        canvas.rect(
+            left + 2.0,
+            along(*line),
+            MARKS_WIDTH - 2.0,
+            2.0,
+            if *error {
+                scheme.error
+            } else {
+                extended.warning
+            },
         );
     }
     for line in &marks.breakpoints {

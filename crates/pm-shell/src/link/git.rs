@@ -31,6 +31,8 @@ pub(super) enum GitAsk {
     Diffs(String, Vec<String>),
     /// The folder's stashes.
     Stashes(String),
+    /// The checked out submodules of the session's folder.
+    Submodules(String),
     /// The files a commit or a branch changed, for the folder.
     Revision(String),
     /// The versions of a conflicted file of the folder, at the path.
@@ -48,12 +50,13 @@ impl Link {
     /// Points the Git panel at `folder`, the open session's, made from the
     /// branch `base`, starting with `branch` shown until the server answers.
     pub(super) fn git_open(&mut self, folder: String, base: Option<String>, branch: String) {
-        if self.workspace.git.folder == folder && !folder.is_empty() {
+        if self.workspace.git.root == folder && !folder.is_empty() {
             self.git_refresh();
             return;
         }
         self.workspace.git = GitSummary {
             folder: folder.clone(),
+            root: folder.clone(),
             base,
             branch,
             changes_open: true,
@@ -78,8 +81,9 @@ impl Link {
         let git = &self.workspace.git;
         let inspect = Request::Inspect {
             directory: folder.clone(),
-            base: git.base.clone(),
+            base: git.base.clone().filter(|_| git.submodule.is_none()),
         };
+        let root = git.root.clone();
         let log = Request::Log {
             directory: folder.clone(),
             limit: GRAPH_COMMITS,
@@ -107,12 +111,20 @@ impl Link {
             },
             Ask::Git(GitAsk::Stashes(folder)),
         );
+        self.ask(
+            Request::SubmoduleHeads {
+                directory: root.clone(),
+            },
+            Ask::Git(GitAsk::Submodules(root)),
+        );
     }
 
     /// Refreshes the Git panel when the server says the files of `directory`, or what git keeps about them, changed.
     pub(super) fn git_folder_changed(&mut self, directory: &str) {
-        let folder = &self.workspace.git.folder;
-        if !folder.is_empty() && same_folder(folder, directory) {
+        let git = &self.workspace.git;
+        if !git.folder.is_empty()
+            && (same_folder(&git.folder, directory) || same_folder(&git.root, directory))
+        {
             self.git_refresh();
         }
     }
@@ -147,6 +159,11 @@ impl Link {
             | (GitAsk::Diffs(folder, _), _)
             | (GitAsk::Stashes(folder), _)
                 if folder != git.folder => {}
+            (GitAsk::Submodules(root), Response::SubmoduleHeads { heads }) => {
+                if root == git.root {
+                    git.submodules = heads;
+                }
+            }
             (
                 GitAsk::Inspect(_),
                 Response::Inspected {
@@ -423,6 +440,29 @@ impl Link {
                     },
                     None,
                 );
+            }
+            GitAction::Repository(submodule) => {
+                let root = git.root.clone();
+                let folder = match &submodule {
+                    Some(path) => format!("{}/{path}", root.trim_end_matches('/')),
+                    None => root.clone(),
+                };
+                let kept = std::mem::take(git);
+                *git = GitSummary {
+                    folder,
+                    root,
+                    base: kept.base,
+                    submodules: kept.submodules,
+                    submodule,
+                    loaded: true,
+                    repository: true,
+                    changes_open: kept.changes_open,
+                    graph_open: kept.graph_open,
+                    graph_all: kept.graph_all,
+                    notes: kept.notes,
+                    ..GitSummary::default()
+                };
+                self.git_refresh();
             }
             GitAction::Stash(stash, index) => {
                 let message = (stash == "push")

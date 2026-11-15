@@ -35,6 +35,7 @@ mod link;
 mod marks;
 mod modal;
 mod pairs;
+mod problems;
 mod redact;
 mod runs;
 mod scope;

@@ -307,6 +307,7 @@ impl CodeEditor {
             menu: remember(|| None),
         };
         blink_carets(&handle);
+        hover_after_rest(&handle);
         save_after_rest(&handle);
         {
             let mut document = self.document.borrow_mut();
@@ -385,6 +386,31 @@ fn blink_carets(handle: &Handle) {
         loop {
             scope.delay(CARET_BLINK).await;
             blink.update(|shown| *shown = !*shown);
+        }
+    });
+}
+
+/// Asks the language server about the word the pointer rests on in the
+/// editor `handle` stands for once it has rested there as long as the
+/// settings say.
+fn hover_after_rest(handle: &Handle) {
+    let resting = handle.hovered.get();
+    let shown = handle
+        .document
+        .borrow()
+        .hover
+        .as_ref()
+        .map(|card| card.offset);
+    let wanted = resting.filter(|word| shown != Some(*word) && handle.code.hover);
+    let delay = std::time::Duration::from_millis(handle.code.hover_delay);
+    let later = handle.clone();
+    launched_effect(wanted, move |scope| async move {
+        let Some(word) = wanted else {
+            return;
+        };
+        scope.delay(delay).await;
+        if later.hovered.get() == Some(word) {
+            later.hover_now(Some(word));
         }
     });
 }
@@ -635,6 +661,35 @@ impl Handle {
             return;
         }
         self.hovered.set(word);
+        self.hover_now(offset);
+    }
+
+    /// Notes that the pointer rests on the byte `offset`, or on none, so
+    /// that the language server is asked about it once the pointer has
+    /// rested there as long as the settings say; a card about another word
+    /// closes at once.
+    fn hover_later(&self, offset: Option<usize>) {
+        if !self.served() {
+            return;
+        }
+        let word = offset.map(|offset| self.document.borrow().field.word_range_at(offset).start);
+        if word == self.hovered.get() {
+            return;
+        }
+        self.hovered.set(word);
+        let open = self.document.borrow().hover.is_some();
+        if open {
+            self.document.borrow_mut().hover = None;
+            self.redraw();
+        }
+    }
+
+    /// Asks the language server what it says of the byte `offset` and
+    /// opens the card for it, or closes the card when nothing is given.
+    fn hover_now(&self, offset: Option<usize>) {
+        if !self.served() {
+            return;
+        }
         let asked = {
             let mut document = self.document.borrow_mut();
             match offset {
@@ -941,6 +996,9 @@ impl Handle {
                     document.add_next_occurrence_edit().into_iter().collect()
                 }
                 Command::SelectAllOccurrences => document.select_all_occurrences_edits(),
+                Command::NextProblem(forward) => {
+                    document.next_problem_edit(forward).into_iter().collect()
+                }
                 Command::AddCaret(down) => document.add_caret_line_edit(down).into_iter().collect(),
                 Command::Fold | Command::Unfold | Command::FoldAll | Command::UnfoldAll => {
                     drop(document);
@@ -1612,6 +1670,22 @@ fn text_area(
             .collect(),
         breakpoints: extras.breakpoints.as_ref().clone(),
         caret: caret_line,
+        problems: document
+            .diagnostics
+            .iter()
+            .filter(|found| {
+                matches!(
+                    found.severity,
+                    pm_editor::Severity::Error | pm_editor::Severity::Warning
+                ) && extras.code.diagnostics.shows(found.severity)
+            })
+            .map(|found| {
+                (
+                    found.span.start.line as usize,
+                    found.severity == pm_editor::Severity::Error,
+                )
+            })
+            .collect(),
     };
     let held = if extras.sticky {
         sticky_lines(&document, top)
@@ -1703,9 +1777,9 @@ fn text_area(
         Some(at) if at.x >= gutter && hover_handle.code.hover => {
             let x = hover_handle.past_across(at.x, gutter);
             let byte = hover_handle.byte_at(x, at.y, gutter, cell.0);
-            hover_handle.hover_at(Some(byte));
+            hover_handle.hover_later(Some(byte));
         }
-        _ => hover_handle.hover_at(None),
+        _ => hover_handle.hover_later(None),
     };
     let assist_handle = handle.clone();
     let grid = Grid {

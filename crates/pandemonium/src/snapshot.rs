@@ -51,6 +51,7 @@ const WORDS: &[&str] = &[
     "branch-menu",
     "git-rebase",
     "git-stashes",
+    "git-submodules",
     "diff",
     "code",
     "code-find",
@@ -334,7 +335,8 @@ fn show_projects(workspace: &mut pm_shell::Workspace, words: &[&str]) {
 /// panel's own menu, `git-confirm` for the question before discarding,
 /// `branch-menu` for the branch list, `diff` for the Diff tab, `git-rebase`
 /// for a rebase stopped with a partly staged and a conflicted file, and
-/// `git-stashes` for the menu of stashes.
+/// `git-stashes` for the menu of stashes, and `git-submodules` for the
+/// menu picking a submodule to work on.
 fn show_git_state(git: &mut pm_shell::GitSummary, words: &[&str]) {
     let first = git.listed().first().map(|change| change.path.clone());
     let second = git.listed().get(1).map(|change| change.path.clone());
@@ -361,6 +363,14 @@ fn show_git_state(git: &mut pm_shell::GitSummary, words: &[&str]) {
                     change.untracked = false;
                     change.status = 'U';
                 }
+            }
+            "git-submodules" => {
+                git.root = "~/Documents/repos/void".to_owned();
+                git.submodules = vec![
+                    ("vendor/tree-sitter".to_owned(), "master".to_owned()),
+                    ("docs/site".to_owned(), "@ 4f2a9c1".to_owned()),
+                ];
+                git.menu = Some(pm_shell::GitMenu::Repositories);
             }
             "git-stashes" => {
                 git.stashes = vec![

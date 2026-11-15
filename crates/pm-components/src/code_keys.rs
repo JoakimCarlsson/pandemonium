@@ -104,6 +104,9 @@ pub(crate) enum Command {
     FoldAll,
     /// Unfolds every block.
     UnfoldAll,
+    /// Moves the caret to the next problem the language server found, or
+    /// the one before when the flag is not set.
+    NextProblem(bool),
 }
 
 /// What `event` asks the code editor for, or nothing for a key it leaves alone.
@@ -178,6 +181,7 @@ pub(crate) fn command(event: &KeyEvent) -> Option<Command> {
         Key::F(12) if shift => Some(Command::Seek(pm_editor::Seek::References)),
         Key::F(12) => Some(Command::Seek(pm_editor::Seek::Definition)),
         Key::F(2) => Some(Command::Rename),
+        Key::F(8) => Some(Command::NextProblem(!shift)),
         Key::Enter => Some(Command::Newline),
         Key::Tab if shift => Some(Command::Outdent),
         Key::Tab => Some(Command::Indent),

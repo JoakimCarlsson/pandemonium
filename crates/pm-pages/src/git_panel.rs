@@ -43,6 +43,9 @@ pub fn git_panel(git: &GitSummary, actions: &Actions) {
                 note("This folder is not a git repository.");
                 return;
             }
+            if !git.submodules.is_empty() {
+                repository_button(git, actions);
+            }
             branch_button(git, actions);
             trouble(git, actions);
             changes_section(git, actions);
@@ -67,6 +70,58 @@ fn note(message: &str) {
         .size(Size::Xs)
         .modifier(Modifier::new().padding_xy(4.0, 8.0))
         .show();
+}
+
+/// The button naming the repository the panel works on, the session's own
+/// or one of its submodules, with the menu that picks another under it.
+fn repository_button(git: &GitSummary, actions: &Actions) {
+    let own = git
+        .root
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or("Repository")
+        .to_owned();
+    let label = git.submodule.clone().unwrap_or_else(|| own.clone());
+    let open = git.menu == Some(GitMenu::Repositories);
+    column_with(Modifier::new().fill_max_width(), || {
+        Button::new(label)
+            .icon(phosphor::FOLDER_SIMPLE)
+            .trailing_icon(phosphor::CARET_DOWN)
+            .variant(if open {
+                ButtonVariant::Secondary
+            } else {
+                ButtonVariant::Ghost
+            })
+            .size(Size::Xs)
+            .modifier(Modifier::new().fill_max_width())
+            .on_click(send(
+                actions,
+                GitAction::Menu((!open).then_some(GitMenu::Repositories)),
+            ))
+            .show();
+        if open {
+            let mut menu = Menu::new()
+                .width(SIDE_MENU_WIDTH)
+                .on_dismiss(send(actions, GitAction::Menu(None)))
+                .icon_item(
+                    phosphor::FOLDER_SIMPLE,
+                    own.clone(),
+                    send(actions, GitAction::Repository(None)),
+                )
+                .heading("Submodules");
+            for (path, head) in &git.submodules {
+                menu = menu
+                    .icon_item(
+                        phosphor::FOLDER_SIMPLE,
+                        path.clone(),
+                        send(actions, GitAction::Repository(Some(path.clone()))),
+                    )
+                    .hint(head.clone());
+            }
+            menu.show();
+        }
+    });
 }
 
 /// The branch button, saying how far the branch and the one it follows are apart, with the branch menu under it.
