@@ -21,6 +21,7 @@ mod code_editor;
 mod code_keys;
 mod code_look;
 mod code_overview;
+mod code_rows;
 mod code_sticky;
 mod code_text;
 mod composer;

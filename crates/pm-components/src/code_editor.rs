@@ -31,6 +31,7 @@ use crate::code_bars::{Bars, CodeEditorBar, FindBar, find_bar, go_to_bar};
 use crate::code_keys::{Command, command, keystroke};
 use crate::code_look::CodeLook;
 use crate::code_overview::{Marks, gutter_colour, overview};
+use crate::code_rows::RowMap;
 use crate::code_sticky::sticky_lines;
 use crate::code_text::{byte_at_column, column_of, digits, expand_tabs, kind_colour, runs};
 use crate::label::{Label, LabelVariant};
@@ -298,7 +299,8 @@ impl CodeEditor {
             },
             hovered: remember(|| None),
             across: remember(|| 0.0_f32),
-            width: remember(|| Rc::new(std::cell::Cell::new(0.0_f32))).get(),
+            width: remember(|| 0.0_f32),
+            rows: remember(|| Rc::new(RefCell::new(RowMap::default()))).get(),
             gutter: remember(|| Rc::new(std::cell::Cell::new(0.0_f32))).get(),
             cell_width: cell.0,
             blink: remember(|| true),
@@ -452,7 +454,9 @@ pub(crate) struct Handle {
     /// How far the text is scrolled across, in logical pixels.
     pub(crate) across: State<f32>,
     /// How wide the text area was laid out, gutter included, in logical pixels.
-    width: Rc<std::cell::Cell<f32>>,
+    width: State<f32>,
+    /// Which line and stretch of it each row draws.
+    pub(crate) rows: Rc<RefCell<RowMap>>,
     /// How wide the gutter of numbers was drawn last, in logical pixels.
     gutter: Rc<std::cell::Cell<f32>>,
     /// How wide one character is, in logical pixels.
@@ -698,19 +702,16 @@ impl Handle {
         self.line_in_row(self.top_row())
     }
 
-    /// The line drawn in row `row`, counting the lines folded away, kept
-    /// inside the text.
+    /// The line drawn in row `row`, counting the lines folded away and the
+    /// rows long lines wrap onto, kept inside the text.
     fn line_in_row(&self, row: usize) -> usize {
+        self.segment_in_row(row).0
+    }
+
+    /// The line drawn in row `row` and the bytes of it the row holds.
+    fn segment_in_row(&self, row: usize) -> (usize, Range<usize>) {
         let document = self.document.borrow();
-        let last = document.lines().saturating_sub(1);
-        if document.folds.is_empty() {
-            return row.min(last);
-        }
-        document
-            .shown_lines(row, 1)
-            .first()
-            .copied()
-            .unwrap_or(last)
+        self.rows.borrow().at(&document, row)
     }
 
     /// Scrolls so `line`, counted from 0, is the first in view, and puts the caret on it.
@@ -718,7 +719,8 @@ impl Handle {
         let (start, row) = {
             let mut document = self.document.borrow_mut();
             document.unfold_line(line);
-            (document.line(line).start, document.row_of_line(line))
+            let row = self.rows.borrow().row_of_line(&document, line);
+            (document.line(line).start, row)
         };
         self.list.scroll().jump_to(row as f32 * self.line_height);
         self.apply([Edit::Place(start, false)]);
@@ -770,7 +772,11 @@ impl Handle {
                 .unwrap_or(0)
         };
         let room = (self.width.get() - self.gutter.get()).max(self.cell_width);
-        let most = ((widest + 4) as f32 * self.cell_width - room).max(0.0);
+        let most = if self.rows.borrow().wraps() {
+            0.0
+        } else {
+            ((widest + 4) as f32 * self.cell_width - room).max(0.0)
+        };
         let across = (self.across.get() + by).clamp(0.0, most);
         if across != self.across.get() {
             self.across.set(across);
@@ -781,7 +787,10 @@ impl Handle {
     /// spare at either side.
     fn reveal_caret_across(&self) {
         let room = self.width.get() - self.gutter.get();
-        if room <= self.cell_width * 4.0 {
+        if room <= self.cell_width * 4.0 || self.rows.borrow().wraps() {
+            if self.across.get() != 0.0 && self.rows.borrow().wraps() {
+                self.across.set(0.0);
+            }
             return;
         }
         let x = {
@@ -809,7 +818,7 @@ impl Handle {
     fn reveal_caret(&self) {
         let line = {
             let document = self.document.borrow();
-            document.row_of_line(document.line_of(document.field.caret()))
+            self.rows.borrow().row_of(&document, document.field.caret())
         };
         let scroll = self.list.scroll();
         let top = line as f32 * self.line_height;
@@ -1197,9 +1206,17 @@ impl Handle {
     /// past the hints drawn inside the line and through right-to-left text
     /// as it is drawn.
     fn byte_at(&self, x: f32, y: f32, gutter: f32, cell: f32) -> usize {
-        let line = self.line_at(y);
+        let row = ((y + self.list.scroll().offset()) / self.line_height)
+            .floor()
+            .max(0.0) as usize;
+        let (line, segment) = self.segment_in_row(row);
         let document = self.document.borrow();
         let range = document.line(line);
+        if segment.len() != range.len() {
+            let text = &document.field.text()[range.start + segment.start..range.start + segment.end];
+            let column = ((x - gutter) / cell).max(0.0);
+            return range.start + segment.start + byte_at_column(text, column);
+        }
         let text = &document.field.text()[range.clone()];
         let inserts = inserts_on(&document, line, &range);
         let mut column = ((x - gutter) / cell).max(0.0);
@@ -1518,6 +1535,7 @@ impl Line {
                 .find(|(line, _)| *line == index)
                 .map(|(_, text)| text.clone()),
             folded: false,
+            continuation: false,
             problems: if index < document.lines() {
                 document
                     .diagnostics_on(index)
@@ -1546,21 +1564,23 @@ fn text_area(
     let (style, cell, scheme, extended) = looks;
     let document = handle.document.borrow();
     let lines = document.lines().max(1);
-    let shown: Option<Rc<Vec<usize>>> =
-        (!document.folds.is_empty()).then(|| Rc::new(document.shown_lines(0, lines)));
-    let count = shown.as_ref().map_or(lines, |shown| shown.len().max(1));
     let gutter = if extras.code.line_numbers {
         (digits(lines + extras.first_line - 1) as f32 + 4.5) * cell.0
     } else {
         3.5 * cell.0
     };
+    handle
+        .rows
+        .borrow_mut()
+        .update(&document, wrap_columns(extras.code, handle.width.get() - gutter, cell.0));
+    let shown = handle.rows.clone();
+    let count = shown.borrow().len(&document);
     let top = handle.top();
-    let bottom = shown.as_ref().map_or(top + handle.rows() + 2, |shown| {
-        shown
-            .get(handle.top_row() + handle.rows() + 2)
-            .copied()
-            .unwrap_or(lines)
-    });
+    let bottom = shown
+        .borrow()
+        .at(&document, handle.top_row() + handle.rows() + 2)
+        .0
+        + 1;
     let window = top..bottom.min(lines).max(top);
     let painted = Rc::new((window.start, document.highlights(window)));
     let selections: Rc<Vec<Range<usize>>> = Rc::new(
@@ -1689,6 +1709,7 @@ fn text_area(
         cell,
         gutter: gutter - handle.across.get(),
         scrolled,
+        rows: handle.rows.clone(),
     };
     let wheel_handle = handle.clone();
     let wheel = move |input: &rustle::PointerInput| {
@@ -1747,7 +1768,11 @@ fn text_area(
                 .focusable(&area_handle.focus, keys.clone())
                 .on_size_changed({
                     let sized = sized_handle.clone();
-                    move |size| sized.width.set(size.width)
+                    move |size| {
+                        if sized.width.get() != size.width {
+                            sized.width.set(size.width);
+                        }
+                    }
                 })
                 .pointer_input(wheel.clone())
                 .on_context_menu(context.clone())
@@ -1768,11 +1793,8 @@ fn text_area(
                     &list,
                     count,
                     move |row| {
-                        let index = shown
-                            .as_ref()
-                            .and_then(|shown| shown.get(row).copied())
-                            .unwrap_or(row);
                         let document = lines_document.borrow();
+                        let (index, segment) = shown.borrow().at(&document, row);
                         let cached = (painted.0..painted.0 + painted.1.len())
                             .contains(&index)
                             .then(|| &painted.1[index - painted.0]);
@@ -1797,7 +1819,10 @@ fn text_area(
                             .map(|caret| caret - range.start)
                             .collect();
                         line.current = index == caret_line;
-                        line.folded = shown.is_some() && document.is_folded_at(index);
+                        line.folded = document.is_folded_at(index);
+                        if segment.len() != range.len() {
+                            line.cut(&segment);
+                        }
                         if extras_inner.code.relative_line_numbers && !line.current {
                             line.number = index.abs_diff(caret_line);
                         }
@@ -1811,7 +1836,7 @@ fn text_area(
                 if !held.is_empty() {
                     sticky_header(&sticky_handle, &held, &extras, look);
                 }
-                assist_layer(&assist_handle, grid, assist_handle.popup.get());
+                assist_layer(&assist_handle, grid.clone(), assist_handle.popup.get());
                 if let Some(at) = assist_handle.menu.get() {
                     editor_menu(&assist_handle, at);
                 }
@@ -2046,9 +2071,61 @@ struct Line {
     problems: Vec<(Range<usize>, pm_editor::Severity)>,
     /// Whether lines after it are folded away, which a mark after its text shows.
     folded: bool,
+    /// Whether it is a later row of a line that wraps, drawn without the
+    /// line's number and gutter marks.
+    continuation: bool,
 }
 
 impl Line {
+    /// Cuts the line down to the bytes `segment` of it, the stretch one row
+    /// of a wrapped line draws: what lies in it is kept and measured from
+    /// its start, the gutter marks only on the first row, and what is drawn
+    /// after the text only on the last.
+    fn cut(&mut self, segment: &Range<usize>) {
+        let first = segment.start == 0;
+        let last = segment.end >= self.text.len();
+        let reach = if last { usize::MAX } else { segment.end };
+        let clip = |range: &Range<usize>| -> Option<Range<usize>> {
+            let start = range.start.max(segment.start);
+            let end = range.end.min(reach);
+            (start < end).then(|| start - segment.start..end - segment.start)
+        };
+        let point = |at: usize| {
+            (at >= segment.start && (at < segment.end || last)).then(|| at - segment.start)
+        };
+        self.runs = self
+            .runs
+            .iter()
+            .filter_map(|(range, kind)| clip(range).map(|range| (range, *kind)))
+            .collect();
+        self.selected = self.selected.iter().filter_map(clip).collect();
+        self.found = self.found.iter().filter_map(clip).collect();
+        self.occurrences = self.occurrences.iter().filter_map(clip).collect();
+        self.problems = self
+            .problems
+            .iter()
+            .filter_map(|(range, severity)| clip(range).map(|range| (range, *severity)))
+            .collect();
+        self.carets = self.carets.iter().filter_map(|at| point(*at)).collect();
+        self.drop_mark = self.drop_mark.and_then(point);
+        self.insets = std::mem::take(&mut self.insets)
+            .into_iter()
+            .filter_map(|inset| point(inset.at).map(|at| Inset { at, ..inset }))
+            .collect();
+        self.text = self.text[segment.clone()].to_owned();
+        if !first {
+            self.continuation = true;
+            self.breakpoint = false;
+            self.change = None;
+            self.bulb = false;
+        }
+        if !last {
+            self.lenses.clear();
+            self.value = None;
+            self.folded = false;
+        }
+    }
+
     /// How many characters of hints and swatches stand before the byte `at`
     /// of the line, or at it as well when `at_too`.
     fn shift_before(&self, at: usize, at_too: bool) -> usize {
@@ -2087,7 +2164,7 @@ impl Line {
         if self.current && look.code.current_line {
             canvas.rect(0.0, 0.0, 20_000.0, height, faded(scheme.on_surface, 10));
         }
-        if look.code.line_numbers {
+        if look.code.line_numbers && !self.continuation {
             self.paint_number(canvas, look);
         }
         if self.breakpoint {
@@ -2389,6 +2466,24 @@ impl Line {
         pieces
     }
 }
+
+/// How many characters a row holds when `code` asks long lines to wrap,
+/// in a text area `room` wide past the gutter with characters `cell` wide;
+/// nothing when lines do not wrap or the area has not been laid out.
+fn wrap_columns(code: CodeLook, room: f32, cell: f32) -> Option<usize> {
+    let edge = (room / cell).floor() as usize;
+    if room <= 0.0 || edge < MIN_WRAP_COLUMNS {
+        return None;
+    }
+    match code.soft_wrap {
+        pm_editor::SoftWrap::Off => None,
+        pm_editor::SoftWrap::Edge => Some(edge.saturating_sub(1)),
+        pm_editor::SoftWrap::LineLength => Some(edge.saturating_sub(1).min(code.line_length)),
+    }
+}
+
+/// The fewest characters a row is wrapped at; a narrower area does not wrap.
+const MIN_WRAP_COLUMNS: usize = 16;
 
 /// The tone a problem of `severity` is marked in.
 fn severity_tone(

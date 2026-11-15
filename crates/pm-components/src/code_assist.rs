@@ -69,7 +69,7 @@ pub(crate) struct Assist {
 
 /// Where things are drawn in the text area: the width and height of a
 /// character, the gutter's width and how far the text is scrolled down.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct Grid {
     /// The width and height of a character.
     pub(crate) cell: (f32, f32),
@@ -77,6 +77,8 @@ pub(crate) struct Grid {
     pub(crate) gutter: f32,
     /// How far the text is scrolled down.
     pub(crate) scrolled: f32,
+    /// Which line and stretch of it each row draws.
+    pub(crate) rows: Rc<std::cell::RefCell<crate::code_rows::RowMap>>,
 }
 
 impl Grid {
@@ -86,11 +88,13 @@ impl Grid {
         let offset = offset.min(document.field.text().len());
         let line = document.line_of(offset);
         let range = document.line(line);
-        let text = &document.field.text()[range.clone()];
-        let column = column_of(text, offset - range.start);
+        let row = self.rows.borrow().row_of(document, offset);
+        let (_, segment) = self.rows.borrow().at(document, row);
+        let text = &document.field.text()[range.start + segment.start..range.end];
+        let column = column_of(text, offset - range.start - segment.start);
         (
             self.gutter + column as f32 * self.cell.0,
-            document.row_of_line(line) as f32 * self.cell.1 - self.scrolled,
+            row as f32 * self.cell.1 - self.scrolled,
         )
     }
 }
