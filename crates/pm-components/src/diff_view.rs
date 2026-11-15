@@ -186,13 +186,16 @@ impl DiffView {
     #[track_caller]
     pub fn show(mut self) {
         let scroll = remember_scroll_state();
-        let height = match self.size {
-            Size::Xs => 16.0,
-            Size::Sm => 18.0,
-            Size::Md => 20.0,
-            Size::Lg => 22.0,
+        let code = crate::code_font();
+        let (drawn, drawn_height) = match self.size {
+            Size::Xs => (10.0, 16.0),
+            Size::Sm => (12.0, 18.0),
+            Size::Md => (13.0, 20.0),
+            Size::Lg => (14.0, 22.0),
         };
-        let style = code_style(height);
+        let font_size = code.sized(drawn);
+        let height = code.line_for(font_size, drawn_height / drawn);
+        let style = code_style(font_size, height, code.family);
         let width = layout_text(&"0".repeat(64), &style, None).size().width / 64.0;
         let look = Look {
             style,
@@ -254,13 +257,13 @@ struct Sides<'a> {
     right_spans: &'a LineSpans,
 }
 
-/// The style code is set in, for lines `height` tall.
-fn code_style(height: f32) -> TextStyle {
+/// The style code is set in: `font_size` pixels big in `family`, for lines `height` tall.
+fn code_style(font_size: f32, height: f32, family: FontFamily) -> TextStyle {
     TextStyle {
         color: color_scheme().on_surface,
-        font_size: (height * 0.64).round(),
+        font_size,
         line_height: height,
-        font_family: FontFamily::Monospace,
+        font_family: family,
         max_lines: Some(1),
         ligatures: false,
         ..TextStyle::default()
@@ -458,7 +461,7 @@ fn half(half: Half, view: &DiffView, look: &Look) {
             .fill_max_height()
             .background(fill)
             .clip(),
-        Arrangement::SpacedBy(6.0),
+        Arrangement::SpacedBy(crate::spacing(6.0)),
         Alignment::Center,
         move || {
             Label::new(number.map(|number| number.to_string()).unwrap_or_default())
@@ -567,7 +570,7 @@ fn note_box(note: &DiffNote, place: usize, view: &DiffView) {
             .fill_max_width()
             .padding_xy(GUTTER, 4.0)
             .background(scheme.surface_container),
-        Arrangement::SpacedBy(8.0),
+        Arrangement::SpacedBy(crate::spacing(8.0)),
         Alignment::Center,
         || {
             icon(phosphor::CHAT_CIRCLE_TEXT, 13.0, scheme.primary);
@@ -597,7 +600,7 @@ fn draft_box(draft: &DiffDraft) {
             .fill_max_width()
             .padding_xy(GUTTER, 6.0)
             .background(scheme.surface_container),
-        Arrangement::SpacedBy(6.0),
+        Arrangement::SpacedBy(crate::spacing(6.0)),
         Alignment::Center,
         || {
             TextInput::new(draft.text.clone())

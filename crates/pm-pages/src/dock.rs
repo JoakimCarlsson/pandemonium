@@ -53,7 +53,7 @@ fn tab_bar(workspace: &Workspace, actions: &Actions) {
             .fill_max_width()
             .height(30.0)
             .padding_xy(8.0, 0.0),
-        Arrangement::SpacedBy(2.0),
+        Arrangement::SpacedBy(pm_components::spacing(2.0)),
         Alignment::Center,
         || {
             for tab in [

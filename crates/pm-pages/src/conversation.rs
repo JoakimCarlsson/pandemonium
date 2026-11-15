@@ -62,7 +62,7 @@ fn message_view(message: &Message, last: bool, actions: &Actions) {
         Speaker::User => {
             row_arranged(
                 Modifier::new().fill_max_width(),
-                Arrangement::SpacedBy(6.0),
+                Arrangement::SpacedBy(pm_components::spacing(6.0)),
                 Alignment::Start,
                 || {
                     spacer(Modifier::new().weight(1.0));
@@ -81,7 +81,7 @@ fn message_view(message: &Message, last: bool, actions: &Actions) {
                 Modifier::new()
                     .fill_max_width()
                     .padding_each(0.0, 6.0, 0.0, 0.0),
-                Arrangement::SpacedBy(6.0),
+                Arrangement::SpacedBy(pm_components::spacing(6.0)),
                 Alignment::Center,
                 || {
                     if let Some(footer) = &message.footer {
@@ -102,7 +102,7 @@ fn message_view(message: &Message, last: bool, actions: &Actions) {
 fn blocks(list: &[Block]) {
     column_arranged(
         Modifier::new().fill_max_width(),
-        Arrangement::SpacedBy(8.0),
+        Arrangement::SpacedBy(pm_components::spacing(8.0)),
         Alignment::Start,
         || {
             for block in list {

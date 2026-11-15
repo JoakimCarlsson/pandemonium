@@ -89,7 +89,7 @@ impl PictureView {
         let size = self.size;
         column_arranged(
             modifier.padding(16.0),
-            Arrangement::SpacedBy(10.0),
+            Arrangement::SpacedBy(crate::spacing(10.0)),
             Alignment::Center,
             move || match &picture {
                 Ok(picture) => {

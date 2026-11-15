@@ -257,6 +257,12 @@ cannot be reached. `settings-<section>`,
 such as `settings-editor-vim`, draws that section of the settings window over
 sample settings at 960 by 720, and `settings-<section>-narrow` draws it at its
 narrowest, 640 by 420; `form` with it opens the section's form filled in.
+Appearance words change the settings any snapshot is drawn with: `compact`
+for compact density, `interface-<px>`, `codesize-<px>`, `line-<times>` and
+`terminal-<px>` for the sizes, `font-<family>` and `mono-<family>` for the
+interface and code fonts (spaces written as `_`), and `relative`,
+`no-numbers`, `wrap-guide`, `no-minimap` and `bar-terminal` for the editor
+and terminal.
 
 ## Architecture
 

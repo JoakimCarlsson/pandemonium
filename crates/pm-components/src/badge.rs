@@ -78,6 +78,7 @@ impl Badge {
             Size::Md => (22.0, 8.0),
             Size::Lg => (26.0, 10.0),
         };
+        let height = crate::interface_font().sized(height);
         let label = self.label;
         let size = self.size;
         stack_aligned(

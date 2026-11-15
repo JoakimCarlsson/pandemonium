@@ -2,6 +2,7 @@
 //! its tab, fetching the grammar its language is highlighted with, saving
 //! it, and the tab strip's actions.
 
+use pm_editor::ServerAsk;
 use pm_protocol::{Request, Response};
 
 use super::{Ask, Link, expand_home};
@@ -104,6 +105,10 @@ impl Link {
         if file.body != FileBody::Text {
             return;
         }
+        self.tidy_before_save(index);
+        let Some(file) = self.workspace.open_files.files.get(index) else {
+            return;
+        };
         let text = file.document.0.borrow().to_save();
         let (directory, path) = (file.directory.clone(), file.path.clone());
         self.ask(
@@ -114,6 +119,28 @@ impl Link {
             },
             Ask::Code(CodeAsk::Save(directory, path)),
         );
+    }
+
+    /// Takes the spaces off the ends of the lines of the open file at `index`
+    /// and ends it with a line break, as far as the editor settings ask,
+    /// telling its language server of the change.
+    fn tidy_before_save(&mut self, index: usize) {
+        let editor = &self.settings.editor;
+        let (trim, final_newline) = (
+            editor.remove_trailing_whitespace_on_save,
+            editor.ensure_final_newline_on_save,
+        );
+        let told = {
+            let file = &self.workspace.open_files.files[index];
+            let mut document = file.document.0.borrow_mut();
+            document
+                .tidy_edit(trim, final_newline)
+                .and_then(|edit| document.edit(edit))
+                .and_then(|edited| edited.change)
+        };
+        if let Some((version, change)) = told {
+            self.code(index, ServerAsk::Changed(version, change));
+        }
     }
 
     /// Asks the server for what the file at `path` in `directory` holds, as

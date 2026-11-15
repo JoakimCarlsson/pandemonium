@@ -40,7 +40,7 @@ pub fn top_bar(workspace: &Workspace, actions: &Actions) {
                 || {
                     row_arranged(
                         Modifier::new().on_press(keep_press),
-                        Arrangement::SpacedBy(4.0),
+                        Arrangement::SpacedBy(pm_components::spacing(4.0)),
                         Alignment::Center,
                         || {
                             trail_button(
@@ -76,7 +76,7 @@ pub fn top_bar(workspace: &Workspace, actions: &Actions) {
                 || {
                     row_arranged(
                         Modifier::new().on_press(keep_press),
-                        Arrangement::SpacedBy(4.0),
+                        Arrangement::SpacedBy(pm_components::spacing(4.0)),
                         Alignment::Center,
                         || {
                             if let Some(offer) = &workspace.update {
@@ -87,7 +87,7 @@ pub fn top_bar(workspace: &Workspace, actions: &Actions) {
                                     .size(Size::Xs)
                                     .on_click(move || update(UpdateAction::Open))
                                     .show();
-                                spacer(Modifier::new().width(8.0));
+                                spacer(Modifier::new().width(pm_components::spacing(8.0)));
                             }
                             panel_button(actions, phosphor::SIDEBAR_SIMPLE, Panel::Sidebar);
                             panel_button(actions, phosphor::SQUARE_HALF_BOTTOM, Panel::Dock);
@@ -97,7 +97,7 @@ pub fn top_bar(workspace: &Workspace, actions: &Actions) {
                                 .size(Size::Sm)
                                 .on_click(move || navigate(Destination::Settings))
                                 .show();
-                            spacer(Modifier::new().width(12.0));
+                            spacer(Modifier::new().width(pm_components::spacing(12.0)));
                             window_button(actions, phosphor::MINUS, WindowAction::Minimise);
                             window_button(
                                 actions,

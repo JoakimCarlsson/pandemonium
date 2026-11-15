@@ -82,7 +82,7 @@ impl ContinueChat {
         };
         row_arranged(
             modifier,
-            Arrangement::SpacedBy(8.0),
+            Arrangement::SpacedBy(crate::spacing(8.0)),
             Alignment::Center,
             move || {
                 icon(phosphor::CHAT_CIRCLE, 14.0, scheme.on_surface_variant);

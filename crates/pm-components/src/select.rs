@@ -89,6 +89,7 @@ impl Select {
             Size::Md => 32.0,
             Size::Lg => 38.0,
         };
+        let height = crate::row_height(height);
         let fill = match (self.variant, hovered.get() || self.open) {
             (_, true) => scheme.surface_container_high,
             (SelectVariant::Outlined, false) => scheme.background,
@@ -118,7 +119,7 @@ impl Select {
         let shown = self.shown;
         row_arranged(
             modifier.padding_xy(10.0, 0.0),
-            Arrangement::SpacedBy(6.0),
+            Arrangement::SpacedBy(crate::spacing(6.0)),
             Alignment::Center,
             move || {
                 Label::new(shown)

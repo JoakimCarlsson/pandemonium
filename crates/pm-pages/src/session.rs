@@ -139,7 +139,7 @@ fn pane_bar(workspace: &Workspace, pane: Pane, tab: SessionTab, focused: bool, a
             })
             .clickable_plain(move || focus(TabAction::Focus(pane)))
             .padding_xy(10.0, 0.0),
-        Arrangement::SpacedBy(6.0),
+        Arrangement::SpacedBy(pm_components::spacing(6.0)),
         Alignment::Center,
         move || {
             Label::new(name.clone())
@@ -280,7 +280,7 @@ fn session_header(workspace: &Workspace) {
             .height(30.0)
             .border_bottom_hairline(scheme.outline_variant)
             .padding_xy(12.0, 0.0),
-        Arrangement::SpacedBy(8.0),
+        Arrangement::SpacedBy(pm_components::spacing(8.0)),
         Alignment::Center,
         || {
             spacer(
@@ -314,7 +314,7 @@ fn header_chip(glyph: Icon, text: &str) {
         Modifier::new()
             .background_rounded(scheme.surface_container_high, 4.0)
             .padding_xy(6.0, 1.0),
-        Arrangement::SpacedBy(4.0),
+        Arrangement::SpacedBy(pm_components::spacing(4.0)),
         Alignment::Center,
         || {
             icon(glyph, 11.0, scheme.on_surface_variant);
@@ -384,12 +384,12 @@ fn flatten(projects: &[Project], prefix: Vec<usize>, offered: &mut Vec<(String, 
 fn below_conversation(workspace: &Workspace, actions: &Actions) {
     column_arranged(
         Modifier::new().fill_max_width(),
-        Arrangement::SpacedBy(8.0),
+        Arrangement::SpacedBy(pm_components::spacing(8.0)),
         Alignment::Center,
         || {
             column_arranged(
                 Modifier::new().width(READING_WIDTH),
-                Arrangement::SpacedBy(8.0),
+                Arrangement::SpacedBy(pm_components::spacing(8.0)),
                 Alignment::Start,
                 || {
                     waiting_cards(&workspace.extras, actions);

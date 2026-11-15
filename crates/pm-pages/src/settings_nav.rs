@@ -66,12 +66,12 @@ pub(crate) fn navigation(model: &Rc<SettingsModel>, actions: &SettingsActions, l
             .background(scheme.surface_container_low)
             .border_right_hairline(scheme.outline_variant)
             .padding(12.0),
-        Arrangement::SpacedBy(8.0),
+        Arrangement::SpacedBy(pm_components::spacing(8.0)),
         Alignment::Start,
         || {
             row_arranged(
                 Modifier::new().fill_max_width(),
-                Arrangement::SpacedBy(4.0),
+                Arrangement::SpacedBy(pm_components::spacing(4.0)),
                 Alignment::Center,
                 || {
                     TextInput::new(model.page.find.clone())
@@ -93,7 +93,7 @@ pub(crate) fn navigation(model: &Rc<SettingsModel>, actions: &SettingsActions, l
                     .fill_max_width()
                     .weight(1.0)
                     .vertical_scroll(&scroll),
-                Arrangement::SpacedBy(1.0),
+                Arrangement::SpacedBy(pm_components::spacing(1.0)),
                 Alignment::Start,
                 || {
                     for section in Section::ALL {

@@ -23,7 +23,7 @@ const SIDE_WIDTH: f32 = 320.0;
 pub fn debug_panel(model: &DebugModel, actions: &Actions) {
     row_arranged(
         Modifier::new().fill_max_size(),
-        Arrangement::SpacedBy(12.0),
+        Arrangement::SpacedBy(pm_components::spacing(12.0)),
         Alignment::Start,
         || {
             match &model.session {
@@ -138,7 +138,7 @@ fn session_columns(session: &DebugSession, actions: &Actions) {
 fn controls(session: &DebugSession, actions: &Actions) {
     row_arranged(
         Modifier::new().fill_max_width().height(28.0),
-        Arrangement::SpacedBy(2.0),
+        Arrangement::SpacedBy(pm_components::spacing(2.0)),
         Alignment::Center,
         || {
             let running = session.standing == DebugStanding::Running;
@@ -193,7 +193,7 @@ fn variable_row(variable: &DebugVariableEntry, actions: &Actions) {
         row_with(Modifier::new().padding_xy(depth as f32 * 12.0, 0.0), || {
             match &caret {
                 Some(glyph) => icon(glyph.clone(), 12.0, scheme.on_surface_variant),
-                None => spacer(Modifier::new().width(12.0)),
+                None => spacer(Modifier::new().width(pm_components::spacing(12.0))),
             };
         });
     }));

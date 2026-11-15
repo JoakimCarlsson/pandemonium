@@ -77,7 +77,7 @@ impl SectionHeader {
         let size = self.size;
         column_arranged(
             Modifier::new().fill_max_width(),
-            Arrangement::SpacedBy(4.0),
+            Arrangement::SpacedBy(crate::spacing(4.0)),
             Alignment::Start,
             move || {
                 if let Some(trail) = trail {

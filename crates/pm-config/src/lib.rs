@@ -14,4 +14,4 @@ pub use general::{Channel, GeneralSettings, Launch};
 pub use git::{GitMarks, GitSettings};
 pub use servers::{KnownServer, Reach, ServerList};
 pub use settings::WindowSettings;
-pub use terminal::{TerminalCursor, TerminalSettings};
+pub use terminal::{SCROLLBACK, TerminalCursor, TerminalSettings};

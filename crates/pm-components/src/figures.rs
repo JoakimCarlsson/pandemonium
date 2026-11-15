@@ -160,7 +160,7 @@ impl Figure {
             ),
             Err(reason) => row_arranged(
                 Modifier::new(),
-                Arrangement::SpacedBy(6.0),
+                Arrangement::SpacedBy(crate::spacing(6.0)),
                 Alignment::Center,
                 || {
                     icon(phosphor::IMAGE_BROKEN, 14.0, scheme.on_surface_variant);

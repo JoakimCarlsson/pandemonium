@@ -45,7 +45,7 @@ pub fn changes_page(page: ChangesPage, actions: &Actions) {
                 .height(36.0)
                 .border_bottom_hairline(scheme.outline_variant)
                 .padding_xy(12.0, 0.0),
-            Arrangement::SpacedBy(6.0),
+            Arrangement::SpacedBy(pm_components::spacing(6.0)),
             Alignment::Center,
             || {
                 icon(
@@ -132,7 +132,7 @@ fn file_block(file: &ChangedFile, working: bool, git: Rc<dyn Fn(GitAction)>) {
     column_with(Modifier::new().fill_max_width(), || {
         row_arranged(
             header,
-            Arrangement::SpacedBy(6.0),
+            Arrangement::SpacedBy(pm_components::spacing(6.0)),
             Alignment::Center,
             || {
                 FileIcon::new(file.name().to_owned()).size(Size::Xs).show();

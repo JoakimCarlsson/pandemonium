@@ -108,12 +108,12 @@ impl TrustCard {
                 .background_rounded(faded(tint, 18), 8.0)
                 .border(1.0, faded(tint, 90), 8.0)
                 .padding_xy(14.0, 12.0),
-            Arrangement::SpacedBy(8.0),
+            Arrangement::SpacedBy(crate::spacing(8.0)),
             Alignment::Start,
             move || {
                 row_arranged(
                     Modifier::new().fill_max_width(),
-                    Arrangement::SpacedBy(8.0),
+                    Arrangement::SpacedBy(crate::spacing(8.0)),
                     Alignment::Center,
                     || {
                         icon(phosphor::SHIELD_WARNING, 15.0, tint);
@@ -136,7 +136,7 @@ impl TrustCard {
                 for (kind, name) in &self.skipped {
                     row_arranged(
                         Modifier::new().fill_max_width(),
-                        Arrangement::SpacedBy(8.0),
+                        Arrangement::SpacedBy(crate::spacing(8.0)),
                         Alignment::Center,
                         || {
                             Label::new(kind.clone())

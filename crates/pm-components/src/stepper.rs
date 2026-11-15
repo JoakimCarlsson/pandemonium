@@ -74,6 +74,7 @@ impl Stepper {
             Size::Md => 32.0,
             Size::Lg => 38.0,
         };
+        let height = crate::row_height(height);
         let mut modifier = Modifier::new()
             .width(Self::WIDTH)
             .height(height)

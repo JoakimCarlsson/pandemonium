@@ -153,7 +153,7 @@ impl QueuedList {
         match self.variant {
             QueuedVariant::Inline => column_arranged(
                 self.modifier,
-                Arrangement::SpacedBy(4.0),
+                Arrangement::SpacedBy(crate::spacing(4.0)),
                 Alignment::Start,
                 rows,
             ),
@@ -164,7 +164,7 @@ impl QueuedList {
                 .show(move || {
                     column_arranged(
                         Modifier::new().fill_max_width(),
-                        Arrangement::SpacedBy(4.0),
+                        Arrangement::SpacedBy(crate::spacing(4.0)),
                         Alignment::Start,
                         rows,
                     )
@@ -189,7 +189,7 @@ fn waiting_row(prompt: Waiting, callbacks: &Callbacks, editing: &State<Option<u6
     let edited = editing.get() == Some(id);
     row_arranged(
         Modifier::new().fill_max_width(),
-        Arrangement::SpacedBy(4.0),
+        Arrangement::SpacedBy(crate::spacing(4.0)),
         Alignment::Center,
         || {
             icon(phosphor::CLOCK, 12.0, scheme.on_surface_variant);

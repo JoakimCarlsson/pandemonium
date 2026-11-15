@@ -71,7 +71,7 @@ fn welcome_column(workspace: &Workspace, start: &Start, actions: &Actions) {
         || {
             column_arranged(
                 Modifier::new().width_in(0.0, COLUMN_WIDTH),
-                Arrangement::SpacedBy(28.0),
+                Arrangement::SpacedBy(pm_components::spacing(28.0)),
                 Alignment::Center,
                 || {
                     Label::new(start.heading.clone())

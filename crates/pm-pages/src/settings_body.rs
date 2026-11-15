@@ -360,7 +360,7 @@ fn server_form(actions: &SettingsActions, layout: Layout) {
         .show();
     column_arranged(
         Modifier::new().fill_max_width(),
-        Arrangement::SpacedBy(8.0),
+        Arrangement::SpacedBy(pm_components::spacing(8.0)),
         Alignment::Start,
         || {
             let options: Vec<String> = REACHES.iter().map(|(_, name)| (*name).to_owned()).collect();

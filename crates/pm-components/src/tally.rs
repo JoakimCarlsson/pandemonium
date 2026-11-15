@@ -61,7 +61,7 @@ impl Tally {
         let compact = self.variant == TallyVariant::Compact;
         row_arranged(
             Modifier::new(),
-            Arrangement::SpacedBy(4.0),
+            Arrangement::SpacedBy(crate::spacing(4.0)),
             Alignment::Center,
             move || {
                 if !compact || self.added > 0 {

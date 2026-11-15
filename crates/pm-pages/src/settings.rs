@@ -104,7 +104,7 @@ fn title_strip(actions: &SettingsActions) {
         || {
             row_arranged(
                 Modifier::new(),
-                Arrangement::SpacedBy(8.0),
+                Arrangement::SpacedBy(pm_components::spacing(8.0)),
                 Alignment::Center,
                 || {
                     icon(phosphor::GEAR_SIX, 14.0, scheme.on_surface_variant);
@@ -141,7 +141,7 @@ fn content(model: &Rc<SettingsModel>, actions: &SettingsActions, layout: Layout)
                         layout.inset,
                         32.0,
                     ),
-                    Arrangement::SpacedBy(16.0),
+                    Arrangement::SpacedBy(pm_components::spacing(16.0)),
                     Alignment::Start,
                     || {
                         SectionHeader::new(section.title())

@@ -24,7 +24,7 @@ pub fn side_panel(workspace: &Workspace, actions: &Actions) {
                     .fill_max_width()
                     .height(36.0)
                     .padding_xy(6.0, 0.0),
-                Arrangement::SpacedBy(2.0),
+                Arrangement::SpacedBy(pm_components::spacing(2.0)),
                 Alignment::Center,
                 || {
                     for (tab, glyph) in [

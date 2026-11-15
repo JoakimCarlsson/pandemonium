@@ -169,6 +169,7 @@ impl ListRow {
             Size::Md => 44.0,
             Size::Lg => 48.0,
         };
+        let height = crate::row_height(height);
         let fill = if hovered.get() && self.on_click.is_some() {
             scheme.surface_container_high
         } else {
@@ -194,7 +195,7 @@ impl ListRow {
         };
         row_arranged(
             modifier,
-            Arrangement::SpacedBy(12.0),
+            Arrangement::SpacedBy(crate::spacing(12.0)),
             Alignment::Center,
             move || {
                 if !matches!(self.leading, Leading::None) {
@@ -202,7 +203,7 @@ impl ListRow {
                 }
                 row_arranged(
                     Modifier::new().weight(1.0),
-                    Arrangement::SpacedBy(8.0),
+                    Arrangement::SpacedBy(crate::spacing(8.0)),
                     Alignment::Center,
                     || {
                         Label::new(self.title.clone())

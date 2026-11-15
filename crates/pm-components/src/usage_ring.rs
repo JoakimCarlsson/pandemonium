@@ -94,7 +94,7 @@ impl UsageRing {
         tooltip(&self.detail, move || {
             row_arranged(
                 Modifier::new().padding_xy(4.0, 0.0),
-                Arrangement::SpacedBy(4.0),
+                Arrangement::SpacedBy(crate::spacing(4.0)),
                 Alignment::Center,
                 move || {
                     canvas(Modifier::new().size(side, side), move |canvas| {

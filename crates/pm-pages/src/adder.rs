@@ -53,12 +53,12 @@ fn clone_form(state: &Adder, actions: &Actions) {
     let ready = !address.is_empty() && !state.busy;
     column_with(Modifier::new().fill_max_width().padding(12.0), || {
         Label::new("Clone a repository").size(Size::Md).show();
-        spacer(Modifier::new().height(4.0));
+        spacer(Modifier::new().height(pm_components::spacing(4.0)));
         Label::new("A GitHub owner/name, or any git address.")
             .variant(LabelVariant::Muted)
             .size(Size::Xs)
             .show();
-        spacer(Modifier::new().height(10.0));
+        spacer(Modifier::new().height(pm_components::spacing(10.0)));
         TextInput::new(state.url.clone())
             .placeholder("owner/name or https://…")
             .autofocus()
@@ -68,21 +68,21 @@ fn clone_form(state: &Adder, actions: &Actions) {
             .on_submit(move |_| submit(ProjectAction::Clone))
             .show();
         if !address.is_empty() {
-            spacer(Modifier::new().height(6.0));
+            spacer(Modifier::new().height(pm_components::spacing(6.0)));
             Label::new(format!("Into a folder named {}", clone_name(&address)))
                 .variant(LabelVariant::Subtle)
                 .size(Size::Xs)
                 .show();
         }
         if let Some(error) = &state.error {
-            spacer(Modifier::new().height(8.0));
+            spacer(Modifier::new().height(pm_components::spacing(8.0)));
             Notice::new("The clone failed")
                 .detail(error.clone())
                 .variant(NoticeVariant::Danger)
                 .size(Size::Sm)
                 .show();
         }
-        spacer(Modifier::new().height(12.0));
+        spacer(Modifier::new().height(pm_components::spacing(12.0)));
         row_arranged(
             Modifier::new().fill_max_width(),
             Arrangement::End,
@@ -93,7 +93,7 @@ fn clone_form(state: &Adder, actions: &Actions) {
                     .size(Size::Sm)
                     .on_click(move || back(ProjectAction::Adding(Some(AddStep::Choose))))
                     .show();
-                spacer(Modifier::new().width(8.0));
+                spacer(Modifier::new().width(pm_components::spacing(8.0)));
                 Button::new(if state.busy { "Cloning…" } else { "Clone" })
                     .icon(phosphor::DOWNLOAD_SIMPLE)
                     .variant(ButtonVariant::Primary)

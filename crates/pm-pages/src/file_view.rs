@@ -239,7 +239,7 @@ fn compared(file: &OpenFile, comparison: &Comparison, index: usize, actions: &Ac
             .background(scheme.surface_container)
             .border_bottom_hairline(scheme.outline_variant)
             .padding_xy(12.0, 0.0),
-        Arrangement::SpacedBy(8.0),
+        Arrangement::SpacedBy(pm_components::spacing(8.0)),
         Alignment::Center,
         move || {
             icon(phosphor::GIT_DIFF, 12.0, scheme.on_surface_variant);
@@ -281,7 +281,7 @@ fn language_bar(offer: &Extension, index: usize, actions: &Actions) {
             .background(scheme.surface_container)
             .border_bottom_hairline(scheme.outline_variant)
             .padding_xy(12.0, 0.0),
-        Arrangement::SpacedBy(8.0),
+        Arrangement::SpacedBy(pm_components::spacing(8.0)),
         Alignment::Center,
         move || {
             icon(phosphor::PUZZLE_PIECE, 13.0, scheme.primary);
@@ -366,7 +366,7 @@ fn file_header(file: &OpenFile, index: usize, around: &Around, actions: &Actions
             .height(30.0)
             .border_bottom_hairline(scheme.outline_variant)
             .padding_xy(12.0, 0.0),
-        Arrangement::SpacedBy(8.0),
+        Arrangement::SpacedBy(pm_components::spacing(8.0)),
         Alignment::Center,
         move || {
             icon(phosphor::FILE_TEXT, 12.0, scheme.on_surface_variant);

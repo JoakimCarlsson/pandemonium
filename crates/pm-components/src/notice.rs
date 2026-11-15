@@ -90,13 +90,13 @@ impl Notice {
                 .background_rounded(faded(tint, 20), 6.0)
                 .border(1.0, faded(tint, 70), 6.0)
                 .padding_xy(10.0, 7.0),
-            Arrangement::SpacedBy(8.0),
+            Arrangement::SpacedBy(crate::spacing(8.0)),
             Alignment::Start,
             move || {
                 icon(self.glyph.clone(), 14.0, tint);
                 column_arranged(
                     Modifier::new().weight(1.0),
-                    Arrangement::SpacedBy(2.0),
+                    Arrangement::SpacedBy(crate::spacing(2.0)),
                     Alignment::Start,
                     || {
                         Label::new(self.title.clone()).size(self.size).wrap().show();

@@ -465,7 +465,7 @@ fn toolbar(
 ) {
     row_arranged(
         Modifier::new().fill_max_width(),
-        Arrangement::SpacedBy(2.0),
+        Arrangement::SpacedBy(crate::spacing(2.0)),
         Alignment::Center,
         || {
             IconButton::new(phosphor::PLUS).size(Size::Xs).show();

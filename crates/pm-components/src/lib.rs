@@ -4,6 +4,7 @@
 
 mod activity;
 mod app_theme;
+mod appearance;
 mod avatar;
 mod badge;
 mod browser_keys;
@@ -18,6 +19,7 @@ mod code_assist;
 mod code_bars;
 mod code_editor;
 mod code_keys;
+mod code_look;
 mod code_overview;
 mod code_sticky;
 mod code_text;
@@ -86,6 +88,10 @@ pub use app_theme::{
     AppTheme, ExtendedColors, app_theme, extended_colors, pandemonium_dark_scheme,
     pandemonium_light_scheme,
 };
+pub use appearance::{
+    CodeFont, Density, INTERFACE_BASE, InterfaceFont, code_font, density, interface_font,
+    row_height, spacing,
+};
 pub use avatar::Avatar;
 pub use badge::{Badge, BadgeVariant};
 pub use browser_keys::{BrowserShortcut, browser_shortcut, held, page_key};
@@ -99,6 +105,7 @@ pub use chip::{Chip, ChipVariant};
 pub use code_assist::CodeEditorPopup;
 pub use code_bars::CodeEditorBar;
 pub use code_editor::{CodeEditor, CodeEditorVariant};
+pub use code_look::{CodeLook, code_look};
 pub use composer::{
     Composer, ComposerChoice, ComposerCommand, ComposerMenu, ComposerPick, ComposerVariant,
 };
@@ -131,6 +138,7 @@ pub use page_header::{PageHeader, PageHeaderVariant};
 pub use pick_list::{PickItem, PickList, PickListVariant, key_caps};
 pub use picture_view::{PictureView, PictureViewVariant};
 pub use plan::{ApproveBand, ApproveBandVariant, PlanPanel, PlanStepState, PlanVariant};
+pub use pm_editor::CursorShape;
 pub use pm_editor::ServerAsk;
 pub use popover::{Popover, PopoverVariant};
 pub use project_colour::project_colour;

@@ -211,7 +211,7 @@ fn completion_list(handle: &Handle, completion: &pm_editor::Completions, at: (f3
                             )
                             .clickable_plain(move || pick.accept_completion(Some(row)))
                             .padding_xy(6.0, 0.0),
-                        Arrangement::SpacedBy(6.0),
+                        Arrangement::SpacedBy(crate::spacing(6.0)),
                         Alignment::Center,
                         move || {
                             Label::new(kind)
@@ -426,7 +426,7 @@ fn colour_picker(handle: &Handle, span: pm_editor::Span, colour: [u8; 4], at: (f
         .show(move || {
             row_arranged(
                 Modifier::new().fill_max_width().padding(4.0),
-                Arrangement::SpacedBy(8.0),
+                Arrangement::SpacedBy(crate::spacing(8.0)),
                 Alignment::Center,
                 move || {
                     spacer(
@@ -461,7 +461,7 @@ fn grid_of_presets(handle: &Handle, span: pm_editor::Span, scheme: &ColorScheme)
         key(row, move || {
             row_arranged(
                 Modifier::new().fill_max_width().padding_xy(4.0, 2.0),
-                Arrangement::SpacedBy(6.0),
+                Arrangement::SpacedBy(crate::spacing(6.0)),
                 Alignment::Center,
                 move || {
                     for colour in colours {

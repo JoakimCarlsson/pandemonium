@@ -16,7 +16,9 @@ use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
 
-use pm_editor::{Document, FIX_ALL, LineChange, ModalView, ORGANIZE_IMPORTS, ServerAsk};
+use pm_editor::{
+    CursorShape, Document, FIX_ALL, LineChange, ModalView, ORGANIZE_IMPORTS, ServerAsk,
+};
 use pm_text::{Edit, Motion};
 use pm_vim::{Command as VimCommand, Effect, Shape, Vim};
 use rustle::layout_text;
@@ -27,6 +29,7 @@ use crate::app_theme::{ExtendedColors, extended_colors};
 use crate::code_assist::{Assist, CodeEditorPopup, Grid, assist_layer, colour_of};
 use crate::code_bars::{Bars, CodeEditorBar, FindBar, find_bar, go_to_bar};
 use crate::code_keys::{Command, command, keystroke};
+use crate::code_look::CodeLook;
 use crate::code_overview::{Marks, gutter_colour, overview};
 use crate::code_sticky::sticky_lines;
 use crate::code_text::{byte_at_column, column_of, digits, expand_tabs, kind_colour, runs};
@@ -238,19 +241,20 @@ impl CodeEditor {
 
     /// The text style the code is set in.
     pub fn style(&self) -> TextStyle {
-        let font_size = match self.size {
+        let code = crate::code_font();
+        let font_size = code.sized(match self.size {
             Size::Xs => 11.0,
             Size::Sm => 12.5,
             Size::Md => 13.5,
             Size::Lg => 15.0,
-        };
+        });
         TextStyle {
             color: color_scheme().on_surface,
             font_size,
-            line_height: (font_size * 1.6).round(),
-            font_family: FontFamily::Monospace,
+            line_height: code.line_for(font_size, 1.6),
+            font_family: code.family,
             max_lines: Some(1),
-            ligatures: false,
+            ligatures: crate::code_look().ligatures,
             ..TextStyle::default()
         }
     }
@@ -285,6 +289,7 @@ impl CodeEditor {
             on_save: self.on_save.clone(),
             on_gutter: self.on_gutter.clone(),
             first_line: self.first_line,
+            code: crate::code_look(),
             assist: self.assist.clone(),
             popup: {
                 let opening = self.popup;
@@ -305,12 +310,14 @@ impl CodeEditor {
         }
         let vim = self.vim;
         let language = self.language.clone();
+        let code = handle.code;
         let extras = Extras {
             breakpoints: self.breakpoints.clone(),
             inline_values: self.inline_values.clone(),
-            minimap: self.minimap,
-            sticky: self.sticky,
+            minimap: self.minimap && code.minimap,
+            sticky: self.sticky && code.sticky,
             first_line: self.first_line,
+            code,
         };
         column_with(
             self.modifier.background(scheme.background).clip(),
@@ -360,6 +367,8 @@ pub(crate) struct Handle {
     on_gutter: Option<Rc<dyn Fn(usize)>>,
     /// The number the first line is shown with.
     first_line: usize,
+    /// How the editor settings say the editor looks and behaves, as they stood when it was last drawn.
+    code: CodeLook,
     /// What the language server's popups need.
     pub(crate) assist: Assist,
     /// The popup open over the text, when one is.
@@ -859,15 +868,16 @@ impl Handle {
         let Some(stroke) = keystroke(event) else {
             return false;
         };
+        let code = self.code;
         let view = ModalView {
             top: self.top(),
             rows: self.rows().max(1),
-            margin: 3,
-            wrap: 80,
-            auto_close: true,
-            auto_indent: true,
-            replay_typing: true,
-            syntax_objects: true,
+            margin: code.scroll_margin,
+            wrap: code.wrap_guide.unwrap_or(80),
+            auto_close: code.auto_close,
+            auto_indent: code.auto_indent,
+            replay_typing: code.replay_typing,
+            syntax_objects: code.syntax_objects,
         };
         let press = {
             let mut document = self.document.borrow_mut();
@@ -1114,6 +1124,9 @@ fn inserts_on(document: &Document, line: usize, range: &Range<usize>) -> Vec<(us
 /// How many characters a colour swatch takes inside a line.
 const SWATCH_WIDTH: usize = 2;
 
+/// How many columns apart the indent guides stand.
+const INDENT_STEP: usize = 4;
+
 /// How many characters a hint reading `label` takes, with a space before
 /// it when `pad_left` and after it when `pad_right`.
 fn hint_width(label: &str, pad_left: bool, pad_right: bool) -> usize {
@@ -1181,6 +1194,8 @@ struct Extras {
     sticky: bool,
     /// The number the first line is shown with.
     first_line: usize,
+    /// How the editor settings say the editor looks and behaves.
+    code: CodeLook,
 }
 
 impl Line {
@@ -1226,11 +1241,15 @@ impl Line {
                     swatch: hint.swatch.map(|swatch| swatch.color),
                 }))
                 .collect();
+            if !extras.code.inlay_hints {
+                hints.retain(|inset| inset.swatch.is_some());
+            }
             hints.sort_by_key(|inset| inset.at);
             let lenses = document
                 .lenses_on(index)
                 .iter()
                 .map(|lens| lens.title.clone())
+                .filter(|_| extras.code.code_lens)
                 .collect();
             (hints, lenses)
         } else {
@@ -1249,7 +1268,9 @@ impl Line {
             carets: Vec::new(),
             current: false,
             breakpoint: extras.breakpoints.contains(&index),
-            change: document.line_change(index),
+            change: document
+                .line_change(index)
+                .filter(|_| extras.code.git_gutter),
             value: extras
                 .inline_values
                 .iter()
@@ -1273,7 +1294,11 @@ fn text_area(
     let (style, cell, scheme, extended) = looks;
     let document = handle.document.borrow();
     let count = document.lines().max(1);
-    let gutter = (digits(count + extras.first_line - 1) as f32 + 4.5) * cell.0;
+    let gutter = if extras.code.line_numbers {
+        (digits(count + extras.first_line - 1) as f32 + 4.5) * cell.0
+    } else {
+        3.5 * cell.0
+    };
     let top = handle.top();
     let window = top..(top + handle.rows() + 2).min(count);
     let painted = Rc::new((window.start, document.highlights(window)));
@@ -1312,10 +1337,11 @@ fn text_area(
     } else {
         Vec::new()
     };
-    let shape = if vim {
-        document.vim_shape()
-    } else {
-        Shape::Typing
+    let shape = match (vim, extras.code.cursor) {
+        (true, _) => document.vim_shape(),
+        (false, CursorShape::Bar) => Shape::Typing,
+        (false, CursorShape::Block) => Shape::Block,
+        (false, CursorShape::Underline) => Shape::Underline,
     };
     drop(document);
     let focused = handle.focus.is_focused();
@@ -1327,6 +1353,7 @@ fn text_area(
         extended,
         focused,
         shape,
+        code: extras.code,
     };
     let keys = {
         let handle = handle.clone();
@@ -1439,7 +1466,9 @@ fn text_area(
                         };
                         line.selected = within(&selections, &range);
                         line.found = within(&found, &range);
-                        line.occurrences = within(&occurrences, &range);
+                        if extras_inner.code.occurrences {
+                            line.occurrences = within(&occurrences, &range);
+                        }
                         line.bulb = bulb == Some(index);
                         line.drop_mark = drop_mark
                             .filter(|mark| range.contains(mark) || *mark == range.end)
@@ -1450,6 +1479,9 @@ fn text_area(
                             .map(|caret| caret - range.start)
                             .collect();
                         line.current = index == caret_line;
+                        if extras_inner.code.relative_line_numbers && !line.current {
+                            line.number = index.abs_diff(caret_line);
+                        }
                         drop(document);
                         canvas(
                             Modifier::new().fill_max_width().height(cell.1),
@@ -1547,6 +1579,8 @@ struct Look {
     focused: bool,
     /// How carets are drawn.
     shape: Shape,
+    /// How the editor settings say the editor looks.
+    code: CodeLook,
 }
 
 /// Something drawn inside a line that is not its text: a hint or a colour swatch.
@@ -1631,20 +1665,13 @@ impl Line {
         let scheme = look.scheme;
         let extended = look.extended;
         let start = look.gutter;
-        if self.current {
+        if self.current && look.code.current_line {
             canvas.rect(0.0, 0.0, 20_000.0, height, faded(scheme.on_surface, 10));
         }
-        let number = self.number.to_string();
-        let number_x = look.gutter - (number.len() as f32 + 1.5) * width;
-        let number_style = TextStyle {
-            color: if self.current {
-                scheme.on_surface
-            } else {
-                scheme.on_surface_variant
-            },
-            ..look.style
-        };
-        canvas.draw_text(number_x, 0.0, &number, &number_style, None);
+        if look.code.line_numbers {
+            self.paint_number(canvas, look);
+        }
+        self.paint_guides(canvas, look);
         if self.breakpoint {
             canvas.circle(
                 width,
@@ -1824,6 +1851,51 @@ impl Line {
         }
     }
 
+    /// Paints the line's number at the right of the gutter, brighter on the caret's line.
+    fn paint_number(&self, canvas: &mut Canvas, look: &Look) {
+        let width = look.cell.0;
+        let number = self.number.to_string();
+        let number_x = look.gutter - (number.len() as f32 + 1.5) * width;
+        let number_style = TextStyle {
+            color: if self.current {
+                look.scheme.on_surface
+            } else {
+                look.scheme.on_surface_variant
+            },
+            ..look.style
+        };
+        canvas.draw_text(number_x, 0.0, &number, &number_style, None);
+    }
+
+    /// Paints the upright lines the settings ask for: one at each level of
+    /// the line's leading indentation, every four columns, and one at the
+    /// column where lines should end.
+    fn paint_guides(&self, canvas: &mut Canvas, look: &Look) {
+        let (width, height) = look.cell;
+        let colour = look.scheme.outline_variant;
+        if look.code.indent_guides {
+            let indent = column_of(&self.text, self.text.len() - self.text.trim_start().len());
+            for column in (0..indent).step_by(INDENT_STEP) {
+                canvas.rect(
+                    look.gutter + column as f32 * width,
+                    0.0,
+                    1.0,
+                    height,
+                    colour,
+                );
+            }
+        }
+        if let Some(column) = look.code.wrap_guide {
+            canvas.rect(
+                look.gutter + column as f32 * width,
+                0.0,
+                1.0,
+                height,
+                colour,
+            );
+        }
+    }
+
     /// The parts of `range` of the line cut where a hint or swatch stands
     /// and where right-to-left text in `reversed` starts or ends, so each
     /// is drawn at its own place.
@@ -1888,7 +1960,7 @@ fn status_line(handle: &Handle, vim: bool, language: Option<&str>) {
             .fill_max_width()
             .height(24.0)
             .padding_xy(12.0, 0.0),
-        Arrangement::SpacedBy(16.0),
+        Arrangement::SpacedBy(crate::spacing(16.0)),
         Alignment::Center,
         move || {
             if let Some(mode) = &mode {

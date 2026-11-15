@@ -86,12 +86,12 @@ fn tab_strip(browser: &Browser, act: &Act) {
             .background(scheme.surface_container_low)
             .border_bottom_hairline(scheme.outline_variant)
             .padding_xy(6.0, 0.0),
-        Arrangement::SpacedBy(4.0),
+        Arrangement::SpacedBy(pm_components::spacing(4.0)),
         Alignment::Center,
         || {
             row_arranged(
                 Modifier::new().weight(1.0).horizontal_scroll(&scroll),
-                Arrangement::SpacedBy(2.0),
+                Arrangement::SpacedBy(pm_components::spacing(2.0)),
                 Alignment::Center,
                 || {
                     for (index, tab) in browser.tabs.iter().enumerate() {
@@ -142,7 +142,7 @@ fn address_bar(browser: &Browser, act: &Act) {
             .height(BAR_HEIGHT)
             .border_bottom_hairline(scheme.outline_variant)
             .padding_xy(6.0, 0.0),
-        Arrangement::SpacedBy(2.0),
+        Arrangement::SpacedBy(pm_components::spacing(2.0)),
         Alignment::Center,
         move || {
             for (glyph, action) in [
@@ -155,7 +155,7 @@ fn address_bar(browser: &Browser, act: &Act) {
                     .on_click(send(&act, action))
                     .show();
             }
-            spacer(Modifier::new().width(4.0));
+            spacer(Modifier::new().width(pm_components::spacing(4.0)));
             let typed = act.clone();
             let go = act.clone();
             key(tab.id, || {
@@ -167,7 +167,7 @@ fn address_bar(browser: &Browser, act: &Act) {
                     .on_submit(move |_| go(BrowserAction::Go))
                     .show();
             });
-            spacer(Modifier::new().width(4.0));
+            spacer(Modifier::new().width(pm_components::spacing(4.0)));
             if (tab.zoom - 1.0).abs() > 0.001 {
                 pm_components::Button::new(format!("{:.0}%", tab.zoom * 100.0))
                     .size(Size::Xs)
@@ -344,7 +344,7 @@ fn find_bar(search: &PageSearch, act: &Act) {
             .background(scheme.surface_container)
             .border(1.0, scheme.outline_variant, 8.0)
             .padding_xy(6.0, 4.0),
-        Arrangement::SpacedBy(4.0),
+        Arrangement::SpacedBy(pm_components::spacing(4.0)),
         Alignment::Center,
         move || {
             let typed = act.clone();

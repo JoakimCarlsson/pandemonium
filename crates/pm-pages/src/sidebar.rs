@@ -57,7 +57,7 @@ pub fn sidebar(workspace: &Workspace, actions: &Actions) {
                         .show();
                 });
             }
-            spacer(Modifier::new().height(14.0));
+            spacer(Modifier::new().height(pm_components::spacing(14.0)));
             if workspace.sample {
                 sample_notice(actions);
             }
@@ -76,7 +76,7 @@ pub fn sidebar(workspace: &Workspace, actions: &Actions) {
                             }),
                         || project_rows(project, vec![index], workspace, actions),
                     );
-                    spacer(Modifier::new().height(8.0));
+                    spacer(Modifier::new().height(pm_components::spacing(8.0)));
                 });
             }
             chats(workspace, actions);
@@ -95,7 +95,7 @@ fn sample_notice(actions: &Actions) {
                 .icon(phosphor::SPARKLE)
                 .size(Size::Sm)
                 .show();
-            spacer(Modifier::new().height(6.0));
+            spacer(Modifier::new().height(pm_components::spacing(6.0)));
             Button::new("Add project")
                 .icon(phosphor::FOLDER_PLUS)
                 .variant(ButtonVariant::Primary)
@@ -104,7 +104,7 @@ fn sample_notice(actions: &Actions) {
                 .show();
         },
     );
-    spacer(Modifier::new().height(10.0));
+    spacer(Modifier::new().height(pm_components::spacing(10.0)));
 }
 
 /// The "Workspaces" heading with the button that opens the adder, and the adder hung under it while open.
@@ -139,7 +139,7 @@ fn chats(workspace: &Workspace, actions: &Actions) {
     if workspace.chats.is_empty() {
         return;
     }
-    spacer(Modifier::new().height(6.0));
+    spacer(Modifier::new().height(pm_components::spacing(6.0)));
     Label::new("Chats")
         .variant(LabelVariant::Subtle)
         .size(Size::Xs)

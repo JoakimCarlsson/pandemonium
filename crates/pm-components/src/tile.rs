@@ -212,6 +212,7 @@ impl Tile {
             Size::Md => 32.0,
             Size::Lg => 36.0,
         };
+        let height = crate::row_height(height);
         let fill = if self.selected {
             scheme.secondary_container
         } else if hovered.get() && self.on_click.is_some() {
@@ -244,7 +245,7 @@ impl Tile {
         let show_hover_icon = hovered.get();
         row_arranged(
             modifier,
-            Arrangement::SpacedBy(8.0),
+            Arrangement::SpacedBy(crate::spacing(8.0)),
             Alignment::Center,
             move || {
                 self.leading.show();

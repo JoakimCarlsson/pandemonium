@@ -99,7 +99,7 @@ impl InquiryCard {
         let body = move || {
             row_arranged(
                 Modifier::new().fill_max_width(),
-                Arrangement::SpacedBy(8.0),
+                Arrangement::SpacedBy(crate::spacing(8.0)),
                 Alignment::Center,
                 || {
                     icon(phosphor::CHAT_CIRCLE_DOTS, 15.0, scheme.primary);
@@ -113,7 +113,7 @@ impl InquiryCard {
                 let picked = answers.get().get(index).cloned().unwrap_or_default();
                 column_arranged(
                     Modifier::new().fill_max_width(),
-                    Arrangement::SpacedBy(6.0),
+                    Arrangement::SpacedBy(crate::spacing(6.0)),
                     Alignment::Start,
                     || {
                         if !question.header.is_empty() {
@@ -160,7 +160,7 @@ impl InquiryCard {
                                         }
                                         answers.set(all);
                                     }),
-                                Arrangement::SpacedBy(8.0),
+                                Arrangement::SpacedBy(crate::spacing(8.0)),
                                 Alignment::Center,
                                 || {
                                     let mark = match (question.multiple, chosen) {
@@ -207,7 +207,7 @@ impl InquiryCard {
             }
             row_arranged(
                 Modifier::new().fill_max_width(),
-                Arrangement::SpacedBy(8.0),
+                Arrangement::SpacedBy(crate::spacing(8.0)),
                 Alignment::Center,
                 || {
                     spacer(Modifier::new().weight(1.0));
@@ -235,7 +235,7 @@ impl InquiryCard {
         let column = move || {
             column_arranged(
                 Modifier::new().fill_max_width(),
-                Arrangement::SpacedBy(14.0),
+                Arrangement::SpacedBy(crate::spacing(14.0)),
                 Alignment::Start,
                 body,
             )

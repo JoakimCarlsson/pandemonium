@@ -112,6 +112,7 @@ impl Button {
             Size::Md => (32.0, 12.0, 14.0),
             Size::Lg => (38.0, 16.0, 16.0),
         };
+        let (height, padding) = (crate::row_height(height), crate::spacing(padding));
         let (fill, tint) = match self.variant {
             ButtonVariant::Primary => (scheme.primary, scheme.on_primary),
             ButtonVariant::Danger => (scheme.error, scheme.on_primary),
@@ -148,7 +149,7 @@ impl Button {
             move || {
                 row_arranged(
                     Modifier::new(),
-                    Arrangement::SpacedBy(6.0),
+                    Arrangement::SpacedBy(crate::spacing(6.0)),
                     Alignment::Center,
                     move || {
                         if let Some(glyph_icon) = &self.icon {

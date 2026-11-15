@@ -70,7 +70,7 @@ impl PageBody {
                         .width_in(0.0, widest)
                         .fill_max_width()
                         .padding_each(20.0, 20.0, 20.0, 32.0),
-                    Arrangement::SpacedBy(24.0),
+                    Arrangement::SpacedBy(crate::spacing(24.0)),
                     Alignment::Start,
                     content,
                 );

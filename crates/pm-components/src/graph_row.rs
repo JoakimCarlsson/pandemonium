@@ -146,6 +146,7 @@ impl GraphRow {
             Size::Md => 26.0,
             Size::Lg => 30.0,
         };
+        let height = crate::row_height(height);
         let mut modifier = Modifier::new()
             .fill_max_width()
             .height(height)
@@ -180,7 +181,7 @@ impl GraphRow {
         let width = self.columns as f32 * LANE;
         row_arranged(
             modifier.padding_xy(4.0, 0.0),
-            Arrangement::SpacedBy(6.0),
+            Arrangement::SpacedBy(crate::spacing(6.0)),
             Alignment::Center,
             move || {
                 canvas(Modifier::new().size(width, height), move |canvas| {
@@ -188,7 +189,7 @@ impl GraphRow {
                 });
                 row_arranged(
                     Modifier::new().weight(1.0).clip(),
-                    Arrangement::SpacedBy(5.0),
+                    Arrangement::SpacedBy(crate::spacing(5.0)),
                     Alignment::Center,
                     || {
                         for (place, name) in self.refs.iter().enumerate() {

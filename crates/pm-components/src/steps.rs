@@ -101,7 +101,7 @@ impl Step {
             }
             row_arranged(
                 header,
-                Arrangement::SpacedBy(8.0),
+                Arrangement::SpacedBy(crate::spacing(8.0)),
                 Alignment::Center,
                 || {
                     icon(self.glyph.clone(), 13.0, scheme.on_surface_variant);
@@ -205,7 +205,7 @@ impl Thought {
                     .padding_xy(4.0, 0.0)
                     .cursor(CursorIcon::Pointer)
                     .clickable(move || toggle.set(!toggle.get())),
-                Arrangement::SpacedBy(8.0),
+                Arrangement::SpacedBy(crate::spacing(8.0)),
                 Alignment::Center,
                 || {
                     icon(phosphor::BRAIN, 13.0, scheme.on_surface_variant);
@@ -240,7 +240,7 @@ impl Thought {
                         .fill_max_width()
                         .height_intrinsic(IntrinsicSize::Min)
                         .padding_each(10.0, 2.0, 0.0, 4.0),
-                    Arrangement::SpacedBy(12.0),
+                    Arrangement::SpacedBy(crate::spacing(12.0)),
                     Alignment::Start,
                     move || {
                         spacer(

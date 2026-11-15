@@ -111,6 +111,7 @@ impl Chip {
             Size::Md => (32.0, 14.0, 14.0),
             Size::Lg => (38.0, 18.0, 16.0),
         };
+        let (height, padding) = (crate::row_height(height), crate::spacing(padding));
         let (fill, edge, tint) = match (self.variant, self.selected) {
             (ChipVariant::Outline, true) => (
                 scheme.surface_container_highest,
@@ -157,7 +158,7 @@ impl Chip {
         }
         row_arranged(
             modifier,
-            Arrangement::SpacedBy(6.0),
+            Arrangement::SpacedBy(crate::spacing(6.0)),
             Alignment::Center,
             move || {
                 if let Some(glyph_icon) = &self.icon {

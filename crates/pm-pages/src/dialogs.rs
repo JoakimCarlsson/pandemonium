@@ -64,7 +64,7 @@ fn update_dialog(offer: &UpdateOffer, actions: &Actions) {
             }
             row_arranged(
                 Modifier::new().fill_max_width(),
-                Arrangement::SpacedBy(8.0),
+                Arrangement::SpacedBy(pm_components::spacing(8.0)),
                 Alignment::Center,
                 || {
                     update_button(
@@ -140,7 +140,7 @@ fn sign_in_dialog(code: &SignInCode, actions: &Actions) {
                 .show();
             row_arranged(
                 Modifier::new().fill_max_width(),
-                Arrangement::SpacedBy(8.0),
+                Arrangement::SpacedBy(pm_components::spacing(8.0)),
                 Alignment::Center,
                 || {
                     sign_in_button(actions, "Hide", SignInAction::Hide, ButtonVariant::Ghost);

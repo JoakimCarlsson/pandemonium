@@ -101,12 +101,12 @@ impl Excerpt {
     #[track_caller]
     pub fn show(self) {
         let scheme = color_scheme();
-        let line_height = match self.size {
+        let line_height = crate::row_height(match self.size {
             Size::Xs => 20.0,
             Size::Sm => 22.0,
             Size::Md => 24.0,
             Size::Lg => 28.0,
-        };
+        });
         let mut modifier = Modifier::new().fill_max_width();
         if self.variant == ExcerptVariant::Boxed {
             modifier = modifier
@@ -133,7 +133,7 @@ impl Excerpt {
             }
             row_arranged(
                 header,
-                Arrangement::SpacedBy(6.0),
+                Arrangement::SpacedBy(crate::spacing(6.0)),
                 Alignment::Center,
                 || {
                     icon(
@@ -209,7 +209,7 @@ fn excerpt_line(line: ExcerptLine, height: f32, on_open: Option<Rc<dyn Fn(usize)
     let after: String = letters[end..].iter().collect();
     row_arranged(
         modifier,
-        Arrangement::SpacedBy(0.0),
+        Arrangement::SpacedBy(crate::spacing(0.0)),
         Alignment::Center,
         || {
             stack_aligned(

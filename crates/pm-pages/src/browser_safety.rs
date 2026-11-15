@@ -40,7 +40,7 @@ pub fn question_bar(question: &Question, waiting: usize, safety: &Safety, act: &
             .border_bottom_hairline(scheme.outline_variant)
             .padding_xy(12.0, 0.0)
             .clickable(|| {}),
-        Arrangement::SpacedBy(8.0),
+        Arrangement::SpacedBy(pm_components::spacing(8.0)),
         Alignment::Center,
         || {
             Label::new(words)
@@ -73,7 +73,7 @@ pub fn download_bar(download: &Download, act: &Act) {
             .background(scheme.surface_container)
             .border_bottom_hairline(scheme.outline_variant)
             .padding_xy(12.0, 0.0),
-        Arrangement::SpacedBy(8.0),
+        Arrangement::SpacedBy(pm_components::spacing(8.0)),
         Alignment::Center,
         || {
             let label = Label::new(download.words())
@@ -97,7 +97,7 @@ fn detail(label: &str, value: &str, code: bool) {
     let value = if value.is_empty() { "unknown" } else { value };
     row_arranged(
         Modifier::new().fill_max_width(),
-        Arrangement::SpacedBy(12.0),
+        Arrangement::SpacedBy(pm_components::spacing(12.0)),
         Alignment::Start,
         || {
             Label::new(label)
@@ -136,7 +136,7 @@ pub fn certificate_page(certificate: &Certificate, act: &Act) {
                     .background(scheme.surface_container)
                     .border(1.0, scheme.outline_variant, 12.0)
                     .padding(20.0),
-                Arrangement::SpacedBy(12.0),
+                Arrangement::SpacedBy(pm_components::spacing(12.0)),
                 Alignment::Start,
                 || {
                     Label::new("Not secure: certificate not trusted")
@@ -163,7 +163,7 @@ pub fn certificate_page(certificate: &Certificate, act: &Act) {
                     detail("SHA-256", &certificate.fingerprint, true);
                     row_arranged(
                         Modifier::new(),
-                        Arrangement::SpacedBy(8.0),
+                        Arrangement::SpacedBy(pm_components::spacing(8.0)),
                         Alignment::Center,
                         || {
                             Button::new("Go back")

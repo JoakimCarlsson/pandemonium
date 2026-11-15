@@ -97,7 +97,7 @@ pub(crate) fn find_bar(handle: &Handle, find: &FindBar) {
     column_with(Modifier::new().fill_max_width(), move || {
         row_arranged(
             bar_row(),
-            Arrangement::SpacedBy(6.0),
+            Arrangement::SpacedBy(crate::spacing(6.0)),
             Alignment::Center,
             || {
                 let typed = handle.clone();
@@ -185,7 +185,7 @@ fn replace_row(handle: &Handle, find: &FindBar) {
     let find = find.clone();
     row_arranged(
         bar_row(),
-        Arrangement::SpacedBy(6.0),
+        Arrangement::SpacedBy(crate::spacing(6.0)),
         Alignment::Center,
         move || {
             let typed = handle.clone();
@@ -294,7 +294,7 @@ pub(crate) fn go_to_bar(handle: &Handle, typed: &str) {
     let typed = typed.to_owned();
     row_arranged(
         bar_row(),
-        Arrangement::SpacedBy(8.0),
+        Arrangement::SpacedBy(crate::spacing(8.0)),
         Alignment::Center,
         move || {
             let changed = handle.clone();

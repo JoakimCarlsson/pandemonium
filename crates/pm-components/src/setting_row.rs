@@ -90,6 +90,7 @@ impl SettingRow {
             Size::Md => 12.0,
             Size::Lg => 16.0,
         };
+        let padding = crate::spacing(padding);
         let title = self.title;
         let about = self.about;
         let on_reset = self.on_reset;
@@ -108,7 +109,7 @@ impl SettingRow {
         let trailing = move |control: Option<Box<dyn FnOnce()>>| {
             row_arranged(
                 Modifier::new(),
-                Arrangement::SpacedBy(6.0),
+                Arrangement::SpacedBy(crate::spacing(6.0)),
                 Alignment::Center,
                 move || {
                     if let Some(control) = control {
@@ -125,18 +126,18 @@ impl SettingRow {
         };
         column_arranged(
             Modifier::new().fill_max_width().padding_xy(0.0, padding),
-            Arrangement::SpacedBy(8.0),
+            Arrangement::SpacedBy(crate::spacing(8.0)),
             Alignment::Start,
             move || {
                 match self.variant {
                     SettingRowVariant::Wide => row_arranged(
                         Modifier::new().fill_max_width(),
-                        Arrangement::SpacedBy(24.0),
+                        Arrangement::SpacedBy(crate::spacing(24.0)),
                         Alignment::Center,
                         move || {
                             column_arranged(
                                 Modifier::new().weight(1.0),
-                                Arrangement::SpacedBy(2.0),
+                                Arrangement::SpacedBy(crate::spacing(2.0)),
                                 Alignment::Start,
                                 words,
                             );
@@ -146,7 +147,7 @@ impl SettingRow {
                     SettingRowVariant::Stacked => {
                         column_arranged(
                             Modifier::new().fill_max_width(),
-                            Arrangement::SpacedBy(2.0),
+                            Arrangement::SpacedBy(crate::spacing(2.0)),
                             Alignment::Start,
                             words,
                         );

@@ -300,7 +300,7 @@ fn pick_row(item: PickItem, chosen: bool, height: f32, on_click: impl Fn() + 'st
             .cursor(CursorIcon::Pointer)
             .clickable(on_click)
             .padding_xy(8.0, 0.0),
-        Arrangement::SpacedBy(8.0),
+        Arrangement::SpacedBy(crate::spacing(8.0)),
         Alignment::Center,
         move || {
             if let Some(glyph) = item.icon.clone() {
@@ -350,7 +350,7 @@ fn matched_title(title: &str, matched: &[usize]) {
 pub fn key_caps(keys: &str) {
     row_arranged(
         Modifier::new(),
-        Arrangement::SpacedBy(4.0),
+        Arrangement::SpacedBy(crate::spacing(4.0)),
         Alignment::Center,
         || {
             for chord in keys.split_whitespace() {
@@ -369,7 +369,7 @@ fn footer() {
             .fill_max_width()
             .height(34.0)
             .padding_xy(12.0, 0.0),
-        Arrangement::SpacedBy(6.0),
+        Arrangement::SpacedBy(crate::spacing(6.0)),
         Alignment::Center,
         || {
             for (keys, what) in [

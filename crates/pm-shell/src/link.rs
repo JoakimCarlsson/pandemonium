@@ -379,6 +379,7 @@ impl Link {
             }
             self.send(request);
         }
+        self.change_dock(|_| {});
     }
 
     /// Sends `request`, remembering what its answer is for.
@@ -625,6 +626,8 @@ impl Link {
 
     /// Changes the dock with `change`, sends what it asks of the server and shows how it stands.
     fn change_dock(&mut self, change: impl FnOnce(&mut Dock)) {
+        self.dock
+            .set_scrollback(self.settings.window.terminal.scrollback);
         change(&mut self.dock);
         for (request, ask) in self.dock.take_requests() {
             self.ask(request, Ask::Dock(ask));

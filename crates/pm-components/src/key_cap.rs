@@ -63,6 +63,7 @@ impl KeyCap {
             Size::Md => 26.0,
             Size::Lg => 30.0,
         };
+        let height = crate::interface_font().sized(height);
         let keys = self.keys;
         stack_aligned(
             Modifier::new()

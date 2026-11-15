@@ -107,6 +107,7 @@ impl CardRow {
             Size::Md => 10.0,
             Size::Lg => 12.0,
         };
+        let padding = crate::spacing(padding);
         let dim = self.variant == CardRowVariant::Dimmed;
         let tint = if dim {
             extended.subtle
@@ -125,7 +126,7 @@ impl CardRow {
         let trailing = self.trailing;
         row_arranged(
             Modifier::new().fill_max_width().padding_xy(4.0, padding),
-            Arrangement::SpacedBy(12.0),
+            Arrangement::SpacedBy(crate::spacing(12.0)),
             Alignment::Center,
             move || {
                 if let Some(glyph) = glyph {
@@ -133,12 +134,12 @@ impl CardRow {
                 }
                 column_arranged(
                     Modifier::new().weight(1.0),
-                    Arrangement::SpacedBy(2.0),
+                    Arrangement::SpacedBy(crate::spacing(2.0)),
                     Alignment::Start,
                     move || {
                         row_arranged(
                             Modifier::new(),
-                            Arrangement::SpacedBy(6.0),
+                            Arrangement::SpacedBy(crate::spacing(6.0)),
                             Alignment::Center,
                             move || {
                                 Label::new(title).variant(title_variant).show();
@@ -159,7 +160,7 @@ impl CardRow {
                 if let Some(trailing) = trailing {
                     row_arranged(
                         Modifier::new(),
-                        Arrangement::SpacedBy(6.0),
+                        Arrangement::SpacedBy(crate::spacing(6.0)),
                         Alignment::Center,
                         trailing,
                     );

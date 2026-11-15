@@ -74,7 +74,7 @@ impl Markdown {
 fn blocks(list: &[Block], size: Size, scheme: &ColorScheme) {
     column_arranged(
         Modifier::new().fill_max_width(),
-        Arrangement::SpacedBy(10.0),
+        Arrangement::SpacedBy(crate::spacing(10.0)),
         Alignment::Start,
         || {
             for block in list {
@@ -149,13 +149,13 @@ fn heading(level: u8, content: &[Span], size: Size, scheme: &ColorScheme) {
 fn list(start: Option<u64>, items: &[Vec<Block>], size: Size, scheme: &ColorScheme) {
     column_arranged(
         Modifier::new().fill_max_width(),
-        Arrangement::SpacedBy(4.0),
+        Arrangement::SpacedBy(crate::spacing(4.0)),
         Alignment::Start,
         || {
             for (index, item) in items.iter().enumerate() {
                 row_arranged(
                     Modifier::new().fill_max_width(),
-                    Arrangement::SpacedBy(8.0),
+                    Arrangement::SpacedBy(crate::spacing(8.0)),
                     Alignment::Start,
                     || {
                         let marker = match start {
@@ -218,7 +218,7 @@ fn quote(inner: &[Block], size: Size, scheme: &ColorScheme) {
         Modifier::new()
             .fill_max_width()
             .height_intrinsic(IntrinsicSize::Min),
-        Arrangement::SpacedBy(10.0),
+        Arrangement::SpacedBy(crate::spacing(10.0)),
         Alignment::Start,
         || {
             spacer(
@@ -246,7 +246,7 @@ fn fold_out(summary: &[Span], inner: &[Block], size: Size, scheme: &ColorScheme)
                     .fill_max_width()
                     .cursor(CursorIcon::Pointer)
                     .clickable(move || toggle.set(!toggle.get())),
-                Arrangement::SpacedBy(6.0),
+                Arrangement::SpacedBy(crate::spacing(6.0)),
                 Alignment::Center,
                 || {
                     icon(
@@ -283,7 +283,7 @@ fn pictures(images: &[Image], centered: bool, size: Size) {
         if centered {
             Arrangement::Center
         } else {
-            Arrangement::SpacedBy(8.0)
+            Arrangement::SpacedBy(crate::spacing(8.0))
         },
         Alignment::Center,
         || {
@@ -365,9 +365,10 @@ pub fn spans(content: &[Span], scheme: &ColorScheme) -> Vec<TextSpan> {
                 text.underline = Some(true);
             }
             if inline.code {
-                text.font_family = Some(FontFamily::Monospace);
+                let code = crate::code_font();
+                text.font_family = Some(code.family);
                 text.background = Some(scheme.surface_container_high);
-                text.font_size = Some(12.0);
+                text.font_size = Some(code.sized(12.0));
             }
             text
         })

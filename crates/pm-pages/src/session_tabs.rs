@@ -31,7 +31,7 @@ pub fn session_tabs(workspace: &Workspace, actions: &Actions) {
             .height(36.0)
             .border_bottom_hairline(scheme.outline_variant)
             .padding_xy(8.0, 0.0),
-        Arrangement::SpacedBy(2.0),
+        Arrangement::SpacedBy(pm_components::spacing(2.0)),
         Alignment::Center,
         move || {
             plain_tab(

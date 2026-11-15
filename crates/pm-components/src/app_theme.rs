@@ -3,9 +3,14 @@
 //! together through their own composition locals.
 
 use rustle::{
-    Color, ColorScheme, CompositionLocal, dark_color_scheme, is_system_in_dark_theme,
-    light_color_scheme, theme,
+    Color, ColorScheme, CompositionLocal, LOCAL_TEXT_STYLE, dark_color_scheme,
+    is_system_in_dark_theme, light_color_scheme, theme,
 };
+
+use crate::appearance::{
+    CodeFont, Density, InterfaceFont, LOCAL_CODE_FONT, LOCAL_DENSITY, LOCAL_INTERFACE_FONT,
+};
+use crate::code_look::{CodeLook, LOCAL_CODE_LOOK};
 
 /// The colours Pandemonium paints with that Material's colour scheme has no
 /// role for, read with [`extended_colors`] as Compose's custom design systems
@@ -201,13 +206,21 @@ pub fn pandemonium_light_scheme() -> ColorScheme {
 }
 
 /// A whole Pandemonium theme: the Material colour scheme and the extended
-/// colours that go with it.
+/// colours that go with it, the interface and code fonts, and the density.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AppTheme {
     /// The Material roles, read with Rustle's `color_scheme()`.
     pub color_scheme: ColorScheme,
     /// The colours Material has no role for, read with [`extended_colors`].
     pub extended_colors: ExtendedColors,
+    /// The interface's font and size, from which Rustle's type scale is built.
+    pub interface_font: InterfaceFont,
+    /// The font code is set in.
+    pub code_font: CodeFont,
+    /// How closely rows, padding and gaps are set.
+    pub density: Density,
+    /// How the code editor looks and behaves.
+    pub code_look: CodeLook,
 }
 
 impl AppTheme {
@@ -216,6 +229,10 @@ impl AppTheme {
         Self {
             color_scheme: pandemonium_dark_scheme(),
             extended_colors: ExtendedColors::dark(),
+            interface_font: InterfaceFont::default(),
+            code_font: CodeFont::default(),
+            density: Density::default(),
+            code_look: CodeLook::default(),
         }
     }
 
@@ -224,6 +241,10 @@ impl AppTheme {
         Self {
             color_scheme: pandemonium_light_scheme(),
             extended_colors: ExtendedColors::light(),
+            interface_font: InterfaceFont::default(),
+            code_font: CodeFont::default(),
+            density: Density::default(),
+            code_look: CodeLook::default(),
         }
     }
 
@@ -236,12 +257,54 @@ impl AppTheme {
     pub fn of_dark(dark: bool) -> Self {
         if dark { Self::dark() } else { Self::light() }
     }
+
+    /// This theme with the interface set in `font`.
+    pub fn with_interface_font(self, font: InterfaceFont) -> Self {
+        Self {
+            interface_font: font,
+            ..self
+        }
+    }
+
+    /// This theme with code set in `font`.
+    pub fn with_code_font(self, font: CodeFont) -> Self {
+        Self {
+            code_font: font,
+            ..self
+        }
+    }
+
+    /// This theme set at `density`.
+    pub fn with_density(self, density: Density) -> Self {
+        Self { density, ..self }
+    }
+
+    /// This theme with the code editor looking and behaving as `look` says.
+    pub fn with_code_look(self, look: CodeLook) -> Self {
+        Self {
+            code_look: look,
+            ..self
+        }
+    }
 }
 
-/// Runs `content` with `app` in effect: its colour scheme through Rustle's
-/// `theme` and its extended colours through their own composition local.
+/// Runs `content` with `app` in effect: its colour scheme and the type scale
+/// built from its interface font through Rustle's `theme`, plain text in that
+/// font, and its extended colours, code font, density and code look
+/// through their own composition locals.
 pub fn app_theme<R>(app: AppTheme, content: impl FnOnce() -> R) -> R {
+    let typography = app.interface_font.typography();
     LOCAL_EXTENDED_COLORS.provide(app.extended_colors, || {
-        theme(app.color_scheme, None, None, content)
+        LOCAL_INTERFACE_FONT.provide(app.interface_font, || {
+            LOCAL_CODE_FONT.provide(app.code_font, || {
+                LOCAL_DENSITY.provide(app.density, || {
+                    LOCAL_CODE_LOOK.provide(app.code_look, || {
+                        LOCAL_TEXT_STYLE.provide(app.interface_font.plain(), || {
+                            theme(app.color_scheme, typography, None, content)
+                        })
+                    })
+                })
+            })
+        })
     })
 }

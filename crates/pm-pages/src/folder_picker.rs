@@ -93,7 +93,7 @@ fn title_strip(actions: &PickerActions) {
         || {
             row_arranged(
                 Modifier::new(),
-                Arrangement::SpacedBy(8.0),
+                Arrangement::SpacedBy(pm_components::spacing(8.0)),
                 Alignment::Center,
                 || {
                     icon(phosphor::FOLDER_OPEN, 14.0, scheme.on_surface_variant);
@@ -142,7 +142,7 @@ fn machines(picker: &FolderPicker, actions: &PickerActions) {
                         .show();
                 });
             }
-            spacer(Modifier::new().height(12.0));
+            spacer(Modifier::new().height(pm_components::spacing(12.0)));
             Label::new("Places")
                 .variant(LabelVariant::Subtle)
                 .size(Size::Xs)
@@ -170,7 +170,7 @@ fn trail(picker: &FolderPicker, actions: &PickerActions) {
             .height(44.0)
             .border_bottom_hairline(scheme.outline_variant)
             .padding_xy(10.0, 0.0),
-        Arrangement::SpacedBy(4.0),
+        Arrangement::SpacedBy(pm_components::spacing(4.0)),
         Alignment::Center,
         || {
             IconButton::new(phosphor::ARROW_LEFT)
@@ -187,10 +187,10 @@ fn trail(picker: &FolderPicker, actions: &PickerActions) {
                 .size(Size::Sm)
                 .on_click(doing(actions, PickerAction::Up))
                 .show();
-            spacer(Modifier::new().width(6.0));
+            spacer(Modifier::new().width(pm_components::spacing(6.0)));
             row_arranged(
                 Modifier::new().weight(1.0),
-                Arrangement::SpacedBy(2.0),
+                Arrangement::SpacedBy(pm_components::spacing(2.0)),
                 Alignment::Center,
                 || {
                     for (place, (name, path)) in picker.trail().into_iter().enumerate() {
@@ -274,7 +274,7 @@ fn footer(picker: &FolderPicker, actions: &PickerActions) {
             .fill_max_width()
             .height(52.0)
             .padding_xy(12.0, 0.0),
-        Arrangement::SpacedBy(8.0),
+        Arrangement::SpacedBy(pm_components::spacing(8.0)),
         Alignment::Center,
         || {
             Label::new(picker.address())

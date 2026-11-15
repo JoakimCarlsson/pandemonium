@@ -138,6 +138,7 @@ impl ItemRow {
             Size::Md => (16.0, 12.0),
             Size::Lg => (20.0, 16.0),
         };
+        let (padding_x, padding_y) = (crate::spacing(padding_x), crate::spacing(padding_y));
         let fill = match self.variant {
             ItemRowVariant::Plain => Color::TRANSPARENT,
             ItemRowVariant::Highlighted => scheme.surface_container_high,
@@ -147,7 +148,7 @@ impl ItemRow {
                 .fill_max_width()
                 .background(fill)
                 .padding_xy(padding_x, padding_y),
-            Arrangement::SpacedBy(12.0),
+            Arrangement::SpacedBy(crate::spacing(12.0)),
             Alignment::Center,
             move || {
                 if let Some(glyph) = &self.icon {
@@ -155,12 +156,12 @@ impl ItemRow {
                 }
                 column_arranged(
                     Modifier::new().weight(1.0),
-                    Arrangement::SpacedBy(2.0),
+                    Arrangement::SpacedBy(crate::spacing(2.0)),
                     Alignment::Start,
                     || {
                         row_arranged(
                             Modifier::new(),
-                            Arrangement::SpacedBy(8.0),
+                            Arrangement::SpacedBy(crate::spacing(8.0)),
                             Alignment::Center,
                             || {
                                 Label::new(self.title.clone())

@@ -139,6 +139,7 @@ impl Tab {
             Size::Md => (32.0, 10.0),
             Size::Lg => (36.0, 12.0),
         };
+        let (height, padding) = (crate::row_height(height), crate::spacing(padding));
         let fill = match (self.variant, self.selected, hovered.get()) {
             (TabVariant::Chip, true, _) => scheme.secondary_container,
             (_, _, true) => scheme.surface_container_high,
@@ -175,7 +176,7 @@ impl Tab {
         let arrangement = if width.is_some() {
             Arrangement::Center
         } else {
-            Arrangement::SpacedBy(6.0)
+            Arrangement::SpacedBy(crate::spacing(6.0))
         };
         row_arranged(modifier, arrangement, Alignment::Center, move || {
             if let Some(glyph) = &self.icon {

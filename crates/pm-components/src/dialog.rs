@@ -97,7 +97,7 @@ impl Dialog {
                         .border(1.0, scheme.outline_variant, 12.0)
                         .on_press(|_| {})
                         .padding_xy(20.0, 18.0),
-                    Arrangement::SpacedBy(12.0),
+                    Arrangement::SpacedBy(crate::spacing(12.0)),
                     Alignment::Start,
                     move || {
                         Label::new(title)

@@ -123,7 +123,7 @@ impl PullRequestBar {
                 .height(34.0)
                 .border_bottom_hairline(scheme.outline_variant)
                 .padding_xy(12.0, 0.0),
-            Arrangement::SpacedBy(8.0),
+            Arrangement::SpacedBy(crate::spacing(8.0)),
             Alignment::Center,
             move || {
                 icon(phosphor::GIT_PULL_REQUEST, 14.0, tint);
@@ -206,7 +206,7 @@ fn checks((passed, failed, pending): (usize, usize, usize), size: Size) {
         }
         row_arranged(
             Modifier::new(),
-            Arrangement::SpacedBy(3.0),
+            Arrangement::SpacedBy(crate::spacing(3.0)),
             Alignment::Center,
             || {
                 icon(glyph, 12.0, tint);

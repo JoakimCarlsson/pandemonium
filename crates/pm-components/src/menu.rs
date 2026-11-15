@@ -209,6 +209,7 @@ impl Menu {
             Size::Md => 30.0,
             Size::Lg => 34.0,
         };
+        let height = crate::row_height(height);
         let entries = self.entries;
         let dismiss = self.on_dismiss.clone();
         let rows = move || {
@@ -297,7 +298,7 @@ fn entry_row(entry: Entry, height: f32, dismiss: Option<Rc<dyn Fn()>>) {
             }
             row_arranged(
                 modifier,
-                Arrangement::SpacedBy(8.0),
+                Arrangement::SpacedBy(crate::spacing(8.0)),
                 Alignment::Center,
                 || {
                     match glyph {

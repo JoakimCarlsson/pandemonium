@@ -172,6 +172,7 @@ impl ChangeRow {
             Size::Md => 28.0,
             Size::Lg => 32.0,
         };
+        let height = crate::row_height(height);
         let fill = if self.selected {
             scheme.secondary_container
         } else if hovered.get() {
@@ -210,7 +211,7 @@ impl ChangeRow {
         let showing_actions = hovered.get() && !self.actions.is_empty();
         row_arranged(
             modifier.padding_xy(4.0, 0.0),
-            Arrangement::SpacedBy(6.0),
+            Arrangement::SpacedBy(crate::spacing(6.0)),
             Alignment::Center,
             move || {
                 if self.indent > 0.0 {
@@ -231,7 +232,7 @@ impl ChangeRow {
                 .show();
                 row_arranged(
                     Modifier::new().weight(1.0).clip(),
-                    Arrangement::SpacedBy(6.0),
+                    Arrangement::SpacedBy(crate::spacing(6.0)),
                     Alignment::Center,
                     || {
                         Label::new(self.name.clone())

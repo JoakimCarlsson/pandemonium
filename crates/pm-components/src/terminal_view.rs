@@ -166,17 +166,19 @@ impl TerminalView {
 
     /// The text style the cells are set in.
     pub fn style(&self) -> TextStyle {
+        let code = crate::code_font();
         let font_size = match self.size {
             Size::Xs => 11.0,
             Size::Sm => 12.0,
             Size::Md => 13.0,
             Size::Lg => 15.0,
-        };
+        } * code.terminal_size
+            / 12.0;
         TextStyle {
             color: color_scheme().on_surface,
             font_size,
-            line_height: (font_size * 1.35).round(),
-            font_family: FontFamily::Monospace,
+            line_height: code.line_for(font_size, 1.35),
+            font_family: code.family,
             max_lines: Some(1),
             ligatures: false,
             ..TextStyle::default()
@@ -241,6 +243,7 @@ impl TerminalView {
             cell,
             style,
             scheme,
+            shape: crate::code_look().terminal_cursor,
         };
         let on_command = self.callbacks.on_command.clone();
         stack_with(modifier, move || {
@@ -417,6 +420,8 @@ struct Screen {
     style: TextStyle,
     /// The colours of the interface.
     scheme: ColorScheme,
+    /// How the cursor is drawn while the view holds focus.
+    shape: pm_editor::CursorShape,
 }
 
 impl Screen {
@@ -492,6 +497,17 @@ impl Screen {
         if !self.focused {
             canvas.stroke_rect(x, y, width, height, 0.0, 1.0, self.scheme.on_surface);
             return;
+        }
+        match self.shape {
+            pm_editor::CursorShape::Bar => {
+                canvas.rect(x, y, 2.0, height, self.scheme.on_surface);
+                return;
+            }
+            pm_editor::CursorShape::Underline => {
+                canvas.rect(x, y + height - 2.0, width, 2.0, self.scheme.on_surface);
+                return;
+            }
+            pm_editor::CursorShape::Block => {}
         }
         canvas.rect(x, y, width, height, self.scheme.on_surface);
         let under = self

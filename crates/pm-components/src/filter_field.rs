@@ -72,6 +72,7 @@ impl FilterField {
             Size::Md => 34.0,
             Size::Lg => 40.0,
         };
+        let height = crate::row_height(height);
         let mut modifier = self.modifier.height(height);
         if self.variant == FilterFieldVariant::Outlined {
             modifier = modifier
@@ -83,7 +84,7 @@ impl FilterField {
         let placeholder = self.placeholder;
         row_arranged(
             modifier.padding_xy(12.0, 0.0),
-            Arrangement::SpacedBy(8.0),
+            Arrangement::SpacedBy(crate::spacing(8.0)),
             Alignment::Center,
             move || {
                 icon(phosphor::MAGNIFYING_GLASS, 14.0, scheme.on_surface_variant);

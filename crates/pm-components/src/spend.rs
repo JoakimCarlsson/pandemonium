@@ -89,7 +89,7 @@ impl SpendStrip {
         column_with(Modifier::new(), move || {
             row_arranged(
                 modifier,
-                Arrangement::SpacedBy(6.0),
+                Arrangement::SpacedBy(crate::spacing(6.0)),
                 Alignment::Center,
                 || {
                     icon(phosphor::COINS, 12.0, scheme.on_surface_variant);
@@ -109,7 +109,7 @@ impl SpendStrip {
                 for (name, cost, tokens) in &self.models {
                     row_arranged(
                         Modifier::new().padding_each(26.0, 2.0, 8.0, 0.0),
-                        Arrangement::SpacedBy(10.0),
+                        Arrangement::SpacedBy(crate::spacing(10.0)),
                         Alignment::Center,
                         || {
                             Label::new(name.clone())

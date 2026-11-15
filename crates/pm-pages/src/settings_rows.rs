@@ -162,7 +162,7 @@ fn list(actions: &SettingsActions, setting: Setting, lines: Vec<String>) {
     let typed = remember(String::new);
     column_arranged(
         Modifier::new().fill_max_width(),
-        Arrangement::SpacedBy(6.0),
+        Arrangement::SpacedBy(pm_components::spacing(6.0)),
         Alignment::Start,
         || {
             if !lines.is_empty() {
@@ -175,7 +175,7 @@ fn list(actions: &SettingsActions, setting: Setting, lines: Vec<String>) {
                             key(place, || {
                                 row_arranged(
                                     Modifier::new().fill_max_width().height(28.0),
-                                    Arrangement::SpacedBy(8.0),
+                                    Arrangement::SpacedBy(pm_components::spacing(8.0)),
                                     Alignment::Center,
                                     || {
                                         Label::new(line.clone())
@@ -206,7 +206,7 @@ fn list(actions: &SettingsActions, setting: Setting, lines: Vec<String>) {
             };
             row_arranged(
                 Modifier::new().fill_max_width(),
-                Arrangement::SpacedBy(8.0),
+                Arrangement::SpacedBy(pm_components::spacing(8.0)),
                 Alignment::Center,
                 || {
                     let keep = typed.clone();
@@ -268,7 +268,7 @@ pub(crate) fn ruled(
 pub(crate) fn group(title: &str, rows: impl FnOnce()) {
     column_arranged(
         Modifier::new().fill_max_width(),
-        Arrangement::SpacedBy(4.0),
+        Arrangement::SpacedBy(pm_components::spacing(4.0)),
         Alignment::Start,
         || {
             SectionHeader::new(title)

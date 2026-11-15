@@ -84,7 +84,9 @@ impl Label {
     /// The text style the label is set in.
     pub fn style(&self) -> TextStyle {
         let scheme = color_scheme();
-        let font_size = match (self.variant, self.size) {
+        let interface = crate::interface_font();
+        let code = crate::code_font();
+        let drawn = match (self.variant, self.size) {
             (LabelVariant::Heading, Size::Xs) => 13.0,
             (LabelVariant::Heading, Size::Sm) => 15.0,
             (LabelVariant::Heading, Size::Md) => 17.0,
@@ -93,6 +95,11 @@ impl Label {
             (_, Size::Sm) => 13.0,
             (_, Size::Md) => 14.0,
             (_, Size::Lg) => 16.0,
+        };
+        let font_size = if self.variant == LabelVariant::Code {
+            code.sized(drawn)
+        } else {
+            interface.sized(drawn)
         };
         let colour = self.colour.unwrap_or(match self.variant {
             LabelVariant::Body | LabelVariant::Heading | LabelVariant::Code => scheme.on_surface,
@@ -109,9 +116,9 @@ impl Label {
                 FontWeight::NORMAL
             },
             font_family: if self.variant == LabelVariant::Code {
-                FontFamily::Monospace
+                code.family
             } else {
-                FontFamily::SansSerif
+                interface.family
             },
             max_lines: (!self.wrap).then_some(1),
             ..TextStyle::default()

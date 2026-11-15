@@ -107,13 +107,14 @@ impl FoldHeader {
             Size::Md => 32.0,
             Size::Lg => 36.0,
         };
+        let height = crate::row_height(height);
         let toggle = self.on_toggle.clone();
         row_arranged(
             Modifier::new()
                 .fill_max_width()
                 .height(height)
                 .padding_xy(4.0, 0.0),
-            Arrangement::SpacedBy(4.0),
+            Arrangement::SpacedBy(crate::spacing(4.0)),
             Alignment::Center,
             move || {
                 if let (Some(state), Some(on_check)) = (self.check, self.on_check.clone()) {
@@ -131,30 +132,35 @@ impl FoldHeader {
                     title = title.clickable_plain(move || toggle());
                 }
                 let folds = self.on_toggle.is_some();
-                row_arranged(title, Arrangement::SpacedBy(4.0), Alignment::Center, || {
-                    if folds {
-                        icon(
-                            if self.open {
-                                phosphor::CARET_DOWN
-                            } else {
-                                phosphor::CARET_RIGHT
-                            },
-                            10.0,
-                            scheme.on_surface_variant,
-                        );
-                    }
-                    let label = Label::new(self.title.clone()).size(Size::Xs);
-                    match self.variant {
-                        FoldHeaderVariant::Section => label.show(),
-                        FoldHeaderVariant::Group => label.variant(LabelVariant::Muted).show(),
-                    }
-                    if let Some(count) = self.count {
-                        Badge::new(count.to_string())
-                            .variant(BadgeVariant::Neutral)
-                            .size(Size::Xs)
-                            .show();
-                    }
-                });
+                row_arranged(
+                    title,
+                    Arrangement::SpacedBy(crate::spacing(4.0)),
+                    Alignment::Center,
+                    || {
+                        if folds {
+                            icon(
+                                if self.open {
+                                    phosphor::CARET_DOWN
+                                } else {
+                                    phosphor::CARET_RIGHT
+                                },
+                                10.0,
+                                scheme.on_surface_variant,
+                            );
+                        }
+                        let label = Label::new(self.title.clone()).size(Size::Xs);
+                        match self.variant {
+                            FoldHeaderVariant::Section => label.show(),
+                            FoldHeaderVariant::Group => label.variant(LabelVariant::Muted).show(),
+                        }
+                        if let Some(count) = self.count {
+                            Badge::new(count.to_string())
+                                .variant(BadgeVariant::Neutral)
+                                .size(Size::Xs)
+                                .show();
+                        }
+                    },
+                );
                 if let Some(trailing) = self.trailing {
                     trailing();
                 }

@@ -137,7 +137,7 @@ fn branch_menu(git: &GitSummary, actions: &Actions) {
                     _ => submit(GitAction::CreateBranch(submitted.clone())),
                 })
                 .show();
-            spacer(Modifier::new().height(4.0));
+            spacer(Modifier::new().height(pm_components::spacing(4.0)));
             if !named.is_empty() && !picked.contains(&named) {
                 let create = create.clone();
                 let name = named.clone();
@@ -176,7 +176,7 @@ fn trouble(git: &GitSummary, actions: &Actions) {
     if let Some(operation) = &git.operation {
         row_arranged(
             Modifier::new().fill_max_width().padding_xy(4.0, 4.0),
-            Arrangement::SpacedBy(6.0),
+            Arrangement::SpacedBy(pm_components::spacing(6.0)),
             Alignment::Center,
             || {
                 icon(phosphor::GIT_MERGE, 12.0, extended.warning);
@@ -194,7 +194,7 @@ fn trouble(git: &GitSummary, actions: &Actions) {
                 .fill_max_width()
                 .background_rounded(scheme.surface_container, 6.0)
                 .padding_xy(6.0, 4.0),
-            Arrangement::SpacedBy(6.0),
+            Arrangement::SpacedBy(pm_components::spacing(6.0)),
             Alignment::Start,
             || {
                 icon(phosphor::WARNING_CIRCLE, 12.0, scheme.error);
@@ -259,9 +259,9 @@ fn changes_section(git: &GitSummary, actions: &Actions) {
             .on_change(move |text| typed(GitAction::Message(text)))
             .on_submit(move |_| submit(GitAction::Commit { push: false }))
             .show();
-        spacer(Modifier::new().height(6.0));
+        spacer(Modifier::new().height(pm_components::spacing(6.0)));
         primary_row(git, actions);
-        spacer(Modifier::new().height(6.0));
+        spacer(Modifier::new().height(pm_components::spacing(6.0)));
         let scroll = remember_scroll_state();
         column_with(
             Modifier::new()
@@ -315,7 +315,7 @@ fn primary_row(git: &GitSummary, actions: &Actions) {
     column_with(Modifier::new().fill_max_width(), || {
         row_arranged(
             Modifier::new().fill_max_width(),
-            Arrangement::SpacedBy(4.0),
+            Arrangement::SpacedBy(pm_components::spacing(4.0)),
             Alignment::Center,
             || {
                 Button::new(label)

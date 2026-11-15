@@ -24,7 +24,7 @@ pub fn search_panel(workspace: &Workspace, actions: &Actions) {
     column_with(Modifier::new().fill_max_size(), || {
         row_arranged(
             Modifier::new().fill_max_width().padding_xy(8.0, 4.0),
-            Arrangement::SpacedBy(2.0),
+            Arrangement::SpacedBy(pm_components::spacing(2.0)),
             Alignment::Center,
             || {
                 let change = actions.search.clone();
@@ -79,7 +79,7 @@ pub fn search_panel(workspace: &Workspace, actions: &Actions) {
                 .weight(1.0)
                 .vertical_scroll(&scroll)
                 .padding_xy(4.0, 0.0),
-            Arrangement::SpacedBy(4.0),
+            Arrangement::SpacedBy(pm_components::spacing(4.0)),
             Alignment::Start,
             || {
                 if search.editing {
@@ -138,12 +138,12 @@ pub(crate) fn editable_excerpts(search: &ProjectSearch, actions: &Actions) {
                     .fill_max_width()
                     .border(1.0, scheme.outline_variant, 6.0)
                     .padding(4.0),
-                Arrangement::SpacedBy(4.0),
+                Arrangement::SpacedBy(pm_components::spacing(4.0)),
                 Alignment::Start,
                 || {
                     row_arranged(
                         Modifier::new().fill_max_width().padding_xy(4.0, 2.0),
-                        Arrangement::SpacedBy(6.0),
+                        Arrangement::SpacedBy(pm_components::spacing(6.0)),
                         Alignment::Center,
                         || {
                             Label::new(path.clone())

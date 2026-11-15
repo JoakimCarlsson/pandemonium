@@ -60,7 +60,7 @@ impl Section {
         let variant = self.variant;
         column_arranged(
             Modifier::new().fill_max_width(),
-            Arrangement::SpacedBy(8.0),
+            Arrangement::SpacedBy(crate::spacing(8.0)),
             Alignment::Start,
             || {
                 let heading = match variant {

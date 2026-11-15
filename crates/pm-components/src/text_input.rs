@@ -147,6 +147,7 @@ impl TextInput {
             Size::Md => 32.0,
             Size::Lg => 38.0,
         };
+        let height = crate::row_height(height);
         let fill = match self.variant {
             TextInputVariant::Outlined => scheme.background,
             TextInputVariant::Search => scheme.surface_container,
@@ -156,7 +157,7 @@ impl TextInput {
         let variant = self.variant;
         let mut style = Label::new("").size(self.size).style();
         if self.code {
-            style.font_family = FontFamily::Monospace;
+            style.font_family = crate::code_font().family;
         }
         row_arranged(
             self.modifier
@@ -164,7 +165,7 @@ impl TextInput {
                 .background_rounded(fill, 6.0)
                 .border(1.0, scheme.outline_variant, 6.0)
                 .padding_xy(10.0, 0.0),
-            Arrangement::SpacedBy(8.0),
+            Arrangement::SpacedBy(crate::spacing(8.0)),
             Alignment::Center,
             move || {
                 if variant == TextInputVariant::Search {

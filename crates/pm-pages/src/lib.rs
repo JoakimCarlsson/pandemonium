@@ -44,6 +44,7 @@ mod sidebar;
 mod tasks_panel;
 mod top_bar;
 mod welcome;
+mod window_theme;
 mod workspace;
 
 pub use actions::{Actions, Destination, Panel, SignInAction, UpdateAction, WindowAction};
@@ -68,4 +69,5 @@ pub use side_panel::side_panel;
 pub use sidebar::sidebar;
 pub use top_bar::{TOP_BAR_HEIGHT, top_bar};
 pub use welcome::welcome_page;
+pub use window_theme::window_theme;
 pub use workspace::workspace_page;

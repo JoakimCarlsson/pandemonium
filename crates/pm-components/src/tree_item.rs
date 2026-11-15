@@ -184,6 +184,7 @@ impl TreeItem {
             Size::Md => 28.0,
             Size::Lg => 32.0,
         };
+        let height = crate::row_height(height);
         let fill = if self.selected {
             scheme.secondary_container
         } else if hovered.get() {
@@ -231,7 +232,7 @@ impl TreeItem {
         };
         row_arranged(
             modifier.padding_xy(6.0, 0.0),
-            Arrangement::SpacedBy(4.0),
+            Arrangement::SpacedBy(crate::spacing(4.0)),
             Alignment::Center,
             move || {
                 spacer(Modifier::new().width(self.depth as f32 * INDENT));

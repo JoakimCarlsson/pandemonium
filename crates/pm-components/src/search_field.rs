@@ -81,6 +81,7 @@ impl SearchField {
             Size::Md => 30.0,
             Size::Lg => 36.0,
         };
+        let height = crate::row_height(height);
         let fill = match (self.variant, hovered.get()) {
             (_, true) => scheme.surface_container_high,
             (SearchFieldVariant::Outlined, false) => scheme.surface_container,
@@ -105,7 +106,7 @@ impl SearchField {
         let placeholder = self.placeholder;
         row_arranged(
             modifier.padding_xy(12.0, 0.0),
-            Arrangement::SpacedBy(8.0),
+            Arrangement::SpacedBy(crate::spacing(8.0)),
             Alignment::Center,
             move || {
                 icon(phosphor::MAGNIFYING_GLASS, 13.0, scheme.on_surface_variant);

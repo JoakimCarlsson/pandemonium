@@ -29,7 +29,7 @@ pub fn excerpts_tab(workspace: &Workspace, actions: &Actions) {
             .background(scheme.background)
             .vertical_scroll(&scroll)
             .padding_xy(16.0, 12.0),
-        Arrangement::SpacedBy(8.0),
+        Arrangement::SpacedBy(pm_components::spacing(8.0)),
         Alignment::Start,
         move || {
             Label::new(format!("Excerpts of “{}”", search.query))
@@ -69,7 +69,7 @@ pub fn update_tab(offer: &UpdateOffer, actions: &Actions) {
             let actions = actions.clone();
             column_arranged(
                 Modifier::new().width(NOTES_WIDTH),
-                Arrangement::SpacedBy(12.0),
+                Arrangement::SpacedBy(pm_components::spacing(12.0)),
                 Alignment::Start,
                 move || {
                     Label::new(format!("{} is available", offer.name))
@@ -90,7 +90,7 @@ pub fn update_tab(offer: &UpdateOffer, actions: &Actions) {
                     .show();
                     row_arranged(
                         Modifier::new().fill_max_width(),
-                        Arrangement::SpacedBy(8.0),
+                        Arrangement::SpacedBy(pm_components::spacing(8.0)),
                         Alignment::Center,
                         || {
                             if !offer.run.busy() {

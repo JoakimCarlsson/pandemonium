@@ -6,6 +6,7 @@
 mod notify;
 mod performance;
 mod snapshot;
+mod snapshot_appearance;
 mod window;
 
 /// Opens the window and runs it until it is closed; given `--version`, prints

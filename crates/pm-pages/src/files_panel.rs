@@ -53,7 +53,7 @@ pub fn files_panel(workspace: &Workspace, actions: &Actions) {
                 for row in tree.rows(&workspace.git.changes) {
                     key(row.path.clone(), || entry(tree, &row, actions));
                 }
-                spacer(Modifier::new().height(24.0));
+                spacer(Modifier::new().height(pm_components::spacing(24.0)));
             },
         );
     });
@@ -67,7 +67,7 @@ fn header(tree: &FileTree, actions: &Actions) {
             .fill_max_width()
             .height(28.0)
             .padding_xy(10.0, 0.0),
-        Arrangement::SpacedBy(2.0),
+        Arrangement::SpacedBy(pm_components::spacing(2.0)),
         Alignment::Center,
         || {
             Label::new(name)

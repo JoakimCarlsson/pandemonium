@@ -98,7 +98,7 @@ impl Segmented {
                 .background_rounded(track, 6.0)
                 .border(1.0, scheme.outline_variant, 6.0)
                 .padding(2.0),
-            Arrangement::SpacedBy(2.0),
+            Arrangement::SpacedBy(crate::spacing(2.0)),
             Alignment::Center,
             move || {
                 for (place, option) in self.options.iter().enumerate() {

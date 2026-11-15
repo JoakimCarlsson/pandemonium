@@ -121,7 +121,7 @@ impl Modal {
                         .border(1.0, scheme.outline_variant, 10.0)
                         .clickable_plain(|| {})
                         .padding(padding),
-                    Arrangement::SpacedBy(8.0),
+                    Arrangement::SpacedBy(crate::spacing(8.0)),
                     Alignment::Start,
                     move || {
                         if let Some(title) = title {

@@ -61,7 +61,7 @@ pub fn diff_page(workspace: &Workspace, path: &str, actions: &Actions) {
                 .height(36.0)
                 .border_bottom_hairline(scheme.outline_variant)
                 .padding_xy(12.0, 0.0),
-            Arrangement::SpacedBy(6.0),
+            Arrangement::SpacedBy(pm_components::spacing(6.0)),
             Alignment::Center,
             || {
                 icon(phosphor::GIT_DIFF, 13.0, scheme.on_surface_variant);

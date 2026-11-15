@@ -28,7 +28,7 @@ pub fn conflict_page(conflict: &ConflictView, actions: &Actions) {
                 .height(36.0)
                 .border_bottom_hairline(scheme.outline_variant)
                 .padding_xy(12.0, 0.0),
-            Arrangement::SpacedBy(6.0),
+            Arrangement::SpacedBy(pm_components::spacing(6.0)),
             Alignment::Center,
             || {
                 icon(phosphor::GIT_MERGE, 13.0, extended.warning);
@@ -97,7 +97,7 @@ pub fn conflict_page(conflict: &ConflictView, actions: &Actions) {
                     .fill_max_height()
                     .vertical_scroll(&scroll)
                     .padding(10.0),
-                Arrangement::SpacedBy(10.0),
+                Arrangement::SpacedBy(pm_components::spacing(10.0)),
                 Alignment::Start,
                 || {
                     if regions.is_empty() {
@@ -145,7 +145,7 @@ fn region_card(place: usize, region: &ConflictRegion, actions: &Actions) {
             .background(scheme.surface_container)
             .border(1.0, scheme.outline_variant, 6.0)
             .padding(8.0),
-        Arrangement::SpacedBy(6.0),
+        Arrangement::SpacedBy(pm_components::spacing(6.0)),
         Alignment::Start,
         || {
             Label::new(format!(
@@ -168,7 +168,7 @@ fn region_card(place: usize, region: &ConflictRegion, actions: &Actions) {
             );
             row_arranged(
                 Modifier::new(),
-                Arrangement::SpacedBy(6.0),
+                Arrangement::SpacedBy(pm_components::spacing(6.0)),
                 Alignment::Center,
                 || {
                     for (label, side) in [

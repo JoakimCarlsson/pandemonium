@@ -142,7 +142,7 @@ impl OptionList {
         let filtering = self.options.len() > FILTER_FROM;
         column_arranged(
             modifier,
-            Arrangement::SpacedBy(4.0),
+            Arrangement::SpacedBy(crate::spacing(4.0)),
             Alignment::Start,
             || {
                 if filtering {
@@ -223,7 +223,7 @@ fn option_row(label: String, picked: bool, height: f32, on_click: impl Fn() + 's
             .cursor(CursorIcon::Pointer)
             .clickable(on_click)
             .padding_xy(8.0, 0.0),
-        Arrangement::SpacedBy(8.0),
+        Arrangement::SpacedBy(crate::spacing(8.0)),
         Alignment::Center,
         move || {
             Label::new(label)

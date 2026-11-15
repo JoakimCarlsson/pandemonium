@@ -138,7 +138,7 @@ fn overlays(workspace: &Workspace, actions: &Actions) {
                                 .variant(ButtonVariant::Secondary)
                                 .on_click(move || cancel(TreeAction::Cancel))
                                 .show();
-                            spacer(Modifier::new().width(8.0));
+                            spacer(Modifier::new().width(pm_components::spacing(8.0)));
                             Button::new("Delete")
                                 .variant(ButtonVariant::Danger)
                                 .icon(phosphor::TRASH)

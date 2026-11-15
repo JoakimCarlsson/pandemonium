@@ -35,14 +35,14 @@ fn field(label: &str, value: &str, placeholder: &str, on_change: impl Fn(String)
         .variant(LabelVariant::Muted)
         .size(Size::Xs)
         .show();
-    spacer(Modifier::new().height(4.0));
+    spacer(Modifier::new().height(pm_components::spacing(4.0)));
     TextInput::new(value)
         .placeholder(placeholder)
         .size(Size::Sm)
         .modifier(Modifier::new().fill_max_width())
         .on_change(on_change)
         .show();
-    spacer(Modifier::new().height(10.0));
+    spacer(Modifier::new().height(pm_components::spacing(10.0)));
 }
 
 /// A row of buttons at the end of a form.
@@ -54,7 +54,7 @@ fn buttons(content: impl FnOnce()) {
         || {
             row_arranged(
                 Modifier::new(),
-                Arrangement::SpacedBy(8.0),
+                Arrangement::SpacedBy(pm_components::spacing(8.0)),
                 Alignment::Center,
                 content,
             )
@@ -87,9 +87,9 @@ pub(crate) fn agent_form(model: &SettingsModel, actions: &SettingsActions, agent
     let forms = &model.forms;
     form(|| {
         Label::new("Key").size(Size::Md).show();
-        spacer(Modifier::new().height(4.0));
+        spacer(Modifier::new().height(pm_components::spacing(4.0)));
         note("A key is kept on the server's machine and given to the agent in place of a login.");
-        spacer(Modifier::new().height(8.0));
+        spacer(Modifier::new().height(pm_components::spacing(8.0)));
         TextInput::new(forms.key.clone())
             .placeholder("Paste a key")
             .size(Size::Sm)
@@ -100,7 +100,7 @@ pub(crate) fn agent_form(model: &SettingsModel, actions: &SettingsActions, agent
                 move |_| save()
             })
             .show();
-        spacer(Modifier::new().height(8.0));
+        spacer(Modifier::new().height(pm_components::spacing(8.0)));
         buttons(|| {
             Button::new("Forget key")
                 .variant(ButtonVariant::Secondary)
@@ -114,13 +114,13 @@ pub(crate) fn agent_form(model: &SettingsModel, actions: &SettingsActions, agent
                 .on_click(pressed(actions, FormChange::SaveKey))
                 .show();
         });
-        spacer(Modifier::new().height(14.0));
+        spacer(Modifier::new().height(pm_components::spacing(14.0)));
         Label::new("Sign in").size(Size::Md).show();
-        spacer(Modifier::new().height(4.0));
+        spacer(Modifier::new().height(pm_components::spacing(4.0)));
         note(
             "Signs in with the agent's own login; a code to enter in the browser shows in the main window.",
         );
-        spacer(Modifier::new().height(8.0));
+        spacer(Modifier::new().height(pm_components::spacing(8.0)));
         buttons(|| {
             Button::new("Sign in")
                 .icon(phosphor::SIGN_IN)
@@ -129,7 +129,7 @@ pub(crate) fn agent_form(model: &SettingsModel, actions: &SettingsActions, agent
                 .on_click(pressed(actions, FormChange::SignIn(None)))
                 .show();
         });
-        spacer(Modifier::new().height(14.0));
+        spacer(Modifier::new().height(pm_components::spacing(14.0)));
         let logins: Vec<_> = forms
             .logins
             .iter()
@@ -169,10 +169,10 @@ pub(crate) fn agent_form(model: &SettingsModel, actions: &SettingsActions, agent
                 });
             });
         }
-        spacer(Modifier::new().height(8.0));
+        spacer(Modifier::new().height(pm_components::spacing(8.0)));
         row_arranged(
             Modifier::new().fill_max_width(),
-            Arrangement::SpacedBy(8.0),
+            Arrangement::SpacedBy(pm_components::spacing(8.0)),
             Alignment::Center,
             || {
                 TextInput::new(forms.account.clone())
@@ -201,7 +201,7 @@ pub(crate) fn registry(model: &SettingsModel, actions: &SettingsActions) {
         .show();
     row_arranged(
         Modifier::new().fill_max_width(),
-        Arrangement::SpacedBy(8.0),
+        Arrangement::SpacedBy(pm_components::spacing(8.0)),
         Alignment::Center,
         || {
             TextInput::new(forms.query.clone())
@@ -270,7 +270,7 @@ pub(crate) fn registry(model: &SettingsModel, actions: &SettingsActions) {
 fn mcp_form(mcp: &McpForm, actions: &SettingsActions) {
     form(|| {
         Label::new("New MCP server").size(Size::Md).show();
-        spacer(Modifier::new().height(10.0));
+        spacer(Modifier::new().height(pm_components::spacing(10.0)));
         field(
             "Name",
             &mcp.name,
@@ -325,11 +325,11 @@ pub(crate) fn model_server_form(model: &SettingsModel, actions: &SettingsActions
 fn model_form(state: &ModelForm, actions: &SettingsActions) {
     form(|| {
         Label::new("New model server").size(Size::Md).show();
-        spacer(Modifier::new().height(4.0));
+        spacer(Modifier::new().height(pm_components::spacing(4.0)));
         note(
             "Any OpenAI-compatible server: LiteLLM, vLLM, LM Studio, llama.cpp or a hosted gateway.",
         );
-        spacer(Modifier::new().height(10.0));
+        spacer(Modifier::new().height(pm_components::spacing(10.0)));
         field(
             "Id",
             &state.id,
@@ -370,7 +370,7 @@ fn model_form(state: &ModelForm, actions: &SettingsActions) {
         );
         if !state.models.is_empty() {
             note(&format!("Offers {}", state.models.join(", ")));
-            spacer(Modifier::new().height(10.0));
+            spacer(Modifier::new().height(pm_components::spacing(10.0)));
         }
         buttons(|| {
             Button::new("Cancel")
@@ -405,7 +405,7 @@ pub(crate) fn slot_form(
 ) {
     form(|| {
         Label::new(format!("@{name}")).size(Size::Md).show();
-        spacer(Modifier::new().height(10.0));
+        spacer(Modifier::new().height(pm_components::spacing(10.0)));
         field(
             "Model",
             model_text,
@@ -469,7 +469,7 @@ pub(crate) fn draft_form(
 fn draft_fields(draft: &Draft, actions: &SettingsActions, noun: &str) {
     form(|| {
         Label::new(format!("New {noun}")).size(Size::Md).show();
-        spacer(Modifier::new().height(10.0));
+        spacer(Modifier::new().height(pm_components::spacing(10.0)));
         field(
             "Name",
             &draft.name,
@@ -485,7 +485,7 @@ fn draft_fields(draft: &Draft, actions: &SettingsActions, noun: &str) {
         let personal = draft.personal;
         row_arranged(
             Modifier::new().fill_max_width(),
-            Arrangement::SpacedBy(8.0),
+            Arrangement::SpacedBy(pm_components::spacing(8.0)),
             Alignment::Center,
             || {
                 Switch::new(personal)
@@ -500,7 +500,7 @@ fn draft_fields(draft: &Draft, actions: &SettingsActions, noun: &str) {
                     .show();
             },
         );
-        spacer(Modifier::new().height(12.0));
+        spacer(Modifier::new().height(pm_components::spacing(12.0)));
         buttons(|| {
             Button::new("Cancel")
                 .variant(ButtonVariant::Secondary)

@@ -5,7 +5,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use pm_components::{AppTheme, TerminalCommand};
-use pm_config::ThemeMode;
 use pm_pages::{
     Actions, Destination, PICKER_SIZE, Panel, PickerActions, SETTINGS_SIZE, SettingsActions,
     SignInAction, UpdateAction, WindowAction, folder_picker_page, settings_page, workspace_page,
@@ -181,13 +180,9 @@ fn settings_window(link: &Rc<RefCell<Link>>, revision: &State<u64>, open: &State
     });
 }
 
-/// The Pandemonium theme the appearance setting `link` keeps chooses: light, dark, or the desktop's own while it follows the system.
+/// The Pandemonium theme the appearance settings `link` keeps choose, following the desktop's light or dark while the theme mode says so.
 fn window_theme(link: &Rc<RefCell<Link>>) -> AppTheme {
-    match link.borrow().settings().window.appearance.theme_mode {
-        ThemeMode::System => AppTheme::system(),
-        ThemeMode::Light => AppTheme::light(),
-        ThemeMode::Dark => AppTheme::dark(),
-    }
+    pm_pages::window_theme(link.borrow().settings(), rustle::is_system_in_dark_theme())
 }
 
 /// The file the editor's settings are kept in.
@@ -359,7 +354,12 @@ fn dock_actions(change: &Change) -> Actions {
         terminal_close: Rc::new(move |key| close(&|link| link.close_terminal(key))),
         terminal_scroll: Rc::new(move |lines| scroll(&|link| link.scroll_terminal(lines))),
         terminal_select: Rc::new(move |selection| {
-            select(&|link| link.select_terminal(selection.anchor, selection.head, selection.clicks))
+            select(&|link| {
+                link.select_terminal(selection.anchor, selection.head, selection.clicks);
+                if link.settings().window.terminal.copy_on_select {
+                    copy_terminal_selection(link);
+                }
+            })
         }),
         terminal_command: Rc::new(move |chosen| command(&|link| terminal_command(link, chosen))),
         run_task: Rc::new(move |index| run(&|link| link.run_task(index))),
@@ -373,15 +373,17 @@ fn dock_actions(change: &Change) -> Actions {
     }
 }
 
+/// Puts the text marked in `link`'s shown shell on the system clipboard, when something is marked.
+fn copy_terminal_selection(link: &mut Link) {
+    if let (Some(text), Some(clipboard)) = (link.terminal_selection(), rustle::clipboard()) {
+        clipboard.set_text(&text);
+    }
+}
+
 /// Runs `command` of the terminal's menu on `link`'s shown shell, through the system clipboard for copying and pasting.
 fn terminal_command(link: &mut Link, command: TerminalCommand) {
     match command {
-        TerminalCommand::Copy => {
-            if let (Some(text), Some(clipboard)) = (link.terminal_selection(), rustle::clipboard())
-            {
-                clipboard.set_text(&text);
-            }
-        }
+        TerminalCommand::Copy => copy_terminal_selection(link),
         TerminalCommand::Paste => {
             if let Some(text) = rustle::clipboard().and_then(|clipboard| clipboard.text()) {
                 link.paste_terminal(&text);

@@ -90,6 +90,8 @@ pub struct Dock {
     debug_error: Option<String>,
     /// The requests to send, with what each is for.
     outbox: Vec<(Request, DockAsk)>,
+    /// How many lines each shell keeps above its window.
+    scrollback: usize,
 }
 
 impl Default for Dock {
@@ -115,11 +117,23 @@ impl Default for Dock {
             breakpoints: BTreeMap::new(),
             debug_error: None,
             outbox: Vec::new(),
+            scrollback: pm_config::SCROLLBACK,
         }
     }
 }
 
 impl Dock {
+    /// Has every shell, and those started later, keep `lines` above its window.
+    pub fn set_scrollback(&mut self, lines: usize) {
+        if lines == self.scrollback {
+            return;
+        }
+        self.scrollback = lines;
+        for shell in &mut self.shells {
+            shell.emulator.set_scrollback(lines);
+        }
+    }
+
     /// Takes the requests queued since the last call, with what each is for.
     pub fn take_requests(&mut self) -> Vec<(Request, DockAsk)> {
         std::mem::take(&mut self.outbox)
@@ -242,6 +256,7 @@ impl Dock {
         self.next_key += 1;
         let (columns, rows) = self.size;
         let mut shell = Shell::starting(key, self.place.clone(), columns, rows);
+        shell.emulator.set_scrollback(self.scrollback);
         shell.task = task;
         self.shells.push(shell);
         self.shown.insert(self.place.clone(), key);

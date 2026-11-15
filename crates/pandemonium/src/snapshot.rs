@@ -8,7 +8,6 @@
 
 use std::path::Path;
 
-use pm_components::AppTheme;
 use pm_pages::{
     Actions, PICKER_SIZE, PickerActions, SETTINGS_SIZE, SettingsActions, folder_picker_page,
     settings_page, settings_section, workspace_page,
@@ -143,7 +142,9 @@ const WORDS: &[&str] = &[
 /// [browser[-find|-menu|-tools|-ask|-cert|-clear|-notice|-pick]]
 /// [project-menu|adder|clone|clone-failed|sample|remote]
 /// [picker|picker-remote|picker-failed] [form]
-/// [composer[-model|-slash|-queued|-attached|-field]|welcome-place]`
+/// [composer[-model|-slash|-queued|-attached|-field]|welcome-place]
+/// [compact] [interface-<px>] [codesize-<px>] [line-<times>] [terminal-<px>]
+/// [font-<family>] [mono-<family>]`
 /// with `arguments` (those after the flag) and returns the process's exit
 /// code: 0 when the PNG was written, 1 when drawing failed, 2 when the
 /// arguments are wrong.
@@ -164,10 +165,12 @@ pub fn run(arguments: &[String]) -> i32 {
     }
     let light = words.contains(&"light");
     if let Some(shot) = words.iter().find_map(|word| word.strip_prefix("settings-")) {
-        return settings_shot(path, shot, given, light, words.contains(&"form"));
+        return settings_shot(path, shot, given, light, &words);
     }
     let live = words.contains(&"live");
-    let theme = AppTheme::of_dark(!light);
+    let mut appearance = pm_shell::SettingsModel::default();
+    crate::snapshot_appearance::apply(&mut appearance, &words);
+    let theme = pm_pages::window_theme(&appearance, !light);
     if let Some(picker) = picker_named(&words) {
         let actions = PickerActions::inert();
         return draw(
@@ -390,14 +393,23 @@ fn show_panels(workspace: &mut pm_shell::Workspace, words: &[&str]) {
 
 /// Whether `word` is one a snapshot understands after its size.
 fn known(word: &str) -> bool {
-    word.starts_with("settings-") || WORDS.contains(&word)
+    word.starts_with("settings-")
+        || WORDS.contains(&word)
+        || crate::snapshot_appearance::known(word)
 }
 
 /// Draws the settings window on the section `shot` names, such as `editor-vim`, or
 /// `editor-vim-narrow` for the narrowest window, into `path` at `size` or the
 /// size the shot implies, in the light theme when `light`, with the section's
-/// form open and filled in when `form`.
-fn settings_shot(path: &str, shot: &str, size: Option<(u32, u32)>, light: bool, form: bool) -> i32 {
+/// form open and filled in when `words` hold `form`, and the appearance
+/// settings changed as the appearance words among `words` say.
+fn settings_shot(
+    path: &str,
+    shot: &str,
+    size: Option<(u32, u32)>,
+    light: bool,
+    words: &[&str],
+) -> i32 {
     let (slug, narrow) = match shot.strip_suffix("-narrow") {
         Some(slug) => (slug, true),
         None => (shot, false),
@@ -411,9 +423,10 @@ fn settings_shot(path: &str, shot: &str, size: Option<(u32, u32)>, light: bool, 
     } else {
         (SETTINGS_SIZE.0 as u32, SETTINGS_SIZE.1 as u32)
     });
-    let theme = AppTheme::of_dark(!light);
     let mut model = pm_shell::sample_settings(section);
-    if form {
+    crate::snapshot_appearance::apply(&mut model, words);
+    let theme = pm_pages::window_theme(&model, !light);
+    if words.contains(&"form") {
         pm_shell::sample_forms(&mut model);
     }
     let actions = SettingsActions::inert();

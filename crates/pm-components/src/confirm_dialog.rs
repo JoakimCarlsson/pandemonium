@@ -143,7 +143,7 @@ impl ConfirmDialog {
                         .border(1.0, scheme.outline_variant, 10.0)
                         .clickable_plain(|| {})
                         .padding(16.0),
-                    Arrangement::SpacedBy(10.0),
+                    Arrangement::SpacedBy(crate::spacing(10.0)),
                     Alignment::Start,
                     move || {
                         Label::new(self.title).variant(LabelVariant::Heading).show();
@@ -170,7 +170,7 @@ impl ConfirmDialog {
                         }
                         row_arranged(
                             Modifier::new().fill_max_width(),
-                            Arrangement::SpacedBy(8.0),
+                            Arrangement::SpacedBy(crate::spacing(8.0)),
                             Alignment::Center,
                             move || {
                                 spacer(Modifier::new().weight(1.0));

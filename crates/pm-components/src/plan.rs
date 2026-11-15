@@ -97,7 +97,7 @@ impl PlanPanel {
                     .fill_max_width()
                     .cursor(CursorIcon::Pointer)
                     .clickable(move || toggle.set(!toggle.get())),
-                Arrangement::SpacedBy(8.0),
+                Arrangement::SpacedBy(crate::spacing(8.0)),
                 Alignment::Center,
                 || {
                     icon(phosphor::LIST_CHECKS, 14.0, scheme.on_surface_variant);
@@ -123,7 +123,7 @@ impl PlanPanel {
                 for (text, state) in &self.steps {
                     row_arranged(
                         Modifier::new().fill_max_width().padding_xy(0.0, 2.0),
-                        Arrangement::SpacedBy(8.0),
+                        Arrangement::SpacedBy(crate::spacing(8.0)),
                         Alignment::Center,
                         || {
                             let (mark, tint) = match state {
@@ -263,12 +263,12 @@ impl ApproveBand {
                 .background_rounded(faded(tint, 18), 8.0)
                 .border(1.0, faded(tint, 90), 8.0)
                 .padding_xy(14.0, 12.0),
-            Arrangement::SpacedBy(10.0),
+            Arrangement::SpacedBy(crate::spacing(10.0)),
             Alignment::Start,
             move || {
                 row_arranged(
                     Modifier::new().fill_max_width(),
-                    Arrangement::SpacedBy(8.0),
+                    Arrangement::SpacedBy(crate::spacing(8.0)),
                     Alignment::Center,
                     || {
                         icon(glyph, 15.0, tint);

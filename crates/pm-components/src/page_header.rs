@@ -79,13 +79,14 @@ impl PageHeader {
             Size::Md => 48.0,
             Size::Lg => 56.0,
         };
+        let height = crate::row_height(height);
         let mut modifier = Modifier::new().fill_max_width().height(height);
         if self.variant == PageHeaderVariant::Ruled {
             modifier = modifier.border_bottom_hairline(scheme.outline_variant);
         }
         row_arranged(
             modifier.padding_xy(20.0, 0.0),
-            Arrangement::SpacedBy(12.0),
+            Arrangement::SpacedBy(crate::spacing(12.0)),
             Alignment::Center,
             move || {
                 if let Some(leading) = &self.leading {
