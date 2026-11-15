@@ -7,8 +7,7 @@ use pm_components::{TerminalCommand, TerminalSelection};
 use pm_shell::{
     BrowserAction, ComposerAction, ConversationCommand, DebugCommand, DockTab, FileAction,
     GitAction, InquiryReply, ProjectAction, QuickAction, RightTab, SearchAction, SessionAction,
-    TabAction,
-    TreeAction, TrustVerdict,
+    TabAction, TreeAction, TrustVerdict,
 };
 
 /// The callbacks the pages call; the shell decides what each does.

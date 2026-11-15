@@ -243,7 +243,11 @@ pub fn goal_chip(goal: &pm_harness::Goal) -> Option<GoalChip> {
         GoalState::Cleared => return None,
     };
     let used = match goal.budget {
-        Some(budget) => format!("{} of {} tokens", short_count(goal.used), short_count(budget)),
+        Some(budget) => format!(
+            "{} of {} tokens",
+            short_count(goal.used),
+            short_count(budget)
+        ),
         None => format!("{} tokens", short_count(goal.used)),
     };
     let detail = match &goal.note {

@@ -156,7 +156,9 @@ fn chats(workspace: &Workspace, actions: &Actions) {
             let open = actions.reopen_session.clone();
             let id = chat.id;
             let selected = workspace.page == Page::Session(id) && workspace.starting.is_none();
-            session_tile(chat, 0.0, selected, true, workspace, actions, move || open(id));
+            session_tile(chat, 0.0, selected, true, workspace, actions, move || {
+                open(id)
+            });
         });
     }
 }
@@ -420,11 +422,7 @@ fn session_menu(session: &Session, indent: f32, chat: bool, actions: &Actions) {
             act(SessionAction::ToggleRead(id)),
         );
     if !session.directory.is_empty() {
-        menu = menu.icon_item(
-            phosphor::COPY,
-            "Copy path",
-            copy(session.directory.clone()),
-        );
+        menu = menu.icon_item(phosphor::COPY, "Copy path", copy(session.directory.clone()));
         if !session.directory.starts_with("ssh://") {
             menu = menu.icon_item(
                 phosphor::FOLDER_OPEN,
@@ -442,9 +440,17 @@ fn session_menu(session: &Session, indent: f32, chat: bool, actions: &Actions) {
     }
     menu = menu.separator();
     menu = if chat {
-        menu.destructive_item(phosphor::TRASH, "Remove chat", act(SessionAction::Remove(id)))
+        menu.destructive_item(
+            phosphor::TRASH,
+            "Remove chat",
+            act(SessionAction::Remove(id)),
+        )
     } else {
-        menu.icon_item(phosphor::ARCHIVE, "Close session", act(SessionAction::Close(id)))
+        menu.icon_item(
+            phosphor::ARCHIVE,
+            "Close session",
+            act(SessionAction::Close(id)),
+        )
     };
     menu.show();
 }

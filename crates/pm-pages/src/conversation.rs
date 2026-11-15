@@ -229,7 +229,10 @@ fn menu(message: &Message, last: bool, actions: &Actions) -> MessageMenu {
                     command(ConversationCommand::Restore(turn)),
                 );
             }
-            menu = menu.item("Undo this turn", command(ConversationCommand::UndoTurn(turn)));
+            menu = menu.item(
+                "Undo this turn",
+                command(ConversationCommand::UndoTurn(turn)),
+            );
         }
         _ => {
             if last {

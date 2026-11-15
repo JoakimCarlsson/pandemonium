@@ -7,8 +7,8 @@
 use pm_protocol::Request;
 
 use super::{Ask, Link};
-use crate::composer::agent_settings;
 use crate::composer::SlashCommand;
+use crate::composer::agent_settings;
 
 impl Link {
     /// Readies the welcome page just shown: offers the agents that can run,
@@ -108,7 +108,12 @@ impl Link {
 
     /// Chooses the agent at position `index` on the welcome page, remembers it, and asks what it lets the reader change.
     pub fn choose_agent(&mut self, index: usize) {
-        let Some(agent) = self.workspace.agents.get(index).map(|agent| agent.id.clone()) else {
+        let Some(agent) = self
+            .workspace
+            .agents
+            .get(index)
+            .map(|agent| agent.id.clone())
+        else {
             return;
         };
         let Some(start) = &mut self.workspace.starting else {
@@ -213,7 +218,13 @@ mod tests {
         let mut link = Link::built(None, None, Arc::new(|| {}));
         link.new_chat();
         let first = link.workspace.agents.len();
-        assert_eq!(link.workspace.starting.as_ref().map(|start| start.shown.len()), Some(first));
+        assert_eq!(
+            link.workspace
+                .starting
+                .as_ref()
+                .map(|start| start.shown.len()),
+            Some(first)
+        );
         let id = link.workspace.agents[1].id.clone();
         link.start_answer(
             Ask::Identity(id.clone()),
@@ -222,7 +233,11 @@ mod tests {
                 selected: None,
             },
         );
-        let start = link.workspace.starting.clone().expect("the welcome page shows");
+        let start = link
+            .workspace
+            .starting
+            .clone()
+            .expect("the welcome page shows");
         assert_eq!(start.shown, [1]);
         assert_eq!(start.agent, 1);
     }
@@ -234,7 +249,11 @@ mod tests {
         link.new_chat();
         link.set_agent_setting("mode".to_owned(), "plan".to_owned());
         link.set_agent_setting("mode".to_owned(), "auto".to_owned());
-        let start = link.workspace.starting.clone().expect("the welcome page shows");
+        let start = link
+            .workspace
+            .starting
+            .clone()
+            .expect("the welcome page shows");
         assert_eq!(start.changed, [("mode".to_owned(), "auto".to_owned())]);
     }
 }

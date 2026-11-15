@@ -88,7 +88,11 @@ impl Link {
         if title.is_empty() || known.as_deref() == Some(title.as_str()) {
             return;
         }
-        if let Some(info) = self.sessions.iter_mut().find(|info| info.session == session) {
+        if let Some(info) = self
+            .sessions
+            .iter_mut()
+            .find(|info| info.session == session)
+        {
             info.title = title.clone();
         }
         if let Some(thread) = self.threads.get_mut(&session) {
@@ -116,7 +120,11 @@ impl Link {
             self.workspace.status = Some(message);
             return;
         }
-        if let Some(info) = self.sessions.iter_mut().find(|info| info.session == session) {
+        if let Some(info) = self
+            .sessions
+            .iter_mut()
+            .find(|info| info.session == session)
+        {
             info.closed = true;
         }
         self.reopened.remove(&session);

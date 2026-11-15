@@ -6,10 +6,14 @@
 use rustle::prelude::*;
 
 use pm_components::{
-    Button, ButtonVariant, Chip, Label, LabelVariant, Notice, NoticeVariant, Size, ApproveBand, ApproveBandVariant, InquiryCard, InquiryPrompt, PlanPanel, PlanStepState,
-    TrustAnswer, TrustCard,
+    ApproveBand, ApproveBandVariant, Button, ButtonVariant, Chip, InquiryCard, InquiryPrompt,
+    Label, LabelVariant, Notice, NoticeVariant, PlanPanel, PlanStepState, Size, TrustAnswer,
+    TrustCard,
 };
-use pm_shell::{ConversationCommand, Approval, Extras, InquiryForm, InquiryReply, PlanProgress, TrustAsk, TrustVerdict};
+use pm_shell::{
+    Approval, ConversationCommand, Extras, InquiryForm, InquiryReply, PlanProgress, TrustAsk,
+    TrustVerdict,
+};
 
 use crate::actions::Actions;
 
@@ -58,16 +62,22 @@ pub fn waiting_cards(extras: &Extras, actions: &Actions) {
 fn sign_in_bars(extras: &Extras, actions: &Actions) {
     if let Some(reason) = &extras.signed_out {
         let run = actions.conversation.clone();
-        sign_in_bar("The session's account is signed out", reason, "Sign in again", move || {
-            run(ConversationCommand::SignIn)
-        });
+        sign_in_bar(
+            "The session's account is signed out",
+            reason,
+            "Sign in again",
+            move || run(ConversationCommand::SignIn),
+        );
     }
     if let Some(page) = &extras.tool_sign_in {
         let open = actions.open_address.clone();
         let address = page.clone();
-        sign_in_bar("A tool server asks you to sign in", page, "Open sign-in page", move || {
-            open(address.clone())
-        });
+        sign_in_bar(
+            "A tool server asks you to sign in",
+            page,
+            "Open sign-in page",
+            move || open(address.clone()),
+        );
     }
 }
 

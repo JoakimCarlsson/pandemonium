@@ -104,7 +104,6 @@ pub fn conversation() -> Vec<Message> {
             turn: Some(0),
             checkpoint: true,
             files: vec!["architecture.png".to_owned()],
-            ..Message::default()
         },
         Message {
             speaker: Speaker::Agent,

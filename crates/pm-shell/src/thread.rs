@@ -166,7 +166,11 @@ impl Thread {
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
-                self.notice(NoticeKind::Answered, "Answered the agent's questions", detail);
+                self.notice(
+                    NoticeKind::Answered,
+                    "Answered the agent's questions",
+                    detail,
+                );
             }
             Event::Trust(request) => {
                 self.asking = true;
@@ -506,7 +510,10 @@ mod tests {
             panic!("expected a step");
         };
         assert_eq!(step.state, StepState::Failed);
-        assert_eq!(thread.messages[0].footer.as_deref(), Some("Failed · 1 step"));
+        assert_eq!(
+            thread.messages[0].footer.as_deref(),
+            Some("Failed · 1 step")
+        );
     }
 
     /// A subagent's calls nest under the call that started it, which can stop it while it runs.

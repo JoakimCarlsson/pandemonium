@@ -55,10 +55,11 @@ impl Link {
     /// the turn the agent is on when `now`, otherwise as its next turn or
     /// queued behind the one it is on.
     pub fn prompt(&mut self, text: String, now: bool) {
-        self.workspace.extras.prefill = None;
         let Some(session) = self.watched else {
+            self.workspace.extras.prefill = Some(text);
             return;
         };
+        self.workspace.extras.prefill = None;
         let composer = &mut self.workspace.extras.composer;
         let text = prompt_text(&text, &composer.elements, &composer.captures);
         let mut attachments: Vec<Attachment> =

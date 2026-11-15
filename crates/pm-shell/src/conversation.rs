@@ -142,7 +142,9 @@ impl ToolStep {
         if self.id == id {
             return Some(self);
         }
-        self.children.iter_mut().find_map(|child| child.find_mut(id))
+        self.children
+            .iter_mut()
+            .find_map(|child| child.find_mut(id))
     }
 
     /// Marks this step and those under it that still run as `state`, and forgets the subagent it ran.

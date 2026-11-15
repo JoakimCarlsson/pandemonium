@@ -80,9 +80,9 @@ pub(crate) fn mention_query(text: &str) -> Option<String> {
 
 /// `text` with the `@` word at its end replaced by a mention of `path` and a space.
 pub(crate) fn with_mention(text: &str, path: &str) -> String {
-    let start = text
-        .rfind(char::is_whitespace)
-        .map_or(0, |at| at + text[at..].chars().next().map_or(1, char::len_utf8));
+    let start = text.rfind(char::is_whitespace).map_or(0, |at| {
+        at + text[at..].chars().next().map_or(1, char::len_utf8)
+    });
     format!("{}@{path} ", &text[..start])
 }
 
@@ -280,9 +280,19 @@ mod tests {
     fn a_mention_replaces_its_word() {
         assert_eq!(mention_query("look at @Mai").as_deref(), Some("mai"));
         assert_eq!(mention_query("look at @main.rs now"), None);
-        assert_eq!(with_mention("look at @ma", "src/main.rs"), "look at @src/main.rs ");
+        assert_eq!(
+            with_mention("look at @ma", "src/main.rs"),
+            "look at @src/main.rs "
+        );
         assert_eq!(with_mention("@", "a.rs"), "@a.rs ");
-        let paths = ["src/lib/main.rs".to_owned(), "main.rs".to_owned(), "x.rs".to_owned()];
-        assert_eq!(MentionMenu::matching(&paths, "main"), ["main.rs", "src/lib/main.rs"]);
+        let paths = [
+            "src/domain.rs".to_owned(),
+            "main.rs".to_owned(),
+            "x.rs".to_owned(),
+        ];
+        assert_eq!(
+            MentionMenu::matching(&paths, "main"),
+            ["main.rs", "src/domain.rs"]
+        );
     }
 }

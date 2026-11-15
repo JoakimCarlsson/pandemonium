@@ -385,35 +385,33 @@ impl Composer {
         let key_send = send.clone();
         let key_state = state.clone();
         let key_callbacks = callbacks.clone();
-        let modifier = self
-            .modifier
-            .on_preview_key_event(move |event| {
-                if !event.pressed {
-                    return false;
+        let modifier = self.modifier.on_preview_key_event(move |event| {
+            if !event.pressed {
+                return false;
+            }
+            let paste = (event.modifiers.ctrl || event.modifiers.meta)
+                && event.key == Key::Character("v".into());
+            if paste {
+                return paste_attachments(&key_callbacks);
+            }
+            if event.key == Key::Tab && event.modifiers.shift {
+                if let Some(cycle) = &key_callbacks.on_cycle_mode {
+                    cycle();
                 }
-                let paste = (event.modifiers.ctrl || event.modifiers.meta)
-                    && event.key == Key::Character("v".into());
-                if paste {
-                    return paste_attachments(&key_callbacks);
-                }
-                if event.key == Key::Tab && event.modifiers.shift {
-                    if let Some(cycle) = &key_callbacks.on_cycle_mode {
-                        cycle();
+                return true;
+            }
+            let enter = event.key == Key::Enter && !event.modifiers.shift;
+            if enter {
+                match (&first_command, slash_open, &first_mention, mention_open) {
+                    (Some(name), true, _, _) => key_state.set_text(format!("/{name} ")),
+                    (_, _, Some(path), true) => {
+                        key_state.set_text(with_mention(&key_state.text(), path))
                     }
-                    return true;
+                    _ => key_send(event.modifiers.ctrl && working),
                 }
-                let enter = event.key == Key::Enter && !event.modifiers.shift;
-                if enter {
-                    match (&first_command, slash_open, &first_mention, mention_open) {
-                        (Some(name), true, _, _) => key_state.set_text(format!("/{name} ")),
-                        (_, _, Some(path), true) => {
-                            key_state.set_text(with_mention(&key_state.text(), path))
-                        }
-                        _ => key_send(event.modifiers.ctrl && working),
-                    }
-                }
-                enter
-            });
+            }
+            enter
+        });
         let drop_callbacks = callbacks.clone();
         let modifier = match drop_callbacks.on_attach.clone() {
             Some(on_attach) => modifier

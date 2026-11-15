@@ -109,9 +109,8 @@ pub fn sample_composer(extras: &mut Extras, sample: SampleComposer) {
             ];
         }
         SampleComposer::Mention => {
-            extras.prefill = Some(
-                "Compare the two entry points\nline by line, then\nlook at @mai".to_owned(),
-            );
+            extras.prefill =
+                Some("Compare the two entry points\nline by line, then\nlook at @mai".to_owned());
         }
         SampleComposer::Field => {
             extras.prefill = Some("Explain why the build fails".to_owned());
