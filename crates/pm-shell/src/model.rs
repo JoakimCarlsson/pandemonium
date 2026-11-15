@@ -74,6 +74,8 @@ pub struct Workspace {
     pub agents: Vec<AgentChoice>,
     /// The agent new work was last started with, or last picked, by its id.
     pub last_agent: Option<String>,
+    /// How far the reader has read each session on this machine: its number and the last event read.
+    pub read_through: std::collections::BTreeMap<u64, u64>,
     /// The page showing.
     pub page: Page,
     /// The pages visited, for going back and forward.

@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 pm-browser = { version = "0.15.0-rc.2", path = "../pm-browser" }
 pm-buffer = { version = "0.15.0-rc.2", path = "../pm-buffer" }
 pm-client.workspace = true

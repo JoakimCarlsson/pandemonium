@@ -50,6 +50,10 @@ pub fn sidebar(workspace: &Workspace, actions: &Actions) {
                     let selected = match destination {
                         Destination::History => workspace.page == Page::History,
                         Destination::Extensions => workspace.page == Page::Extensions,
+                        Destination::NewChat => workspace
+                            .starting
+                            .as_ref()
+                            .is_some_and(|start| start.at.is_none()),
                         _ => false,
                     };
                     Tile::new(label)

@@ -56,6 +56,10 @@ impl Link {
                 let thread = self.threads.entry(session).or_default();
                 if thread.is_unread() {
                     thread.mark_read();
+                    let seq = thread.seq;
+                    if self.routes.remote(session).is_none() {
+                        self.workspace.read_through.insert(session, seq);
+                    }
                 } else {
                     thread.mark_unread();
                 }

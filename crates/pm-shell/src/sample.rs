@@ -97,6 +97,7 @@ pub fn sample_workspace() -> Workspace {
         starting: None,
         agents: offered_agents(),
         last_agent: None,
+        read_through: Default::default(),
         page: Page::Session(9),
         trail: Trail::default(),
         history: history(),

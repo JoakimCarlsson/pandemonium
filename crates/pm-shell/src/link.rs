@@ -631,6 +631,9 @@ impl Link {
         }
         let thread = self.threads.entry(id).or_default();
         thread.mark_read();
+        if self.routes.remote(id).is_none() {
+            self.workspace.read_through.insert(id, thread.seq);
+        }
         show_thread(&mut self.workspace, thread);
         let agent = self.workspace.agent.clone();
         let login = info.and_then(|info| info.login.clone());
@@ -1174,13 +1177,23 @@ impl Link {
         let info = self.session_info(session);
         let replayed = info.as_ref().is_some_and(|info| seq <= info.last_seq);
         let open = self.watched == Some(session);
+        let local = self.routes.remote(session).is_none();
+        let seen = self
+            .workspace
+            .read_through
+            .get(&session)
+            .filter(|_| local)
+            .map_or(replayed, |read| seq <= *read);
         let finishing = matches!(event, Event::Finished(_));
         let thread = self.threads.entry(session).or_default();
         if !thread.take(seq, event) {
             return;
         }
-        if replayed || open {
+        if seen || open {
             thread.mark_read();
+        }
+        if open && local {
+            self.workspace.read_through.insert(session, seq);
         }
         if finishing && !replayed {
             let title = info
