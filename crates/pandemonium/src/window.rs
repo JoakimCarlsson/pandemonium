@@ -440,65 +440,61 @@ fn install_update(staged: String) {
 const GRIP: f32 = 4.0;
 
 /// Invisible strips along each edge and corner of the undecorated window that
-/// resize it when pressed.
+/// resize it when pressed, laid out in rows and columns so each covers only
+/// its own edge and the middle is left to the window's content.
 fn resize_grips() {
-    let edges = [
-        (ResizeEdge::North, BoxAlignment::TopCenter, None, Some(GRIP)),
-        (
-            ResizeEdge::South,
-            BoxAlignment::BottomCenter,
-            None,
-            Some(GRIP),
-        ),
-        (
-            ResizeEdge::West,
-            BoxAlignment::CenterStart,
-            Some(GRIP),
-            None,
-        ),
-        (ResizeEdge::East, BoxAlignment::CenterEnd, Some(GRIP), None),
-        (
-            ResizeEdge::NorthWest,
-            BoxAlignment::TopStart,
-            Some(GRIP * 2.0),
-            Some(GRIP * 2.0),
-        ),
-        (
-            ResizeEdge::NorthEast,
-            BoxAlignment::TopEnd,
-            Some(GRIP * 2.0),
-            Some(GRIP * 2.0),
-        ),
-        (
-            ResizeEdge::SouthWest,
-            BoxAlignment::BottomStart,
-            Some(GRIP * 2.0),
-            Some(GRIP * 2.0),
-        ),
-        (
-            ResizeEdge::SouthEast,
-            BoxAlignment::BottomEnd,
-            Some(GRIP * 2.0),
-            Some(GRIP * 2.0),
-        ),
-    ];
+    let corner = GRIP * 2.0;
+    column_with(Modifier::new().fill_max_size(), || {
+        row_with(Modifier::new().fill_max_width().height(GRIP), || {
+            grip(
+                ResizeEdge::NorthWest,
+                Modifier::new().width(corner).fill_max_height(),
+            );
+            grip(
+                ResizeEdge::North,
+                Modifier::new().weight(1.0).fill_max_height(),
+            );
+            grip(
+                ResizeEdge::NorthEast,
+                Modifier::new().width(corner).fill_max_height(),
+            );
+        });
+        row_with(Modifier::new().fill_max_width().weight(1.0), || {
+            grip(
+                ResizeEdge::West,
+                Modifier::new().width(GRIP).fill_max_height(),
+            );
+            spacer(Modifier::new().weight(1.0));
+            grip(
+                ResizeEdge::East,
+                Modifier::new().width(GRIP).fill_max_height(),
+            );
+        });
+        row_with(Modifier::new().fill_max_width().height(GRIP), || {
+            grip(
+                ResizeEdge::SouthWest,
+                Modifier::new().width(corner).fill_max_height(),
+            );
+            grip(
+                ResizeEdge::South,
+                Modifier::new().weight(1.0).fill_max_height(),
+            );
+            grip(
+                ResizeEdge::SouthEast,
+                Modifier::new().width(corner).fill_max_height(),
+            );
+        });
+    });
+}
+
+/// One strip laid out with `modifier` that resizes the window from `edge` when pressed.
+fn grip(edge: ResizeEdge, modifier: Modifier) {
     let window = current_window();
-    for (edge, alignment, width, height) in edges {
-        let modifier = Modifier::new().align(alignment);
-        let modifier = match width {
-            Some(width) => modifier.width(width),
-            None => modifier.fill_max_width(),
-        };
-        let modifier = match height {
-            Some(height) => modifier.height(height),
-            None => modifier.fill_max_height(),
-        };
-        spacer(
-            modifier
-                .cursor(edge.cursor())
-                .on_press(move |_| window.drag_resize_window(edge)),
-        );
-    }
+    spacer(
+        modifier
+            .cursor(edge.cursor())
+            .on_press(move |_| window.drag_resize_window(edge)),
+    );
 }
 
 /// How the window changes the link and composes again.
