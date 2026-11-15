@@ -42,8 +42,8 @@ polish.
 | # | Gap | Where (new) | Old reference |
 |---|---|---|---|
 | 1 | **Most settings are ignored.** Appearance (interface font and size, code font and size, line height, density), every Editor page, and Terminal font size, cursor, scrollback and copy-on-select are saved but never read. `window_theme` maps only `theme_mode`. `AppTheme::with_interface_font`, `with_code_font` and `with_density` have no callers. `pm_config::Density` is never converted to `pm_components::Density`. | `pandemonium/src/window.rs:185-191`, `pm-components/src/app_theme.rs:224-275` | `old: pandemonium/src/app.rs:330-355,713-725`, `scene.rs:18-39` |
-| 2 | **Theme families are gone.** The Light theme and Dark theme rows were removed from the catalog, the Dusk theme and extension themes are gone, and the theme quick-pick lists only light, dark and system. | `pm-shell/src/settings_catalog.rs:266`, `link/quick_input.rs:123` | `old: settings_catalog.rs:55-58`, `pm-theme/src/builtin.rs:72-169` |
-| 3 | **Icons look pixelated and small.** Rustle tessellates icon paths with no MSAA and a 0.8 px fringe that only fades outward, so sub-pixel Phosphor strokes alias. Origins are not pixel-snapped. Pandemonium sizes glyphs off the 12/14/16 grid (9, 10, 11, 13, 15 px) and centres them on half pixels. The old build rasterised SVGs with resvg into anti-aliased masks at `size × scale`. | rustle `rustle-wgpu/src/path.rs:24,121,182,363`; `pm-components/src/icon_button.rs:88-123`, `checkbox.rs:92-119` | `old: pm-icon/src/svg.rs:56-72`, `pm-renderer/src/renderer.rs:876-889` |
+| 2 | **FIXED** (`gap/panels`): Default and Dusk ship again, extension themes come from `ExtensionAssets`, the Light theme and Dark theme rows are back and the theme quick-pick lists the families. **Theme families are gone.** The Light theme and Dark theme rows were removed from the catalog, the Dusk theme and extension themes are gone, and the theme quick-pick lists only light, dark and system. | `pm-shell/src/settings_catalog.rs:266`, `link/quick_input.rs:123` | `old: settings_catalog.rs:55-58`, `pm-theme/src/builtin.rs:72-169` |
+| 3 | **FIXED** (`gap/panels`): Rustle now rasterises outlines into area-coverage masks drawn on whole pixels, and Pandemonium draws glyphs at 12, 14 and 16 px in boxes of even size (title-bar icons 16 px in 28 px buttons). **Icons look pixelated and small.** Rustle tessellates icon paths with no MSAA and a 0.8 px fringe that only fades outward, so sub-pixel Phosphor strokes alias. Origins are not pixel-snapped. Pandemonium sizes glyphs off the 12/14/16 grid (9, 10, 11, 13, 15 px) and centres them on half pixels. The old build rasterised SVGs with resvg into anti-aliased masks at `size × scale`. | rustle `rustle-wgpu/src/path.rs:24,121,182,363`; `pm-components/src/icon_button.rs:88-123`, `checkbox.rs:92-119` | `old: pm-icon/src/svg.rs:56-72`, `pm-renderer/src/renderer.rs:876-889` |
 | 4 | **The editor and terminal ignore the keymap.** Only window-wide actions go through it. Editor keys are hard-coded in `code_keys`, so keymap presets and custom bindings do nothing in the editor or terminal. | `pm-components/src/code_keys.rs:96-175`, `terminal_keys.rs:102-127` | `old: app/code.rs:410-498,589-1006`, `app/terminal.rs:122-148` |
 | 5 | **About 55 window-wide keymap actions do nothing.** `run_action` ends in `_ => return None`. Affected: tabs (close, close others, pin, next/previous), panes (split, focus), zoom, ToggleTheme, git stash/amend/continue/abort/skip/create branch, agent mode/model/allow/reject, session rename/archive/copy path, Quit, FocusPrompt, and others. | `pm-shell/src/link/keys.rs:123` | `old: app/code.rs:829-1006` |
 | 6 | **The root key handler takes chords from the terminal and browser.** The keymap runs in `on_preview_key_event`, before the focused child, so Ctrl+R/N/P/T/E never reach a shell, and any binding overrides keys typed in a web page. | `pm-pages/src/workspace.rs:79,155-158` | `old: app.rs:2085-2097`, `app/browser.rs:667-702` |
@@ -67,10 +67,10 @@ polish.
 | 24 | **Git workflows are missing.** You can't continue, skip or abort a merge, rebase or cherry-pick (Commit just sends a plain commit). Stash is gone. The submodule picker is gone. Commit readiness ignores conflicts. Partly staged files are mishandled, and conflicted rows can be staged. | `pm-pages/src/git_panel.rs:176-190,534-604`, `pm-shell/src/git.rs:89-145,394-398` | `old: git_controls.rs:543-616,815-905`, `git_menus.rs:239-265,414-424` |
 | 25 | **Restore files and Undo turn are gone.** The "Restore files to before this turn" action, Undo turn and turn changes are missing. `Restored`, `Undone`, `ToolSignIn`, `Limits`, `Goal`, `Slots` and `Container` events are dropped. | `pm-shell/src/thread.rs:254` | `old: chat.rs:63-123`, `hearing.rs:113-115,303-363` |
 | 26 | **Subagents are flattened into ordinary rows.** The subagent card, per-subagent Stop (`StopSubagent`), the worktree/merge chip and nesting through `parent` are gone. Back-to-back thinking or text blocks overwrite each other. The "Worked for Ns · N steps" fold is gone. Edit steps lose their diff. | `pm-shell/src/translate.rs:24-65`, `thread.rs:71-96,285`, `pm-components/src/steps.rs` | `old: steps.rs:43-465,591-616`, `hearing.rs:185-220,407-418,541-594` |
-| 27 | **Quick input is reduced.** It has a fixed table of 25 commands, with hard-coded key labels that ignore the keymap. `:` go to line, `?` help, recents, Compare-with-file mode, chat search, Ctrl+Enter to start a new session and the debug, task and toolchain pickers are gone. Outline needs the language server plus typing. | `pm-shell/src/quick.rs:179-244,291`, `link/quick_input.rs:173-252` | `old: listing.rs:166-1279`, `quick_choices.rs:148-446`, `quick_sessions.rs:10-188` |
-| 28 | **The file tree is reduced.** There are no key shortcuts (the menu still shows F2 and Delete hints), no cut, copy or paste, and no multi-select. Dropping a folder fails, and imports overwrite files with the same name. Names aren't validated, there is no menu on empty space, and every row is rebuilt each frame. | `pm-pages/src/files_panel.rs:180-296`, `pm-shell/src/file_tree.rs:28-226`, `link/browse.rs:171-222` | `old: app/tree.rs:47-103`, `tree_actions.rs:239-748`, `work/import.rs:28-104` |
-| 29 | **Panes and tabs are simplified.** The pane tree became one fixed 50/50 left/right split with no draggable divider, no up/down splits, no drop-zone highlight and no drag ghost. Tabs have no pinning, a cut-down tab menu, generic file icons, and no overflow handling (shell tabs in the dock run off the edge in every new render). Open files are no longer per session. | `pm-shell/src/open_files.rs:276-343`, `pm-pages/src/session.rs:59-115`, `session_tabs.rs:28-254`, `pm-pages/src/dock.rs:99-127` | `old: pm-components/src/panes.rs:91-1026`, `pm-pages/src/panes.rs:75-585`, `open_files.rs:291-345` |
-| 30 | **Undecided.** These are close for the last slot: the embedded browser no longer downloads when enabled in Settings, and agents are never told it is available (`web.rs:388-395`, `link/browser.rs:203-206`); and file-type icons no longer come from installed languages or icon themes (`file_icon.rs:84-127` vs `old: file_icon.rs:57-156`). | | |
+| 27 | **PARTLY FIXED** (`gap/panels`): `>` lists every window-wide keymap action with the keys the keymap binds, the recently used first; `:` goes to a line, `?` lists the prefixes, recently opened files lead, and Run Task, Start Debugging and Select Toolchain open their pickers. Still missing: compare-with-file, chat search, Ctrl+Enter, outline without the language server. **Quick input is reduced.** It has a fixed table of 25 commands, with hard-coded key labels that ignore the keymap. `:` go to line, `?` help, recents, Compare-with-file mode, chat search, Ctrl+Enter to start a new session and the debug, task and toolchain pickers are gone. Outline needs the language server plus typing. | `pm-shell/src/quick.rs:179-244,291`, `link/quick_input.rs:173-252` | `old: listing.rs:166-1279`, `quick_choices.rs:148-446`, `quick_sessions.rs:10-188` |
+| 28 | **PARTLY FIXED** (`gap/panels`): F2, Delete, Ctrl+X, Ctrl+C and Ctrl+V work on the entries chosen, Ctrl and Shift clicks choose several, dropped folders are imported whole, imports and moves take free names (`name copy.ext`), and names are validated. Still missing: the menu on empty space and per-frame row rebuilding. **The file tree is reduced.** There are no key shortcuts (the menu still shows F2 and Delete hints), no cut, copy or paste, and no multi-select. Dropping a folder fails, and imports overwrite files with the same name. Names aren't validated, there is no menu on empty space, and every row is rebuilt each frame. | `pm-pages/src/files_panel.rs:180-296`, `pm-shell/src/file_tree.rs:28-226`, `link/browse.rs:171-222` | `old: app/tree.rs:47-103`, `tree_actions.rs:239-748`, `work/import.rs:28-104` |
+| 29 | **PARTLY FIXED** (`gap/panels`): the divider between panes drags, tabs can be pinned (kept first, left open by Close others and Close all), the session and dock tab strips scroll sideways, file tabs show their file-type icon, and the right pane keeps its file after a close. Still missing: up/down splits, drop-zone highlight, drag ghost, per-session open files. **Panes and tabs are simplified.** The pane tree became one fixed 50/50 left/right split with no draggable divider, no up/down splits, no drop-zone highlight and no drag ghost. Tabs have no pinning, a cut-down tab menu, generic file icons, and no overflow handling (shell tabs in the dock run off the edge in every new render). Open files are no longer per session. | `pm-shell/src/open_files.rs:276-343`, `pm-pages/src/session.rs:59-115`, `session_tabs.rs:28-254`, `pm-pages/src/dock.rs:99-127` | `old: pm-components/src/panes.rs:91-1026`, `pm-pages/src/panes.rs:75-585`, `open_files.rs:291-345` |
+| 30 | **FIXED** (`gap/panels`): turning the browser on downloads it with no pane open, the settings row shows the download's progress, and the local and remote servers are told when it is available; file icons come from installed languages' `icon.svg` and icon-theme extensions again. **Undecided.** These are close for the last slot: the embedded browser no longer downloads when enabled in Settings, and agents are never told it is available (`web.rs:388-395`, `link/browser.rs:203-206`); and file-type icons no longer come from installed languages or icon themes (`file_icon.rs:84-127` vs `old: file_icon.rs:57-156`). | | |
 
 ---
 
@@ -441,21 +441,21 @@ reads the value.
   shared across sessions.
 
 **P2**
-- No pinned tabs.
+- ~~No pinned tabs.~~ **FIXED.**
 - The tab menu has 10 rows instead of 15. It lacks Close left, Close saved,
   read-only, the absolute path, permalinks, Reveal in file manager or project,
   Pin and Open in terminal. Nothing is ever disabled, and "Copy path" copies
   the relative path.
-- The pane tree is a fixed left/right pair. The divider can't be dragged. A
+- The pane tree is a fixed left/right pair. ~~The divider can't be dragged.~~ **FIXED.** A
   tab drag shows no overlay or ghost. The open-to-the-side drop strip is 6 px
   wide. The split menu is gone.
 - Next and previous skip the browser tab, and the tab keys only work while
   focus is in the session column.
 - Reopen loses the caret and scroll. Deleted or renamed files keep their tabs.
-  The right pane can jump to another file after a close
-  (`open_files.rs:496-561`).
-- The tab strip doesn't clip or scroll. In every new render the dock's shell
-  tabs run past the right edge.
+  ~~The right pane can jump to another file after a close
+  (`open_files.rs:496-561`).~~ **FIXED.**
+- ~~The tab strip doesn't clip or scroll. In every new render the dock's shell
+  tabs run past the right edge.~~ **FIXED:** both strips scroll sideways.
 - Files at HEAD can't be opened (`head: false` always).
 - There is no dock maximise. The dock stays open after its last shell exits.
   The Debug tab always shows.
@@ -464,7 +464,7 @@ reads the value.
 **P3**
 - The Diff tab always shows.
 - The page tab label ignores the page.
-- Every file tab gets `FILE_TEXT`.
+- ~~Every file tab gets `FILE_TEXT`.~~ **FIXED.**
 - The Excerpts tab has a fixed title.
 - No empty-pane state.
 - `Tab` has no tooltip, agent variant or lock mark, and the close cross only
@@ -591,17 +591,17 @@ reads the value.
 ## 10. Files panel, search, quick input and dialogs
 
 **P1**
-- **Tree:** no keys (yet the menu shows F2 and Delete hints), no cut, copy or
+- ~~**Tree:** no keys (yet the menu shows F2 and Delete hints), no cut, copy or
   paste, no multi-select. A dropped folder fails, and imports overwrite files
-  with the same name.
+  with the same name.~~ **FIXED.**
 - **Project search needs Enter;** there is no search as you type.
 - **Quick input:**
-  - A fixed list of 25 commands with hard-coded key labels.
+  - ~~A fixed list of 25 commands with hard-coded key labels.~~ **FIXED.**
   - Outline needs typing and the language server.
-  - `:` go to line and `?` help are gone.
+  - ~~`:` go to line and `?` help are gone.~~ **FIXED.**
   - Ctrl+Enter no longer starts a new session.
-  - The agent-setting, restore, fork, debug, task, runnable and toolchain
-    choosers are gone.
+  - The agent-setting, restore, fork and runnable choosers are gone.
+    ~~Debug, task and toolchain~~ **FIXED.**
 - **The folder picker only adds projects** (no clone-into or extension
   purposes) and has no keyboard.
 - **The editor and text-field context menus are gone.**
@@ -610,7 +610,7 @@ reads the value.
 - **Tree:**
   - No menu on empty space.
   - No copy path or reveal.
-  - Names aren't validated.
+  - ~~Names aren't validated.~~ **FIXED.**
   - Rename leaves the viewer on the old path.
   - Weak drag feedback: no target highlight, ghost or Ctrl to copy.
   - Refresh doesn't refresh git.
@@ -618,7 +618,7 @@ reads the value.
 - **Search:** ignores `seed_search_from_selection`, has no clear button, no
   tooltips, and lost its empty and error states.
 - **Quick input:**
-  - No recents or group headings.
+  - No group headings. ~~No recents.~~ **FIXED.**
   - Files are capped at 60.
   - No compare-with-file mode.
   - The `%` highlight length is wrong (`link/quick_input.rs:252`).
@@ -679,8 +679,9 @@ reads the value.
 - **Terminal input:**
   - No Ctrl+click links.
   - No IME preedit.
-  - **Paste doesn't strip control characters, so a paste can escape bracketed
-    paste mode** (`pm-shell/src/terminal.rs:170-177`).
+  - ~~**Paste doesn't strip control characters, so a paste can escape bracketed
+    paste mode** (`pm-shell/src/terminal.rs:170-177`).~~ **FIXED:** control
+    characters other than tab and return are dropped, with a test.
   - A new or picked shell doesn't take focus.
 
 **P3**
@@ -697,12 +698,12 @@ reads the value.
 ## 12. Browser
 
 **P1**
-- **Turning on the embedded browser doesn't download it until the pane is
+- ~~**Turning on the embedded browser doesn't download it until the pane is
   opened.** `install` is skipped when no browser is open, and `run_web`
   returns early. Agents are never told it is available, and the notice text
-  is wrong (`web.rs:388-395,462`, `link/browser.rs:203-206`).
-- **Download progress (`download_note`) is written but never read.** The
-  settings page shows no status.
+  is wrong (`web.rs:388-395,462`, `link/browser.rs:203-206`).~~ **FIXED.**
+- ~~**Download progress (`download_note`) is written but never read.** The
+  settings page shows no status.~~ **FIXED:** the Embedded browser row shows it.
 
 **P2**
 - The keymap preview handler beats the page's keys (#6).
@@ -741,15 +742,15 @@ prompts, zoom, clear data, per-session scoping and restore.
 ## 13. Visual primitives, theme and icons
 
 **P1**
-- **Icon rasterisation.** See top 30, #3, and `icons-zoom.png`: the new icons
+- ~~**Icon rasterisation.**~~ **FIXED.** See top 30, #3, and `icons-zoom.png`: the new icons
   are about 12 px against the old 16 px, thinner, and the bottom-panel glyph
   shows hatching artefacts. The fix lives in both repositories:
   - **Rustle:** draw icons through an anti-aliased raster atlas at
     `size × scale`, or add MSAA or an inner fringe, and snap origins to
     physical pixels.
   - **Pandemonium:** go back to 12, 14 and 16 px glyphs with integer centring.
-- **File-type icons no longer come from `languages/*/icon.svg` or icon-theme
-  extensions.** A hard-coded Phosphor table replaced them, and the server's
+- ~~**File-type icons no longer come from `languages/*/icon.svg` or icon-theme
+  extensions.**~~ **FIXED:** the SVGs are read into outlines once and tinted. A hard-coded Phosphor table replaced them, and the server's
   `icon_themes` go unused (`file_icon.rs:84-127`).
 - **No focus ring or keyboard focus on any control.**
 - **Tooltips are missing everywhere.**
@@ -765,7 +766,7 @@ prompts, zoom, clear data, per-session scoping and restore.
   light up on hover.
 - The Subtle and Comment colours changed (`#666666` → `#707070`,
   `#6f7378` → `#7a7e83`).
-- Folders are grey instead of gold (`#d9a95b`).
+- ~~Folders are grey instead of gold (`#d9a95b`).~~ **FIXED.**
 - Spinning icons (busy states) are gone everywhere.
 
 **P3**
