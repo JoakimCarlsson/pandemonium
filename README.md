@@ -248,8 +248,11 @@ at the caret and `code-unsaved` asks before closing a modified file;
 panel's menus and prompts, `git-rebase` shows a stopped rebase with a partly
 staged and a conflicted file, and `git-stashes` and `git-submodules` open the
 stash and submodule menus; `files`, `search`, `file-menu` and `file-delete`
-show the Files and Search tabs; `quick`, `quick-commands`,
-`quick-sessions`, `quick-text` and `quick-theme` open the quick input;
+show the Files and Search tabs, and `files-picked` the tree with several
+entries chosen; `quick`, `quick-commands`, `quick-sessions`, `quick-text`,
+`quick-theme`, `quick-help` and `quick-line` open the quick input; with
+`code`, `split` shows a file to the side, `split-wide` widens the left pane,
+`tab-pinned` pins the last tab and `tab-many` opens enough tabs to scroll;
 `browser` shows the browser pane on a sample page, and `browser-find`,
 `browser-menu`, `browser-tools`, `browser-ask`, `browser-cert`,
 `browser-clear`, `browser-notice` and `browser-pick` show it with the find
@@ -268,7 +271,7 @@ such as `settings-editor-vim`, draws that section of the settings window over
 sample settings at 960 by 720, and `settings-<section>-narrow` draws it at its
 narrowest, 640 by 420; `form` with it opens the section's form filled in.
 Appearance words change the settings any snapshot is drawn with: `compact`
-for compact density, `interface-<px>`, `codesize-<px>`, `line-<times>` and
+for compact density, `dusk` for the Dusk theme family, `interface-<px>`, `codesize-<px>`, `line-<times>` and
 `terminal-<px>` for the sizes, `font-<family>` and `mono-<family>` for the
 interface and code fonts (spaces written as `_`), and `relative`,
 `no-numbers`, `wrap-guide`, `soft-wrap`, `no-minimap` and `bar-terminal` for the editor

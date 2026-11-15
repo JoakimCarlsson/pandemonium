@@ -111,11 +111,23 @@ impl ProjectSearch {
     }
 }
 
-/// The quick input as `kind` shows it: `files`, `commands`, `sessions`, `text` or `theme`.
+/// The quick input as `kind` shows it: `files`, `commands`, `help`, `line`, `sessions`, `text`, `theme` and the other lists of choices.
 pub fn sample_quick(kind: &str) -> QuickInput {
     match kind {
         "commands" => QuickInput {
             query: ">".to_owned(),
+            commands: crate::quick::command_items(
+                &pm_editor::Keymap::new(pm_editor::Preset::default(), &Default::default()),
+                &["Push".to_owned()],
+            ),
+            ..QuickInput::default()
+        },
+        "help" => QuickInput {
+            query: "?".to_owned(),
+            ..QuickInput::default()
+        },
+        "line" => QuickInput {
+            query: ":120".to_owned(),
             ..QuickInput::default()
         },
         "sessions" => QuickInput {
@@ -143,13 +155,13 @@ pub fn sample_quick(kind: &str) -> QuickInput {
         },
         "theme" => QuickInput {
             choosing: Some(Choosing::Theme),
-            found: ["System", "Light", "Dark"]
+            found: ["System", "Light", "Dark", "Default", "Dusk"]
                 .iter()
                 .enumerate()
                 .map(|(place, name)| QuickItem {
                     title: (*name).to_owned(),
-                    detail: String::new(),
-                    kind: if place == 0 {
+                    detail: if place < 3 { "" } else { "Theme" }.to_owned(),
+                    kind: if place == 0 || place == 3 {
                         QuickKind::Current
                     } else {
                         QuickKind::Choice

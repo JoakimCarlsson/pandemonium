@@ -200,14 +200,18 @@ impl Link {
     pub(super) fn run_web(&mut self) -> bool {
         let general = &self.settings.window.general;
         let workspace = &mut self.workspace;
-        if workspace.browser.is_none() && workspace.shelf.kept.is_empty() {
+        let changed = if workspace.browser.is_none() && workspace.shelf.kept.is_empty() {
             self.web.shutdown();
-            return false;
-        }
-        let changed = self
-            .web
-            .run(&mut workspace.browser, &mut workspace.shelf, general);
-        self.take_web_attachments() || changed
+            self.web
+                .prepare(&mut workspace.browser, &mut workspace.shelf, general)
+        } else {
+            self.web
+                .run(&mut workspace.browser, &mut workspace.shelf, general)
+        };
+        let note = self.web.download_status();
+        let noted = note != self.settings.browser_note;
+        self.settings.browser_note = note;
+        changed || noted || self.take_web_attachments()
     }
 
     /// Attaches to the next prompt the elements picked and the captures taken in the browser since the last call, and says in the status line why a capture failed; returns whether anything was attached or said.

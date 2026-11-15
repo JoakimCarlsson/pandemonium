@@ -169,7 +169,7 @@ impl TextInput {
             Alignment::Center,
             move || {
                 if variant == TextInputVariant::Search {
-                    icon(phosphor::MAGNIFYING_GLASS, 13.0, scheme.on_surface_variant);
+                    icon(phosphor::MAGNIFYING_GLASS, 14.0, scheme.on_surface_variant);
                 }
                 stack_aligned(
                     Modifier::new().weight(1.0).clip(),

@@ -31,7 +31,7 @@ pub fn conflict_page(conflict: &ConflictView, actions: &Actions) {
             Arrangement::SpacedBy(pm_components::spacing(6.0)),
             Alignment::Center,
             || {
-                icon(phosphor::GIT_MERGE, 13.0, extended.warning);
+                icon(phosphor::GIT_MERGE, 14.0, extended.warning);
                 Label::new(conflict.path.clone())
                     .size(Size::Xs)
                     .modifier(Modifier::new().weight(1.0))

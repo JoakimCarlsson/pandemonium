@@ -7,11 +7,11 @@ use rustle::prelude::*;
 
 use pm_components::{
     Activity, ConfirmDialog, ContinueChat, IconButton, Label, LabelVariant, PullRequestBar,
-    PullRequestVariant, Size, SpendStrip, extended_colors,
+    PullRequestVariant, Sash, Size, SpendStrip, extended_colors,
 };
 use pm_shell::{
-    ActivityKind, Pane, Project, PullRequestInfo, SessionTab, SpendSummary, TabAction, Unsaved,
-    Workspace,
+    ActivityKind, PANE_SHARE_MIN, Pane, Project, PullRequestInfo, SessionTab, SpendSummary,
+    TabAction, Unsaved, Workspace,
 };
 
 use crate::actions::Actions;
@@ -132,33 +132,50 @@ fn dropped_on(actions: &Actions, pane: Pane) -> impl Fn(&dyn std::any::Any) + 's
 /// strip's tab and the right `right`, each under a bar naming it that makes
 /// it the pane tabs chosen show in, and each taking tabs dropped on it.
 fn split_panes(workspace: &Workspace, right: SessionTab, actions: &Actions) {
-    let scheme = color_scheme();
     let files = &workspace.open_files;
-    row_with(Modifier::new().fill_max_width().weight(1.0), || {
-        for (pane, tab) in [(Pane::Left, files.tab), (Pane::Right, right)] {
-            let focused = files.focus == pane;
-            if pane == Pane::Right {
-                spacer(
-                    Modifier::new()
-                        .width(1.0)
-                        .fill_max_height()
-                        .background(scheme.outline_variant),
-                );
+    let width = remember(|| 0.0_f32);
+    let share = files.left_share();
+    let measured = width.clone();
+    row_with(
+        Modifier::new()
+            .fill_max_width()
+            .weight(1.0)
+            .on_size_changed(move |size| measured.set(size.width)),
+        || {
+            for (pane, tab) in [(Pane::Left, files.tab), (Pane::Right, right)] {
+                let focused = files.focus == pane;
+                if pane == Pane::Right {
+                    let resize = actions.file_tab.clone();
+                    let across = width.get();
+                    Sash::new(share * across)
+                        .size(Size::Sm)
+                        .range(across * PANE_SHARE_MIN, across * (1.0 - PANE_SHARE_MIN))
+                        .on_resize(move |left| {
+                            if across > 0.0 {
+                                resize(TabAction::Resize((left / across * 1000.0).round() as u32));
+                            }
+                        })
+                        .show();
+                }
+                let weight = match pane {
+                    Pane::Left => share,
+                    Pane::Right => 1.0 - share,
+                };
+                key(pane == Pane::Right, || {
+                    column_with(
+                        Modifier::new()
+                            .fill_max_height()
+                            .weight(weight)
+                            .drop_target(dropped_on(actions, pane)),
+                        || {
+                            pane_bar(workspace, pane, tab, focused, actions);
+                            pane_content(workspace, tab, actions);
+                        },
+                    );
+                });
             }
-            key(pane == Pane::Right, || {
-                column_with(
-                    Modifier::new()
-                        .fill_max_height()
-                        .weight(1.0)
-                        .drop_target(dropped_on(actions, pane)),
-                    || {
-                        pane_bar(workspace, pane, tab, focused, actions);
-                        pane_content(workspace, tab, actions);
-                    },
-                );
-            });
-        }
-    });
+        },
+    );
 }
 
 /// Emits the bar over `pane`, which shows `tab`: its name, marked when the
@@ -363,7 +380,7 @@ fn header_chip(glyph: Icon, text: &str) {
         Arrangement::SpacedBy(pm_components::spacing(4.0)),
         Alignment::Center,
         || {
-            icon(glyph, 11.0, scheme.on_surface_variant);
+            icon(glyph, 12.0, scheme.on_surface_variant);
             Label::new(text.to_owned())
                 .variant(LabelVariant::Muted)
                 .size(Size::Xs)

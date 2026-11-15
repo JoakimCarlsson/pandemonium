@@ -101,6 +101,8 @@ pub struct OpenFile {
     /// Unsaved text kept from the last run, put in place of the text read
     /// from the folder once it arrives.
     pub restored: Option<String>,
+    /// Whether its tab is pinned: kept first in the strip and left open by Close others, Close to the right and Close all.
+    pub pinned: bool,
 }
 
 /// A popup an editor can be asked to open with over its text.
@@ -329,6 +331,10 @@ pub enum TabAction {
     Dismiss(SessionTab),
     /// Stops showing the comparison of the open file at this position.
     EndCompare(usize),
+    /// Pins the file at this position, or unpins it.
+    TogglePin(usize),
+    /// Gives the left pane this share of the split view's width, in thousandths.
+    Resize(u32),
     /// Answers the question asked before closing modified files.
     Unsaved(Unsaved),
 }
@@ -358,6 +364,9 @@ pub struct SavedFile {
     pub unsaved: Option<String>,
 }
 
+/// The narrowest share of the split view either pane may take.
+pub const PANE_SHARE_MIN: f32 = 0.15;
+
 /// The files open in the session view and the tab chosen.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct OpenFiles {
@@ -384,6 +393,8 @@ pub struct OpenFiles {
     /// The close waiting while the reader is asked what to do with the
     /// unsaved changes of the files it would close.
     pub asking: Option<TabAction>,
+    /// The share of the split view's width the left pane takes, or 0 for half.
+    pub share: f32,
 }
 
 impl OpenFiles {
@@ -461,7 +472,7 @@ impl OpenFiles {
         let replaced = self
             .files
             .iter()
-            .position(|held| held.preview && !held.is_dirty());
+            .position(|held| held.preview && !held.pinned && !held.is_dirty());
         let index = match replaced {
             Some(index) => {
                 self.files[index] = file;
@@ -489,12 +500,21 @@ impl OpenFiles {
             TabAction::Close(_)
             | TabAction::CloseOthers(_)
             | TabAction::CloseRight(_)
-            | TabAction::CloseAll => self.close_where(|at| Self::closes(action, at)),
+            | TabAction::CloseAll => {
+                let pinned = self.pinned_set();
+                self.close_where(|at| Self::closes(action, at, &pinned));
+            }
             TabAction::Unsaved(answer) => {
                 let held = self.asking.take();
                 if let (Some(close), Unsaved::Save | Unsaved::Discard) = (held, answer) {
-                    self.close_where(|at| Self::closes(close, at));
+                    let pinned = self.pinned_set();
+                    self.close_where(|at| Self::closes(close, at, &pinned));
                 }
+            }
+            TabAction::TogglePin(index) => self.toggle_pin(index),
+            TabAction::Resize(thousandths) => {
+                let share = thousandths as f32 / 1000.0;
+                self.share = share.clamp(PANE_SHARE_MIN, 1.0 - PANE_SHARE_MIN);
             }
             TabAction::Keep(index) => {
                 if let Some(file) = self.files.get_mut(index) {
@@ -564,25 +584,89 @@ impl OpenFiles {
         None
     }
 
-    /// Whether `action` closes the file at position `at`.
-    fn closes(action: TabAction, at: usize) -> bool {
+    /// Whether `action` closes the file at position `at`, given the positions of the `pinned` files, which only Close itself closes.
+    fn closes(action: TabAction, at: usize, pinned: &[usize]) -> bool {
         match action {
             TabAction::Close(index) => at == index,
-            TabAction::CloseOthers(index) => at != index,
-            TabAction::CloseRight(index) => at > index,
-            TabAction::CloseAll => true,
+            TabAction::CloseOthers(index) => at != index && !pinned.contains(&at),
+            TabAction::CloseRight(index) => at > index && !pinned.contains(&at),
+            TabAction::CloseAll => !pinned.contains(&at),
             _ => false,
         }
     }
 
     /// The positions of the modified files `action` would close.
     pub fn unsaved_closing(&self, action: TabAction) -> Vec<usize> {
+        let pinned = self.pinned_set();
         self.files
             .iter()
             .enumerate()
-            .filter(|(at, file)| Self::closes(action, *at) && file.is_dirty())
+            .filter(|(at, file)| Self::closes(action, *at, &pinned) && file.is_dirty())
             .map(|(at, _)| at)
             .collect()
+    }
+
+    /// The share of the split view's width the left pane takes.
+    pub fn left_share(&self) -> f32 {
+        if self.share <= 0.0 { 0.5 } else { self.share }
+    }
+
+    /// The positions of the pinned files.
+    fn pinned_set(&self) -> Vec<usize> {
+        self.files
+            .iter()
+            .enumerate()
+            .filter(|(_, file)| file.pinned)
+            .map(|(at, _)| at)
+            .collect()
+    }
+
+    /// Pins the file at `index`, moving it after the pinned files, or unpins it, moving it after them too.
+    fn toggle_pin(&mut self, index: usize) {
+        let Some(file) = self.files.get_mut(index) else {
+            return;
+        };
+        file.pinned = !file.pinned;
+        file.preview = false;
+        let pinned = file.pinned;
+        let others = self
+            .files
+            .iter()
+            .enumerate()
+            .filter(|(at, file)| *at != index && file.pinned)
+            .count();
+        let to = if pinned {
+            others
+        } else {
+            others.min(self.files.len() - 1)
+        };
+        self.move_file(index, to);
+    }
+
+    /// Moves the file at `from` to `to`, keeping the tabs shown in either pane on the same files.
+    fn move_file(&mut self, from: usize, to: usize) {
+        if from == to || from >= self.files.len() || to >= self.files.len() {
+            return;
+        }
+        let file = self.files.remove(from);
+        self.files.insert(to, file);
+        let moved = |at: usize| {
+            if at == from {
+                to
+            } else if from < at && at <= to {
+                at - 1
+            } else if to <= at && at < from {
+                at + 1
+            } else {
+                at
+            }
+        };
+        if let SessionTab::File(at) = self.tab {
+            self.tab = SessionTab::File(moved(at));
+        }
+        if let Some(SessionTab::File(at)) = self.split {
+            self.split = Some(SessionTab::File(moved(at)));
+        }
     }
 
     /// Stops offering to install the language called `name`.
@@ -643,6 +727,11 @@ impl OpenFiles {
             SessionTab::File(index) => Some(index),
             _ => None,
         };
+        let right = match self.split {
+            Some(SessionTab::File(index)) => Some(index),
+            _ => None,
+        };
+        let mut right_now = None;
         let mut kept = Vec::new();
         let mut shown_now = None;
         let mut nearest = None;
@@ -654,6 +743,9 @@ impl OpenFiles {
             if Some(index) == shown {
                 shown_now = Some(kept.len());
             }
+            if Some(index) == right {
+                right_now = Some(kept.len());
+            }
             if shown.is_some_and(|at| index < at) || nearest.is_none() {
                 nearest = Some(kept.len());
             }
@@ -662,6 +754,9 @@ impl OpenFiles {
         let excess = self.closed.len().saturating_sub(CLOSED_KEPT);
         self.closed.drain(..excess);
         self.files = kept;
+        if right.is_some() {
+            self.split = Some(right_now.map_or(SessionTab::Chat, SessionTab::File));
+        }
         if shown.is_some() {
             self.tab = match shown_now.or(nearest) {
                 Some(index) => SessionTab::File(index),
@@ -703,6 +798,37 @@ mod tests {
         assert_eq!(files.files.len(), 2);
         files.act(TabAction::CloseAll);
         assert_eq!(files.tab, SessionTab::Chat);
+    }
+
+    /// A pinned tab moves first and stays open through Close others and Close all, and the panes keep their files.
+    #[test]
+    fn pinned_tabs_stay() {
+        let mut files = OpenFiles::default();
+        files.open("d", "a.rs", true);
+        files.open("d", "b.rs", true);
+        files.open("d", "c.rs", true);
+        files.act(TabAction::TogglePin(2));
+        assert_eq!(files.files[0].path, "c.rs");
+        assert_eq!(files.tab, SessionTab::File(0));
+        files.act(TabAction::CloseOthers(1));
+        let left: Vec<&str> = files.files.iter().map(|file| file.path.as_str()).collect();
+        assert_eq!(left, vec!["c.rs", "a.rs"]);
+        files.act(TabAction::CloseAll);
+        assert_eq!(files.files.len(), 1);
+        assert_eq!(files.open("d", "d.rs", false), Some(1));
+    }
+
+    /// Closing a file keeps the right pane on the file it showed.
+    #[test]
+    fn right_pane_keeps_its_file() {
+        let mut files = OpenFiles::default();
+        files.open("d", "a.rs", true);
+        files.open("d", "b.rs", true);
+        files.act(TabAction::MoveTo(SessionTab::File(1), Pane::Right));
+        files.act(TabAction::Close(0));
+        assert_eq!(files.split, Some(SessionTab::File(0)));
+        files.act(TabAction::Resize(990));
+        assert_eq!(files.left_share(), 1.0 - PANE_SHARE_MIN);
     }
 
     /// Splitting shows the tab in the right pane, where chosen tabs then

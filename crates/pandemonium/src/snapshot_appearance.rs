@@ -26,6 +26,7 @@ const FLAGS: &[&str] = &[
     "soft-wrap",
     "no-minimap",
     "bar-terminal",
+    "dusk",
 ];
 
 /// Whether `word` is an appearance word.
@@ -51,6 +52,10 @@ fn apply_word(model: &mut SettingsModel, word: &str) {
         "soft-wrap" => model.editor.soft_wrap = pm_editor::SoftWrap::Edge,
         "no-minimap" => model.editor.minimap = false,
         "bar-terminal" => model.window.terminal.cursor = TerminalCursor::Bar,
+        "dusk" => {
+            appearance.dark_theme = "Dusk".to_owned();
+            appearance.light_theme = "Dusk".to_owned();
+        }
         _ => apply_valued(model, word),
     }
 }

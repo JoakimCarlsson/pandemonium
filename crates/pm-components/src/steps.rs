@@ -150,7 +150,7 @@ impl Step {
                 Arrangement::SpacedBy(crate::spacing(8.0)),
                 Alignment::Center,
                 || {
-                    icon(self.glyph.clone(), 13.0, scheme.on_surface_variant);
+                    icon(self.glyph.clone(), 14.0, scheme.on_surface_variant);
                     Label::new(self.title.clone())
                         .variant(LabelVariant::Muted)
                         .size(self.size)
@@ -275,7 +275,7 @@ impl Thought {
                 Arrangement::SpacedBy(crate::spacing(8.0)),
                 Alignment::Center,
                 || {
-                    icon(phosphor::BRAIN, 13.0, scheme.on_surface_variant);
+                    icon(phosphor::BRAIN, 14.0, scheme.on_surface_variant);
                     Label::new("Thought")
                         .variant(LabelVariant::Muted)
                         .size(self.size)

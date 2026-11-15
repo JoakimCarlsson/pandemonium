@@ -1,12 +1,16 @@
 //! The right panel's Files tab: the folder's tree with change marks and file
 //! icons, a menu of tree actions on each entry, names typed in place for new
 //! and renamed entries, entries dragged onto folders and files dropped from
-//! other applications imported.
+//! other applications imported; F2, Delete and the clipboard keys act on the
+//! entries chosen, and Ctrl or Shift with a click chooses several.
+
+use std::rc::Rc;
 
 use rustle::prelude::*;
+use rustle::{Key, KeyEvent, Modifiers, remember_focus};
 
 use pm_components::{IconButton, Label, LabelVariant, Menu, Size, TreeItem, TreeItemVariant};
-use pm_shell::{EditKind, FileTree, TreeAction, TreeRow, Workspace, name_of};
+use pm_shell::{EditKind, FileTree, PickHow, TreeAction, TreeRow, Workspace, name_of};
 
 use crate::actions::Actions;
 
@@ -26,10 +30,14 @@ pub fn files_panel(workspace: &Workspace, actions: &Actions) {
         let scroll = remember_scroll_state();
         let import = actions.tree.clone();
         let moved = actions.tree.clone();
+        let keys = actions.tree.clone();
+        let focus = remember_focus();
+        let naming = tree.editing.is_some();
         column_with(
             Modifier::new()
                 .fill_max_width()
                 .weight(1.0)
+                .focusable(&focus, move |event| !naming && tree_key(event, &keys))
                 .vertical_scroll(&scroll)
                 .on_file_drop(move |file| {
                     import(TreeAction::Import {
@@ -59,6 +67,31 @@ pub fn files_panel(workspace: &Workspace, actions: &Actions) {
     });
 }
 
+/// Does what the key `event` asks of the entries chosen, saying whether it was a tree key: F2 renames, Delete deletes, and Ctrl+X, Ctrl+C and Ctrl+V cut, copy and paste.
+fn tree_key(event: &KeyEvent, act: &Rc<dyn Fn(TreeAction)>) -> bool {
+    let action = if event.is(Key::F(2), Modifiers::NONE) {
+        TreeAction::RenameChosen
+    } else if event.is(Key::Delete, Modifiers::NONE) {
+        TreeAction::RemoveChosen
+    } else if is_command(event, "x") {
+        TreeAction::Hold { cut: true }
+    } else if is_command(event, "c") {
+        TreeAction::Hold { cut: false }
+    } else if is_command(event, "v") {
+        TreeAction::Paste
+    } else {
+        return false;
+    };
+    act(action);
+    true
+}
+
+/// Whether `event` presses the letter `letter` with Ctrl, or Command where shortcuts use it.
+fn is_command(event: &KeyEvent, letter: &str) -> bool {
+    let key = || Key::Character(letter.to_owned());
+    event.is(key(), Modifiers::CTRL) || event.is(key(), Modifiers::META)
+}
+
 /// The header: the folder's name and the buttons acting on the whole tree.
 fn header(tree: &FileTree, actions: &Actions) {
     let name = name_of(tree.root.trim_end_matches('/')).to_uppercase();
@@ -79,14 +112,14 @@ fn header(tree: &FileTree, actions: &Actions) {
                 (
                     phosphor::FILE_PLUS,
                     TreeAction::StartCreate {
-                        parent: selected_folder(tree),
+                        parent: tree.target_folder(),
                         folder: false,
                     },
                 ),
                 (
                     phosphor::FOLDER_PLUS,
                     TreeAction::StartCreate {
-                        parent: selected_folder(tree),
+                        parent: tree.target_folder(),
                         folder: true,
                     },
                 ),
@@ -112,15 +145,6 @@ fn glyph_name(action: &TreeAction) -> &'static str {
         TreeAction::StartCreate { folder: true, .. } => "new-folder",
         TreeAction::Refresh => "refresh",
         _ => "collapse",
-    }
-}
-
-/// The folder new entries go in: the folder chosen, the folder of the file chosen, or the root.
-fn selected_folder(tree: &FileTree) -> String {
-    match &tree.selected {
-        Some(path) if tree.is_folder(path) => path.clone(),
-        Some(path) => pm_shell::parent_of(path).to_owned(),
-        None => String::new(),
     }
 }
 
@@ -168,6 +192,7 @@ fn item(row: &TreeRow, actions: &Actions) {
     let open = actions.open_file.clone();
     let menu = actions.tree.clone();
     let menu_path = path.clone();
+    let pick = actions.tree.clone();
     let mut item = TreeItem::new(row.name.clone(), row.depth)
         .mark(row.mark)
         .selected(row.selected)
@@ -178,10 +203,14 @@ fn item(row: &TreeRow, actions: &Actions) {
         })
         .draggable(path.clone())
         .on_menu(move || menu(TreeAction::Menu(Some(menu_path.clone()))))
-        .on_click({
+        .on_pick({
             let path = path.clone();
-            move || {
-                if folder {
+            move |held: Modifiers| {
+                if held.shift {
+                    pick(TreeAction::Pick(path.clone(), PickHow::Range));
+                } else if held.command() {
+                    pick(TreeAction::Pick(path.clone(), PickHow::Toggle));
+                } else if folder {
                     click(TreeAction::Toggle(path.clone()));
                 } else {
                     click(TreeAction::Select(path.clone()));
@@ -286,6 +315,21 @@ fn entry_menu(row: &TreeRow, actions: &Actions) {
             "Duplicate",
             act(TreeAction::Duplicate(path.clone())),
         )
+        .separator()
+        .icon_item(
+            phosphor::SCISSORS,
+            "Cut",
+            act(TreeAction::Hold { cut: true }),
+        )
+        .hint("Ctrl+X")
+        .icon_item(
+            phosphor::COPY_SIMPLE,
+            "Copy",
+            act(TreeAction::Hold { cut: false }),
+        )
+        .hint("Ctrl+C")
+        .icon_item(phosphor::CLIPBOARD, "Paste", act(TreeAction::Paste))
+        .hint("Ctrl+V")
         .separator()
         .destructive_item(
             phosphor::TRASH,

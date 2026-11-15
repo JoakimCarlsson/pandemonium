@@ -43,6 +43,10 @@ pub struct Tab {
     on_menu: Option<Rc<dyn Fn()>>,
     /// What a double click does.
     on_double_click: Option<Rc<dyn Fn()>>,
+    /// Whether it is pinned, which marks it with a pin where the cross shows.
+    pinned: bool,
+    /// The colour of its icon in place of its words' colour.
+    icon_tint: Option<Color>,
 }
 
 impl Tab {
@@ -60,6 +64,8 @@ impl Tab {
             on_close: None,
             on_menu: None,
             on_double_click: None,
+            pinned: false,
+            icon_tint: None,
         }
     }
 
@@ -122,6 +128,18 @@ impl Tab {
         self
     }
 
+    /// The tab marked pinned when `pinned`: a pin shows where the cross does until it is hovered.
+    pub fn pinned(mut self, pinned: bool) -> Self {
+        self.pinned = pinned;
+        self
+    }
+
+    /// The icon painted `tint`, when given, instead of in the words' colour.
+    pub fn icon_tint(mut self, tint: Option<Color>) -> Self {
+        self.icon_tint = tint;
+        self
+    }
+
     /// The tab calling `on_double_click` when double-clicked.
     pub fn on_double_click(mut self, on_double_click: impl Fn() + 'static) -> Self {
         self.on_double_click = Some(Rc::new(on_double_click));
@@ -172,7 +190,7 @@ impl Tab {
         if let Some(on_double_click) = self.on_double_click.clone() {
             modifier = modifier.on_double_click(move || on_double_click());
         }
-        let closable = self.on_close.is_some() || self.dirty;
+        let closable = self.on_close.is_some() || self.dirty || self.pinned;
         let arrangement = if width.is_some() {
             Arrangement::Center
         } else {
@@ -180,7 +198,11 @@ impl Tab {
         };
         row_arranged(modifier, arrangement, Alignment::Center, move || {
             if let Some(glyph) = &self.icon {
-                icon(glyph.clone(), glyph_size(self.size), tint);
+                icon(
+                    glyph.clone(),
+                    glyph_size(self.size),
+                    self.icon_tint.unwrap_or(tint),
+                );
             }
             if !self.label.is_empty() {
                 let label = Label::new(self.label.clone())
@@ -197,6 +219,7 @@ impl Tab {
                 close_mark(
                     self.on_close.clone(),
                     self.dirty,
+                    self.pinned,
                     self.selected || hovered.get(),
                     glyph_size(self.size),
                 );
@@ -205,9 +228,16 @@ impl Tab {
     }
 }
 
-/// Emits the end of a closable tab: a dot while `dirty` and not `revealed`,
-/// otherwise a cross calling `on_close` that shows while `revealed`, `side` wide.
-fn close_mark(on_close: Option<Rc<dyn Fn()>>, dirty: bool, revealed: bool, side: f32) {
+/// Emits the end of a closable tab: a dot while `dirty` and not hovered, a pin
+/// while `pinned` and not hovered, otherwise a cross calling `on_close` that
+/// shows while `revealed`, `side` wide.
+fn close_mark(
+    on_close: Option<Rc<dyn Fn()>>,
+    dirty: bool,
+    pinned: bool,
+    revealed: bool,
+    side: f32,
+) {
     let scheme = color_scheme();
     let hovered = remember(|| false);
     let box_side = side + 4.0;
@@ -233,6 +263,8 @@ fn close_mark(on_close: Option<Rc<dyn Fn()>>, dirty: bool, revealed: bool, side:
                     .size(7.0, 7.0)
                     .background_rounded(scheme.on_surface, 3.5),
             );
+        } else if pinned && !hovered.get() {
+            icon(phosphor::PUSH_PIN, side - 2.0, scheme.on_surface_variant);
         } else if revealed || hovered.get() {
             icon(phosphor::X, side - 2.0, scheme.on_surface_variant);
         }
@@ -243,8 +275,8 @@ fn close_mark(on_close: Option<Rc<dyn Fn()>>, dirty: bool, revealed: bool, side:
 fn glyph_size(size: Size) -> f32 {
     match size {
         Size::Xs => 12.0,
-        Size::Sm => 13.0,
-        Size::Md => 15.0,
+        Size::Sm => 14.0,
+        Size::Md => 16.0,
         Size::Lg => 16.0,
     }
 }

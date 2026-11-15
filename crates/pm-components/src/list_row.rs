@@ -213,7 +213,7 @@ impl ListRow {
                         if let Some(note) = &self.note {
                             icon(phosphor::CARET_RIGHT, 12.0, scheme.on_surface_variant);
                             if let Some(glyph) = &self.note_icon {
-                                icon(glyph.clone(), 13.0, scheme.on_surface_variant);
+                                icon(glyph.clone(), 14.0, scheme.on_surface_variant);
                             }
                             Label::new(note.clone()).variant(LabelVariant::Muted).show();
                         }

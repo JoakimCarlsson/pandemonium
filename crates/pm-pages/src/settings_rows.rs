@@ -30,6 +30,10 @@ pub(crate) fn setting_row(
 ) {
     key(setting, || {
         let (title, about) = setting.words();
+        let about = match (&model.browser_note, setting) {
+            (Some(note), Setting::EmbeddedBrowser) => format!("{about} {note}"),
+            _ => about.to_owned(),
+        };
         let beside = matches!(setting.control(model), Control::Switch(_));
         let mut row = SettingRow::new(title, about).variant(if layout.stacked && !beside {
             SettingRowVariant::Stacked

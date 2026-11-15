@@ -86,6 +86,12 @@ const WORDS: &[&str] = &[
     "tab-menu",
     "tab-steps",
     "split",
+    "split-wide",
+    "tab-pinned",
+    "tab-many",
+    "files-picked",
+    "quick-help",
+    "quick-line",
     "excerpts",
     "update-tab",
     "files",
@@ -251,7 +257,17 @@ pub fn run(arguments: &[String]) -> i32 {
         workspace.open_files.tab = pm_shell::SessionTab::Diff;
     }
     if words.iter().any(|word| {
-        ["code", "tab-menu", "tab-steps", "split"].contains(word) || word.starts_with("code-")
+        [
+            "code",
+            "tab-menu",
+            "tab-steps",
+            "split",
+            "split-wide",
+            "tab-pinned",
+            "tab-many",
+        ]
+        .contains(word)
+            || word.starts_with("code-")
     }) {
         open_sample_files(&mut workspace.open_files);
         show_code_state(&mut workspace, &words);
@@ -475,13 +491,20 @@ fn show_review(workspace: &mut pm_shell::Workspace, words: &[&str]) {
 /// one, the Search tab, or the quick input on files, commands, sessions,
 /// lines or themes.
 fn show_panels(workspace: &mut pm_shell::Workspace, words: &[&str]) {
-    let marked = ["files", "file-menu", "file-delete"];
+    let marked = ["files", "file-menu", "file-delete", "files-picked"];
     if words.iter().any(|word| marked.contains(word)) {
         workspace.right_tab = pm_shell::RightTab::Files;
         workspace.git.changes = pm_shell::sample_changes();
     }
     if words.contains(&"file-menu") {
         workspace.tree.menu = Some("crates/pm-shell/src/link.rs".to_owned());
+    }
+    if words.contains(&"files-picked") {
+        workspace.tree.picked = [
+            "crates/pm-shell/src/search.rs".to_owned(),
+            "docs/protocol.md".to_owned(),
+        ]
+        .into();
     }
     if words.contains(&"file-delete") {
         workspace.tree.removing = Some("crates/pm-shell/src/link.rs".to_owned());
@@ -919,6 +942,18 @@ fn show_language_samples(workspace: &mut pm_shell::Workspace, words: &[&str]) {
             pm_shell::SessionTab::File(1),
             pm_shell::Pane::Right,
         ));
+    }
+    if words.contains(&"split-wide") {
+        files.act(pm_shell::TabAction::Resize(650));
+    }
+    if words.contains(&"tab-pinned") {
+        let last = files.files.len().saturating_sub(1);
+        files.act(pm_shell::TabAction::TogglePin(last));
+    }
+    if words.contains(&"tab-many") {
+        for index in 0..12 {
+            files.open("~/sample", &format!("src/module_{index}.rs"), true);
+        }
     }
 }
 

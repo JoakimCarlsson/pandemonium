@@ -7,7 +7,7 @@
 use rustle::prelude::*;
 use rustle::{Key, KeyEvent};
 
-use pm_components::{IconButton, Menu, Size, Tab};
+use pm_components::{IconButton, Menu, Size, Tab, file_glyph};
 use pm_shell::{BrowserAction, OpenFiles, Pane, SessionTab, TabAction, TabMenu, Workspace};
 
 use crate::actions::Actions;
@@ -34,82 +34,107 @@ pub fn session_tabs(workspace: &Workspace, actions: &Actions) {
         Arrangement::SpacedBy(pm_components::spacing(2.0)),
         Alignment::Center,
         move || {
-            plain_tab(
-                &agent,
-                phosphor::SPARKLE,
-                SessionTab::Chat,
-                shown,
-                &actions,
-                false,
+            let strip = remember_scroll_state();
+            row_arranged(
+                Modifier::new()
+                    .weight(1.0)
+                    .fill_max_height()
+                    .horizontal_scroll(&strip),
+                Arrangement::SpacedBy(pm_components::spacing(2.0)),
+                Alignment::Center,
+                || strip_tabs(&files, browser.as_ref(), &agent, update, shown, &actions),
             );
-            plain_tab(
-                "Diff",
-                phosphor::GIT_DIFF,
-                SessionTab::Diff,
-                shown,
-                &actions,
-                false,
-            );
-            for index in 0..files.files.len() {
-                key((index, files.files[index].path.clone()), || {
-                    file_tab(&files, index, shown, &actions)
-                });
-            }
-            if files.excerpts_tab {
-                plain_tab(
-                    "Excerpts",
-                    phosphor::LIST_MAGNIFYING_GLASS,
-                    SessionTab::Excerpts,
-                    shown,
-                    &actions,
-                    true,
-                );
-            }
-            if let Some(browser) = &browser {
-                let show = actions.file_tab.clone();
-                let close = actions.browser.clone();
-                draggable(SessionTab::Browser, || {
-                    Tab::new(browser.shown().label().chars().take(24).collect::<String>())
-                        .icon(phosphor::GLOBE)
-                        .size(Size::Xs)
-                        .selected(shown == SessionTab::Browser)
-                        .on_click(move || show(TabAction::Select(SessionTab::Browser)))
-                        .on_close(move || close(BrowserAction::Close))
-                        .show();
-                });
-            }
-            if update {
-                plain_tab(
-                    "Update",
-                    phosphor::ARROW_CIRCLE_UP,
-                    SessionTab::Update,
-                    shown,
-                    &actions,
-                    true,
-                );
-            }
-            spacer(Modifier::new().weight(1.0));
-            let open = actions.browser.clone();
-            IconButton::new(phosphor::GLOBE)
-                .size(Size::Xs)
-                .active(shown == SessionTab::Browser)
-                .on_click(move || open(BrowserAction::Open))
-                .show();
-            let split = actions.file_tab.clone();
-            let is_split = files.split.is_some();
-            IconButton::new(phosphor::SQUARE_SPLIT_HORIZONTAL)
-                .size(Size::Xs)
-                .active(is_split)
-                .on_click(move || {
-                    split(if is_split {
-                        TabAction::Unsplit
-                    } else {
-                        TabAction::Split
-                    })
-                })
-                .show();
+            buttons(&files, shown, &actions);
         },
     );
+}
+
+/// Emits the tabs of the strip, which scroll sideways when they don't fit.
+fn strip_tabs(
+    files: &OpenFiles,
+    browser: Option<&pm_shell::Browser>,
+    agent: &str,
+    update: bool,
+    shown: SessionTab,
+    actions: &Actions,
+) {
+    plain_tab(
+        agent,
+        phosphor::SPARKLE,
+        SessionTab::Chat,
+        shown,
+        actions,
+        false,
+    );
+    plain_tab(
+        "Diff",
+        phosphor::GIT_DIFF,
+        SessionTab::Diff,
+        shown,
+        actions,
+        false,
+    );
+    for index in 0..files.files.len() {
+        key((index, files.files[index].path.clone()), || {
+            file_tab(files, index, shown, actions)
+        });
+    }
+    if files.excerpts_tab {
+        plain_tab(
+            "Excerpts",
+            phosphor::LIST_MAGNIFYING_GLASS,
+            SessionTab::Excerpts,
+            shown,
+            actions,
+            true,
+        );
+    }
+    if let Some(browser) = browser {
+        let show = actions.file_tab.clone();
+        let close = actions.browser.clone();
+        draggable(SessionTab::Browser, || {
+            Tab::new(browser.shown().label().chars().take(24).collect::<String>())
+                .icon(phosphor::GLOBE)
+                .size(Size::Xs)
+                .selected(shown == SessionTab::Browser)
+                .on_click(move || show(TabAction::Select(SessionTab::Browser)))
+                .on_close(move || close(BrowserAction::Close))
+                .show();
+        });
+    }
+    if update {
+        plain_tab(
+            "Update",
+            phosphor::ARROW_CIRCLE_UP,
+            SessionTab::Update,
+            shown,
+            actions,
+            true,
+        );
+    }
+}
+
+/// Emits the buttons after the strip: the browser and splitting the view.
+fn buttons(files: &OpenFiles, shown: SessionTab, actions: &Actions) {
+    let open = actions.browser.clone();
+    IconButton::new(phosphor::GLOBE)
+        .size(Size::Xs)
+        .active(shown == SessionTab::Browser)
+        .on_click(move || open(BrowserAction::Open))
+        .show();
+    let split = actions.file_tab.clone();
+    let is_split = files.split.is_some();
+    IconButton::new(phosphor::SQUARE_SPLIT_HORIZONTAL)
+        .size(Size::Xs)
+        .active(is_split)
+        .on_click(move || {
+            split(if is_split {
+                TabAction::Unsplit
+            } else {
+                TabAction::Split
+            })
+        })
+        .show();
 }
 
 /// The tab showing in the pane tabs chosen show in.
@@ -164,15 +189,19 @@ fn file_tab(files: &OpenFiles, index: usize, shown: SessionTab, actions: &Action
     let markdown = file.is_markdown();
     let rendered = file.rendered;
     let path = file.path.clone();
+    let pinned = file.pinned;
+    let (glyph, tint) = file_glyph(&name);
     draggable(SessionTab::File(index), move || {
         let select = act.clone();
         let keep = act.clone();
         let close = act.clone();
         let opened = act.clone();
         Tab::new(name)
-            .icon(phosphor::FILE_TEXT)
+            .icon(glyph)
+            .icon_tint(tint)
             .size(Size::Xs)
             .selected(shown == SessionTab::File(index))
+            .pinned(pinned)
             .preview(preview)
             .dirty(dirty)
             .on_click(move || select(TabAction::Select(SessionTab::File(index))))
@@ -184,6 +213,7 @@ fn file_tab(files: &OpenFiles, index: usize, shown: SessionTab, actions: &Action
             tab_menu(
                 index,
                 preview,
+                pinned,
                 markdown.then_some(rendered),
                 split,
                 path,
@@ -200,6 +230,7 @@ fn file_tab(files: &OpenFiles, index: usize, shown: SessionTab, actions: &Action
 fn tab_menu(
     index: usize,
     preview: bool,
+    pinned: bool,
     markdown: Option<bool>,
     split: bool,
     path: String,
@@ -221,6 +252,10 @@ fn tab_menu(
     if preview {
         menu = menu.item("Keep open", pick(TabAction::Keep(index)));
     }
+    menu = menu.item(
+        if pinned { "Unpin" } else { "Pin" },
+        pick(TabAction::TogglePin(index)),
+    );
     if let Some(rendered) = markdown {
         let label = if rendered {
             "Show as text"

@@ -26,6 +26,10 @@ pub struct FileTree {
     pub expanded: BTreeSet<String>,
     /// The entry chosen.
     pub selected: Option<String>,
+    /// The entries chosen beside `selected` with Ctrl or Shift.
+    pub picked: BTreeSet<String>,
+    /// The entries cut or copied, waiting to be pasted.
+    pub held: Option<Held>,
     /// The entry whose menu is open; the empty path for the folder itself.
     pub menu: Option<String>,
     /// The name being typed for a new or renamed entry.
@@ -34,6 +38,24 @@ pub struct FileTree {
     pub removing: Option<String>,
     /// Whether the server answered for `root`.
     pub loaded: bool,
+}
+
+/// Entries cut or copied in the tree, waiting to be pasted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Held {
+    /// The entries, from the root of the folder.
+    pub paths: Vec<String>,
+    /// Whether pasting moves them rather than copying them.
+    pub cut: bool,
+}
+
+/// How a click chooses an entry of the tree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PickHow {
+    /// Adds the entry to the entries chosen, or takes it out.
+    Toggle,
+    /// Chooses every row from the entry chosen last to this one.
+    Range,
 }
 
 /// A name being typed in the tree.
@@ -90,6 +112,19 @@ pub enum TreeAction {
     Toggle(String),
     /// Chooses the entry.
     Select(String),
+    /// Chooses the entry along with others, as Ctrl or Shift and a click do.
+    Pick(String, PickHow),
+    /// Holds the entries chosen to be moved, when `cut`, or copied by the next paste.
+    Hold {
+        /// Whether pasting moves them.
+        cut: bool,
+    },
+    /// Moves or copies the entries held into the folder chosen.
+    Paste,
+    /// Starts renaming the entry chosen.
+    RenameChosen,
+    /// Asks the reader to confirm taking the entries chosen off the disk.
+    RemoveChosen,
     /// Opens the menu of the entry, or closes the open menu.
     Menu(Option<String>),
     /// Starts typing the name of a new entry.
@@ -120,7 +155,7 @@ pub enum TreeAction {
         /// The folder it goes into; empty for the root.
         into: String,
     },
-    /// Brings a file from the reader's machine into the folder.
+    /// Brings a file or folder from the reader's machine into the folder.
     Import {
         /// The folder it goes into; empty for the root.
         into: String,
@@ -181,7 +216,7 @@ impl FileTree {
                     .iter()
                     .any(|change| change.path.starts_with(&inside))
                     .then_some(FOLDER_MARK),
-                selected: self.selected.as_deref() == Some(path),
+                selected: self.is_chosen(path),
             });
             if expanded {
                 self.walk(children, path, depth + 1, changes, rows);
@@ -199,8 +234,66 @@ impl FileTree {
                     .iter()
                     .find(|change| &change.path == path)
                     .map(|change| change.status),
-                selected: self.selected.as_deref() == Some(path),
+                selected: self.is_chosen(path),
             });
+        }
+    }
+
+    /// Whether the entry at `path` is among those chosen.
+    pub fn is_chosen(&self, path: &str) -> bool {
+        self.selected.as_deref() == Some(path) || self.picked.contains(path)
+    }
+
+    /// The entries chosen, without those inside another chosen folder, in path order.
+    pub fn chosen(&self) -> Vec<String> {
+        let mut all: BTreeSet<String> = self.picked.clone();
+        all.extend(self.selected.clone());
+        let all: Vec<String> = all.into_iter().filter(|path| !path.is_empty()).collect();
+        all.iter()
+            .filter(|path| {
+                !all.iter()
+                    .any(|outer| outer != *path && path.starts_with(&format!("{outer}/")))
+            })
+            .cloned()
+            .collect()
+    }
+
+    /// The entries an action on `path` covers: every entry chosen when `path` is one of them, else `path` alone.
+    pub fn with_chosen(&self, path: String) -> Vec<String> {
+        if self.is_chosen(&path) && !self.picked.is_empty() {
+            self.chosen()
+        } else {
+            vec![path]
+        }
+    }
+
+    /// Whether an entry, file or folder, is at `path`.
+    pub fn has(&self, path: &str) -> bool {
+        self.paths.iter().any(|file| file == path) || self.is_folder(path)
+    }
+
+    /// The first path for `name` inside `into` that neither the tree nor `taken` holds: its own, then `name copy.ext`, `name copy 2.ext` and so on.
+    pub fn free_path(&self, into: &str, name: &str, taken: &[String]) -> String {
+        let (stem, extension) = split_extension(name);
+        (0..)
+            .map(|count| {
+                let name = match count {
+                    0 => name.to_owned(),
+                    1 => format!("{stem} copy{extension}"),
+                    count => format!("{stem} copy {count}{extension}"),
+                };
+                join(into, &name)
+            })
+            .find(|path| !self.has(path) && !taken.contains(path))
+            .unwrap_or_else(|| join(into, name))
+    }
+
+    /// The folder new and pasted entries go in: the folder chosen, the folder of the file chosen, or the root.
+    pub fn target_folder(&self) -> String {
+        match &self.selected {
+            Some(path) if self.is_folder(path) => path.clone(),
+            Some(path) => parent_of(path).to_owned(),
+            None => String::new(),
         }
     }
 
@@ -236,6 +329,30 @@ fn add_folder(children: &mut Children, folder: &str) {
             .0
             .insert(path.to_owned());
         path = parent;
+    }
+}
+
+/// `name` split before its extension, the dot going with the extension; a leading dot is part of the stem.
+fn split_extension(name: &str) -> (&str, &str) {
+    match name.rfind('.') {
+        Some(dot) if dot > 0 => name.split_at(dot),
+        _ => (name, ""),
+    }
+}
+
+/// Why `name` cannot name an entry, when it cannot.
+pub fn name_problem(name: &str) -> Option<&'static str> {
+    let name = name.trim();
+    if name.is_empty() {
+        Some("A name is needed.")
+    } else if name == "." || name == ".." {
+        Some("That name is reserved.")
+    } else if name.contains('/') || name.contains('\\') {
+        Some("A name can't hold a slash.")
+    } else if name.chars().any(char::is_control) {
+        Some("A name can't hold control characters.")
+    } else {
+        None
     }
 }
 
@@ -296,6 +413,41 @@ mod tests {
                 (0, "README.md".to_owned()),
             ]
         );
+    }
+
+    /// Free names skip the files already there, keeping the extension.
+    #[test]
+    fn free_paths_do_not_overwrite() {
+        let tree = tree();
+        assert_eq!(tree.free_path("src", "lib.rs", &[]), "src/lib.rs");
+        assert_eq!(tree.free_path("src", "main.rs", &[]), "src/main copy.rs");
+        assert_eq!(
+            tree.free_path("src", "main.rs", &["src/main copy.rs".to_owned()]),
+            "src/main copy 2.rs"
+        );
+        assert_eq!(tree.free_path("", "src", &[]), "src copy");
+    }
+
+    /// The entries chosen leave out those inside a chosen folder, and every one shows chosen.
+    #[test]
+    fn chosen_entries_are_outermost() {
+        let mut tree = tree();
+        tree.selected = Some("src/main.rs".into());
+        tree.picked = ["src".to_owned(), "README.md".to_owned()].into();
+        assert_eq!(
+            tree.chosen(),
+            vec!["README.md".to_owned(), "src".to_owned()]
+        );
+        assert!(tree.rows(&[]).iter().filter(|row| row.selected).count() == 3);
+    }
+
+    /// Names with slashes or nothing in them are refused.
+    #[test]
+    fn names_are_checked() {
+        assert!(name_problem("ok.rs").is_none());
+        assert!(name_problem(" ").is_some());
+        assert!(name_problem("a/b").is_some());
+        assert!(name_problem("..").is_some());
     }
 
     #[test]

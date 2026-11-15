@@ -43,6 +43,10 @@ pub enum Setting {
     AgentOrigins,
     /// Whether the window is light, dark or as the desktop says.
     ThemeMode,
+    /// The theme family drawn while the window is light.
+    LightTheme,
+    /// The theme family drawn while the window is dark.
+    DarkTheme,
     /// The font the interface is set in.
     InterfaceFont,
     /// How big the interface's text is.
@@ -263,7 +267,7 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting, in the order the pages show them.
-    pub const ALL: [Self; 119] = [
+    pub const ALL: [Self; 121] = [
         Self::Launch,
         Self::ConfirmClose,
         Self::CheckUpdates,
@@ -275,6 +279,8 @@ impl Setting {
         Self::RestrictAgentBrowsing,
         Self::AgentOrigins,
         Self::ThemeMode,
+        Self::LightTheme,
+        Self::DarkTheme,
         Self::InterfaceFont,
         Self::InterfaceSize,
         Self::CodeFont,
@@ -399,6 +405,8 @@ impl Setting {
             | Self::RestrictAgentBrowsing
             | Self::AgentOrigins => Section::Browser,
             Self::ThemeMode
+            | Self::LightTheme
+            | Self::DarkTheme
             | Self::InterfaceFont
             | Self::InterfaceSize
             | Self::CodeFont
@@ -592,6 +600,14 @@ impl Setting {
             Self::ThemeMode => (
                 "Theme mode",
                 "Light, dark, or whichever the desktop is set to.",
+            ),
+            Self::LightTheme => (
+                "Light theme",
+                "The theme drawn while the window is light: Default, Dusk, or one an extension brings.",
+            ),
+            Self::DarkTheme => (
+                "Dark theme",
+                "The theme drawn while the window is dark: Default, Dusk, or one an extension brings.",
             ),
             Self::InterfaceFont => (
                 "Interface font",

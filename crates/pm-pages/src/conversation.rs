@@ -93,7 +93,7 @@ fn message_body(message: &Message, last: bool, actions: &Actions) {
                 Alignment::Center,
                 || {
                     if let Some(footer) = &message.footer {
-                        icon(phosphor::CLOCK, 11.0, color_scheme().on_surface_variant);
+                        icon(phosphor::CLOCK, 12.0, color_scheme().on_surface_variant);
                         Label::new(footer.clone())
                             .variant(LabelVariant::Subtle)
                             .size(Size::Xs)

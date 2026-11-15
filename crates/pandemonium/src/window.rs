@@ -231,9 +231,11 @@ fn settings_window(link: &Rc<RefCell<Link>>, revision: &State<u64>, open: &State
     });
 }
 
-/// The Pandemonium theme the appearance settings `link` keeps choose, following the desktop's light or dark while the theme mode says so.
+/// The Pandemonium theme the appearance settings `link` keeps choose, following the desktop's light or dark while the theme mode says so; the file icons learn what the languages and icon themes installed give on the way.
 fn window_theme(link: &Rc<RefCell<Link>>) -> AppTheme {
-    pm_pages::window_theme(link.borrow().settings(), rustle::is_system_in_dark_theme())
+    let link = link.borrow();
+    pm_pages::learn_file_icons(link.settings());
+    pm_pages::window_theme(link.settings(), rustle::is_system_in_dark_theme())
 }
 
 /// The file the editor's settings are kept in.

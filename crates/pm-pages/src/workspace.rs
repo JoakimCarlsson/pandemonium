@@ -123,12 +123,26 @@ fn overlays(workspace: &Workspace, actions: &Actions) {
         let dismiss = actions.tree.clone();
         let remove = actions.tree.clone();
         let target = path.clone();
+        let count = workspace.tree.with_chosen(path.clone()).len();
+        let (title, message) = if count > 1 {
+            (
+                format!("Delete {count} entries?"),
+                format!(
+                    "{count} entries, starting with {path}, and everything in them are taken off the disk. This cannot be undone."
+                ),
+            )
+        } else {
+            (
+                format!("Delete {}?", name_of(path)),
+                format!(
+                    "{path} and everything in it is taken off the disk. This cannot be undone."
+                ),
+            )
+        };
         Modal::new()
             .size(Size::Sm)
-            .title(format!("Delete {}?", name_of(path)))
-            .message(format!(
-                "{path} and everything in it is taken off the disk. This cannot be undone."
-            ))
+            .title(title)
+            .message(message)
             .show(
                 move || dismiss(TreeAction::Cancel),
                 || {

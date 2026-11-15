@@ -5,6 +5,9 @@ use rustle::prelude::*;
 use crate::size::Size;
 use rustle::color_scheme;
 
+/// The gold folders are drawn in.
+pub const FOLDER_COLOUR: Color = Color::rgb(0xd9, 0xa9, 0x5b);
+
 /// How a file icon is tinted.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FileIconVariant {
@@ -65,11 +68,11 @@ impl FileIcon {
             Size::Xs => 12.0,
             Size::Sm => 14.0,
             Size::Md => 16.0,
-            Size::Lg => 18.0,
+            Size::Lg => 16.0,
         };
         let (glyph, tint) = match self.folder {
-            Some(true) => (phosphor::FOLDER_OPEN, Some(scheme.on_surface_variant)),
-            Some(false) => (phosphor::FOLDER, Some(scheme.on_surface_variant)),
+            Some(true) => (phosphor::FOLDER_OPEN, Some(FOLDER_COLOUR)),
+            Some(false) => (phosphor::FOLDER, Some(FOLDER_COLOUR)),
             None => file_glyph(&self.name),
         };
         let tint = match self.variant {
@@ -82,6 +85,14 @@ impl FileIcon {
 
 /// The glyph of the file called `name`, and the colour of its kind when it has one.
 pub fn file_glyph(name: &str) -> (Icon, Option<Color>) {
+    if let Some(learned) = crate::learned_icons::learned_glyph(name) {
+        return learned;
+    }
+    builtin_glyph(name)
+}
+
+/// The glyph the app draws for the file called `name` when nothing installed gives it one, and the colour of its kind when it has one.
+fn builtin_glyph(name: &str) -> (Icon, Option<Color>) {
     let lower = name.to_lowercase();
     let ending = lower.rsplit_once('.').map_or("", |(_, ending)| ending);
     let tone = |r, g, b| Some(Color::rgb(r, g, b));

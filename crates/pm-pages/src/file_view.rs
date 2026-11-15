@@ -301,7 +301,7 @@ fn language_bar(offer: &Extension, index: usize, actions: &Actions) {
         Arrangement::SpacedBy(pm_components::spacing(8.0)),
         Alignment::Center,
         move || {
-            icon(phosphor::PUZZLE_PIECE, 13.0, scheme.primary);
+            icon(phosphor::PUZZLE_PIECE, 14.0, scheme.primary);
             Label::new(text.clone())
                 .size(Size::Xs)
                 .modifier(Modifier::new().weight(1.0))

@@ -2,7 +2,11 @@
 //! `>` the window's commands, `#` the project's symbols, `@` the outline of
 //! the open file and `%` the lines of the project holding some text; and
 //! the lists of choices it shows in their place: sessions to switch to,
-//! appearances, keymaps, settings pages, turns to rewind to and branches.
+//! appearances, keymaps, settings pages, turns to rewind to, branches,
+//! tasks, debug scenarios and toolchains. `:` goes to a line of the open
+//! file and `?` lists the prefixes.
+
+use pm_editor::{Action, Keymap};
 
 use crate::model::{Project, Workspace};
 
@@ -22,6 +26,10 @@ pub struct QuickInput {
     pub found: Vec<QuickItem>,
     /// The query the server is asked about, while it has not answered.
     pub waiting: Option<String>,
+    /// The window's commands, with the keys the keymap binds them to, the recently used first.
+    pub commands: Vec<QuickItem>,
+    /// The files opened lately from the quick input, the latest first.
+    pub recent_files: Vec<String>,
 }
 
 /// What the quick input lists, by the prefix typed.
@@ -37,7 +45,21 @@ pub enum QuickMode {
     Outline,
     /// The lines of the project holding the text, after `%`.
     Text,
+    /// A line of the open file to go to, after `:`.
+    Line,
+    /// The prefixes that can be typed first, after `?`.
+    Help,
 }
+
+/// Each prefix the quick input understands, with what it lists.
+pub const PREFIXES: [(&str, &str); 6] = [
+    (">", "Run a command"),
+    ("#", "Go to a symbol in the project"),
+    ("@", "Go to a symbol in the open file"),
+    ("%", "Find text in the project"),
+    (":", "Go to a line of the open file"),
+    ("?", "Show what can be typed first"),
+];
 
 /// A list of choices the quick input shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,6 +88,12 @@ pub enum Choosing {
     Fork,
     /// The reader's turns of the open session, to put its files back as they were before.
     Restore,
+    /// The tasks of the project, to run one.
+    Task,
+    /// What the project can be debugged as, to start one.
+    Debug,
+    /// The toolchains the project's languages can be started with, to choose one.
+    Toolchain,
 }
 
 /// One row of the quick input.
@@ -122,6 +150,17 @@ pub enum QuickPick {
     Choose(Choosing, usize),
     /// Puts back the state of the open file kept under this number.
     Version(u64),
+    /// Does the keymap action.
+    Action(Action),
+    /// Types the prefix into the field.
+    Prefix(String),
+    /// Chooses the toolchain a language of the open project starts with.
+    Toolchain {
+        /// The language, by family.
+        language: String,
+        /// The toolchain, by the id the server gave it.
+        id: String,
+    },
 }
 
 /// A command of the window.
@@ -179,34 +218,97 @@ pub enum Command {
     Problems,
 }
 
-/// Every command, with what it reads and the keys bound to it.
-pub const COMMANDS: [(Command, &str, &str); 25] = [
-    (Command::SwitchSession, "Switch session", "Ctrl+Tab"),
-    (Command::NewChat, "New chat", "Ctrl+N"),
-    (Command::ToggleSidebar, "Toggle sidebar", "Ctrl+B"),
-    (Command::ToggleDock, "Toggle dock", "Ctrl+J"),
-    (Command::ToggleRight, "Toggle right panel", "Ctrl+Alt+B"),
-    (Command::Files, "Show files", "Ctrl+Shift+E"),
-    (Command::Search, "Search in project", "Ctrl+Shift+F"),
-    (Command::Git, "Show source control", "Ctrl+Shift+G"),
-    (Command::Symbols, "Go to symbol in project", "Ctrl+T"),
-    (Command::Outline, "Go to symbol in file", "Ctrl+Shift+O"),
-    (Command::FindText, "Find text in project", ""),
-    (Command::References, "Find all references", "Shift+F12"),
-    (Command::CodeActions, "Show code actions", "Ctrl+."),
-    (Command::LocalHistory, "Show local history of file", ""),
-    (Command::Problems, "List problems", "Ctrl+Shift+M"),
-    (Command::Back, "Go back", "Alt+Left"),
-    (Command::Forward, "Go forward", "Alt+Right"),
-    (Command::History, "Show history", "Ctrl+H"),
-    (Command::Extensions, "Show extensions", "Ctrl+Shift+X"),
-    (Command::Settings, "Open settings", "Ctrl+,"),
-    (Command::Setting, "Open settings page", ""),
-    (Command::Theme, "Choose appearance", "Ctrl+K Ctrl+T"),
-    (Command::Keymap, "Choose keymap", ""),
-    (Command::Rewind, "Rewind conversation", ""),
-    (Command::Branch, "Switch branch", ""),
+/// Every command, with what it reads and the keymap action whose keys it shows.
+pub const COMMANDS: [(Command, &str, Option<Action>); 25] = [
+    (
+        Command::SwitchSession,
+        "Switch session",
+        Some(Action::GoToSession),
+    ),
+    (Command::NewChat, "New chat", Some(Action::NewChat)),
+    (Command::ToggleSidebar, "Toggle sidebar", None),
+    (
+        Command::ToggleDock,
+        "Toggle dock",
+        Some(Action::ToggleTerminal),
+    ),
+    (Command::ToggleRight, "Toggle right panel", None),
+    (Command::Files, "Show files", None),
+    (
+        Command::Search,
+        "Search in project",
+        Some(Action::SearchProject),
+    ),
+    (
+        Command::Git,
+        "Show source control",
+        Some(Action::ToggleSourceControl),
+    ),
+    (
+        Command::Symbols,
+        "Go to symbol in project",
+        Some(Action::ProjectSymbols),
+    ),
+    (
+        Command::Outline,
+        "Go to symbol in file",
+        Some(Action::Outline),
+    ),
+    (Command::FindText, "Find text in project", None),
+    (
+        Command::References,
+        "Find all references",
+        Some(Action::FindReferences),
+    ),
+    (
+        Command::CodeActions,
+        "Show code actions",
+        Some(Action::CodeActions),
+    ),
+    (
+        Command::LocalHistory,
+        "Show local history of file",
+        Some(Action::FileHistory),
+    ),
+    (Command::Problems, "List problems", Some(Action::Problems)),
+    (Command::Back, "Go back", Some(Action::WorkspaceBack)),
+    (
+        Command::Forward,
+        "Go forward",
+        Some(Action::WorkspaceForward),
+    ),
+    (Command::History, "Show history", Some(Action::ShowHistory)),
+    (
+        Command::Extensions,
+        "Show extensions",
+        Some(Action::ShowExtensions),
+    ),
+    (
+        Command::Settings,
+        "Open settings",
+        Some(Action::OpenSettings),
+    ),
+    (Command::Setting, "Open settings page", None),
+    (
+        Command::Theme,
+        "Choose appearance",
+        Some(Action::ChangeTheme),
+    ),
+    (Command::Keymap, "Choose keymap", Some(Action::ChangeKeymap)),
+    (
+        Command::Rewind,
+        "Rewind conversation",
+        Some(Action::RewindConversation),
+    ),
+    (
+        Command::Branch,
+        "Switch branch",
+        Some(Action::CheckoutBranch),
+    ),
 ];
+
+/// How many files and commands the quick input remembers as used lately.
+pub const RECENT_LIMIT: usize = 8;
 
 /// What the person does in the quick input.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -252,6 +354,8 @@ impl QuickInput {
             Some('#') => QuickMode::Symbols,
             Some('@') => QuickMode::Outline,
             Some('%') => QuickMode::Text,
+            Some(':') => QuickMode::Line,
+            Some('?') => QuickMode::Help,
             _ => QuickMode::Files,
         }
     }
@@ -282,7 +386,14 @@ impl QuickInput {
             Some(Choosing::Problems) => "Go to a problem",
             Some(Choosing::Fork) => "Branch a new session off before a turn",
             Some(Choosing::Restore) => "Put the files back as they were before a turn",
-            None => "Search files by name, > commands, # symbols, @ outline, % text",
+            Some(Choosing::Task) => "Run a task",
+            Some(Choosing::Debug) => "Start debugging",
+            Some(Choosing::Toolchain) => "Choose a toolchain",
+            None => match self.mode() {
+                QuickMode::Line => "Go to a line by its number",
+                QuickMode::Help => "Type a prefix, or select one",
+                _ => "Search files by name (type ? to see what else can be typed first)",
+            },
         }
     }
 }
@@ -297,8 +408,13 @@ pub fn quick_items(workspace: &Workspace) -> Vec<QuickItem> {
         Some(Choosing::Session) => ranked(session_items(&workspace.projects, ""), needle),
         Some(_) => ranked(quick.found.clone(), needle),
         None => match quick.mode() {
-            QuickMode::Files => ranked(file_items(&workspace.tree.paths), needle),
-            QuickMode::Commands => ranked(command_items(), needle),
+            QuickMode::Files => ranked(
+                file_items(&workspace.tree.paths, &quick.recent_files),
+                needle,
+            ),
+            QuickMode::Commands => ranked(quick.commands.clone(), needle),
+            QuickMode::Line => line_items(workspace, needle),
+            QuickMode::Help => ranked(help_items(), needle),
             QuickMode::Symbols | QuickMode::Outline | QuickMode::Text => quick.found.clone(),
         },
     };
@@ -306,10 +422,12 @@ pub fn quick_items(workspace: &Workspace) -> Vec<QuickItem> {
     items
 }
 
-/// A row for each file of `paths`.
-fn file_items(paths: &[String]) -> Vec<QuickItem> {
-    paths
-        .iter()
+/// A row for each file of `paths`, those of `recent` that are among them first, the latest first.
+fn file_items(paths: &[String], recent: &[String]) -> Vec<QuickItem> {
+    let lately = recent.iter().filter(|path| paths.contains(path));
+    let rest = paths.iter().filter(|path| !recent.contains(path));
+    lately
+        .chain(rest)
         .map(|path| {
             let (folder, name) = path.rsplit_once('/').unwrap_or(("", path));
             QuickItem {
@@ -327,17 +445,85 @@ fn file_items(paths: &[String]) -> Vec<QuickItem> {
         .collect()
 }
 
-/// A row for each command.
-fn command_items() -> Vec<QuickItem> {
-    COMMANDS
+/// A row for each command of the window and each keymap action that works everywhere, with the keys `keymap` binds them to, those titled in `recent` first, the latest first.
+pub fn command_items(keymap: &Keymap, recent: &[String]) -> Vec<QuickItem> {
+    let covered: Vec<Action> = COMMANDS
         .iter()
-        .map(|(command, title, keys)| QuickItem {
-            title: (*title).to_owned(),
+        .filter_map(|(_, _, action)| *action)
+        .collect();
+    let commands = COMMANDS.iter().map(|(command, title, action)| QuickItem {
+        title: (*title).to_owned(),
+        detail: String::new(),
+        kind: QuickKind::Command,
+        keys: action.and_then(|action| keymap.label(action)),
+        matched: Vec::new(),
+        pick: QuickPick::Command(*command),
+    });
+    let actions = Action::ALL
+        .into_iter()
+        .filter(|action| {
+            action.everywhere() && *action != Action::CommandPalette && !covered.contains(action)
+        })
+        .map(|action| QuickItem {
+            title: action.title().to_owned(),
             detail: String::new(),
             kind: QuickKind::Command,
-            keys: (!keys.is_empty()).then(|| (*keys).to_owned()),
+            keys: keymap.label(action),
             matched: Vec::new(),
-            pick: QuickPick::Command(*command),
+            pick: QuickPick::Action(action),
+        });
+    let mut items: Vec<QuickItem> = commands.chain(actions).collect();
+    let lead = |item: &QuickItem| {
+        recent
+            .iter()
+            .position(|title| *title == item.title)
+            .unwrap_or(usize::MAX)
+    };
+    items.sort_by_key(lead);
+    items
+}
+
+/// The row that goes to the line `needle` names in the open file, or a row saying what to type.
+fn line_items(workspace: &Workspace, needle: &str) -> Vec<QuickItem> {
+    let Some(file) = workspace.open_files.shown() else {
+        return Vec::new();
+    };
+    let lines = file.document.0.borrow().field.text().lines().count().max(1);
+    let line = needle
+        .parse::<usize>()
+        .ok()
+        .filter(|line| (1..=lines).contains(line));
+    let title = match line {
+        Some(line) => format!("Go to line {line}"),
+        None => format!("Type a line number between 1 and {lines}"),
+    };
+    vec![QuickItem {
+        title,
+        detail: file.path.clone(),
+        kind: QuickKind::Text,
+        keys: None,
+        matched: Vec::new(),
+        pick: match line {
+            Some(line) => QuickPick::Open {
+                path: file.path.clone(),
+                line: Some(line),
+            },
+            None => QuickPick::Prefix(":".to_owned()),
+        },
+    }]
+}
+
+/// A row for each prefix the quick input understands.
+fn help_items() -> Vec<QuickItem> {
+    PREFIXES
+        .iter()
+        .map(|(prefix, what)| QuickItem {
+            title: (*what).to_owned(),
+            detail: String::new(),
+            kind: QuickKind::Command,
+            keys: Some((*prefix).to_owned()),
+            matched: Vec::new(),
+            pick: QuickPick::Prefix((*prefix).to_owned()),
         })
         .collect()
 }
@@ -436,6 +622,9 @@ mod tests {
         assert_eq!(quick("@main").mode(), QuickMode::Outline);
         assert_eq!(quick("%todo").mode(), QuickMode::Text);
         assert_eq!(quick("main.rs").mode(), QuickMode::Files);
+        assert_eq!(quick(":12").mode(), QuickMode::Line);
+        assert_eq!(quick(":12").needle(), "12");
+        assert_eq!(quick("?").mode(), QuickMode::Help);
     }
 
     #[test]
@@ -462,8 +651,42 @@ mod tests {
         assert_eq!(items[0].title, "link.rs");
         workspace.quick = Some(QuickInput {
             query: ">dock".into(),
+            commands: command_items(&Keymap::default(), &[]),
             ..QuickInput::default()
         });
         assert_eq!(quick_items(&workspace)[0].title, "Toggle dock");
+        workspace.quick = Some(QuickInput {
+            query: "?".into(),
+            ..QuickInput::default()
+        });
+        assert_eq!(quick_items(&workspace).len(), PREFIXES.len());
+    }
+
+    /// The command list holds every action that works everywhere, with the keys the keymap binds, and the recently used lead.
+    #[test]
+    fn commands_come_from_the_keymap() {
+        let keymap = Keymap::new(pm_editor::Preset::default(), &Default::default());
+        let items = command_items(&keymap, &["Push".to_owned()]);
+        assert_eq!(items[0].title, "Push");
+        assert!(
+            items
+                .iter()
+                .any(|item| item.pick == QuickPick::Action(Action::StartDebugging))
+        );
+        let palette = items
+            .iter()
+            .find(|item| item.pick == QuickPick::Command(Command::Settings))
+            .unwrap();
+        assert!(palette.keys.is_some());
+        assert_eq!(palette.keys, keymap.label(Action::OpenSettings));
+    }
+
+    /// Recently opened files lead the file list.
+    #[test]
+    fn recent_files_lead() {
+        let paths = vec!["a.rs".to_owned(), "b.rs".to_owned()];
+        let items = file_items(&paths, &["b.rs".to_owned(), "gone.rs".to_owned()]);
+        assert_eq!(items[0].title, "b.rs");
+        assert_eq!(items.len(), 2);
     }
 }
