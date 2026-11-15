@@ -13,11 +13,14 @@ use pm_shell::{DebugCommand, DebugModel, DebugSession, DebugStanding, DebugVaria
 
 use crate::actions::Actions;
 
-/// How wide the column of the stack, or of the scenarios, is.
-const STACK_WIDTH: f32 = 260.0;
+/// The share of the tab's width the column of the stack takes.
+const STACK_SHARE: f32 = 0.32;
 
-/// How wide the column of the breakpoints, watches and console is.
-const SIDE_WIDTH: f32 = 320.0;
+/// The share of the tab's width the column of the variables, or of the scenarios, takes.
+const VARIABLES_SHARE: f32 = 0.33;
+
+/// The share of the tab's width the column of the breakpoints, watches and console takes.
+const SIDE_SHARE: f32 = 0.35;
 
 /// Emits the Debug tab for `model`.
 pub fn debug_panel(model: &DebugModel, actions: &Actions) {
@@ -44,54 +47,58 @@ fn scrolling(modifier: Modifier, content: impl FnOnce()) {
 
 /// The scenarios the folder can be debugged as, each starting a session when pressed.
 fn scenarios(model: &DebugModel, actions: &Actions) {
-    scrolling(Modifier::new().weight(1.0), || {
-        if let Some(error) = &model.error {
-            Label::new(error.clone())
-                .colour(color_scheme().error)
-                .size(Size::Xs)
-                .show();
-        }
-        if !model.loaded {
-            Label::new("Open a session to debug its folder.")
-                .variant(LabelVariant::Subtle)
-                .size(Size::Xs)
-                .show();
-            return;
-        }
-        if model.scenarios.is_empty() {
-            Label::new("Nothing in the folder can be debugged.")
-                .variant(LabelVariant::Subtle)
-                .size(Size::Xs)
-                .show();
-        }
-        for (index, scenario) in model.scenarios.iter().enumerate() {
-            key(index, || {
-                let start = actions.debug_start.clone();
-                let note = if scenario.installed {
-                    scenario.adapter.clone()
-                } else {
-                    format!("{} (not installed)", scenario.adapter)
-                };
-                ListRow::new(scenario.label.clone())
-                    .leading(Leading::Icon(phosphor::BUG))
-                    .note(note)
-                    .variant(if scenario.installed {
-                        ListRowVariant::Plain
-                    } else {
-                        ListRowVariant::Dimmed
-                    })
+    scrolling(
+        Modifier::new().weight(STACK_SHARE + VARIABLES_SHARE),
+        || {
+            if let Some(error) = &model.error {
+                Label::new(error.clone())
+                    .colour(color_scheme().error)
                     .size(Size::Xs)
-                    .on_click(move || start(index))
                     .show();
-            });
-        }
-    });
+            }
+            if !model.loaded {
+                Label::new("Open a session to debug its folder.")
+                    .variant(LabelVariant::Subtle)
+                    .size(Size::Xs)
+                    .show();
+                return;
+            }
+            if model.scenarios.is_empty() {
+                Label::new("Nothing in the folder can be debugged.")
+                    .variant(LabelVariant::Subtle)
+                    .size(Size::Xs)
+                    .show();
+            }
+            for (index, scenario) in model.scenarios.iter().enumerate() {
+                key(index, || {
+                    let start = actions.debug_start.clone();
+                    let note = if scenario.installed {
+                        scenario.adapter.clone()
+                    } else {
+                        format!("{} (not installed)", scenario.adapter)
+                    };
+                    ListRow::new(scenario.label.clone())
+                        .leading(Leading::Icon(phosphor::BUG))
+                        .note(note)
+                        .variant(if scenario.installed {
+                            ListRowVariant::Plain
+                        } else {
+                            ListRowVariant::Dimmed
+                        })
+                        .size(Size::Xs)
+                        .on_click(move || start(index))
+                        .show();
+                });
+            }
+        },
+    );
 }
 
 /// The session's controls over its stack, and its variables beside them.
 fn session_columns(session: &DebugSession, actions: &Actions) {
-    scrolling(Modifier::new().width(STACK_WIDTH), || {
+    scrolling(Modifier::new().weight(STACK_SHARE), || {
         controls(session, actions);
+        heading("Call stack");
         for frame in &session.frames {
             key(frame.id, || {
                 let choose = actions.debug_command.clone();
@@ -110,7 +117,8 @@ fn session_columns(session: &DebugSession, actions: &Actions) {
             });
         }
     });
-    scrolling(Modifier::new().weight(1.0), || {
+    scrolling(Modifier::new().weight(VARIABLES_SHARE), || {
+        heading("Variables");
         if session.scopes.is_empty() {
             Label::new(match session.standing {
                 DebugStanding::Stopped => "The frame has no variables.",
@@ -132,6 +140,15 @@ fn session_columns(session: &DebugSession, actions: &Actions) {
             });
         }
     });
+}
+
+/// A muted heading over a column of the tab, reading `title`.
+fn heading(title: &str) {
+    Label::new(title)
+        .variant(LabelVariant::Muted)
+        .size(Size::Xs)
+        .modifier(Modifier::new().padding_xy(4.0, 4.0))
+        .show();
 }
 
 /// The buttons that drive the session, each with a tooltip and enabled only while the program stands where it applies, and how it stands.
@@ -235,12 +252,13 @@ fn variable_row(variable: &DebugVariableEntry, actions: &Actions) {
 
 /// The breakpoints and the watches over the console, then the box that evaluates an expression while a session runs.
 fn side_column(model: &DebugModel, actions: &Actions) {
-    column_with(Modifier::new().width(SIDE_WIDTH).fill_max_height(), || {
+    column_with(Modifier::new().weight(SIDE_SHARE).fill_max_height(), || {
         let scroll = remember_scroll_state();
         column_with(
             Modifier::new()
                 .fill_max_width()
                 .weight(1.0)
+                .clip()
                 .vertical_scroll(&scroll),
             || {
                 breakpoints(model, actions);
@@ -252,6 +270,7 @@ fn side_column(model: &DebugModel, actions: &Actions) {
         let Some(session) = &model.session else {
             return;
         };
+        heading("Console");
         console(&session.console);
         if session.standing != DebugStanding::Ended {
             evaluate_box(actions);
@@ -333,7 +352,7 @@ fn console(lines: &[String]) {
     let list = remember_lazy_list_state();
     list.set_stick_to_end(true);
     lazy_list_keyed(
-        Modifier::new().fill_max_width().weight(1.0),
+        Modifier::new().fill_max_width().weight(1.0).clip(),
         &list,
         lines.len(),
         |index| index,

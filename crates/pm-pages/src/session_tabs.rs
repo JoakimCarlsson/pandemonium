@@ -7,10 +7,13 @@
 use rustle::prelude::*;
 use rustle::{Key, KeyEvent};
 
-use pm_components::{IconButton, Menu, Size, Tab, file_glyph};
+use pm_components::{IconButton, Menu, Size, Tab, TabVariant, file_glyph};
 use pm_shell::{BrowserAction, OpenFiles, Pane, SessionTab, TabAction, TabMenu, Workspace};
 
 use crate::actions::Actions;
+
+/// How tall the strip of tabs over the session view is.
+const STRIP_HEIGHT: f32 = 48.0;
 
 /// Emits the strip of tabs over the session view.
 pub fn session_tabs(workspace: &Workspace, actions: &Actions) {
@@ -28,11 +31,11 @@ pub fn session_tabs(workspace: &Workspace, actions: &Actions) {
     row_arranged(
         Modifier::new()
             .fill_max_width()
-            .height(36.0)
+            .height(pm_components::row_height(STRIP_HEIGHT))
             .border_bottom_hairline(scheme.outline_variant)
-            .padding_xy(8.0, 0.0),
-        Arrangement::SpacedBy(pm_components::spacing(2.0)),
-        Alignment::Center,
+            .padding_xy(12.0, 0.0),
+        Arrangement::SpacedBy(pm_components::spacing(4.0)),
+        Alignment::End,
         move || {
             let strip = remember_scroll_state();
             row_arranged(
@@ -40,11 +43,16 @@ pub fn session_tabs(workspace: &Workspace, actions: &Actions) {
                     .weight(1.0)
                     .fill_max_height()
                     .horizontal_scroll(&strip),
-                Arrangement::SpacedBy(pm_components::spacing(2.0)),
-                Alignment::Center,
+                Arrangement::SpacedBy(pm_components::spacing(4.0)),
+                Alignment::End,
                 || strip_tabs(&files, browser.as_ref(), &agent, update, shown, &actions),
             );
-            buttons(&files, shown, &actions);
+            row_arranged(
+                Modifier::new().height(pm_components::row_height(pm_components::STRIP_TAB_HEIGHT)),
+                Arrangement::SpacedBy(pm_components::spacing(4.0)),
+                Alignment::Center,
+                || buttons(&files, shown, &actions),
+            );
         },
     );
 }
@@ -95,7 +103,8 @@ fn strip_tabs(
         draggable(SessionTab::Browser, || {
             Tab::new(browser.shown().label().chars().take(24).collect::<String>())
                 .icon(phosphor::GLOBE)
-                .size(Size::Xs)
+                .size(Size::Sm)
+                .variant(TabVariant::Strip)
                 .selected(shown == SessionTab::Browser)
                 .on_click(move || show(TabAction::Select(SessionTab::Browser)))
                 .on_close(move || close(BrowserAction::Close))
@@ -118,7 +127,7 @@ fn strip_tabs(
 fn buttons(files: &OpenFiles, shown: SessionTab, actions: &Actions) {
     let open = actions.browser.clone();
     IconButton::new(phosphor::GLOBE)
-        .size(Size::Xs)
+        .size(Size::Sm)
         .tooltip("Open the browser")
         .active(shown == SessionTab::Browser)
         .on_click(move || open(BrowserAction::Open))
@@ -126,7 +135,7 @@ fn buttons(files: &OpenFiles, shown: SessionTab, actions: &Actions) {
     let split = actions.file_tab.clone();
     let is_split = files.split.is_some();
     IconButton::new(phosphor::SQUARE_SPLIT_HORIZONTAL)
-        .size(Size::Xs)
+        .size(Size::Sm)
         .tooltip(if is_split {
             "Close the split"
         } else {
@@ -173,7 +182,8 @@ fn plain_tab(
     draggable(tab, move || {
         let mut chip = Tab::new(label)
             .icon(glyph)
-            .size(Size::Xs)
+            .size(Size::Sm)
+            .variant(TabVariant::Strip)
             .selected(shown == tab)
             .on_click(move || select(TabAction::Select(tab)));
         if closes {
@@ -206,7 +216,8 @@ fn file_tab(files: &OpenFiles, index: usize, shown: SessionTab, actions: &Action
             .icon(glyph)
             .icon_tint(tint)
             .tooltip(path.clone())
-            .size(Size::Xs)
+            .size(Size::Sm)
+            .variant(TabVariant::Strip)
             .selected(shown == SessionTab::File(index))
             .pinned(pinned)
             .preview(preview)

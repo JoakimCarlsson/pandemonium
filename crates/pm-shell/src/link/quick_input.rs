@@ -216,6 +216,10 @@ impl Link {
 
     /// Asks the server what the quick input lists for its query, when what it lists comes from the server.
     fn quick_ask(&mut self) {
+        let outlined =
+            self.workspace.quick.as_ref().is_some_and(|quick| {
+                quick.choosing.is_none() && quick.mode() == QuickMode::Outline
+            }) && !crate::quick::outline_items(&self.workspace).is_empty();
         let Some(quick) = &mut self.workspace.quick else {
             return;
         };
@@ -240,10 +244,10 @@ impl Link {
         let mode = quick.mode();
         let needle = quick.needle().to_owned();
         let query = quick.query.clone();
-        if matches!(
-            mode,
-            QuickMode::Files | QuickMode::Commands | QuickMode::Outline
-        ) {
+        if matches!(mode, QuickMode::Files | QuickMode::Commands) {
+            return;
+        }
+        if mode == QuickMode::Outline && outlined {
             return;
         }
         quick.found.clear();

@@ -52,15 +52,19 @@ fn problem_row(problem: &Problem, open: Rc<dyn Fn(String, usize)>) {
     row.show();
 }
 
-/// Emits the glyph of `severity` in its tone.
+/// Emits the dot of `severity` in its tone, as the old Problems tab marked each row.
 fn severity_mark(severity: ProblemSeverity) {
     let scheme = color_scheme();
     let extended = extended_colors();
-    let (glyph, tone) = match severity {
-        ProblemSeverity::Error => (phosphor::X_CIRCLE, scheme.error),
-        ProblemSeverity::Warning => (phosphor::WARNING, extended.warning),
-        ProblemSeverity::Information => (phosphor::INFO, scheme.primary),
-        ProblemSeverity::Hint => (phosphor::LIGHTBULB, scheme.on_surface_variant),
+    let tone = match severity {
+        ProblemSeverity::Error => scheme.error,
+        ProblemSeverity::Warning => extended.warning,
+        ProblemSeverity::Information => scheme.primary,
+        ProblemSeverity::Hint => scheme.on_surface_variant,
     };
-    icon(glyph, 14.0, tone);
+    stack_aligned(
+        Modifier::new().size(14.0, 14.0),
+        BoxAlignment::Center,
+        move || spacer(Modifier::new().size(8.0, 8.0).background_rounded(tone, 4.0)),
+    );
 }

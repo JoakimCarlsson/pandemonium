@@ -261,8 +261,12 @@ impl PickList {
                     })
                     .show();
             });
+            let wheel = self.on_move.clone();
             column_with(
-                Modifier::new().fill_max_width().padding_xy(6.0, 0.0),
+                Modifier::new()
+                    .fill_max_width()
+                    .pointer_input(move |input| wheel_moved(input, wheel.as_deref()))
+                    .padding_xy(6.0, 0.0),
                 || {
                     if self.items.is_empty() {
                         Label::new(self.empty.clone())
@@ -291,6 +295,17 @@ impl PickList {
             }
         });
     }
+}
+
+/// Moves the row chosen one step for each turn of the wheel in `input` through `on_move`, saying whether it was a wheel turn.
+fn wheel_moved(input: &PointerInput, on_move: Option<&dyn Fn(isize)>) -> bool {
+    if input.phase != PointerInputPhase::Scroll || input.scroll_delta.y == 0.0 {
+        return false;
+    }
+    if let Some(on_move) = on_move {
+        on_move(if input.scroll_delta.y < 0.0 { 1 } else { -1 });
+    }
+    true
 }
 
 /// One row of the list, `height` tall, highlighted when `chosen`, calling `on_click` when pressed.

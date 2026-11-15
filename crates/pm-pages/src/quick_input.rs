@@ -38,7 +38,7 @@ pub fn quick_input(workspace: &Workspace, actions: &Actions) {
                     .selected(quick.selected)
                     .empty(empty)
                     .visible(12)
-                    .footer()
+                    .size(Size::Xs)
                     .modifier(Modifier::new().fill_max_width())
                     .on_query(move |text| typed(QuickAction::Query(text)))
                     .on_pick(move |place| picked(QuickAction::Pick(Some(place))))

@@ -429,7 +429,10 @@ pub fn quick_items(workspace: &Workspace) -> Vec<QuickItem> {
             QuickMode::Commands => ranked(quick.commands.clone(), needle),
             QuickMode::Line => line_items(workspace, needle),
             QuickMode::Help => ranked(help_items(), needle),
-            QuickMode::Outline => ranked(outline_items(workspace), needle),
+            QuickMode::Outline => match outline_items(workspace) {
+                local if local.is_empty() => quick.found.clone(),
+                local => ranked(local, needle),
+            },
             QuickMode::Symbols | QuickMode::Text => quick.found.clone(),
         },
     };
@@ -544,7 +547,7 @@ fn line_items(workspace: &Workspace, needle: &str) -> Vec<QuickItem> {
 }
 
 /// A row for each item the grammar's outline query finds in the open file, indented by depth, without asking a language server.
-fn outline_items(workspace: &Workspace) -> Vec<QuickItem> {
+pub fn outline_items(workspace: &Workspace) -> Vec<QuickItem> {
     let Some(file) = workspace.open_files.shown() else {
         return Vec::new();
     };

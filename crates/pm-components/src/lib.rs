@@ -165,7 +165,7 @@ pub use spinner::{spinner, spinning_icon};
 pub use stepper::{Stepper, StepperVariant};
 pub use steps::{Step, StepVariant, Thought};
 pub use switch::{Switch, SwitchVariant};
-pub use tab::{Tab, TabVariant};
+pub use tab::{STRIP_TAB_HEIGHT, Tab, TabVariant};
 pub use tally::{Tally, TallyVariant};
 pub use terminal_keys::{TerminalCommand, TerminalShortcut, key_bytes, terminal_shortcut};
 pub use terminal_view::{TerminalSelection, TerminalView, TerminalViewVariant};

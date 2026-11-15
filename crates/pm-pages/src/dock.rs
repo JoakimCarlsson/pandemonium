@@ -37,16 +37,20 @@ pub fn dock(workspace: &Workspace, actions: &Actions) {
     );
 }
 
-/// What the tab of `tab` reads, with the number of problems on the Problems tab, hints left out of the count.
-fn tab_label(tab: DockTab, workspace: &Workspace) -> String {
+/// The number the Problems tab shows in its badge: the problems that are not hints, when there are any.
+fn problem_count(tab: DockTab, workspace: &Workspace) -> Option<usize> {
     let counted = workspace
         .problems
         .iter()
         .filter(|problem| problem.severity != ProblemSeverity::Hint)
         .count();
+    (tab == DockTab::Problems && counted > 0).then_some(counted)
+}
+
+/// What the tab of `tab` reads.
+fn tab_label(tab: DockTab) -> String {
     match tab {
-        DockTab::Problems if counted == 0 => "Problems".to_owned(),
-        DockTab::Problems => format!("Problems {counted}"),
+        DockTab::Problems => "Problems".to_owned(),
         DockTab::Terminal => "Terminal".to_owned(),
         DockTab::Tasks => "Tasks".to_owned(),
         DockTab::Debug => "Debug".to_owned(),
@@ -58,8 +62,8 @@ fn tab_bar(workspace: &Workspace, actions: &Actions) {
     row_arranged(
         Modifier::new()
             .fill_max_width()
-            .height(30.0)
-            .padding_xy(8.0, 0.0),
+            .height(pm_components::row_height(40.0))
+            .padding_xy(12.0, 0.0),
         Arrangement::SpacedBy(pm_components::spacing(2.0)),
         Alignment::Center,
         || {
@@ -71,8 +75,9 @@ fn tab_bar(workspace: &Workspace, actions: &Actions) {
             ] {
                 key(format!("{tab:?}"), || {
                     let choose = actions.dock_tab.clone();
-                    Tab::new(tab_label(tab, workspace))
-                        .size(Size::Xs)
+                    Tab::new(tab_label(tab))
+                        .count(problem_count(tab, workspace))
+                        .size(Size::Sm)
                         .selected(workspace.dock_tab == tab)
                         .on_click(move || choose(tab))
                         .show();

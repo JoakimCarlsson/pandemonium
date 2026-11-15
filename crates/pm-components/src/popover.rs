@@ -5,7 +5,7 @@
 use std::rc::Rc;
 
 use rustle::prelude::*;
-use rustle::{Key, Modifiers};
+use rustle::{Key, Modifiers, Rect};
 
 use crate::size::Size;
 use rustle::color_scheme;
@@ -102,6 +102,9 @@ impl Popover {
         };
         let dismiss = self.on_dismiss.clone();
         let escape = self.on_dismiss.clone();
+        let shift = remember(|| (0.0_f32, 0.0_f32));
+        let (shift_x, shift_y) = shift.get();
+        let fitting = shift.clone();
         catching_outside(
             self.above,
             move || {
@@ -114,13 +117,20 @@ impl Popover {
                     Modifier::new()
                         .width(self.width)
                         .offset(
-                            self.offset.0,
-                            if self.above {
-                                -self.offset.1
-                            } else {
-                                self.offset.1
-                            },
+                            self.offset.0 + shift_x,
+                            shift_y
+                                + if self.above {
+                                    -self.offset.1
+                                } else {
+                                    self.offset.1
+                                },
                         )
+                        .on_placed(move |rect, window| {
+                            let wanted = kept_inside(rect, window, fitting.get());
+                            if wanted != fitting.get() {
+                                fitting.set(wanted);
+                            }
+                        })
                         .shadow(8.0, 8.0)
                         .background_rounded(fill, 8.0)
                         .border(1.0, scheme.outline_variant, 8.0)
@@ -138,6 +148,21 @@ impl Popover {
             },
         );
     }
+}
+
+/// How far a popover laid out at `rect`, already moved by `shift`, must be moved from where it was asked to be so it stays inside a window of `window`'s size, keeping a small margin.
+fn kept_inside(rect: Rect, window: rustle::Size, shift: (f32, f32)) -> (f32, f32) {
+    let margin = 4.0;
+    let fit = |start: f32, length: f32, room: f32, moved: f32| {
+        let asked = start - moved;
+        let most = (room - margin - length).max(margin);
+        let placed = asked.clamp(margin.min(most), most);
+        (placed - asked).round()
+    };
+    (
+        fit(rect.origin.x, rect.size.width, window.width, shift.0),
+        fit(rect.origin.y, rect.size.height, window.height, shift.1),
+    )
 }
 
 /// Emits `content` in the layer above everything else, opening upward when
