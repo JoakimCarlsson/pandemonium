@@ -1,11 +1,15 @@
-//! A square button holding one icon.
+//! A square button holding one icon: lit under the pointer with a short
+//! colour transition, faint with a not-allowed cursor while disabled, and
+//! turning while busy.
 
 use std::rc::Rc;
 
 use rustle::prelude::*;
 
+use crate::app_theme::extended_colors;
 use crate::focus_ring::remember_focus_ring;
 use crate::size::Size;
+use crate::spinner::spinning_icon;
 use rustle::color_scheme;
 
 /// How an icon button is drawn.
@@ -37,7 +41,14 @@ pub struct IconButton {
     on_click: Option<Rc<dyn Fn()>>,
     /// What the label shown while the pointer rests on it says, when it shows one.
     tooltip: Option<String>,
+    /// Whether it is faint and ignores clicks.
+    disabled: bool,
+    /// Whether its glyph turns, while what it does is under way.
+    spinning: bool,
 }
+
+/// How long an icon button's colours take to follow the pointer, in milliseconds.
+const FADE: u64 = 120;
 
 impl IconButton {
     /// A ghost button showing `icon`.
@@ -50,7 +61,21 @@ impl IconButton {
             active: false,
             on_click: None,
             tooltip: None,
+            disabled: false,
+            spinning: false,
         }
+    }
+
+    /// The button faint and ignoring clicks when `disabled`.
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
+    /// The button with its glyph turning while `spinning`.
+    pub fn spinning(mut self, spinning: bool) -> Self {
+        self.spinning = spinning;
+        self
     }
 
     /// The button showing `tooltip` in a label while the pointer rests on it.
@@ -94,6 +119,7 @@ impl IconButton {
     pub fn show(self) {
         let scheme = color_scheme();
         let hovered = remember(|| false);
+        let lit = hovered.get() && !self.disabled;
         let (side, glyph) = match self.size {
             Size::Xs => (20.0, 12.0),
             Size::Sm => (28.0, 16.0),
@@ -101,18 +127,19 @@ impl IconButton {
             Size::Lg => (36.0, 16.0),
         };
         let fill = match self.variant {
+            IconButtonVariant::Primary if lit => extended_colors().accent_hover,
             IconButtonVariant::Primary => scheme.on_surface_variant,
             IconButtonVariant::Filled => scheme.surface_container_highest,
-            IconButtonVariant::Ghost if self.active || hovered.get() => {
-                scheme.surface_container_high
-            }
+            IconButtonVariant::Ghost if self.active || lit => scheme.surface_container_high,
             IconButtonVariant::Ghost => Color::TRANSPARENT,
         };
         let tint = self.tint.unwrap_or(match self.variant {
             IconButtonVariant::Primary => scheme.background,
-            _ if self.active || hovered.get() => scheme.on_surface,
+            _ if self.active || lit => scheme.on_surface,
             _ => scheme.on_surface_variant,
         });
+        let fill = animate_color_as_state(fill, tween(FADE)).get();
+        let tint = animate_color_as_state(tint, tween(FADE)).get();
         let radius = if self.variant == IconButtonVariant::Primary {
             side / 2.0
         } else {
@@ -131,9 +158,11 @@ impl IconButton {
             .on_hover({
                 let hovered = hovered.clone();
                 move |inside| hovered.set(inside)
-            })
-            .cursor(CursorIcon::Pointer);
-        if let Some(on_click) = self.on_click {
+            });
+        if self.disabled {
+            modifier = modifier.alpha(0.4).cursor(CursorIcon::NotAllowed);
+        } else if let Some(on_click) = self.on_click {
+            modifier = modifier.cursor(CursorIcon::Pointer);
             let pressed = on_click.clone();
             let clicked = ring_state.clone();
             modifier = ring_state.focusable(
@@ -145,9 +174,14 @@ impl IconButton {
             );
         }
         let icon_glyph = self.icon;
+        let spinning = self.spinning;
         let button = move || {
             stack_aligned(modifier, BoxAlignment::Center, move || {
-                icon(icon_glyph, glyph, tint);
+                if spinning {
+                    spinning_icon(icon_glyph, glyph, tint);
+                } else {
+                    icon(icon_glyph, glyph, tint);
+                }
             });
         };
         match &self.tooltip {

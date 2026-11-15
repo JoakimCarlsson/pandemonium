@@ -63,6 +63,11 @@ fn extension_row(extension: &Extension, actions: &Actions) {
         .variant(variant)
         .size(Size::Sm)
         .disabled(extension.action == ExtensionAction::Installing)
+        .icon_when(
+            extension.action == ExtensionAction::Installing,
+            phosphor::CIRCLE_NOTCH,
+        )
+        .spinning(extension.action == ExtensionAction::Installing)
         .on_click(move || press(id.clone()));
     let mut row = ItemRow::new(extension.name.clone()).icon(if extension.package {
         phosphor::PLUG
