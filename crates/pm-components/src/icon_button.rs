@@ -151,7 +151,7 @@ impl IconButton {
             });
         };
         match &self.tooltip {
-            Some(label) => tooltip(label, button),
+            Some(label) => crate::tip::tip(label, button),
             None => button(),
         }
     }

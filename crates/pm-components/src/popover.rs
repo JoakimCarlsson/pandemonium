@@ -102,25 +102,21 @@ impl Popover {
         };
         let dismiss = self.on_dismiss.clone();
         let escape = self.on_dismiss.clone();
+        let (((across, down), above), marker, measured) =
+            crate::window_area::remember_fit(self.offset, self.above);
         catching_outside(
-            self.above,
+            above,
             move || {
                 if let Some(dismiss) = &dismiss {
                     dismiss();
                 }
             },
             || {
+                spacer(marker);
                 column_with(
-                    Modifier::new()
+                    measured
                         .width(self.width)
-                        .offset(
-                            self.offset.0,
-                            if self.above {
-                                -self.offset.1
-                            } else {
-                                self.offset.1
-                            },
-                        )
+                        .offset(across, if above { -down } else { down })
                         .shadow(8.0, 8.0)
                         .background_rounded(fill, 8.0)
                         .border(1.0, scheme.outline_variant, 8.0)

@@ -107,7 +107,7 @@ fn install_close_handler(link: &Rc<RefCell<Link>>, revision: &State<u64>) {
             return false;
         }
         held.shutdown_browser();
-        let view = pm_shell::View::of(held.workspace()).write();
+        let view = held.view().write();
         if let Err(error) = crate::store_writer::save_now(VIEW, &view) {
             eprintln!("pandemonium: could not save the layout: {error}");
         }
@@ -159,12 +159,17 @@ fn framed_kept(kept: bool, content: impl FnOnce()) {
     let band = remember(|| 0.0_f32);
     let floating = remember(|| true);
     let floated = remember(|| crate::frame_memory::Frame::load().size);
+    let whole = remember(rustle::Size::default);
+    let sized_to = whole.clone();
     let measured = band.clone();
     let shape = floating.clone();
     let handle = current_window();
     let sized = Modifier::new()
         .fill_max_size()
         .on_size_changed(move |size| {
+            if sized_to.get() != size {
+                sized_to.set(size);
+            }
             let now = handle.shadow_band(pm_components::SHADOW_MARGIN);
             if now != measured.get() {
                 measured.set(now);
@@ -185,8 +190,23 @@ fn framed_kept(kept: bool, content: impl FnOnce()) {
                 .save();
             }
         });
+    let inset = if floating.get() { band.get() } else { 0.0 };
+    let size = whole.get();
+    let area = rustle::Rect::new(
+        rustle::Offset::new(inset, inset),
+        rustle::Size::new(
+            (size.width - inset * 2.0).max(0.0),
+            (size.height - inset * 2.0).max(0.0),
+        ),
+    );
     stack_with(sized, || {
-        pm_components::shadow_band(band.get(), floating.get(), content);
+        pm_components::shadow_band(band.get(), floating.get(), || {
+            if size.width > 0.0 {
+                pm_components::provide_window_area(area, content);
+            } else {
+                content();
+            }
+        });
         if floating.get() {
             let inset = (band.get() - GRIP).max(0.0);
             stack_with(Modifier::new().fill_max_size().padding(inset), resize_grips);
@@ -327,9 +347,9 @@ fn load_view() -> pm_shell::View {
         .unwrap_or_default()
 }
 
-/// Has the layout `workspace` shows written to its file, off the UI thread, when it changed.
-fn save_view(workspace: &pm_shell::Workspace) {
-    crate::store_writer::save(VIEW, pm_shell::View::of(workspace).write());
+/// Has the layout `link` keeps written to its file, off the UI thread, when it changed.
+fn save_view(link: &Link) {
+    crate::store_writer::save(VIEW, link.view().write());
 }
 
 /// Does what `link` asked of the window when answers came in, such as putting a link to a line on the clipboard or opening it.
@@ -355,7 +375,7 @@ fn save_after(link: &mut Link) {
     if link.take_settings_changed() {
         save_settings(link.settings());
     }
-    save_view(link.workspace());
+    save_view(link);
 }
 
 /// The file the window keeps its settings in.

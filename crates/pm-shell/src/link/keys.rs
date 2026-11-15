@@ -60,7 +60,7 @@ impl Link {
         let Some(chord) = Chord::parse(written) else {
             return KeyOutcome::default();
         };
-        let keymap = self.settings.editor.keymap();
+        let keymap = self.keymap();
         let before = std::mem::take(&mut self.chords);
         match keymap.press_among(&before, &chord, Action::everywhere) {
             Pressed::Waiting => {

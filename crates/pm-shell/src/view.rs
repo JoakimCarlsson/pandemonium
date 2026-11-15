@@ -76,6 +76,14 @@ pub struct View {
     pub last_agent: Option<String>,
     /// How far the reader has read each session on this machine: its number and the last event read.
     pub read_through: std::collections::BTreeMap<u64, u64>,
+    /// The files opened lately from the quick input, the latest first.
+    pub recent_files: Vec<String>,
+    /// The titles of the commands run lately from the quick input, the latest first.
+    pub recent_commands: Vec<String>,
+    /// The addresses of the projects folded in the sidebar.
+    pub folded: Vec<String>,
+    /// The share of the split view's width the left pane takes, or 0 for half.
+    pub split_share: f32,
 }
 
 impl Default for View {
@@ -93,6 +101,10 @@ impl Default for View {
             files: Vec::new(),
             last_agent: None,
             read_through: Default::default(),
+            recent_files: Vec::new(),
+            recent_commands: Vec::new(),
+            folded: Vec::new(),
+            split_share: 0.0,
         }
     }
 }
@@ -112,6 +124,8 @@ impl View {
             files: workspace.open_files.saved(),
             last_agent: workspace.last_agent.clone(),
             read_through: workspace.read_through.clone(),
+            split_share: workspace.open_files.share,
+            ..Self::default()
         }
     }
 
@@ -125,6 +139,7 @@ impl View {
         workspace.sizes = self.sizes.clamped();
         workspace.last_agent = self.last_agent.clone();
         workspace.read_through = self.read_through.clone();
+        workspace.open_files.share = self.split_share.clamp(0.0, 0.9);
         workspace
             .shelf
             .restore(&mut workspace.browser, &self.browsers);

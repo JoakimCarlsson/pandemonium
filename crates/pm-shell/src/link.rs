@@ -240,6 +240,12 @@ pub struct Link {
     jumped_from: Vec<(String, usize)>,
     /// The places gone back from, the latest last, for going forward again.
     jumped_back: Vec<(String, usize)>,
+    /// The keymap the editor settings made last, with the preset and bindings it was made from, so a key does not build it again.
+    keymap: Option<(
+        pm_editor::Preset,
+        std::collections::BTreeMap<String, Vec<String>>,
+        pm_editor::Keymap,
+    )>,
 }
 
 impl Link {
@@ -304,6 +310,7 @@ impl Link {
             outcomes: Vec::new(),
             jumped_from: Vec::new(),
             jumped_back: Vec::new(),
+            keymap: None,
         }
     }
 
@@ -360,6 +367,9 @@ impl Link {
     /// Lays the window out the way `view` says and opens its page once the server lists its sessions.
     pub fn restore(&mut self, view: View) {
         view.lay_out(&mut self.workspace);
+        self.recent_files = view.recent_files.clone();
+        self.recent_commands = view.recent_commands.clone();
+        self.folded = view.folded.iter().cloned().collect();
         self.reopen = view.files.clone();
         self.pending = Some(Page::from(view.page));
     }
@@ -385,6 +395,18 @@ impl Link {
         }
     }
 
+    /// The layout to keep for the next run: what the workspace shows, with the files and commands used lately and the projects folded.
+    pub fn view(&self) -> View {
+        let mut folded: Vec<String> = self.folded.iter().cloned().collect();
+        folded.sort();
+        View {
+            recent_files: self.recent_files.clone(),
+            recent_commands: self.recent_commands.clone(),
+            folded,
+            ..View::of(&self.workspace)
+        }
+    }
+
     /// The workspace as it now stands.
     pub fn workspace(&self) -> &Workspace {
         &self.workspace
@@ -403,6 +425,21 @@ impl Link {
     /// The settings model, to put in what the window read of its own, such as its settings files and fonts.
     pub fn settings_mut(&mut self) -> &mut SettingsModel {
         &mut self.settings
+    }
+
+    /// The keymap the editor settings make, built again only when the preset or the reader's bindings changed.
+    fn keymap(&mut self) -> pm_editor::Keymap {
+        let editor = &self.settings.editor;
+        match &self.keymap {
+            Some((preset, keys, keymap)) if *preset == editor.keymap && *keys == editor.keys => {
+                keymap.clone()
+            }
+            _ => {
+                let keymap = editor.keymap();
+                self.keymap = Some((editor.keymap, editor.keys.clone(), keymap.clone()));
+                keymap
+            }
+        }
     }
 
     /// Takes what the link asked of the window beyond itself since the last call, such as text to copy.
