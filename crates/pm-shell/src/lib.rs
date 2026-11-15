@@ -68,8 +68,8 @@ pub use browser_scope::{BrowserShelf, NO_SCOPE, SavedBrowser};
 pub use browser_tools::{agent_may_open, changes_page, locked_message, origin_allowed, tabs_text};
 pub use composer::{
     Capture, CaptureKind, ComposerAction, ComposerMenu, ComposerState, ConversationSetting, Gauge,
-    PickedElement, PromptFile, QueuedPrompt, SettingPick, SlashCommand, allowance_gauge,
-    context_gauge, matching_commands, prompt_text, slot_resolves_to, with_slot_picks,
+    GoalChip, PickedElement, PromptFile, QueuedPrompt, SettingPick, SlashCommand, allowance_gauge,
+    context_gauge, goal_chip, matching_commands, prompt_text, slot_resolves_to, with_slot_picks,
 };
 pub use conversation::{
     Activity, ActivityKind, Approval, ApprovalChoice, Block, Extras, InquiryForm, InquiryQuestion,
@@ -95,7 +95,9 @@ pub use git::{
 pub use git_sample::sample_git;
 pub use grammar::{installed_grammar, learn_grammar};
 pub use history::{PastSession, Span};
-pub use link::{ConversationCommand, KeyOutcome, Link, SessionCommand, age, session_at};
+pub use link::{
+    BASE_SETTING, ConversationCommand, KeyOutcome, Link, SessionCommand, age, session_at,
+};
 pub use model::{
     AgentChoice, Commit, DockTab, PanelSizes, Project, ProjectReach, Renaming, RightTab, Session,
     SessionStatus, Start, Workspace,
@@ -124,7 +126,7 @@ pub use sample::{
     sample_workspace,
 };
 pub use sample_code::{COLOUR_SAMPLE, CodeSample, RIGHT_TO_LEFT_SAMPLE, sample_code};
-pub use sample_composer::{SampleComposer, sample_composer};
+pub use sample_composer::{SampleComposer, sample_composer, sample_mentions};
 pub use sample_conversation::{SampleAsk, sample_ask};
 pub use sample_files::{sample_changes, sample_files, sample_quick, sample_search};
 pub use search::{

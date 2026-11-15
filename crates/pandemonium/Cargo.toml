@@ -15,6 +15,7 @@ pm-shell.workspace = true
 pm-components.workspace = true
 pm-editor = { version = "0.15.0-rc.2", path = "../pm-editor" }
 pm-text.workspace = true
+rfd = "0.17.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 mac-notification-sys = "0.6.15"

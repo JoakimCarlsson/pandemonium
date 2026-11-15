@@ -1,7 +1,8 @@
 //! The sidebar: navigation, the made-up projects' notice before real ones
 //! exist, every project with its nested submodules, its sessions and a
-//! "New session" row, each project and session with its menu, projects dragged to reorder,
-//! the adder that adds a project, and the chats that belong to none.
+//! "New session" row, each project with its menu and dragged to reorder,
+//! the adder that adds a project, and the chats that belong to none; each
+//! session and chat with a menu on its dots or a right click.
 
 use std::rc::Rc;
 
@@ -49,6 +50,10 @@ pub fn sidebar(workspace: &Workspace, actions: &Actions) {
                     let selected = match destination {
                         Destination::History => workspace.page == Page::History,
                         Destination::Extensions => workspace.page == Page::Extensions,
+                        Destination::NewChat => workspace
+                            .starting
+                            .as_ref()
+                            .is_some_and(|start| start.at.is_none()),
                         _ => false,
                     };
                     Tile::new(label)
@@ -150,13 +155,10 @@ fn chats(workspace: &Workspace, actions: &Actions) {
         key(chat.id, || {
             let open = actions.reopen_session.clone();
             let id = chat.id;
-            Tile::new(chat.title.clone())
-                .leading(status_mark(chat.status))
-                .trailing(chat.age.clone())
-                .size(Size::Xs)
-                .selected(workspace.page == Page::Session(id) && workspace.starting.is_none())
-                .on_click(move || open(id))
-                .show();
+            let selected = workspace.page == Page::Session(id) && workspace.starting.is_none();
+            session_tile(chat, 0.0, selected, true, workspace, actions, move || {
+                open(id)
+            });
         });
     }
 }
@@ -309,34 +311,57 @@ fn session_row(
     actions: &Actions,
 ) {
     let open = actions.open_session.clone();
-    let menu = actions.session.clone();
-    let id = session.id;
     let selected = workspace.open.as_ref() == Some(&at);
+    session_tile(
+        session,
+        (depth + 1) as f32 * NEST,
+        selected,
+        false,
+        workspace,
+        actions,
+        move || open(at.clone()),
+    );
+}
+
+/// Emits the row of `session`, indented `indent`, a chat when `chat`,
+/// calling `on_open` when clicked, and its menu while open.
+fn session_tile(
+    session: &Session,
+    indent: f32,
+    selected: bool,
+    chat: bool,
+    workspace: &Workspace,
+    actions: &Actions,
+    on_open: impl Fn() + 'static,
+) {
+    let id = session.id;
+    let (menu, right_menu) = (actions.session.clone(), actions.session.clone());
     Tile::new(session.title.clone())
         .leading(status_mark(session.status))
         .trailing(session.age.clone())
-        .indent((depth + 1) as f32 * NEST)
+        .indent(indent)
         .size(Size::Xs)
         .selected(selected)
         .hover_icon(phosphor::DOTS_THREE)
         .on_hover_icon(move || menu(SessionCommand::Menu(Some(id))))
-        .on_click(move || open(at.clone()))
+        .on_click(on_open)
+        .on_menu(move || right_menu(SessionCommand::Menu(Some(id))))
         .show();
     if workspace.session_menu == Some(id) {
-        session_menu(session, actions);
+        session_menu(session, indent, chat, actions);
     }
 }
 
-/// The menu of `session`, hung under its row: rename, copy its folder or branch, show its folder, and close it.
-fn session_menu(session: &Session, actions: &Actions) {
+/// The menu of `session`, a chat when `chat`, hung under its row indented `indent`: rename, mark read or unread, copy its folder or branch, show its folder, and close the session or remove the chat.
+fn session_menu(session: &Session, indent: f32, chat: bool, actions: &Actions) {
     let id = session.id;
     let act = |command: SessionCommand| {
         let session = actions.session.clone();
         move || session(command.clone())
     };
     let mut menu = Menu::new()
-        .offset(24.0, 0.0)
-        .width(210.0)
+        .offset(indent + 8.0, 0.0)
+        .width(220.0)
         .on_dismiss(act(SessionCommand::Menu(None)))
         .icon_item(
             phosphor::PENCIL_SIMPLE,
@@ -344,25 +369,49 @@ fn session_menu(session: &Session, actions: &Actions) {
             act(SessionCommand::Rename(id)),
         )
         .icon_item(
-            phosphor::COPY,
-            "Copy path",
-            act(SessionCommand::CopyPath(id)),
+            phosphor::ENVELOPE_SIMPLE,
+            if session.status == SessionStatus::Unread {
+                "Mark as read"
+            } else {
+                "Mark as unread"
+            },
+            act(SessionCommand::ToggleRead(id)),
         );
-    if !session.branch.is_empty() {
+    if !session.directory.is_empty() {
+        menu = menu
+            .icon_item(
+                phosphor::COPY,
+                "Copy path",
+                act(SessionCommand::CopyPath(id)),
+            )
+            .icon_item(
+                phosphor::FOLDER_OPEN,
+                "Open folder",
+                act(SessionCommand::OpenFolder(id)),
+            );
+    }
+    if !chat && !session.branch.is_empty() {
         menu = menu.icon_item(
             phosphor::GIT_BRANCH,
             "Copy branch name",
             act(SessionCommand::CopyBranch(id)),
         );
     }
-    menu.icon_item(
-        phosphor::FOLDER_OPEN,
-        "Open folder",
-        act(SessionCommand::OpenFolder(id)),
-    )
-    .separator()
-    .destructive_item(phosphor::X, "Close session", act(SessionCommand::Close(id)))
-    .show();
+    menu = menu.separator();
+    menu = if chat {
+        menu.destructive_item(
+            phosphor::TRASH,
+            "Remove chat",
+            act(SessionCommand::Remove(id)),
+        )
+    } else {
+        menu.destructive_item(
+            phosphor::X,
+            "Close session",
+            act(SessionCommand::Close(id)),
+        )
+    };
+    menu.show();
 }
 
 /// The mark a session's row leads with for `status`.

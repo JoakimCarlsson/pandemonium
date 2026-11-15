@@ -33,6 +33,21 @@ impl Link {
             ComposerAction::HoldQueue(held) => self.hold_queue(held),
             ComposerAction::EditQueued(queued, text) => self.edit_queued(queued, text),
             ComposerAction::Place(worktree, container) => self.choose_place(worktree, container),
+            ComposerAction::Browse => {}
+            ComposerAction::Mention => {
+                if !self.workspace.tree.loaded
+                    || self.browse_root().as_deref() != Some(self.workspace.tree.root.as_str())
+                {
+                    self.load_files();
+                }
+            }
+            ComposerAction::CycleMode => {
+                if let Some((setting, value)) =
+                    crate::composer::next_mode(&self.workspace.extras.composer.settings)
+                {
+                    self.set_agent_setting(setting, value);
+                }
+            }
         }
     }
 
@@ -40,10 +55,11 @@ impl Link {
     /// the turn the agent is on when `now`, otherwise as its next turn or
     /// queued behind the one it is on.
     pub fn prompt(&mut self, text: String, now: bool) {
-        self.workspace.extras.prefill = None;
         let Some(session) = self.watched else {
+            self.workspace.extras.prefill = Some(text);
             return;
         };
+        self.workspace.extras.prefill = None;
         let composer = &mut self.workspace.extras.composer;
         let text = prompt_text(&text, &composer.elements, &composer.captures);
         let mut attachments: Vec<Attachment> =
@@ -82,6 +98,10 @@ impl Link {
 
     /// Gives the open session's agent setting `setting` the value `value`.
     pub fn set_agent_setting(&mut self, setting: String, value: String) {
+        if self.workspace.starting.is_some() {
+            self.set_start_setting(setting, value);
+            return;
+        }
         let Some(session) = self.watched else {
             return;
         };
@@ -254,7 +274,7 @@ impl Link {
 }
 
 /// The attachment `file` is sent as: its bytes as pasted, or read from its path, or nothing when that cannot be read.
-fn attachment_of(file: &PromptFile) -> Option<Attachment> {
+pub(super) fn attachment_of(file: &PromptFile) -> Option<Attachment> {
     let data = match &file.path {
         Some(path) => std::fs::read(path).ok()?,
         None => file.data.clone(),

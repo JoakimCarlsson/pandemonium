@@ -35,6 +35,7 @@ fn session(id: u64, title: &str, age: &str) -> Session {
         age: age.to_owned(),
         status: SessionStatus::Idle,
         branch: "main".to_owned(),
+        directory: format!("~/repos/sample-{id}"),
     }
 }
 
@@ -100,6 +101,8 @@ pub fn sample_workspace() -> Workspace {
         quit_confirmed: false,
         starting: None,
         agents: offered_agents(),
+        last_agent: None,
+        read_through: Default::default(),
         page: Page::Session(9),
         trail: Trail::default(),
         history: history(),

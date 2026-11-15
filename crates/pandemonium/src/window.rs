@@ -535,7 +535,17 @@ fn actions(
         open_session: Rc::new(move |at| open(&|link| link.open_session(at.clone()))),
         new_session: Rc::new(move |at| new_session(&|link| link.new_session(at.clone()))),
         send_prompt: Rc::new(move |text| send(&|link| link.send_prompt(text.clone()))),
-        composer: Rc::new(move |action| composed(&|link| link.composer_action(action.clone()))),
+        composer: Rc::new(move |action| match action {
+            pm_shell::ComposerAction::Browse => {
+                let paths = crate::file_dialog::pick_attachments();
+                if !paths.is_empty() {
+                    composed(&|link| {
+                        link.composer_action(pm_shell::ComposerAction::Attach(paths.clone()))
+                    });
+                }
+            }
+            action => composed(&|link| link.composer_action(action.clone())),
+        }),
         choose_agent: Rc::new(move |index| choose(&|link| link.choose_agent(index))),
         start: Rc::new(move |text| start(&|link| link.start(text.clone()))),
         right_tab: Rc::new(move |tab| right(&|link| link.choose_right_tab(tab))),

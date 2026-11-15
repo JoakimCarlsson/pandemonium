@@ -117,7 +117,7 @@ pub struct Actions {
     pub shortcut: Rc<dyn Fn(String) -> bool>,
     /// Arranges the sidebar's projects, or works the adder or the folder picker.
     pub projects: Rc<dyn Fn(ProjectAction)>,
-    /// Does something to a whole session, such as closing or renaming it, or dismisses the status bar.
+    /// Does something to a whole session or chat, such as closing, renaming or marking it unread, or dismisses the status bar.
     pub session: Rc<dyn Fn(SessionCommand)>,
 }
 

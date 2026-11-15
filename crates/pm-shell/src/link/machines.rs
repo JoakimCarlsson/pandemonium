@@ -237,6 +237,7 @@ impl Link {
                             SessionStatus::OutOfReach
                         },
                         branch: info.branch.clone().unwrap_or_default(),
+                        directory: super::routes::address_on(host, &info.directory),
                     }
                 })
                 .collect();

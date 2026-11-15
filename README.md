@@ -240,7 +240,8 @@ session's menu in the sidebar, `rename` its rename dialog, `discard` the
 question before its uncommitted changes are thrown away, and `quitting` the
 question before the window closes on working agents.
 `approve`, `inquiry`, `trust` and `continue` show a card waiting on the
-reader. `code` opens sample files in the editor and `diff` the Diff tab;
+reader, and `signed-out` the sign-in bars and the goal chip. `code` opens
+sample files in the editor and `diff` the Diff tab;
 with `code`, `code-problems` marks problems, `code-folded` folds the block
 at the caret and `code-unsaved` asks before closing a modified file;
 `git-menu`, `git-source`, `git-confirm` and `branch-menu` open the Git
@@ -257,7 +258,8 @@ download, an untrusted certificate, the question before clearing site data, a
 page that cannot be shown, or picking an element for the prompt (with `welcome`, beside the welcome page); and
 `problems`, `tasks` and `debug` pick the dock's tab, with `selection`
 marking text in its terminal. `project-menu`, `adder`, `clone` and
-`clone-failed` open the sidebar's project menu and the adder, `sample` shows
+`clone-failed` open the sidebar's project menu and the adder,
+`session-menu` and `chat-menu` the menu of a session or a chat, `sample` shows
 the notice over the made-up projects, and `remote` adds projects on other
 machines with their reach. `picker`, `picker-remote` and `picker-failed` draw
 the folder picker's window on this machine, on another one, or on one that

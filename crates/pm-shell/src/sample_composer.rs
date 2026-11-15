@@ -23,6 +23,20 @@ pub enum SampleComposer {
     Attached,
     /// The text field's menu open.
     Field,
+    /// Three lines written, the last mentioning a file after an `@`.
+    Mention,
+}
+
+/// The files the sample composer can mention.
+pub fn sample_mentions() -> Vec<String> {
+    [
+        "src/main.rs",
+        "src/maintenance.rs",
+        "crates/void-core/src/main.rs",
+        "README.md",
+    ]
+    .map(str::to_owned)
+    .to_vec()
 }
 
 /// Puts the sample composer state `sample` into `extras`.
@@ -93,6 +107,10 @@ pub fn sample_composer(extras: &mut Extras, sample: SampleComposer) {
                     data: Vec::new(),
                 },
             ];
+        }
+        SampleComposer::Mention => {
+            extras.prefill =
+                Some("Compare the two entry points\nline by line, then\nlook at @mai".to_owned());
         }
         SampleComposer::Field => {
             extras.prefill = Some("Explain why the build fails".to_owned());

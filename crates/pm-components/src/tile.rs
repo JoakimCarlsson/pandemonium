@@ -127,6 +127,8 @@ pub struct Tile {
     on_hover_icon: Option<Rc<dyn Fn()>>,
     /// What a click does.
     on_click: Option<Rc<dyn Fn()>>,
+    /// What a right click does, such as opening the row's menu.
+    on_menu: Option<Rc<dyn Fn()>>,
 }
 
 impl Tile {
@@ -143,7 +145,14 @@ impl Tile {
             hover_icon: None,
             on_hover_icon: None,
             on_click: None,
+            on_menu: None,
         }
+    }
+
+    /// The tile calling `on_menu` when right-clicked.
+    pub fn on_menu(mut self, on_menu: impl Fn() + 'static) -> Self {
+        self.on_menu = Some(Rc::new(on_menu));
+        self
     }
 
     /// The tile leading with `leading`.
@@ -233,6 +242,9 @@ impl Tile {
             modifier = modifier
                 .cursor(CursorIcon::Pointer)
                 .clickable(move || on_click());
+        }
+        if let Some(on_menu) = self.on_menu.clone() {
+            modifier = modifier.on_secondary_click(move |_| on_menu());
         }
         let label_variant = match self.variant {
             TileVariant::Action => LabelVariant::Muted,

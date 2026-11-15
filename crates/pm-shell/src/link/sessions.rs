@@ -1,6 +1,6 @@
 //! The link's part in what the reader does to whole sessions: their menu in
 //! the sidebar, closing one (asking first when its worktree holds changes not
-//! committed), renaming one, copying its folder or branch, showing its folder,
+//! committed), removing a chat, marking one read or unread, renaming one, copying its folder or branch, showing its folder,
 //! the sessions branched off a turn, and the status bar's dismissal.
 
 use pm_protocol::{Request, Response, SessionInfo};
@@ -30,6 +30,10 @@ pub enum SessionCommand {
     ConfirmRename,
     /// Closes the rename dialog without renaming.
     CancelRename,
+    /// Marks the session unread, or read when it already is.
+    ToggleRead(u64),
+    /// Removes the chat, its scratch folder with it.
+    Remove(u64),
     /// Puts the session's folder on the clipboard.
     CopyPath(u64),
     /// Puts the session's branch on the clipboard.
@@ -47,6 +51,8 @@ impl Link {
         match command {
             SessionCommand::Menu(session) => self.workspace.session_menu = session,
             SessionCommand::Close(session) => self.close_session(session, false),
+            SessionCommand::Remove(session) => self.close_session(session, true),
+            SessionCommand::ToggleRead(session) => self.toggle_read(session),
             SessionCommand::Discard => {
                 if let Some(session) = self.workspace.closing.take() {
                     self.close_session(session, true);
@@ -123,6 +129,21 @@ impl Link {
                 .count()
     }
 
+    /// Marks the session the window numbers `session` unread, or read when it already is, keeping how far it was read when it is on this machine.
+    fn toggle_read(&mut self, session: u64) {
+        let thread = self.threads.entry(session).or_default();
+        if thread.is_unread() {
+            thread.mark_read();
+            let seq = thread.seq;
+            if self.routes.remote(session).is_none() {
+                self.workspace.read_through.insert(session, seq);
+            }
+        } else {
+            thread.mark_unread();
+        }
+        self.rebuild();
+    }
+
     /// Asks the server of its machine to close the session the window numbers `session`, throwing away changes its worktree has not committed when `discard`.
     fn close_session(&mut self, session: u64, discard: bool) {
         self.ask(
@@ -137,10 +158,11 @@ impl Link {
             return;
         };
         let title = renaming.title.trim().to_owned();
-        if title.is_empty() {
+        let id = renaming.session;
+        let known = self.session_info(id).map(|info| info.title);
+        if title.is_empty() || known.as_deref() == Some(title.as_str()) {
             return;
         }
-        let id = renaming.session;
         let number = self.routes.remote(id).map(|(_, number)| number);
         let listed = self
             .sessions
@@ -149,6 +171,9 @@ impl Link {
             .find(|info| info.session == number.unwrap_or(id));
         if let Some(info) = listed {
             info.title = title.clone();
+        }
+        if let Some(thread) = self.threads.get_mut(&id) {
+            thread.title = Some(title.clone());
         }
         if self.watched == Some(id) {
             self.workspace.title = title.clone();
@@ -168,6 +193,7 @@ impl Link {
                 if self.routes.remote(session).is_none() {
                     self.sessions.retain(|info| info.session != session);
                 }
+                self.reopened.remove(&session);
                 if self.workspace.page == Page::Session(session) {
                     self.navigate(Page::Home);
                 }

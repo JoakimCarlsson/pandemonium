@@ -5,9 +5,6 @@ use pm_protocol::SessionInfo;
 
 use crate::link::age;
 
-/// One milliseconds-long day.
-const DAY_MS: u64 = 86_400_000;
-
 /// What the machine column says for a project on this machine.
 const LOCAL_MACHINE: &str = "local";
 
@@ -31,9 +28,9 @@ impl Span {
     pub const ALL: [Span; 3] = [Span::Today, Span::Yesterday, Span::Earlier];
 
     /// The span a change at `then` falls in when it is `now`, both in
-    /// milliseconds since the epoch, by UTC calendar day.
+    /// milliseconds since the epoch, by local calendar day.
     pub fn of(then: u64, now: u64) -> Self {
-        match (now / DAY_MS).saturating_sub(then / DAY_MS) {
+        match local_day(now).saturating_sub(local_day(then)) {
             0 => Self::Today,
             1 => Self::Yesterday,
             _ => Self::Earlier,
@@ -48,6 +45,19 @@ impl Span {
             Self::Earlier => "Earlier",
         }
     }
+}
+
+/// The number of the local calendar day `millis` since the epoch falls on.
+fn local_day(millis: u64) -> i64 {
+    use chrono::Datelike;
+    chrono::DateTime::from_timestamp_millis(millis as i64).map_or(0, |moment| {
+        i64::from(
+            moment
+                .with_timezone(&chrono::Local)
+                .date_naive()
+                .num_days_from_ce(),
+        )
+    })
 }
 
 /// A session as the history page lists it.
@@ -90,7 +100,10 @@ impl PastSession {
         Self {
             id: info.session,
             title: info.title.clone(),
-            agent: info.agent.clone(),
+            agent: pm_harness::agents()
+                .iter()
+                .find(|agent| agent.id == info.agent)
+                .map_or_else(|| info.agent.clone(), |agent| agent.name.to_owned()),
             project,
             machine: pm_protocol::host_of(&info.repository)
                 .map(|(host, _)| host.to_owned())
@@ -119,15 +132,29 @@ impl PastSession {
 }
 
 #[cfg(test)]
+/// Tests for the history's rows.
 mod tests {
+    use chrono::TimeZone;
+
     use super::*;
 
-    /// Changes fall in today, yesterday or earlier by calendar day.
+    /// One day, in milliseconds.
+    const DAY_MS: u64 = 86_400_000;
+
+    /// Changes fall in today, yesterday or earlier by local calendar day.
     #[test]
     fn spans_follow_calendar_days() {
-        let now = 10 * DAY_MS + 1_000;
+        let noon = chrono::Local::now()
+            .date_naive()
+            .and_hms_opt(12, 0, 0)
+            .expect("noon is a time");
+        let now = chrono::Local
+            .from_local_datetime(&noon)
+            .earliest()
+            .expect("noon is on the local clock")
+            .timestamp_millis() as u64;
         assert_eq!(Span::of(now - 500, now), Span::Today);
-        assert_eq!(Span::of(now - 2_000, now), Span::Yesterday);
+        assert_eq!(Span::of(now - DAY_MS, now), Span::Yesterday);
         assert_eq!(Span::of(now - 3 * DAY_MS, now), Span::Earlier);
     }
 }

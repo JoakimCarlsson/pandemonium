@@ -39,6 +39,7 @@ const WORDS: &[&str] = &[
     "inquiry",
     "trust",
     "continue",
+    "signed-out",
     "update",
     "sign-in",
     "status",
@@ -121,6 +122,7 @@ const WORDS: &[&str] = &[
     "browser-notice",
     "browser-pick",
     "project-menu",
+    "chat-menu",
     "adder",
     "clone",
     "clone-failed",
@@ -136,7 +138,9 @@ const WORDS: &[&str] = &[
     "composer-queued",
     "composer-attached",
     "composer-field",
+    "composer-mention",
     "welcome-place",
+    "welcome-branch",
     "settings-<section>[-narrow]",
 ];
 
@@ -151,9 +155,10 @@ const WORDS: &[&str] = &[
 /// [tab-menu|tab-steps|split|excerpts|update-tab]
 /// [files|search|search-edit|quick[-<list>]|file-menu|file-delete]
 /// [browser[-find|-menu|-tools|-ask|-cert|-clear|-notice|-pick]]
-/// [project-menu|adder|clone|clone-failed|sample|remote]
+/// [project-menu|session-menu|chat-menu|adder|clone|clone-failed|sample|remote]
 /// [picker|picker-remote|picker-failed] [form]
-/// [composer[-model|-slash|-queued|-attached|-field]|welcome-place]
+/// [composer[-model|-slash|-queued|-attached|-field|-mention]|welcome-place|welcome-branch]
+/// [signed-out]
 /// [compact] [interface-<px>] [codesize-<px>] [line-<times>] [terminal-<px>]
 /// [font-<family>] [mono-<family>]`
 /// with `arguments` (those after the flag) and returns the process's exit
@@ -206,9 +211,15 @@ pub fn run(arguments: &[String]) -> i32 {
         pm_shell::sample_ask(&mut workspace.extras, ask);
     }
     if !live && let Some(sample) = composer_named(&words) {
+        if sample == pm_shell::SampleComposer::Mention {
+            workspace.tree.paths = pm_shell::sample_mentions();
+        }
         pm_shell::sample_composer(&mut workspace.extras, sample);
     }
-    let start = if words.contains(&"welcome") || words.contains(&"welcome-place") {
+    let start = if ["welcome", "welcome-place", "welcome-branch"]
+        .iter()
+        .any(|word| words.contains(word))
+    {
         pm_shell::start_in(&workspace.projects, &[0])
     } else if words.contains(&"chat") {
         Some(pm_shell::start_chat())
@@ -217,6 +228,12 @@ pub fn run(arguments: &[String]) -> i32 {
     };
     if let Some(mut start) = start {
         start.place_menu = words.contains(&"welcome-place");
+        if words.contains(&"welcome-branch") {
+            start.worktree = true;
+            start.branches = vec!["main".to_owned(), "feature/search".to_owned()];
+            start.base = Some("feature/search".to_owned());
+            start.settings = workspace.extras.composer.settings.clone();
+        }
         pm_shell::show_start(&mut workspace, start);
     }
     if !live {
@@ -338,6 +355,17 @@ fn show_projects(workspace: &mut pm_shell::Workspace, words: &[&str]) {
             .projects
             .get(2)
             .map(|project| project.path.clone());
+    }
+    if words.contains(&"session-menu") && workspace.session_menu.is_none() {
+        workspace.session_menu = workspace
+            .projects
+            .iter()
+            .flat_map(|project| &project.sessions)
+            .next()
+            .map(|session| session.id);
+    }
+    if words.contains(&"chat-menu") {
+        workspace.session_menu = workspace.chats.first().map(|chat| chat.id);
     }
     if words.contains(&"adder") {
         workspace.adder = Some(pm_shell::Adder::default());
@@ -594,6 +622,7 @@ fn ask_named(words: &[&str]) -> Option<pm_shell::SampleAsk> {
         "inquiry" => Some(pm_shell::SampleAsk::Inquiry),
         "trust" => Some(pm_shell::SampleAsk::Trust),
         "continue" => Some(pm_shell::SampleAsk::Continue),
+        "signed-out" => Some(pm_shell::SampleAsk::SignIn),
         _ => None,
     })
 }
@@ -606,6 +635,7 @@ fn composer_named(words: &[&str]) -> Option<pm_shell::SampleComposer> {
         "composer-slash" => Some(pm_shell::SampleComposer::Slash),
         "composer-queued" => Some(pm_shell::SampleComposer::Queued),
         "composer-attached" => Some(pm_shell::SampleComposer::Attached),
+        "composer-mention" => Some(pm_shell::SampleComposer::Mention),
         "composer-field" => Some(pm_shell::SampleComposer::Field),
         _ => None,
     })

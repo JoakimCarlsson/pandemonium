@@ -82,6 +82,10 @@ pub struct Workspace {
     pub starting: Option<Start>,
     /// The agents new work can be started with, in the order the welcome page lists them.
     pub agents: Vec<AgentChoice>,
+    /// The agent new work was last started with, or last picked, by its id.
+    pub last_agent: Option<String>,
+    /// How far the reader has read each session on this machine: its number and the last event read.
+    pub read_through: std::collections::BTreeMap<u64, u64>,
     /// The page showing.
     pub page: Page,
     /// The pages visited, for going back and forward.
@@ -202,6 +206,18 @@ pub struct Start {
     pub container: bool,
     /// Whether the menu of where the work runs is open, for snapshots.
     pub place_menu: bool,
+    /// The positions among [`Workspace::agents`] of the agents offered: those shown and signed in.
+    pub shown: Vec<usize>,
+    /// What the agent chosen lets the reader change, as it said when asked, with the values picked.
+    pub settings: Vec<crate::composer::ConversationSetting>,
+    /// The commands the agent chosen offers behind a slash.
+    pub commands: Vec<crate::composer::SlashCommand>,
+    /// The settings the reader changed, as the agent names them and their values.
+    pub changed: Vec<(String, String)>,
+    /// The branches of the project's repository, the one checked out first.
+    pub branches: Vec<String>,
+    /// The branch a worktree is made from, or nothing for what is checked out.
+    pub base: Option<String>,
 }
 
 /// An agent new work can be started with.
@@ -258,6 +274,8 @@ pub struct Session {
     pub status: SessionStatus,
     /// The branch its worktree is on, or empty.
     pub branch: String,
+    /// The folder its agent works in, as `ssh://host/folder` on another machine, or empty.
+    pub directory: String,
 }
 
 /// What a session is doing, shown as its leading mark.
