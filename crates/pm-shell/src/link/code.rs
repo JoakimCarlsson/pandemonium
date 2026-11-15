@@ -28,6 +28,8 @@ pub(super) enum CodeAsk {
     Reload(String, String),
     /// Who last changed this line, counted from 0, of the file at this path in this folder.
     Blame(String, String, usize),
+    /// The address of a line of a file on its git host, opened when the flag is set and copied otherwise.
+    Permalink(bool),
 }
 
 impl Link {
@@ -41,6 +43,48 @@ impl Link {
     /// Opens the file at `path` as [`Link::open_file`] does, with the caret
     /// on `line`, counted from 1.
     pub fn open_location(&mut self, path: String, line: usize) {
+        if let Some(here) = self.caret_place() {
+            self.jumped_from.push(here);
+            self.jumped_back.clear();
+        }
+        self.open_place(path, line);
+    }
+
+    /// Where the caret of the file showing is, as its path and line counted from 1, when a file shows.
+    fn caret_place(&self) -> Option<(String, usize)> {
+        let SessionTab::File(index) = self.workspace.open_files.tab else {
+            return None;
+        };
+        let file = self.workspace.open_files.files.get(index)?;
+        let document = file.document.0.borrow();
+        Some((
+            file.path.clone(),
+            document.line_of(document.field.caret()) + 1,
+        ))
+    }
+
+    /// Goes back to where the caret was before it last jumped, or forward again to where it went back from when `forward`.
+    pub(super) fn walk_jumps(&mut self, forward: bool) {
+        let target = if forward {
+            self.jumped_back.pop()
+        } else {
+            self.jumped_from.pop()
+        };
+        let Some((path, line)) = target else {
+            return;
+        };
+        if let Some(here) = self.caret_place() {
+            if forward {
+                self.jumped_from.push(here);
+            } else {
+                self.jumped_back.push(here);
+            }
+        }
+        self.open_place(path, line);
+    }
+
+    /// Opens the file at `path` with the caret on `line`, counted from 1, without noting where the caret jumped from.
+    fn open_place(&mut self, path: String, line: usize) {
         self.open_file(path);
         if let SessionTab::File(index) = self.workspace.open_files.tab
             && let Some(file) = self.workspace.open_files.files.get_mut(index)
@@ -447,6 +491,16 @@ impl Link {
                     self.take_reloaded(index, text);
                 }
             }
+            (CodeAsk::Permalink(open), Response::Address { url }) => {
+                self.outcomes.push(if open {
+                    crate::quick::QuickOutcome::OpenAddress(url)
+                } else {
+                    crate::quick::QuickOutcome::Copy(url)
+                });
+            }
+            (CodeAsk::Permalink(_), Response::Failed { message }) => {
+                self.workspace.status = Some(format!("No link to this line: {message}"));
+            }
             (CodeAsk::Blame(directory, path, line), Response::Blamed { blame }) => {
                 if let Some(index) = files.position(&directory, &path) {
                     files.files[index].document.0.borrow_mut().blame =
@@ -493,4 +547,54 @@ fn blame_line(blame: &pm_git::Blame) -> Option<String> {
     let then = u64::try_from(blame.when).unwrap_or_default() * 1000;
     let ago = super::age(super::now_ms().saturating_sub(then));
     Some(format!("{}, {ago} • {}", blame.author, blame.summary))
+}
+
+impl Link {
+    /// Does the keymap's `action`, which the editor of the open file at `index` left to the window: goes back or forward through the places the caret jumped from, copies or opens the address of the caret's lines on the git host, lists the file's history or opens a shell in its folder.
+    pub(super) fn editor_action(&mut self, index: usize, action: pm_editor::Action) {
+        let Some(file) = self.workspace.open_files.files.get(index) else {
+            return;
+        };
+        let (directory, path) = (file.directory.clone(), file.path.clone());
+        let lines = {
+            let document = file.document.0.borrow();
+            let range = document
+                .field
+                .selection()
+                .unwrap_or(document.field.caret()..document.field.caret());
+            (
+                document.line_of(range.start) + 1,
+                document.line_of(range.end) + 1,
+            )
+        };
+        match action {
+            pm_editor::Action::GoBack => self.walk_jumps(false),
+            pm_editor::Action::GoForward => self.walk_jumps(true),
+            pm_editor::Action::CopyPermalink | pm_editor::Action::OpenPermalink => self.ask(
+                Request::Permalink {
+                    directory,
+                    path,
+                    line: Some(lines.0),
+                    end_line: (lines.1 > lines.0).then_some(lines.1),
+                },
+                Ask::Code(CodeAsk::Permalink(
+                    action == pm_editor::Action::OpenPermalink,
+                )),
+            ),
+            pm_editor::Action::FileHistory => {
+                self.workspace.open_files.tab = SessionTab::File(index);
+                self.open_choices(crate::quick::Choosing::History);
+            }
+            pm_editor::Action::OpenTerminalHere => {
+                let folder = match path.rsplit_once('/') {
+                    Some((parent, _)) => format!("{}/{parent}", directory.trim_end_matches('/')),
+                    None => directory,
+                };
+                self.workspace.dock_open = true;
+                self.workspace.dock_tab = crate::model::DockTab::Terminal;
+                self.change_dock(|dock| dock.new_shell_in(folder));
+            }
+            _ => {}
+        }
+    }
 }

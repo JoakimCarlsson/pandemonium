@@ -947,6 +947,9 @@ impl Handle {
 
     /// Carries out `command`; returns whether it was taken.
     fn run(&self, command: Command) -> bool {
+        if let Some(taken) = self.run_beyond_text(&command) {
+            return taken;
+        }
         let edits: Vec<Edit> = {
             let document = self.document.borrow();
             match command {
@@ -1093,6 +1096,54 @@ impl Handle {
         };
         self.apply(edits);
         true
+    }
+
+    /// Carries out `command` when it moves the carets back or forth, copies, sets a breakpoint, locks the text or leaves an action to the window; says it was taken, or nothing for any other command.
+    fn run_beyond_text(&self, command: &Command) -> Option<bool> {
+        match command {
+            Command::CursorHistory(forward) => {
+                let moved = {
+                    let mut document = self.document.borrow_mut();
+                    if *forward {
+                        document.cursor_redo()
+                    } else {
+                        document.cursor_undo()
+                    }
+                };
+                if moved {
+                    self.settle(false);
+                }
+                Some(true)
+            }
+            Command::CopyUnindented => {
+                copy(&unindented(&self.document.borrow().field.selected_all()));
+                Some(true)
+            }
+            Command::ToggleBreakpoint => {
+                let line = {
+                    let document = self.document.borrow();
+                    document.line_of(document.field.caret())
+                };
+                if let Some(on_gutter) = &self.on_gutter {
+                    on_gutter(line + self.first_line);
+                }
+                Some(true)
+            }
+            Command::ToggleReadOnly => {
+                {
+                    let mut document = self.document.borrow_mut();
+                    let locked = document.field.is_read_only();
+                    document.field = document.field.clone().read_only(!locked);
+                }
+                self.redraw();
+                Some(true)
+            }
+            Command::Window(action) => {
+                self.ask(ServerAsk::Act(*action));
+                Some(true)
+            }
+            _ => None,
+        }
     }
 
     /// Carries out `command`, one the language server answers; returns
@@ -2760,40 +2811,6 @@ fn cell_size(style: &TextStyle) -> (f32, f32) {
     (width.max(1.0), style.line_height.max(1.0))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Right-to-left runs take in the spaces between their words, not those
-    /// at their ends.
-    #[test]
-    fn right_to_left_runs() {
-        let text = "a = \"שלום עולם\" b";
-        let runs = reversed_runs(text);
-        assert_eq!(runs.len(), 1);
-        assert_eq!(&text[runs[0].clone()], "שלום עולם");
-        assert!(reversed_runs("plain text").is_empty());
-    }
-
-    /// Ranges are cut to a line and measured from its start, reaching past
-    /// its end when they run on.
-    #[test]
-    fn ranges_fall_within_lines() {
-        let line = 10..20;
-        let inside: Vec<Range<usize>> = std::iter::once(12..15).collect();
-        let across: Vec<Range<usize>> = std::iter::once(5..30).collect();
-        assert_eq!(
-            within(&inside, &line),
-            std::iter::once(2..5).collect::<Vec<_>>()
-        );
-        assert_eq!(
-            within(&across, &line),
-            std::iter::once(0..11).collect::<Vec<_>>()
-        );
-        assert!(within(&[0..5, 25..30], &line).is_empty());
-    }
-}
-
 /// The line the lightbulb stands beside in `document`, as `shown` says it is shown, when it shows at all.
 fn bulb_shown(document: &Document, shown: pm_editor::LightbulbShown) -> Option<usize> {
     match shown {
@@ -2884,4 +2901,62 @@ fn configure_vim(engine: &mut Vim, bindings: &[String], sharing: pm_editor::VimC
         }
     }
     engine.share_clipboard(sharing.into());
+}
+
+/// `text` with the indentation its lines share taken off every line, blank lines left out of the reckoning.
+fn unindented(text: &str) -> String {
+    let shared = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.len() - line.trim_start().len())
+        .min()
+        .unwrap_or(0);
+    text.split_inclusive('\n')
+        .map(|line| {
+            let cut = line
+                .char_indices()
+                .take_while(|(at, character)| {
+                    *at < shared && character.is_whitespace() && *character != '\n'
+                })
+                .count();
+            &line[line
+                .char_indices()
+                .nth(cut)
+                .map_or(line.len(), |(at, _)| at)..]
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Right-to-left runs take in the spaces between their words, not those
+    /// at their ends.
+    #[test]
+    fn right_to_left_runs() {
+        let text = "a = \"שלום עולם\" b";
+        let runs = reversed_runs(text);
+        assert_eq!(runs.len(), 1);
+        assert_eq!(&text[runs[0].clone()], "שלום עולם");
+        assert!(reversed_runs("plain text").is_empty());
+    }
+
+    /// Ranges are cut to a line and measured from its start, reaching past
+    /// its end when they run on.
+    #[test]
+    fn ranges_fall_within_lines() {
+        let line = 10..20;
+        let inside: Vec<Range<usize>> = std::iter::once(12..15).collect();
+        let across: Vec<Range<usize>> = std::iter::once(5..30).collect();
+        assert_eq!(
+            within(&inside, &line),
+            std::iter::once(2..5).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            within(&across, &line),
+            std::iter::once(0..11).collect::<Vec<_>>()
+        );
+        assert!(within(&[0..5, 25..30], &line).is_empty());
+    }
 }

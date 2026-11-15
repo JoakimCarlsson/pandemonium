@@ -232,6 +232,14 @@ pub struct Link {
     recent_commands: Vec<String>,
     /// Whether the link changed the window's or the editor's settings itself since the window last saved them.
     settings_changed: bool,
+    /// When the newest release was last asked for, so it is asked again every few hours while the window is open.
+    release_asked: Option<std::time::Instant>,
+    /// What the link asked of the window beyond itself while doing something that answers later, such as copying a link to a line, not yet taken.
+    outcomes: Vec<crate::quick::QuickOutcome>,
+    /// The places the caret jumped from, as path and line counted from 1, the latest last, for going back.
+    jumped_from: Vec<(String, usize)>,
+    /// The places gone back from, the latest last, for going forward again.
+    jumped_back: Vec<(String, usize)>,
 }
 
 impl Link {
@@ -292,6 +300,10 @@ impl Link {
             recent_files: Vec::new(),
             recent_commands: Vec::new(),
             settings_changed: false,
+            release_asked: None,
+            outcomes: Vec::new(),
+            jumped_from: Vec::new(),
+            jumped_back: Vec::new(),
         }
     }
 
@@ -393,6 +405,11 @@ impl Link {
         &mut self.settings
     }
 
+    /// Takes what the link asked of the window beyond itself since the last call, such as text to copy.
+    pub fn take_outcomes(&mut self) -> Vec<crate::quick::QuickOutcome> {
+        std::mem::take(&mut self.outcomes)
+    }
+
     /// Whether the link changed the settings itself since this was last asked, so the window saves them.
     pub fn take_settings_changed(&mut self) -> bool {
         std::mem::take(&mut self.settings_changed)
@@ -491,7 +508,23 @@ impl Link {
         }
         let browsed = self.run_web();
         self.browser_agent();
+        self.recheck_release();
         browsed || changed || remote
+    }
+
+    /// Asks for the newest release again once enough time passed since it was last asked, while the settings say to look for one.
+    fn recheck_release(&mut self) {
+        let general = &self.settings.window.general;
+        if !general.check_updates || self.client.is_none() {
+            return;
+        }
+        let due = self
+            .release_asked
+            .is_none_or(|asked| asked.elapsed() >= RELEASE_RECHECK);
+        if due {
+            self.release_asked = Some(std::time::Instant::now());
+            self.send(release_request(general.channel));
+        }
     }
 
     /// Opens the session at index path `at`, recording it in the trail.
@@ -515,17 +548,37 @@ impl Link {
         self.go(page);
     }
 
-    /// Goes back to the page before the one showing in the trail.
+    /// Goes back to the page before the one showing in the trail, passing over pages that are gone, such as closed sessions.
     pub fn back(&mut self) {
-        if let Some(page) = self.workspace.trail.back() {
-            self.go(page);
+        while let Some(page) = self.workspace.trail.back() {
+            if self.still_there(&page) {
+                self.go(page);
+                return;
+            }
         }
     }
 
-    /// Goes forward to the page after the one showing in the trail.
+    /// Goes forward to the page after the one showing in the trail, passing over pages that are gone.
     pub fn forward(&mut self) {
-        if let Some(page) = self.workspace.trail.forward() {
-            self.go(page);
+        while let Some(page) = self.workspace.trail.forward() {
+            if self.still_there(&page) {
+                self.go(page);
+                return;
+            }
+        }
+    }
+
+    /// Whether `page` can still be shown: its session is still listed and its project still kept.
+    fn still_there(&self, page: &Page) -> bool {
+        match page {
+            Page::Session(id) => {
+                self.sessions
+                    .iter()
+                    .any(|info| info.session == *id && (!info.closed || self.reopened.contains(id)))
+                    || self.routes.remote(*id).is_some()
+            }
+            Page::Overview(path) => self.paths.contains(path),
+            Page::Home | Page::History | Page::Extensions => true,
         }
     }
 
@@ -848,6 +901,7 @@ impl Link {
                 self.ask(Request::Sessions, Ask::Sessions);
                 self.send(Request::MachineSettings);
                 if self.settings.window.general.check_updates {
+                    self.release_asked = Some(std::time::Instant::now());
                     self.send(release_request(self.settings.window.general.channel));
                 }
                 self.send(Request::ExtensionAssets);
@@ -1324,6 +1378,9 @@ impl Link {
         self.workspace.open_files.tab = crate::open_files::SessionTab::Diff;
     }
 }
+
+/// How long the window waits before it asks for the newest release again.
+pub const RELEASE_RECHECK: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
 
 /// How many of a project's latest commits its overview lists.
 const COMMITS_SHOWN: usize = 8;

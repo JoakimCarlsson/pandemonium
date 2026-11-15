@@ -4,6 +4,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod file_dialog;
+mod frame_memory;
 mod notify;
 mod performance;
 mod snapshot;

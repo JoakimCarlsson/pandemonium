@@ -164,6 +164,10 @@ impl Link {
                 self.ask_blame(index, line);
                 return;
             }
+            ServerAsk::Act(action) => {
+                self.editor_action(index, action);
+                return;
+            }
             ServerAsk::Changed(version, change) => {
                 self.ask(
                     Request::ChangeDocument {

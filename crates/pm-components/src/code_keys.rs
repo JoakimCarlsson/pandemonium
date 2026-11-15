@@ -110,6 +110,16 @@ pub(crate) enum Command {
     /// Moves the caret to the next problem the language server found, or
     /// the one before when the flag is not set.
     NextProblem(bool),
+    /// Puts the carets back where they were before they last moved, or forward again when the flag is set.
+    CursorHistory(bool),
+    /// Copies the selection with the indentation its lines share taken off.
+    CopyUnindented,
+    /// Sets a breakpoint on the caret's line, or takes it off.
+    ToggleBreakpoint,
+    /// Stops the file being edited, or lets it be edited again.
+    ToggleReadOnly,
+    /// Leaves the keymap's action to the window, for the file at the caret.
+    Window(Action),
 }
 
 impl Command {
@@ -136,6 +146,20 @@ impl Command {
             Action::GoToImplementation => Self::Seek(Seek::Implementation),
             Action::FindReferences => Self::Seek(Seek::References),
             Action::IncomingCalls => Self::Seek(Seek::IncomingCalls),
+            Action::OutgoingCalls => Self::Seek(Seek::OutgoingCalls),
+            Action::ShowSupertypes => Self::Seek(Seek::Supertypes),
+            Action::ShowSubtypes => Self::Seek(Seek::Subtypes),
+            Action::CursorUndo => Self::CursorHistory(false),
+            Action::CursorRedo => Self::CursorHistory(true),
+            Action::CopyWithoutIndentation => Self::CopyUnindented,
+            Action::ToggleBreakpoint => Self::ToggleBreakpoint,
+            Action::ToggleReadOnly => Self::ToggleReadOnly,
+            Action::GoBack
+            | Action::GoForward
+            | Action::CopyPermalink
+            | Action::OpenPermalink
+            | Action::FileHistory
+            | Action::OpenTerminalHere => Self::Window(action),
             Action::Rename => Self::Rename,
             Action::Format | Action::FormatSelection => Self::Format,
             Action::CodeActions => Self::CodeActions,

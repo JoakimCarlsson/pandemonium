@@ -41,7 +41,10 @@ pub fn shadow_band(band: f32, floating: bool, content: impl FnOnce()) {
     if band <= 0.0 {
         stack_with(
             Modifier::new().fill_max_size().clip_rounded(FRAME_RADIUS),
-            content,
+            || {
+                content();
+                frame_edge();
+            },
         );
         return;
     }
@@ -57,5 +60,18 @@ pub fn shadow_band(band: f32, floating: bool, content: impl FnOnce()) {
             )
         },
     );
-    stack_with(shadowed.clip_rounded(FRAME_RADIUS), content);
+    stack_with(shadowed.clip_rounded(FRAME_RADIUS), || {
+        content();
+        frame_edge();
+    });
+}
+
+/// The hairline drawn around the edge of a floating frame, over what it holds, so the window stands apart from what is behind it.
+fn frame_edge() {
+    let scheme = rustle::color_scheme();
+    spacer(
+        Modifier::new()
+            .fill_max_size()
+            .border(1.0, scheme.outline_variant, FRAME_RADIUS),
+    );
 }

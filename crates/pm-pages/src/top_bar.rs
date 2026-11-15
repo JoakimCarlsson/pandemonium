@@ -14,8 +14,11 @@ use crate::actions::{Actions, Destination, Panel, UpdateAction, WindowAction};
 /// Height of the top bar.
 pub const TOP_BAR_HEIGHT: f32 = 40.0;
 
-/// Width of the command centre field.
-const COMMAND_CENTRE_WIDTH: f32 = 330.0;
+/// Widest the command centre field grows.
+const COMMAND_CENTRE_WIDTH: f32 = 420.0;
+
+/// Narrowest the command centre field shrinks to in a narrow window.
+const COMMAND_CENTRE_MIN: f32 = 180.0;
 
 /// Emits the top bar for `workspace`.
 pub fn top_bar(workspace: &Workspace, actions: &Actions) {
@@ -64,7 +67,8 @@ pub fn top_bar(workspace: &Workspace, actions: &Actions) {
                 .size(Size::Sm)
                 .modifier(
                     Modifier::new()
-                        .width(COMMAND_CENTRE_WIDTH)
+                        .weight(1.6)
+                        .width_in(COMMAND_CENTRE_MIN, COMMAND_CENTRE_WIDTH)
                         .on_press(keep_press),
                 )
                 .on_click(move || open())
@@ -79,6 +83,15 @@ pub fn top_bar(workspace: &Workspace, actions: &Actions) {
                         Arrangement::SpacedBy(pm_components::spacing(4.0)),
                         Alignment::Center,
                         || {
+                            if language_update(workspace) {
+                                let navigate = actions.navigate.clone();
+                                Button::new("Update languages")
+                                    .icon(phosphor::TRANSLATE)
+                                    .variant(ButtonVariant::Ghost)
+                                    .size(Size::Xs)
+                                    .on_click(move || navigate(Destination::Extensions))
+                                    .show();
+                            }
                             if let Some(offer) = &workspace.update {
                                 let update = actions.update.clone();
                                 Button::new(format!("Update to {}", offer.version))
@@ -156,11 +169,30 @@ fn place_name(workspace: &Workspace) -> String {
             .next()
             .unwrap_or(path)
             .to_owned(),
-        Page::Home | Page::Session(_) => match workspace.open {
-            Some(_) => format!("{} · {}", open_project(workspace), workspace.title),
-            None => "New chat".to_owned(),
+        Page::Home | Page::Session(_) => match (&workspace.starting, &workspace.open) {
+            (Some(start), _) => match start.at.as_ref().and_then(|at| at.first()) {
+                Some(index) => format!(
+                    "{} · New session",
+                    workspace
+                        .projects
+                        .get(*index)
+                        .map_or("Project", |project| project.name.as_str())
+                ),
+                None => "New chat".to_owned(),
+            },
+            (None, Some(_)) => format!("{} · {}", open_project(workspace), workspace.title),
+            (None, None) => "New chat".to_owned(),
         },
     }
+}
+
+/// Whether an installed language or language server has a newer version than the machine has, so the top bar offers to update it.
+fn language_update(workspace: &Workspace) -> bool {
+    workspace.extensions.as_deref().is_some_and(|extensions| {
+        extensions.iter().any(|extension| {
+            extension.installed && extension.action == pm_shell::ExtensionAction::Update
+        })
+    })
 }
 
 /// A small button walking the trail for `action`, faint when `enabled` is

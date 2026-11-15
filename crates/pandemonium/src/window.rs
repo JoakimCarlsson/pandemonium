@@ -16,9 +16,6 @@ use pm_shell::{
 use rustle::prelude::*;
 use rustle::{ResizeEdge, WindowHandle, current_window, set_external_handler};
 
-/// The window's first size, in logical pixels.
-const SIZE: (f32, f32) = (1636.0, 720.0);
-
 /// Opens the Rustle window and runs it until it is closed.
 pub fn run() {
     crate::performance::install();
@@ -31,25 +28,32 @@ pub fn run() {
     }
     connected.follow_settings();
     let link = Rc::new(RefCell::new(connected));
+    wake_for_rechecks();
+    let frame = crate::frame_memory::Frame::load();
     let options = WindowOptions {
         title: "Pandemonium".to_owned(),
-        size: SIZE,
+        size: frame.size,
+        min_size: crate::frame_memory::MIN_SIZE,
         decorations: false,
         transparent: true,
         shadow: Some(pm_components::window_shadow()),
         app_id: Some("pandemonium".to_owned()),
         ..WindowOptions::default()
     };
-    rustle::run_with(options, move || root(&link));
+    rustle::run_with(options, move || root(&link, frame));
 }
 
 /// The root composable: pumps the link when the server wakes the loop and
-/// draws the workspace it holds.
-fn root(link: &Rc<RefCell<Link>>) {
+/// draws the workspace it holds, maximising the window first when `frame`
+/// says it was left maximised.
+fn root(link: &Rc<RefCell<Link>>, frame: crate::frame_memory::Frame) {
     let revision = remember(|| 0_u64);
     let installed = remember(|| false);
     if !installed.get() {
         installed.set(true);
+        if frame.maximised {
+            current_window().toggle_maximize();
+        }
         install_close_handler(link, &revision);
         let link = link.clone();
         let revision = revision.clone();
@@ -58,12 +62,14 @@ fn root(link: &Rc<RefCell<Link>>) {
             if link.pump() {
                 revision.update(|value| *value += 1);
             }
+            answered_outcomes(&mut link);
             for title in link.take_finished() {
                 agent_finished(&link.settings().window.agents, &title);
             }
-            if let Some(staged) = link.take_staged()
-                && let Err(reason) = install_update(&staged)
-            {
+            if let Some(staged) = link.take_staged() {
+                install_update(staged);
+            }
+            if let Some(reason) = take_install_failure() {
                 link.update_failed(reason);
                 revision.update(|value| *value += 1);
             }
@@ -76,7 +82,9 @@ fn root(link: &Rc<RefCell<Link>>) {
     let workspace = link.borrow().workspace().clone();
     let theme = window_theme(link);
     let bindings = key_bindings(link, &revision, &settings_open);
-    framed(|| provide_key_bindings(bindings, || workspace_page(&workspace, theme, &actions)));
+    framed_kept(true, || {
+        provide_key_bindings(bindings, || workspace_page(&workspace, theme, &actions))
+    });
     if settings_open.get() {
         settings_window(link, &revision, &settings_open);
     }
@@ -141,24 +149,48 @@ fn key_bindings(
 /// shadow band around it, where the compositor needs one, and the resize
 /// grips along its edges.
 fn framed(content: impl FnOnce()) {
+    framed_kept(false, content);
+}
+
+/// Draws `content` inside the self-drawn frame, as [`framed`] does, keeping
+/// the window's size and whether it is maximised for the next run when
+/// `kept`; the resize grips sit on the frame's own edge and only while it floats.
+fn framed_kept(kept: bool, content: impl FnOnce()) {
     let band = remember(|| 0.0_f32);
     let floating = remember(|| true);
+    let floated = remember(|| crate::frame_memory::Frame::load().size);
     let measured = band.clone();
     let shape = floating.clone();
     let handle = current_window();
-    let sized = Modifier::new().fill_max_size().on_size_changed(move |_| {
-        let now = handle.shadow_band(pm_components::SHADOW_MARGIN);
-        if now != measured.get() {
-            measured.set(now);
-        }
-        let floats = !handle.is_maximized() && !handle.is_fullscreen();
-        if floats != shape.get() {
-            shape.set(floats);
-        }
-    });
+    let sized = Modifier::new()
+        .fill_max_size()
+        .on_size_changed(move |size| {
+            let now = handle.shadow_band(pm_components::SHADOW_MARGIN);
+            if now != measured.get() {
+                measured.set(now);
+            }
+            let maximised = handle.is_maximized();
+            let floats = !maximised && !handle.is_fullscreen();
+            if floats != shape.get() {
+                shape.set(floats);
+            }
+            if kept && !handle.is_fullscreen() {
+                if floats {
+                    floated.set((size.width, size.height));
+                }
+                crate::frame_memory::Frame {
+                    size: floated.get(),
+                    maximised,
+                }
+                .save();
+            }
+        });
     stack_with(sized, || {
         pm_components::shadow_band(band.get(), floating.get(), content);
-        resize_grips();
+        if floating.get() {
+            let inset = (band.get() - GRIP).max(0.0);
+            stack_with(Modifier::new().fill_max_size().padding(inset), resize_grips);
+        }
     });
 }
 
@@ -300,8 +332,26 @@ fn save_view(workspace: &pm_shell::Workspace) {
     crate::store_writer::save(VIEW, pm_shell::View::of(workspace).write());
 }
 
-/// Saves what changed after an action on `link`: the layout, and the settings when the link changed them itself.
+/// Does what `link` asked of the window when answers came in, such as putting a link to a line on the clipboard or opening it.
+fn answered_outcomes(link: &mut Link) {
+    for outcome in link.take_outcomes() {
+        match outcome {
+            QuickOutcome::Copy(text) => {
+                if let Some(clipboard) = rustle::clipboard() {
+                    clipboard.set_text(&text);
+                }
+            }
+            QuickOutcome::OpenAddress(url) => {
+                rustle::open_url(&url);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Saves what changed after an action on `link`: the layout, and the settings when the link changed them itself, after doing what it asked of the window meanwhile.
 fn save_after(link: &mut Link) {
+    answered_outcomes(link);
     if link.take_settings_changed() {
         save_settings(link.settings());
     }
@@ -319,15 +369,51 @@ fn agent_finished(settings: &pm_config::AgentSettings, title: &str) {
     }
 }
 
-/// Installs the release the server downloaded to `staged` over the running one and restarts into it, ending this process once the new one runs.
-///
-/// # Errors
-///
-/// The reason the install or the restart failed; the running install is then left as it was.
-fn install_update(staged: &str) -> Result<(), String> {
-    let installed = pm_update::install(std::path::Path::new(staged))?;
-    pm_update::relaunch(&installed)?;
-    std::process::exit(0)
+/// Wakes the window's loop now and then from a thread of its own, so the link asks for the newest release again after [`pm_shell::RELEASE_RECHECK`] even while nothing else happens.
+fn wake_for_rechecks() {
+    let wake = rustle::external_waker();
+    std::thread::Builder::new()
+        .name("release-recheck".to_owned())
+        .spawn(move || {
+            loop {
+                std::thread::sleep(pm_shell::RELEASE_RECHECK / 6);
+                wake();
+            }
+        })
+        .ok();
+}
+
+thread_local! {
+    /// Why installing the downloaded release failed, once the thread doing it said so.
+    static INSTALL_FAILURE: std::sync::Arc<std::sync::Mutex<Option<String>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(None));
+}
+
+/// Takes why installing the downloaded release failed, when the installing thread said so since the last call.
+fn take_install_failure() -> Option<String> {
+    INSTALL_FAILURE.with(|held| held.lock().ok().and_then(|mut held| held.take()))
+}
+
+/// Installs the release the server downloaded to `staged` over the running one on a thread of its own and restarts into it, ending this process once the new one runs; a failure is left for [`take_install_failure`] and the loop woken, the running install then left as it was.
+fn install_update(staged: String) {
+    let failure = INSTALL_FAILURE.with(std::sync::Arc::clone);
+    let wake = rustle::external_waker();
+    std::thread::Builder::new()
+        .name("update-install".to_owned())
+        .spawn(move || {
+            let outcome = pm_update::install(std::path::Path::new(&staged))
+                .and_then(|installed| pm_update::relaunch(&installed));
+            match outcome {
+                Ok(()) => std::process::exit(0),
+                Err(reason) => {
+                    if let Ok(mut held) = failure.lock() {
+                        *held = Some(reason);
+                    }
+                    wake();
+                }
+            }
+        })
+        .ok();
 }
 
 /// How thick the invisible resize strips along the window's edges are.
@@ -798,6 +884,9 @@ fn take_outcome(
             save_settings(link.settings());
         }
         Some(QuickOutcome::Quit) => handle.close(),
+        Some(QuickOutcome::OpenAddress(url)) => {
+            rustle::open_url(&url);
+        }
         None => {}
     }
 }

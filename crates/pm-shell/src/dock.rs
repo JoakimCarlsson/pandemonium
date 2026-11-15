@@ -291,6 +291,20 @@ impl Dock {
         );
     }
 
+    /// Opens a new shell in the place, started in `folder` rather than the place's own folder, and shows it.
+    pub fn new_shell_in(&mut self, folder: String) {
+        let key = self.add_shell(None);
+        let (columns, rows) = self.size;
+        self.send(
+            Request::OpenTerminal {
+                directory: folder,
+                columns,
+                rows,
+            },
+            DockAsk::Shell(key),
+        );
+    }
+
     /// Adds a shell in the place, running `task` when given, shows it and returns its key.
     fn add_shell(&mut self, task: Option<String>) -> u64 {
         let key = self.next_key;
