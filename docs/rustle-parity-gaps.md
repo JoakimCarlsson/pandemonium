@@ -49,10 +49,10 @@ polish.
 | 6 | **The root key handler takes chords from the terminal and browser.** The keymap runs in `on_preview_key_event`, before the focused child, so Ctrl+R/N/P/T/E never reach a shell, and any binding overrides keys typed in a web page. | `pm-pages/src/workspace.rs:79,155-158` | `old: app.rs:2085-2097`, `app/browser.rs:667-702` |
 | 7 | **Error messages are never shown.** `Workspace.status` is written by about 25 failure paths (disconnect, start, save, LSP, file tree, listing, browser) and read by nothing. `answer_settings` and other answer handlers drop `Response::Failed` in catch-alls. Prompt, Cancel, Set, Answer, Trust, Rewind, Fork, SaveMcpServers, ModelServers and other failures vanish silently. | `pm-shell/src/model.rs:70`, `link.rs:153,916-919,981` | `old: work.rs:2080-2083,2374,2389` |
 | 8 | **A failed turn leaves the session stuck.** `Event::Failed` never calls `end_turn`, so the session stays Working. Tool steps are never closed on Finished, Halted or Failed and keep their running mark. | `pm-shell/src/thread.rs:157-160,274-287` | `old: hearing.rs:80-84,252-260` |
-| 9 | **Closing a modified file discards it without asking.** This covers Close, Close others, Close all and Ctrl+W. Unsaved text, carets and open tabs are also no longer saved across restarts. | `pm-shell/src/open_files.rs:532-562`, `pm-shell/src/view.rs:53-72` | `old: open_files.rs:632-640`, `view.rs:47-65,588-617` |
+| 9 | **FIXED.** **Closing a modified file discards it without asking.** This covers Close, Close others, Close all and Ctrl+W. Unsaved text, carets and open tabs are also no longer saved across restarts. *Closing now asks Save, Don't save or Cancel; open files, their caret lines and unsaved text are kept in `view.json` and reopened once the server lists its sessions.* | `pm-shell/src/open_files.rs:532-562`, `pm-shell/src/view.rs:53-72` | `old: open_files.rs:632-640`, `view.rs:47-65,588-617` |
 | 10 | **Closing the window doesn't ask, and the browser isn't shut down.** The title-bar Close calls `process::exit(0)`, and the confirm-close setting is ignored. A desktop close skips `shutdown_browser` and the view flush. | `pandemonium/src/window.rs:536-539` | `old: app/frame.rs:144-155`, `app.rs:2272-2276,2410` |
-| 11 | **Diagnostics never reach the editor.** There are no squiggles, no problem colour on line numbers, no problems in the hover card, no scrollbar marks and no next/previous problem. Problems only lists open files, and pressing a problem row does nothing. | `link.rs:798-803`, `code_editor.rs:1631-1825`, `pm-pages/src/problems_panel.rs:32-47` | `old: editor.rs:250-273`, `viewer.rs:257-267`, `dock.rs:253-343` |
-| 12 | **Long lines are cut off.** There is no horizontal scroll and no word wrap in the editor or the diff (compare `new-code.png` and `new-diff.png`). The old build wrapped them. | `code_editor.rs:1426-1458`, `diff_view.rs` | `old: viewer.rs:826-860`, `diff.rs` |
+| 11 | **FIXED.** **Diagnostics never reach the editor.** There are no squiggles, no problem colour on line numbers, no problems in the hover card, no scrollbar marks and no next/previous problem. Problems only lists open files, and pressing a problem row does nothing. *Diagnostics now reach open and later-opened files: squiggles, coloured line numbers, scrollbar marks, F8/Shift+F8, and problem rows open their place. The server still reports only open files.* | `link.rs:798-803`, `code_editor.rs:1631-1825`, `pm-pages/src/problems_panel.rs:32-47` | `old: editor.rs:250-273`, `viewer.rs:257-267`, `dock.rs:253-343` |
+| 12 | **PARTLY FIXED.** **Long lines are cut off.** There is no horizontal scroll and no word wrap in the editor or the diff (compare `new-code.png` and `new-diff.png`). The old build wrapped them. *The editor now scrolls across (Shift+wheel, following the caret) and wraps at the edge or the line length as Soft wrap says; the diff is still clipped.* | `code_editor.rs:1426-1458`, `diff_view.rs` | `old: viewer.rs:826-860`, `diff.rs` |
 | 13 | **Shells are lost on reconnect or restart.** `Terminals` and `AttachTerminal` are never sent, `watch_terminal` is never called, shells are never adopted or closed, and missed output is never caught up. This breaks the AGENTS.md reconnect rule. | `pm-shell/src/dock.rs:136-141` | `old: dock.rs:509-520`, `work.rs:2121-2143` |
 | 14 | **Remote machines lose most server messages.** `link/remote.rs` passes on only six message kinds. BrowserCall (a remote agent's browser tool hangs), Diagnostics, FolderChanged, ExtensionsChanged and ChatContinued are dropped. Remote sessions also show no "out of reach" state; they keep spinning as Working. | `pm-shell/src/link/remote.rs:202`, `model.rs` (`SessionStatus`) | `old: work.rs:1752-1843`, `reach.rs:12-32` |
 | 15 | **Customizations, clone and the machines form ignore remote machines.** The library and `SaveWithheld` always go to the local server. Clone has no destination or machine. The machines form has no token field, so token-protected servers can't be reached. | `link.rs:359`, `settings_change.rs:110-119,240-274`, `link/projects.rs:80-98` | `old: settings_library.rs:137-174`, `settings_machines.rs:243-250`, `adder.rs:540-604` |
@@ -60,11 +60,11 @@ polish.
 | 17 | **Sessions can't be closed or renamed.** `CloseSession` and `RenameSession` are never sent. A fork made in this window doesn't appear until a reconnect, because the `Started` reply is dropped (`Ask::Nothing`). | `pm-pages/src/actions.rs`, `link/conversation_requests.rs:161` | `old: work.rs:819-852,998` |
 | 18 | **Tooltips are almost all gone.** The new code has one `tooltip(` call (`usage_ring.rs:94`), and `IconButton` has no tooltip API. The title bar, git panel, browser, find bar, file header, debug controls, sidebar status marks and agent chips all lost theirs. | `pm-components/src/icon_button.rs:22-37` | `old: pm-ui/src/tooltip.rs`; title bar alone had 11 |
 | 19 | **There is no keyboard focus ring and no keyboard operation of controls.** Buttons, checkboxes, switches, segmented controls, selects, steppers and menus can't be focused or driven by keys. `Dialog` and `ConfirmDialog` don't close on Escape. The folder picker and adder have no arrow or Enter keys. | `button.rs:131-144`, `menu.rs:269-298`, `dialog.rs:82-111`, `confirm_dialog.rs` | `old: button.rs:253-313`, `settings.rs:20-92`, `folder_picker.rs:308-348` |
-| 20 | **Typing behaviour ignores its settings, and features are missing.** Typing ignores tab size, hard tabs, auto-close, auto-indent and comment extension. Format on save, code actions on save, auto save, snippets and Emmet on Tab, folding, multi-caret (Ctrl+D, Alt+click, column select), case and sort commands, and the line-copy fallback are gone. | `code_editor.rs:669-855`, `link/code.rs:100-117`, `code_text.rs:14` | `old: editor.rs:353-684`, `line_edits.rs:20-157`, `app/code.rs:165-199` |
+| 20 | **PARTLY FIXED.** **Typing behaviour ignores its settings, and features are missing.** Typing ignores tab size, hard tabs, auto-close, auto-indent and comment extension. Format on save, code actions on save, auto save, snippets and Emmet on Tab, folding, multi-caret (Ctrl+D, Alt+click, column select), case and sort commands, and the line-copy fallback are gone. *Now honoured: tab size, hard tabs, auto-close, auto-surround, auto-indent, comment extension, format on save and on type, auto save, snippets and Emmet on Tab, folding, Ctrl+D, Ctrl+Shift+L, Ctrl+Alt+Up/Down and Alt+click. Still missing: code actions on save, column select, case and sort commands and the line-copy fallback.* | `code_editor.rs:669-855`, `link/code.rs:100-117`, `code_text.rs:14` | `old: editor.rs:353-684`, `line_edits.rs:20-157`, `app/code.rs:165-199` |
 | 21 | **The composer is reduced.** The `+`, `@` and `/` toolbar buttons do nothing. `@` file mentions are gone. A prompt made only of attachments can't be sent. The box doesn't grow past one line. Signed-out sessions show no "Sign in again" bar. Account and Goal chips are inert. Shift+Tab mode cycling is gone. | `pm-components/src/composer.rs:294-320,471-477`, `prompt_box.rs:116`, `thread.rs:156` | `old: composer.rs:353-412,592-631`, `input.rs:254-354`, `choices.rs:784-968` |
 | 22 | **The start page drops what you chose.** `StartSession` sends empty `settings` and `attachments` and `base: "HEAD"`. The welcome composer can't take attachments. Agents aren't filtered to visible, signed-in ones. | `pm-shell/src/link.rs:524-537`, `pm-pages/src/welcome.rs:85,99-116` | `old: choices.rs:523-535,757-761`, `agent_list.rs:106-126` |
-| 23 | **Folder watches are mostly lost, and diffs go stale or loop.** `WatchFolders` holds only the session folder. The tree and open files don't reload on outside edits. Kept diffs are never refetched. Empty or failed diffs re-request on every recomposition and show "Loading the diff…" forever. | `link/git.rs:61-66,193-223,522-529`, `changes_page.rs:99-109` | `old: work/watch.rs:39-114`, `lazy_diffs.rs:46-131` |
-| 24 | **Git workflows are missing.** You can't continue, skip or abort a merge, rebase or cherry-pick (Commit just sends a plain commit). Stash is gone. The submodule picker is gone. Commit readiness ignores conflicts. Partly staged files are mishandled, and conflicted rows can be staged. | `pm-pages/src/git_panel.rs:176-190,534-604`, `pm-shell/src/git.rs:89-145,394-398` | `old: git_controls.rs:543-616,815-905`, `git_menus.rs:239-265,414-424` |
+| 23 | **PARTLY FIXED.** **Folder watches are mostly lost, and diffs go stale or loop.** `WatchFolders` holds only the session folder. The tree and open files don't reload on outside edits. Kept diffs are never refetched. Empty or failed diffs re-request on every recomposition and show "Loading the diff…" forever. *Diffs are now refetched after each change and never re-requested once answered, and open files without unsaved changes follow outside edits. `WatchFolders` still holds only the session folder and the tree does not reload.* | `link/git.rs:61-66,193-223,522-529`, `changes_page.rs:99-109` | `old: work/watch.rs:39-114`, `lazy_diffs.rs:46-131` |
+| 24 | **FIXED.** **Git workflows are missing.** You can't continue, skip or abort a merge, rebase or cherry-pick (Commit just sends a plain commit). Stash is gone. The submodule picker is gone. Commit readiness ignores conflicts. Partly staged files are mishandled, and conflicted rows can be staged. *Continue, Skip and Abort show while a merge, rebase or cherry-pick is stopped; stashes can be made, applied, popped and dropped; a submodule picker points the panel at a submodule; conflicts block committing; partly staged files list under both groups; conflicted rows have no stage box.* | `pm-pages/src/git_panel.rs:176-190,534-604`, `pm-shell/src/git.rs:89-145,394-398` | `old: git_controls.rs:543-616,815-905`, `git_menus.rs:239-265,414-424` |
 | 25 | **Restore files and Undo turn are gone.** The "Restore files to before this turn" action, Undo turn and turn changes are missing. `Restored`, `Undone`, `ToolSignIn`, `Limits`, `Goal`, `Slots` and `Container` events are dropped. | `pm-shell/src/thread.rs:254` | `old: chat.rs:63-123`, `hearing.rs:113-115,303-363` |
 | 26 | **Subagents are flattened into ordinary rows.** The subagent card, per-subagent Stop (`StopSubagent`), the worktree/merge chip and nesting through `parent` are gone. Back-to-back thinking or text blocks overwrite each other. The "Worked for Ns · N steps" fold is gone. Edit steps lose their diff. | `pm-shell/src/translate.rs:24-65`, `thread.rs:71-96,285`, `pm-components/src/steps.rs` | `old: steps.rs:43-465,591-616`, `hearing.rs:185-220,407-418,541-594` |
 | 27 | **Quick input is reduced.** It has a fixed table of 25 commands, with hard-coded key labels that ignore the keymap. `:` go to line, `?` help, recents, Compare-with-file mode, chat search, Ctrl+Enter to start a new session and the debug, task and toolchain pickers are gone. Outline needs the language server plus typing. | `pm-shell/src/quick.rs:179-244,291`, `link/quick_input.rs:173-252` | `old: listing.rs:166-1279`, `quick_choices.rs:148-446`, `quick_sessions.rs:10-188` |
@@ -475,40 +475,48 @@ reads the value.
 ## 8. Code editor
 
 **P1**
-- **No editor setting is applied** (see section 2).
-- **Diagnostics are never stored or drawn.**
-- **The lightbulb applies the wrong action.** Titles are filtered to enabled
+- **PARTLY FIXED.** **No editor setting is applied** (see section 2). Typing,
+  wrap, blink, hover, completion, signature, format and auto-save settings now
+  reach the editor.
+- **FIXED.** **Diagnostics are never stored or drawn.**
+- **FIXED.** **The lightbulb applies the wrong action.** Titles are filtered to enabled
   actions, but `TakeAction(place)` indexes the unfiltered list
   (`file_view.rs:158-163`, `code_assist.rs:361-364`, `lsp.rs:467`).
 - **The keymap is ignored in the editor.**
-- **Line edits are missing:** add next occurrence, select all occurrences,
+- **PARTLY FIXED** (add next occurrence, select all occurrences, carets
+  above and below, next/previous problem). **Line edits are missing:** add next occurrence, select all occurrences,
   carets above and below, column select, split selection, case changes, sort,
   reverse and unique, transpose, trim, delete to line end or start, block
   comment, text objects, next/previous problem and change, cursor undo.
-- **No folding.** `FoldingRanges` is never requested.
-- **Format on save, actions on save and auto save are gone.**
+- **FIXED.** **No folding.** `FoldingRanges` is never requested. Ctrl+Shift+[
+  and ] fold and unfold at the caret, Ctrl+Alt+[ and ] fold and unfold all,
+  by the syntax tree or indentation; a folded line shows a ⋯ mark.
+- **PARTLY FIXED** (format on save and auto save after a second's rest).
+  **Format on save, actions on save and auto save are gone.**
 - **Documents aren't re-opened with the language server after a reconnect or
   when a language is installed.**
 - **Vim:** settings are hard-coded, only `:w` is handled, `zz`/`zt`/`zb` and
   Ctrl-E/Ctrl-Y are dropped, and toggling vim mode doesn't reach open files.
-- **Typing ignores its settings,** and snippets and Emmet on Tab are gone.
-- **No horizontal scroll and no soft wrap.** Long lines are clipped (see
+- **FIXED.** **Typing ignores its settings,** and snippets and Emmet on Tab are gone.
+- **FIXED.** **No horizontal scroll and no soft wrap.** Long lines are clipped (see
   `new-code.png`).
 
 **P2**
-- Completion, signature, hover and hover-delay settings are ignored. Hover,
+- **PARTLY FIXED** (the settings are honoured and hover waits for the hover
+  delay). Completion, signature, hover and hover-delay settings are ignored. Hover,
   highlights and code actions are requested on every move with no rest delay.
   The completion scope is always `None`.
 - Inlay hints and lenses are fetched even when switched off.
-- Line numbers are always shown and never relative. The cursor shape and
+- **FIXED.** Line numbers are always shown and never relative. The cursor shape and
   blink settings are ignored outside vim.
 - Minimap and sticky scroll are always on.
 - **Find bar:** no find-in-selection, smartcase, wrap setting or autofocus,
   and Shift+Enter doesn't step back.
 - Copy with no selection copies nothing (the old build copied the line).
   Paste doesn't re-indent.
-- No Ctrl+click to go to definition, no Alt+click for a caret, and no editor
-  context menu.
+- **PARTLY FIXED** (Alt+click adds a caret; the editor menu has the
+  clipboard, language-server, comment, fold and find commands). No Ctrl+click
+  to go to definition, no Alt+click for a caret, and no editor context menu.
 - Pressing selected text without moving leaves the drag state. Ctrl+K is bound
   directly to Hover, which blocks Ctrl+K chords (`code_keys.rs:111`).
 - Missing actions: Go back/forward, toggle breakpoint at the caret,
@@ -540,23 +548,24 @@ reads the value.
 ## 9. Diff, review and git
 
 **P1**
-- **Folder watches cover only the session folder,** and the tree and open
+- **PARTLY FIXED** (open files reload). **Folder watches cover only the session folder,** and the tree and open
   files never reload on outside edits.
-- **Kept diffs go stale, and empty or failed diffs loop forever with
+- **FIXED.** **Kept diffs go stale, and empty or failed diffs loop forever with
   "Loading the diff…".**
-- **No continue, skip or abort for a merge, rebase or cherry-pick.**
-- **Commit readiness ignores conflicts and untracked-only states,** and the ✓
+- **FIXED.** **No continue, skip or abort for a merge, rebase or cherry-pick.**
+- **PARTLY FIXED** (conflicts disable the commit button and block the ✓
+  button with a notice). **Commit readiness ignores conflicts and untracked-only states,** and the ✓
   button is never disabled.
-- **Stash is gone entirely.**
-- **The submodule repository picker is gone.**
-- **Partly staged files are mishandled** (one `staged` flag, first-match
+- **FIXED.** **Stash is gone entirely.**
+- **FIXED.** **The submodule repository picker is gone.**
+- **FIXED.** **Partly staged files are mishandled** (one `staged` flag, first-match
   lookups).
 
 **P2**
 - Changed files are a flat list instead of a folder tree with folder
   checkboxes and tallies (compare `old-files.png` and `new-files.png`).
 - The group checkbox state is wrong.
-- Conflicted rows show a stage box.
+- **FIXED.** Conflicted rows show a stage box.
 - Changed-file rows have no file icons.
 - Moved submodules and side-by-side repositories are dropped.
 - The change menu and source menu lost rows: Open file at HEAD, copy paths,

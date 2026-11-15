@@ -237,8 +237,12 @@ welcome page of a new session in the first project, `chat` for a new chat,
 `sign-in` draws the update dialog or the sign-in code dialog over it.
 `approve`, `inquiry`, `trust` and `continue` show a card waiting on the
 reader. `code` opens sample files in the editor and `diff` the Diff tab;
+with `code`, `code-problems` marks problems, `code-folded` folds the block
+at the caret and `code-unsaved` asks before closing a modified file;
 `git-menu`, `git-source`, `git-confirm` and `branch-menu` open the Git
-panel's menus and prompts; `files`, `search`, `file-menu` and `file-delete`
+panel's menus and prompts, `git-rebase` shows a stopped rebase with a partly
+staged and a conflicted file, and `git-stashes` and `git-submodules` open the
+stash and submodule menus; `files`, `search`, `file-menu` and `file-delete`
 show the Files and Search tabs; `quick`, `quick-commands`,
 `quick-sessions`, `quick-text` and `quick-theme` open the quick input;
 `browser` shows the browser pane on a sample page, and `browser-find`,
@@ -261,7 +265,7 @@ Appearance words change the settings any snapshot is drawn with: `compact`
 for compact density, `interface-<px>`, `codesize-<px>`, `line-<times>` and
 `terminal-<px>` for the sizes, `font-<family>` and `mono-<family>` for the
 interface and code fonts (spaces written as `_`), and `relative`,
-`no-numbers`, `wrap-guide`, `no-minimap` and `bar-terminal` for the editor
+`no-numbers`, `wrap-guide`, `soft-wrap`, `no-minimap` and `bar-terminal` for the editor
 and terminal.
 
 ## Architecture
