@@ -96,12 +96,12 @@ pub fn changes_page(page: ChangesPage, actions: &Actions) {
             count,
             move |index| {
                 let file = &files[index];
-                if working && file.diff.is_empty() && !file.untracked {
+                if working && !file.fetched && !file.untracked {
                     let wanted: Vec<String> = files
                         .iter()
                         .skip(index)
                         .take(AHEAD + 1)
-                        .filter(|file| file.diff.is_empty() && !file.untracked)
+                        .filter(|file| !file.fetched && !file.untracked)
                         .map(|file| file.path.clone())
                         .collect();
                     let load = git.clone();
@@ -151,7 +151,7 @@ fn file_block(file: &ChangedFile, working: bool, git: Rc<dyn Fn(GitAction)>) {
             None
         } else if file.untracked {
             Some("A new file; stage it to see its lines.")
-        } else if working {
+        } else if working && !file.fetched {
             Some("Loading the diff…")
         } else {
             Some("No lines changed.")

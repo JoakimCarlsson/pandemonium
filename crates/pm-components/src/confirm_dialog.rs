@@ -53,6 +53,9 @@ pub struct ConfirmDialog {
     on_confirm: Option<Rc<dyn Fn()>>,
     /// What cancelling, or a click outside, does.
     on_cancel: Option<Rc<dyn Fn()>>,
+    /// A third answer beside Cancel and confirm, as its label and what
+    /// choosing it does, when the question offers one.
+    alternative: Option<(String, Rc<dyn Fn()>)>,
 }
 
 impl ConfirmDialog {
@@ -71,6 +74,7 @@ impl ConfirmDialog {
             size: Size::Sm,
             on_confirm: None,
             on_cancel: None,
+            alternative: None,
         }
     }
 
@@ -110,6 +114,13 @@ impl ConfirmDialog {
     /// The question calling `on_cancel` when cancelled, clicked outside, or Escape is pressed in it.
     pub fn on_cancel(mut self, on_cancel: impl Fn() + 'static) -> Self {
         self.on_cancel = Some(Rc::new(on_cancel));
+        self
+    }
+
+    /// The question with a third button reading `label`, left of Cancel,
+    /// calling `on_choose` when pressed, such as "Don't save".
+    pub fn alternative(mut self, label: impl Into<String>, on_choose: impl Fn() + 'static) -> Self {
+        self.alternative = Some((label.into(), Rc::new(on_choose)));
         self
     }
 
@@ -182,6 +193,13 @@ impl ConfirmDialog {
                             Arrangement::SpacedBy(crate::spacing(8.0)),
                             Alignment::Center,
                             move || {
+                                if let Some((label, choose)) = self.alternative.clone() {
+                                    Button::new(label)
+                                        .variant(ButtonVariant::Ghost)
+                                        .size(Size::Xs)
+                                        .on_click(move || choose())
+                                        .show();
+                                }
                                 spacer(Modifier::new().weight(1.0));
                                 let cancel = self.on_cancel.clone();
                                 Button::new("Cancel")

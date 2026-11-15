@@ -101,8 +101,8 @@ pub use model::{
     SessionStatus, Start, Workspace,
 };
 pub use open_files::{
-    Comparison, EditorBar, EditorPopup, FileBody, OpenFile, OpenFiles, Pane, SessionTab,
-    SharedDocument, TabAction, TabMenu, is_picture,
+    Comparison, EditorBar, EditorPopup, FileBody, OpenFile, OpenFiles, Pane, SavedFile, SessionTab,
+    SharedDocument, TabAction, TabMenu, Unsaved, is_picture,
 };
 pub use page::{Page, Trail};
 pub use pm_browser::CaptureKind as PageCapture;

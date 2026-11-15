@@ -43,6 +43,9 @@ pub fn git_panel(git: &GitSummary, actions: &Actions) {
                 note("This folder is not a git repository.");
                 return;
             }
+            if !git.submodules.is_empty() {
+                repository_button(git, actions);
+            }
             branch_button(git, actions);
             trouble(git, actions);
             changes_section(git, actions);
@@ -67,6 +70,58 @@ fn note(message: &str) {
         .size(Size::Xs)
         .modifier(Modifier::new().padding_xy(4.0, 8.0))
         .show();
+}
+
+/// The button naming the repository the panel works on, the session's own
+/// or one of its submodules, with the menu that picks another under it.
+fn repository_button(git: &GitSummary, actions: &Actions) {
+    let own = git
+        .root
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or("Repository")
+        .to_owned();
+    let label = git.submodule.clone().unwrap_or_else(|| own.clone());
+    let open = git.menu == Some(GitMenu::Repositories);
+    column_with(Modifier::new().fill_max_width(), || {
+        Button::new(label)
+            .icon(phosphor::FOLDER_SIMPLE)
+            .trailing_icon(phosphor::CARET_DOWN)
+            .variant(if open {
+                ButtonVariant::Secondary
+            } else {
+                ButtonVariant::Ghost
+            })
+            .size(Size::Xs)
+            .modifier(Modifier::new().fill_max_width())
+            .on_click(send(
+                actions,
+                GitAction::Menu((!open).then_some(GitMenu::Repositories)),
+            ))
+            .show();
+        if open {
+            let mut menu = Menu::new()
+                .width(SIDE_MENU_WIDTH)
+                .on_dismiss(send(actions, GitAction::Menu(None)))
+                .icon_item(
+                    phosphor::FOLDER_SIMPLE,
+                    own.clone(),
+                    send(actions, GitAction::Repository(None)),
+                )
+                .heading("Submodules");
+            for (path, head) in &git.submodules {
+                menu = menu
+                    .icon_item(
+                        phosphor::FOLDER_SIMPLE,
+                        path.clone(),
+                        send(actions, GitAction::Repository(Some(path.clone()))),
+                    )
+                    .hint(head.clone());
+            }
+            menu.show();
+        }
+    });
 }
 
 /// The branch button, saying how far the branch and the one it follows are apart, with the branch menu under it.
@@ -185,6 +240,25 @@ fn trouble(git: &GitSummary, actions: &Actions) {
                     .size(Size::Xs)
                     .modifier(Modifier::new().weight(1.0))
                     .show();
+                let conflicted = git.changes.iter().any(|change| change.conflicted);
+                Button::new("Abort")
+                    .variant(ButtonVariant::Ghost)
+                    .size(Size::Xs)
+                    .on_click(send(actions, GitAction::Step("abort".to_owned())))
+                    .show();
+                if git.skippable {
+                    Button::new("Skip")
+                        .variant(ButtonVariant::Ghost)
+                        .size(Size::Xs)
+                        .on_click(send(actions, GitAction::Step("skip".to_owned())))
+                        .show();
+                }
+                Button::new("Continue")
+                    .variant(ButtonVariant::Secondary)
+                    .size(Size::Xs)
+                    .disabled(conflicted)
+                    .on_click(send(actions, GitAction::Step("continue".to_owned())))
+                    .show();
             },
         );
     }
@@ -243,6 +317,9 @@ fn changes_section(git: &GitSummary, actions: &Actions) {
                     .show();
             })
             .show();
+        if git.menu == Some(GitMenu::Stashes) {
+            stashes_menu(git, actions);
+        }
         if git.menu == Some(GitMenu::Source) {
             source_menu(git, actions);
         }
@@ -461,12 +538,34 @@ fn source_menu(git: &GitSummary, actions: &Actions) {
             ),
         )
         .separator()
-        .heading("Branch")
-        .icon_item(
-            phosphor::GIT_BRANCH,
-            "New branch…",
-            send(actions, GitAction::Ask(GitPrompt::NewBranch(String::new()))),
+        .heading("Stash");
+    if !git.changes.is_empty() {
+        menu = menu.icon_item(
+            phosphor::ARCHIVE,
+            "Stash changes",
+            send(actions, GitAction::Stash("push".to_owned(), None)),
         );
+    }
+    if let Some((latest, _)) = git.stashes.first() {
+        menu = menu
+            .icon_item(
+                phosphor::ARCHIVE,
+                "Pop latest stash",
+                send(actions, GitAction::Stash("pop".to_owned(), Some(*latest))),
+            )
+            .icon_item(
+                phosphor::LIST,
+                format!("Stashes ({})…", git.stashes.len()),
+                send(actions, GitAction::Menu(Some(GitMenu::Stashes))),
+            );
+    } else if git.changes.is_empty() {
+        menu = menu.disabled_item(phosphor::ARCHIVE, "No changes to stash");
+    }
+    menu = menu.separator().heading("Branch").icon_item(
+        phosphor::GIT_BRANCH,
+        "New branch…",
+        send(actions, GitAction::Ask(GitPrompt::NewBranch(String::new()))),
+    );
     if !branch.is_empty() {
         if git.upstream.is_none() && !git.remotes.is_empty() {
             menu = menu.icon_item(
@@ -523,31 +622,56 @@ fn source_menu(git: &GitSummary, actions: &Actions) {
     menu.show();
 }
 
+/// Emits the menu of the stashes, each with its message as a heading and
+/// rows that apply, pop or drop it.
+fn stashes_menu(git: &GitSummary, actions: &Actions) {
+    let mut menu = Menu::new()
+        .width(MENU_WIDTH)
+        .offset(SIDE_MENU_WIDTH - MENU_WIDTH, 0.0)
+        .on_dismiss(send(actions, GitAction::Menu(None)));
+    for (index, message) in &git.stashes {
+        let stash = |action: &str| send(actions, GitAction::Stash(action.to_owned(), Some(*index)));
+        menu = menu
+            .heading(format!("stash@{{{index}}} {message}"))
+            .icon_item(phosphor::ARROW_LINE_DOWN, "Apply", stash("apply"))
+            .icon_item(phosphor::ARCHIVE, "Pop", stash("pop"))
+            .destructive_item(phosphor::TRASH, "Drop", stash("drop"));
+    }
+    menu.show();
+}
+
 /// A group of changed files: its header, whose box stages or unstages the whole group, then its files.
 fn change_group(git: &GitSummary, group: ChangeGroup, members: &[&ChangedFile], actions: &Actions) {
     let staged = group == ChangeGroup::Staged;
     let paths: Vec<String> = members.iter().map(|change| change.path.clone()).collect();
-    FoldHeader::new(group.title(), true)
+    let mut header = FoldHeader::new(group.title(), true)
         .variant(FoldHeaderVariant::Group)
         .size(Size::Xs)
-        .count(members.len())
-        .check(
+        .count(members.len());
+    if group != ChangeGroup::Conflicted {
+        header = header.check(
             if staged {
                 CheckState::On
             } else {
                 CheckState::Off
             },
             send(actions, GitAction::Stage(paths, !staged)),
-        )
-        .show();
+        );
+    }
+    header.show();
     for change in members {
-        key(change.path.clone(), || change_row(git, change, actions));
+        key(change.path.clone(), || {
+            change_row(git, change, staged, actions)
+        });
     }
 }
 
-/// One changed file, with the menu on it under it while that menu is open.
-fn change_row(git: &GitSummary, change: &ChangedFile, actions: &Actions) {
+/// One changed file, listed among the staged files when `in_staged`, with
+/// the menu on it under it while that menu is open; a conflicted file has
+/// no box to stage it until it is resolved.
+fn change_row(git: &GitSummary, change: &ChangedFile, in_staged: bool, actions: &Actions) {
     let path = change.path.clone();
+    let staged = change.staged || in_staged;
     let acting = git.acting(&path);
     let variant = match change.status {
         _ if change.conflicted => ChangeRowVariant::Conflicted,
@@ -559,7 +683,8 @@ fn change_row(git: &GitSummary, change: &ChangedFile, actions: &Actions) {
     let picked = path.clone();
     let mut row = ChangeRow::new(change.name(), change.folder(), change.status)
         .tally(change.added, change.removed)
-        .checked(change.staged)
+        .checked(staged)
+        .checkable(!change.conflicted)
         .selected(git.selected.contains(&path) || git.diff.as_ref() == Some(&path))
         .variant(variant)
         .size(Size::Xs)
@@ -576,10 +701,7 @@ fn change_row(git: &GitSummary, change: &ChangedFile, actions: &Actions) {
                 picking(GitAction::Open(picked.clone()));
             }
         })
-        .on_toggle(send(
-            actions,
-            GitAction::Stage(vec![path.clone()], !change.staged),
-        ))
+        .on_toggle(send(actions, GitAction::Stage(vec![path.clone()], !staged)))
         .on_menu(send(
             actions,
             GitAction::Menu(Some(GitMenu::Change(path.clone()))),
@@ -594,14 +716,16 @@ fn change_row(git: &GitSummary, change: &ChangedFile, actions: &Actions) {
             send(actions, GitAction::Discard(acting.clone())),
         );
     }
-    row = row.action(
-        if change.staged {
-            phosphor::MINUS
-        } else {
-            phosphor::PLUS
-        },
-        send(actions, GitAction::Stage(acting.clone(), !change.staged)),
-    );
+    if !change.conflicted {
+        row = row.action(
+            if staged {
+                phosphor::MINUS
+            } else {
+                phosphor::PLUS
+            },
+            send(actions, GitAction::Stage(acting.clone(), !staged)),
+        );
+    }
     column_with(Modifier::new().fill_max_width(), || {
         row.show();
         if git.menu == Some(GitMenu::Change(path.clone())) {

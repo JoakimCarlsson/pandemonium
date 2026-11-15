@@ -54,12 +54,18 @@ const WORDS: &[&str] = &[
     "git-source",
     "git-confirm",
     "branch-menu",
+    "git-rebase",
+    "git-stashes",
+    "git-submodules",
     "diff",
     "code",
     "code-find",
     "code-replace",
     "code-goto",
     "code-vim",
+    "code-problems",
+    "code-folded",
+    "code-unsaved",
     "code-debug",
     "code-scrolled",
     "code-markdown",
@@ -369,7 +375,10 @@ fn show_projects(workspace: &mut pm_shell::Workspace, words: &[&str]) {
 /// Opens in `git` the Git panel's menu, question or Diff tab named among
 /// `words`: `git-menu` for the menu on a changed file, `git-source` for the
 /// panel's own menu, `git-confirm` for the question before discarding,
-/// `branch-menu` for the branch list, and `diff` for the Diff tab.
+/// `branch-menu` for the branch list, `diff` for the Diff tab, `git-rebase`
+/// for a rebase stopped with a partly staged and a conflicted file, and
+/// `git-stashes` for the menu of stashes, and `git-submodules` for the
+/// menu picking a submodule to work on.
 fn show_git_state(git: &mut pm_shell::GitSummary, words: &[&str]) {
     let first = git.listed().first().map(|change| change.path.clone());
     let second = git.listed().get(1).map(|change| change.path.clone());
@@ -384,6 +393,34 @@ fn show_git_state(git: &mut pm_shell::GitSummary, words: &[&str]) {
             }
             "branch-menu" => git.branch_menu = Some(pm_shell::BranchMenu::default()),
             "diff" => git.diff = first.clone(),
+            "git-rebase" => {
+                git.operation = Some("Rebasing onto main (2/5)".to_owned());
+                git.skippable = true;
+                if let Some(change) = git.changes.first_mut() {
+                    change.partly = true;
+                    change.staged = false;
+                }
+                if let Some(change) = git.changes.last_mut() {
+                    change.conflicted = true;
+                    change.untracked = false;
+                    change.status = 'U';
+                }
+            }
+            "git-submodules" => {
+                git.root = "~/Documents/repos/void".to_owned();
+                git.submodules = vec![
+                    ("vendor/tree-sitter".to_owned(), "master".to_owned()),
+                    ("docs/site".to_owned(), "@ 4f2a9c1".to_owned()),
+                ];
+                git.menu = Some(pm_shell::GitMenu::Repositories);
+            }
+            "git-stashes" => {
+                git.stashes = vec![
+                    (0, "WIP on main: Keep the reader's position".to_owned()),
+                    (1, "On main: try a smaller ranking window".to_owned()),
+                ];
+                git.menu = Some(pm_shell::GitMenu::Stashes);
+            }
             _ => {}
         }
     }
@@ -649,6 +686,14 @@ fn show_code_state(workspace: &mut pm_shell::Workspace, words: &[&str]) {
             }
             "code-goto" => files.files[0].bar = Some(pm_shell::EditorBar::GoTo("120".to_owned())),
             "code-vim" => files.vim = true,
+            "code-problems" => show_problems(&files.files[0]),
+            "code-folded" => {
+                files.files[0].document.0.borrow_mut().fold_at_caret();
+            }
+            "code-unsaved" => {
+                files.files[0].document.0.borrow_mut().mark_unsaved();
+                files.act(pm_shell::TabAction::Close(0));
+            }
             "code-scrolled" | "code-debug" => {
                 let line = CODE_SAMPLE[..CODE_SAMPLE.find("drag_resize_window(edge)").unwrap_or(0)]
                     .lines()
@@ -709,6 +754,52 @@ fn show_code_state(workspace: &mut pm_shell::Workspace, words: &[&str]) {
             pm_shell::FileBody::Picture(std::rc::Rc::new(PICTURE_SAMPLE.to_vec()));
         files.tab = pm_shell::SessionTab::File(index);
     }
+}
+
+/// Marks problems on the sample `file` as a language server would: an
+/// error, a warning and a hint on the lines around its caret.
+fn show_problems(file: &pm_shell::OpenFile) {
+    let mut document = file.document.0.borrow_mut();
+    let caret = document.field.caret();
+    let line = document.line_of(caret) as u32;
+    let found = |line: u32, from: u32, to: u32, severity, message: &str| pm_editor::Diagnostic {
+        span: pm_editor::Span::new(
+            pm_editor::Position {
+                line,
+                character: from,
+            },
+            pm_editor::Position {
+                line,
+                character: to,
+            },
+        ),
+        severity,
+        message: message.to_owned(),
+        source: Some("rustc".to_owned()),
+    };
+    document.diagnostics = vec![
+        found(
+            line,
+            3,
+            7,
+            pm_editor::Severity::Error,
+            "cannot find value `root`",
+        ),
+        found(
+            line + 2,
+            8,
+            20,
+            pm_editor::Severity::Warning,
+            "unused variable",
+        ),
+        found(
+            line + 4,
+            4,
+            9,
+            pm_editor::Severity::Hint,
+            "consider borrowing",
+        ),
+    ];
 }
 
 /// Shows on the sample files of `workspace` the language features, panes

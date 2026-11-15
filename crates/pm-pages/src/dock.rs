@@ -26,7 +26,9 @@ pub fn dock(workspace: &Workspace, actions: &Actions) {
                 Modifier::new().fill_max_size().padding_xy(12.0, 4.0),
                 || match workspace.dock_tab {
                     DockTab::Terminal => terminal(workspace, actions),
-                    DockTab::Problems => problems_panel(&workspace.problems),
+                    DockTab::Problems => {
+                        problems_panel(&workspace.problems, actions.open_location.clone())
+                    }
                     DockTab::Tasks => tasks_panel(&workspace.tasks, actions),
                     DockTab::Debug => debug_panel(&workspace.debug, actions),
                 },

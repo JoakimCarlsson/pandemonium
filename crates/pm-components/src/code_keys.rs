@@ -93,6 +93,23 @@ pub(crate) enum Command {
     FixAll,
     /// Asks the language server to format the file, or the selection.
     Format,
+    /// Selects the next place the selection, or the word at the caret, comes again as well.
+    AddNextOccurrence,
+    /// Selects every place the selection, or the word at the caret, comes.
+    SelectAllOccurrences,
+    /// Adds a caret on the line below the carets, or above them when the flag is not set.
+    AddCaret(bool),
+    /// Folds away the block around the caret.
+    Fold,
+    /// Unfolds the blocks at the caret.
+    Unfold,
+    /// Folds away every outermost block.
+    FoldAll,
+    /// Unfolds every block.
+    UnfoldAll,
+    /// Moves the caret to the next problem the language server found, or
+    /// the one before when the flag is not set.
+    NextProblem(bool),
 }
 
 impl Command {
@@ -125,6 +142,16 @@ impl Command {
             Action::Hover => Self::Hover,
             Action::Complete => Self::Complete,
             Action::SignatureHelp => Self::Signature,
+            Action::AddNextOccurrence => Self::AddNextOccurrence,
+            Action::SelectAllOccurrences => Self::SelectAllOccurrences,
+            Action::AddCaretAbove => Self::AddCaret(false),
+            Action::AddCaretBelow => Self::AddCaret(true),
+            Action::Fold => Self::Fold,
+            Action::Unfold => Self::Unfold,
+            Action::FoldAll => Self::FoldAll,
+            Action::UnfoldAll => Self::UnfoldAll,
+            Action::NextProblem => Self::NextProblem(true),
+            Action::PreviousProblem => Self::NextProblem(false),
             _ => return None,
         })
     }
@@ -300,6 +327,10 @@ mod tests {
         assert_eq!(
             command(&KeyEvent::typed("é", plain)),
             Some(Command::Type("é".into()))
+        );
+        assert_eq!(
+            command(&press(Key::Character("d".into()), ctrl)),
+            Some(Command::AddNextOccurrence)
         );
     }
 

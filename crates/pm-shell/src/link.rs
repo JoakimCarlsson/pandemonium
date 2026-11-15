@@ -189,6 +189,12 @@ pub struct Link {
     settings: SettingsModel,
     /// The page the window was left on, opened once the server lists its sessions.
     pending: Option<Page>,
+    /// The files open when the window was left, opened again once the
+    /// server lists its sessions.
+    reopen: Vec<crate::open_files::SavedFile>,
+    /// What the language servers last found wrong with each file, by folder
+    /// and path, handed to a file's editor when it opens.
+    diagnosed: std::collections::HashMap<(String, String), Vec<pm_protocol::Diagnostic>>,
     /// Where the server put a downloaded release, not yet taken to be installed.
     staged: Option<String>,
     /// The engine behind the browser pane.
@@ -251,6 +257,8 @@ impl Link {
             workspace,
             settings: SettingsModel::new(Default::default(), Default::default()),
             pending: None,
+            reopen: Vec::new(),
+            diagnosed: std::collections::HashMap::new(),
             staged: None,
             web,
             remotes: Remotes::new(wake),
@@ -315,6 +323,7 @@ impl Link {
     /// Lays the window out the way `view` says and opens its page once the server lists its sessions.
     pub fn restore(&mut self, view: View) {
         view.lay_out(&mut self.workspace);
+        self.reopen = view.files.clone();
         self.pending = Some(Page::from(view.page));
     }
 
@@ -323,6 +332,12 @@ impl Link {
         let Some(page) = self.pending.take() else {
             return;
         };
+        self.workspace.open_files.vim = self.settings.editor.vim_mode;
+        for saved in std::mem::take(&mut self.reopen) {
+            if self.workspace.open_files.reopen(&saved).is_some() {
+                self.read_file(saved.directory, saved.path);
+            }
+        }
         let there = match &page {
             Page::Session(id) => self.sessions.iter().any(|info| info.session == *id),
             Page::Overview(path) => self.paths.contains(path),
@@ -813,7 +828,10 @@ impl Link {
                 self.rebuild();
             }
             Incoming::ProjectsChanged(paths) => self.set_projects(paths),
-            Incoming::FolderChanged(directory) => self.git_folder_changed(&directory),
+            Incoming::FolderChanged(directory) => {
+                self.reload_open_files(&directory);
+                self.git_folder_changed(&directory);
+            }
             Incoming::ExtensionsChanged(extensions) => {
                 self.workspace.extensions = Some(listed(&extensions));
                 self.settings.extensions = extensions;
@@ -833,7 +851,7 @@ impl Link {
                 path,
                 diagnostics,
                 ..
-            } => self.change_dock(|dock| dock.diagnostics(directory, path, diagnostics)),
+            } => self.take_diagnostics(directory, path, diagnostics),
             Incoming::Debug {
                 debug,
                 view,

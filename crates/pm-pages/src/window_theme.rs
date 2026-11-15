@@ -8,7 +8,8 @@ use pm_shell::SettingsModel;
 /// desktop's own when it follows the system and the desktop is dark when
 /// `system_dark` holds; with the interface and code fonts, the line height,
 /// the terminal's size, the density, the code editor's look, git's line marks and the
-/// terminal's cursor they name.
+/// terminal's cursor they name. Also makes the editor settings the ones
+/// every code editor reads its snippets from.
 pub fn window_theme(settings: &SettingsModel, system_dark: bool) -> AppTheme {
     let appearance = &settings.window.appearance;
     let dark = match appearance.theme_mode {
@@ -22,6 +23,7 @@ pub fn window_theme(settings: &SettingsModel, system_dark: bool) -> AppTheme {
         .terminal
         .font_size
         .map_or(code_size, |size| size as f32);
+    pm_components::use_editor_settings(&settings.editor);
     AppTheme::of_dark(dark)
         .with_interface_font(InterfaceFont::named(
             &appearance.interface_font,

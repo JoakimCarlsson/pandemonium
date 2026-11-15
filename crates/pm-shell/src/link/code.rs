@@ -6,7 +6,7 @@ use pm_editor::ServerAsk;
 use pm_protocol::{Request, Response};
 
 use super::{Ask, Link, expand_home};
-use crate::open_files::{FileBody, SessionTab, TabAction, is_picture};
+use crate::open_files::{FileBody, SessionTab, TabAction, Unsaved, is_picture};
 
 /// What a request about the open files was for.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -23,6 +23,9 @@ pub(super) enum CodeAsk {
     Base(String, String),
     /// What the folder holds of the file at this path in this folder, to compare its editor with.
     Compare(String, String),
+    /// What the folder holds of the open file at this path in this folder
+    /// after something outside the editor changed the folder.
+    Reload(String, String),
 }
 
 impl Link {
@@ -60,7 +63,17 @@ impl Link {
     }
 
     /// Carries out `action` the tab strip or its menu asked for.
-    pub fn file_tab(&mut self, action: TabAction) {
+    pub fn file_tab(&mut self, mut action: TabAction) {
+        if action == TabAction::Unsaved(Unsaved::Save) {
+            let held = self.workspace.open_files.asking;
+            for index in held
+                .map(|close| self.workspace.open_files.unsaved_closing(close))
+                .unwrap_or_default()
+            {
+                self.write_file(index);
+            }
+            action = TabAction::Unsaved(Unsaved::Discard);
+        }
         let synced: Vec<(String, String)> = self
             .workspace
             .open_files
@@ -96,6 +109,65 @@ impl Link {
         }
     }
 
+    /// Reads again the open files of `directory` that have no unsaved
+    /// changes, after the server said something changed the folder, so
+    /// that their editors follow edits made outside them.
+    pub(super) fn reload_open_files(&mut self, directory: &str) {
+        let stale: Vec<(String, String)> = self
+            .workspace
+            .open_files
+            .files
+            .iter()
+            .filter(|file| {
+                file.body == FileBody::Text
+                    && !file.is_dirty()
+                    && super::same_folder(&file.directory, directory)
+            })
+            .map(|file| (file.directory.clone(), file.path.clone()))
+            .collect();
+        for (directory, path) in stale {
+            self.ask(
+                Request::ReadFile {
+                    directory: directory.clone(),
+                    path: path.clone(),
+                    head: false,
+                    revision: None,
+                },
+                Ask::Code(CodeAsk::Reload(directory, path)),
+            );
+        }
+    }
+
+    /// Puts `text`, what the folder now holds of the open file at `index`,
+    /// in its editor in place of the text it shows, keeping the caret where
+    /// it can, unless the file was changed in the editor meanwhile or holds
+    /// that text already; its language server is told of the change.
+    fn take_reloaded(&mut self, index: usize, text: String) {
+        let told = {
+            let file = &self.workspace.open_files.files[index];
+            if file.body != FileBody::Text || file.is_dirty() {
+                return;
+            }
+            let mut document = file.document.0.borrow_mut();
+            let text = text.replace("\r\n", "\n");
+            if document.field.text() == text {
+                return;
+            }
+            let whole = document.field.text().len();
+            let caret = document.field.caret().min(text.len());
+            let caret = (0..=caret)
+                .rev()
+                .find(|at| text.is_char_boundary(*at))
+                .unwrap_or(0);
+            let edited = document.edit(pm_text::Edit::Replace(0..whole, text, (caret, caret)));
+            document.mark_saved();
+            edited.and_then(|edited| edited.change)
+        };
+        if let Some((version, change)) = told {
+            self.code(index, ServerAsk::Changed(version, change));
+        }
+    }
+
     /// Asks the server to write the open file at position `index` as its
     /// document holds it.
     pub fn save_file(&mut self, index: usize) {
@@ -106,6 +178,30 @@ impl Link {
             return;
         }
         self.tidy_before_save(index);
+        let Some(file) = self.workspace.open_files.files.get(index) else {
+            return;
+        };
+        let synced = file.document.0.borrow().synced;
+        if self.settings.editor.format_on_save && synced {
+            let (directory, path) = (file.directory.clone(), file.path.clone());
+            let version = file.document.0.borrow().version;
+            self.ask(
+                Request::Format {
+                    directory: directory.clone(),
+                    path: path.clone(),
+                    version,
+                    range: None,
+                },
+                Ask::Server(super::lsp::ServerFor::FormatThenSave(directory, path)),
+            );
+            return;
+        }
+        self.write_file(index);
+    }
+
+    /// Asks the server to write the open file at position `index` as its
+    /// document holds it now, with no tidying or formatting first.
+    pub(super) fn write_file(&mut self, index: usize) {
         let Some(file) = self.workspace.open_files.files.get(index) else {
             return;
         };
@@ -190,6 +286,7 @@ impl Link {
                     None => file.body = FileBody::Failed("This file is not text.".to_owned()),
                 }
                 let pending_made = file.is_dirty();
+                self.hand_diagnostics(index);
                 self.open_for_server(index);
                 if pending_made {
                     self.workspace.open_files.files[index].preview = false;
@@ -265,6 +362,16 @@ impl Link {
                         index,
                         crate::open_files::Comparison::between("Saved", &saved, &edited),
                     );
+                }
+            }
+            (
+                CodeAsk::Reload(directory, path),
+                Response::File {
+                    text: Some(text), ..
+                },
+            ) => {
+                if let Some(index) = files.position(&directory, &path) {
+                    self.take_reloaded(index, text);
                 }
             }
             (CodeAsk::Save(_, path), Response::Failed { message }) => {

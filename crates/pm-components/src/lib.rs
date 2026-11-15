@@ -21,6 +21,7 @@ mod code_editor;
 mod code_keys;
 mod code_look;
 mod code_overview;
+mod code_rows;
 mod code_sticky;
 mod code_text;
 mod composer;
@@ -107,7 +108,7 @@ pub use chip::{Chip, ChipVariant};
 pub use code_assist::CodeEditorPopup;
 pub use code_bars::CodeEditorBar;
 pub use code_editor::{CodeEditor, CodeEditorVariant};
-pub use code_look::{CodeLook, code_look};
+pub use code_look::{CodeLook, code_look, editor_settings, use_editor_settings};
 pub use composer::{
     Composer, ComposerChoice, ComposerCommand, ComposerMenu, ComposerPick, ComposerVariant,
 };

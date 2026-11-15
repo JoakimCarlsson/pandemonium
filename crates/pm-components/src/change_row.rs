@@ -50,6 +50,8 @@ pub struct ChangeRow {
     tally: (usize, usize),
     /// Whether its box is ticked.
     checked: bool,
+    /// Whether it has a box to stage it by.
+    checkable: bool,
     /// Whether it is picked.
     selected: bool,
     /// How it reads.
@@ -79,6 +81,7 @@ impl ChangeRow {
             status,
             tally: (0, 0),
             checked: false,
+            checkable: true,
             selected: false,
             variant: ChangeRowVariant::Modified,
             size: Size::Sm,
@@ -94,6 +97,13 @@ impl ChangeRow {
     /// The row saying it adds `added` lines and removes `removed`.
     pub fn tally(mut self, added: usize, removed: usize) -> Self {
         self.tally = (added, removed);
+        self
+    }
+
+    /// The row with a box to stage it by when `checkable`, or room where
+    /// the box would be when not, as for a conflicted file.
+    pub fn checkable(mut self, checkable: bool) -> Self {
+        self.checkable = checkable;
         self
     }
 
@@ -218,18 +228,22 @@ impl ChangeRow {
                     spacer(Modifier::new().width(self.indent));
                 }
                 let toggle = self.on_toggle.clone();
-                Checkbox::new(if self.checked {
-                    CheckState::On
+                if self.checkable {
+                    Checkbox::new(if self.checked {
+                        CheckState::On
+                    } else {
+                        CheckState::Off
+                    })
+                    .size(Size::Xs)
+                    .on_toggle(move || {
+                        if let Some(toggle) = &toggle {
+                            toggle();
+                        }
+                    })
+                    .show();
                 } else {
-                    CheckState::Off
-                })
-                .size(Size::Xs)
-                .on_toggle(move || {
-                    if let Some(toggle) = &toggle {
-                        toggle();
-                    }
-                })
-                .show();
+                    spacer(Modifier::new().width(crate::row_height(14.0)));
+                }
                 row_arranged(
                     Modifier::new().weight(1.0).clip(),
                     Arrangement::SpacedBy(crate::spacing(6.0)),

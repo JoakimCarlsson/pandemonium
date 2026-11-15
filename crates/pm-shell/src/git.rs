@@ -9,8 +9,17 @@ use crate::review::{ConflictSide, ConflictView, LineNote, Revision};
 /// The git state of a worktree, as the right panel shows it.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GitSummary {
-    /// The folder the panel works on, as the session names it, or empty when no session is open.
+    /// The folder the panel works on, as the session names it, or empty when no session is open;
+    /// a submodule's folder inside the session's while one is picked.
     pub folder: String,
+    /// The session's own folder, which holds the submodules the panel can be pointed at.
+    pub root: String,
+    /// The checked out submodules of the session's folder, nested ones
+    /// included, as their path from it and the branch, or `@` and the
+    /// commit, each has checked out.
+    pub submodules: Vec<(String, String)>,
+    /// The submodule the panel works on, by its path from the session's folder, while one is picked.
+    pub submodule: Option<String>,
     /// The branch the session's worktree was made from, when it has one.
     pub base: Option<String>,
     /// The checked out branch, or empty on a detached head.
@@ -27,6 +36,10 @@ pub struct GitSummary {
     pub remotes: Vec<String>,
     /// The merge, rebase or cherry-pick the folder is stopped in, by name, when it is in one.
     pub operation: Option<String>,
+    /// Whether the step the folder is stopped in can be skipped, as a rebase's can.
+    pub skippable: bool,
+    /// The stashes of the repository, newest first, by their index in git's list and message.
+    pub stashes: Vec<(usize, String)>,
     /// Whether the folder is a repository; false until the server said.
     pub repository: bool,
     /// Whether the server answered at least once for this folder.
@@ -92,6 +105,12 @@ pub struct ChangedFile {
     pub untracked: bool,
     /// Whether the file is changed on both sides of a merge.
     pub conflicted: bool,
+    /// Whether some of its changes are staged and some are not, which lists
+    /// it among the staged files and the changed ones both.
+    pub partly: bool,
+    /// Whether the server answered for its diff since the file last
+    /// changed, even when it sent none.
+    pub fetched: bool,
     /// Where the file was before it was renamed, when it was.
     pub from: Option<String>,
     /// The lines of its diff from the first hunk on, or empty until the server sent them.
@@ -207,6 +226,10 @@ pub enum GitMenu {
     Commit,
     /// The panel's own menu: pull, push, fetch, stage all and the branch's tasks.
     Source,
+    /// The stashes, each to apply, pop or drop.
+    Stashes,
+    /// The repositories the panel can work on: the session's own and its submodules.
+    Repositories,
     /// The menu on a commit of the graph.
     History(String),
 }
@@ -362,6 +385,15 @@ pub enum GitAction {
     TakeAllConflicts(ConflictSide),
     /// Writes the open conflicted file as resolved and stages it.
     Resolve,
+    /// Takes the next step of the merge, rebase or cherry-pick the folder is
+    /// stopped in: `continue`, `skip` or `abort`.
+    Step(String),
+    /// Saves the changes in a new stash, or applies, pops or drops the stash
+    /// with the index: `push`, `apply`, `pop` or `drop`.
+    Stash(String, Option<usize>),
+    /// Points the panel at the submodule at the path from the session's
+    /// folder, or at the session's own repository when nothing is given.
+    Repository(Option<String>),
 }
 
 /// What the main button under the commit message does.
@@ -391,6 +423,12 @@ impl GitSummary {
         if let Some(busy) = &self.busy {
             return Primary::Busy(busy.clone());
         }
+        if self.changes.iter().any(|change| change.conflicted) {
+            return Primary::Commit { ready: false };
+        }
+        if self.operation.is_some() {
+            return Primary::Commit { ready: true };
+        }
         if !self.changes.is_empty() {
             return Primary::Commit {
                 ready: !self.message.trim().is_empty(),
@@ -412,7 +450,9 @@ impl GitSummary {
     pub fn group(&self, group: ChangeGroup) -> Vec<&ChangedFile> {
         self.changes
             .iter()
-            .filter(|change| change.group() == group)
+            .filter(|change| {
+                change.group() == group || group == ChangeGroup::Staged && change.partly
+            })
             .collect()
     }
 
@@ -656,6 +696,26 @@ mod tests {
         );
         assert_eq!(git.acting("a").len(), 3);
         assert_eq!(git.acting("x"), vec!["x".to_owned()]);
+    }
+
+    /// A partly staged file is listed among the staged files and the
+    /// changed ones, and a conflict keeps the commit button from committing.
+    #[test]
+    fn partly_staged_and_conflicted_files() {
+        let mut git = GitSummary {
+            message: "Fix".to_owned(),
+            changes: vec![ChangedFile {
+                path: "a.rs".to_owned(),
+                partly: true,
+                ..ChangedFile::default()
+            }],
+            ..GitSummary::default()
+        };
+        assert_eq!(git.group(ChangeGroup::Staged).len(), 1);
+        assert_eq!(git.group(ChangeGroup::Tracked).len(), 1);
+        assert_eq!(git.primary(), Primary::Commit { ready: true });
+        git.changes[0].conflicted = true;
+        assert_eq!(git.primary(), Primary::Commit { ready: false });
     }
 
     /// The main button pushes once everything is committed and the branch is ahead.

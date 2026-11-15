@@ -23,6 +23,7 @@ const FLAGS: &[&str] = &[
     "relative",
     "no-numbers",
     "wrap-guide",
+    "soft-wrap",
     "no-minimap",
     "bar-terminal",
 ];
@@ -47,6 +48,7 @@ fn apply_word(model: &mut SettingsModel, word: &str) {
         "relative" => model.editor.relative_line_numbers = true,
         "no-numbers" => model.editor.line_numbers = false,
         "wrap-guide" => model.editor.wrap_guide = true,
+        "soft-wrap" => model.editor.soft_wrap = pm_editor::SoftWrap::Edge,
         "no-minimap" => model.editor.minimap = false,
         "bar-terminal" => model.window.terminal.cursor = TerminalCursor::Bar,
         _ => apply_valued(model, word),

@@ -98,6 +98,9 @@ pub struct OpenFile {
     pub rename: Option<(std::ops::Range<usize>, String)>,
     /// The comparison shown in place of the text, while one is.
     pub compare: Option<Comparison>,
+    /// Unsaved text kept from the last run, put in place of the text read
+    /// from the folder once it arrives.
+    pub restored: Option<String>,
 }
 
 /// A popup an editor can be asked to open with over its text.
@@ -182,6 +185,10 @@ impl OpenFile {
             for edit in document.change_edits(pending) {
                 document.edit(edit);
             }
+        }
+        if let Some(restored) = self.restored.take() {
+            let whole = document.field.text().len();
+            document.edit(pm_text::Edit::Replace(0..whole, restored, (0, 0)));
         }
         self.document = SharedDocument::new(document);
         self.body = FileBody::Text;
@@ -322,6 +329,33 @@ pub enum TabAction {
     Dismiss(SessionTab),
     /// Stops showing the comparison of the open file at this position.
     EndCompare(usize),
+    /// Answers the question asked before closing modified files.
+    Unsaved(Unsaved),
+}
+
+/// An answer to the question asked before closing files with unsaved changes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unsaved {
+    /// Saves the modified files, then closes them.
+    Save,
+    /// Closes the files, throwing their changes away.
+    Discard,
+    /// Keeps the files open.
+    Cancel,
+}
+
+/// An open file as it is kept between runs.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct SavedFile {
+    /// The folder it belongs to.
+    pub directory: String,
+    /// Its path from the root of the folder.
+    pub path: String,
+    /// The line of its caret, counted from 1.
+    pub line: usize,
+    /// Its text, when it had changes that were not saved.
+    pub unsaved: Option<String>,
 }
 
 /// The files open in the session view and the tab chosen.
@@ -347,9 +381,52 @@ pub struct OpenFiles {
     pub update_tab: bool,
     /// The languages the reader declined to install, by name.
     pub declined: Vec<String>,
+    /// The close waiting while the reader is asked what to do with the
+    /// unsaved changes of the files it would close.
+    pub asking: Option<TabAction>,
 }
 
 impl OpenFiles {
+    /// The open files as they are kept between runs: where each is, the
+    /// line of its caret and its text when it has unsaved changes.
+    pub fn saved(&self) -> Vec<SavedFile> {
+        self.files
+            .iter()
+            .filter(|file| !matches!(file.body, FileBody::Failed(_)))
+            .map(|file| {
+                let text = (file.body == FileBody::Text)
+                    .then(|| file.document.0.try_borrow().ok())
+                    .flatten();
+                let line = text
+                    .as_ref()
+                    .map(|held| held.line_of(held.field.caret()) + 1)
+                    .or(file.line)
+                    .unwrap_or(1);
+                let unsaved = text
+                    .filter(|held| held.is_dirty())
+                    .map(|held| held.field.text().to_owned())
+                    .or_else(|| file.restored.clone());
+                SavedFile {
+                    directory: file.directory.clone(),
+                    path: file.path.clone(),
+                    line,
+                    unsaved,
+                }
+            })
+            .collect()
+    }
+
+    /// Opens again the file `saved` describes in a kept tab, with its caret
+    /// line and unsaved text put back once it is read; returns its position
+    /// when it has to be read, being new.
+    pub fn reopen(&mut self, saved: &SavedFile) -> Option<usize> {
+        let index = self.open(&saved.directory, &saved.path, true)?;
+        let file = &mut self.files[index];
+        file.line = Some(saved.line);
+        file.restored = saved.unsaved.clone();
+        Some(index)
+    }
+
     /// The position of the file at `path` in `directory`, when it is open.
     pub fn position(&self, directory: &str, path: &str) -> Option<usize> {
         self.files
@@ -402,12 +479,23 @@ impl OpenFiles {
     /// Carries out `action`; returns the folder and path of a file to read
     /// again when it opened one closed earlier.
     pub fn act(&mut self, action: TabAction) -> Option<(String, String)> {
+        if !self.unsaved_closing(action).is_empty() {
+            self.asking = Some(action);
+            self.menu = None;
+            return None;
+        }
         match action {
             TabAction::Select(tab) => self.show(tab),
-            TabAction::Close(index) => self.close_where(|at| at == index),
-            TabAction::CloseOthers(index) => self.close_where(|at| at != index),
-            TabAction::CloseRight(index) => self.close_where(|at| at > index),
-            TabAction::CloseAll => self.close_where(|_| true),
+            TabAction::Close(_)
+            | TabAction::CloseOthers(_)
+            | TabAction::CloseRight(_)
+            | TabAction::CloseAll => self.close_where(|at| Self::closes(action, at)),
+            TabAction::Unsaved(answer) => {
+                let held = self.asking.take();
+                if let (Some(close), Unsaved::Save | Unsaved::Discard) = (held, answer) {
+                    self.close_where(|at| Self::closes(close, at));
+                }
+            }
             TabAction::Keep(index) => {
                 if let Some(file) = self.files.get_mut(index) {
                     file.preview = false;
@@ -474,6 +562,27 @@ impl OpenFiles {
             self.menu = None;
         }
         None
+    }
+
+    /// Whether `action` closes the file at position `at`.
+    fn closes(action: TabAction, at: usize) -> bool {
+        match action {
+            TabAction::Close(index) => at == index,
+            TabAction::CloseOthers(index) => at != index,
+            TabAction::CloseRight(index) => at > index,
+            TabAction::CloseAll => true,
+            _ => false,
+        }
+    }
+
+    /// The positions of the modified files `action` would close.
+    pub fn unsaved_closing(&self, action: TabAction) -> Vec<usize> {
+        self.files
+            .iter()
+            .enumerate()
+            .filter(|(at, file)| Self::closes(action, *at) && file.is_dirty())
+            .map(|(at, _)| at)
+            .collect()
     }
 
     /// Stops offering to install the language called `name`.
@@ -622,6 +731,25 @@ mod tests {
         let comparison = Comparison::between("Clipboard", "a\nb\n", "a\nc\n");
         assert!(comparison.diff.contains("-b") && comparison.diff.contains("+c"));
         assert!(Comparison::between("Saved", "a\n", "a\n").is_same());
+    }
+
+    /// Closing a modified file asks first; cancelling keeps it, and
+    /// discarding closes it.
+    #[test]
+    fn closing_modified_files_asks() {
+        let mut files = OpenFiles::default();
+        files.open("d", "a.rs", true);
+        files.files[0].take_text("one\n", false, None);
+        files.files[0].document.0.borrow_mut().mark_unsaved();
+        assert!(files.files[0].is_dirty());
+        files.act(TabAction::Close(0));
+        assert_eq!(files.asking, Some(TabAction::Close(0)));
+        assert_eq!(files.files.len(), 1);
+        files.act(TabAction::Unsaved(Unsaved::Cancel));
+        assert_eq!((files.asking, files.files.len()), (None, 1));
+        files.act(TabAction::CloseAll);
+        files.act(TabAction::Unsaved(Unsaved::Discard));
+        assert!(files.files.is_empty());
     }
 
     /// Stepping through the tabs goes round.

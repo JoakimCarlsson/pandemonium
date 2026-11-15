@@ -27,8 +27,12 @@ pub(super) enum GitAsk {
     Branches(String),
     /// The folder's remotes and their branches.
     BranchInfo(String),
-    /// The diffs of files listed without them.
-    Diffs(String),
+    /// The diffs of files listed without them: the folder and the paths asked for.
+    Diffs(String, Vec<String>),
+    /// The folder's stashes.
+    Stashes(String),
+    /// The checked out submodules of the session's folder.
+    Submodules(String),
     /// The files a commit or a branch changed, for the folder.
     Revision(String),
     /// The versions of a conflicted file of the folder, at the path.
@@ -46,12 +50,13 @@ impl Link {
     /// Points the Git panel at `folder`, the open session's, made from the
     /// branch `base`, starting with `branch` shown until the server answers.
     pub(super) fn git_open(&mut self, folder: String, base: Option<String>, branch: String) {
-        if self.workspace.git.folder == folder && !folder.is_empty() {
+        if self.workspace.git.root == folder && !folder.is_empty() {
             self.git_refresh();
             return;
         }
         self.workspace.git = GitSummary {
             folder: folder.clone(),
+            root: folder.clone(),
             base,
             branch,
             changes_open: true,
@@ -76,8 +81,9 @@ impl Link {
         let git = &self.workspace.git;
         let inspect = Request::Inspect {
             directory: folder.clone(),
-            base: git.base.clone(),
+            base: git.base.clone().filter(|_| git.submodule.is_none()),
         };
+        let root = git.root.clone();
         let log = Request::Log {
             directory: folder.clone(),
             limit: GRAPH_COMMITS,
@@ -97,14 +103,28 @@ impl Link {
                 directory: folder.clone(),
                 branch,
             },
-            Ask::Git(GitAsk::BranchInfo(folder)),
+            Ask::Git(GitAsk::BranchInfo(folder.clone())),
+        );
+        self.ask(
+            Request::Stashes {
+                directory: folder.clone(),
+            },
+            Ask::Git(GitAsk::Stashes(folder)),
+        );
+        self.ask(
+            Request::SubmoduleHeads {
+                directory: root.clone(),
+            },
+            Ask::Git(GitAsk::Submodules(root)),
         );
     }
 
     /// Refreshes the Git panel when the server says the files of `directory`, or what git keeps about them, changed.
     pub(super) fn git_folder_changed(&mut self, directory: &str) {
-        let folder = &self.workspace.git.folder;
-        if !folder.is_empty() && same_folder(folder, directory) {
+        let git = &self.workspace.git;
+        if !git.folder.is_empty()
+            && (same_folder(&git.folder, directory) || same_folder(&git.root, directory))
+        {
             self.git_refresh();
         }
     }
@@ -136,8 +156,14 @@ impl Link {
             | (GitAsk::Log(folder), _)
             | (GitAsk::Branches(folder), _)
             | (GitAsk::BranchInfo(folder), _)
-            | (GitAsk::Diffs(folder), _)
+            | (GitAsk::Diffs(folder, _), _)
+            | (GitAsk::Stashes(folder), _)
                 if folder != git.folder => {}
+            (GitAsk::Submodules(root), Response::SubmoduleHeads { heads }) => {
+                if root == git.root {
+                    git.submodules = heads;
+                }
+            }
             (
                 GitAsk::Inspect(_),
                 Response::Inspected {
@@ -159,6 +185,7 @@ impl Link {
                 git.upstream = tracking.upstream;
                 git.ahead = tracking.ahead;
                 git.behind = tracking.behind;
+                git.skippable = matches!(operation, Some(pm_git::Operation::Rebase { .. }));
                 git.operation = operation.map(|operation| operation.label());
                 git.repository = true;
                 git.loaded = true;
@@ -190,19 +217,28 @@ impl Link {
                 git.remotes = remotes;
                 git.remote_branches = remote_branches;
             }
-            (GitAsk::Diffs(_), Response::Diffs { files }) => {
-                for file in files {
-                    git.wanted.retain(|path| *path != file.path);
-                    if let Some(change) = git
-                        .changes
-                        .iter_mut()
-                        .find(|change| change.path == file.path)
-                    {
-                        change.diff = file.diff;
+            (GitAsk::Diffs(_, asked), response) => {
+                let files = match response {
+                    Response::Diffs { files } => files,
+                    _ => Vec::new(),
+                };
+                git.wanted.retain(|path| !asked.contains(path));
+                for change in &mut git.changes {
+                    if !asked.contains(&change.path) {
+                        continue;
+                    }
+                    change.fetched = true;
+                    if let Some(file) = files.iter().find(|file| file.path == change.path) {
+                        change.diff = file.diff.clone();
                     }
                 }
             }
-            (GitAsk::Diffs(_), Response::Failed { .. }) => git.wanted.clear(),
+            (GitAsk::Stashes(_), Response::Stashes { stashes }) => {
+                git.stashes = stashes
+                    .into_iter()
+                    .map(|stash| (stash.index, stash.message))
+                    .collect();
+            }
             (ask @ (GitAsk::Revision(_) | GitAsk::Conflict(..)), response) => {
                 self.review_answer(ask, response)
             }
@@ -219,16 +255,17 @@ impl Link {
         let missing = git
             .changes
             .iter()
-            .any(|change| &change.path == path && change.diff.is_empty());
-        if missing {
+            .any(|change| &change.path == path && !change.fetched && !change.untracked);
+        if missing && !git.wanted.contains(path) {
             let folder = git.folder.clone();
             let paths = vec![path.clone()];
+            self.workspace.git.wanted.extend(paths.iter().cloned());
             self.ask(
                 Request::Diffs {
                     directory: folder.clone(),
-                    paths,
+                    paths: paths.clone(),
                 },
-                Ask::Git(GitAsk::Diffs(folder)),
+                Ask::Git(GitAsk::Diffs(folder, paths)),
             );
         }
     }
@@ -388,6 +425,59 @@ impl Link {
             | GitAction::TakeConflict(..)
             | GitAction::TakeAllConflicts(_)
             | GitAction::Resolve) => self.git_review(action),
+            GitAction::Step(step) => {
+                let message = (step == "continue")
+                    .then(|| git.message.trim().to_owned())
+                    .filter(|message| !message.is_empty());
+                if message.is_some() {
+                    git.message.clear();
+                }
+                self.git_act(
+                    Request::Step {
+                        directory,
+                        action: step,
+                        message,
+                    },
+                    None,
+                );
+            }
+            GitAction::Repository(submodule) => {
+                let root = git.root.clone();
+                let folder = match &submodule {
+                    Some(path) => format!("{}/{path}", root.trim_end_matches('/')),
+                    None => root.clone(),
+                };
+                let kept = std::mem::take(git);
+                *git = GitSummary {
+                    folder,
+                    root,
+                    base: kept.base,
+                    submodules: kept.submodules,
+                    submodule,
+                    loaded: true,
+                    repository: true,
+                    changes_open: kept.changes_open,
+                    graph_open: kept.graph_open,
+                    graph_all: kept.graph_all,
+                    notes: kept.notes,
+                    ..GitSummary::default()
+                };
+                self.git_refresh();
+            }
+            GitAction::Stash(stash, index) => {
+                let message = (stash == "push")
+                    .then(|| git.message.trim().to_owned())
+                    .filter(|message| !message.is_empty());
+                self.git_act(
+                    Request::Stash {
+                        directory,
+                        action: stash,
+                        index,
+                        message,
+                    },
+                    None,
+                );
+            }
         }
     }
 
@@ -410,6 +500,20 @@ impl Link {
 
     /// Commits the message, rewriting the last commit when `amend`, then pushes when `push`.
     pub(super) fn git_commit(&mut self, amend: bool, push: bool) {
+        if self
+            .workspace
+            .git
+            .changes
+            .iter()
+            .any(|change| change.conflicted)
+        {
+            self.workspace.git.notice = Some("Resolve the conflicts first.".to_owned());
+            return;
+        }
+        if self.workspace.git.operation.is_some() && !amend {
+            self.git(GitAction::Step("continue".to_owned()));
+            return;
+        }
         let git = &mut self.workspace.git;
         let message = git.message.trim().to_owned();
         if message.is_empty() && !amend {
@@ -495,6 +599,16 @@ fn busy_word(request: &Request) -> &'static str {
         Request::Discard { .. } => "Discarding",
         Request::Stage { .. } => "Staging",
         Request::Ignore { .. } => "Ignoring",
+        Request::Step { action, .. } => match action.as_str() {
+            "abort" => "Aborting",
+            "skip" => "Skipping",
+            _ => "Continuing",
+        },
+        Request::Stash { action, .. } => match action.as_str() {
+            "push" => "Stashing",
+            "drop" => "Dropping",
+            _ => "Applying",
+        },
         Request::BranchOperation { action, .. } => match action.as_str() {
             "publish" => "Publishing",
             "merge" => "Merging",
@@ -519,14 +633,19 @@ pub(super) fn changed_file(change: pm_git::Change, kept: &[ChangedFile]) -> Chan
         change.worktree.or(change.index).unwrap_or('M')
     };
     let (counted_added, counted_removed) = tally(&change.diff);
-    let diff = if change.diff.is_empty() {
+    let fetched = !change.diff.is_empty();
+    let diff = if fetched {
+        change.diff
+    } else {
         kept.iter()
             .find(|old| old.path == change.path && old.staged == change.staged)
             .map(|old| old.diff.clone())
             .unwrap_or_default()
-    } else {
-        change.diff
     };
+    let partly = !change.untracked
+        && !change.conflicted
+        && change.index.is_some()
+        && change.worktree.is_some();
     ChangedFile {
         path: change.path,
         status,
@@ -535,6 +654,8 @@ pub(super) fn changed_file(change: pm_git::Change, kept: &[ChangedFile]) -> Chan
         staged: change.staged,
         untracked: change.untracked,
         conflicted: change.conflicted,
+        partly,
+        fetched,
         from: change.from,
         diff,
     }
