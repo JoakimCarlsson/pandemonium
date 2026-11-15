@@ -75,6 +75,109 @@ fn machine_choice(state: &Adder, actions: &Actions) {
     );
 }
 
+/// How many repositories the clone form lists before it scrolls.
+const REPOSITORIES_SHOWN: f32 = 6.0;
+
+/// How tall a repository's row is.
+const REPOSITORY_ROW: f32 = 26.0;
+
+/// The GitHub accounts the chosen machine is signed in to, the one listed raised, and its repositories that hold what the address field holds; picking one fills the address.
+fn github_picker(state: &Adder, actions: &Actions) {
+    let Some(owners) = &state.owners else {
+        spacer(Modifier::new().height(pm_components::spacing(6.0)));
+        Label::new("Reading your GitHub accounts…")
+            .variant(LabelVariant::Subtle)
+            .size(Size::Xs)
+            .show();
+        return;
+    };
+    if let Some(error) = &state.github_error {
+        spacer(Modifier::new().height(pm_components::spacing(6.0)));
+        Label::new(format!("GitHub isn't listed: {error}"))
+            .variant(LabelVariant::Subtle)
+            .size(Size::Xs)
+            .show();
+    }
+    if owners.is_empty() {
+        return;
+    }
+    spacer(Modifier::new().height(pm_components::spacing(8.0)));
+    flow_row_with(
+        Modifier::new().fill_max_width(),
+        FlowOptions::new(6.0, 6.0),
+        || {
+            for (login, organization) in owners {
+                let pick = actions.projects.clone();
+                let owner = login.clone();
+                let chosen = state.owner.as_ref() == Some(login);
+                key(login.clone(), || {
+                    Button::new(login.clone())
+                        .icon(if *organization {
+                            phosphor::BUILDINGS
+                        } else {
+                            phosphor::USER
+                        })
+                        .variant(if chosen {
+                            ButtonVariant::Secondary
+                        } else {
+                            ButtonVariant::Ghost
+                        })
+                        .size(Size::Xs)
+                        .on_click(move || pick(ProjectAction::CloneOwner(owner.clone())))
+                        .show();
+                });
+            }
+        },
+    );
+    spacer(Modifier::new().height(pm_components::spacing(6.0)));
+    if state.repositories.is_none() {
+        Label::new("Listing repositories…")
+            .variant(LabelVariant::Subtle)
+            .size(Size::Xs)
+            .show();
+        return;
+    }
+    let listed = state.matching_repositories();
+    if listed.is_empty() {
+        Label::new("No repository matches.")
+            .variant(LabelVariant::Subtle)
+            .size(Size::Xs)
+            .show();
+        return;
+    }
+    let height = listed.len().min(REPOSITORIES_SHOWN as usize) as f32 * REPOSITORY_ROW;
+    let rows: Vec<_> = listed.into_iter().cloned().collect();
+    let scroll = remember_scroll_state();
+    column_with(
+        Modifier::new()
+            .fill_max_width()
+            .height(height)
+            .vertical_scroll(&scroll),
+        || {
+            for repository in rows {
+                let pick = actions.projects.clone();
+                let url = repository.url.clone();
+                let chosen = state.url == repository.url;
+                key(repository.name.clone(), || {
+                    let mut row = Tile::new(repository.name.clone())
+                        .leading(Leading::Icon(if repository.private {
+                            phosphor::LOCK_SIMPLE
+                        } else {
+                            phosphor::BOOK_BOOKMARK
+                        }))
+                        .size(Size::Xs)
+                        .selected(chosen)
+                        .on_click(move || pick(ProjectAction::CloneUrl(url.clone())));
+                    if repository.private {
+                        row = row.trailing("private");
+                    }
+                    row.show();
+                });
+            }
+        },
+    );
+}
+
 /// The form that clones a repository, into the folder and on the machine chosen, and adds the clone.
 fn clone_form(state: &Adder, actions: &Actions) {
     let change = actions.projects.clone();
@@ -99,6 +202,7 @@ fn clone_form(state: &Adder, actions: &Actions) {
             .on_change(move |text| change(ProjectAction::CloneUrl(text)))
             .on_submit(move |_| submit(ProjectAction::Clone))
             .show();
+        github_picker(state, actions);
         if !address.is_empty() {
             spacer(Modifier::new().height(pm_components::spacing(6.0)));
             Label::new(format!("Into a folder named {}", clone_name(&address)))

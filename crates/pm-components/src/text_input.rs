@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use rustle::prelude::*;
+use crate::text_menu::TextMenu;
 use rustle::{TextFieldOptions, basic_text_field_in, remember_focus};
 
 use crate::label::{Label, LabelVariant};
@@ -171,7 +172,7 @@ impl TextInput {
                 if variant == TextInputVariant::Search {
                     icon(phosphor::MAGNIFYING_GLASS, 14.0, scheme.on_surface_variant);
                 }
-                stack_aligned(
+                TextMenu::new(&state).around(
                     Modifier::new().weight(1.0).clip(),
                     BoxAlignment::CenterStart,
                     || {

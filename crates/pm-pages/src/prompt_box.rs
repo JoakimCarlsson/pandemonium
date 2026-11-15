@@ -5,10 +5,13 @@
 use pm_components::{
     Composer, ComposerChoice, ComposerMenu, ComposerPick, QueuedList, UsageRing, UsageRingVariant,
 };
-use pm_shell::{CaptureKind, ComposerAction, ComposerState, ConversationSetting, Workspace};
+use pm_shell::{
+    ACCOUNT_CHOICE, ADD_ACCOUNT, CaptureKind, ComposerAction, ComposerState, ConversationSetting,
+    OWN_ACCOUNT, Workspace,
+};
 use rustle::prelude::*;
 
-use crate::actions::Actions;
+use crate::actions::{Actions, Destination};
 
 /// The category of the setting naming the model.
 const MODEL: &str = "model";
@@ -57,14 +60,15 @@ pub fn prompt_box(workspace: &Workspace, actions: &Actions, width: f32) {
                 .detail(allowance.detail.clone()),
         );
     }
-    let (now, stop, pick, mention) = (act.clone(), act.clone(), act.clone(), act.clone());
+    let (now, stop, mention) = (act.clone(), act.clone(), act.clone());
+    let picker = actions.clone();
     with_attaching(prompt, actions)
         .mentions(workspace.tree.paths.clone())
         .on_mention(move || mention(ComposerAction::Mention))
         .on_send(move |text| send(text))
         .on_send_now(move |text| now(ComposerAction::SendNow(text)))
         .on_stop(move || stop(ComposerAction::Stop))
-        .on_pick(move |id, value| pick(ComposerAction::Set(id, value)))
+        .on_pick(move |id, value| pick(id, value, &picker))
         .show();
 }
 
@@ -131,7 +135,56 @@ fn with_settings(mut prompt: Composer, workspace: &Workspace) -> Composer {
     for setting in settings {
         prompt = prompt.setting(choice_of(setting));
     }
-    prompt.choice(Some(phosphor::USER_CIRCLE), workspace.account.clone())
+    if workspace.accounts.is_empty() {
+        return prompt.choice(Some(phosphor::USER_CIRCLE), workspace.account.clone());
+    }
+    prompt.setting(account_choice(workspace))
+}
+
+/// The account chip of the open session: its agent's own login, each named login of its agent and an entry to add one, the one it runs as current.
+fn account_choice(workspace: &Workspace) -> ComposerChoice {
+    let mut picks = vec![ComposerPick {
+        value: OWN_ACCOUNT.to_owned(),
+        name: "Default account".to_owned(),
+        description: "The agent's own login".to_owned(),
+    }];
+    picks.extend(
+        workspace
+            .accounts
+            .iter()
+            .map(|(id, name)| ComposerPick {
+                value: id.clone(),
+                name: name.clone(),
+                description: String::new(),
+            }),
+    );
+    picks.push(ComposerPick {
+        value: ADD_ACCOUNT.to_owned(),
+        name: "Add account…".to_owned(),
+        description: "Sign in another login in the settings".to_owned(),
+    });
+    ComposerChoice {
+        icon: Some(phosphor::USER_CIRCLE),
+        label: workspace.account.clone(),
+        id: ACCOUNT_CHOICE.to_owned(),
+        heading: "Account".to_owned(),
+        current: workspace.login.clone().unwrap_or_default(),
+        picks,
+    }
+}
+
+/// Does what picking `value` of the toolbar setting `id` asks: switching the account, opening the settings to add one, or giving the agent's setting the value.
+pub(crate) fn pick(id: String, value: String, actions: &Actions) {
+    let act = &actions.composer;
+    match (id.as_str(), value.as_str()) {
+        (ACCOUNT_CHOICE, ADD_ACCOUNT) => {
+            act(ComposerAction::ManageAccounts);
+            (actions.navigate)(Destination::Settings);
+        }
+        (ACCOUNT_CHOICE, OWN_ACCOUNT) => act(ComposerAction::Account(None)),
+        (ACCOUNT_CHOICE, login) => act(ComposerAction::Account(Some(login.to_owned()))),
+        _ => act(ComposerAction::Set(id, value)),
+    }
 }
 
 /// The toolbar choice of `setting`, its glyph picked by what it is for.

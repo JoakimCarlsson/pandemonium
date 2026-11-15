@@ -141,6 +141,16 @@ enum Ask {
     Discover(String),
     /// The branches of the repository at this folder, for the welcome page.
     StartBranches(String),
+    /// The GitHub accounts the machine with this host, or this one, is signed in to, for the clone form.
+    Owners(Option<String>),
+    /// The GitHub repositories of this owner, as the machine with this host, or this one, lists them, for the clone form.
+    Repositories(Option<String>, String),
+    /// What the extension in the folder at this path carries and asks, to show before it is installed.
+    Inspect(String),
+    /// The branches of the project at this folder, to continue the open chat in it.
+    ContinueBranches(String),
+    /// A prompt sent to a session, whose attachments, kept under this number in [`Link::unsent`], go back into the composer when it fails.
+    Prompt(u64),
     /// Nothing that needs handling but a failure, which the status bar shows.
     Nothing,
 }
@@ -228,6 +238,10 @@ pub struct Link {
     recent_files: Vec<String>,
     /// The titles of the commands run lately from the quick input, the latest first.
     recent_commands: Vec<String>,
+    /// What prompts the server has yet to take held, each under the number its request's [`Ask::Prompt`] names, so a prompt that fails gives them back.
+    unsent: HashMap<u64, composer_requests::Unsent>,
+    /// The number the next prompt sent is kept under in [`Link::unsent`].
+    next_unsent: u64,
 }
 
 impl Link {
@@ -287,6 +301,8 @@ impl Link {
             identities: HashMap::new(),
             recent_files: Vec::new(),
             recent_commands: Vec::new(),
+            unsent: HashMap::new(),
+            next_unsent: 0,
         }
     }
 
@@ -526,6 +542,64 @@ impl Link {
         self.ask(request, Ask::Nothing);
     }
 
+    /// Does what the reader asked about extensions beyond a row's button: picking a folder to install from, allowing capabilities, and installing or giving up the folder picked.
+    pub fn extension_do(&mut self, order: crate::extensions::ExtensionDo) {
+        use crate::extensions::ExtensionDo;
+        match order {
+            ExtensionDo::InstallFromFolder => {
+                self.project_action(crate::projects::ProjectAction::Picker(
+                    crate::projects::PickerAction::OpenForExtension,
+                ));
+            }
+            ExtensionDo::Grant(id, capability, granted) => self.ask(
+                Request::GrantExtension {
+                    id,
+                    capability,
+                    granted,
+                },
+                Ask::Nothing,
+            ),
+            ExtensionDo::PreviewGrant(capability, granted) => {
+                let held = self
+                    .workspace
+                    .extension_preview
+                    .as_mut()
+                    .and_then(|preview| preview.extension.as_mut());
+                for asked in held.into_iter().flat_map(|held| &mut held.capabilities) {
+                    if asked.id == capability {
+                        asked.granted = granted;
+                    }
+                }
+            }
+            ExtensionDo::InstallPreview => {
+                let Some(preview) = self.workspace.extension_preview.take() else {
+                    return;
+                };
+                if preview.extension.is_none() {
+                    return;
+                }
+                let grants = preview.grants();
+                self.ask(
+                    Request::InstallExtension {
+                        path: preview.path,
+                        grants,
+                    },
+                    Ask::Nothing,
+                );
+            }
+            ExtensionDo::CancelPreview => self.workspace.extension_preview = None,
+        }
+    }
+
+    /// Asks the server what the extension in the folder at `path` carries and asks to be allowed, showing it before it is installed.
+    fn inspect_extension(&mut self, path: String) {
+        self.workspace.extension_preview = Some(crate::extensions::ExtensionPreview {
+            path: path.clone(),
+            ..Default::default()
+        });
+        self.ask(Request::InspectExtension { path: path.clone() }, Ask::Inspect(path));
+    }
+
     /// Shows the welcome page for a new session in the project or submodule
     /// at index path `at`.
     pub fn new_session(&mut self, at: Vec<usize>) {
@@ -660,8 +734,10 @@ impl Link {
             .and_then(|info| info.branch.clone())
             .unwrap_or_else(|| "main".to_owned());
         self.workspace.agent = info.map(|info| info.agent.clone()).unwrap_or_default();
-        self.workspace.account = info.and_then(|info| info.login.clone()).unwrap_or_default();
         self.workspace.starting = None;
+        self.workspace.continuing = Default::default();
+        self.workspace.sending = self.unsent.values().any(|held| held.session == id);
+        self.workspace.machine = self.routes.remote(id).map(|(host, _)| host.to_owned());
         self.workspace.extras = Default::default();
         self.workspace.extras.chat = info.is_some_and(|info| info.chat);
         self.watched = Some(id);
@@ -681,6 +757,7 @@ impl Link {
             self.workspace.read_through.insert(id, thread.seq);
         }
         show_thread(&mut self.workspace, thread);
+        self.show_accounts();
         let agent = self.workspace.agent.clone();
         let login = info.and_then(|info| info.login.clone());
         self.ask_composer(id, agent, login);
@@ -820,6 +897,7 @@ impl Link {
                 self.ask(Request::Projects, Ask::Projects);
                 self.ask(Request::Sessions, Ask::Sessions);
                 self.send(Request::MachineSettings);
+                self.send(Request::Accounts);
                 if self.settings.window.general.check_updates {
                     self.send(release_request(self.settings.window.general.channel));
                 }
@@ -935,6 +1013,24 @@ impl Link {
             }
             (Ask::Folders(host), response) => self.answer_folders(host, response),
             (Ask::Cloned, response) => self.answer_clone(response),
+            (Ask::Inspect(path), response) => {
+                if let Some(preview) = self
+                    .workspace
+                    .extension_preview
+                    .as_mut()
+                    .filter(|preview| preview.path == path)
+                {
+                    match response {
+                        Response::ExtensionPreview { extension } => preview.read(&extension),
+                        Response::Failed { message } => preview.problem = Some(message),
+                        _ => {}
+                    }
+                }
+            }
+            (Ask::Owners(machine), response) => self.answer_owners(machine, response),
+            (Ask::Repositories(machine, owner), response) => {
+                self.answer_repositories(machine, owner, response)
+            }
             (Ask::Sessions, Response::Sessions { sessions }) => {
                 for info in &sessions {
                     self.follow(info);
@@ -959,6 +1055,10 @@ impl Link {
                 self.navigate(Page::Session(session));
             }
             (Ask::Start, Response::Failed { message }) => self.workspace.status = Some(message),
+            (Ask::Prompt(kept), response) => self.answer_prompt(kept, response),
+            (Ask::ContinueBranches(directory), response) => {
+                self.answer_continue_branches(directory, response)
+            }
             (Ask::Fork, response) => self.answer_fork(response),
             (Ask::Close(session), response) => self.answer_close(session, response),
             (Ask::Submodules(path), Response::Submodules { paths }) => {
@@ -1061,6 +1161,7 @@ impl Link {
                 for request in settings.take_form_answer(response) {
                     self.send(request);
                 }
+                self.show_accounts();
             }
             (Ask::Update, Response::UpdateStaged { path }) => {
                 if let Some(offer) = &mut self.workspace.update {

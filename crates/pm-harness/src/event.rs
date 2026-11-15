@@ -159,6 +159,8 @@ pub enum Event {
         /// Why the request failed, as the provider said.
         reason: String,
     },
+    /// The turn that just ended took this many milliseconds, from the reader's prompt to the event that ended it, as the server's clock measured.
+    Took(u64),
 }
 
 /// What an agent says about itself when a conversation is opened.

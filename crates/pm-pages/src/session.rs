@@ -10,7 +10,7 @@ use pm_components::{
     PullRequestVariant, Sash, Size, SpendStrip, extended_colors,
 };
 use pm_shell::{
-    ActivityKind, PANE_SHARE_MIN, Pane, Project, PullRequestInfo, SessionTab, SpendSummary,
+    ActivityKind, PANE_SHARE_MIN, Pane, Project, PullRequestInfo, SessionStatus, SessionTab, SpendSummary,
     TabAction, Unsaved, Workspace,
 };
 
@@ -312,7 +312,7 @@ fn chat(workspace: &Workspace, actions: &Actions) {
         pull_request_bar(request, actions);
     }
     if workspace.extras.chat {
-        continue_bar(&workspace.projects, actions);
+        continue_bar(workspace, actions);
     }
     conversation(&workspace.conversation, actions);
     below_conversation(workspace, actions);
@@ -416,28 +416,48 @@ fn pull_request_bar(request: &PullRequestInfo, actions: &Actions) {
         .show();
 }
 
-/// The bar offering to continue the open chat in one of `projects`.
-fn continue_bar(projects: &[Project], actions: &Actions) {
+/// The bar offering to continue the open chat of `workspace` in one of the projects on the chat's own machine, from a branch of the one picked; switched off while the agent works or prompts wait for it.
+fn continue_bar(workspace: &Workspace, actions: &Actions) {
     let mut offered = Vec::new();
-    flatten(projects, Vec::new(), &mut offered);
-    let names = offered.iter().map(|(name, _)| name.clone()).collect();
+    flatten(&workspace.projects, Vec::new(), &mut offered);
+    offered.retain(|(_, _, machine)| machine.as_deref() == workspace.machine.as_deref());
+    let names = offered.iter().map(|(name, _, _)| name.clone()).collect();
+    let chosen = workspace
+        .continuing
+        .project
+        .as_ref()
+        .and_then(|picked| offered.iter().position(|(_, at, _)| at == picked));
+    let composer = &workspace.extras.composer;
+    let busy = composer.working || !composer.queued.is_empty();
+    let pick = actions.continue_project.clone();
     let carry = actions.continue_chat.clone();
     ContinueChat::new(names)
+        .chosen(chosen, workspace.continuing.branches.clone())
+        .disabled(busy)
         .on_pick(move |index| {
-            if let Some((_, at)) = offered.get(index) {
-                carry(at.clone());
+            if let Some((_, at, _)) = offered.get(index) {
+                pick(at.clone());
             }
         })
+        .on_branch(move |base| carry(base))
         .show();
 }
 
 /// Puts every project among `projects` under `prefix`, nested ones after
-/// their parent, into `offered` with its index path.
-fn flatten(projects: &[Project], prefix: Vec<usize>, offered: &mut Vec<(String, Vec<usize>)>) {
+/// their parent, into `offered` with its index path and the machine it lives on.
+fn flatten(
+    projects: &[Project],
+    prefix: Vec<usize>,
+    offered: &mut Vec<(String, Vec<usize>, Option<String>)>,
+) {
     for (index, project) in projects.iter().enumerate() {
         let mut at = prefix.clone();
         at.push(index);
-        offered.push((project.name.clone(), at.clone()));
+        offered.push((
+            project.name.clone(),
+            at.clone(),
+            project.machine().map(str::to_owned),
+        ));
         flatten(&project.children, at, offered);
     }
 }
@@ -455,6 +475,7 @@ fn below_conversation(workspace: &Workspace, actions: &Actions) {
                 Arrangement::SpacedBy(pm_components::spacing(8.0)),
                 Alignment::Start,
                 || {
+                    status_line(workspace);
                     waiting_cards(&workspace.extras, actions);
                     let mut chips = Activity::new();
                     for activity in &workspace.extras.activity {
@@ -480,6 +501,49 @@ fn below_conversation(workspace: &Workspace, actions: &Actions) {
                     }
                 },
             );
+        },
+    );
+}
+
+/// What the open session's agent is doing while nothing waits on the reader: that its server is out of reach, that the prompt is being sent, or that it is thinking; nothing while it is idle or asks something.
+fn status_line(workspace: &Workspace) {
+    let extras = &workspace.extras;
+    let out_of_reach = workspace
+        .open
+        .as_ref()
+        .and_then(|at| pm_shell::session_at(&workspace.projects, at))
+        .is_some_and(|session| session.status == SessionStatus::OutOfReach);
+    let asking = extras.approval.is_some()
+        || extras.inquiry.is_some()
+        || extras.trust.is_some()
+        || extras.signed_out.is_some()
+        || extras.container.is_some();
+    let label = if out_of_reach {
+        "The server is out of reach. Waiting for the connection to come back…"
+    } else if asking {
+        return;
+    } else if workspace.sending {
+        "Sending prompt…"
+    } else if extras.composer.working {
+        "Thinking…"
+    } else {
+        return;
+    };
+    let scheme = color_scheme();
+    row_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(pm_components::spacing(8.0)),
+        Alignment::Center,
+        move || {
+            if out_of_reach {
+                icon(phosphor::LINK_BREAK, 14.0, scheme.on_surface_variant);
+            } else {
+                circular_progress_indicator_indeterminate(12.0);
+            }
+            Label::new(label)
+                .variant(LabelVariant::Muted)
+                .size(Size::Xs)
+                .show();
         },
     );
 }

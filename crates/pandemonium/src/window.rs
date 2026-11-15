@@ -618,7 +618,11 @@ fn actions(
             overview(&|link| link.navigate(Page::Overview(path.clone())))
         }),
         reopen_session: Rc::new(move |id| reopen(&|link| link.reopen_session(id))),
-        press_extension: Rc::new(move |id| extension(&|link| link.press_extension(&id))),
+        press_extension: Rc::new({
+            let extension = extension.clone();
+            move |id| extension(&|link| link.press_extension(&id))
+        }),
+        extension: Rc::new(move |order| extension(&|link| link.extension_do(order.clone()))),
         choose: Rc::new(move |ticket, option| answer(&|link| link.choose(ticket, option.clone()))),
         answer_inquiry: Rc::new(move |ticket, replies| {
             inquire(&|link| link.answer_inquiry(ticket, replies.clone()))
@@ -628,7 +632,11 @@ fn actions(
         conversation: Rc::new(move |order| {
             command(&|link| link.conversation_command(order.clone()))
         }),
-        continue_chat: Rc::new(move |at| carry(&|link| link.continue_chat(at.clone()))),
+        continue_project: Rc::new({
+            let carry = carry.clone();
+            move |at| carry(&|link| link.choose_continue_project(at.clone()))
+        }),
+        continue_chat: Rc::new(move |base| carry(&|link| link.continue_chat(base.clone()))),
         open_address: Rc::new(move |url| address(&|link| link.open_address(&url))),
         browser,
         update: Rc::new(move |action| match action {

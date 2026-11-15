@@ -2,6 +2,8 @@
 //! placeholder while it is empty.
 
 use rustle::basic_text_field;
+
+use crate::text_menu::TextMenu;
 use rustle::prelude::*;
 
 use crate::label::{Label, LabelVariant};
@@ -88,7 +90,8 @@ impl FilterField {
             Alignment::Center,
             move || {
                 icon(phosphor::MAGNIFYING_GLASS, 14.0, scheme.on_surface_variant);
-                stack_aligned(
+                let menu = TextMenu::new(&state);
+                menu.around(
                     Modifier::new().weight(1.0),
                     BoxAlignment::CenterStart,
                     move || {

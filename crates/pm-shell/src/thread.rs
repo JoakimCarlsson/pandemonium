@@ -15,6 +15,17 @@ use crate::conversation::{
 use crate::model::SessionStatus;
 use crate::translate;
 
+/// `millis` milliseconds as a reader says it: `0.4s` under a second, `12s` under a minute, `3m 5s` under an hour and `1h 2m` beyond.
+fn duration(millis: u64) -> String {
+    let seconds = millis / 1000;
+    match seconds {
+        0 => format!("{:.1}s", millis as f64 / 1000.0),
+        1..60 => format!("{seconds}s"),
+        60..3600 => format!("{}m {}s", seconds / 60, seconds % 60),
+        _ => format!("{}h {}m", seconds / 3600, seconds / 60 % 60),
+    }
+}
+
 /// What the window knows of one session from its events.
 #[derive(Clone, Debug, Default)]
 pub struct Thread {
@@ -319,8 +330,29 @@ impl Thread {
                 None => self.end_turn(StepState::Done, "Worked"),
             },
             Event::Halted => self.end_turn(StepState::Failed, "Stopped"),
+            Event::Took(millis) => self.took(millis),
         }
         true
+    }
+
+    /// Puts how long the last turn took, `millis` milliseconds, into the footer of its reply, after the verb.
+    fn took(&mut self, millis: u64) {
+        let Some(message) = self
+            .messages
+            .iter_mut()
+            .rev()
+            .find(|message| message.speaker == Speaker::Agent)
+        else {
+            return;
+        };
+        let Some(footer) = &message.footer else {
+            return;
+        };
+        let lasted = format!("for {}", duration(millis));
+        message.footer = Some(match footer.split_once(" · ") {
+            Some((verb, steps)) => format!("{verb} {lasted} · {steps}"),
+            None => format!("{footer} {lasted}"),
+        });
     }
 
     /// Keeps `slots` as the model slots the agent's harness holds and offers them in the model picker.
@@ -527,6 +559,19 @@ mod tests {
         assert_eq!(
             thread.messages[0].footer.as_deref(),
             Some("Failed · 1 step")
+        );
+    }
+
+    /// The time a turn took goes into its footer after the verb.
+    #[test]
+    fn the_footer_says_how_long_the_turn_took() {
+        let mut thread = Thread::default();
+        thread.take(1, Event::Tool(tool("t", None)));
+        thread.take(2, Event::Failed("broke".to_owned()));
+        thread.take(3, Event::Took(12_400));
+        assert_eq!(
+            thread.messages[0].footer.as_deref(),
+            Some("Failed for 12s · 1 step")
         );
     }
 

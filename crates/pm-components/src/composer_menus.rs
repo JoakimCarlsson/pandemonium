@@ -10,6 +10,7 @@ use rustle::{TextFieldState, clipboard};
 use crate::composer::{ComposerCallbacks, ComposerChoice, ComposerCommand};
 use crate::menu::Menu;
 use crate::size::Size;
+use crate::text_menu::TextMenu;
 
 /// How many commands the slash menu lists at most.
 const COMMANDS_SHOWN: usize = 8;
@@ -24,6 +25,8 @@ const BUTTON_HEIGHT: f32 = 22.0;
 pub(crate) struct CommandMenu {
     /// The commands listed, in order.
     pub(crate) commands: Vec<ComposerCommand>,
+    /// The command the arrow keys point at, which Enter picks.
+    pub(crate) highlighted: usize,
     /// What picking a command does with its name.
     pub(crate) on_pick: Rc<dyn Fn(String)>,
     /// What closing the menu without picking does.
@@ -53,6 +56,7 @@ impl CommandMenu {
     pub(crate) fn show(self) {
         let mut menu = Menu::new()
             .heading("Commands")
+            .highlighted(Some(self.highlighted))
             .size(Size::Xs)
             .width(360.0)
             .above(true)
@@ -90,6 +94,8 @@ pub(crate) fn with_mention(text: &str, path: &str) -> String {
 pub(crate) struct MentionMenu {
     /// The paths listed, in order.
     pub(crate) paths: Vec<String>,
+    /// The path the arrow keys point at, which Enter picks.
+    pub(crate) highlighted: usize,
     /// What picking a file does with its path.
     pub(crate) on_pick: Rc<dyn Fn(String)>,
     /// What closing the menu without picking does.
@@ -119,6 +125,7 @@ impl MentionMenu {
     pub(crate) fn show(self) {
         let mut menu = Menu::new()
             .heading("Files")
+            .highlighted(Some(self.highlighted))
             .size(Size::Xs)
             .width(360.0)
             .above(true)
@@ -192,54 +199,12 @@ impl FieldMenu {
     /// Emits the menu.
     #[track_caller]
     pub(crate) fn show(self) {
-        let selected = self
-            .state
-            .value()
-            .selected_text()
-            .map(str::to_owned)
-            .unwrap_or_default();
-        let cut_state = self.state.clone();
-        let cut_text = selected.clone();
-        let paste_state = self.state.clone();
-        let all_state = self.state.clone();
         let callbacks = self.callbacks.clone();
         let dismiss = self.on_dismiss.clone();
-        stack_with(Modifier::new().offset(self.at.0, self.at.1), move || {
-            let mut menu = Menu::new().size(Size::Xs).width(180.0).above(true);
-            menu = if selected.is_empty() {
-                menu.disabled_item(phosphor::SCISSORS, "Cut")
-                    .disabled_item(phosphor::COPY, "Copy")
-            } else {
-                menu.icon_item(phosphor::SCISSORS, "Cut", move || {
-                    copy_text(&cut_text);
-                    cut_state.replace_selection("");
-                })
-                .icon_item(phosphor::COPY, "Copy", move || copy_text(&selected))
-            };
-            menu.icon_item(phosphor::CLIPBOARD_TEXT, "Paste", move || {
-                if paste_attachments(&callbacks) {
-                    return;
-                }
-                if let Some(text) = clipboard().and_then(|clipboard| clipboard.text()) {
-                    paste_state.replace_selection(&text);
-                }
-            })
-            .hint("Ctrl+V")
-            .separator()
-            .icon_item(phosphor::SELECTION_ALL, "Select all", move || {
-                all_state.select_all()
-            })
-            .hint("Ctrl+A")
-            .on_dismiss(move || dismiss())
-            .show();
-        });
-    }
-}
-
-/// Puts `text` on the clipboard.
-fn copy_text(text: &str) {
-    if let Some(clipboard) = clipboard() {
-        clipboard.set_text(text);
+        TextMenu::new(&self.state)
+            .above(true)
+            .on_paste(move || paste_attachments(&callbacks))
+            .show_at(self.at, move || dismiss());
     }
 }
 

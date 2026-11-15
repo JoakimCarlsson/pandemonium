@@ -2,6 +2,7 @@
 //! which follows the value it is given, tells what is typed and submits on
 //! Ctrl+Enter.
 
+use crate::text_menu::TextMenu;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -146,7 +147,8 @@ impl TextArea {
         let placeholder = self.placeholder;
         let style = Label::new("").size(self.size).wrap().style();
         let size = self.size;
-        stack_with(modifier.clip(), move || {
+        let menu = TextMenu::new(&state);
+        menu.around(modifier.clip(), BoxAlignment::TopStart, move || {
             if empty {
                 Label::new(placeholder)
                     .variant(LabelVariant::Subtle)

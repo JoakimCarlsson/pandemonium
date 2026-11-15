@@ -80,6 +80,79 @@ pub struct Extension {
     pub suffixes: Vec<String>,
     /// The whole names of the files it reads.
     pub names: Vec<String>,
+    /// The capabilities it asks to be allowed, each with what it lets it do, and whether the reader allowed it.
+    pub capabilities: Vec<Capability>,
+}
+
+/// A capability an extension package asks to be allowed.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Capability {
+    /// Its name, which requests name it by.
+    pub id: String,
+    /// What it lets the extension do, in words for the reader.
+    pub about: String,
+    /// Whether the reader allowed it.
+    pub granted: bool,
+}
+
+/// The capabilities `info` asks to be allowed, each allowed as `granted` says.
+fn capabilities(info: &ExtensionInfo, granted: impl Fn(&str) -> bool) -> Vec<Capability> {
+    info.requests
+        .iter()
+        .map(|id| Capability {
+            id: id.clone(),
+            about: pm_protocol::CAPABILITIES
+                .iter()
+                .find(|(known, _)| known == id)
+                .map_or_else(|| id.clone(), |(_, about)| (*about).to_owned()),
+            granted: granted(id),
+        })
+        .collect()
+}
+
+/// What the reader does about extensions beyond pressing a row's button.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ExtensionDo {
+    /// Pick a folder on this machine to install an extension from.
+    InstallFromFolder,
+    /// Allow the installed extension with this id the capability so named, or take it back.
+    Grant(String, String, bool),
+    /// Allow the extension of the folder being installed the capability so named, or not.
+    PreviewGrant(String, bool),
+    /// Install the extension of the folder being installed, with what was allowed.
+    InstallPreview,
+    /// Give up installing the extension of the folder.
+    CancelPreview,
+}
+
+/// An extension in a folder the reader picked, shown before it is installed with what it carries and asks.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ExtensionPreview {
+    /// The folder, on this machine.
+    pub path: String,
+    /// The extension as its folder describes it, or nothing until the server answered.
+    pub extension: Option<Extension>,
+    /// Why the folder holds no extension that can be installed, when it does not.
+    pub problem: Option<String>,
+}
+
+impl ExtensionPreview {
+    /// The preview of the extension `info` describes, asking for nothing allowed yet.
+    pub fn read(&mut self, info: &ExtensionInfo) {
+        let mut extension = Extension::of(info);
+        extension.capabilities = capabilities(info, |_| false);
+        self.extension = Some(extension);
+    }
+
+    /// The names of the capabilities allowed so far.
+    pub fn grants(&self) -> Vec<String> {
+        self.extension
+            .iter()
+            .flat_map(|extension| &extension.capabilities)
+            .filter(|capability| capability.granted)
+            .map(|capability| capability.id.clone())
+            .collect()
+    }
 }
 
 impl Extension {
@@ -123,6 +196,7 @@ impl Extension {
             },
             suffixes: info.suffixes.clone(),
             names: info.names.clone(),
+            capabilities: capabilities(info, |id| info.granted.iter().any(|held| held == id)),
         }
     }
 

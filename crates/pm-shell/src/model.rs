@@ -36,6 +36,16 @@ pub struct Workspace {
     pub permissions: String,
     /// The account shown in the composer.
     pub account: String,
+    /// The id of the login the open session runs as, or nothing for its agent's own.
+    pub login: Option<String>,
+    /// Whether a prompt sent to the open session waits for the server to take it.
+    pub sending: bool,
+    /// Where the open chat is to be continued, as picked so far.
+    pub continuing: ContinueChoice,
+    /// The machine the open session lives on, by host, or nothing for this one.
+    pub machine: Option<String>,
+    /// The named logins of the open session's agent the account chip offers, as id and name; empty when it offers none, as for a session of another machine.
+    pub accounts: Vec<(String, String)>,
     /// The conversation of the open session.
     pub conversation: Vec<Message>,
     /// The cards, strips and bars around the open session's conversation.
@@ -94,6 +104,8 @@ pub struct Workspace {
     pub history: Vec<PastSession>,
     /// The extensions the server lists, once it answered.
     pub extensions: Option<Vec<Extension>>,
+    /// The extension in a folder the reader picked to install, while it is shown before installing.
+    pub extension_preview: Option<crate::extensions::ExtensionPreview>,
     /// The latest commits of the project the overview shows, newest first.
     pub commits: Vec<Commit>,
     /// How big the resizable panels are.
@@ -248,6 +260,22 @@ pub struct Project {
     pub collapsed: bool,
     /// How the server of the machine it lives on stands, for a project on another machine.
     pub reach: Option<ProjectReach>,
+}
+
+impl Project {
+    /// The machine it lives on, by host, or nothing for this one.
+    pub fn machine(&self) -> Option<&str> {
+        pm_protocol::host_of(&self.path).map(|(host, _)| host)
+    }
+}
+
+/// Where the open chat is to be continued as a session, as picked so far.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ContinueChoice {
+    /// The project picked, as a path of indices among the projects.
+    pub project: Option<Vec<usize>>,
+    /// The branches of that project, once its machine listed them; none of them for a folder that holds no repository.
+    pub branches: Option<Vec<String>>,
 }
 
 /// How the server of the machine a project lives on stands with the window.

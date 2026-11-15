@@ -67,7 +67,7 @@ pub use browser_sample::{BrowserSample, sample_browser};
 pub use browser_scope::{BrowserShelf, NO_SCOPE, SavedBrowser};
 pub use browser_tools::{agent_may_open, changes_page, locked_message, origin_allowed, tabs_text};
 pub use composer::{
-    Capture, CaptureKind, ComposerAction, ComposerMenu, ComposerState, ConversationSetting, Gauge,
+    ACCOUNT_CHOICE, ADD_ACCOUNT, OWN_ACCOUNT, Capture, CaptureKind, ComposerAction, ComposerMenu, ComposerState, ConversationSetting, Gauge,
     GoalChip, PickedElement, PromptFile, QueuedPrompt, SettingPick, SlashCommand, allowance_gauge,
     context_gauge, goal_chip, matching_commands, prompt_text, slot_resolves_to, with_slot_picks,
 };
@@ -82,7 +82,10 @@ pub use dock_model::{
     DebugScopeEntry, DebugSession, DebugStanding, DebugVariableEntry, InlineValue, Problem,
     ProblemSeverity, TaskEntry, TaskList, TerminalTab,
 };
-pub use extensions::{Extension, ExtensionAction, Tone, language_offer, listed};
+pub use extensions::{
+    Capability, Extension, ExtensionAction, ExtensionDo, ExtensionPreview, Tone, language_offer,
+    listed,
+};
 pub use file_actions::FileAction;
 pub use file_tree::{
     EditKind, FOLDER_MARK, FileTree, Held, PickHow, TreeAction, TreeEdit, TreeRow, join, name_of,
@@ -100,7 +103,7 @@ pub use link::{
     BASE_SETTING, ConversationCommand, KeyOutcome, Link, SessionCommand, age, session_at,
 };
 pub use model::{
-    AgentChoice, Commit, DockTab, PanelSizes, Project, ProjectReach, Renaming, RightTab, Session,
+    AgentChoice, Commit, ContinueChoice, DockTab, PanelSizes, Project, ProjectReach, Renaming, RightTab, Session,
     SessionStatus, Start, Workspace,
 };
 pub use open_files::{
@@ -110,7 +113,7 @@ pub use open_files::{
 pub use page::{Page, Trail};
 pub use pm_browser::CaptureKind as PageCapture;
 pub use projects::{
-    AddStep, Adder, FolderPicker, Machine, PickerAction, ProjectAction, Reach, clone_address,
+    AddStep, Adder, FolderPicker, GithubRepository, Machine, PickerAction, ProjectAction, Reach, clone_address,
     clone_name, join_host, moved, reordered,
 };
 pub use quick::{

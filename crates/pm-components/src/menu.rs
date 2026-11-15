@@ -61,6 +61,8 @@ pub struct Menu {
     on_dismiss: Option<Rc<dyn Fn()>>,
     /// Whether it opens upward from where it is emitted.
     above: bool,
+    /// The command the keys point at, counted among the commands only, drawn as if the pointer were over it.
+    highlighted: Option<usize>,
 }
 
 impl Menu {
@@ -74,12 +76,19 @@ impl Menu {
             offset: (0.0, 4.0),
             on_dismiss: None,
             above: false,
+            highlighted: None,
         }
     }
 
     /// The menu opening upward from where it is emitted when `above`, for a field near the bottom of the window.
     pub fn above(mut self, above: bool) -> Self {
         self.above = above;
+        self
+    }
+
+    /// The menu drawing its command at `place`, counted among the commands only, as if the pointer were over it, for lists stepped through with the arrow keys.
+    pub fn highlighted(mut self, place: Option<usize>) -> Self {
+        self.highlighted = place;
         self
     }
 
@@ -212,10 +221,16 @@ impl Menu {
         let height = crate::row_height(height);
         let entries = self.entries;
         let dismiss = self.on_dismiss.clone();
+        let highlighted = self.highlighted;
         let rows = move || {
+            let mut command = 0;
             for (place, entry) in entries.into_iter().enumerate() {
                 let dismiss = dismiss.clone();
-                key(place, move || entry_row(entry, height, dismiss));
+                let lit = matches!(entry, Entry::Item { .. }) && highlighted == Some(command);
+                if matches!(entry, Entry::Item { .. }) {
+                    command += 1;
+                }
+                key(place, move || entry_row(entry, height, lit, dismiss));
             }
         };
         match self.variant {
@@ -241,9 +256,9 @@ impl Default for Menu {
     }
 }
 
-/// Emits `entry` `height` tall, calling `dismiss` after a command is chosen.
+/// Emits `entry` `height` tall, drawn as under the pointer when `lit`, calling `dismiss` after a command is chosen.
 #[track_caller]
-fn entry_row(entry: Entry, height: f32, dismiss: Option<Rc<dyn Fn()>>) {
+fn entry_row(entry: Entry, height: f32, lit: bool, dismiss: Option<Rc<dyn Fn()>>) {
     let scheme = color_scheme();
     match entry {
         Entry::Separator => spacer(
@@ -274,7 +289,7 @@ fn entry_row(entry: Entry, height: f32, dismiss: Option<Rc<dyn Fn()>>) {
             } else {
                 scheme.on_surface
             };
-            let fill = if hovered.get() && !disabled {
+            let fill = if (hovered.get() || lit) && !disabled {
                 scheme.surface_container_high
             } else {
                 Color::TRANSPARENT

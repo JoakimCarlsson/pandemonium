@@ -4,7 +4,7 @@
 //! project.
 
 use pm_git::{CheckState, PullRequestStatus, ReviewDecision};
-use pm_protocol::Request;
+use pm_protocol::{Request, Response};
 
 use super::{Ask, Link};
 use crate::conversation::{InquiryReply, PullRequestInfo, TrustVerdict};
@@ -30,6 +30,8 @@ pub enum ConversationCommand {
     Restore(u64),
     /// Take what the reader's turn given changed back out of the files.
     UndoTurn(u64),
+    /// Show the files the reader's turn given changed, with their diffs, in the Diff tab.
+    TurnChanges(u64),
     /// Stop the subagent with this id, and those it started.
     StopSubagent(String),
     /// Sign in again as the session's account.
@@ -179,6 +181,7 @@ impl Link {
                 },
                 Ask::Nothing,
             ),
+            ConversationCommand::TurnChanges(turn) => self.show_turn_changes(session, turn),
             ConversationCommand::StopSubagent(subagent) => {
                 self.ask(Request::StopSubagent { session, subagent }, Ask::Nothing)
             }
@@ -189,22 +192,85 @@ impl Link {
         }
     }
 
-    /// Continues the open chat as a session in the project at index path `at`.
-    pub fn continue_chat(&mut self, at: Vec<usize>) {
-        let Some(session) = self.watched else {
-            return;
-        };
+    /// Opens the Diff tab on what the reader's turn `turn` of `session` changed, and asks the server for those files.
+    fn show_turn_changes(&mut self, session: u64, turn: u64) {
+        let folder = self.workspace.git.folder.clone();
+        let git = &mut self.workspace.git;
+        git.menu = None;
+        git.revision = Some(crate::review::Revision {
+            title: format!("Turn {} changes", turn + 1),
+            ..crate::review::Revision::default()
+        });
+        self.workspace.open_files.tab = crate::open_files::SessionTab::Diff;
+        self.ask(
+            Request::TurnChanges { session, turn },
+            Ask::Git(super::git::GitAsk::Revision(folder)),
+        );
+    }
+
+    /// Picks the project at index path `at` to continue the open chat in, and asks its machine for the branches the session's worktree can be made from.
+    pub fn choose_continue_project(&mut self, at: Vec<usize>) {
         let Some(project) = project_at(&self.workspace.projects, &at) else {
             return;
         };
-        let repository = project.path.clone();
+        let directory = super::expand_home(&project.path);
+        self.workspace.continuing = crate::model::ContinueChoice {
+            project: Some(at),
+            branches: None,
+        };
+        self.ask(
+            Request::Branches {
+                directory: directory.clone(),
+            },
+            Ask::ContinueBranches(directory),
+        );
+    }
+
+    /// Takes the server's answer to the branches of the project at `directory`, asked to continue the open chat in it.
+    pub(super) fn answer_continue_branches(&mut self, directory: String, response: Response) {
+        let picked = self
+            .workspace
+            .continuing
+            .project
+            .as_ref()
+            .and_then(|at| project_at(&self.workspace.projects, at))
+            .map(|project| super::expand_home(&project.path));
+        if picked.as_deref() != Some(directory.as_str()) {
+            return;
+        }
+        self.workspace.continuing.branches = Some(match response {
+            Response::Branches { names } => names,
+            _ => Vec::new(),
+        });
+    }
+
+    /// Continues the open chat as a session in the project picked, its worktree made from `base`, unless its agent is working or prompts wait for it.
+    pub fn continue_chat(&mut self, base: String) {
+        let Some(session) = self.watched else {
+            return;
+        };
+        let composer = &self.workspace.extras.composer;
+        if composer.working || !composer.queued.is_empty() {
+            return;
+        }
+        let Some(project) = self
+            .workspace
+            .continuing
+            .project
+            .as_ref()
+            .and_then(|at| project_at(&self.workspace.projects, at))
+        else {
+            return;
+        };
+        let repository = super::expand_home(&project.path);
         let title = self.workspace.title.clone();
         self.workspace.extras.chat = false;
+        self.workspace.continuing = crate::model::ContinueChoice::default();
         self.ask(
             Request::ContinueChat {
                 session,
                 repository,
-                base: "HEAD".to_owned(),
+                base,
                 title,
             },
             Ask::Nothing,

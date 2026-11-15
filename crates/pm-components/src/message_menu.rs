@@ -59,6 +59,12 @@ impl MessageMenu {
         self
     }
 
+    /// The menu with the entries of `other` after its own.
+    pub fn extend(mut self, other: MessageMenu) -> Self {
+        self.entries.extend(other.entries);
+        self
+    }
+
     /// The menu with an entry `label` that copies `text` to the clipboard.
     pub fn copy(self, label: impl Into<String>, text: String) -> Self {
         self.item(label, move || {

@@ -395,7 +395,12 @@ impl Composer {
         let height = (lines as f32 * LINE_HEIGHT).max(least);
         let matching = CommandMenu::matching(&self.commands, &text);
         let slash_open = !matching.is_empty() && slash_closed.get().as_deref() != Some(&text);
-        let first_command = matching.first().map(|command| command.name.clone());
+        let picked = remember(|| 0usize);
+        let picked_for = remember(String::new);
+        if picked_for.get() != text {
+            picked_for.set(text.clone());
+            picked.set(0);
+        }
         let mention = mention_query(&text);
         let mentioned = remember(|| false);
         if mention.is_some() != mentioned.get() {
@@ -411,7 +416,19 @@ impl Composer {
         let mention_open = !mention_matches.is_empty()
             && !slash_open
             && slash_closed.get().as_deref() != Some(&text);
-        let first_mention = mention_matches.first().cloned();
+        let listed = if slash_open {
+            matching.len()
+        } else if mention_open {
+            mention_matches.len()
+        } else {
+            0
+        };
+        let place = picked.get().min(listed.saturating_sub(1));
+        let chosen_command = matching.get(place).map(|command| command.name.clone());
+        let chosen_mention = mention_matches.get(place).cloned();
+        let key_picked = picked.clone();
+        let key_closed = slash_closed.clone();
+        let key_text = text.clone();
         let key_send = send.clone();
         let key_state = state.clone();
         let key_callbacks = callbacks.clone();
@@ -430,9 +447,27 @@ impl Composer {
                 }
                 return true;
             }
-            let enter = event.key == Key::Enter && !event.modifiers.shift;
+            if listed > 0 {
+                match event.key {
+                    Key::ArrowDown => {
+                        key_picked.set((place + 1) % listed);
+                        return true;
+                    }
+                    Key::ArrowUp => {
+                        key_picked.set((place + listed - 1) % listed);
+                        return true;
+                    }
+                    Key::Escape => {
+                        key_closed.set(Some(key_text.clone()));
+                        return true;
+                    }
+                    _ => {}
+                }
+            }
+            let enter = (event.key == Key::Enter || (event.key == Key::Tab && listed > 0))
+                && !event.modifiers.shift;
             if enter {
-                match (&first_command, slash_open, &first_mention, mention_open) {
+                match (&chosen_command, slash_open, &chosen_mention, mention_open) {
                     (Some(name), true, _, _) => key_state.set_text(format!("/{name} ")),
                     (_, _, Some(path), true) => {
                         key_state.set_text(with_mention(&key_state.text(), path))
@@ -466,6 +501,7 @@ impl Composer {
                     let typed = text.clone();
                     CommandMenu {
                         commands: matching,
+                        highlighted: place,
                         on_pick: Rc::new(move |name: String| {
                             commands_state.set_text(format!("/{name} "))
                         }),
@@ -477,6 +513,7 @@ impl Composer {
                     let typed = text.clone();
                     MentionMenu {
                         paths: mention_matches,
+                        highlighted: place,
                         on_pick: Rc::new(move |path: String| {
                             mention_state.set_text(with_mention(&mention_state.text(), &path))
                         }),
