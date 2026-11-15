@@ -70,7 +70,7 @@ impl Link {
                 .map(|close| self.workspace.open_files.unsaved_closing(close))
                 .unwrap_or_default()
             {
-                self.save_file(index);
+                self.write_file(index);
             }
             action = TabAction::Unsaved(Unsaved::Discard);
         }
@@ -178,6 +178,30 @@ impl Link {
             return;
         }
         self.tidy_before_save(index);
+        let Some(file) = self.workspace.open_files.files.get(index) else {
+            return;
+        };
+        let synced = file.document.0.borrow().synced;
+        if self.settings.editor.format_on_save && synced {
+            let (directory, path) = (file.directory.clone(), file.path.clone());
+            let version = file.document.0.borrow().version;
+            self.ask(
+                Request::Format {
+                    directory: directory.clone(),
+                    path: path.clone(),
+                    version,
+                    range: None,
+                },
+                Ask::Server(super::lsp::ServerFor::FormatThenSave(directory, path)),
+            );
+            return;
+        }
+        self.write_file(index);
+    }
+
+    /// Asks the server to write the open file at position `index` as its
+    /// document holds it now, with no tidying or formatting first.
+    pub(super) fn write_file(&mut self, index: usize) {
         let Some(file) = self.workspace.open_files.files.get(index) else {
             return;
         };

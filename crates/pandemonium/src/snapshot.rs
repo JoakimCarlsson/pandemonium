@@ -58,6 +58,7 @@ const WORDS: &[&str] = &[
     "code-goto",
     "code-vim",
     "code-problems",
+    "code-folded",
     "code-unsaved",
     "code-debug",
     "code-scrolled",
@@ -634,6 +635,9 @@ fn show_code_state(workspace: &mut pm_shell::Workspace, words: &[&str]) {
             "code-goto" => files.files[0].bar = Some(pm_shell::EditorBar::GoTo("120".to_owned())),
             "code-vim" => files.vim = true,
             "code-problems" => show_problems(&files.files[0]),
+            "code-folded" => {
+                files.files[0].document.0.borrow_mut().fold_at_caret();
+            }
             "code-unsaved" => {
                 files.files[0].document.0.borrow_mut().mark_unsaved();
                 files.act(pm_shell::TabAction::Close(0));

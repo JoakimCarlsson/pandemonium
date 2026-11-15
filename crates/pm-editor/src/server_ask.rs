@@ -38,6 +38,9 @@ pub enum ServerAsk {
     Colour(Span, [u8; 4]),
     /// Formats the file, or the stretch of it when one is given.
     Format(Option<Span>),
+    /// Formats what was just typed, at this version of the text, with the
+    /// caret at this place after the character typed.
+    FormatOnType(i32, Position, String),
 }
 
 /// The kind of change that sorts the imports of a file.

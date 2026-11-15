@@ -90,7 +90,7 @@ impl Grid {
         let column = column_of(text, offset - range.start);
         (
             self.gutter + column as f32 * self.cell.0,
-            line as f32 * self.cell.1 - self.scrolled,
+            document.row_of_line(line) as f32 * self.cell.1 - self.scrolled,
         )
     }
 }

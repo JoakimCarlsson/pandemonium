@@ -48,6 +48,8 @@ pub(super) enum ServerFor {
     Lenses(String, String, i32),
     /// The colours spelled in the file, asked at this version.
     Colours(String, String, i32),
+    /// Formatting the file before it is written, as the settings ask.
+    FormatThenSave(String, String),
 }
 
 impl Link {
@@ -288,6 +290,16 @@ impl Link {
                 },
                 ServerFor::Edited(directory, path),
             ),
+            ServerAsk::FormatOnType(version, position, character) => (
+                Request::FormatOnType {
+                    directory: directory.clone(),
+                    path: path.clone(),
+                    version,
+                    position,
+                    character,
+                },
+                ServerFor::Edited(directory, path),
+            ),
         };
         self.ask(request, Ask::Server(purpose));
     }
@@ -518,6 +530,15 @@ impl Link {
                 | Response::ActionTaken { files, .. }
                 | Response::LensPressed { files, .. },
             ) => self.make_edits(files),
+            (ServerFor::FormatThenSave(directory, path), response) => {
+                let Some(index) = self.workspace.open_files.position(&directory, &path) else {
+                    return;
+                };
+                if let Response::Formatted { edits } = response {
+                    self.edit_open_file(index, edits);
+                }
+                self.write_file(index);
+            }
             (ServerFor::Edited(_, path), Response::Formatted { edits }) => {
                 self.make_edits(vec![FileEdit {
                     path,
@@ -604,36 +625,43 @@ impl Link {
                     continue;
                 }
             };
-            let changes = {
-                let file: &OpenFile = &self.workspace.open_files.files[index];
-                if file.body != FileBody::Text {
-                    self.workspace.open_files.files[index]
-                        .pending
-                        .extend(edit.changes);
-                    continue;
-                }
-                let document = file.document.0.borrow();
-                document.change_edits(edit.changes)
-            };
-            let told = {
-                let file = &self.workspace.open_files.files[index];
-                let mut document = file.document.0.borrow_mut();
-                let mut told = Vec::new();
-                for change in changes {
-                    if let Some(edited) = document.edit(change)
-                        && let Some(change) = edited.change
-                    {
-                        told.push(change);
-                    }
-                }
-                told
-            };
-            for (version, change) in told {
-                self.code(index, ServerAsk::Changed(version, change));
-            }
+            self.edit_open_file(index, edit.changes);
             self.workspace.open_files.files[index].preview = false;
         }
         self.workspace.open_files.tab = shown;
+    }
+
+    /// Makes `changes`, which a language server asked for, in the open file
+    /// at `index`, telling its server of each; changes to a file whose text
+    /// has not arrived yet wait until it does.
+    pub(super) fn edit_open_file(&mut self, index: usize, changes: Vec<pm_lsp::TextChange>) {
+        let edits = {
+            let file: &OpenFile = &self.workspace.open_files.files[index];
+            if file.body != FileBody::Text {
+                self.workspace.open_files.files[index]
+                    .pending
+                    .extend(changes);
+                return;
+            }
+            let document = file.document.0.borrow();
+            document.change_edits(changes)
+        };
+        let told = {
+            let file = &self.workspace.open_files.files[index];
+            let mut document = file.document.0.borrow_mut();
+            let mut told = Vec::new();
+            for change in edits {
+                if let Some(edited) = document.edit(change)
+                    && let Some(change) = edited.change
+                {
+                    told.push(change);
+                }
+            }
+            told
+        };
+        for (version, change) in told {
+            self.code(index, ServerAsk::Changed(version, change));
+        }
     }
 
     /// Closes the popups the window opened over the editor of the open file at `index`.

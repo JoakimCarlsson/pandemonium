@@ -90,6 +90,20 @@ pub(crate) enum Command {
     FixAll,
     /// Asks the language server to format the file, or the selection.
     Format,
+    /// Selects the next place the selection, or the word at the caret, comes again as well.
+    AddNextOccurrence,
+    /// Selects every place the selection, or the word at the caret, comes.
+    SelectAllOccurrences,
+    /// Adds a caret on the line below the carets, or above them when the flag is not set.
+    AddCaret(bool),
+    /// Folds away the block around the caret.
+    Fold,
+    /// Unfolds the blocks at the caret.
+    Unfold,
+    /// Folds away every outermost block.
+    FoldAll,
+    /// Unfolds every block.
+    UnfoldAll,
 }
 
 /// What `event` asks the code editor for, or nothing for a key it leaves alone.
@@ -105,6 +119,14 @@ pub(crate) fn command(event: &KeyEvent) -> Option<Command> {
     };
     if ctrl {
         return match (letter, &event.key) {
+            (_, Key::ArrowUp) if alt => Some(Command::AddCaret(false)),
+            (_, Key::ArrowDown) if alt => Some(Command::AddCaret(true)),
+            (Some('[') | Some('{'), _) if alt => Some(Command::FoldAll),
+            (Some(']') | Some('}'), _) if alt => Some(Command::UnfoldAll),
+            (Some('[') | Some('{'), _) if shift => Some(Command::Fold),
+            (Some(']') | Some('}'), _) if shift => Some(Command::Unfold),
+            (Some('d'), _) if !shift => Some(Command::AddNextOccurrence),
+            (Some('l'), _) if shift => Some(Command::SelectAllOccurrences),
             (Some(' '), _) if shift => Some(Command::Signature),
             (Some(' '), _) => Some(Command::Complete),
             (Some('.'), _) => Some(Command::CodeActions),
@@ -256,6 +278,10 @@ mod tests {
         assert_eq!(
             command(&KeyEvent::typed("é", plain)),
             Some(Command::Type("é".into()))
+        );
+        assert_eq!(
+            command(&press(Key::Character("d".into()), ctrl)),
+            Some(Command::AddNextOccurrence)
         );
     }
 

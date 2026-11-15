@@ -34,6 +34,7 @@ use crate::code_overview::{Marks, gutter_colour, overview};
 use crate::code_sticky::sticky_lines;
 use crate::code_text::{byte_at_column, column_of, digits, expand_tabs, kind_colour, runs};
 use crate::label::{Label, LabelVariant};
+use crate::menu::Menu;
 use crate::size::Size;
 use rustle::{ColorScheme, color_scheme};
 
@@ -301,6 +302,7 @@ impl CodeEditor {
             gutter: remember(|| Rc::new(std::cell::Cell::new(0.0_f32))).get(),
             cell_width: cell.0,
             blink: remember(|| true),
+            menu: remember(|| None),
         };
         blink_carets(&handle);
         save_after_rest(&handle);
@@ -457,6 +459,8 @@ pub(crate) struct Handle {
     cell_width: f32,
     /// Whether the carets show in this beat of their blinking.
     blink: State<bool>,
+    /// Where the editor's own menu is open over the text area, when it is.
+    menu: State<Option<(f32, f32)>>,
 }
 
 impl Handle {
@@ -470,7 +474,7 @@ impl Handle {
             let mut asks = Vec::new();
             for edit in edits {
                 if let Some(edited) = document.edit(edit) {
-                    asks.extend(server_asks(&document, edited));
+                    asks.extend(server_asks(&document, edited, &self.code));
                 }
             }
             let moved = document.field.caret() != caret;
@@ -684,15 +688,39 @@ impl Handle {
         (self.list.scroll().viewport_length() / self.line_height).floor() as usize
     }
 
-    /// The first line in view.
-    fn top(&self) -> usize {
+    /// The first row in view.
+    fn top_row(&self) -> usize {
         (self.list.scroll().offset() / self.line_height).floor() as usize
+    }
+
+    /// The first line in view, past the lines folded away above it.
+    fn top(&self) -> usize {
+        self.line_in_row(self.top_row())
+    }
+
+    /// The line drawn in row `row`, counting the lines folded away, kept
+    /// inside the text.
+    fn line_in_row(&self, row: usize) -> usize {
+        let document = self.document.borrow();
+        let last = document.lines().saturating_sub(1);
+        if document.folds.is_empty() {
+            return row.min(last);
+        }
+        document
+            .shown_lines(row, 1)
+            .first()
+            .copied()
+            .unwrap_or(last)
     }
 
     /// Scrolls so `line`, counted from 0, is the first in view, and puts the caret on it.
     pub(crate) fn jump_to_line(&self, line: usize) {
-        let start = self.document.borrow().line(line).start;
-        self.list.scroll().jump_to(line as f32 * self.line_height);
+        let (start, row) = {
+            let mut document = self.document.borrow_mut();
+            document.unfold_line(line);
+            (document.line(line).start, document.row_of_line(line))
+        };
+        self.list.scroll().jump_to(row as f32 * self.line_height);
         self.apply([Edit::Place(start, false)]);
     }
 
@@ -781,7 +809,7 @@ impl Handle {
     fn reveal_caret(&self) {
         let line = {
             let document = self.document.borrow();
-            document.line_of(document.field.caret())
+            document.row_of_line(document.line_of(document.field.caret()))
         };
         let scroll = self.list.scroll();
         let top = line as f32 * self.line_height;
@@ -901,6 +929,16 @@ impl Handle {
                 Command::DeleteLines => document.delete_lines_edit().into_iter().collect(),
                 Command::JoinLines => document.join_lines_edit().into_iter().collect(),
                 Command::MatchingBracket => document.matching_bracket_edit().into_iter().collect(),
+                Command::AddNextOccurrence => {
+                    document.add_next_occurrence_edit().into_iter().collect()
+                }
+                Command::SelectAllOccurrences => document.select_all_occurrences_edits(),
+                Command::AddCaret(down) => document.add_caret_line_edit(down).into_iter().collect(),
+                Command::Fold | Command::Unfold | Command::FoldAll | Command::UnfoldAll => {
+                    drop(document);
+                    self.fold(command);
+                    return true;
+                }
                 Command::GrowSelection | Command::ShrinkSelection => {
                     drop(document);
                     let edit = {
@@ -999,6 +1037,24 @@ impl Handle {
         true
     }
 
+    /// Folds or unfolds blocks as `command` says, then keeps the caret in view.
+    fn fold(&self, command: Command) {
+        {
+            let mut document = self.document.borrow_mut();
+            match command {
+                Command::Fold => {
+                    document.fold_at_caret();
+                }
+                Command::Unfold => {
+                    document.unfold_at_caret();
+                }
+                Command::FoldAll => document.fold_all(),
+                _ => document.unfold_all(),
+            }
+        }
+        self.settle(false);
+    }
+
     /// Moves to the next blank of the snippet being filled in, or writes
     /// out the snippet or Emmet abbreviation before the caret as the editor
     /// settings allow; says whether Tab was taken by either.
@@ -1086,10 +1142,10 @@ impl Handle {
 
     /// The line, counted from 0, at height `y` of the text area, kept inside the text.
     fn line_at(&self, y: f32) -> usize {
-        let line = ((y + self.list.scroll().offset()) / self.line_height)
+        let row = ((y + self.list.scroll().offset()) / self.line_height)
             .floor()
             .max(0.0) as usize;
-        line.min(self.document.borrow().lines().saturating_sub(1))
+        self.line_in_row(row)
     }
 
     /// Calls what a press on the gutter does with the line at height `y`,
@@ -1258,18 +1314,26 @@ impl Handle {
 }
 
 /// What the language server is to be told and asked after an edit of
-/// `document` that called for `edited`.
-fn server_asks(document: &Document, edited: pm_editor::Edited) -> Vec<ServerAsk> {
+/// `document` that called for `edited`, as far as the settings in `code`
+/// allow completions, signatures and formatting as the reader types.
+fn server_asks(document: &Document, edited: pm_editor::Edited, code: &CodeLook) -> Vec<ServerAsk> {
     let caret = document.position_of(document.field.caret());
     let mut asks = Vec::new();
     if let Some((version, change)) = edited.change {
         asks.push(ServerAsk::Changed(version, change));
     }
-    if let Some(trigger) = edited.ask {
+    if let Some(trigger) = edited.ask.filter(|_| code.completions_on_input) {
         asks.push(ServerAsk::Complete(document.version, caret, trigger));
     }
-    if edited.signature {
+    if edited.signature && code.signature_help {
         asks.push(ServerAsk::Signature(document.version, caret));
+    }
+    if let Some(typed) = edited.format.filter(|_| code.format_on_type) {
+        asks.push(ServerAsk::FormatOnType(
+            document.version,
+            caret,
+            typed.to_string(),
+        ));
     }
     asks
 }
@@ -1453,6 +1517,7 @@ impl Line {
                 .iter()
                 .find(|(line, _)| *line == index)
                 .map(|(_, text)| text.clone()),
+            folded: false,
             problems: if index < document.lines() {
                 document
                     .diagnostics_on(index)
@@ -1480,14 +1545,23 @@ fn text_area(
 ) {
     let (style, cell, scheme, extended) = looks;
     let document = handle.document.borrow();
-    let count = document.lines().max(1);
+    let lines = document.lines().max(1);
+    let shown: Option<Rc<Vec<usize>>> =
+        (!document.folds.is_empty()).then(|| Rc::new(document.shown_lines(0, lines)));
+    let count = shown.as_ref().map_or(lines, |shown| shown.len().max(1));
     let gutter = if extras.code.line_numbers {
-        (digits(count + extras.first_line - 1) as f32 + 4.5) * cell.0
+        (digits(lines + extras.first_line - 1) as f32 + 4.5) * cell.0
     } else {
         3.5 * cell.0
     };
     let top = handle.top();
-    let window = top..(top + handle.rows() + 2).min(count);
+    let bottom = shown.as_ref().map_or(top + handle.rows() + 2, |shown| {
+        shown
+            .get(handle.top_row() + handle.rows() + 2)
+            .copied()
+            .unwrap_or(lines)
+    });
+    let window = top..bottom.min(lines).max(top);
     let painted = Rc::new((window.start, document.highlights(window)));
     let selections: Rc<Vec<Range<usize>>> = Rc::new(
         document
@@ -1569,6 +1643,11 @@ fn text_area(
                 PointerPhase::Press if x < gutter && handle.press_bulb(x, y, cell.0) => {}
                 PointerPhase::Press if x < gutter && handle.press_gutter(y) => {}
                 PointerPhase::Press if handle.press_extra(x, y, gutter, cell) => {}
+                PointerPhase::Press if event.modifiers.alt => {
+                    handle.focus_text();
+                    let byte = handle.byte_at(x, y, gutter, cell.0);
+                    handle.apply([Edit::AddSelection(byte, byte)]);
+                }
                 PointerPhase::Press => {
                     handle.focus_text();
                     handle.press_at(
@@ -1598,7 +1677,7 @@ fn text_area(
     let area_handle = handle.clone();
     let hover_handle = handle.clone();
     let hover = move |at: Option<rustle::Offset>| match at {
-        Some(at) if at.x >= gutter => {
+        Some(at) if at.x >= gutter && hover_handle.code.hover => {
             let x = hover_handle.past_across(at.x, gutter);
             let byte = hover_handle.byte_at(x, at.y, gutter, cell.0);
             hover_handle.hover_at(Some(byte));
@@ -1629,6 +1708,24 @@ fn text_area(
         true
     };
     let sized_handle = handle.clone();
+    let menu_handle = handle.clone();
+    let context = move |event: &rustle::PointerEvent| {
+        let (x, y) = (event.position.x, event.position.y);
+        menu_handle.focus_text();
+        if x >= gutter {
+            let byte = menu_handle.byte_at(menu_handle.past_across(x, gutter), y, gutter, cell.0);
+            let inside = menu_handle
+                .document
+                .borrow()
+                .field
+                .selection()
+                .is_some_and(|range| range.contains(&byte));
+            if !inside {
+                menu_handle.apply([Edit::Place(byte, false)]);
+            }
+        }
+        menu_handle.menu.set(Some((x, y)));
+    };
     row_with(Modifier::new().fill_max_width().weight(1.0), move || {
         let document = document.clone();
         let list = list.clone();
@@ -1642,6 +1739,7 @@ fn text_area(
         let area_handle = area_handle.clone();
         let assist_handle = assist_handle.clone();
         let occurrences = occurrences.clone();
+        let shown = shown.clone();
         stack_with(
             Modifier::new()
                 .fill_max_height()
@@ -1652,6 +1750,7 @@ fn text_area(
                     move |size| sized.width.set(size.width)
                 })
                 .pointer_input(wheel.clone())
+                .on_context_menu(context.clone())
                 .on_pointer_button(PointerButton::Primary, pointer.clone())
                 .on_pointer_move(hover.clone())
                 .cursor(CursorIcon::Text),
@@ -1663,11 +1762,16 @@ fn text_area(
                 let carets = carets.clone();
                 let found = found.clone();
                 let occurrences = occurrences.clone();
+                let shown = shown.clone();
                 lazy_list(
                     Modifier::new().fill_max_size(),
                     &list,
                     count,
-                    move |index| {
+                    move |row| {
+                        let index = shown
+                            .as_ref()
+                            .and_then(|shown| shown.get(row).copied())
+                            .unwrap_or(row);
                         let document = lines_document.borrow();
                         let cached = (painted.0..painted.0 + painted.1.len())
                             .contains(&index)
@@ -1693,6 +1797,7 @@ fn text_area(
                             .map(|caret| caret - range.start)
                             .collect();
                         line.current = index == caret_line;
+                        line.folded = shown.is_some() && document.is_folded_at(index);
                         if extras_inner.code.relative_line_numbers && !line.current {
                             line.number = index.abs_diff(caret_line);
                         }
@@ -1707,12 +1812,103 @@ fn text_area(
                     sticky_header(&sticky_handle, &held, &extras, look);
                 }
                 assist_layer(&assist_handle, grid, assist_handle.popup.get());
+                if let Some(at) = assist_handle.menu.get() {
+                    editor_menu(&assist_handle, at);
+                }
             },
         );
         if minimap {
             overview(&overview_handle, marks.clone(), scheme, extended);
         }
     });
+}
+
+/// Emits the editor's own menu at `at` of the text area: the clipboard,
+/// what the language server answers, comments, formatting and folding.
+fn editor_menu(handle: &Handle, at: (f32, f32)) {
+    let close = handle.clone();
+    let served = handle.served();
+    let selected = handle.document.borrow().field.selection().is_some();
+    let read_only = handle.document.borrow().field.is_read_only();
+    let pick = |command: Command| {
+        let handle = handle.clone();
+        move || {
+            handle.menu.set(None);
+            handle.run(command.clone());
+            handle.focus_text();
+        }
+    };
+    let mut menu = Menu::new()
+        .width(240.0)
+        .offset(at.0, at.1)
+        .on_dismiss(move || close.menu.set(None));
+    if served {
+        menu = menu
+            .icon_item(
+                phosphor::ARROW_SQUARE_OUT,
+                "Go to definition",
+                pick(Command::Seek(pm_editor::Seek::Definition)),
+            )
+            .hint("F12")
+            .icon_item(
+                phosphor::LIST_MAGNIFYING_GLASS,
+                "Find references",
+                pick(Command::Seek(pm_editor::Seek::References)),
+            )
+            .hint("Shift+F12");
+        if !read_only {
+            menu = menu
+                .icon_item(phosphor::PENCIL_SIMPLE, "Rename symbol", pick(Command::Rename))
+                .hint("F2")
+                .icon_item(phosphor::LIGHTBULB, "Code actions", pick(Command::CodeActions))
+                .hint("Ctrl+.")
+                .icon_item(phosphor::MAGIC_WAND, "Format", pick(Command::Format))
+                .hint("Shift+Alt+F");
+        }
+        menu = menu.separator();
+    }
+    if !read_only {
+        menu = if selected {
+            menu.icon_item(phosphor::SCISSORS, "Cut", pick(Command::Cut))
+                .hint("Ctrl+X")
+        } else {
+            menu.disabled_item(phosphor::SCISSORS, "Cut")
+        };
+    }
+    menu = if selected {
+        menu.icon_item(phosphor::COPY, "Copy", pick(Command::Copy))
+            .hint("Ctrl+C")
+    } else {
+        menu.disabled_item(phosphor::COPY, "Copy")
+    };
+    if !read_only {
+        menu = menu
+            .icon_item(phosphor::CLIPBOARD_TEXT, "Paste", pick(Command::Paste))
+            .hint("Ctrl+V");
+    }
+    menu = menu
+        .icon_item(phosphor::SELECTION_ALL, "Select all", pick(Command::SelectAll))
+        .hint("Ctrl+A")
+        .icon_item(
+            phosphor::TEXT_AA,
+            "Select all occurrences",
+            pick(Command::SelectAllOccurrences),
+        )
+        .hint("Ctrl+Shift+L")
+        .separator();
+    if !read_only {
+        menu = menu
+            .icon_item(phosphor::CHAT_TEXT, "Toggle comment", pick(Command::ToggleComment))
+            .hint("Ctrl+/");
+    }
+    menu = menu
+        .icon_item(phosphor::CARET_UP, "Fold", pick(Command::Fold))
+        .hint("Ctrl+Shift+[")
+        .icon_item(phosphor::CARET_DOWN, "Unfold", pick(Command::Unfold))
+        .hint("Ctrl+Shift+]")
+        .icon_item(phosphor::MAGNIFYING_GLASS, "Find", pick(Command::Find))
+        .hint("Ctrl+F");
+    menu.show();
 }
 
 /// Emits the lines `held`, counted from 0, at the top of the text area over
@@ -1848,6 +2044,8 @@ struct Line {
     /// What the language server finds wrong on it, as offsets into it with
     /// how bad each is, as far as the settings mark them.
     problems: Vec<(Range<usize>, pm_editor::Severity)>,
+    /// Whether lines after it are folded away, which a mark after its text shows.
+    folded: bool,
 }
 
 impl Line {
@@ -2027,6 +2225,22 @@ impl Line {
             }
         }
         let mut after = start + (end_column + 2) as f32 * width;
+        if self.folded {
+            canvas.rounded_rect(
+                after - width * 1.5,
+                2.0,
+                width * 3.0,
+                height - 4.0,
+                3.0,
+                faded(scheme.on_surface, 30),
+            );
+            let style = TextStyle {
+                color: scheme.on_surface_variant,
+                ..look.style
+            };
+            canvas.draw_text(after - width * 1.5, 0.0, "⋯", &style, None);
+            after += width * 3.0;
+        }
         if let Some(value) = &self.value {
             let value_style = TextStyle {
                 color: scheme.on_surface_variant,
