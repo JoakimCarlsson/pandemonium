@@ -266,19 +266,20 @@ impl Thread {
                 question,
                 answer,
                 failed,
-            } => self.notice(
-                if failed {
-                    NoticeKind::Failure
-                } else {
-                    NoticeKind::Aside
-                },
-                if question.is_empty() {
+            } => {
+                let title = if question.is_empty() {
                     "Side question".to_owned()
                 } else {
                     question
-                },
-                answer,
-            ),
+                };
+                if failed {
+                    self.notice(NoticeKind::Failure, title, answer);
+                } else {
+                    self.notice(NoticeKind::Aside, title, String::new());
+                    self.agent_message().blocks.push(Block::markdown(answer));
+                    self.fresh = true;
+                }
+            }
             Event::HandedOff { prompt, .. } => {
                 self.notice(
                     NoticeKind::HandedOff,

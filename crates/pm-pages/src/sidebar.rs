@@ -338,6 +338,7 @@ fn session_tile(
     let (menu, right_menu) = (actions.session.clone(), actions.session.clone());
     Tile::new(session.title.clone())
         .leading(status_mark(session.status))
+        .leading_tooltip(status_words(session.status))
         .trailing(session.age.clone())
         .indent(indent)
         .size(Size::Xs)
@@ -408,6 +409,18 @@ fn session_menu(session: &Session, indent: f32, chat: bool, actions: &Actions) {
         menu.destructive_item(phosphor::X, "Close session", act(SessionCommand::Close(id)))
     };
     menu.show();
+}
+
+/// What the mark of a session's row means for `status`, in a few words.
+fn status_words(status: SessionStatus) -> &'static str {
+    match status {
+        SessionStatus::Idle => "Idle",
+        SessionStatus::Unread => "Unread",
+        SessionStatus::Working => "Working",
+        SessionStatus::NeedsInput => "Needs input",
+        SessionStatus::Error => "Unread error",
+        SessionStatus::OutOfReach => "Server out of reach",
+    }
 }
 
 /// The mark a session's row leads with for `status`.

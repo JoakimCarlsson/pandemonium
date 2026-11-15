@@ -104,6 +104,8 @@ pub struct Workspace {
     pub history: Vec<PastSession>,
     /// The extensions the server lists, once it answered.
     pub extensions: Option<Vec<Extension>>,
+    /// The commands the extensions of this machine bring behind a slash, as name and what each does.
+    pub extension_commands: Vec<(String, String)>,
     /// The extension in a folder the reader picked to install, while it is shown before installing.
     pub extension_preview: Option<crate::extensions::ExtensionPreview>,
     /// The latest commits of the project the overview shows, newest first.

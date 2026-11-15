@@ -22,7 +22,7 @@ use pm_harness::Event;
 use pm_protocol::{Request, Response, SessionInfo};
 
 use crate::composer::ComposerState;
-use crate::conversation::Extras;
+use crate::conversation::{Block, Extras};
 use crate::dialog::{SignInCode, UpdateOffer, UpdateRun};
 use crate::dock::{Dock, DockAsk};
 use crate::dock_model::DebugCommand;
@@ -149,6 +149,8 @@ enum Ask {
     Repositories(Option<String>, String),
     /// What the extension in the folder at this path carries and asks, to show before it is installed.
     Inspect(String),
+    /// Running a command an extension brings, typed behind a slash.
+    ExtensionCommand,
     /// The branches of the project at this folder, to continue the open chat in it.
     ContinueBranches(String),
     /// A prompt sent to a session, whose attachments, kept under this number in [`Link::unsent`], go back into the composer when it fails.
@@ -901,6 +903,7 @@ impl Link {
                 self.ask(Request::Sessions, Ask::Sessions);
                 self.send(Request::MachineSettings);
                 self.send(Request::Accounts);
+                self.send(Request::ExtensionAssets);
                 if self.settings.window.general.check_updates {
                     self.send(release_request(self.settings.window.general.channel));
                 }
@@ -1065,6 +1068,7 @@ impl Link {
             }
             (Ask::Start, Response::Failed { message }) => self.workspace.status = Some(message),
             (Ask::Prompt(kept), response) => self.answer_prompt(kept, response),
+            (Ask::ExtensionCommand, response) => self.answer_extension_command(response),
             (Ask::ContinueBranches(directory), response) => {
                 self.answer_continue_branches(directory, response)
             }
@@ -1085,6 +1089,11 @@ impl Link {
                 }
             }
             (Ask::ExtensionAssets, Response::ExtensionAssets(assets)) => {
+                self.workspace.extension_commands = assets
+                    .commands
+                    .iter()
+                    .map(|command| (command.id.clone(), command.description.clone()))
+                    .collect();
                 self.settings.assets = assets;
             }
             (Ask::Log(path), Response::Log { commits })
@@ -1391,6 +1400,16 @@ const COMMITS_SHOWN: usize = 8;
 /// How many characters of a commit's name the overview shows.
 const SHORT_ID: usize = 7;
 
+/// Writes the paths in the titles of `step` and the steps under it from the session's folder, which `prefix` names with a slash after it.
+fn relative_titles(step: &mut crate::conversation::ToolStep, prefix: &str) {
+    if step.title.contains(prefix) {
+        step.title = step.title.replace(prefix, "");
+    }
+    for child in &mut step.children {
+        relative_titles(child, prefix);
+    }
+}
+
 /// Puts what `thread` knows of the open session into `workspace`.
 fn show_thread(workspace: &mut Workspace, thread: &Thread) {
     if let Some(title) = &thread.title {
@@ -1399,6 +1418,17 @@ fn show_thread(workspace: &mut Workspace, thread: &Thread) {
     workspace.model = thread.model.clone().unwrap_or_default();
     workspace.permissions = thread.mode.clone().unwrap_or_default();
     workspace.conversation = thread.messages.clone();
+    let folder = workspace.git.folder.trim_end_matches('/').to_owned();
+    if !folder.is_empty() {
+        let prefix = format!("{folder}/");
+        for message in &mut workspace.conversation {
+            for block in &mut message.blocks {
+                if let Block::Tool(step) = block {
+                    relative_titles(step, &prefix);
+                }
+            }
+        }
+    }
     let kept = std::mem::take(&mut workspace.extras);
     workspace.extras = Extras {
         pull_request: kept.pull_request,

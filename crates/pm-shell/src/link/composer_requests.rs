@@ -75,6 +75,9 @@ impl Link {
             self.prefill(text);
             return;
         };
+        if self.run_extension_command(session, &text) {
+            return;
+        }
         self.workspace.extras.prefill = None;
         let composer = &mut self.workspace.extras.composer;
         let typed = text.clone();
@@ -112,6 +115,59 @@ impl Link {
             },
             Ask::Prompt(kept),
         );
+    }
+
+    /// Runs the command an extension brings that `text` names after a slash, with what follows its name, in the folder of `session`, and says whether it named one; a session of another machine runs none, since its extensions are that machine's, and a command of the agent's own goes first.
+    fn run_extension_command(&mut self, session: u64, text: &str) -> bool {
+        let Some(typed) = text.trim_start().strip_prefix('/') else {
+            return false;
+        };
+        let (name, argument) = typed.split_once(char::is_whitespace).unwrap_or((typed, ""));
+        let agents = &self.workspace.extras.composer.commands;
+        if self.routes.remote(session).is_some() || agents.iter().any(|known| known.name == name)
+        {
+            return false;
+        }
+        let Some(command) = self
+            .settings
+            .assets
+            .commands
+            .iter()
+            .find(|command| command.id == name)
+            .cloned()
+        else {
+            return false;
+        };
+        let directory = self
+            .session_info(session)
+            .map(|info| info.directory)
+            .filter(|directory| !directory.is_empty());
+        self.ask(
+            Request::RunExtensionCommand {
+                extension: command.extension,
+                command: command.id,
+                argument: argument.trim().to_owned(),
+                directory,
+            },
+            Ask::ExtensionCommand,
+        );
+        true
+    }
+
+    /// Takes what a command an extension brings came to: its text goes in the composer, its line in the status bar.
+    pub(super) fn answer_extension_command(&mut self, response: Response) {
+        match response {
+            Response::ExtensionCommand { prompt, message } => {
+                if let Some(text) = prompt {
+                    self.prefill(text);
+                }
+                if let Some(line) = message {
+                    self.workspace.status = Some(line);
+                }
+            }
+            Response::Failed { message } => self.workspace.status = Some(message),
+            _ => {}
+        }
     }
 
     /// Puts `text` in the open composer, even when it is what was put there last.

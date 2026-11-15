@@ -50,6 +50,13 @@ pub fn prompt_box(workspace: &Workspace, actions: &Actions, width: f32) {
     for command in &composer.commands {
         prompt = prompt.command(command.name.clone(), command.description.clone());
     }
+    if workspace.machine.is_none() {
+        for (name, description) in &workspace.extension_commands {
+            if !composer.commands.iter().any(|known| &known.name == name) {
+                prompt = prompt.command(name.clone(), description.clone());
+            }
+        }
+    }
     prompt = with_attachments(prompt, composer, actions);
     if let Some(context) = &composer.context {
         prompt = prompt.ring(UsageRing::new(context.fraction).detail(context.detail.clone()));
