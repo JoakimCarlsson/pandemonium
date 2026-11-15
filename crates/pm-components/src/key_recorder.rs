@@ -3,7 +3,7 @@
 use std::rc::Rc;
 
 use rustle::prelude::*;
-use rustle::{Key, KeyEvent};
+use rustle::{Key, KeyCode, KeyEvent, PhysicalKey};
 
 use crate::button::{Button, ButtonVariant};
 use crate::key_cap::{KeyCap, KeyCapVariant};
@@ -34,6 +34,28 @@ pub struct KeyRecorder {
     on_record: Option<Rc<dyn Fn(String)>>,
     /// What Escape while it records does.
     on_cancel: Option<Rc<dyn Fn()>>,
+}
+
+/// The sign the key of `event` types without Shift on a US layout, judged by where the key sits, for keys whose own text Control turned into a control character.
+fn sign_of(event: &KeyEvent) -> Option<String> {
+    let PhysicalKey::Code(code) = event.physical_key else {
+        return None;
+    };
+    let sign = match code {
+        KeyCode::Backquote => "`",
+        KeyCode::Minus => "-",
+        KeyCode::Equal => "=",
+        KeyCode::BracketLeft => "[",
+        KeyCode::BracketRight => "]",
+        KeyCode::Backslash => "\\",
+        KeyCode::Semicolon => ";",
+        KeyCode::Quote => "'",
+        KeyCode::Comma => ",",
+        KeyCode::Period => ".",
+        KeyCode::Slash => "/",
+        _ => return None,
+    };
+    Some(sign.to_owned())
 }
 
 impl KeyRecorder {
@@ -79,11 +101,13 @@ impl KeyRecorder {
         self
     }
 
-    /// The chord `event` types, as the settings write it, or nothing for a modifier alone or a key no chord names.
+    /// The chord `event` types, as the settings write it, or nothing for a modifier alone or a key no chord names. A sign Control turned into a control character, as some layouts do with the backquote, is named as the key types it alone on a US layout.
     pub fn chord(event: &KeyEvent) -> Option<String> {
         let key = match &event.key {
             Key::Character(text) if text == " " => "space".to_owned(),
+            Key::Character(text) if text.chars().any(char::is_control) => sign_of(event)?,
             Key::Character(text) => text.to_lowercase(),
+            Key::Other => sign_of(event)?,
             Key::Enter => "enter".to_owned(),
             Key::Tab => "tab".to_owned(),
             Key::Backspace => "backspace".to_owned(),
@@ -168,6 +192,43 @@ impl KeyRecorder {
                     .size(size)
                     .show();
             },
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rustle::Modifiers;
+
+    use super::*;
+
+    /// A press of the key at `code` typing `text`, with `modifiers` held.
+    fn press(code: KeyCode, text: &str, modifiers: Modifiers) -> KeyEvent {
+        KeyEvent {
+            physical_key: PhysicalKey::Code(code),
+            ..KeyEvent::press(Key::Character(text.to_owned()), modifiers)
+        }
+    }
+
+    /// Control with the backquote key names the backquote even when it typed a control character, and letters are named by what they type.
+    #[test]
+    fn modified_signs_are_named_by_their_key() {
+        let ctrl = Modifiers {
+            ctrl: true,
+            ..Modifiers::NONE
+        };
+        let both = Modifiers {
+            ctrl: true,
+            shift: true,
+            ..Modifiers::NONE
+        };
+        assert_eq!(
+            KeyRecorder::chord(&press(KeyCode::Backquote, "\0", ctrl)).as_deref(),
+            Some("ctrl+`")
+        );
+        assert_eq!(
+            KeyRecorder::chord(&press(KeyCode::KeyP, "P", both)).as_deref(),
+            Some("ctrl+shift+p")
         );
     }
 }
