@@ -48,7 +48,7 @@ polish.
 | 5 | **About 55 window-wide keymap actions do nothing.** `run_action` ends in `_ => return None`. Affected: tabs (close, close others, pin, next/previous), panes (split, focus), zoom, ToggleTheme, git stash/amend/continue/abort/skip/create branch, agent mode/model/allow/reject, session rename/archive/copy path, Quit, FocusPrompt, and others. | `pm-shell/src/link/keys.rs:123` | `old: app/code.rs:829-1006` |
 | 6 | **The root key handler takes chords from the terminal and browser.** The keymap runs in `on_preview_key_event`, before the focused child, so Ctrl+R/N/P/T/E never reach a shell, and any binding overrides keys typed in a web page. | `pm-pages/src/workspace.rs:79,155-158` | `old: app.rs:2085-2097`, `app/browser.rs:667-702` |
 | 7 | **Error messages are never shown.** `Workspace.status` is written by about 25 failure paths (disconnect, start, save, LSP, file tree, listing, browser) and read by nothing. `answer_settings` and other answer handlers drop `Response::Failed` in catch-alls. Prompt, Cancel, Set, Answer, Trust, Rewind, Fork, SaveMcpServers, ModelServers and other failures vanish silently. | `pm-shell/src/model.rs:70`, `link.rs:153,916-919,981` | `old: work.rs:2080-2083,2374,2389` |
-| 8 | **A failed turn leaves the session stuck.** `Event::Failed` never calls `end_turn`, so the session stays Working. Tool steps are never closed on Finished, Halted or Failed and keep their running mark. | `pm-shell/src/thread.rs:157-160,274-287` | `old: hearing.rs:80-84,252-260` |
+| 8 | **FIXED** (`gap/conversation`). **A failed turn leaves the session stuck.** `Event::Failed` never calls `end_turn`, so the session stays Working. Tool steps are never closed on Finished, Halted or Failed and keep their running mark. | `pm-shell/src/thread.rs:157-160,274-287` | `old: hearing.rs:80-84,252-260` |
 | 9 | **Closing a modified file discards it without asking.** This covers Close, Close others, Close all and Ctrl+W. Unsaved text, carets and open tabs are also no longer saved across restarts. | `pm-shell/src/open_files.rs:532-562`, `pm-shell/src/view.rs:53-72` | `old: open_files.rs:632-640`, `view.rs:47-65,588-617` |
 | 10 | **Closing the window doesn't ask, and the browser isn't shut down.** The title-bar Close calls `process::exit(0)`, and the confirm-close setting is ignored. A desktop close skips `shutdown_browser` and the view flush. | `pandemonium/src/window.rs:536-539` | `old: app/frame.rs:144-155`, `app.rs:2272-2276,2410` |
 | 11 | **Diagnostics never reach the editor.** There are no squiggles, no problem colour on line numbers, no problems in the hover card, no scrollbar marks and no next/previous problem. Problems only lists open files, and pressing a problem row does nothing. | `link.rs:798-803`, `code_editor.rs:1631-1825`, `pm-pages/src/problems_panel.rs:32-47` | `old: editor.rs:250-273`, `viewer.rs:257-267`, `dock.rs:253-343` |
@@ -56,17 +56,17 @@ polish.
 | 13 | **Shells are lost on reconnect or restart.** `Terminals` and `AttachTerminal` are never sent, `watch_terminal` is never called, shells are never adopted or closed, and missed output is never caught up. This breaks the AGENTS.md reconnect rule. | `pm-shell/src/dock.rs:136-141` | `old: dock.rs:509-520`, `work.rs:2121-2143` |
 | 14 | **Remote machines lose most server messages.** `link/remote.rs` passes on only six message kinds. BrowserCall (a remote agent's browser tool hangs), Diagnostics, FolderChanged, ExtensionsChanged and ChatContinued are dropped. Remote sessions also show no "out of reach" state; they keep spinning as Working. | `pm-shell/src/link/remote.rs:202`, `model.rs` (`SessionStatus`) | `old: work.rs:1752-1843`, `reach.rs:12-32` |
 | 15 | **Customizations, clone and the machines form ignore remote machines.** The library and `SaveWithheld` always go to the local server. Clone has no destination or machine. The machines form has no token field, so token-protected servers can't be reached. | `link.rs:359`, `settings_change.rs:110-119,240-274`, `link/projects.rs:80-98` | `old: settings_library.rs:137-174`, `settings_machines.rs:243-250`, `adder.rs:540-604` |
-| 16 | **Context menus are missing.** The editor menu (18 commands), the text-field menu outside the composer, the session and chat menus in the sidebar (rename, close, copy path or branch, mark unread, open folder, remove chat), and the right-click menu on chat messages are all gone. `Tile` has no secondary-click hook. | `code_editor.rs`, `text_input.rs`, `pm-components/src/tile.rs:206-284` | `old: context_menu.rs:156-336`, `arrange.rs:17-36,142-204`, `message_menu.rs:45-102` |
+| 16 | **PARTLY FIXED** (`gap/conversation`): the sidebar's session and chat menus and the message right-click menu are back, and `Tile` has `on_menu`; the editor and text-field menus remain. **Context menus are missing.** The editor menu (18 commands), the text-field menu outside the composer, the session and chat menus in the sidebar (rename, close, copy path or branch, mark unread, open folder, remove chat), and the right-click menu on chat messages are all gone. `Tile` has no secondary-click hook. | `code_editor.rs`, `text_input.rs`, `pm-components/src/tile.rs:206-284` | `old: context_menu.rs:156-336`, `arrange.rs:17-36,142-204`, `message_menu.rs:45-102` |
 | 17 | **Sessions can't be closed or renamed.** `CloseSession` and `RenameSession` are never sent. A fork made in this window doesn't appear until a reconnect, because the `Started` reply is dropped (`Ask::Nothing`). | `pm-pages/src/actions.rs`, `link/conversation_requests.rs:161` | `old: work.rs:819-852,998` |
 | 18 | **Tooltips are almost all gone.** The new code has one `tooltip(` call (`usage_ring.rs:94`), and `IconButton` has no tooltip API. The title bar, git panel, browser, find bar, file header, debug controls, sidebar status marks and agent chips all lost theirs. | `pm-components/src/icon_button.rs:22-37` | `old: pm-ui/src/tooltip.rs`; title bar alone had 11 |
 | 19 | **There is no keyboard focus ring and no keyboard operation of controls.** Buttons, checkboxes, switches, segmented controls, selects, steppers and menus can't be focused or driven by keys. `Dialog` and `ConfirmDialog` don't close on Escape. The folder picker and adder have no arrow or Enter keys. | `button.rs:131-144`, `menu.rs:269-298`, `dialog.rs:82-111`, `confirm_dialog.rs` | `old: button.rs:253-313`, `settings.rs:20-92`, `folder_picker.rs:308-348` |
 | 20 | **Typing behaviour ignores its settings, and features are missing.** Typing ignores tab size, hard tabs, auto-close, auto-indent and comment extension. Format on save, code actions on save, auto save, snippets and Emmet on Tab, folding, multi-caret (Ctrl+D, Alt+click, column select), case and sort commands, and the line-copy fallback are gone. | `code_editor.rs:669-855`, `link/code.rs:100-117`, `code_text.rs:14` | `old: editor.rs:353-684`, `line_edits.rs:20-157`, `app/code.rs:165-199` |
-| 21 | **The composer is reduced.** The `+`, `@` and `/` toolbar buttons do nothing. `@` file mentions are gone. A prompt made only of attachments can't be sent. The box doesn't grow past one line. Signed-out sessions show no "Sign in again" bar. Account and Goal chips are inert. Shift+Tab mode cycling is gone. | `pm-components/src/composer.rs:294-320,471-477`, `prompt_box.rs:116`, `thread.rs:156` | `old: composer.rs:353-412,592-631`, `input.rs:254-354`, `choices.rs:784-968` |
-| 22 | **The start page drops what you chose.** `StartSession` sends empty `settings` and `attachments` and `base: "HEAD"`. The welcome composer can't take attachments. Agents aren't filtered to visible, signed-in ones. | `pm-shell/src/link.rs:524-537`, `pm-pages/src/welcome.rs:85,99-116` | `old: choices.rs:523-535,757-761`, `agent_list.rs:106-126` |
+| 21 | **FIXED** (`gap/conversation`), except the account chip's menu. **The composer is reduced.** The `+`, `@` and `/` toolbar buttons do nothing. `@` file mentions are gone. A prompt made only of attachments can't be sent. The box doesn't grow past one line. Signed-out sessions show no "Sign in again" bar. Account and Goal chips are inert. Shift+Tab mode cycling is gone. | `pm-components/src/composer.rs:294-320,471-477`, `prompt_box.rs:116`, `thread.rs:156` | `old: composer.rs:353-412,592-631`, `input.rs:254-354`, `choices.rs:784-968` |
+| 22 | **FIXED** (`gap/conversation`). **The start page drops what you chose.** `StartSession` sends empty `settings` and `attachments` and `base: "HEAD"`. The welcome composer can't take attachments. Agents aren't filtered to visible, signed-in ones. | `pm-shell/src/link.rs:524-537`, `pm-pages/src/welcome.rs:85,99-116` | `old: choices.rs:523-535,757-761`, `agent_list.rs:106-126` |
 | 23 | **Folder watches are mostly lost, and diffs go stale or loop.** `WatchFolders` holds only the session folder. The tree and open files don't reload on outside edits. Kept diffs are never refetched. Empty or failed diffs re-request on every recomposition and show "Loading the diff…" forever. | `link/git.rs:61-66,193-223,522-529`, `changes_page.rs:99-109` | `old: work/watch.rs:39-114`, `lazy_diffs.rs:46-131` |
 | 24 | **Git workflows are missing.** You can't continue, skip or abort a merge, rebase or cherry-pick (Commit just sends a plain commit). Stash is gone. The submodule picker is gone. Commit readiness ignores conflicts. Partly staged files are mishandled, and conflicted rows can be staged. | `pm-pages/src/git_panel.rs:176-190,534-604`, `pm-shell/src/git.rs:89-145,394-398` | `old: git_controls.rs:543-616,815-905`, `git_menus.rs:239-265,414-424` |
-| 25 | **Restore files and Undo turn are gone.** The "Restore files to before this turn" action, Undo turn and turn changes are missing. `Restored`, `Undone`, `ToolSignIn`, `Limits`, `Goal`, `Slots` and `Container` events are dropped. | `pm-shell/src/thread.rs:254` | `old: chat.rs:63-123`, `hearing.rs:113-115,303-363` |
-| 26 | **Subagents are flattened into ordinary rows.** The subagent card, per-subagent Stop (`StopSubagent`), the worktree/merge chip and nesting through `parent` are gone. Back-to-back thinking or text blocks overwrite each other. The "Worked for Ns · N steps" fold is gone. Edit steps lose their diff. | `pm-shell/src/translate.rs:24-65`, `thread.rs:71-96,285`, `pm-components/src/steps.rs` | `old: steps.rs:43-465,591-616`, `hearing.rs:185-220,407-418,541-594` |
+| 25 | **FIXED** (`gap/conversation`), except "Show what this turn changed". **Restore files and Undo turn are gone.** The "Restore files to before this turn" action, Undo turn and turn changes are missing. `Restored`, `Undone`, `ToolSignIn`, `Limits`, `Goal`, `Slots` and `Container` events are dropped. | `pm-shell/src/thread.rs:254` | `old: chat.rs:63-123`, `hearing.rs:113-115,303-363` |
+| 26 | **FIXED** (`gap/conversation`), except the duration in "Worked for Ns", which the events do not carry. **Subagents are flattened into ordinary rows.** The subagent card, per-subagent Stop (`StopSubagent`), the worktree/merge chip and nesting through `parent` are gone. Back-to-back thinking or text blocks overwrite each other. The "Worked for Ns · N steps" fold is gone. Edit steps lose their diff. | `pm-shell/src/translate.rs:24-65`, `thread.rs:71-96,285`, `pm-components/src/steps.rs` | `old: steps.rs:43-465,591-616`, `hearing.rs:185-220,407-418,541-594` |
 | 27 | **Quick input is reduced.** It has a fixed table of 25 commands, with hard-coded key labels that ignore the keymap. `:` go to line, `?` help, recents, Compare-with-file mode, chat search, Ctrl+Enter to start a new session and the debug, task and toolchain pickers are gone. Outline needs the language server plus typing. | `pm-shell/src/quick.rs:179-244,291`, `link/quick_input.rs:173-252` | `old: listing.rs:166-1279`, `quick_choices.rs:148-446`, `quick_sessions.rs:10-188` |
 | 28 | **The file tree is reduced.** There are no key shortcuts (the menu still shows F2 and Delete hints), no cut, copy or paste, and no multi-select. Dropping a folder fails, and imports overwrite files with the same name. Names aren't validated, there is no menu on empty space, and every row is rebuilt each frame. | `pm-pages/src/files_panel.rs:180-296`, `pm-shell/src/file_tree.rs:28-226`, `link/browse.rs:171-222` | `old: app/tree.rs:47-103`, `tree_actions.rs:239-748`, `work/import.rs:28-104` |
 | 29 | **Panes and tabs are simplified.** The pane tree became one fixed 50/50 left/right split with no draggable divider, no up/down splits, no drop-zone highlight and no drag ghost. Tabs have no pinning, a cut-down tab menu, generic file icons, and no overflow handling (shell tabs in the dock run off the edge in every new render). Open files are no longer per session. | `pm-shell/src/open_files.rs:276-343`, `pm-pages/src/session.rs:59-115`, `session_tabs.rs:28-254`, `pm-pages/src/dock.rs:99-127` | `old: pm-components/src/panes.rs:91-1026`, `pm-pages/src/panes.rs:75-585`, `open_files.rs:291-345` |
@@ -284,10 +284,10 @@ reads the value.
 ## 4. Sidebar, overview, history, extensions and welcome
 
 **P1**
-- **The session and chat context menu is gone** (top 30, #16).
+- **FIXED** (`gap/conversation`): **The session and chat context menu is gone** (top 30, #16).
 - **There is no "Server out of reach" status.** Remote sessions keep spinning
   as Working (`link/machines.rs:165-180`).
-- **Read receipts are memory-only.** Replayed events are all marked read, so
+- **FIXED** (`gap/conversation`; kept per local session in the saved view): **Read receipts are memory-only.** Replayed events are all marked read, so
   anything that finished while the window was away shows as Idle, not Unread
   (`link.rs:1154-1156`, `thread.rs:44`).
 - **The adder can't clone from GitHub through the account and repository
@@ -296,18 +296,18 @@ reads the value.
 - **Extensions:** "Install Extension…" from a folder and the per-capability
   grant switches are gone. `InspectExtension`, `InstallExtension` and
   `GrantExtension` are never sent.
-- **Welcome page agent chips are unfiltered and reset to the first agent**
+- **FIXED** (`gap/conversation`): **Welcome page agent chips are unfiltered and reset to the first agent**
   (`welcome.rs:85`, `start.rs:34,44`).
 
 **P2**
 - A session is marked read as soon as it opens, whatever the focus or scroll.
-- "Mark unread" is gone.
+- **FIXED** (`gap/conversation`): "Mark unread" is gone.
 - Status marks are plain coloured dots with no glyphs and no tooltips.
 - The overview is missing its Repository section (branch, ahead/behind,
   uncommitted count) and its agent icons and tallies per row.
-- "New chat" is never highlighted.
+- **FIXED** (`gap/conversation`): "New chat" is never highlighted.
 - The adder has no keyboard navigation and ignores a remote default machine.
-- History groups days in UTC (`pm-shell/src/history.rs:35-41`) and always
+- **FIXED** (`gap/conversation`), except the glyph: History groups days in UTC (`pm-shell/src/history.rs:35-41`) and always
   shows `SPARKLE` with the raw agent id.
 - Extensions lost their own icons, matching by file ending, and the reason a
   folder install failed.
@@ -327,30 +327,30 @@ reads the value.
 ## 5. Conversation
 
 **P1**
-- **Restore files and Undo turn are gone**, and `Restored` and `Undone` are
+- **FIXED** (`gap/conversation`): **Restore files and Undo turn are gone**, and `Restored` and `Undone` are
   dropped (`thread.rs:254`).
-- **`Event::Failed` leaves the session Working, and tool steps never close**
+- **FIXED** (`gap/conversation`): **`Event::Failed` leaves the session Working, and tool steps never close**
   (`thread.rs:157-160,274-287`).
-- **`ToolSignIn` is ignored,** so a tool server's sign-in page is never shown.
-- **Subagents are flattened:** no card, no Stop, no worktree chip, no nesting.
+- **FIXED** (`gap/conversation`): **`ToolSignIn` is ignored,** so a tool server's sign-in page is never shown.
+- **FIXED** (`gap/conversation`): **Subagents are flattened:** no card, no Stop, no worktree chip, no nesting.
 
 **P2**
-- Back-to-back blocks of the same kind overwrite each other: two thinking
+- **FIXED** (`gap/conversation`): Back-to-back blocks of the same kind overwrite each other: two thinking
   blocks, or two text blocks, become one (`thread.rs:71-96,308-314`; the old
   test `each_thinking_block_is_one_thought` expected two).
-- The turn footer always says "Worked", with no duration and no step fold.
+- **PARTLY FIXED** (`gap/conversation`; it says Worked, Failed or Stopped with the step count): The turn footer always says "Worked", with no duration and no step fold.
   "Thought for Ns" became "Thought".
-- Edit steps lose their diff, and the +/− counts are miscounted with a
+- **FIXED** (`gap/conversation`): Edit steps lose their diff, and the +/− counts are miscounted with a
   HashSet.
 - Steps lost relative paths, file icons, a live timer, the spinner and output
   caps, so large outputs expand without limit.
-- The "Thinking…" status line is gone, along with "Sending prompt…", the
+- **PARTLY FIXED** (`gap/conversation`; the container step and `Event::Container` are shown): The "Thinking…" status line is gone, along with "Sending prompt…", the
   container step, "server out of reach" and the handling of `Event::Container`.
-- The right-click message menu is gone (Copy reply as Markdown, Select all).
+- **FIXED** (`gap/conversation`), except Select all: The right-click message menu is gone (Copy reply as Markdown, Select all).
   Multi-click and Shift-click selection are unverified.
-- "Show what this turn changed" is gone. Rewind leaves the approval and
+- **PARTLY FIXED** (`gap/conversation`; rewind drops the cards): "Show what this turn changed" is gone. Rewind leaves the approval and
   inquiry cards up.
-- Sent files and element chips are missing from user messages.
+- **FIXED** (`gap/conversation`), for sent files: Sent files and element chips are missing from user messages.
   `Event::Answered` keeps no record of the answers.
 - Markdown links can't be clicked. Images by URL or repository path don't
   load. Diagrams and formulas are drawn on the UI thread with an uncapped
@@ -386,32 +386,32 @@ reads the value.
 ## 6. Composer
 
 **P1**
-- **The `+`, `@` and `/` toolbar buttons have no handlers**
+- **FIXED** (`gap/conversation`): **The `+`, `@` and `/` toolbar buttons have no handlers**
   (`composer.rs:471-477`).
-- **`@` file mentions are gone.**
-- **A prompt made only of attachments can't be sent**
+- **FIXED** (`gap/conversation`): **`@` file mentions are gone.**
+- **FIXED** (`gap/conversation`): **A prompt made only of attachments can't be sent**
   (`composer.rs:305,320`).
-- **The box is fixed at 22 px (54 px on the welcome page) and doesn't grow**
+- **FIXED** (`gap/conversation`; it grows to ten lines): **The box is fixed at 22 px (54 px on the welcome page) and doesn't grow**
   (`composer.rs:294-297,380-383`).
-- **Signed-out sessions show no sign-in bar.** `SignedOut` only sets `asking`.
-- **The start page sends no settings, attachments or base branch, and its
+- **FIXED** (`gap/conversation`): **Signed-out sessions show no sign-in bar.** `SignedOut` only sets `asking`.
+- **FIXED** (`gap/conversation`): **The start page sends no settings, attachments or base branch, and its
   composer can't take files.**
 
 **P2**
 - The slash menu has no arrow keys; Enter takes the first match. Extension
   commands are gone.
-- Shift+Tab mode cycling is gone.
-- The account chip has no menu and the Goal chip is gone.
+- **FIXED** (`gap/conversation`): Shift+Tab mode cycling is gone.
+- **PARTLY FIXED** (`gap/conversation`; the Goal chip is back): The account chip has no menu and the Goal chip is gone.
 - The model menu has no filter, effort stepper or agent switch.
 - Usage rings: one context ring plus one allowance ring, with no reset times.
-- The "Run in" menu lists all three places unconditionally and has no "Branch
+- **PARTLY FIXED** (`gap/conversation`; "Branch from" is back): The "Run in" menu lists all three places unconditionally and has no "Branch
   from".
-- The text is cleared even when nothing was sent because no session is
+- **FIXED** (`gap/conversation`): The text is cleared even when nothing was sent because no session is
   watched (`composer.rs:316`, `composer_requests.rs:44-46`).
 - The `focused` state is never written, so the card is never highlighted on
   focus (`composer.rs:362`).
 - The draft lives only in the widget and is likely lost on navigation.
-- **Element and console text is fenced with fixed backticks and no "page
+- **FIXED** (`gap/conversation`): **Element and console text is fenced with fixed backticks and no "page
   content, not instructions" label, so page text can break out of the fence.**
   This is a prompt-injection risk (`pm-shell/src/composer.rs:330-348` vs
   `old: elements.rs:80-96,232-283`).
