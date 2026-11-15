@@ -50,6 +50,14 @@ pub(super) enum ServerFor {
     Colours(String, String, i32),
     /// Formatting the file before it is written, as the settings ask.
     FormatThenSave(String, String),
+    /// The blocks of lines that can be folded, asked at this version.
+    Folds(String, String, i32),
+    /// The places related to the thing at a place as the seek looks for them, such as the functions calling it, listed to choose from.
+    Related(String, String, Seek),
+    /// The code actions of one kind offered for the whole file before it is saved, with the kinds still to ask for after it.
+    SaveActions(String, String, Vec<String>),
+    /// Taking a code action offered before the file is saved, with the kinds still to ask for after it.
+    SaveActionTaken(String, String, Vec<String>),
 }
 
 impl Link {
@@ -204,16 +212,23 @@ impl Link {
                 self.open_choices(crate::quick::Choosing::References);
                 return;
             }
-            ServerAsk::Seek(position, seek) => (
-                Request::Definition {
-                    directory: directory.clone(),
-                    path: path.clone(),
-                    version,
-                    position,
-                    seek,
-                },
-                ServerFor::Seek(directory, path),
-            ),
+            ServerAsk::Seek(position, seek) => {
+                let purpose = if is_hierarchy(seek) {
+                    ServerFor::Related(directory.clone(), path.clone(), seek)
+                } else {
+                    ServerFor::Seek(directory.clone(), path.clone())
+                };
+                (
+                    Request::Definition {
+                        directory,
+                        path,
+                        version,
+                        position,
+                        seek,
+                    },
+                    purpose,
+                )
+            }
             ServerAsk::PrepareRename(position) => (
                 Request::PrepareRename {
                     directory: directory.clone(),
@@ -361,7 +376,18 @@ impl Link {
                     path: path.clone(),
                     version,
                 },
-                ServerFor::Colours(directory, path, version),
+                ServerFor::Colours(directory.clone(), path.clone(), version),
+            ));
+        }
+        if document.folds_supported && document.server_folds_version() != Some(version) {
+            document.take_folds(version, Vec::new());
+            asks.push((
+                Request::FoldingRanges {
+                    directory: directory.clone(),
+                    path: path.clone(),
+                    version,
+                },
+                ServerFor::Folds(directory, path, version),
             ));
         }
         drop(document);
@@ -378,9 +404,26 @@ impl Link {
     /// Handles the `response` of a language server to a request made for `purpose`.
     pub(super) fn answer_server(&mut self, purpose: ServerFor, response: Response) {
         if let Response::Failed { message } = &response {
+            match &purpose {
+                ServerFor::SaveActions(directory, path, kinds)
+                | ServerFor::SaveActionTaken(directory, path, kinds) => {
+                    if let Some(index) = self.served_file(directory, path) {
+                        self.save_with_actions(index, kinds.clone());
+                    }
+                    return;
+                }
+                ServerFor::FormatThenSave(directory, path) => {
+                    if let Some(index) = self.served_file(directory, path) {
+                        self.write_file(index);
+                    }
+                    return;
+                }
+                _ => {}
+            }
             if matches!(
                 purpose,
                 ServerFor::Seek(..)
+                    | ServerFor::Related(..)
                     | ServerFor::RenameTarget(..)
                     | ServerFor::Edited(..)
                     | ServerFor::SourceAction(..)
@@ -473,9 +516,46 @@ impl Link {
                     let line = location.span.start.line as usize + 1;
                     self.open_location(location.path.clone(), line);
                 }
-                Some(_) => self.open_choices(crate::quick::Choosing::References),
+                Some(_) => self.list_locations(crate::quick::Choosing::References, locations),
                 None => self.workspace.status = Some("Nothing found there.".to_owned()),
             },
+            (ServerFor::Related(_, _, seek), Response::Definitions { locations }) => {
+                if locations.is_empty() {
+                    self.workspace.status =
+                        Some(format!("No {} found there.", seek.title().to_lowercase()));
+                } else {
+                    self.list_locations(crate::quick::Choosing::Related(seek), locations);
+                }
+            }
+            (ServerFor::SaveActions(directory, path, kinds), Response::CodeActions { actions }) => {
+                let Some(index) = self.served_file(&directory, &path) else {
+                    return;
+                };
+                match actions.iter().position(|action| action.disabled.is_none()) {
+                    Some(place) => self.ask(
+                        Request::TakeCodeAction {
+                            directory: directory.clone(),
+                            path: path.clone(),
+                            index: place,
+                        },
+                        Ask::Server(ServerFor::SaveActionTaken(directory, path, kinds)),
+                    ),
+                    None => self.save_with_actions(index, kinds),
+                }
+            }
+            (ServerFor::SaveActionTaken(directory, path, kinds), response) => {
+                if let Response::Edited { files } | Response::ActionTaken { files, .. } = response {
+                    self.make_edits(files);
+                }
+                if let Some(index) = self.served_file(&directory, &path) {
+                    self.save_with_actions(index, kinds);
+                }
+            }
+            (ServerFor::SaveActions(directory, path, kinds), _) => {
+                if let Some(index) = self.served_file(&directory, &path) {
+                    self.save_with_actions(index, kinds);
+                }
+            }
             (ServerFor::RenameTarget(directory, path), Response::RenameTarget { target }) => {
                 let Some(index) = self.served_file(&directory, &path) else {
                     return;
@@ -578,6 +658,11 @@ impl Link {
                     document.take_colors(version, colors)
                 });
             }
+            (ServerFor::Folds(directory, path, version), Response::FoldingRanges { ranges }) => {
+                self.with_document(&directory, &path, |document| {
+                    document.take_folds(version, ranges)
+                });
+            }
             _ => {}
         }
     }
@@ -664,6 +749,19 @@ impl Link {
         }
     }
 
+    /// Lists `locations`, places a language server found, in the quick input as the list of choices `choosing`, to open one.
+    fn list_locations(
+        &mut self,
+        choosing: crate::quick::Choosing,
+        locations: Vec<pm_lsp::Location>,
+    ) {
+        self.workspace.quick = Some(crate::quick::QuickInput {
+            choosing: Some(choosing),
+            found: super::listing::location_items(locations),
+            ..crate::quick::QuickInput::default()
+        });
+    }
+
     /// Closes the popups the window opened over the editor of the open file at `index`.
     pub fn dismiss_popups(&mut self, index: usize) {
         if let Some(file) = self.workspace.open_files.files.get_mut(index) {
@@ -671,4 +769,12 @@ impl Link {
             file.popup = None::<EditorPopup>;
         }
     }
+}
+
+/// Whether `seek` looks for the functions or types related to a function or a type, which are listed to choose from however many are found.
+fn is_hierarchy(seek: Seek) -> bool {
+    matches!(
+        seek,
+        Seek::IncomingCalls | Seek::OutgoingCalls | Seek::Supertypes | Seek::Subtypes
+    )
 }

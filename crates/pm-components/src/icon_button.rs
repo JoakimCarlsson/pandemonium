@@ -8,6 +8,9 @@ use crate::focus_ring::remember_focus_ring;
 use crate::size::Size;
 use rustle::color_scheme;
 
+/// How opaque the icon of a disabled button is, out of 255.
+const DISABLED_ALPHA: u8 = 90;
+
 /// How an icon button is drawn.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum IconButtonVariant {
@@ -33,6 +36,8 @@ pub struct IconButton {
     tint: Option<Color>,
     /// Whether it shows as switched on.
     active: bool,
+    /// Whether it is greyed out and ignores clicks.
+    disabled: bool,
     /// What a click does.
     on_click: Option<Rc<dyn Fn()>>,
     /// What the label shown while the pointer rests on it says, when it shows one.
@@ -48,6 +53,7 @@ impl IconButton {
             size: Size::Sm,
             tint: None,
             active: false,
+            disabled: false,
             on_click: None,
             tooltip: None,
         }
@@ -83,6 +89,12 @@ impl IconButton {
         self
     }
 
+    /// The button greyed out and ignoring clicks when `disabled`.
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+
     /// The button calling `on_click` when clicked.
     pub fn on_click(mut self, on_click: impl Fn() + 'static) -> Self {
         self.on_click = Some(Rc::new(on_click));
@@ -94,6 +106,7 @@ impl IconButton {
     pub fn show(self) {
         let scheme = color_scheme();
         let hovered = remember(|| false);
+        let lit = hovered.get() && !self.disabled;
         let (side, glyph) = match self.size {
             Size::Xs => (20.0, 12.0),
             Size::Sm => (28.0, 16.0),
@@ -103,16 +116,19 @@ impl IconButton {
         let fill = match self.variant {
             IconButtonVariant::Primary => scheme.on_surface_variant,
             IconButtonVariant::Filled => scheme.surface_container_highest,
-            IconButtonVariant::Ghost if self.active || hovered.get() => {
-                scheme.surface_container_high
-            }
+            IconButtonVariant::Ghost if self.active || lit => scheme.surface_container_high,
             IconButtonVariant::Ghost => Color::TRANSPARENT,
         };
         let tint = self.tint.unwrap_or(match self.variant {
             IconButtonVariant::Primary => scheme.background,
-            _ if self.active || hovered.get() => scheme.on_surface,
+            _ if self.active || lit => scheme.on_surface,
             _ => scheme.on_surface_variant,
         });
+        let tint = if self.disabled {
+            Color::rgba(tint.r, tint.g, tint.b, DISABLED_ALPHA)
+        } else {
+            tint
+        };
         let radius = if self.variant == IconButtonVariant::Primary {
             side / 2.0
         } else {
@@ -131,13 +147,12 @@ impl IconButton {
             .on_hover({
                 let hovered = hovered.clone();
                 move |inside| hovered.set(inside)
-            })
-            .cursor(CursorIcon::Pointer);
-        if let Some(on_click) = self.on_click {
+            });
+        if let (Some(on_click), false) = (self.on_click, self.disabled) {
             let pressed = on_click.clone();
             let clicked = ring_state.clone();
             modifier = ring_state.focusable(
-                modifier.clickable(move || {
+                modifier.cursor(CursorIcon::Pointer).clickable(move || {
                     clicked.clicked();
                     on_click()
                 }),

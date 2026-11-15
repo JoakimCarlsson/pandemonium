@@ -72,6 +72,10 @@ pub struct View {
     pub browsers: Vec<SavedBrowser>,
     /// The files open in the session view, with their unsaved text.
     pub files: Vec<SavedFile>,
+    /// The session the open files belong to, when they belong to one.
+    pub files_owner: Option<u64>,
+    /// The files left open in the other sessions, by session.
+    pub session_files: std::collections::BTreeMap<u64, Vec<SavedFile>>,
     /// The agent new work was last started with, by its id.
     pub last_agent: Option<String>,
     /// How far the reader has read each session on this machine: its number and the last event read.
@@ -91,6 +95,8 @@ impl Default for View {
             sizes: PanelSizes::default(),
             browsers: Vec::new(),
             files: Vec::new(),
+            files_owner: None,
+            session_files: Default::default(),
             last_agent: None,
             read_through: Default::default(),
         }
@@ -110,6 +116,8 @@ impl View {
             sizes: workspace.sizes,
             browsers: workspace.shelf.saved(&workspace.browser),
             files: workspace.open_files.saved(),
+            files_owner: workspace.open_files.owner,
+            session_files: workspace.open_files.others.clone(),
             last_agent: workspace.last_agent.clone(),
             read_through: workspace.read_through.clone(),
         }
@@ -125,6 +133,8 @@ impl View {
         workspace.sizes = self.sizes.clamped();
         workspace.last_agent = self.last_agent.clone();
         workspace.read_through = self.read_through.clone();
+        workspace.open_files.owner = self.files_owner;
+        workspace.open_files.others = self.session_files.clone();
         workspace
             .shelf
             .restore(&mut workspace.browser, &self.browsers);

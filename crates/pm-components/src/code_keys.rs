@@ -1,8 +1,9 @@
 //! What a key pressed in the code editor asks for, before the document is
 //! asked how to do it, and the keystroke vim reads for the same key.
 
-use pm_editor::{Action, Seek};
+use pm_editor::{Action, Case, LineOrder, Seek};
 use pm_text::Motion;
+use pm_treesitter::TextObject;
 
 use crate::key_bindings::{Bound, KeyBindings};
 use pm_vim::{Key as VimKey, Keystroke};
@@ -110,6 +111,34 @@ pub(crate) enum Command {
     /// Moves the caret to the next problem the language server found, or
     /// the one before when the flag is not set.
     NextProblem(bool),
+    /// Writes the selection, or the word at each caret, in a case.
+    Case(Case),
+    /// Rearranges the selected lines.
+    OrderLines(LineOrder),
+    /// Swaps the characters on either side of the caret.
+    Transpose,
+    /// Takes the spaces and tabs off the ends of the lines.
+    TrimTrailing,
+    /// Deletes from the caret to the end of its line.
+    DeleteToLineEnd,
+    /// Deletes from the caret back to the start of its line.
+    DeleteToLineStart,
+    /// Wraps the selected lines in a block comment, or takes it off.
+    ToggleBlockComment,
+    /// Puts a caret at the end of each line the selection covers.
+    SplitIntoLines,
+    /// Grows the rectangle being selected by lines down and columns right.
+    Column(isize, isize),
+    /// Selects the piece of syntax around the caret, or what is inside it when the flag is set.
+    SelectObject(TextObject, bool),
+    /// Copies the selection with the indentation its lines share taken off.
+    CopyWithoutIndentation,
+    /// Puts the carets back where they were before they last moved.
+    CursorUndo,
+    /// Moves the carets again where they were before a cursor undo.
+    CursorRedo,
+    /// Sets or clears a breakpoint on the caret's line.
+    ToggleBreakpoint,
 }
 
 impl Command {
@@ -136,6 +165,9 @@ impl Command {
             Action::GoToImplementation => Self::Seek(Seek::Implementation),
             Action::FindReferences => Self::Seek(Seek::References),
             Action::IncomingCalls => Self::Seek(Seek::IncomingCalls),
+            Action::OutgoingCalls => Self::Seek(Seek::OutgoingCalls),
+            Action::ShowSupertypes => Self::Seek(Seek::Supertypes),
+            Action::ShowSubtypes => Self::Seek(Seek::Subtypes),
             Action::Rename => Self::Rename,
             Action::Format | Action::FormatSelection => Self::Format,
             Action::CodeActions => Self::CodeActions,
@@ -152,6 +184,42 @@ impl Command {
             Action::UnfoldAll => Self::UnfoldAll,
             Action::NextProblem => Self::NextProblem(true),
             Action::PreviousProblem => Self::NextProblem(false),
+            Action::UppercaseSelection => Self::Case(Case::Upper),
+            Action::LowercaseSelection => Self::Case(Case::Lower),
+            Action::TitleCaseSelection => Self::Case(Case::Title),
+            Action::SwapCaseSelection => Self::Case(Case::Swap),
+            Action::SnakeCaseSelection => Self::Case(Case::Snake),
+            Action::KebabCaseSelection => Self::Case(Case::Kebab),
+            Action::CamelCaseSelection => Self::Case(Case::Camel),
+            Action::PascalCaseSelection => Self::Case(Case::Pascal),
+            Action::ConstantCaseSelection => Self::Case(Case::Constant),
+            Action::SortLinesAscending => Self::OrderLines(LineOrder::Ascending),
+            Action::SortLinesDescending => Self::OrderLines(LineOrder::Descending),
+            Action::SortLinesIgnoringCase => Self::OrderLines(LineOrder::IgnoringCase),
+            Action::ReverseLines => Self::OrderLines(LineOrder::Reversed),
+            Action::UniqueLines => Self::OrderLines(LineOrder::Unique),
+            Action::TransposeCharacters => Self::Transpose,
+            Action::TrimTrailingWhitespace => Self::TrimTrailing,
+            Action::DeleteToLineEnd => Self::DeleteToLineEnd,
+            Action::DeleteToLineStart => Self::DeleteToLineStart,
+            Action::ToggleBlockComment => Self::ToggleBlockComment,
+            Action::SplitSelectionIntoLines => Self::SplitIntoLines,
+            Action::ColumnSelectUp => Self::Column(-1, 0),
+            Action::ColumnSelectDown => Self::Column(1, 0),
+            Action::ColumnSelectLeft => Self::Column(0, -1),
+            Action::ColumnSelectRight => Self::Column(0, 1),
+            Action::MatchingBracket => Self::MatchingBracket,
+            Action::NewlineBelow => Self::OpenLine(false),
+            Action::NewlineAbove => Self::OpenLine(true),
+            Action::SelectFunction => Self::SelectObject(TextObject::Function, false),
+            Action::SelectFunctionBody => Self::SelectObject(TextObject::Function, true),
+            Action::SelectClass => Self::SelectObject(TextObject::Class, false),
+            Action::SelectClassBody => Self::SelectObject(TextObject::Class, true),
+            Action::SelectComment => Self::SelectObject(TextObject::Comment, false),
+            Action::CopyWithoutIndentation => Self::CopyWithoutIndentation,
+            Action::CursorUndo => Self::CursorUndo,
+            Action::CursorRedo => Self::CursorRedo,
+            Action::ToggleBreakpoint => Self::ToggleBreakpoint,
             _ => return None,
         })
     }
@@ -348,6 +416,67 @@ mod tests {
         assert_eq!(
             keymapped(&press(Key::F(8), Modifiers::default()), &bindings),
             Keyed::Command(Command::NextProblem(true))
+        );
+    }
+
+    /// Case changes, line orders, column selection and the other editing
+    /// actions of the keymap reach the editor's commands.
+    #[test]
+    fn editing_actions_map_to_commands() {
+        let cases = [
+            (Action::UppercaseSelection, Command::Case(Case::Upper)),
+            (Action::ConstantCaseSelection, Command::Case(Case::Constant)),
+            (
+                Action::SortLinesIgnoringCase,
+                Command::OrderLines(LineOrder::IgnoringCase),
+            ),
+            (Action::UniqueLines, Command::OrderLines(LineOrder::Unique)),
+            (Action::ColumnSelectUp, Command::Column(-1, 0)),
+            (Action::ColumnSelectRight, Command::Column(0, 1)),
+            (Action::NewlineAbove, Command::OpenLine(true)),
+            (Action::CursorUndo, Command::CursorUndo),
+            (Action::ToggleBreakpoint, Command::ToggleBreakpoint),
+            (Action::OutgoingCalls, Command::Seek(Seek::OutgoingCalls)),
+            (Action::ShowSubtypes, Command::Seek(Seek::Subtypes)),
+            (
+                Action::SelectFunctionBody,
+                Command::SelectObject(TextObject::Function, true),
+            ),
+            (
+                Action::CopyWithoutIndentation,
+                Command::CopyWithoutIndentation,
+            ),
+        ];
+        for (action, wanted) in cases {
+            assert_eq!(Command::of_action(action), Some(wanted), "{action:?}");
+        }
+        assert_eq!(Command::of_action(Action::Quit), None);
+    }
+
+    /// The default keymap binds column selection and cursor undo.
+    #[test]
+    fn default_keymap_binds_column_select_and_cursor_undo() {
+        let bindings = KeyBindings::new(
+            pm_editor::Keymap::new(pm_editor::Preset::default(), &Default::default()),
+            |_| {},
+        );
+        let all = Modifiers {
+            ctrl: true,
+            alt: true,
+            shift: true,
+            ..Modifiers::default()
+        };
+        assert_eq!(
+            keymapped(&press(Key::ArrowDown, all), &bindings),
+            Keyed::Command(Command::Column(1, 0))
+        );
+        let ctrl = Modifiers {
+            ctrl: true,
+            ..Modifiers::default()
+        };
+        assert_eq!(
+            keymapped(&press(Key::Character("u".into()), ctrl), &bindings),
+            Keyed::Command(Command::CursorUndo)
         );
     }
 

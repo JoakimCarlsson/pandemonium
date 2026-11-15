@@ -43,6 +43,7 @@ mod browser_agent;
 mod code;
 mod excerpts;
 mod file_actions;
+mod file_keys;
 mod git;
 mod keys;
 mod listing;
@@ -53,6 +54,8 @@ mod quick_input;
 mod remote;
 mod review;
 mod routes;
+mod timeline;
+mod watches;
 
 use crate::view::View;
 use code::CodeAsk;
@@ -186,6 +189,10 @@ pub struct Link {
     sessions: Vec<SessionInfo>,
     /// The open session.
     watched: Option<u64>,
+    /// The folders each server was last told to watch, by its machine's host, `None` for this machine.
+    folder_watches: std::collections::BTreeMap<Option<String>, Vec<String>>,
+    /// The timeline of the file it was last asked for, as far as the server answered.
+    timeline: timeline::Timeline,
     /// What each session's events built, by session.
     threads: HashMap<u64, Thread>,
     /// The titles of sessions whose agent finished a turn live, not yet taken.
@@ -267,6 +274,8 @@ impl Link {
             submodules: HashMap::new(),
             sessions: Vec::new(),
             watched: None,
+            folder_watches: std::collections::BTreeMap::new(),
+            timeline: timeline::Timeline::default(),
             threads: HashMap::new(),
             finished: Vec::new(),
             dock,
@@ -464,6 +473,7 @@ impl Link {
         }
         let browsed = self.run_web();
         self.browser_agent();
+        self.sync_watches();
         browsed || changed || remote
     }
 
@@ -665,6 +675,7 @@ impl Link {
         self.workspace.extras = Default::default();
         self.workspace.extras.chat = info.is_some_and(|info| info.chat);
         self.watched = Some(id);
+        self.swap_open_files(id);
         let folder = info
             .filter(|info| !info.chat)
             .map(|info| (info.directory.clone(), info.base.clone()))
@@ -816,6 +827,7 @@ impl Link {
         match message {
             Incoming::Connected => {
                 self.workspace.status = None;
+                self.forget_watches(None);
                 self.web.forget_announcement();
                 self.ask(Request::Projects, Ask::Projects);
                 self.ask(Request::Sessions, Ask::Sessions);
@@ -860,6 +872,7 @@ impl Link {
             Incoming::FolderChanged(directory) => {
                 self.reload_open_files(&directory);
                 self.git_folder_changed(&directory);
+                self.tree_folder_changed(&directory);
             }
             Incoming::ExtensionsChanged(extensions) => {
                 self.workspace.extensions = Some(listed(&extensions));

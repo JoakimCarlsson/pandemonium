@@ -453,16 +453,16 @@ reads the value.
 - **Closing a modified file discards it without asking.**
 - **Tab and pane keymap actions and the vim `:vsplit`, `:split`, `gt` and
   `gT` commands are dropped** (`code_editor.rs:893` handles only Save).
-- **Open files are not kept per session.** One `workspace.open_files` is
+- **FIXED.** **Open files are not kept per session.** One `workspace.open_files` is
   shared across sessions.
 
 **P2**
-- ~~No pinned tabs.~~ **FIXED.**
+- ~~No pinned tabs.~~ **FIXED**, and pins are kept across restarts.
 - The tab menu has 10 rows instead of 15. It lacks Close left, Close saved,
   read-only, the absolute path, permalinks, Reveal in file manager or project,
   Pin and Open in terminal. Nothing is ever disabled, and "Copy path" copies
   the relative path.
-- The pane tree is a fixed left/right pair. ~~The divider can't be dragged.~~ **FIXED.** A
+- The pane tree is a fixed pair, side by side or (split up and down) stacked. ~~The divider can't be dragged.~~ **FIXED.** A
   tab drag shows no overlay or ghost. The open-to-the-side drop strip is 6 px
   wide. The split menu is gone.
 - Next and previous skip the browser tab, and the tab keys only work while
@@ -499,23 +499,25 @@ reads the value.
   actions, but `TakeAction(place)` indexes the unfiltered list
   (`file_view.rs:158-163`, `code_assist.rs:361-364`, `lsp.rs:467`).
 - **The keymap is ignored in the editor.**
-- **PARTLY FIXED** (add next occurrence, select all occurrences, carets
-  above and below, next/previous problem). **Line edits are missing:** add next occurrence, select all occurrences,
+- **FIXED.** **Line edits are missing:** add next occurrence, select all occurrences,
   carets above and below, column select, split selection, case changes, sort,
   reverse and unique, transpose, trim, delete to line end or start, block
   comment, text objects, next/previous problem and change, cursor undo.
+  Column select also works by Shift+Alt or middle drag.
 - **FIXED.** **No folding.** `FoldingRanges` is never requested. Ctrl+Shift+[
   and ] fold and unfold at the caret, Ctrl+Alt+[ and ] fold and unfold all,
   by the syntax tree or indentation; a folded line shows a ⋯ mark.
-- **PARTLY FIXED** (format on save and auto save after a second's rest).
-  **Format on save, actions on save and auto save are gone.**
+- **FIXED.** **Format on save, actions on save and auto save are gone.**
+  Organize imports and fix all on save run before formatting and the write.
 - **Documents aren't re-opened with the language server after a reconnect or
   when a language is installed.**
 - **Vim:** settings are hard-coded, only `:w` is handled, `zz`/`zt`/`zb` and
   Ctrl-E/Ctrl-Y are dropped, and toggling vim mode doesn't reach open files.
 - **FIXED.** **Typing ignores its settings,** and snippets and Emmet on Tab are gone.
 - **FIXED.** **No horizontal scroll and no soft wrap.** Long lines are clipped (see
-  `new-code.png`).
+  `new-code.png`). Jumps to a line land on its row while lines wrap, and Page
+  Up and Down move by rows.
+- **FIXED.** **The language server's folding ranges are never asked for.**
 
 **P2**
 - **PARTLY FIXED** (the settings are honoured and hover waits for the hover
@@ -528,16 +530,17 @@ reads the value.
 - Minimap and sticky scroll are always on.
 - **Find bar:** no find-in-selection, smartcase, wrap setting or autofocus,
   and Shift+Enter doesn't step back.
-- Copy with no selection copies nothing (the old build copied the line).
+- **FIXED.** Copy with no selection copies nothing (the old build copied the line).
   Paste doesn't re-indent.
-- **PARTLY FIXED** (Alt+click adds a caret; the editor menu has the
-  clipboard, language-server, comment, fold and find commands). No Ctrl+click
+- **FIXED** (Alt+click adds a caret; the editor menu has the clipboard,
+  language-server, comment, fold, find, case and sort commands). No Ctrl+click
   to go to definition, no Alt+click for a caret, and no editor context menu.
 - Pressing selected text without moving leaves the drag state. Ctrl+K is bound
   directly to Hover, which blocks Ctrl+K chords (`code_keys.rs:111`).
-- Missing actions: Go back/forward, toggle breakpoint at the caret,
+- **FIXED.** Missing actions: Go back/forward, toggle breakpoint at the caret,
   permalinks, file history, terminal here, reveal, format selection, call
-  hierarchy, declaration and type definition.
+  hierarchy, declaration and type definition. Read-only toggling, copy
+  without indentation, supertypes and subtypes work too.
 - The colour picker doesn't list the server's presentations.
 - **File header:** no file icon, HEAD or read-only labels, breadcrumbs, or
   problem counts (compare `old-code.png` and `new-code.png`).
@@ -564,13 +567,12 @@ reads the value.
 ## 9. Diff, review and git
 
 **P1**
-- **PARTLY FIXED** (open files reload). **Folder watches cover only the session folder,** and the tree and open
+- **FIXED.** **Folder watches cover only the session folder,** and the tree and open
   files never reload on outside edits.
 - **FIXED.** **Kept diffs go stale, and empty or failed diffs loop forever with
   "Loading the diff…".**
 - **FIXED.** **No continue, skip or abort for a merge, rebase or cherry-pick.**
-- **PARTLY FIXED** (conflicts disable the commit button and block the ✓
-  button with a notice). **Commit readiness ignores conflicts and untracked-only states,** and the ✓
+- **FIXED.** **Commit readiness ignores conflicts and untracked-only states,** and the ✓
   button is never disabled.
 - **FIXED.** **Stash is gone entirely.**
 - **FIXED.** **The submodule repository picker is gone.**
@@ -578,9 +580,10 @@ reads the value.
   lookups).
 
 **P2**
-- Changed files are a flat list instead of a folder tree with folder
+- **FIXED.** Changed files are a flat list instead of a folder tree with folder
   checkboxes and tallies (compare `old-files.png` and `new-files.png`).
-- The group checkbox state is wrong.
+- **FIXED.** The group checkbox state is wrong.
+- **FIXED.** The stash keys always act on `stash@{0}`.
 - **FIXED.** Conflicted rows show a stage box.
 - Changed-file rows have no file icons.
 - Moved submodules and side-by-side repositories are dropped.
@@ -592,11 +595,12 @@ reads the value.
 - **Graph:** the commit menu lost Cherry-pick and Copy hash. It is fixed at
   230 px with 60 commits and no "go to current". It is open by default and
   fetched even when folded.
-- **Diff view:** one file at a time, no folding per file, no viewed marks, no
-  comments over ranges or whole files. Long lines are clipped instead of
-  wrapped (`new-diff.png`).
+- **PARTLY FIXED** (long lines wrap with Soft wrap on and scroll across
+  otherwise). **Diff view:** one file at a time, no folding per file, no
+  viewed marks, no comments over ranges or whole files. Long lines are
+  clipped instead of wrapped (`new-diff.png`).
 - The word-diff setting is ignored, and the server's word ranges are dropped.
-- Turn revisions (Undo turn) and the file timeline with Restore are gone.
+- **FIXED.** Turn revisions (Undo turn) and the file timeline with Restore are gone.
 - "Take all ours/theirs" ignores the server's blobs (so delete/modify
   conflicts break), and conflict choices can't be undone.
 - No tooltips anywhere in the panel.

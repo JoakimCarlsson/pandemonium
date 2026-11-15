@@ -1350,6 +1350,13 @@ impl Action {
                 | Self::ProjectSymbols
                 | Self::SearchProject
                 | Self::Problems
+                | Self::CopyPermalink
+                | Self::OpenPermalink
+                | Self::FileHistory
+                | Self::OpenTerminalHere
+                | Self::GoBack
+                | Self::GoForward
+                | Self::ToggleBreakpoint
         )
     }
 

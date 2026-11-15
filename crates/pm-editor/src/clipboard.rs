@@ -103,4 +103,114 @@ impl Document {
         }
         (pasted != text).then_some(Edit::Paste(pasted))
     }
+
+    /// The selected text with the indentation its lines share taken off, the line it starts on counted with the spaces and tabs before the selection; nothing when nothing is selected.
+    pub fn copied_without_indentation(&self) -> Option<String> {
+        let range = self.field.selection()?;
+        let start = self.line(self.line_of(range.start)).start;
+        let document = self.field.text();
+        Some(without_shared_indentation(
+            &document[range.clone()],
+            &document[start..range.start],
+        ))
+    }
+}
+
+/// Whether `character` indents a line.
+fn indents(character: char) -> bool {
+    character == ' ' || character == '\t'
+}
+
+/// The spaces and tabs `line` begins with.
+fn leading(line: &str) -> &str {
+    &line[..line.len() - line.trim_start_matches(indents).len()]
+}
+
+/// How many bytes `first` and `second` begin with alike.
+fn shared_prefix(first: &str, second: &str) -> usize {
+    first
+        .bytes()
+        .zip(second.bytes())
+        .take_while(|(left, right)| left == right)
+        .count()
+}
+
+/// `text` with the indentation its lines that hold more than spaces share taken off, where `before` is what stands on its first line before it: the first line counts with `before` when that is only spaces and tabs, and is left as it is otherwise.
+pub(crate) fn without_shared_indentation(text: &str, before: &str) -> String {
+    let indented_start = before.chars().all(indents);
+    let mut lines = text.split('\n');
+    let first = lines.next().unwrap_or_default();
+    let first_whole = format!("{before}{first}");
+    let rest: Vec<&str> = lines.collect();
+    let counted = indented_start
+        .then_some(first_whole.as_str())
+        .into_iter()
+        .chain(rest.iter().copied())
+        .filter(|line| !line.trim().is_empty());
+    let mut shared: Option<&str> = None;
+    for line in counted {
+        let own = leading(line);
+        shared = Some(match shared {
+            Some(held) => &held[..shared_prefix(held, own)],
+            None => own,
+        });
+    }
+    let shared = shared.unwrap_or_default();
+    let mut out = String::with_capacity(text.len());
+    if indented_start {
+        let cut = shared
+            .len()
+            .saturating_sub(before.len())
+            .min(leading(first).len());
+        out.push_str(&first[cut..]);
+    } else {
+        out.push_str(first);
+    }
+    for line in rest {
+        out.push('\n');
+        out.push_str(&line[shared_prefix(line, shared).min(leading(line).len())..]);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Lines indented alike lose the indentation they share and keep the rest.
+    #[test]
+    fn shared_indentation_comes_off() {
+        assert_eq!(
+            without_shared_indentation("    a\n        b\n\n    c", ""),
+            "a\n    b\n\nc"
+        );
+    }
+
+    /// A selection started inside the indentation counts the spaces before it.
+    #[test]
+    fn indentation_before_the_selection_counts() {
+        assert_eq!(without_shared_indentation("  a\n      b", "  "), "a\n  b");
+    }
+
+    /// A selection started after text leaves its first line alone.
+    #[test]
+    fn first_line_after_text_stays() {
+        assert_eq!(
+            without_shared_indentation("x = 1\n    y\n    z", "let "),
+            "x = 1\ny\nz"
+        );
+    }
+
+    /// The document copies its selection without the indentation it shares.
+    #[test]
+    fn document_copies_without_indentation() {
+        let mut document = Document::new("fn f() {\n    a();\n        b();\n}\n", false, false);
+        let start = document.line(1).start;
+        let end = document.line(2).end;
+        document.field.apply(Edit::Select(start, end));
+        assert_eq!(
+            document.copied_without_indentation().as_deref(),
+            Some("a();\n    b();")
+        );
+    }
 }

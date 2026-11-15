@@ -78,6 +78,51 @@ pub fn sample_review(git: &mut GitSummary, word: &str) {
                 changes,
                 loaded: true,
                 trouble: None,
+                restore: None,
+            });
+        }
+        "turn-changes" => {
+            let (added, removed) = crate::git::tally(COMMIT_DIFF);
+            git.revision = Some(Revision {
+                title: "Turn 2".to_owned(),
+                to: String::new(),
+                changes: vec![ChangedFile {
+                    path: "crates/void/Cargo.toml".to_owned(),
+                    status: 'M',
+                    added,
+                    removed,
+                    diff: COMMIT_DIFF.to_owned(),
+                    ..ChangedFile::default()
+                }],
+                loaded: true,
+                restore: Some(crate::review::RevisionRestore::Turn {
+                    session: 1,
+                    turn: 1,
+                }),
+                ..Revision::default()
+            });
+        }
+        "timeline" => {
+            let (added, removed) = crate::git::tally(COMMIT_DIFF);
+            git.revision = Some(Revision {
+                title: "Timeline: Cargo.toml \u{b7} Saved 25m ago".to_owned(),
+                to: "crates/void/Cargo.toml".to_owned(),
+                changes: vec![ChangedFile {
+                    path: "crates/void/Cargo.toml".to_owned(),
+                    status: 'M',
+                    added,
+                    removed,
+                    fetched: true,
+                    diff: COMMIT_DIFF.to_owned(),
+                    ..ChangedFile::default()
+                }],
+                loaded: true,
+                restore: Some(crate::review::RevisionRestore::Version {
+                    directory: String::new(),
+                    path: "crates/void/Cargo.toml".to_owned(),
+                    text: String::new(),
+                }),
+                ..Revision::default()
             });
         }
         _ => {}

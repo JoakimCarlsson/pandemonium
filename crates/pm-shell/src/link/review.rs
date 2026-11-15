@@ -64,6 +64,11 @@ impl Link {
                 );
             }
             GitAction::CloseRevision => git.revision = None,
+            GitAction::RestoreRevision => {
+                if let Some(restore) = git.revision.take().and_then(|revision| revision.restore) {
+                    self.restore_revision(restore);
+                }
+            }
             GitAction::LoadDiffs(paths) => {
                 let paths: Vec<String> = paths
                     .into_iter()

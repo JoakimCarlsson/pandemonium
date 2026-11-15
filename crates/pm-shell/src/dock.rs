@@ -279,11 +279,16 @@ impl Dock {
 
     /// Asks for another shell in the place and shows it.
     pub fn new_shell(&mut self) {
+        self.new_shell_in(self.place.clone());
+    }
+
+    /// Asks for another shell of the place that starts in `folder`, such as a folder inside the place, and shows it.
+    pub fn new_shell_in(&mut self, folder: String) {
         let key = self.add_shell(None);
         let (columns, rows) = self.size;
         self.send(
             Request::OpenTerminal {
-                directory: self.place.clone(),
+                directory: folder,
                 columns,
                 rows,
             },

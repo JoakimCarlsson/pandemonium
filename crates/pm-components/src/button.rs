@@ -138,6 +138,7 @@ impl Button {
         let mut modifier = self
             .modifier
             .height(height)
+            .alpha(if self.disabled { 0.45 } else { 1.0 })
             .background_rounded(fill, 6.0)
             .border(1.5, outline, 6.0)
             .padding_xy(padding, 0.0)

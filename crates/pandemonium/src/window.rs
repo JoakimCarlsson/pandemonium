@@ -58,6 +58,11 @@ fn root(link: &Rc<RefCell<Link>>) {
             for title in link.take_finished() {
                 agent_finished(&title);
             }
+            if let Some(text) = link.take_copied()
+                && let Some(clipboard) = rustle::clipboard()
+            {
+                clipboard.set_text(&text);
+            }
             if let Some(staged) = link.take_staged()
                 && let Err(reason) = install_update(&staged)
             {

@@ -57,6 +57,8 @@ const WORDS: &[&str] = &[
     "branch-menu",
     "git-rebase",
     "git-stashes",
+    "git-ready",
+    "diff-long",
     "git-submodules",
     "diff",
     "code",
@@ -87,6 +89,8 @@ const WORDS: &[&str] = &[
     "tab-steps",
     "split",
     "split-wide",
+    "split-down",
+    "code-read-only",
     "tab-pinned",
     "tab-many",
     "files-picked",
@@ -107,6 +111,7 @@ const WORDS: &[&str] = &[
     "quick-settings",
     "quick-rewind",
     "quick-branch",
+    "quick-stash",
     "quick-references",
     "quick-actions",
     "quick-history",
@@ -114,6 +119,8 @@ const WORDS: &[&str] = &[
     "diff-notes",
     "conflict",
     "revision",
+    "turn-changes",
+    "timeline",
     "changes",
     "search-edit",
     "file-menu",
@@ -158,7 +165,7 @@ const WORDS: &[&str] = &[
 /// [code[-find|-replace|-goto|-vim|-debug|-scrolled|-markdown|-picture]]
 /// [code-completions|code-hover|code-signature|code-annotations|code-actions]
 /// [code-rename|code-drag|code-colour|code-rtl|code-language|code-compare|code-file-menu]
-/// [tab-menu|tab-steps|split|excerpts|update-tab]
+/// [tab-menu|tab-steps|split|split-down|code-read-only|excerpts|update-tab]
 /// [files|search|search-edit|quick[-<list>]|file-menu|file-delete]
 /// [browser[-find|-menu|-tools|-ask|-cert|-clear|-notice|-pick]]
 /// [project-menu|session-menu|chat-menu|adder|clone|clone-failed|sample|remote]
@@ -263,6 +270,7 @@ pub fn run(arguments: &[String]) -> i32 {
             "tab-steps",
             "split",
             "split-wide",
+            "split-down",
             "tab-pinned",
             "tab-many",
         ]
@@ -416,13 +424,18 @@ fn show_projects(workspace: &mut pm_shell::Workspace, words: &[&str]) {
     }
 }
 
+/// A line added to the sample diff by `diff-long`, longer than the Diff tab is wide.
+const LONG_DIFF_LINE: &str = "\n+        let summary = format!(\"{} chunks read from {} at position {} of {}, with {} left to read and {} skipped because they were empty\", self.read, self.path.display(), self.position.offset(), self.length, self.length - self.position.offset(), self.skipped);";
+
 /// Opens in `git` the Git panel's menu, question or Diff tab named among
 /// `words`: `git-menu` for the menu on a changed file, `git-source` for the
 /// panel's own menu, `git-confirm` for the question before discarding,
 /// `branch-menu` for the branch list, `diff` for the Diff tab, `git-rebase`
 /// for a rebase stopped with a partly staged and a conflicted file, and
-/// `git-stashes` for the menu of stashes, and `git-submodules` for the
-/// menu picking a submodule to work on.
+/// `git-stashes` for the menu of stashes, `git-submodules` for the
+/// menu picking a submodule to work on, `git-ready` for a commit message
+/// typed so the commit buttons are live, and `diff-long` for a line in the
+/// diff too long for the Diff tab.
 fn show_git_state(git: &mut pm_shell::GitSummary, words: &[&str]) {
     let first = git.listed().first().map(|change| change.path.clone());
     let second = git.listed().get(1).map(|change| change.path.clone());
@@ -457,6 +470,12 @@ fn show_git_state(git: &mut pm_shell::GitSummary, words: &[&str]) {
                     ("docs/site".to_owned(), "@ 4f2a9c1".to_owned()),
                 ];
                 git.menu = Some(pm_shell::GitMenu::Repositories);
+            }
+            "git-ready" => git.message = "Keep the reader's position".to_owned(),
+            "diff-long" => {
+                if let Some(change) = git.changes.first_mut() {
+                    change.diff.push_str(LONG_DIFF_LINE);
+                }
             }
             "git-stashes" => {
                 git.stashes = vec![
@@ -860,7 +879,8 @@ fn show_problems(file: &pm_shell::OpenFile) {
 /// coloured with hints and lenses, the lightbulb's menu, renaming, text
 /// dragged, a colour picker, right-to-left text, the offer of a missing
 /// language, a comparison, the file's menu, a tab's menu, the tabs stepped
-/// through forward twice and back once, and split panes.
+/// through forward twice and back once, split panes side by side or one
+/// over the other, and a file made read only.
 fn show_language_samples(workspace: &mut pm_shell::Workspace, words: &[&str]) {
     let folder = "~/Documents/repos/pandemonium";
     let samples = [
@@ -945,6 +965,14 @@ fn show_language_samples(workspace: &mut pm_shell::Workspace, words: &[&str]) {
     }
     if words.contains(&"split-wide") {
         files.act(pm_shell::TabAction::Resize(650));
+    }
+    if words.contains(&"split-down") {
+        files.act(pm_shell::TabAction::Select(pm_shell::SessionTab::File(0)));
+        files.act(pm_shell::TabAction::SplitBelow);
+        files.act(pm_shell::TabAction::Select(pm_shell::SessionTab::File(1)));
+    }
+    if words.contains(&"code-read-only") {
+        files.act(pm_shell::TabAction::ToggleReadOnly(0));
     }
     if words.contains(&"tab-pinned") {
         let last = files.files.len().saturating_sub(1);

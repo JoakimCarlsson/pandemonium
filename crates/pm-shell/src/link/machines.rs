@@ -65,6 +65,7 @@ impl Link {
         let connected = self.remotes.take_connected();
         let changed = !connected.is_empty() || !answers.is_empty();
         for host in connected {
+            self.forget_watches(Some(host.clone()));
             self.hand_machine_settings(&host);
             self.announce_browser(&host);
             if self.remote_hosts().contains(&host) {

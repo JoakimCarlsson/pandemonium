@@ -89,6 +89,9 @@ impl Link {
         if let Some(outcome) = self.window_action(action) {
             return Some(outcome);
         }
+        if let Some(outcome) = self.file_key(action) {
+            return Some(outcome);
+        }
         if self.session_action(action) || self.tab_action(action) || self.git_key(action) {
             return Some(None);
         }
@@ -278,9 +281,10 @@ impl Link {
                     self.file_action(index, FileAction::Reveal);
                 }
             }
-            Action::SplitRight | Action::SplitLeft | Action::SplitUp | Action::SplitDown => {
-                self.file_tab(TabAction::Split)
-            }
+            Action::SplitRight => self.file_tab(TabAction::Split),
+            Action::SplitLeft => self.file_tab(TabAction::SplitLeft),
+            Action::SplitDown => self.file_tab(TabAction::SplitBelow),
+            Action::SplitUp => self.file_tab(TabAction::SplitAbove),
             Action::FocusNextPane | Action::FocusPreviousPane => {
                 let other = match self.workspace.open_files.focus {
                     Pane::Left => Pane::Right,
@@ -326,9 +330,9 @@ impl Link {
             Action::SkipCommit => self.git_act(step("skip"), None),
             Action::AbortOperation => self.git_act(step("abort"), None),
             Action::StashChanges => self.git_act(stash("push", None), None),
-            Action::StashApply => self.git_act(stash("apply", Some(0)), None),
-            Action::StashPop => self.git_act(stash("pop", Some(0)), None),
-            Action::StashDrop => self.git_act(stash("drop", Some(0)), None),
+            Action::StashApply => self.open_choices(Choosing::StashApply),
+            Action::StashPop => self.open_choices(Choosing::StashPop),
+            Action::StashDrop => self.open_choices(Choosing::StashDrop),
             Action::ToggleGraph => {
                 self.show_right(RightTab::Git);
                 self.git(GitAction::Fold(GitSection::Graph));

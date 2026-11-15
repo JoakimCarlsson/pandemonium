@@ -30,6 +30,8 @@ pub enum ConversationCommand {
     Restore(u64),
     /// Take what the reader's turn given changed back out of the files.
     UndoTurn(u64),
+    /// Show in the Diff tab what the reader's turn given changed, with a button that undoes it.
+    TurnChanges(u64),
     /// Stop the subagent with this id, and those it started.
     StopSubagent(String),
     /// Sign in again as the session's account.
@@ -169,7 +171,8 @@ impl Link {
                 self.ask(Request::ForkSession { session, turn }, Ask::Fork)
             }
             ConversationCommand::Restore(turn) => {
-                self.ask(Request::Restore { session, turn }, Ask::Nothing)
+                let ask = self.files_changed_ask();
+                self.ask(Request::Restore { session, turn }, ask)
             }
             ConversationCommand::UndoTurn(turn) => self.ask(
                 Request::UndoTurn {
@@ -177,8 +180,9 @@ impl Link {
                     turn,
                     paths: Vec::new(),
                 },
-                Ask::Nothing,
+                self.files_changed_ask(),
             ),
+            ConversationCommand::TurnChanges(turn) => self.show_turn(turn),
             ConversationCommand::StopSubagent(subagent) => {
                 self.ask(Request::StopSubagent { session, subagent }, Ask::Nothing)
             }

@@ -247,7 +247,9 @@ at the caret and `code-unsaved` asks before closing a modified file;
 `git-menu`, `git-source`, `git-confirm` and `branch-menu` open the Git
 panel's menus and prompts, `git-rebase` shows a stopped rebase with a partly
 staged and a conflicted file, and `git-stashes` and `git-submodules` open the
-stash and submodule menus; `files`, `search`, `file-menu` and `file-delete`
+stash and submodule menus, `git-ready` types a commit message so the commit
+buttons are live, and `diff-long` adds a line too long for the Diff tab;
+`quick-stash` opens the stash chooser; `files`, `search`, `file-menu` and `file-delete`
 show the Files and Search tabs, and `files-picked` the tree with several
 entries chosen; `quick`, `quick-commands`, `quick-sessions`, `quick-text`,
 `quick-theme`, `quick-help` and `quick-line` open the quick input; with

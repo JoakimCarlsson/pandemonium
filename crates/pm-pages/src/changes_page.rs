@@ -9,7 +9,8 @@ use std::rc::Rc;
 use rustle::prelude::*;
 
 use pm_components::{
-    DiffView, FileIcon, IconButton, Label, LabelVariant, Size, Tally, TallyVariant,
+    Button, ButtonVariant, DiffView, FileIcon, IconButton, Label, LabelVariant, Size, Tally,
+    TallyVariant,
 };
 use pm_shell::{ChangedFile, GitAction, grammar_by_ending};
 
@@ -29,6 +30,8 @@ pub struct ChangesPage<'a> {
     pub working: bool,
     /// What is still on its way or went wrong, shown in place of the files.
     pub message: Option<String>,
+    /// The words on the header's button that puts back what the files show, such as undoing a turn, when they can be put back.
+    pub restore: Option<String>,
 }
 
 /// Emits `page`.
@@ -69,6 +72,15 @@ pub fn changes_page(page: ChangesPage, actions: &Actions) {
                 .size(Size::Xs)
                 .show();
                 Tally::new(added, removed).show();
+                if let Some(restore) = page.restore.clone() {
+                    let git = actions.git.clone();
+                    Button::new(restore)
+                        .icon(phosphor::ARROW_COUNTER_CLOCKWISE)
+                        .variant(ButtonVariant::Secondary)
+                        .size(Size::Xs)
+                        .on_click(move || git(GitAction::RestoreRevision))
+                        .show();
+                }
                 if !working {
                     let git = actions.git.clone();
                     IconButton::new(phosphor::X)
