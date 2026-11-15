@@ -347,9 +347,9 @@ fn page_area(browser: &Browser, act: &Act) {
             with_constraints(Modifier::new().fill_max_size(), move |constraints| {
                 let room = (constraints.max_width, constraints.max_height);
                 if menu.capture {
-                    capture_menu(&act);
+                    capture_menu(room.0, &act);
                 } else {
-                    page_menu(fitted(menu.at, room), &act);
+                    page_menu(fitted(menu.at, room), room.0, &act);
                 }
             });
         }
@@ -545,16 +545,15 @@ fn area_bar(act: &Act) {
     );
 }
 
-/// The menu of the camera button, below it at the top right of the page: the captures it can add to the prompt.
-fn capture_menu(act: &Act) {
+/// The menu of the camera button, below it at the top right of a page `across` wide: the captures it can add to the prompt.
+fn capture_menu(across: f32, act: &Act) {
     let act = act.clone();
+    let width = MENU_WIDTH / 2.0 + 40.0;
     stack_with(
-        Modifier::new()
-            .align(BoxAlignment::TopEnd)
-            .offset(-MENU_WIDTH / 2.0, 0.0),
+        Modifier::new().offset((across - width - MENU_WIDTH / 2.0).max(0.0), 0.0),
         move || {
             let mut menu = Menu::new()
-                .width(MENU_WIDTH / 2.0 + 40.0)
+                .width(width)
                 .size(Size::Xs)
                 .on_dismiss(send(&act, BrowserAction::Menu(None)));
             for (kind, label) in CAPTURES {
@@ -565,12 +564,10 @@ fn capture_menu(act: &Act) {
     );
 }
 
-/// The menu over the page, opened at `at`, a point of the page, or below the menu button at the top right when `at` is to the left of the page.
-fn page_menu(at: (f32, f32), act: &Act) {
+/// The menu over a page `across` wide, opened at `at`, a point of the page, or below the menu button at the top right when `at` is to the left of the page.
+fn page_menu(at: (f32, f32), across: f32, act: &Act) {
     let modifier = if at.0 < 0.0 {
-        Modifier::new()
-            .align(BoxAlignment::TopEnd)
-            .offset(-MENU_WIDTH - 8.0, 0.0)
+        Modifier::new().offset((across - MENU_WIDTH - 8.0).max(0.0), 0.0)
     } else {
         Modifier::new().offset(at.0, at.1)
     };

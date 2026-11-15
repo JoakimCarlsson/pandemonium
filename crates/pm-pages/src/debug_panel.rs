@@ -229,7 +229,8 @@ fn variable_row(variable: &DebugVariableEntry, actions: &Actions) {
     };
     let leading = Leading::Custom(Rc::new(move || {
         let scheme = color_scheme();
-        row_with(Modifier::new().padding_xy(depth as f32 * 12.0, 0.0), || {
+        row_with(Modifier::new(), || {
+            spacer(Modifier::new().width(depth as f32 * 12.0));
             match &caret {
                 Some(glyph) => icon(glyph.clone(), 12.0, scheme.on_surface_variant),
                 None => spacer(Modifier::new().width(pm_components::spacing(12.0))),
@@ -240,7 +241,7 @@ fn variable_row(variable: &DebugVariableEntry, actions: &Actions) {
         .leading(leading)
         .size(Size::Xs);
     if let Some(kind) = &variable.kind {
-        row = row.end_column(kind.clone(), 120.0);
+        row = row.end_column(kind.clone(), 64.0);
     }
     if variable.reference != 0 {
         let expand = actions.debug_command.clone();
