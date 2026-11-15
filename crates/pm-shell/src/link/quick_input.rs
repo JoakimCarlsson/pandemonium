@@ -10,21 +10,27 @@ use crate::conversation::{Block, Speaker};
 use crate::model::RightTab;
 use crate::page::Page;
 use crate::quick::{
-    Choosing, Command, QuickAction, QuickInput, QuickItem, QuickKind, QuickMode, QuickOutcome,
-    QuickPick, quick_items,
+    Choosing, Command, QUICK_ROWS, QuickAction, QuickInput, QuickItem, QuickKind, QuickMode,
+    QuickOutcome, QuickPick, RECENT_LIMIT, command_items, quick_items,
 };
 use crate::settings_catalog::Setting;
 use crate::settings_change::SettingsChange;
 use crate::settings_section::Section;
 use crate::settings_values::Control;
 
+/// How many appearances the theme chooser lists before the theme families: following the desktop, light and dark.
+const THEME_MODES: usize = 3;
+
 impl Link {
     /// Does what the person asked of the quick input, answering with what the window must do beyond it.
     pub fn quick(&mut self, action: QuickAction) -> Option<QuickOutcome> {
         match action {
             QuickAction::Open(query) => {
+                let keymap = self.settings.editor.keymap();
                 self.workspace.quick = Some(QuickInput {
                     query,
+                    commands: command_items(&keymap, &self.recent_commands),
+                    recent_files: self.recent_files.clone(),
                     ..QuickInput::default()
                 });
                 if !self.workspace.tree.loaded {
@@ -77,6 +83,18 @@ impl Link {
         {
             self.ask(Request::Branches { directory }, Ask::Branches);
         }
+        if choosing == Choosing::Toolchain
+            && let Some(directory) = self.browse_root()
+        {
+            let project = self.project_root();
+            if let Some(quick) = &mut self.workspace.quick {
+                quick.waiting = Some(String::new());
+            }
+            self.ask(
+                Request::Toolchains { directory, project },
+                Ask::Listing(choosing),
+            );
+        }
         self.ask_listing(choosing);
     }
 
@@ -118,9 +136,45 @@ impl Link {
             | Choosing::Branch
             | Choosing::References
             | Choosing::Actions
-            | Choosing::History => Vec::new(),
+            | Choosing::History
+            | Choosing::Toolchain => Vec::new(),
+            Choosing::Task => self
+                .workspace
+                .tasks
+                .tasks
+                .iter()
+                .enumerate()
+                .map(|(place, task)| choice(place, task.name.clone(), task.command.clone(), false))
+                .collect(),
+            Choosing::Debug => self
+                .workspace
+                .debug
+                .scenarios
+                .iter()
+                .enumerate()
+                .map(|(place, scenario)| {
+                    let detail = if scenario.installed {
+                        scenario.adapter.clone()
+                    } else {
+                        format!("{} · not installed", scenario.adapter)
+                    };
+                    choice(place, scenario.label.clone(), detail, false)
+                })
+                .collect(),
             Choosing::Problems => self.problem_choices(),
-            Choosing::Theme => setting_choices(Setting::ThemeMode),
+            Choosing::Theme => {
+                let mut rows: Vec<QuickItem> = setting_choices(Setting::ThemeMode);
+                let modes = rows.len();
+                let appearance = &self.settings.window.appearance;
+                rows.extend(self.settings.theme_names().into_iter().enumerate().map(
+                    |(place, name)| {
+                        let current =
+                            appearance.dark_theme == name && appearance.light_theme == name;
+                        choice(modes + place, name, "Theme".to_owned(), current)
+                    },
+                ));
+                rows
+            }
             Choosing::Keymap => setting_choices(Setting::BaseKeymap),
             Choosing::Setting => Section::ALL
                 .iter()
@@ -312,18 +366,73 @@ impl Link {
     /// Does what the row `item` stands for.
     fn pick(&mut self, item: QuickItem) -> Option<QuickOutcome> {
         match item.pick {
-            QuickPick::Open { path, line } => Some(QuickOutcome::OpenFile(path, line)),
+            QuickPick::Open { path, line } => {
+                self.remember_file(&path);
+                Some(QuickOutcome::OpenFile(path, line))
+            }
             QuickPick::Session(at) => {
                 self.open_session(at);
                 None
             }
-            QuickPick::Command(command) => self.run_command(command),
+            QuickPick::Command(command) => {
+                self.remember_command(&item.title);
+                self.run_command(command)
+            }
             QuickPick::Choose(choosing, place) => self.choose_quick(choosing, place, item.title),
             QuickPick::Version(version) => {
                 self.restore_version(version);
                 None
             }
+            QuickPick::Action(action) => {
+                self.remember_command(&item.title);
+                match self.run_action(action) {
+                    Some(outcome) => outcome,
+                    None => {
+                        self.workspace.status = Some(format!("{} can't be done here.", item.title));
+                        None
+                    }
+                }
+            }
+            QuickPick::Toolchain { language, id } => {
+                let project = self.project_root()?;
+                self.ask(
+                    Request::SelectToolchain {
+                        project,
+                        language,
+                        toolchain: Some(id),
+                    },
+                    Ask::Nothing,
+                );
+                None
+            }
+            QuickPick::Prefix(prefix) => {
+                let _ = self.quick(QuickAction::Open(prefix));
+                None
+            }
         }
+    }
+
+    /// Puts the command titled `title` first among those used lately.
+    fn remember_command(&mut self, title: &str) {
+        self.recent_commands.retain(|held| held != title);
+        self.recent_commands.insert(0, title.to_owned());
+        self.recent_commands.truncate(RECENT_LIMIT);
+    }
+
+    /// Puts `path` first among the files opened lately.
+    fn remember_file(&mut self, path: &str) {
+        self.recent_files.retain(|held| held != path);
+        self.recent_files.insert(0, path.to_owned());
+        self.recent_files.truncate(RECENT_LIMIT.max(QUICK_ROWS / 6));
+    }
+
+    /// The folder of the project the open session belongs to, when one is open.
+    pub(super) fn project_root(&self) -> Option<String> {
+        self.watched
+            .and_then(|id| self.sessions.iter().find(|info| info.session == id))
+            .filter(|info| !info.repository.is_empty())
+            .map(|info| info.repository.clone())
+            .or_else(|| self.browse_root())
     }
 
     /// Runs `command`.
@@ -380,7 +489,14 @@ impl Link {
         match choosing {
             Choosing::Session => None,
             Choosing::Theme => {
-                self.change_settings(SettingsChange::Press(Setting::ThemeMode, place));
+                let modes = THEME_MODES;
+                if place < modes {
+                    self.change_settings(SettingsChange::Press(Setting::ThemeMode, place));
+                } else {
+                    let family = place - modes;
+                    self.change_settings(SettingsChange::Pick(Setting::DarkTheme, family));
+                    self.change_settings(SettingsChange::Pick(Setting::LightTheme, family));
+                }
                 Some(QuickOutcome::SettingsChanged)
             }
             Choosing::References | Choosing::Problems => None,
@@ -389,6 +505,19 @@ impl Link {
                 None
             }
             Choosing::History => None,
+            Choosing::Task => {
+                self.run_task(place);
+                self.workspace.dock_open = true;
+                self.workspace.dock_tab = crate::model::DockTab::Tasks;
+                None
+            }
+            Choosing::Debug => {
+                self.debug_start(place);
+                self.workspace.dock_open = true;
+                self.workspace.dock_tab = crate::model::DockTab::Debug;
+                None
+            }
+            Choosing::Toolchain => None,
             Choosing::Keymap => {
                 self.change_settings(SettingsChange::Pick(Setting::BaseKeymap, place));
                 Some(QuickOutcome::SettingsChanged)

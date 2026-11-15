@@ -91,8 +91,15 @@ impl Link {
                 self.workspace.dock_tab = DockTab::Terminal;
                 self.new_terminal();
             }
-            Action::RunTask | Action::RerunTask => self.show_dock(DockTab::Tasks),
-            Action::StartDebugging | Action::AttachDebugger => self.show_dock(DockTab::Debug),
+            Action::RunTask => return Some(self.quick(QuickAction::Choose(Choosing::Task))),
+            Action::StartDebugging => {
+                return Some(self.quick(QuickAction::Choose(Choosing::Debug)));
+            }
+            Action::SelectToolchain => {
+                return Some(self.quick(QuickAction::Choose(Choosing::Toolchain)));
+            }
+            Action::RerunTask => self.show_dock(DockTab::Tasks),
+            Action::AttachDebugger => self.show_dock(DockTab::Debug),
             Action::StopDebugging => self.debug_command(DebugCommand::Stop),
             Action::PauseDebugging => self.debug_command(DebugCommand::Pause),
             Action::StepOver => self.debug_command(DebugCommand::StepOver),

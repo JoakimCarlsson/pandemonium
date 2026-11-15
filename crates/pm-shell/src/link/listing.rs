@@ -240,6 +240,31 @@ impl Link {
                     })
                     .collect()
             }
+            Response::Toolchains { toolchains } => toolchains
+                .into_iter()
+                .map(|toolchain| {
+                    let language = if toolchain.language_name.is_empty() {
+                        toolchain.language.clone()
+                    } else {
+                        toolchain.language_name.clone()
+                    };
+                    QuickItem {
+                        title: toolchain.name,
+                        detail: format!("{language} · {}", toolchain.detail),
+                        kind: if toolchain.selected {
+                            QuickKind::Current
+                        } else {
+                            QuickKind::Choice
+                        },
+                        keys: None,
+                        matched: Vec::new(),
+                        pick: QuickPick::Toolchain {
+                            language: toolchain.language,
+                            id: toolchain.id,
+                        },
+                    }
+                })
+                .collect(),
             Response::Failed { message } => {
                 trouble = Some(message);
                 Vec::new()
