@@ -7,7 +7,7 @@ use rustle::prelude::*;
 
 use pm_components::{
     Activity, ConfirmDialog, ContinueChat, IconButton, Label, LabelVariant, PullRequestBar,
-    PullRequestVariant, Sash, Size, SpendStrip, extended_colors,
+    PullRequestVariant, Sash, SashVariant, Size, SpendStrip, extended_colors,
 };
 use pm_shell::{
     ActivityKind, PANE_SHARE_MIN, Pane, Project, PullRequestInfo, SessionTab, SpendSummary,
@@ -128,54 +128,63 @@ fn dropped_on(actions: &Actions, pane: Pane) -> impl Fn(&dyn std::any::Any) + 's
     }
 }
 
-/// Emits the view split in two panes side by side, the left showing the
-/// strip's tab and the right `right`, each under a bar naming it that makes
-/// it the pane tabs chosen show in, and each taking tabs dropped on it.
+/// Emits the view split in two panes, side by side or one over the other
+/// as the open files say, the left or top showing the strip's tab and the
+/// other `right`, each under a bar naming it that makes it the pane tabs
+/// chosen show in, and each taking tabs dropped on it.
 fn split_panes(workspace: &Workspace, right: SessionTab, actions: &Actions) {
     let files = &workspace.open_files;
-    let width = remember(|| 0.0_f32);
+    let stacked = files.stacked;
+    let length = remember(|| 0.0_f32);
     let share = files.left_share();
-    let measured = width.clone();
-    row_with(
-        Modifier::new()
-            .fill_max_width()
-            .weight(1.0)
-            .on_size_changed(move |size| measured.set(size.width)),
-        || {
-            for (pane, tab) in [(Pane::Left, files.tab), (Pane::Right, right)] {
-                let focused = files.focus == pane;
-                if pane == Pane::Right {
-                    let resize = actions.file_tab.clone();
-                    let across = width.get();
-                    Sash::new(share * across)
-                        .size(Size::Sm)
-                        .range(across * PANE_SHARE_MIN, across * (1.0 - PANE_SHARE_MIN))
-                        .on_resize(move |left| {
-                            if across > 0.0 {
-                                resize(TabAction::Resize((left / across * 1000.0).round() as u32));
-                            }
-                        })
-                        .show();
-                }
-                let weight = match pane {
-                    Pane::Left => share,
-                    Pane::Right => 1.0 - share,
-                };
-                key(pane == Pane::Right, || {
-                    column_with(
-                        Modifier::new()
-                            .fill_max_height()
-                            .weight(weight)
-                            .drop_target(dropped_on(actions, pane)),
-                        || {
-                            pane_bar(workspace, pane, tab, focused, actions);
-                            pane_content(workspace, tab, actions);
-                        },
-                    );
-                });
+    let measured = length.clone();
+    let frame = Modifier::new()
+        .fill_max_width()
+        .weight(1.0)
+        .on_size_changed(move |size| measured.set(if stacked { size.height } else { size.width }));
+    let panes = || {
+        for (pane, tab) in [(Pane::Left, files.tab), (Pane::Right, right)] {
+            let focused = files.focus == pane;
+            if pane == Pane::Right {
+                let resize = actions.file_tab.clone();
+                let across = length.get();
+                Sash::new(share * across)
+                    .variant(if stacked {
+                        SashVariant::Horizontal
+                    } else {
+                        SashVariant::Vertical
+                    })
+                    .size(Size::Sm)
+                    .range(across * PANE_SHARE_MIN, across * (1.0 - PANE_SHARE_MIN))
+                    .on_resize(move |first| {
+                        if across > 0.0 {
+                            resize(TabAction::Resize((first / across * 1000.0).round() as u32));
+                        }
+                    })
+                    .show();
             }
-        },
-    );
+            let weight = match pane {
+                Pane::Left => share,
+                Pane::Right => 1.0 - share,
+            };
+            let place = if stacked {
+                Modifier::new().fill_max_width().weight(weight)
+            } else {
+                Modifier::new().fill_max_height().weight(weight)
+            };
+            key(pane == Pane::Right, || {
+                column_with(place.drop_target(dropped_on(actions, pane)), || {
+                    pane_bar(workspace, pane, tab, focused, actions);
+                    pane_content(workspace, tab, actions);
+                });
+            });
+        }
+    };
+    if stacked {
+        column_with(frame, panes);
+    } else {
+        row_with(frame, panes);
+    }
 }
 
 /// Emits the bar over `pane`, which shows `tab`: its name, marked when the
@@ -284,6 +293,10 @@ fn diff_tab(workspace: &Workspace, actions: &Actions) {
                 files: &revision.changes,
                 working: false,
                 message,
+                restore: revision
+                    .restore
+                    .as_ref()
+                    .map(|restore| restore.label().to_owned()),
             },
             actions,
         );
@@ -298,6 +311,7 @@ fn diff_tab(workspace: &Workspace, actions: &Actions) {
                 files: &git.listed().into_iter().cloned().collect::<Vec<_>>(),
                 working: true,
                 message: None,
+                restore: None,
             },
             actions,
         ),

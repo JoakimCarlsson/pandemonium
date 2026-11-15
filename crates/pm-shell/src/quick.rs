@@ -94,6 +94,16 @@ pub enum Choosing {
     Debug,
     /// The toolchains the project's languages can be started with, to choose one.
     Toolchain,
+    /// The stashes of the open session's repository, to apply one.
+    StashApply,
+    /// The stashes of the open session's repository, to apply one and drop it.
+    StashPop,
+    /// The stashes of the open session's repository, to drop one.
+    StashDrop,
+    /// The places a language server found related to the thing under the caret of the open file, as this seek looks for them, such as the functions calling it.
+    Related(pm_lsp::Seek),
+    /// The commits that changed the open file, to compare it with the file as one of them left it.
+    Commits,
 }
 
 /// One row of the quick input.
@@ -391,6 +401,15 @@ impl QuickInput {
             Some(Choosing::Task) => "Run a task",
             Some(Choosing::Debug) => "Start debugging",
             Some(Choosing::Toolchain) => "Choose a toolchain",
+            Some(Choosing::StashApply) => "Apply a stash",
+            Some(Choosing::StashPop) => "Pop a stash",
+            Some(Choosing::StashDrop) => "Drop a stash",
+            Some(Choosing::Related(pm_lsp::Seek::IncomingCalls)) => "Go to a caller",
+            Some(Choosing::Related(pm_lsp::Seek::OutgoingCalls)) => "Go to a called function",
+            Some(Choosing::Related(pm_lsp::Seek::Supertypes)) => "Go to a supertype",
+            Some(Choosing::Related(pm_lsp::Seek::Subtypes)) => "Go to a subtype",
+            Some(Choosing::Related(_)) => "Go to a place found",
+            Some(Choosing::Commits) => "Compare with the file as a commit left it",
             None => match self.mode() {
                 QuickMode::Line => "Go to a line by its number",
                 QuickMode::Help => "Type a prefix, or select one",

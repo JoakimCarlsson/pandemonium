@@ -230,6 +230,10 @@ fn menu(message: &Message, last: bool, actions: &Actions) -> MessageMenu {
                 );
             }
             menu = menu.item(
+                "Show changes of this turn",
+                command(ConversationCommand::TurnChanges(turn)),
+            );
+            menu = menu.item(
                 "Undo this turn",
                 command(ConversationCommand::UndoTurn(turn)),
             );

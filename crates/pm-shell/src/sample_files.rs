@@ -255,6 +255,13 @@ pub fn sample_quick(kind: &str) -> QuickInput {
             Choosing::Branch,
             &["main", "reader-continuation", "release"],
         ),
+        "stash" => choices(
+            Choosing::StashPop,
+            &[
+                "stash@{0}  WIP on main: Keep the reader's position",
+                "stash@{1}  On main: try a smaller ranking window",
+            ],
+        ),
         "actions" => choices(
             Choosing::Actions,
             &[

@@ -3,20 +3,21 @@
 //! them, the menus on them, the questions asked before throwing work away,
 //! and the commit graph with the remote tasks.
 
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use rustle::Modifiers;
 use rustle::prelude::*;
 
 use pm_components::{
-    Button, ButtonVariant, ChangeRow, ChangeRowVariant, CheckState, ConfirmDialog,
-    ConfirmDialogVariant, Divider, FoldHeader, FoldHeaderVariant, GraphLine, GraphRow,
-    GraphRowVariant, IconButton, Label, LabelVariant, Menu, OptionList, OptionListVariant, Popover,
-    Size, TextArea, TextInput, extended_colors,
+    Button, ButtonVariant, ChangeFolderRow, ChangeFolderRowVariant, ChangeRow, ChangeRowVariant,
+    CheckState, ConfirmDialog, ConfirmDialogVariant, Divider, FoldHeader, FoldHeaderVariant,
+    GraphLine, GraphRow, GraphRowVariant, IconButton, Label, LabelVariant, Menu, OptionList,
+    OptionListVariant, Popover, Size, TextArea, TextInput, extended_colors,
 };
 use pm_shell::{
-    BranchTask, ChangeGroup, ChangedFile, GitAction, GitMenu, GitPrompt, GitSection, GitSummary,
-    GraphCommit, Pick, Primary,
+    BranchTask, ChangeEntry, ChangeFolder, ChangeGroup, ChangedFile, GitAction, GitMenu, GitPrompt,
+    GitSection, GitSummary, GraphCommit, Pick, Primary,
 };
 
 use crate::actions::Actions;
@@ -291,6 +292,7 @@ fn trouble(git: &GitSummary, actions: &Actions) {
 fn changes_section(git: &GitSummary, actions: &Actions) {
     column_with(Modifier::new().fill_max_width().weight(1.0), || {
         let commit = send(actions, GitAction::Commit { push: false });
+        let can_commit = git.can_commit();
         let refresh = send(actions, GitAction::Refresh);
         let source = send(
             actions,
@@ -305,6 +307,7 @@ fn changes_section(git: &GitSummary, actions: &Actions) {
             .trailing(move || {
                 IconButton::new(phosphor::CHECK)
                     .size(Size::Xs)
+                    .disabled(!can_commit)
                     .on_click(commit)
                     .show();
                 IconButton::new(phosphor::ARROWS_CLOCKWISE)
@@ -418,7 +421,7 @@ fn primary_row(git: &GitSummary, actions: &Actions) {
             },
         );
         if commit_menu {
-            let ready = !git.changes.is_empty() && !git.message.trim().is_empty();
+            let ready = git.can_commit();
             let mut menu = Menu::new()
                 .width(MENU_WIDTH)
                 .offset(SIDE_MENU_WIDTH - MENU_WIDTH, 4.0)
@@ -640,7 +643,9 @@ fn stashes_menu(git: &GitSummary, actions: &Actions) {
     menu.show();
 }
 
-/// A group of changed files: its header, whose box stages or unstages the whole group, then its files.
+/// A group of changed files: its header, whose box stages or unstages the
+/// whole group, then its files in a folder tree whose folders fold and
+/// stage or unstage everything under them.
 fn change_group(git: &GitSummary, group: ChangeGroup, members: &[&ChangedFile], actions: &Actions) {
     let staged = group == ChangeGroup::Staged;
     let paths: Vec<String> = members.iter().map(|change| change.path.clone()).collect();
@@ -649,27 +654,98 @@ fn change_group(git: &GitSummary, group: ChangeGroup, members: &[&ChangedFile], 
         .size(Size::Xs)
         .count(members.len());
     if group != ChangeGroup::Conflicted {
+        let state = box_state(members, staged);
         header = header.check(
-            if staged {
-                CheckState::On
-            } else {
-                CheckState::Off
-            },
-            send(actions, GitAction::Stage(paths, !staged)),
+            state,
+            send(actions, GitAction::Stage(paths, state != CheckState::On)),
         );
     }
     header.show();
-    for change in members {
-        key(change.path.clone(), || {
-            change_row(git, change, staged, actions)
-        });
+    let folded = remember(HashSet::<String>::new);
+    let tree = ChangeFolder::of(members);
+    let closed = folded.get();
+    for entry in tree.rows(&|path| closed.contains(path)) {
+        match entry {
+            ChangeEntry::Folder { folder, depth } => {
+                key(format!("folder:{}", folder.path), || {
+                    folder_row(group, folder, depth, &folded, actions)
+                });
+            }
+            ChangeEntry::File { change, depth } => {
+                key(change.path.clone(), || {
+                    change_row(git, change, staged, depth, actions)
+                });
+            }
+        }
     }
 }
 
-/// One changed file, listed among the staged files when `in_staged`, with
+/// What a box over `files` shows, listed among the staged files when
+/// `in_staged`: ticked when every one is staged, empty when none is, and
+/// partly filled between.
+fn box_state(files: &[&ChangedFile], in_staged: bool) -> CheckState {
+    let ticked = files
+        .iter()
+        .filter(|change| change.staged || in_staged)
+        .count();
+    let partly = files.iter().any(|change| change.partly);
+    match ticked {
+        0 if !partly => CheckState::Off,
+        all if all == files.len() && !partly => CheckState::On,
+        _ => CheckState::Partial,
+    }
+}
+
+/// The row of `folder`, `depth` folders down in the tree of `group`: a
+/// click folds it in `folded`, and its box stages everything under it, or
+/// unstages it all once all of it is staged.
+fn folder_row(
+    group: ChangeGroup,
+    folder: &ChangeFolder,
+    depth: usize,
+    folded: &State<HashSet<String>>,
+    actions: &Actions,
+) {
+    let files = folder.all_files();
+    let state = box_state(&files, group == ChangeGroup::Staged);
+    let paths: Vec<String> = files.iter().map(|change| change.path.clone()).collect();
+    let (added, removed) = folder.tally();
+    let path = folder.path.clone();
+    let folding = folded.clone();
+    ChangeFolderRow::new(folder.name.clone(), depth)
+        .open(!folded.with(|closed| closed.contains(&folder.path)))
+        .state(state)
+        .tally(added, removed)
+        .variant(if group == ChangeGroup::Conflicted {
+            ChangeFolderRowVariant::Plain
+        } else {
+            ChangeFolderRowVariant::Checkable
+        })
+        .size(Size::Xs)
+        .on_fold(move || {
+            folding.update(|closed| {
+                if !closed.remove(&path) {
+                    closed.insert(path.clone());
+                }
+            })
+        })
+        .on_toggle(send(
+            actions,
+            GitAction::Stage(paths, state != CheckState::On),
+        ))
+        .show();
+}
+
+/// One changed file, `depth` folders down, listed among the staged files when `in_staged`, with
 /// the menu on it under it while that menu is open; a conflicted file has
 /// no box to stage it until it is resolved.
-fn change_row(git: &GitSummary, change: &ChangedFile, in_staged: bool, actions: &Actions) {
+fn change_row(
+    git: &GitSummary,
+    change: &ChangedFile,
+    in_staged: bool,
+    depth: usize,
+    actions: &Actions,
+) {
     let path = change.path.clone();
     let staged = change.staged || in_staged;
     let acting = git.acting(&path);
@@ -681,7 +757,8 @@ fn change_row(git: &GitSummary, change: &ChangedFile, in_staged: bool, actions: 
     };
     let picking = actions.git.clone();
     let picked = path.clone();
-    let mut row = ChangeRow::new(change.name(), change.folder(), change.status)
+    let mut row = ChangeRow::new(change.name(), "", change.status)
+        .indent(ChangeFolderRow::indent(depth))
         .tally(change.added, change.removed)
         .checked(staged)
         .checkable(!change.conflicted)

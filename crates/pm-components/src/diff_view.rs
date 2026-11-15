@@ -3,6 +3,8 @@
 //! the danger tone and added ones in the success tone, the words that
 //! changed inside a line boxed, the code coloured by its syntax, hunk
 //! headers between them, and notes left on lines under the lines they are on.
+//! Long lines wrap when the editor's soft wrap is on, and otherwise scroll
+//! across with a sideways wheel or Shift and the wheel.
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -13,6 +15,7 @@ use rustle::prelude::*;
 
 use crate::app_theme::{ExtendedColors, extended_colors};
 use crate::button::{Button, ButtonVariant};
+use crate::code_look::code_look;
 use crate::code_text::{column_of, expand_tabs, kind_colour, runs};
 use crate::diff_syntax::{LineSpans, colour_rows};
 use crate::icon_button::IconButton;
@@ -32,6 +35,9 @@ const WORD_TINT: u8 = 110;
 
 /// How wide the column of line numbers is.
 const GUTTER: f32 = 40.0;
+
+/// The fewest characters a wrapped row holds; a narrower side does not wrap.
+const MIN_WRAP_COLUMNS: usize = 16;
 
 /// One row of a side-by-side diff.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -197,14 +203,52 @@ impl DiffView {
         let height = code.line_for(font_size, drawn_height / drawn);
         let style = code_style(font_size, height, code.family);
         let width = layout_text(&"0".repeat(64), &style, None).size().width / 64.0;
+        let width = width.max(1.0);
+        let shown = self.rows.len().min(ROWS_AT_MOST);
+        let across = remember(|| 0.0_f32);
+        let area = remember(|| 0.0_f32);
+        let room = text_room(area.get(), self.variant, width);
+        let wrap = wrap_columns(room, width);
+        let widest = self.rows[..shown]
+            .iter()
+            .flat_map(|row| [&row.left, &row.right])
+            .flatten()
+            .map(|(_, text)| column_of(text, text.len()))
+            .max()
+            .unwrap_or(0);
+        let limit = (widest as f32 * width + 2.0 * width - room).max(0.0);
         let look = Look {
             style,
-            width: width.max(1.0),
+            width,
             height,
             scheme: color_scheme(),
             extended: extended_colors(),
+            wrap,
+            across: if wrap.is_some() {
+                0.0
+            } else {
+                across.get().min(limit)
+            },
         };
-        let shown = self.rows.len().min(ROWS_AT_MOST);
+        let wheel = move |input: &rustle::PointerInput| {
+            if wrap.is_some() || input.phase != rustle::PointerInputPhase::Scroll {
+                return false;
+            }
+            let delta = input.scroll_delta;
+            let sideways = if input.modifiers.shift && delta.x == 0.0 {
+                delta.y
+            } else {
+                delta.x
+            };
+            if sideways == 0.0 || delta.y.abs() > delta.x.abs() && !input.modifiers.shift {
+                return false;
+            }
+            let to = (across.get().min(limit) - sideways).clamp(0.0, limit);
+            if to != across.get() {
+                across.set(to);
+            }
+            true
+        };
         let colours = colour_rows(&self.rows[..shown], self.grammar.as_ref());
         let modifier = if self.scrolls {
             std::mem::take(&mut self.modifier).vertical_scroll(&scroll)
@@ -212,7 +256,12 @@ impl DiffView {
             std::mem::take(&mut self.modifier)
         };
         let view = Rc::new(self);
-        column_with(modifier, move || {
+        let sized = move |size: rustle::Size| {
+            if area.get() != size.width {
+                area.set(size.width);
+            }
+        };
+        let rows = move || {
             for (place, row) in view.rows.iter().take(shown).enumerate() {
                 let (left_spans, right_spans) = &colours[place];
                 key(place, || {
@@ -228,7 +277,70 @@ impl DiffView {
                     under_row(row, &view);
                 });
             }
+        };
+        column_with(modifier, move || {
+            column_with(
+                Modifier::new()
+                    .fill_max_width()
+                    .on_size_changed(sized)
+                    .pointer_input(wheel),
+                rows,
+            );
         });
+    }
+}
+
+/// How wide the text of one side is in a view `area` wide drawn as
+/// `variant`, with characters `width` wide: what is left past the line
+/// numbers and the marker.
+fn text_room(area: f32, variant: DiffViewVariant, width: f32) -> f32 {
+    let side = match variant {
+        DiffViewVariant::Split => (area - 1.0) / 2.0,
+        DiffViewVariant::Unified => area,
+    };
+    side - GUTTER - width - 2.0 * crate::spacing(6.0)
+}
+
+/// How many characters a row holds when the editor's soft wrap is on, in
+/// text `room` wide with characters `width` wide; nothing when lines do not
+/// wrap or the view has not been laid out.
+fn wrap_columns(room: f32, width: f32) -> Option<usize> {
+    let edge = (room / width).floor().max(0.0) as usize;
+    if room <= 0.0 || edge < MIN_WRAP_COLUMNS {
+        return None;
+    }
+    let look = code_look();
+    match look.soft_wrap {
+        pm_editor::SoftWrap::Off => None,
+        pm_editor::SoftWrap::Edge => Some(edge.saturating_sub(1)),
+        pm_editor::SoftWrap::LineLength => Some(edge.saturating_sub(1).min(look.line_length)),
+    }
+}
+
+/// Where each row of `text` starts when it wraps at `columns` characters:
+/// the byte and the column of the first character of each row.
+fn wrap_cuts(text: &str, columns: usize) -> Vec<(usize, usize)> {
+    let mut cuts = vec![(0, 0)];
+    let mut column = 0;
+    for (at, character) in text.char_indices() {
+        let next = column
+            + expand_tabs(&text[at..at + character.len_utf8()], column)
+                .chars()
+                .count();
+        let start = cuts.last().map_or(0, |(_, start)| *start);
+        if next - start > columns && column > start {
+            cuts.push((at, column));
+        }
+        column = next;
+    }
+    cuts
+}
+
+/// The rows `line` takes as `look` lays it out: more than one only when it wraps.
+fn line_rows(line: Option<&(usize, String)>, look: &Look) -> usize {
+    match (line, look.wrap) {
+        (Some((_, text)), Some(columns)) => wrap_cuts(text, columns).len(),
+        _ => 1,
     }
 }
 
@@ -245,6 +357,10 @@ struct Look {
     scheme: ColorScheme,
     /// The colours Material has no role for.
     extended: ExtendedColors,
+    /// How many characters a row holds when long lines wrap.
+    wrap: Option<usize>,
+    /// How far the text is scrolled across when they do not.
+    across: f32,
 }
 
 /// A row with the syntax colours of its sides.
@@ -321,36 +437,42 @@ fn split_row(sides_of: &Sides, view: &DiffView, look: &Look) {
         return;
     }
     let (left, right) = sides(row);
-    row_with(Modifier::new().fill_max_width().height(look.height), || {
-        half(
-            Half {
-                line: row.left.as_ref(),
-                side: left,
-                new: false,
-                spans: sides_of.left_spans,
-                words: &row.left_words,
-            },
-            view,
-            look,
-        );
-        spacer(
-            Modifier::new()
-                .width(1.0)
-                .fill_max_height()
-                .background(look.scheme.outline_variant),
-        );
-        half(
-            Half {
-                line: row.right.as_ref(),
-                side: right,
-                new: true,
-                spans: sides_of.right_spans,
-                words: &row.right_words,
-            },
-            view,
-            look,
-        );
-    });
+    let lines = line_rows(row.left.as_ref(), look).max(line_rows(row.right.as_ref(), look));
+    row_with(
+        Modifier::new()
+            .fill_max_width()
+            .height(look.height * lines as f32),
+        || {
+            half(
+                Half {
+                    line: row.left.as_ref(),
+                    side: left,
+                    new: false,
+                    spans: sides_of.left_spans,
+                    words: &row.left_words,
+                },
+                view,
+                look,
+            );
+            spacer(
+                Modifier::new()
+                    .width(1.0)
+                    .fill_max_height()
+                    .background(look.scheme.outline_variant),
+            );
+            half(
+                Half {
+                    line: row.right.as_ref(),
+                    side: right,
+                    new: true,
+                    spans: sides_of.right_spans,
+                    words: &row.right_words,
+                },
+                view,
+                look,
+            );
+        },
+    );
 }
 
 /// Emits `sides` as unified lines.
@@ -362,9 +484,13 @@ fn unified_row(sides_of: &Sides, view: &DiffView, look: &Look) {
         return;
     }
     let line = |half_of: Half| {
-        row_with(Modifier::new().fill_max_width().height(look.height), || {
-            half(half_of, view, look)
-        });
+        let lines = line_rows(half_of.line, look);
+        row_with(
+            Modifier::new()
+                .fill_max_width()
+                .height(look.height * lines as f32),
+            || half(half_of, view, look),
+        );
     };
     let old = || Half {
         line: row.left.as_ref(),
@@ -442,6 +568,10 @@ fn half(half: Half, view: &DiffView, look: &Look) {
     };
     let text = half.line.map(|(_, text)| text.clone()).unwrap_or_default();
     let painted = Painted {
+        cuts: match look.wrap {
+            Some(columns) => wrap_cuts(&text, columns),
+            None => vec![(0, 0)],
+        },
         runs: runs(text.len(), half.spans),
         words: half
             .words
@@ -463,26 +593,34 @@ fn half(half: Half, view: &DiffView, look: &Look) {
             .background(fill)
             .clip(),
         Arrangement::SpacedBy(crate::spacing(6.0)),
-        Alignment::Center,
+        Alignment::Start,
         move || {
-            Label::new(number.map(|number| number.to_string()).unwrap_or_default())
-                .variant(LabelVariant::Code)
-                .colour(scheme.on_surface_variant)
-                .size(Size::Xs)
-                .modifier(gutter.clone())
-                .show();
-            Label::new(marker)
-                .variant(LabelVariant::Code)
-                .colour(match half.side {
-                    Side::Removed => scheme.error,
-                    Side::Added => extended.success,
-                    Side::Same | Side::Empty => scheme.on_surface_variant,
-                })
-                .size(Size::Xs)
-                .show();
+            row_arranged(
+                Modifier::new().height(look.height),
+                Arrangement::SpacedBy(crate::spacing(6.0)),
+                Alignment::Center,
+                || {
+                    Label::new(number.map(|number| number.to_string()).unwrap_or_default())
+                        .variant(LabelVariant::Code)
+                        .colour(scheme.on_surface_variant)
+                        .size(Size::Xs)
+                        .modifier(gutter.clone())
+                        .show();
+                    Label::new(marker)
+                        .variant(LabelVariant::Code)
+                        .colour(match half.side {
+                            Side::Removed => scheme.error,
+                            Side::Added => extended.success,
+                            Side::Same | Side::Empty => scheme.on_surface_variant,
+                        })
+                        .size(Size::Xs)
+                        .modifier(Modifier::new().width(look.width))
+                        .show();
+                },
+            );
             let painted = Rc::new(painted.clone());
             canvas(
-                Modifier::new().weight(1.0).fill_max_height(),
+                Modifier::new().weight(1.0).fill_max_height().clip(),
                 move |canvas| painted.paint(canvas, &look),
             );
         },
@@ -494,6 +632,8 @@ fn half(half: Half, view: &DiffView, look: &Look) {
 struct Painted {
     /// Its text.
     text: String,
+    /// Where each of its rows starts, as a byte and a column: one row unless it wraps.
+    cuts: Vec<(usize, usize)>,
     /// The runs of one syntax colour it is painted in.
     runs: Vec<(std::ops::Range<usize>, Option<pm_treesitter::Kind>)>,
     /// The stretches of it that changed.
@@ -503,39 +643,57 @@ struct Painted {
 }
 
 impl Painted {
-    /// Paints the boxes behind the words that changed, then the text in its colours.
+    /// Paints the boxes behind the words that changed, then the text in
+    /// its colours, row by row when it wraps and shifted by how far the
+    /// view is scrolled across.
     fn paint(&self, canvas: &mut Canvas, look: &Look) {
-        let x_of = |byte: usize| column_of(&self.text, byte) as f32 * look.width;
-        for range in &self.words {
-            let left = x_of(range.start);
-            let right = x_of(range.end);
-            canvas.rect(
-                left,
-                1.0,
-                (right - left).max(2.0),
-                look.height - 2.0,
-                self.word_colour,
-            );
-        }
-        for (range, kind) in &self.runs {
-            let piece = &self.text[range.clone()];
-            if piece.trim().is_empty() {
-                continue;
-            }
-            let column = column_of(&self.text, range.start);
-            let style = TextStyle {
-                color: kind.map_or(look.scheme.on_surface, |kind| {
-                    kind_colour(kind, &look.scheme, &look.extended)
-                }),
-                ..look.style
+        for (row, (start, base)) in self.cuts.iter().enumerate() {
+            let end = self
+                .cuts
+                .get(row + 1)
+                .map_or(self.text.len(), |(next, _)| *next);
+            let top = row as f32 * look.height;
+            let x_of = |byte: usize| {
+                (column_of(&self.text, byte) - base) as f32 * look.width - look.across
             };
-            canvas.draw_text(
-                column as f32 * look.width,
-                0.0,
-                &expand_tabs(piece, column),
-                &style,
-                None,
-            );
+            for range in &self.words {
+                let (from, to) = (range.start.max(*start), range.end.min(end));
+                if from > to || from == to && range.start != range.end {
+                    continue;
+                }
+                let left = x_of(from);
+                let right = x_of(to);
+                canvas.rect(
+                    left,
+                    top + 1.0,
+                    (right - left).max(2.0),
+                    look.height - 2.0,
+                    self.word_colour,
+                );
+            }
+            for (range, kind) in &self.runs {
+                let (from, to) = (range.start.max(*start), range.end.min(end));
+                if from >= to {
+                    continue;
+                }
+                let piece = &self.text[from..to];
+                if piece.trim().is_empty() {
+                    continue;
+                }
+                let style = TextStyle {
+                    color: kind.map_or(look.scheme.on_surface, |kind| {
+                        kind_colour(kind, &look.scheme, &look.extended)
+                    }),
+                    ..look.style
+                };
+                canvas.draw_text(
+                    x_of(from),
+                    top,
+                    &expand_tabs(piece, column_of(&self.text, from)),
+                    &style,
+                    None,
+                );
+            }
         }
     }
 }

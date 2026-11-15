@@ -3,6 +3,7 @@
 //! chosen, and the files closed lately, which can be opened again.
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::rc::Rc;
 
@@ -13,6 +14,9 @@ use pm_treesitter::{Grammar, Syntax, registry};
 
 /// The most closed files remembered to open again.
 const CLOSED_KEPT: usize = 20;
+
+/// The most places remembered to go back or forward to.
+const JUMPS_KEPT: usize = 100;
 
 /// A document shared between the model and the editor drawing it, which
 /// edits it in place.
@@ -103,6 +107,8 @@ pub struct OpenFile {
     pub restored: Option<String>,
     /// Whether its tab is pinned: kept first in the strip and left open by Close others, Close to the right and Close all.
     pub pinned: bool,
+    /// Whether it is shown to be read and not changed, until this is turned off again.
+    pub read_only: bool,
 }
 
 /// A popup an editor can be asked to open with over its text.
@@ -347,11 +353,22 @@ pub enum TabMenu {
 /// One of the two panes the session view splits into.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Pane {
-    /// The left pane, which the tab strip's own tab shows in.
+    /// The left pane, or the top one while the panes are stacked, which the tab strip's own tab shows in.
     #[default]
     Left,
-    /// The right pane, shown while the view is split.
+    /// The right pane, or the bottom one while the panes are stacked, shown while the view is split.
     Right,
+}
+
+/// A place in an open file the caret was at before a jump, to go back or forward to.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Jump {
+    /// The folder the file belongs to.
+    pub directory: String,
+    /// The file's path from the root of the folder.
+    pub path: String,
+    /// The line of the caret, counted from 1.
+    pub line: usize,
 }
 
 /// What the tab strip or its menu asks of the open files.
@@ -381,6 +398,12 @@ pub enum TabAction {
     Menu(Option<TabMenu>),
     /// Splits the view, showing the tab showing in the right pane as well.
     Split,
+    /// Splits the view into a top and a bottom pane, showing the tab showing in the bottom pane as well.
+    SplitBelow,
+    /// Splits the view side by side, the new pane on the left: both panes show the tab showing, and the left one takes the tabs chosen.
+    SplitLeft,
+    /// Splits the view into a top and a bottom pane, the new pane on top: both panes show the tab showing, and the top one takes the tabs chosen.
+    SplitAbove,
     /// Joins the panes again, keeping the left one.
     Unsplit,
     /// Shows the tab in the pane, splitting the view when it is not, as
@@ -396,10 +419,12 @@ pub enum TabAction {
     EndCompare(usize),
     /// Pins the file at this position, or unpins it.
     TogglePin(usize),
-    /// Gives the left pane this share of the split view's width, in thousandths.
+    /// Gives the left pane, or the top one while the panes are stacked, this share of the split view, in thousandths.
     Resize(u32),
     /// Answers the question asked before closing modified files.
     Unsaved(Unsaved),
+    /// Makes the file at this position read only, or editable again.
+    ToggleReadOnly(usize),
 }
 
 /// An answer to the question asked before closing files with unsaved changes.
@@ -425,6 +450,8 @@ pub struct SavedFile {
     pub line: usize,
     /// Its text, when it had changes that were not saved.
     pub unsaved: Option<String>,
+    /// Whether its tab was pinned.
+    pub pinned: bool,
 }
 
 /// The narrowest share of the split view either pane may take.
@@ -462,6 +489,20 @@ pub struct OpenFiles {
     pub asking: Option<TabAction>,
     /// The share of the split view's width the left pane takes, or 0 for half.
     pub share: f32,
+    /// Whether the split view's panes are one over the other rather than side by side.
+    pub stacked: bool,
+    /// The places jumped away from, the latest last, to go back to.
+    pub back: Vec<Jump>,
+    /// The places gone back from, the nearest last, to go forward to again.
+    pub ahead: Vec<Jump>,
+    /// The session the open files belong to, when they belong to one.
+    pub owner: Option<u64>,
+    /// The files left open in the other sessions, by session, opened again when the reader goes back to one.
+    pub others: BTreeMap<u64, Vec<SavedFile>>,
+    /// The commits that changed the file showing, as the quick input lists them: each one's object name, the path the file had in it, and what it is called.
+    pub commits: Vec<(String, String, String)>,
+    /// Text waiting to be put on the clipboard, such as a permalink the server answered with.
+    pub copied: Option<String>,
 }
 
 impl OpenFiles {
@@ -489,6 +530,7 @@ impl OpenFiles {
                     path: file.path.clone(),
                     line,
                     unsaved,
+                    pinned: file.pinned,
                 }
             })
             .collect()
@@ -502,7 +544,85 @@ impl OpenFiles {
         let file = &mut self.files[index];
         file.line = Some(saved.line);
         file.restored = saved.unsaved.clone();
+        file.pinned = saved.pinned;
         Some(index)
+    }
+
+    /// Where the caret of the file showing is, when a file shows.
+    pub fn here(&self) -> Option<Jump> {
+        let file = self.shown()?;
+        let line = (file.body == FileBody::Text)
+            .then(|| file.document.0.try_borrow().ok())
+            .flatten()
+            .map(|held| held.line_of(held.field.caret()) + 1)
+            .or(file.line)
+            .unwrap_or(1);
+        Some(Jump {
+            directory: file.directory.clone(),
+            path: file.path.clone(),
+            line,
+        })
+    }
+
+    /// Remembers where the caret of the file showing is, before it jumps elsewhere, to go back to; the places gone back from are forgotten.
+    pub fn leave(&mut self) {
+        let Some(here) = self.here() else {
+            return;
+        };
+        if self.back.last() != Some(&here) {
+            self.back.push(here);
+        }
+        let excess = self.back.len().saturating_sub(JUMPS_KEPT);
+        self.back.drain(..excess);
+        self.ahead.clear();
+    }
+
+    /// The place to go back to, remembering where the caret is now to go forward to again; nothing when there is nowhere to go back to.
+    pub fn go_back(&mut self) -> Option<Jump> {
+        let target = self.back.pop()?;
+        if let Some(here) = self.here() {
+            self.ahead.push(here);
+        }
+        Some(target)
+    }
+
+    /// The place to go forward to again, remembering where the caret is now to go back to; nothing when nothing was gone back from.
+    pub fn go_ahead(&mut self) -> Option<Jump> {
+        let target = self.ahead.pop()?;
+        if let Some(here) = self.here() {
+            self.back.push(here);
+        }
+        Some(target)
+    }
+
+    /// Makes the open files those of the session `session`: the files open now are kept for the session they belong to, and the files kept for `session` come back, to be opened again; nothing comes back when the files already belong to it, or when they belonged to no session and none were kept for it, in which case they become its own.
+    pub fn swap_to(&mut self, session: u64) -> Option<Vec<SavedFile>> {
+        if self.owner == Some(session) {
+            return None;
+        }
+        let previous = self.owner.replace(session);
+        let incoming = self.others.remove(&session);
+        match previous {
+            Some(previous) => {
+                let saved = self.saved();
+                if !saved.is_empty() {
+                    self.others.insert(previous, saved);
+                }
+            }
+            None if incoming.is_none() => return None,
+            None => {}
+        }
+        self.files.clear();
+        self.tab = SessionTab::Chat;
+        self.split = None;
+        self.focus = Pane::Left;
+        self.closed.clear();
+        self.menu = None;
+        self.asking = None;
+        self.back.clear();
+        self.ahead.clear();
+        self.commits.clear();
+        Some(incoming.unwrap_or_default())
     }
 
     /// The position of the file at `path` in `directory`, when it is open.
@@ -602,9 +722,21 @@ impl OpenFiles {
                 }
             }
             TabAction::Menu(menu) => self.menu = menu,
-            TabAction::Split => {
+            TabAction::Split
+            | TabAction::SplitBelow
+            | TabAction::SplitLeft
+            | TabAction::SplitAbove => {
                 self.split = Some(self.tab);
-                self.focus = Pane::Right;
+                self.stacked = matches!(action, TabAction::SplitBelow | TabAction::SplitAbove);
+                self.focus = match action {
+                    TabAction::SplitLeft | TabAction::SplitAbove => Pane::Left,
+                    _ => Pane::Right,
+                };
+            }
+            TabAction::ToggleReadOnly(index) => {
+                if let Some(file) = self.files.get_mut(index) {
+                    file.read_only = !file.read_only;
+                }
             }
             TabAction::Unsplit => {
                 self.split = None;
@@ -954,5 +1086,83 @@ mod tests {
         assert_eq!(files.tab, SessionTab::Chat);
         files.act(TabAction::Previous);
         assert_eq!(files.tab, SessionTab::File(0));
+    }
+
+    /// Going back returns to the places jumped from, and forward to the places gone back from; a new jump forgets the way forward.
+    #[test]
+    fn jumping_back_and_forward() {
+        let mut files = OpenFiles::default();
+        files.open("d", "a.rs", true);
+        files.files[0].line = Some(3);
+        files.leave();
+        files.open("d", "b.rs", true);
+        files.files[1].line = Some(7);
+        let back = files.go_back().expect("a place to go back to");
+        assert_eq!((back.path.as_str(), back.line), ("a.rs", 3));
+        files.open("d", "a.rs", true);
+        let ahead = files.go_ahead().expect("a place to go forward to");
+        assert_eq!((ahead.path.as_str(), ahead.line), ("b.rs", 7));
+        files.leave();
+        assert!(files.ahead.is_empty());
+        assert_eq!(files.go_ahead(), None);
+    }
+
+    /// Pinned tabs are kept between runs and come back pinned; a file kept before pins were saved comes back unpinned.
+    #[test]
+    fn pins_are_saved() {
+        let mut files = OpenFiles::default();
+        files.open("d", "a.rs", true);
+        files.open("d", "b.rs", true);
+        files.act(TabAction::TogglePin(1));
+        let saved = files.saved();
+        assert_eq!(
+            saved.iter().map(|file| file.pinned).collect::<Vec<_>>(),
+            vec![true, false]
+        );
+        let mut again = OpenFiles::default();
+        for file in &saved {
+            again.reopen(file);
+        }
+        assert!(again.files[0].pinned && !again.files[1].pinned);
+        let old: SavedFile =
+            serde_json::from_str(r#"{"directory":"d","path":"a.rs","line":2}"#).expect("old file");
+        assert!(!old.pinned);
+    }
+
+    /// Each session keeps its own open files: switching keeps those of the session left and brings back those of the session shown.
+    #[test]
+    fn sessions_keep_their_files() {
+        let mut files = OpenFiles::default();
+        files.open("d", "a.rs", true);
+        assert_eq!(files.swap_to(1), None);
+        assert_eq!(files.files.len(), 1);
+        let second = files.swap_to(2).expect("the second session's files");
+        assert!(second.is_empty() && files.files.is_empty());
+        files.open("e", "b.rs", true);
+        let first = files.swap_to(1).expect("the first session's files");
+        assert_eq!(first[0].path, "a.rs");
+        assert_eq!(files.others[&2][0].path, "b.rs");
+        assert_eq!(files.swap_to(1), None);
+    }
+
+    /// Splitting below stacks the panes, and splitting to the side puts them side by side again.
+    #[test]
+    fn splitting_below_stacks() {
+        let mut files = OpenFiles::default();
+        files.open("d", "a.rs", true);
+        files.act(TabAction::SplitBelow);
+        assert!(files.stacked);
+        assert_eq!(files.right_tab(), Some(SessionTab::File(0)));
+        files.act(TabAction::Split);
+        assert!(!files.stacked);
+        assert_eq!(files.focus, Pane::Right);
+        files.act(TabAction::SplitAbove);
+        assert!(files.stacked);
+        assert_eq!(files.focus, Pane::Left);
+        files.act(TabAction::SplitLeft);
+        assert!(!files.stacked);
+        assert_eq!(files.focus, Pane::Left);
+        files.act(TabAction::ToggleReadOnly(0));
+        assert!(files.files[0].read_only);
     }
 }

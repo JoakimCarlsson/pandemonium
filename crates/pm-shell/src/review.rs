@@ -37,6 +37,39 @@ pub struct Revision {
     pub loaded: bool,
     /// Why the server could not list them, when it could not.
     pub trouble: Option<String>,
+    /// What the Diff tab's button puts back, when the changes can be taken back.
+    pub restore: Option<RevisionRestore>,
+}
+
+/// What a revision's button puts back.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RevisionRestore {
+    /// Takes what a reader's turn changed back out of the session's files.
+    Turn {
+        /// The session.
+        session: u64,
+        /// The turn, by how many of the reader's turns came before it.
+        turn: u64,
+    },
+    /// Puts an earlier version of a file back, from the file's timeline.
+    Version {
+        /// The folder the file is in, as the server knows it.
+        directory: String,
+        /// The path, from the root of the folder.
+        path: String,
+        /// What the file held in that version.
+        text: String,
+    },
+}
+
+impl RevisionRestore {
+    /// The words on the button that puts it back.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Turn { .. } => "Undo turn",
+            Self::Version { .. } => "Restore",
+        }
+    }
 }
 
 /// Which side of a conflict to take.

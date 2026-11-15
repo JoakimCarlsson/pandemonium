@@ -12,6 +12,7 @@ mod browser_safety;
 mod browser_sample;
 mod browser_scope;
 mod browser_tools;
+mod change_tree;
 mod composer;
 mod conversation;
 mod dialog;
@@ -66,6 +67,7 @@ pub use browser_safety::{ALLOW_DELAY, Answer, Certificate, Download, Question, S
 pub use browser_sample::{BrowserSample, sample_browser};
 pub use browser_scope::{BrowserShelf, NO_SCOPE, SavedBrowser};
 pub use browser_tools::{agent_may_open, changes_page, locked_message, origin_allowed, tabs_text};
+pub use change_tree::{ChangeEntry, ChangeFolder};
 pub use composer::{
     Capture, CaptureKind, ComposerAction, ComposerMenu, ComposerState, ConversationSetting, Gauge,
     GoalChip, PickedElement, PromptFile, QueuedPrompt, SettingPick, SlashCommand, allowance_gauge,
@@ -119,8 +121,9 @@ pub use quick::{
     QuickMode, QuickOutcome, QuickPick, fuzzy, quick_items,
 };
 pub use review::{
-    ConflictRegion, ConflictSide, ConflictView, LineNote, Revision, conflict_regions,
-    grammar_by_ending, language_by_ending, notes_prompt, settle_all, settle_conflict,
+    ConflictRegion, ConflictSide, ConflictView, LineNote, Revision, RevisionRestore,
+    conflict_regions, grammar_by_ending, language_by_ending, notes_prompt, settle_all,
+    settle_conflict,
 };
 pub use review_sample::{sample_review, sample_search_edit};
 pub use sample::{

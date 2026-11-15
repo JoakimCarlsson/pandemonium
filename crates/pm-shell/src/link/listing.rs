@@ -4,11 +4,9 @@
 //! problems the language servers report; asked of the server, so they work
 //! the same for remote projects.
 
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use pm_protocol::{Request, Response};
 
-use super::{Ask, Link, age};
+use super::{Ask, Link};
 use crate::quick::{Choosing, QuickItem, QuickKind, QuickPick};
 
 /// The version the open file is handed to its language server at for one request.
@@ -39,21 +37,23 @@ impl Link {
         let language = document.language.clone();
         let synced = document.synced.then_some(document.version);
         drop(document);
+        if let Some(quick) = &mut self.workspace.quick {
+            quick.waiting = Some(String::new());
+        }
+        if choosing == Choosing::History {
+            let directory = if file_directory.is_empty() {
+                directory
+            } else {
+                file_directory
+            };
+            self.ask_timeline(directory, path);
+            return;
+        }
         let directory = if synced.is_some() {
             file_directory
         } else {
             directory
         };
-        if let Some(quick) = &mut self.workspace.quick {
-            quick.waiting = Some(String::new());
-        }
-        if choosing == Choosing::History {
-            self.ask(
-                Request::LocalHistory { directory, path },
-                Ask::Listing(choosing),
-            );
-            return;
-        }
         let Some(language) = language else {
             self.workspace.status = Some("The open file has no language server.".to_owned());
             return;
@@ -158,6 +158,12 @@ impl Link {
 
     /// Handles the `response` to a request made for the list of choices `choosing`.
     pub(super) fn answer_listing(&mut self, choosing: Choosing, response: Response) {
+        if choosing == Choosing::History
+            && let Some(found) = self.answer_timeline(&response)
+        {
+            self.show_listing(choosing, found);
+            return;
+        }
         if let (
             Choosing::History,
             Response::File {
@@ -186,28 +192,7 @@ impl Link {
         }
         let mut trouble = None;
         let found = match response {
-            Response::Definitions { locations } => locations
-                .into_iter()
-                .map(|location| {
-                    let line = location.span.start.line as usize + 1;
-                    QuickItem {
-                        title: location
-                            .line
-                            .as_deref()
-                            .unwrap_or_default()
-                            .trim()
-                            .to_owned(),
-                        detail: format!("{}:{line}", location.path),
-                        kind: QuickKind::Symbol,
-                        keys: None,
-                        matched: Vec::new(),
-                        pick: QuickPick::Open {
-                            path: location.path,
-                            line: Some(line),
-                        },
-                    }
-                })
-                .collect(),
+            Response::Definitions { locations } => location_items(locations),
             Response::CodeActions { actions } => actions
                 .into_iter()
                 .enumerate()
@@ -224,22 +209,6 @@ impl Link {
                     pick: QuickPick::Choose(Choosing::Actions, place),
                 })
                 .collect(),
-            Response::LocalHistory { versions } => {
-                let now = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map_or(0, |elapsed| elapsed.as_millis() as u64);
-                versions
-                    .into_iter()
-                    .map(|version| QuickItem {
-                        title: format!("Saved {}", age(now.saturating_sub(version.id))),
-                        detail: format!("{} bytes", version.size),
-                        kind: QuickKind::Choice,
-                        keys: None,
-                        matched: Vec::new(),
-                        pick: QuickPick::Version(version.id),
-                    })
-                    .collect()
-            }
             Response::Toolchains { toolchains } => toolchains
                 .into_iter()
                 .map(|toolchain| {
@@ -274,6 +243,11 @@ impl Link {
         if trouble.is_some() {
             self.workspace.status = trouble;
         }
+        self.show_listing(choosing, found);
+    }
+
+    /// Lists `found` in the quick input, when it still lists the choices `choosing`.
+    fn show_listing(&mut self, choosing: Choosing, found: Vec<QuickItem>) {
         if let Some(quick) = self
             .workspace
             .quick
@@ -299,4 +273,31 @@ impl Link {
         file.take_text(text, false, language);
         file.document.0.borrow_mut().mark_unsaved();
     }
+}
+
+/// The rows listing `locations`, places a language server found: each reads the name found there, or else its line, beside its path and line, and opens the file at that line.
+pub(super) fn location_items(locations: Vec<pm_lsp::Location>) -> Vec<QuickItem> {
+    locations
+        .into_iter()
+        .map(|location| {
+            let line = location.span.start.line as usize + 1;
+            let text = location
+                .line
+                .as_deref()
+                .unwrap_or_default()
+                .trim()
+                .to_owned();
+            QuickItem {
+                title: location.name.clone().unwrap_or(text),
+                detail: format!("{}:{line}", location.path),
+                kind: QuickKind::Symbol,
+                keys: None,
+                matched: Vec::new(),
+                pick: QuickPick::Open {
+                    path: location.path,
+                    line: Some(line),
+                },
+            }
+        })
+        .collect()
 }

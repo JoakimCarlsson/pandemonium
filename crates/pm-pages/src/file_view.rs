@@ -6,8 +6,8 @@
 use rustle::prelude::*;
 
 use pm_components::{
-    Button, ButtonVariant, CodeEditor, CodeEditorBar, CodeEditorPopup, DiffView, IconButton, Label,
-    LabelVariant, Markdown, Menu, PictureView, ServerAsk, Size,
+    Button, ButtonVariant, CodeEditor, CodeEditorBar, CodeEditorPopup, CodeEditorVariant, DiffView,
+    IconButton, Label, LabelVariant, Markdown, Menu, PictureView, ServerAsk, Size,
 };
 use pm_shell::{
     Block, Comparison, DebugModel, EditorBar, EditorPopup, Extension, FileAction, FileBody,
@@ -187,7 +187,13 @@ fn editor(file: &OpenFile, index: usize, vim: bool, debug: &DebugModel, actions:
     let breakpoint = actions.toggle_breakpoint.clone();
     let path = file.path.clone();
     let language = file.document.0.borrow().language.clone();
+    let variant = if file.read_only {
+        CodeEditorVariant::Viewer
+    } else {
+        CodeEditorVariant::Editor
+    };
     CodeEditor::new(file.document.0.clone())
+        .variant(variant)
         .size(Size::Sm)
         .vim(vim)
         .language(language)
@@ -392,6 +398,7 @@ fn file_header(file: &OpenFile, index: usize, around: &Around, actions: &Actions
     let rendered = file.rendered;
     let dirty = file.is_dirty();
     let preview = file.preview;
+    let read_only = file.read_only;
     let act = actions.file_tab.clone();
     let save = actions.save_file.clone();
     row_arranged(
@@ -413,6 +420,18 @@ fn file_header(file: &OpenFile, index: usize, around: &Around, actions: &Actions
                 Label::new("Preview")
                     .variant(LabelVariant::Subtle)
                     .size(Size::Xs)
+                    .show();
+            }
+            if read_only {
+                let unlock = act.clone();
+                icon(phosphor::LOCK_SIMPLE, 12.0, scheme.on_surface_variant);
+                Label::new("Read only")
+                    .variant(LabelVariant::Subtle)
+                    .size(Size::Xs)
+                    .show();
+                IconButton::new(phosphor::PENCIL_SIMPLE)
+                    .size(Size::Xs)
+                    .on_click(move || unlock(TabAction::ToggleReadOnly(index)))
                     .show();
             }
             if markdown {

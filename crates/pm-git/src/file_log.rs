@@ -246,15 +246,26 @@ pub fn permalink(
         .trim()
         .to_owned();
     let file = format!("{prefix}{path}");
+    Ok(link_of(&web, &commit, &file, lines, hosts))
+}
+
+/// The web address of `file`, from the root of the repository whose web address is `web`, at `commit`, narrowed to `lines` as [`permalink`] says, laid out as the host of `web` lays addresses out; `hosts` says which layout the servers it names use.
+fn link_of(
+    web: &str,
+    commit: &str,
+    file: &str,
+    lines: Option<(usize, usize)>,
+    hosts: &BTreeMap<String, String>,
+) -> String {
     let host = web
         .strip_prefix("https://")
         .and_then(|rest| rest.split('/').next())
         .unwrap_or_default();
     let layout = layout_of(host, hosts);
     let web = if layout.id == "azure" {
-        azure_pages(&web)
+        azure_pages(web)
     } else {
-        web
+        web.to_owned()
     };
     let template = match lines {
         None => layout.file,
@@ -262,13 +273,13 @@ pub fn permalink(
         Some(_) => layout.range,
     };
     let (start, end) = lines.map_or((0, 0), |(start, end)| (start, end.max(start)));
-    Ok(template
+    template
         .replace("{web}", &web)
-        .replace("{commit}", &commit)
-        .replace("{file}", &file)
+        .replace("{commit}", commit)
+        .replace("{file}", file)
         .replace("{start}", &start.to_string())
         .replace("{end}", &end.to_string())
-        .replace("{after}", &(end + 1).to_string()))
+        .replace("{after}", &(end + 1).to_string())
 }
 
 /// One line of a file of a repository that a search found.
@@ -395,4 +406,54 @@ pub fn blame(directory: &Path, path: &str, line: usize) -> Result<Blame, String>
         }
     }
     Ok(found)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Remote addresses over ssh and https name the same web page.
+    #[test]
+    fn remotes_name_their_web_page() {
+        let page = Some("https://github.com/owner/name".to_owned());
+        assert_eq!(web_address("git@github.com:owner/name.git"), page);
+        assert_eq!(web_address("https://github.com/owner/name.git"), page);
+        assert_eq!(web_address("ssh://git@github.com:22/owner/name"), page);
+        assert_eq!(web_address("/srv/git/name"), None);
+    }
+
+    /// A line and a range of lines link the way each host lays them out, and a host the settings name uses the layout they choose.
+    #[test]
+    fn links_follow_the_host() {
+        let none = BTreeMap::new();
+        assert_eq!(
+            link_of(
+                "https://github.com/o/n",
+                "abc",
+                "src/a.rs",
+                Some((7, 7)),
+                &none
+            ),
+            "https://github.com/o/n/blob/abc/src/a.rs#L7"
+        );
+        assert_eq!(
+            link_of("https://gitlab.com/o/n", "abc", "a.rs", Some((3, 5)), &none),
+            "https://gitlab.com/o/n/-/blob/abc/a.rs#L3-5"
+        );
+        assert_eq!(
+            link_of("https://github.com/o/n", "abc", "a.rs", None, &none),
+            "https://github.com/o/n/blob/abc/a.rs"
+        );
+        let chosen = BTreeMap::from([("git.example.com".to_owned(), "gitea".to_owned())]);
+        assert_eq!(
+            link_of(
+                "https://git.example.com/o/n",
+                "abc",
+                "a.rs",
+                Some((2, 2)),
+                &chosen
+            ),
+            "https://git.example.com/o/n/src/commit/abc/a.rs#L2"
+        );
+    }
 }

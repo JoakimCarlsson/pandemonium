@@ -28,6 +28,7 @@ use rustle::{ItemAlign, KeyEvent, PointerButton, PointerPhase};
 use crate::app_theme::{ExtendedColors, extended_colors};
 use crate::code_assist::{Assist, CodeEditorPopup, Grid, assist_layer, colour_of};
 use crate::code_bars::{Bars, CodeEditorBar, FindBar, find_bar, go_to_bar};
+use crate::code_clipboard::{Copied, copied_as, remember_copy};
 use crate::code_keys::{Command, Keyed, command, keymapped, keystroke};
 use crate::code_look::CodeLook;
 use crate::code_overview::{Marks, gutter_colour, overview};
@@ -312,6 +313,7 @@ impl CodeEditor {
             cell_width: cell.0,
             blink: remember(|| true),
             menu: remember(|| None),
+            column_from: remember(|| Rc::new(std::cell::Cell::new(None))).get(),
         };
         blink_carets(&handle);
         hover_after_rest(&handle);
@@ -498,6 +500,8 @@ pub(crate) struct Handle {
     blink: State<bool>,
     /// Where the editor's own menu is open over the text area, when it is.
     menu: State<Option<(f32, f32)>>,
+    /// The byte a drag selecting a rectangle started at, while one goes on.
+    column_from: Rc<std::cell::Cell<Option<usize>>>,
 }
 
 impl Handle {
@@ -804,14 +808,29 @@ impl Handle {
 
     /// Scrolls so `line`, counted from 0, is the first in view, and puts the caret on it.
     pub(crate) fn jump_to_line(&self, line: usize) {
-        let (start, row) = {
+        let start = {
             let mut document = self.document.borrow_mut();
             document.unfold_line(line);
-            let row = self.rows.borrow().row_of_line(&document, line);
-            (document.line(line).start, row)
+            document.line(line).start
+        };
+        self.refresh_rows();
+        let row = {
+            let document = self.document.borrow();
+            self.rows.borrow().row_of_line(&document, line)
         };
         self.list.scroll().jump_to(row as f32 * self.line_height);
         self.apply([Edit::Place(start, false)]);
+    }
+
+    /// Works the rows out again for the text, folds and width as they are
+    /// now, which a change, a fold or an unfold since the last drawing has
+    /// left behind.
+    fn refresh_rows(&self) {
+        let document = self.document.borrow();
+        let room = self.width.get() - self.gutter.get();
+        self.rows
+            .borrow_mut()
+            .update(&document, wrap_columns(self.code, room, self.cell_width));
     }
 
     /// Scrolls so the line drawn at height `y` of a minimap drawing each
@@ -903,6 +922,7 @@ impl Handle {
 
     /// Scrolls so the line the caret is on is in view.
     fn reveal_caret(&self) {
+        self.refresh_rows();
         let line = {
             let document = self.document.borrow();
             self.rows.borrow().row_of(&document, document.field.caret())
@@ -945,11 +965,83 @@ impl Handle {
         });
     }
 
+    /// Puts the selection on the clipboard, or the lines the carets are on
+    /// when nothing is selected, remembering how it was copied; says whether
+    /// whole lines were copied.
+    fn copy_selection(&self) -> bool {
+        let document = self.document.borrow();
+        let indentation = document.copied_indentation();
+        let (text, whole_lines) = match document.copied_lines() {
+            Some(lines) => (lines, true),
+            None => (document.field.selected_all(), false),
+        };
+        copy(&text);
+        remember_copy(Copied {
+            text,
+            whole_lines,
+            indentation,
+        });
+        whole_lines
+    }
+
+    /// The edit that pastes `text` into `document`: above the caret's line
+    /// when an editor copied it as whole lines, moved to the indentation of
+    /// the place it goes when an editor copied it from indented lines and
+    /// the settings indent automatically, and as it is otherwise.
+    fn paste_edit(&self, document: &Document, text: String) -> Edit {
+        let placed = copied_as(&text).and_then(|copied| {
+            if copied.whole_lines {
+                document.paste_lines_edit(&text)
+            } else if self.code.auto_indent {
+                document.paste_reindented_edit(&text, &copied.indentation)
+            } else {
+                None
+            }
+        });
+        placed.unwrap_or(Edit::Paste(text))
+    }
+
+    /// The edits that move the caret a page down, or up when not `down`,
+    /// extending the selection when `extend`: by the rows drawn when long
+    /// lines wrap, keeping the caret's column within its row, and by lines
+    /// otherwise.
+    fn page_edits(&self, down: bool, extend: bool) -> Vec<Edit> {
+        self.refresh_rows();
+        let page = self.rows().max(1);
+        let rows = self.rows.borrow();
+        if !rows.wraps() {
+            let motion = if down {
+                Motion::LineDown
+            } else {
+                Motion::LineUp
+            };
+            return vec![Edit::Move(motion, extend); page];
+        }
+        let document = self.document.borrow();
+        let text = document.field.text();
+        let caret = document.field.caret();
+        let row = rows.row_of(&document, caret);
+        let (line, segment) = rows.at(&document, row);
+        let row_start = document.line(line).start + segment.start;
+        let column = text[row_start..caret.max(row_start)].chars().count();
+        let target = if down {
+            row + page
+        } else {
+            row.saturating_sub(page)
+        };
+        let last = rows.len(&document).saturating_sub(1);
+        let (line, segment) = rows.at(&document, target.min(last));
+        let line_start = document.line(line).start;
+        let held = &text[line_start + segment.start..line_start + segment.end];
+        let within = held
+            .char_indices()
+            .nth(column)
+            .map_or(held.len(), |(at, _)| at);
+        vec![Edit::Place(line_start + segment.start + within, extend)]
+    }
+
     /// Carries out `command`; returns whether it was taken.
     fn run(&self, command: Command) -> bool {
-        if let Some(taken) = self.run_beyond_text(&command) {
-            return taken;
-        }
         let edits: Vec<Edit> = {
             let document = self.document.borrow();
             match command {
@@ -991,32 +1083,88 @@ impl Handle {
                 Command::Move(motion, extend) => vec![Edit::Move(motion, extend)],
                 Command::Home(extend) => vec![document.home_edit(extend)],
                 Command::Page(down, extend) => {
-                    let motion = if down {
-                        Motion::LineDown
-                    } else {
-                        Motion::LineUp
-                    };
-                    vec![Edit::Move(motion, extend); self.rows().max(1)]
+                    drop(document);
+                    let edits = self.page_edits(down, extend);
+                    self.apply(edits);
+                    return true;
                 }
                 Command::SelectAll => vec![Edit::SelectAll],
                 Command::SelectLine => vec![document.select_line_edit()],
                 Command::Undo => vec![Edit::Undo],
                 Command::Redo => vec![Edit::Redo],
                 Command::Copy => {
-                    copy(&document.field.selected_all());
+                    drop(document);
+                    self.copy_selection();
                     return true;
                 }
                 Command::Cut => {
-                    if document.field.selection().is_none() {
-                        return true;
+                    drop(document);
+                    let whole_lines = self.copy_selection();
+                    let document = self.document.borrow();
+                    if whole_lines {
+                        document.delete_lines_edit().into_iter().collect()
+                    } else {
+                        vec![Edit::Backspace]
                     }
-                    copy(&document.field.selected_all());
-                    vec![Edit::Backspace]
                 }
                 Command::Paste => match rustle::clipboard().and_then(|board| board.text()) {
-                    Some(text) => vec![Edit::Paste(text)],
+                    Some(text) => vec![self.paste_edit(&document, text)],
                     None => return true,
                 },
+                Command::CopyWithoutIndentation => {
+                    if let Some(text) = document.copied_without_indentation() {
+                        copy(&text);
+                    }
+                    return true;
+                }
+                Command::Case(case) => document.case_edits(case),
+                Command::OrderLines(order) => document.order_lines_edits(order),
+                Command::Transpose => document.transpose_edit().into_iter().collect(),
+                Command::TrimTrailing => document.tidy_edit(true, false).into_iter().collect(),
+                Command::DeleteToLineEnd => vec![Edit::Move(Motion::LineEnd, true), Edit::Delete],
+                Command::DeleteToLineStart => {
+                    vec![Edit::Move(Motion::LineStart, true), Edit::Backspace]
+                }
+                Command::ToggleBlockComment => document
+                    .toggle_block_comment_lines_edit()
+                    .into_iter()
+                    .collect(),
+                Command::SplitIntoLines => document.split_into_lines_edits(),
+                Command::SelectObject(object, inside) => document
+                    .select_object_edit(object, inside)
+                    .into_iter()
+                    .collect(),
+                Command::Column(down, right) => {
+                    drop(document);
+                    let edits = self.document.borrow_mut().column_select_edits(down, right);
+                    self.apply(edits);
+                    return true;
+                }
+                Command::CursorUndo | Command::CursorRedo => {
+                    drop(document);
+                    let moved = {
+                        let mut document = self.document.borrow_mut();
+                        if command == Command::CursorUndo {
+                            document.cursor_undo()
+                        } else {
+                            document.cursor_redo()
+                        }
+                    };
+                    if moved {
+                        self.ask_at_caret();
+                        self.settle(false);
+                    }
+                    return true;
+                }
+                Command::ToggleBreakpoint => {
+                    let line = document.line_of(document.field.caret());
+                    drop(document);
+                    let Some(on_gutter) = &self.on_gutter else {
+                        return false;
+                    };
+                    on_gutter(line + self.first_line);
+                    return true;
+                }
                 Command::Save => {
                     drop(document);
                     self.save();
@@ -1096,54 +1244,6 @@ impl Handle {
         };
         self.apply(edits);
         true
-    }
-
-    /// Carries out `command` when it moves the carets back or forth, copies, sets a breakpoint, locks the text or leaves an action to the window; says it was taken, or nothing for any other command.
-    fn run_beyond_text(&self, command: &Command) -> Option<bool> {
-        match command {
-            Command::CursorHistory(forward) => {
-                let moved = {
-                    let mut document = self.document.borrow_mut();
-                    if *forward {
-                        document.cursor_redo()
-                    } else {
-                        document.cursor_undo()
-                    }
-                };
-                if moved {
-                    self.settle(false);
-                }
-                Some(true)
-            }
-            Command::CopyUnindented => {
-                copy(&unindented(&self.document.borrow().field.selected_all()));
-                Some(true)
-            }
-            Command::ToggleBreakpoint => {
-                let line = {
-                    let document = self.document.borrow();
-                    document.line_of(document.field.caret())
-                };
-                if let Some(on_gutter) = &self.on_gutter {
-                    on_gutter(line + self.first_line);
-                }
-                Some(true)
-            }
-            Command::ToggleReadOnly => {
-                {
-                    let mut document = self.document.borrow_mut();
-                    let locked = document.field.is_read_only();
-                    document.field = document.field.clone().read_only(!locked);
-                }
-                self.redraw();
-                Some(true)
-            }
-            Command::Window(action) => {
-                self.ask(ServerAsk::Act(*action));
-                Some(true)
-            }
-            _ => None,
-        }
     }
 
     /// Carries out `command`, one the language server answers; returns
@@ -1452,6 +1552,31 @@ impl Handle {
         self.popup.set(Some(CodeEditorPopup::Actions));
         self.redraw();
         true
+    }
+
+    /// Starts selecting a rectangle from the byte `from`, placing the caret there.
+    fn start_column_drag(&self, from: usize) {
+        self.column_from.set(Some(from));
+        self.apply([Edit::Place(from, false)]);
+    }
+
+    /// Selects the rectangle from where the drag started to the point `x`,
+    /// `y`; says whether a rectangle is being dragged.
+    fn drag_column(&self, x: f32, y: f32, gutter: f32, cell: f32) -> bool {
+        let Some(from) = self.column_from.get() else {
+            return false;
+        };
+        let to = self.byte_at(x, y, gutter, cell);
+        let edits = self.document.borrow().column_drag_edits(from, to);
+        self.apply(edits);
+        true
+    }
+
+    /// Places the caret at the byte `offset` and asks the language server
+    /// where the name there is defined, as a press with Ctrl held does.
+    fn go_to_definition_at(&self, offset: usize) {
+        self.apply([Edit::Place(offset, false)]);
+        self.run(Command::Seek(pm_editor::Seek::Definition));
     }
 
     /// Follows the pointer dragging selected text over the point `x`, `y`;
@@ -1858,6 +1983,9 @@ fn text_area(
     let pointer = {
         let handle = handle.clone();
         move |event: &rustle::PointerEvent| {
+            if handle.menu.get().is_some() {
+                return;
+            }
             let (x, y) = (
                 handle.past_across(event.position.x, gutter),
                 event.position.y,
@@ -1866,6 +1994,16 @@ fn text_area(
                 PointerPhase::Press if x < gutter && handle.press_bulb(x, y, cell.0) => {}
                 PointerPhase::Press if x < gutter && handle.press_gutter(y) => {}
                 PointerPhase::Press if handle.press_extra(x, y, gutter, cell) => {}
+                PointerPhase::Press if event.modifiers.alt && event.modifiers.shift => {
+                    handle.focus_text();
+                    handle.start_column_drag(handle.byte_at(x, y, gutter, cell.0));
+                }
+                PointerPhase::Press
+                    if (event.modifiers.ctrl || event.modifiers.meta) && handle.served() =>
+                {
+                    handle.focus_text();
+                    handle.go_to_definition_at(handle.byte_at(x, y, gutter, cell.0));
+                }
                 PointerPhase::Press if event.modifiers.alt => {
                     handle.focus_text();
                     let byte = handle.byte_at(x, y, gutter, cell.0);
@@ -1882,11 +2020,33 @@ fn text_area(
                         event.modifiers.shift,
                     );
                 }
+                PointerPhase::Drag if handle.drag_column(x, y, gutter, cell.0) => {}
                 PointerPhase::Drag if handle.drag_text_over(x, y, gutter, cell.0) => {}
                 PointerPhase::Drag => handle.press_at(x, y, gutter, cell.0, 1, true),
+                PointerPhase::Release if handle.column_from.take().is_some() => {}
                 PointerPhase::Release => {
                     handle.drop_text(event.modifiers.ctrl || event.modifiers.alt);
                 }
+                _ => {}
+            }
+        }
+    };
+    let middle = {
+        let handle = handle.clone();
+        move |event: &rustle::PointerEvent| {
+            let (x, y) = (
+                handle.past_across(event.position.x, gutter),
+                event.position.y,
+            );
+            match event.phase {
+                PointerPhase::Press if x >= gutter => {
+                    handle.focus_text();
+                    handle.start_column_drag(handle.byte_at(x, y, gutter, cell.0));
+                }
+                PointerPhase::Drag => {
+                    handle.drag_column(x, y, gutter, cell.0);
+                }
+                PointerPhase::Release => handle.column_from.set(None),
                 _ => {}
             }
         }
@@ -1980,6 +2140,7 @@ fn text_area(
                 .pointer_input(wheel.clone())
                 .on_context_menu(context.clone())
                 .on_pointer_button(PointerButton::Primary, pointer.clone())
+                .on_pointer_button(PointerButton::Middle, middle.clone())
                 .on_pointer_move(hover.clone())
                 .cursor(CursorIcon::Text),
             move || {
@@ -2051,7 +2212,8 @@ fn text_area(
 }
 
 /// Emits the editor's own menu at `at` of the text area: the clipboard,
-/// what the language server answers, comments, formatting and folding.
+/// what the language server answers, comments, case and line order,
+/// formatting and folding.
 fn editor_menu(handle: &Handle, at: (f32, f32)) {
     let close = handle.clone();
     let served = handle.served();
@@ -2106,19 +2268,13 @@ fn editor_menu(handle: &Handle, at: (f32, f32)) {
         menu = menu.separator();
     }
     if !read_only {
-        menu = if selected {
-            menu.icon_item(phosphor::SCISSORS, "Cut", pick(Command::Cut))
-                .hint("Ctrl+X")
-        } else {
-            menu.disabled_item(phosphor::SCISSORS, "Cut")
-        };
+        menu = menu
+            .icon_item(phosphor::SCISSORS, "Cut", pick(Command::Cut))
+            .hint("Ctrl+X");
     }
-    menu = if selected {
-        menu.icon_item(phosphor::COPY, "Copy", pick(Command::Copy))
-            .hint("Ctrl+C")
-    } else {
-        menu.disabled_item(phosphor::COPY, "Copy")
-    };
+    menu = menu
+        .icon_item(phosphor::COPY, "Copy", pick(Command::Copy))
+        .hint("Ctrl+C");
     if !read_only {
         menu = menu
             .icon_item(phosphor::CLIPBOARD_TEXT, "Paste", pick(Command::Paste))
@@ -2146,6 +2302,36 @@ fn editor_menu(handle: &Handle, at: (f32, f32)) {
                 pick(Command::ToggleComment),
             )
             .hint("Ctrl+/");
+        if selected {
+            menu = menu
+                .icon_item(
+                    phosphor::TEXT_T,
+                    "Transform to uppercase",
+                    pick(Command::Case(pm_editor::Case::Upper)),
+                )
+                .icon_item(
+                    phosphor::TEXT_T,
+                    "Transform to lowercase",
+                    pick(Command::Case(pm_editor::Case::Lower)),
+                )
+                .icon_item(
+                    phosphor::SORT_ASCENDING,
+                    "Sort lines ascending",
+                    pick(Command::OrderLines(pm_editor::LineOrder::Ascending)),
+                )
+                .icon_item(
+                    phosphor::SORT_DESCENDING,
+                    "Sort lines descending",
+                    pick(Command::OrderLines(pm_editor::LineOrder::Descending)),
+                );
+        }
+    }
+    if selected {
+        menu = menu.icon_item(
+            phosphor::TEXT_INDENT,
+            "Copy without indentation",
+            pick(Command::CopyWithoutIndentation),
+        );
     }
     menu = menu
         .icon_item(phosphor::CARET_UP, "Fold", pick(Command::Fold))
@@ -2904,30 +3090,6 @@ fn configure_vim(engine: &mut Vim, bindings: &[String], sharing: pm_editor::VimC
         }
     }
     engine.share_clipboard(sharing.into());
-}
-
-/// `text` with the indentation its lines share taken off every line, blank lines left out of the reckoning.
-fn unindented(text: &str) -> String {
-    let shared = text
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| line.len() - line.trim_start().len())
-        .min()
-        .unwrap_or(0);
-    text.split_inclusive('\n')
-        .map(|line| {
-            let cut = line
-                .char_indices()
-                .take_while(|(at, character)| {
-                    *at < shared && character.is_whitespace() && *character != '\n'
-                })
-                .count();
-            &line[line
-                .char_indices()
-                .nth(cut)
-                .map_or(line.len(), |(at, _)| at)..]
-        })
-        .collect()
 }
 
 #[cfg(test)]

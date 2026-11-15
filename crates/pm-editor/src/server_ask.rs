@@ -43,8 +43,6 @@ pub enum ServerAsk {
     FormatOnType(i32, Position, String),
     /// Says the caret moved to this line, counted from 0, so git can be asked who last changed it.
     CaretLine(usize),
-    /// Asks the window to do the keymap's action for the file at the caret, one only the window can do, such as copying a link to the caret's line or going back to where the caret was before a jump.
-    Act(crate::keymap::Action),
 }
 
 /// The kind of change that sorts the imports of a file.

@@ -66,6 +66,11 @@ fn root(link: &Rc<RefCell<Link>>, frame: crate::frame_memory::Frame) {
             for title in link.take_finished() {
                 agent_finished(&link.settings().window.agents, &title);
             }
+            if let Some(text) = link.take_copied()
+                && let Some(clipboard) = rustle::clipboard()
+            {
+                clipboard.set_text(&text);
+            }
             if let Some(staged) = link.take_staged() {
                 install_update(staged);
             }

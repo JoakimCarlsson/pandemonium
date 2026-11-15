@@ -4,6 +4,7 @@
 //! question, and the file whose diff the Diff tab shows; with the actions
 //! the panel asks for.
 
+use crate::change_tree::ChangeFolder;
 use crate::review::{ConflictSide, ConflictView, LineNote, Revision};
 
 /// The git state of a worktree, as the right panel shows it.
@@ -377,6 +378,8 @@ pub enum GitAction {
     },
     /// Goes back from a commit's or a branch's files to the uncommitted ones.
     CloseRevision,
+    /// Puts back what the revision shown offers to: undoes its turn, or restores its version of the file.
+    RestoreRevision,
     /// Asks for the diffs of the files listed without them.
     LoadDiffs(Vec<String>),
     /// Settles the conflict at the place among the open file's conflicts with a side.
@@ -433,7 +436,7 @@ impl GitSummary {
         }
         if !self.changes.is_empty() {
             return Primary::Commit {
-                ready: !self.message.trim().is_empty(),
+                ready: self.can_commit(),
             };
         }
         if self.upstream.is_some() && (self.ahead > 0 || self.behind > 0) {
@@ -448,6 +451,23 @@ impl GitSummary {
         Primary::Commit { ready: false }
     }
 
+    /// Whether a commit can be made now: nothing is busy or conflicted, and
+    /// either a merge, rebase or cherry-pick waits to go on, or there is a
+    /// message and something tracked to commit.
+    pub fn can_commit(&self) -> bool {
+        if self.busy.is_some() || self.changes.iter().any(|change| change.conflicted) {
+            return false;
+        }
+        if self.operation.is_some() {
+            return true;
+        }
+        !self.message.trim().is_empty()
+            && self
+                .changes
+                .iter()
+                .any(|change| change.staged || change.partly || !change.untracked)
+    }
+
     /// The changed files in `group`, in the order the server listed them.
     pub fn group(&self, group: ChangeGroup) -> Vec<&ChangedFile> {
         self.changes
@@ -458,11 +478,12 @@ impl GitSummary {
             .collect()
     }
 
-    /// The changes in the order the list shows them.
+    /// The changes in the order the list shows them: group by group, each
+    /// group's files in the order of its folder tree.
     pub fn listed(&self) -> Vec<&ChangedFile> {
         ChangeGroup::ALL
             .iter()
-            .flat_map(|group| self.group(*group))
+            .flat_map(|group| ChangeFolder::of(&self.group(*group)).all_files())
             .collect()
     }
 
@@ -718,6 +739,25 @@ mod tests {
         assert_eq!(git.primary(), Primary::Commit { ready: true });
         git.changes[0].conflicted = true;
         assert_eq!(git.primary(), Primary::Commit { ready: false });
+    }
+
+    /// Only untracked files with nothing staged leave nothing for a commit to take.
+    #[test]
+    fn untracked_files_alone_cannot_be_committed() {
+        let mut git = GitSummary {
+            message: "Add".to_owned(),
+            changes: vec![ChangedFile {
+                path: "new.rs".to_owned(),
+                untracked: true,
+                ..ChangedFile::default()
+            }],
+            ..GitSummary::default()
+        };
+        assert!(!git.can_commit());
+        git.changes[0].staged = true;
+        assert!(git.can_commit());
+        git.message.clear();
+        assert!(!git.can_commit());
     }
 
     /// The main button pushes once everything is committed and the branch is ahead.

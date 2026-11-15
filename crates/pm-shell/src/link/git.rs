@@ -63,12 +63,6 @@ impl Link {
             graph_open: true,
             ..GitSummary::default()
         };
-        let directories = if folder.is_empty() {
-            Vec::new()
-        } else {
-            vec![folder]
-        };
-        self.ask(Request::WatchFolders { directories }, Ask::Nothing);
         self.git_refresh();
     }
 
@@ -421,6 +415,7 @@ impl Link {
             | GitAction::SendNotes
             | GitAction::ShowRevision { .. }
             | GitAction::CloseRevision
+            | GitAction::RestoreRevision
             | GitAction::LoadDiffs(_)
             | GitAction::TakeConflict(..)
             | GitAction::TakeAllConflicts(_)

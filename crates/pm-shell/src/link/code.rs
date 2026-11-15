@@ -2,7 +2,7 @@
 //! its tab, fetching the grammar its language is highlighted with, saving
 //! it, and the tab strip's actions.
 
-use pm_editor::ServerAsk;
+use pm_editor::{FIX_ALL, ORGANIZE_IMPORTS, ServerAsk};
 use pm_protocol::{Request, Response};
 
 use super::{Ask, Link, expand_home};
@@ -28,8 +28,12 @@ pub(super) enum CodeAsk {
     Reload(String, String),
     /// Who last changed this line, counted from 0, of the file at this path in this folder.
     Blame(String, String, usize),
-    /// The address of a line of a file on its git host, opened when the flag is set and copied otherwise.
+    /// The web address of a line of an open file on its repository's host, to open in the browser when set and to copy otherwise.
     Permalink(bool),
+    /// The commits that changed the file at this path in this folder.
+    Commits(String, String),
+    /// What a commit, called by this label, held of the open file at this path in this folder, to compare it with.
+    Committed(String, String, String),
 }
 
 impl Link {
@@ -43,48 +47,7 @@ impl Link {
     /// Opens the file at `path` as [`Link::open_file`] does, with the caret
     /// on `line`, counted from 1.
     pub fn open_location(&mut self, path: String, line: usize) {
-        if let Some(here) = self.caret_place() {
-            self.jumped_from.push(here);
-            self.jumped_back.clear();
-        }
-        self.open_place(path, line);
-    }
-
-    /// Where the caret of the file showing is, as its path and line counted from 1, when a file shows.
-    fn caret_place(&self) -> Option<(String, usize)> {
-        let SessionTab::File(index) = self.workspace.open_files.tab else {
-            return None;
-        };
-        let file = self.workspace.open_files.files.get(index)?;
-        let document = file.document.0.borrow();
-        Some((
-            file.path.clone(),
-            document.line_of(document.field.caret()) + 1,
-        ))
-    }
-
-    /// Goes back to where the caret was before it last jumped, or forward again to where it went back from when `forward`.
-    pub(super) fn walk_jumps(&mut self, forward: bool) {
-        let target = if forward {
-            self.jumped_back.pop()
-        } else {
-            self.jumped_from.pop()
-        };
-        let Some((path, line)) = target else {
-            return;
-        };
-        if let Some(here) = self.caret_place() {
-            if forward {
-                self.jumped_from.push(here);
-            } else {
-                self.jumped_back.push(here);
-            }
-        }
-        self.open_place(path, line);
-    }
-
-    /// Opens the file at `path` with the caret on `line`, counted from 1, without noting where the caret jumped from.
-    fn open_place(&mut self, path: String, line: usize) {
+        self.workspace.open_files.leave();
         self.open_file(path);
         if let SessionTab::File(index) = self.workspace.open_files.tab
             && let Some(file) = self.workspace.open_files.files.get_mut(index)
@@ -106,6 +69,29 @@ impl Link {
         if files.open(&directory, &relative, keep).is_some() {
             self.read_file(directory, relative);
         }
+    }
+
+    /// Makes the open files those of the session `id`, keeping those open now for the session they belong to, telling the language servers of the files that close, and reading the files kept for `id` again.
+    pub(super) fn swap_open_files(&mut self, id: u64) {
+        let synced: Vec<(String, String)> = self
+            .workspace
+            .open_files
+            .files
+            .iter()
+            .filter(|file| file.document.0.try_borrow().is_ok_and(|held| held.synced))
+            .map(|file| (file.directory.clone(), file.path.clone()))
+            .collect();
+        let Some(incoming) = self.workspace.open_files.swap_to(id) else {
+            return;
+        };
+        self.close_for_server(synced);
+        self.workspace.open_files.vim = self.settings.editor.vim_mode;
+        for saved in incoming {
+            if self.workspace.open_files.reopen(&saved).is_some() {
+                self.read_file(saved.directory, saved.path);
+            }
+        }
+        self.workspace.open_files.tab = SessionTab::Chat;
     }
 
     /// Carries out `action` the tab strip or its menu asked for.
@@ -224,53 +210,59 @@ impl Link {
             return;
         }
         self.tidy_before_save(index);
-        let Some(file) = self.workspace.open_files.files.get(index) else {
-            return;
-        };
-        let (synced, language) = {
-            let document = file.document.0.borrow();
-            (
-                document.synced,
-                document.language.clone().unwrap_or_default(),
-            )
-        };
-        let editor = &self.settings.editor;
-        let preferences = self.settings.machine.language(&language);
-        let mut kinds = Vec::new();
-        if preferences
-            .organize_imports_on_save
-            .unwrap_or(editor.organize_imports_on_save)
-        {
-            kinds.push(pm_editor::ORGANIZE_IMPORTS.to_owned());
-        }
-        if preferences
-            .fix_all_on_save
-            .unwrap_or(editor.fix_all_on_save)
-        {
-            kinds.push(pm_editor::FIX_ALL.to_owned());
-        }
-        if synced && !kinds.is_empty() {
-            self.save_action(index, kinds);
-            return;
-        }
-        self.format_then_write(index);
+        let kinds = self.save_kinds(index);
+        self.save_with_actions(index, kinds);
     }
 
-    /// Takes the first change of the first kind of `kinds` the language server offers for the whole open file at `index`, then the next kind, and formats and writes the file once none are left.
-    pub(super) fn save_action(&mut self, index: usize, mut kinds: Vec<String>) {
+    /// The kinds of code actions the settings ask to take on the open file at `index` before it is saved: organizing its imports and applying its safe fixes, as its language's settings say, then as the editor's do.
+    fn save_kinds(&self, index: usize) -> Vec<String> {
+        let Some(file) = self.workspace.open_files.files.get(index) else {
+            return Vec::new();
+        };
+        let preferences = self.save_preferences(file);
+        let editor = &self.settings.editor;
+        let organizes = preferences
+            .organize_imports_on_save
+            .unwrap_or(editor.organize_imports_on_save);
+        let fixes = preferences
+            .fix_all_on_save
+            .unwrap_or(editor.fix_all_on_save);
+        [(organizes, ORGANIZE_IMPORTS), (fixes, FIX_ALL)]
+            .into_iter()
+            .filter(|(wanted, _)| *wanted)
+            .map(|(_, kind)| kind.to_owned())
+            .collect()
+    }
+
+    /// How the language `file` is written in is handled, as the machine's settings say.
+    fn save_preferences(
+        &self,
+        file: &crate::open_files::OpenFile,
+    ) -> pm_protocol::LanguagePreferences {
+        file.document
+            .0
+            .borrow()
+            .language
+            .as_deref()
+            .map(|id| self.settings.machine.language(id))
+            .unwrap_or_default()
+    }
+
+    /// Asks the language server of the open file at `index` for the code actions of the first of `kinds` for the whole file, to take before it is saved, and of the rest after; once none is left, or the file has no language server, formats and writes it.
+    pub(super) fn save_with_actions(&mut self, index: usize, mut kinds: Vec<String>) {
         let Some(file) = self.workspace.open_files.files.get(index) else {
             return;
         };
-        if kinds.is_empty() {
+        let document = file.document.0.borrow();
+        if !document.synced || kinds.is_empty() {
+            drop(document);
             self.format_then_write(index);
             return;
         }
         let kind = kinds.remove(0);
+        let (version, span) = (document.version, document.whole_span());
+        drop(document);
         let (directory, path) = (file.directory.clone(), file.path.clone());
-        let (version, span) = {
-            let document = file.document.0.borrow();
-            (document.version, document.whole_span())
-        };
         self.ask(
             Request::CodeActions {
                 directory: directory.clone(),
@@ -279,29 +271,21 @@ impl Link {
                 span,
                 only: Some(vec![kind]),
             },
-            Ask::Server(super::lsp::ServerFor::SaveAction(directory, path, kinds)),
+            Ask::Server(super::lsp::ServerFor::SaveActions(directory, path, kinds)),
         );
     }
 
-    /// Formats the open file at `index` when the settings, or those of its language, say saving formats, then writes it.
-    pub(super) fn format_then_write(&mut self, index: usize) {
+    /// Asks the language server of the open file at `index` to format it, when the settings ask for that on save, and writes it afterwards; writes it at once otherwise.
+    fn format_then_write(&mut self, index: usize) {
         let Some(file) = self.workspace.open_files.files.get(index) else {
             return;
         };
-        let (synced, language) = {
-            let document = file.document.0.borrow();
-            (
-                document.synced,
-                document.language.clone().unwrap_or_default(),
-            )
-        };
-        let format = self
-            .settings
-            .machine
-            .language(&language)
+        let synced = file.document.0.borrow().synced;
+        let formats = self
+            .save_preferences(file)
             .format_on_save
             .unwrap_or(self.settings.editor.format_on_save);
-        if format && synced {
+        if formats && synced {
             let (directory, path) = (file.directory.clone(), file.path.clone());
             let version = file.document.0.borrow().version;
             self.ask(
@@ -384,8 +368,20 @@ impl Link {
         self.ask(request, Ask::Code(ask));
     }
 
+    /// Takes the text waiting to be put on the clipboard, such as a permalink the server answered with.
+    pub fn take_copied(&mut self) -> Option<String> {
+        self.workspace.open_files.copied.take()
+    }
+
     /// Handles the `response` to a request about the open files made for `ask`.
     pub(super) fn answer_code(&mut self, ask: CodeAsk, response: Response) {
+        let ask = match ask {
+            CodeAsk::Permalink(..) | CodeAsk::Commits(..) | CodeAsk::Committed(..) => {
+                self.answer_file_key(ask, response);
+                return;
+            }
+            ask => ask,
+        };
         let files = &mut self.workspace.open_files;
         match (ask, response) {
             (
@@ -547,54 +543,4 @@ fn blame_line(blame: &pm_git::Blame) -> Option<String> {
     let then = u64::try_from(blame.when).unwrap_or_default() * 1000;
     let ago = super::age(super::now_ms().saturating_sub(then));
     Some(format!("{}, {ago} • {}", blame.author, blame.summary))
-}
-
-impl Link {
-    /// Does the keymap's `action`, which the editor of the open file at `index` left to the window: goes back or forward through the places the caret jumped from, copies or opens the address of the caret's lines on the git host, lists the file's history or opens a shell in its folder.
-    pub(super) fn editor_action(&mut self, index: usize, action: pm_editor::Action) {
-        let Some(file) = self.workspace.open_files.files.get(index) else {
-            return;
-        };
-        let (directory, path) = (file.directory.clone(), file.path.clone());
-        let lines = {
-            let document = file.document.0.borrow();
-            let range = document
-                .field
-                .selection()
-                .unwrap_or(document.field.caret()..document.field.caret());
-            (
-                document.line_of(range.start) + 1,
-                document.line_of(range.end) + 1,
-            )
-        };
-        match action {
-            pm_editor::Action::GoBack => self.walk_jumps(false),
-            pm_editor::Action::GoForward => self.walk_jumps(true),
-            pm_editor::Action::CopyPermalink | pm_editor::Action::OpenPermalink => self.ask(
-                Request::Permalink {
-                    directory,
-                    path,
-                    line: Some(lines.0),
-                    end_line: (lines.1 > lines.0).then_some(lines.1),
-                },
-                Ask::Code(CodeAsk::Permalink(
-                    action == pm_editor::Action::OpenPermalink,
-                )),
-            ),
-            pm_editor::Action::FileHistory => {
-                self.workspace.open_files.tab = SessionTab::File(index);
-                self.open_choices(crate::quick::Choosing::History);
-            }
-            pm_editor::Action::OpenTerminalHere => {
-                let folder = match path.rsplit_once('/') {
-                    Some((parent, _)) => format!("{}/{parent}", directory.trim_end_matches('/')),
-                    None => directory,
-                };
-                self.workspace.dock_open = true;
-                self.workspace.dock_tab = crate::model::DockTab::Terminal;
-                self.change_dock(|dock| dock.new_shell_in(folder));
-            }
-            _ => {}
-        }
-    }
 }

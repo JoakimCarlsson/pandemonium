@@ -7,6 +7,7 @@ use pm_protocol::{Request, Response};
 use super::browse::char_column;
 use super::{Ask, Link};
 use crate::conversation::{Block, Speaker};
+use crate::git::GitAction;
 use crate::model::RightTab;
 use crate::page::Page;
 use crate::quick::{
@@ -137,7 +138,9 @@ impl Link {
             | Choosing::References
             | Choosing::Actions
             | Choosing::History
-            | Choosing::Toolchain => Vec::new(),
+            | Choosing::Toolchain
+            | Choosing::Related(_)
+            | Choosing::Commits => Vec::new(),
             Choosing::Task => self
                 .workspace
                 .tasks
@@ -162,6 +165,16 @@ impl Link {
                 })
                 .collect(),
             Choosing::Problems => self.problem_choices(),
+            Choosing::StashApply | Choosing::StashPop | Choosing::StashDrop => self
+                .workspace
+                .git
+                .stashes
+                .iter()
+                .enumerate()
+                .map(|(place, (index, message))| {
+                    choice(place, format!("stash@{{{index}}}"), message.clone(), false)
+                })
+                .collect(),
             Choosing::Theme => {
                 let mut rows: Vec<QuickItem> = setting_choices(Setting::ThemeMode);
                 let modes = rows.len();
@@ -194,7 +207,9 @@ impl Link {
                 .iter()
                 .filter(|message| message.speaker == Speaker::User)
                 .enumerate()
-                .map(|(turn, message)| {
+                .filter(|(_, message)| choosing != Choosing::Restore || message.checkpoint)
+                .map(|(place, message)| {
+                    let turn = message.turn.map_or(place, |turn| turn as usize);
                     let said = message
                         .blocks
                         .iter()
@@ -499,12 +514,19 @@ impl Link {
                 }
                 Some(QuickOutcome::SettingsChanged)
             }
-            Choosing::References | Choosing::Problems => None,
+            Choosing::References | Choosing::Problems | Choosing::Related(_) => None,
+            Choosing::Commits => {
+                self.compare_with_commit(place);
+                None
+            }
             Choosing::Actions => {
                 self.take_action(place);
                 None
             }
-            Choosing::History => None,
+            Choosing::History => {
+                self.open_timeline(place);
+                None
+            }
             Choosing::Task => {
                 self.run_task(place);
                 self.workspace.dock_open = true;
@@ -518,6 +540,16 @@ impl Link {
                 None
             }
             Choosing::Toolchain => None,
+            Choosing::StashApply | Choosing::StashPop | Choosing::StashDrop => {
+                let (index, _) = self.workspace.git.stashes.get(place)?.clone();
+                let task = match choosing {
+                    Choosing::StashApply => "apply",
+                    Choosing::StashPop => "pop",
+                    _ => "drop",
+                };
+                self.git(GitAction::Stash(task.to_owned(), Some(index)));
+                None
+            }
             Choosing::Keymap => {
                 self.change_settings(SettingsChange::Pick(Setting::BaseKeymap, place));
                 Some(QuickOutcome::SettingsChanged)
@@ -556,7 +588,7 @@ impl Link {
                         session,
                         turn: place as u64,
                     },
-                    Ask::Nothing,
+                    self.files_changed_ask(),
                 );
                 None
             }
@@ -573,5 +605,34 @@ impl Link {
                 None
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use pm_editor::Action;
+
+    use super::*;
+
+    /// The stash keys open a chooser of the stashes, each row standing for
+    /// its own stash, and picking one closes it.
+    #[test]
+    fn stash_keys_choose_the_stash() {
+        let mut link = Link::built(None, None, Arc::new(|| {}));
+        link.workspace.git.stashes = vec![(0, "first".to_owned()), (3, "second".to_owned())];
+        assert!(link.run_action(Action::StashDrop).is_some());
+        let quick = link.workspace.quick.as_ref();
+        assert_eq!(
+            quick.and_then(|quick| quick.choosing),
+            Some(Choosing::StashDrop)
+        );
+        let items = quick_items(&link.workspace);
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[1].title, "stash@{3}");
+        assert_eq!(items[1].pick, QuickPick::Choose(Choosing::StashDrop, 1));
+        let _ = link.quick(QuickAction::Pick(Some(1)));
+        assert!(link.workspace.quick.is_none());
     }
 }
