@@ -1,15 +1,19 @@
-//! The dialogs drawn over the window: the offer of a newer release and the code a sign-in waits for.
+//! The dialogs drawn over the window: the offer of a newer release, the code a sign-in waits for, renaming a session, the question before a session's changes not committed are thrown away, and the question before the window closes on working agents.
 
 use rustle::prelude::*;
 
 use pm_components::{
-    Button, ButtonVariant, Dialog, DialogVariant, Label, LabelVariant, Markdown, Size,
+    Button, ButtonVariant, ConfirmDialog, ConfirmDialogVariant, Dialog, DialogVariant, Label,
+    LabelVariant, Markdown, Size,
 };
-use pm_shell::{Block, RUNNING, SessionTab, SignInCode, TabAction, UpdateOffer, Workspace};
+use pm_shell::{
+    Block, RUNNING, Renaming, SessionCommand, SessionTab, SignInCode, TabAction, UpdateOffer,
+    Workspace,
+};
 
-use crate::actions::{Actions, SignInAction, UpdateAction};
+use crate::actions::{Actions, SignInAction, UpdateAction, WindowAction};
 
-/// Emits whichever dialog `workspace` shows, the sign-in code over the update offer.
+/// Emits whichever dialog `workspace` shows, the sign-in code over the update offer, and the questions about a session over both.
 pub fn dialogs(workspace: &Workspace, actions: &Actions) {
     if let Some(offer) = workspace.update.as_ref().filter(|offer| offer.open) {
         update_dialog(offer, actions);
@@ -17,6 +21,67 @@ pub fn dialogs(workspace: &Workspace, actions: &Actions) {
     if let Some(code) = &workspace.sign_in {
         sign_in_dialog(code, actions);
     }
+    if let Some(renaming) = &workspace.renaming {
+        rename_dialog(renaming, actions);
+    }
+    if workspace.closing.is_some() {
+        discard_dialog(actions);
+    }
+    if let Some(working) = workspace.quitting {
+        quit_dialog(working, actions);
+    }
+}
+
+/// Emits the question asked before the window closes while `working` agents work.
+fn quit_dialog(working: usize, actions: &Actions) {
+    let (close, stay) = (actions.window.clone(), actions.window.clone());
+    let agents = if working == 1 {
+        "An agent is".to_owned()
+    } else {
+        format!("{working} agents are")
+    };
+    ConfirmDialog::new(
+        "Close Pandemonium?",
+        format!("{agents} working. They go on on the server, and you can open the window again to follow them."),
+        "Close",
+    )
+    .on_confirm(move || close(WindowAction::ConfirmClose))
+    .on_cancel(move || stay(WindowAction::CancelClose))
+    .show();
+}
+
+/// Emits the dialog giving the session of `renaming` a new title.
+fn rename_dialog(renaming: &Renaming, actions: &Actions) {
+    let (typed, confirm, cancel) = (
+        actions.session.clone(),
+        actions.session.clone(),
+        actions.session.clone(),
+    );
+    ConfirmDialog::new(
+        "Rename session",
+        "The new title shows in the sidebar and the history.",
+        "Rename",
+    )
+    .naming(renaming.title.clone(), "Session title", move |text| {
+        typed(SessionCommand::Retitle(text))
+    })
+    .on_confirm(move || confirm(SessionCommand::ConfirmRename))
+    .on_cancel(move || cancel(SessionCommand::CancelRename))
+    .show();
+}
+
+/// Emits the question asked before a session whose worktree has changes not committed is closed, which throws them away.
+fn discard_dialog(actions: &Actions) {
+    let (discard, keep) = (actions.session.clone(), actions.session.clone());
+    ConfirmDialog::new(
+        "Close this session?",
+        "Its worktree has changes that are not committed. Closing it removes the worktree and throws them away.",
+        "Close and discard",
+    )
+    .variant(ConfirmDialogVariant::Destructive)
+    .on_confirm(move || discard(SessionCommand::Discard))
+    .on_cancel(move || keep(SessionCommand::KeepOpen))
+    .show();
 }
 
 /// Emits the dialog offering the newer release `offer`: its version, its notes and the buttons that install it or put it off.

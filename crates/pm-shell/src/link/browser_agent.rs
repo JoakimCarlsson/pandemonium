@@ -18,6 +18,9 @@ impl Link {
     pub(super) fn browser_agent(&mut self) {
         if let Some(available) = self.web.announcement(&self.settings.window.general) {
             self.ask(Request::BrowserAvailable { available }, Ask::Nothing);
+            for host in self.remotes.hosts() {
+                self.announce_browser(&host);
+            }
         }
         for result in self.web.take_results() {
             let image = result
@@ -36,6 +39,13 @@ impl Link {
             };
             self.browser_answer(result.call, answer, image);
         }
+    }
+
+    /// Tells the server of `host` whether this window can run the tools of its agents.
+    pub(super) fn announce_browser(&mut self, host: &str) {
+        let available = crate::web::Web::ready(&self.settings.window.general)
+            && pm_browser::install::supported();
+        self.ask_remote(host, Request::BrowserAvailable { available }, Ask::Nothing);
     }
 
     /// Tells the server what the call `call` came to.

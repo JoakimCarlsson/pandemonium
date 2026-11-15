@@ -41,6 +41,7 @@ mod settings_nav;
 mod settings_rows;
 mod side_panel;
 mod sidebar;
+mod status_bar;
 mod tasks_panel;
 mod top_bar;
 mod welcome;

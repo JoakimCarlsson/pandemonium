@@ -234,7 +234,7 @@ impl Link {
     }
 
     /// Sends `request`, which changes the panel's folder, saying `busy` meanwhile, and `then` once it is done.
-    fn git_act(&mut self, request: Request, then: Option<Request>) {
+    pub(super) fn git_act(&mut self, request: Request, then: Option<Request>) {
         let folder = self.workspace.git.folder.clone();
         if folder.is_empty() {
             return;
@@ -409,7 +409,7 @@ impl Link {
     }
 
     /// Commits the message, rewriting the last commit when `amend`, then pushes when `push`.
-    fn git_commit(&mut self, amend: bool, push: bool) {
+    pub(super) fn git_commit(&mut self, amend: bool, push: bool) {
         let git = &mut self.workspace.git;
         let message = git.message.trim().to_owned();
         if message.is_empty() && !amend {

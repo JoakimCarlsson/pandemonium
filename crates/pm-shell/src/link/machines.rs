@@ -12,7 +12,7 @@ use pm_protocol::{Request, Response, SessionInfo};
 
 use super::remote::Standing;
 use super::{Ask, Link, age, same_folder};
-use crate::model::{ProjectReach, Session};
+use crate::model::{ProjectReach, Session, SessionStatus};
 use crate::thread::Thread;
 
 impl Link {
@@ -60,12 +60,13 @@ impl Link {
         self.ask_remote(host, request, Ask::Nothing);
     }
 
-    /// Takes in what the servers of other machines did: asks each one that let the window in again for its sessions and hands it the machine settings, and takes the sessions they list; gives back whether anything arrived.
+    /// Takes in what the servers of other machines did: asks each one that let the window in again for its sessions and hands it the machine settings and whether this window runs browser tools, and takes the sessions they list; gives back whether anything arrived.
     pub(super) fn take_remote(&mut self, answers: Vec<(String, Ask, Response)>) -> bool {
         let connected = self.remotes.take_connected();
         let changed = !connected.is_empty() || !answers.is_empty();
         for host in connected {
             self.hand_machine_settings(&host);
+            self.announce_browser(&host);
             if self.remote_hosts().contains(&host) {
                 self.ask_remote(&host, Request::Sessions, Ask::RemoteSessions(host.clone()));
             }
@@ -99,7 +100,7 @@ impl Link {
         }
     }
 
-    /// Takes in `message` the server of `host` sent unasked, with what it numbers given the window's numbers; a session added or closed there has the server asked for its sessions again.
+    /// Takes in `message` the server of `host` sent unasked, with what it numbers given the window's numbers and its folders as addresses on that machine: session events, shell output, debugging news, an agent's browser tool calls, problems, changed folders and served pages. A session added, closed or continued from a chat there has the server asked for its sessions again; the window's own projects, updates, sign-ins and extensions are this machine's, so those of other machines are left out.
     pub(super) fn take_pushed(&mut self, host: &str, message: Incoming) {
         let message = match message {
             Incoming::Event {
@@ -135,12 +136,68 @@ impl Link {
                 );
                 return;
             }
-            _ => return,
+            Incoming::BrowserCall {
+                call,
+                session,
+                tool,
+                arguments,
+            } => Incoming::BrowserCall {
+                call: self.routes.local(host, "call", call),
+                session: self.routes.local(host, "session", session),
+                tool,
+                arguments,
+            },
+            Incoming::Diagnostics {
+                directory,
+                path,
+                version,
+                diagnostics,
+            } => Incoming::Diagnostics {
+                directory: super::routes::address_on(host, &directory),
+                path,
+                version,
+                diagnostics,
+            },
+            Incoming::FolderChanged(directory) => {
+                Incoming::FolderChanged(super::routes::address_on(host, &directory))
+            }
+            Incoming::TerminalServing { terminal, url } => Incoming::TerminalServing {
+                terminal: self.routes.local(host, "terminal", terminal),
+                url,
+            },
+            Incoming::SessionServing { session, url } => Incoming::SessionServing {
+                session: self.routes.local(host, "session", session),
+                url,
+            },
+            Incoming::ChatContinued {
+                chat: _,
+                started,
+                failure,
+            } => {
+                if started.is_some() {
+                    self.ask_remote(
+                        host,
+                        Request::Sessions,
+                        Ask::RemoteSessions(host.to_owned()),
+                    );
+                }
+                if let Some(failure) = failure {
+                    self.workspace.status = Some(failure);
+                }
+                return;
+            }
+            Incoming::ExtensionsChanged(_) => return,
+            Incoming::Connected
+            | Incoming::Disconnected(_)
+            | Incoming::Response { .. }
+            | Incoming::ProjectsChanged(_)
+            | Incoming::UpdateProgress { .. }
+            | Incoming::SignInCode { .. } => return,
         };
         self.handle(message);
     }
 
-    /// Gives each project on another machine how its server stands and the sessions it lists, `now` being the time in milliseconds.
+    /// Gives each project on another machine how its server stands and the sessions it lists, `now` being the time in milliseconds; while its server is not reached its sessions read as out of reach rather than as they last stood.
     pub(super) fn place_remote_projects(&mut self, now: u64) {
         for project in &mut self.workspace.projects {
             let Some((host, folder)) = pm_protocol::host_of(&project.path) else {
@@ -151,6 +208,7 @@ impl Link {
                 Some(Standing::Reached) => ProjectReach::Reached,
                 Some(Standing::Lost(reason)) => ProjectReach::Unreachable(reason),
             });
+            let reached = project.reach == Some(ProjectReach::Reached);
             let folder = format!("/{}", folder.trim_start_matches('/'));
             let mut listed: Vec<&SessionInfo> = self
                 .remote_sessions
@@ -170,10 +228,14 @@ impl Link {
                         id,
                         title: info.title.clone(),
                         age: age(now.saturating_sub(info.updated)),
-                        status: threads
-                            .get(&id)
-                            .map(|thread| thread.status(info.running))
-                            .unwrap_or_default(),
+                        status: if reached {
+                            threads
+                                .get(&id)
+                                .map(|thread| thread.status(info.running))
+                                .unwrap_or_default()
+                        } else {
+                            SessionStatus::OutOfReach
+                        },
                         branch: info.branch.clone().unwrap_or_default(),
                     }
                 })

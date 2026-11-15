@@ -7,6 +7,7 @@ use rustle::prelude::*;
 use crate::label::{Label, LabelVariant};
 use crate::size::Size;
 use rustle::color_scheme;
+use rustle::{Key, Modifiers};
 
 /// How a dialog is drawn.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -53,7 +54,7 @@ impl Dialog {
         self
     }
 
-    /// Calls `on_dismiss` when the reader presses beside a modal dialog's panel.
+    /// Calls `on_dismiss` when the reader presses beside a modal dialog's panel or presses Escape in it.
     pub fn on_dismiss(mut self, on_dismiss: impl Fn() + 'static) -> Self {
         self.on_dismiss = Some(Rc::new(on_dismiss));
         self
@@ -79,6 +80,7 @@ impl Dialog {
             DialogVariant::Blocking => None,
         };
         let title = self.title;
+        let escape = dismiss.clone();
         stack_aligned(
             Modifier::new()
                 .fill_max_size()
@@ -87,6 +89,13 @@ impl Dialog {
                     if let Some(dismiss) = &dismiss {
                         dismiss();
                     }
+                })
+                .on_key_event(move |event| match &escape {
+                    Some(escape) if event.is(Key::Escape, Modifiers::NONE) => {
+                        escape();
+                        true
+                    }
+                    _ => false,
                 }),
             BoxAlignment::Center,
             move || {

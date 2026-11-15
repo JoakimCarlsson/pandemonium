@@ -8,6 +8,7 @@ use rustle::prelude::*;
 use rustle::{Key, KeyEvent, PointerButton, PointerEvent, PointerPhase};
 
 use crate::browser_keys::{BrowserShortcut, browser_shortcut, held, page_key};
+use crate::key_bindings::{Bound, KeyBindings, key_bindings};
 use crate::label::{Label, LabelVariant};
 use crate::size::Size;
 use rustle::color_scheme;
@@ -243,7 +244,10 @@ impl BrowserView {
                 });
                 true
             })
-            .focusable(&focus, move |event| key_event(&keys, event))
+            .focusable(&focus, {
+                let bindings = key_bindings();
+                move |event| key_event(&keys, &bindings, event)
+            })
             .cursor(cursor_icon(self.cursor));
         let placeholder = self.placeholder;
         let size = self.size;
@@ -313,12 +317,18 @@ fn button_event(
     }
 }
 
-/// Hands `event` to the browser's own keys first, then to the page; returns whether either took it.
-fn key_event(callbacks: &Callbacks, event: &KeyEvent) -> bool {
+/// Hands `event` to the browser's own keys first, then to the keymap in `bindings`, which takes the chords bound to what the window does everywhere, then to the page; returns whether any took it.
+fn key_event(callbacks: &Callbacks, bindings: &KeyBindings, event: &KeyEvent) -> bool {
     if let Some(shortcut) = browser_shortcut(event) {
         if let Some(on_shortcut) = &callbacks.on_shortcut {
             on_shortcut(shortcut);
         }
+        return true;
+    }
+    let modifiers = event.modifiers;
+    if (modifiers.ctrl || modifiers.alt || modifiers.meta)
+        && bindings.press(event, |_| false) == Bound::Taken
+    {
         return true;
     }
     if event.key == Key::Other {

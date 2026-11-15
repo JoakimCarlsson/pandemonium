@@ -1,10 +1,11 @@
 //! The whole window: the top bar over the sidebar, the session view or the
 //! welcome page or another page in the middle, the right panel and the dock,
-//! with the quick input, the modals and the dialogs over them.
+//! the status bar under them, with the quick input, the modals and the
+//! dialogs over them.
 
 use rustle::prelude::*;
 
-use rustle::KeyEvent;
+use rustle::{Key, KeyEvent, Modifiers};
 
 use pm_components::{
     AppTheme, Button, ButtonVariant, KeyRecorder, Modal, Sash, SashVariant, Size, app_theme,
@@ -21,6 +22,7 @@ use crate::quick_input::quick_input;
 use crate::session::session_view;
 use crate::side_panel::side_panel;
 use crate::sidebar::sidebar;
+use crate::status_bar::status_bar;
 use crate::top_bar::top_bar;
 use crate::welcome::welcome_page;
 
@@ -76,7 +78,7 @@ pub fn workspace_page(workspace: &Workspace, theme: AppTheme, actions: &Actions)
         stack_with(
             Modifier::new()
                 .fill_max_size()
-                .on_preview_key_event(shortcuts(actions)),
+                .on_key_event(shortcuts(actions)),
             || {
                 column_with(
                     Modifier::new()
@@ -103,6 +105,7 @@ pub fn workspace_page(workspace: &Workspace, theme: AppTheme, actions: &Actions)
                                 side_panel(workspace, actions);
                             }
                         });
+                        status_bar(workspace, actions);
                     },
                 );
                 overlays(workspace, actions);
@@ -151,8 +154,16 @@ fn overlays(workspace: &Workspace, actions: &Actions) {
     }
 }
 
-/// The window's keys: each chord pressed anywhere in the window is handed to the keymap the settings make, which takes those bound to actions that work everywhere.
+/// The window's keys: each chord pressed in the window that the control holding the keyboard left alone, or pressed while none does, is handed to the keymap the settings make, which takes those bound to actions that work everywhere; Escape is handed on as `escape`, closing the dialog or menu on top.
 fn shortcuts(actions: &Actions) -> impl Fn(&KeyEvent) -> bool + 'static {
     let shortcut = actions.shortcut.clone();
-    move |event| event.pressed && KeyRecorder::chord(event).is_some_and(|chord| shortcut(chord))
+    move |event| {
+        if !event.pressed {
+            return false;
+        }
+        if event.is(Key::Escape, Modifiers::NONE) {
+            return shortcut("escape".to_owned());
+        }
+        KeyRecorder::chord(event).is_some_and(|chord| shortcut(chord))
+    }
 }

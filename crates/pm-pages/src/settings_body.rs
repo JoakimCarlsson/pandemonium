@@ -350,10 +350,11 @@ fn servers(model: &SettingsModel, actions: &SettingsActions, layout: Layout) {
     server_form(actions, layout);
 }
 
-/// Emits the form adding a server: its name, how it is reached and its address.
+/// Emits the form adding a server: its name, how it is reached, its address, and for a server reached straight or through a tunnel the token it lets the window in with.
 fn server_form(actions: &SettingsActions, layout: Layout) {
     let name = remember(String::new);
     let address = remember(String::new);
+    let token = remember(String::new);
     let reach = remember(|| 0_usize);
     SectionHeader::new("Add a server")
         .variant(SectionHeaderVariant::Group)
@@ -397,8 +398,21 @@ fn server_form(actions: &SettingsActions, layout: Layout) {
                 .modifier(Modifier::new().fill_max_width())
                 .on_change(move |text| keep_address.set(text))
                 .show();
+            let keeps_token = REACHES
+                .get(reach.get())
+                .is_some_and(|(how, _)| how.keeps_token());
+            if keeps_token {
+                let keep_token = token.clone();
+                TextInput::new(token.get())
+                    .placeholder("Token the server lets the window in with")
+                    .code()
+                    .modifier(Modifier::new().fill_max_width())
+                    .on_change(move |text| keep_token.set(text))
+                    .show();
+            }
             let change = actions.change.clone();
-            let (name, address, reach) = (name.clone(), address.clone(), reach.clone());
+            let (name, address, reach, token) =
+                (name.clone(), address.clone(), reach.clone(), token.clone());
             let ready = !name.get().trim().is_empty();
             Button::new("Add Server")
                 .icon(phosphor::PLUS)
@@ -409,9 +423,11 @@ fn server_form(actions: &SettingsActions, layout: Layout) {
                         name.get(),
                         address.get(),
                         reach.get(),
+                        token.get(),
                     ));
                     name.set(String::new());
                     address.set(String::new());
+                    token.set(String::new());
                 })
                 .show();
         },

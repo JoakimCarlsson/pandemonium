@@ -6,9 +6,11 @@
 
 mod composer_requests;
 mod conversation_requests;
+mod sessions;
 
 pub use conversation_requests::ConversationCommand;
 pub use keys::KeyOutcome;
+pub use sessions::SessionCommand;
 
 use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -125,7 +127,11 @@ enum Ask {
     RemoteSessions(String),
     /// Something a form of the settings window sent.
     Form,
-    /// Nothing that needs handling.
+    /// Branching a new session off a turn of the open one, which opens once the server made it.
+    Fork,
+    /// Closing the session the window numbers so, which asks before throwing away changes not committed.
+    Close(u64),
+    /// Nothing that needs handling but a failure, which the status bar shows.
     Nothing,
 }
 
@@ -347,7 +353,7 @@ impl Link {
         &mut self.settings
     }
 
-    /// Readies the settings window as it opens: names the agent and project its customizations are read for, and asks the server for what its pages list.
+    /// Readies the settings window as it opens: names the agent and the project its customizations are read for, the open session's or else the first, on whichever machine it lives, and asks the server for what its pages list.
     pub fn open_settings(&mut self) {
         let agent = self
             .settings
@@ -356,7 +362,15 @@ impl Link {
             .default_agent
             .clone()
             .or_else(|| self.settings.agents.first().map(|agent| agent.id.clone()));
-        self.settings.library_place = agent.zip(self.paths.first().map(|path| expand_home(path)));
+        let open_project = self
+            .workspace
+            .open
+            .as_ref()
+            .filter(|_| !self.workspace.sample)
+            .and_then(|at| self.workspace.projects.get(*at.first()?))
+            .map(|project| project.path.clone());
+        let project = open_project.or_else(|| self.paths.first().cloned());
+        self.settings.library_place = agent.zip(project.map(|path| expand_home(&path)));
         let mut requests = vec![
             Request::McpServers,
             Request::ModelServers,
@@ -382,10 +396,21 @@ impl Link {
         self.change_dock(|_| {});
     }
 
-    /// Sends `request`, remembering what its answer is for.
+    /// Sends `request`, remembering what its answer is for; the agent's tools and what is withheld from it go to the machine of the project the settings window reads customizations for.
     fn send(&mut self, request: Request) {
         let ask = Ask::of(&request);
-        self.ask(request, ask);
+        let library_host = self
+            .settings
+            .library_place
+            .as_ref()
+            .and_then(|(_, directory)| pm_protocol::host_of(directory))
+            .map(|(host, _)| host.to_owned());
+        match (library_host, &request) {
+            (Some(host), Request::ToolSets { .. } | Request::SaveWithheld { .. }) => {
+                self.ask_remote(&host, request, ask)
+            }
+            _ => self.ask(request, ask),
+        }
     }
 
     /// Handles everything the server sent since the last call and returns
@@ -624,13 +649,18 @@ impl Link {
         self.prompt(text, false);
     }
 
-    /// Changes the dock with `change`, sends what it asks of the server and shows how it stands.
+    /// Changes the dock with `change`, sends what it asks of the server, has the connection replay and follow the shells it took up, and shows how it stands.
     fn change_dock(&mut self, change: impl FnOnce(&mut Dock)) {
         self.dock
             .set_scrollback(self.settings.window.terminal.scrollback);
         change(&mut self.dock);
         for (request, ask) in self.dock.take_requests() {
             self.ask(request, Ask::Dock(ask));
+        }
+        for terminal in self.dock.take_watches() {
+            if let Some(client) = &self.client {
+                client.watch_terminal(terminal, 0);
+            }
         }
         self.dock.publish(&mut self.workspace);
     }
@@ -875,6 +905,8 @@ impl Link {
                 self.navigate(Page::Session(session));
             }
             (Ask::Start, Response::Failed { message }) => self.workspace.status = Some(message),
+            (Ask::Fork, response) => self.answer_fork(response),
+            (Ask::Close(session), response) => self.answer_close(session, response),
             (Ask::Submodules(path), Response::Submodules { paths }) => {
                 self.submodules.insert(path, paths);
                 self.rebuild();
@@ -981,6 +1013,7 @@ impl Link {
                     offer.run = UpdateRun::Idle;
                 }
             }
+            (_, Response::Failed { message }) => self.workspace.status = Some(message),
             _ => {}
         }
     }
@@ -1194,6 +1227,7 @@ fn show_thread(workspace: &mut Workspace, thread: &Thread) {
             elements: kept.composer.elements,
             captures: kept.composer.captures,
             menu: kept.composer.menu,
+            asked: kept.composer.asked,
             ..thread.extras.composer.clone()
         },
         ..thread.extras.clone()

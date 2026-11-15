@@ -27,7 +27,7 @@ pub enum Standing {
 pub(super) struct Pumped {
     /// Each answer, with the host it came from and what it was for.
     pub(super) answers: Vec<(String, Ask, Response)>,
-    /// What each server sent unasked, with its host.
+    /// What each server sent unasked, with its host: every message but the answers and the connection's own news.
     pub(super) pushed: Vec<(String, Incoming)>,
     /// Whether anything changed.
     pub(super) changed: bool,
@@ -193,13 +193,7 @@ impl Remotes {
                             answers.push((host.clone(), ask, response));
                         }
                     }
-                    message @ (Incoming::Event { .. }
-                    | Incoming::TerminalOutput { .. }
-                    | Incoming::TerminalExited(_)
-                    | Incoming::SessionAdded(_)
-                    | Incoming::SessionClosed(_)
-                    | Incoming::Debug { .. }) => pushed.push((host.clone(), message)),
-                    _ => {}
+                    message => pushed.push((host.clone(), message)),
                 }
             }
         }

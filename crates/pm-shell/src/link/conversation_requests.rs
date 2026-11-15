@@ -158,7 +158,7 @@ impl Link {
                 self.ask(Request::Rewind { session, turn }, Ask::Nothing)
             }
             ConversationCommand::Fork(turn) => {
-                self.ask(Request::ForkSession { session, turn }, Ask::Nothing)
+                self.ask(Request::ForkSession { session, turn }, Ask::Fork)
             }
         }
     }

@@ -209,6 +209,8 @@ pub struct ComposerState {
     pub captures: Vec<Capture>,
     /// The menu open when the composer is first drawn, for snapshots.
     pub menu: Option<ComposerMenu>,
+    /// How many times the window asked to open [`ComposerState::menu`] or to put the keyboard in the composer, so the composer opens or focuses again each time.
+    pub asked: u64,
 }
 
 impl ComposerState {

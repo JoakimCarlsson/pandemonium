@@ -4,6 +4,7 @@ use std::rc::Rc;
 
 use rustle::prelude::*;
 
+use crate::focus_ring::remember_focus_ring;
 use crate::size::Size;
 use rustle::color_scheme;
 
@@ -34,6 +35,8 @@ pub struct IconButton {
     active: bool,
     /// What a click does.
     on_click: Option<Rc<dyn Fn()>>,
+    /// What the label shown while the pointer rests on it says, when it shows one.
+    tooltip: Option<String>,
 }
 
 impl IconButton {
@@ -46,7 +49,14 @@ impl IconButton {
             tint: None,
             active: false,
             on_click: None,
+            tooltip: None,
         }
+    }
+
+    /// The button showing `tooltip` in a label while the pointer rests on it.
+    pub fn tooltip(mut self, tooltip: impl Into<String>) -> Self {
+        self.tooltip = Some(tooltip.into());
+        self
     }
 
     /// The button in `variant`.
@@ -108,20 +118,41 @@ impl IconButton {
         } else {
             5.0
         };
+        let ring_state = remember_focus_ring();
+        let ring = if ring_state.shown() {
+            scheme.primary
+        } else {
+            Color::TRANSPARENT
+        };
         let mut modifier = Modifier::new()
             .size(side, side)
             .background_rounded(fill, radius)
+            .border(1.5, ring, radius)
             .on_hover({
                 let hovered = hovered.clone();
                 move |inside| hovered.set(inside)
             })
             .cursor(CursorIcon::Pointer);
         if let Some(on_click) = self.on_click {
-            modifier = modifier.clickable(move || on_click());
+            let pressed = on_click.clone();
+            let clicked = ring_state.clone();
+            modifier = ring_state.focusable(
+                modifier.clickable(move || {
+                    clicked.clicked();
+                    on_click()
+                }),
+                move || pressed(),
+            );
         }
         let icon_glyph = self.icon;
-        stack_aligned(modifier, BoxAlignment::Center, move || {
-            icon(icon_glyph, glyph, tint);
-        });
+        let button = move || {
+            stack_aligned(modifier, BoxAlignment::Center, move || {
+                icon(icon_glyph, glyph, tint);
+            });
+        };
+        match &self.tooltip {
+            Some(label) => tooltip(label, button),
+            None => button(),
+        }
     }
 }

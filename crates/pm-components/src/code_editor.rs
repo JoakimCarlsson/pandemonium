@@ -28,7 +28,7 @@ use rustle::{ItemAlign, KeyEvent, PointerButton, PointerPhase};
 use crate::app_theme::{ExtendedColors, extended_colors};
 use crate::code_assist::{Assist, CodeEditorPopup, Grid, assist_layer, colour_of};
 use crate::code_bars::{Bars, CodeEditorBar, FindBar, find_bar, go_to_bar};
-use crate::code_keys::{Command, command, keystroke};
+use crate::code_keys::{Command, Keyed, command, keymapped, keystroke};
 use crate::code_look::CodeLook;
 use crate::code_overview::{Marks, gutter_colour, overview};
 use crate::code_sticky::sticky_lines;
@@ -1358,6 +1358,7 @@ fn text_area(
     let keys = {
         let handle = handle.clone();
         let engine = engine.clone();
+        let bindings = crate::key_bindings::key_bindings();
         move |event: &KeyEvent| {
             if handle.completion_key(event) {
                 return true;
@@ -1368,7 +1369,11 @@ fn text_area(
             if handle.right_to_left_key(event) {
                 return true;
             }
-            command(event).is_some_and(|command| handle.run(command))
+            match keymapped(event, &bindings) {
+                Keyed::Command(command) => handle.run(command),
+                Keyed::Taken => true,
+                Keyed::Nothing => command(event).is_some_and(|command| handle.run(command)),
+            }
         }
     };
     let pointer = {

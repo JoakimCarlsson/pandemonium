@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use pm_protocol::{
     Breakpoint, DebugAction, DebugEvent, DebugFile, DebugView, Request, Response, Standing, Task,
+    TerminalInfo,
 };
 
 use crate::dock_model::{
@@ -38,6 +39,8 @@ pub enum DockAsk {
     DebugWatch,
     /// The debugging sessions the server holds.
     Debugs,
+    /// The shells the server holds, to take up those a window before this one started.
+    Terminals,
     /// Nothing that needs handling.
     Nothing,
 }
@@ -92,6 +95,10 @@ pub struct Dock {
     outbox: Vec<(Request, DockAsk)>,
     /// How many lines each shell keeps above its window.
     scrollback: usize,
+    /// Whether the shells the server held when the window first reached it were taken up.
+    adopted: bool,
+    /// The shells taken up from the server, whose output the connection is to replay and follow, by number.
+    watches: Vec<u64>,
 }
 
 impl Default for Dock {
@@ -118,6 +125,8 @@ impl Default for Dock {
             debug_error: None,
             outbox: Vec::new(),
             scrollback: pm_config::SCROLLBACK,
+            adopted: false,
+            watches: Vec::new(),
         }
     }
 }
@@ -146,12 +155,44 @@ impl Dock {
         }
     }
 
-    /// Notes the server is reached: starts the place's shell, and asks for the debugging sessions running and what the place offers.
+    /// Notes the server is reached: the first time asks for the shells it holds, to take them up before starting the place's shell, and later starts the place's shell when none runs; and asks for the debugging sessions running and what the place offers.
     pub fn connected(&mut self) {
         self.connected = true;
         self.send(Request::Debugs, DockAsk::Debugs);
-        self.ensure_shell();
+        if self.adopted {
+            self.ensure_shell();
+        } else {
+            self.send(Request::Terminals, DockAsk::Terminals);
+        }
         self.ask_place();
+    }
+
+    /// Takes the shells taken up from the server since the last call, whose output the connection is to replay from the start and follow.
+    pub fn take_watches(&mut self) -> Vec<u64> {
+        std::mem::take(&mut self.watches)
+    }
+
+    /// Takes up `terminals`, the shells the server holds that the dock does not know, as tabs of the folders they run in, then starts the place's shell when none of them runs there.
+    fn adopt(&mut self, terminals: Vec<TerminalInfo>) {
+        self.adopted = true;
+        for info in terminals {
+            if self
+                .shells
+                .iter()
+                .any(|shell| shell.id == Some(info.terminal))
+            {
+                continue;
+            }
+            let key = self.next_key;
+            self.next_key += 1;
+            let mut shell = Shell::starting(key, info.directory.clone(), info.columns, info.rows);
+            shell.emulator.set_scrollback(self.scrollback);
+            shell.id = Some(info.terminal);
+            self.shells.push(shell);
+            self.shown.entry(info.directory).or_insert(key);
+            self.watches.push(info.terminal);
+        }
+        self.ensure_shell();
     }
 
     /// Follows `folder`, starting a shell there unless one runs and asking what it offers when it changed.
@@ -647,6 +688,11 @@ impl Dock {
     /// Handles the `response` to a request made for `ask`.
     pub fn answer(&mut self, ask: DockAsk, response: Response) {
         match (ask, response) {
+            (DockAsk::Terminals, Response::Terminals { terminals }) => self.adopt(terminals),
+            (DockAsk::Terminals, _) => {
+                self.adopted = true;
+                self.ensure_shell();
+            }
             (DockAsk::Shell(key), Response::Terminal { terminal }) => {
                 self.shell_started(key, terminal)
             }
@@ -959,6 +1005,39 @@ fn shell_title(shell: &Shell, index: usize) -> String {
 mod tests {
     use super::*;
 
+    /// A window reaching a server that holds shells takes them up and replays them rather than starting another, and starts one only where none runs.
+    #[test]
+    fn shells_of_the_server_are_taken_up() {
+        let mut dock = Dock::default();
+        dock.follow("/repo".to_owned());
+        dock.connected();
+        let asked: Vec<DockAsk> = dock
+            .take_requests()
+            .into_iter()
+            .map(|(_, ask)| ask)
+            .collect();
+        assert!(asked.contains(&DockAsk::Terminals));
+        assert!(!asked.iter().any(|ask| matches!(ask, DockAsk::Shell(_))));
+        dock.answer(
+            DockAsk::Terminals,
+            Response::Terminals {
+                terminals: vec![TerminalInfo {
+                    terminal: 9,
+                    directory: "/repo".to_owned(),
+                    columns: 80,
+                    rows: 24,
+                }],
+            },
+        );
+        assert_eq!(dock.take_watches(), vec![9]);
+        assert_eq!(dock.place_shells().count(), 1);
+        assert!(
+            dock.take_requests()
+                .iter()
+                .all(|(_, ask)| !matches!(ask, DockAsk::Shell(_)))
+        );
+    }
+
     /// The shells of the start page follow the session started from it.
     #[test]
     fn shells_are_handed_over() {
@@ -971,11 +1050,17 @@ mod tests {
         assert_eq!(dock.shown.get("/worktree"), Some(&key));
     }
 
-    /// A connected dock asks for a shell in the place, and a second one becomes a second tab that shows.
+    /// A connected dock asks for a shell in the place once the server holds none, and a second one becomes a second tab that shows.
     #[test]
     fn new_shells_become_tabs() {
         let mut dock = Dock::default();
         dock.connected();
+        dock.answer(
+            DockAsk::Terminals,
+            Response::Terminals {
+                terminals: Vec::new(),
+            },
+        );
         dock.new_shell();
         let mut workspace = Workspace::default();
         dock.publish(&mut workspace);

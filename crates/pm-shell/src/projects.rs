@@ -24,6 +24,10 @@ pub enum ProjectAction {
     CloneUrl(String),
     /// Clones the address the clone form holds and adds the clone.
     Clone,
+    /// Changes the folder the clone form clones into; the usual folder for clones when empty.
+    CloneUnder(String),
+    /// Chooses the machine the clone form clones on, by host, or this one when nothing.
+    CloneOn(Option<String>),
     /// Does something in the folder picker.
     Picker(PickerAction),
 }
@@ -49,6 +53,12 @@ pub struct Adder {
     pub busy: bool,
     /// Why the last clone failed, when it did.
     pub error: Option<String>,
+    /// The folder the clone goes in, or empty for the usual folder for clones.
+    pub under: String,
+    /// The machine the clone is made on, by host, or nothing for this one.
+    pub machine: Option<String>,
+    /// The machines a clone can be made on, this one first.
+    pub machines: Vec<Machine>,
 }
 
 /// Something the reader does in the folder picker.

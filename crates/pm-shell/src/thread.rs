@@ -6,7 +6,7 @@ use pm_harness::{Event, Part, SlotInfo, SubagentState};
 use crate::composer::{QueuedPrompt, SlashCommand, agent_settings, context_gauge, with_slot_picks};
 
 use crate::conversation::{
-    Activity, ActivityKind, Block, Extras, Message, Notice, NoticeKind, Speaker,
+    Activity, ActivityKind, Block, Extras, Message, Notice, NoticeKind, Speaker, StepState,
 };
 use crate::model::SessionStatus;
 use crate::translate;
@@ -157,6 +157,7 @@ impl Thread {
             Event::Failed(reason) => {
                 self.failed = true;
                 self.notice(NoticeKind::Failure, "The agent failed", reason);
+                self.end_turn();
             }
             Event::Spent(spent) => self.extras.spend = Some(translate::spend(&spent)),
             Event::ModelFallback {
@@ -250,7 +251,10 @@ impl Thread {
                 }
                 self.end_turn();
             }
-            Event::Halted => self.end_turn(),
+            Event::Halted => {
+                self.close_steps(StepState::Failed);
+                self.end_turn();
+            }
             _ => {}
         }
         true
@@ -279,10 +283,28 @@ impl Thread {
         self.extras.approval = None;
         self.extras.activity.clear();
         self.updates += 1;
+        self.close_steps(if self.failed {
+            StepState::Failed
+        } else {
+            StepState::Done
+        });
         if let Some(message) = self.messages.last_mut()
             && message.speaker == Speaker::Agent
         {
             message.footer = Some("Worked".to_owned());
+        }
+    }
+
+    /// Marks `settled` every tool step still marked running, once its turn ended.
+    fn close_steps(&mut self, settled: StepState) {
+        for message in &mut self.messages {
+            for block in &mut message.blocks {
+                if let Block::Tool(step) = block
+                    && step.state == StepState::Running
+                {
+                    step.state = settled;
+                }
+            }
         }
     }
 
@@ -370,6 +392,34 @@ mod tests {
         assert!(!thread.take(2, Event::Finished(None)));
         thread.mark_read();
         assert_eq!(thread.status(false), SessionStatus::Idle);
+    }
+
+    /// A failure ends the turn, so the session no longer reads as working, and settles the steps left running.
+    #[test]
+    fn failures_end_the_turn() {
+        let mut thread = Thread::default();
+        thread.take(
+            1,
+            Event::Tool(pm_harness::Tool {
+                id: "t".to_owned(),
+                title: Some("Run".to_owned()),
+                kind: None,
+                state: None,
+                target: None,
+                diff: None,
+                output: None,
+                parent: None,
+                agent: None,
+                worktree: None,
+            }),
+        );
+        assert_eq!(thread.status(false), SessionStatus::Working);
+        thread.take(2, Event::Failed("gone".to_owned()));
+        assert_eq!(thread.status(false), SessionStatus::Error);
+        assert!(matches!(
+            &thread.messages[0].blocks[0],
+            Block::Tool(step) if step.state == StepState::Failed
+        ));
     }
 
     /// Thoughts, text and tool calls land in one agent message in the order they came.

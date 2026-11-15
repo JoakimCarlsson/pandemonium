@@ -13,7 +13,7 @@ use serde_json::Value;
 pub(super) const REMOTE_BASE: u64 = 1 << 48;
 
 /// The fields of requests and answers that number something a server keeps.
-const NUMBERED: [&str; 3] = ["session", "terminal", "debug"];
+const NUMBERED: [&str; 4] = ["session", "terminal", "debug", "call"];
 
 /// The fields of requests that name a folder or file on a server's machine.
 const ADDRESSED: [&str; 4] = ["directory", "repository", "project", "path"];
