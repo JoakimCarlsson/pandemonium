@@ -112,7 +112,11 @@ fn an_ended_turn_says_how_long_it_took() {
     let told = held.take_in(NUMBER, Event::Finished(None));
     assert!(matches!(told.last(), Some((_, _, Event::Took(_)))));
     let again = held.take_in(NUMBER, Event::Finished(None));
-    assert!(!again.iter().any(|(_, _, event)| matches!(event, Event::Took(_))));
+    assert!(
+        !again
+            .iter()
+            .any(|(_, _, event)| matches!(event, Event::Took(_)))
+    );
 }
 
 /// A turn id never repeats one the log holds, even when the log was rebuilt with fewer events than its ids reach.
