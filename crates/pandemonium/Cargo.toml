@@ -16,8 +16,6 @@ pm-components.workspace = true
 pm-editor = { version = "0.15.0-rc.2", path = "../pm-editor" }
 pm-text.workspace = true
 rfd = "0.17.2"
-serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.154"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 mac-notification-sys = "0.6.15"

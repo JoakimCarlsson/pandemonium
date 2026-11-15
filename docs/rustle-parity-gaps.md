@@ -41,11 +41,11 @@ polish.
 
 | # | Gap | Where (new) | Old reference |
 |---|---|---|---|
-| 1 | **Most settings are ignored.** Appearance (interface font and size, code font and size, line height, density), every Editor page, and Terminal font size, cursor, scrollback and copy-on-select are saved but never read. `window_theme` maps only `theme_mode`. `AppTheme::with_interface_font`, `with_code_font` and `with_density` have no callers. `pm_config::Density` is never converted to `pm_components::Density`. | `pandemonium/src/window.rs:185-191`, `pm-components/src/app_theme.rs:224-275` | `old: pandemonium/src/app.rs:330-355,713-725`, `scene.rs:18-39` |
+| 1 | **FIXED** (`gap2/window`): every catalog setting now reaches the window, the editor, the terminal or the server; see the table in section 2. **Most settings are ignored.** Appearance (interface font and size, code font and size, line height, density), every Editor page, and Terminal font size, cursor, scrollback and copy-on-select are saved but never read. `window_theme` maps only `theme_mode`. `AppTheme::with_interface_font`, `with_code_font` and `with_density` have no callers. `pm_config::Density` is never converted to `pm_components::Density`. | `pandemonium/src/window.rs:185-191`, `pm-components/src/app_theme.rs:224-275` | `old: pandemonium/src/app.rs:330-355,713-725`, `scene.rs:18-39` |
 | 2 | **FIXED** (`gap/panels`): Default and Dusk ship again, extension themes come from `ExtensionAssets`, the Light theme and Dark theme rows are back and the theme quick-pick lists the families. **Theme families are gone.** The Light theme and Dark theme rows were removed from the catalog, the Dusk theme and extension themes are gone, and the theme quick-pick lists only light, dark and system. | `pm-shell/src/settings_catalog.rs:266`, `link/quick_input.rs:123` | `old: settings_catalog.rs:55-58`, `pm-theme/src/builtin.rs:72-169` |
 | 3 | **FIXED** (`gap/panels`): Rustle now rasterises outlines into area-coverage masks drawn on whole pixels, and Pandemonium draws glyphs at 12, 14 and 16 px in boxes of even size (title-bar icons 16 px in 28 px buttons). **Icons look pixelated and small.** Rustle tessellates icon paths with no MSAA and a 0.8 px fringe that only fades outward, so sub-pixel Phosphor strokes alias. Origins are not pixel-snapped. Pandemonium sizes glyphs off the 12/14/16 grid (9, 10, 11, 13, 15 px) and centres them on half pixels. The old build rasterised SVGs with resvg into anti-aliased masks at `size × scale`. | rustle `rustle-wgpu/src/path.rs:24,121,182,363`; `pm-components/src/icon_button.rs:88-123`, `checkbox.rs:92-119` | `old: pm-icon/src/svg.rs:56-72`, `pm-renderer/src/renderer.rs:876-889` |
 | 4 | **FIXED.** `KeyBindings` in `pm-components/src/key_bindings.rs` hands the keymap to the editor and terminal; verified by unit tests (`own_bindings_reach_the_editor`, `shortcuts_are_caught`) and live: Ctrl+R in a shell reaches bash (reverse-i-search). **The editor and terminal ignore the keymap.** Only window-wide actions go through it. Editor keys are hard-coded in `code_keys`, so keymap presets and custom bindings do nothing in the editor or terminal. | `pm-components/src/code_keys.rs:96-175`, `terminal_keys.rs:102-127` | `old: app/code.rs:410-498,589-1006`, `app/terminal.rs:122-148` |
-| 5 | **FIXED (mostly).** `link/keys.rs` does every window-wide action except the few listed in section 3; verified by `window_actions_are_done` and the live Ctrl+Shift+P/Escape check. **About 55 window-wide keymap actions do nothing.** `run_action` ends in `_ => return None`. Affected: tabs (close, close others, pin, next/previous), panes (split, focus), zoom, ToggleTheme, git stash/amend/continue/abort/skip/create branch, agent mode/model/allow/reject, session rename/archive/copy path, Quit, FocusPrompt, and others. | `pm-shell/src/link/keys.rs:123` | `old: app/code.rs:829-1006` |
+| 5 | **FIXED.** `link/keys.rs` does every window-wide action and the editor does or hands on the rest (section 3); verified by `window_actions_are_done` and the live Ctrl+Shift+P/Escape check. **About 55 window-wide keymap actions do nothing.** `run_action` ends in `_ => return None`. Affected: tabs (close, close others, pin, next/previous), panes (split, focus), zoom, ToggleTheme, git stash/amend/continue/abort/skip/create branch, agent mode/model/allow/reject, session rename/archive/copy path, Quit, FocusPrompt, and others. | `pm-shell/src/link/keys.rs:123` | `old: app/code.rs:829-1006` |
 | 6 | **FIXED.** the root handler is `on_key_event`; verified live: Ctrl+R in a focused shell opened bash's reverse search, not the session picker. **The root key handler takes chords from the terminal and browser.** The keymap runs in `on_preview_key_event`, before the focused child, so Ctrl+R/N/P/T/E never reach a shell, and any binding overrides keys typed in a web page. | `pm-pages/src/workspace.rs:79,155-158` | `old: app.rs:2085-2097`, `app/browser.rs:667-702` |
 | 7 | **FIXED.** `Workspace.status` shows in a dismissible status bar and every unhandled `Response::Failed` lands there; verified by `failures_reach_the_status_bar` and the `status` snapshot. **Error messages are never shown.** `Workspace.status` is written by about 25 failure paths (disconnect, start, save, LSP, file tree, listing, browser) and read by nothing. `answer_settings` and other answer handlers drop `Response::Failed` in catch-alls. Prompt, Cancel, Set, Answer, Trust, Rewind, Fork, SaveMcpServers, ModelServers and other failures vanish silently. | `pm-shell/src/model.rs:70`, `link.rs:153,916-919,981` | `old: work.rs:2080-2083,2374,2389` |
 | 8 | **FIXED.** failures and halts end the turn and settle running steps; verified by `failures_end_the_turn`. **A failed turn leaves the session stuck.** `Event::Failed` never calls `end_turn`, so the session stays Working. Tool steps are never closed on Finished, Halted or Failed and keep their running mark. | `pm-shell/src/thread.rs:157-160,274-287` | `old: hearing.rs:80-84,252-260` |
@@ -58,8 +58,8 @@ polish.
 | 15 | **FIXED.** the clone form has a folder and machine, the machines form a token field, and the library's tool sets and withheld keys go to the open project's machine; verified by the `clone` and `settings-servers` snapshots. **Customizations, clone and the machines form ignore remote machines.** The library and `SaveWithheld` always go to the local server. Clone has no destination or machine. The machines form has no token field, so token-protected servers can't be reached. | `link.rs:359`, `settings_change.rs:110-119,240-274`, `link/projects.rs:80-98` | `old: settings_library.rs:137-174`, `settings_machines.rs:243-250`, `adder.rs:540-604` |
 | 16 | **PARTLY FIXED** (`gap/conversation`): the sidebar's session and chat menus and the message right-click menu are back, and `Tile` has `on_menu`; the editor and text-field menus remain. **Context menus are missing.** The editor menu (18 commands), the text-field menu outside the composer, the session and chat menus in the sidebar (rename, close, copy path or branch, mark unread, open folder, remove chat), and the right-click menu on chat messages are all gone. `Tile` has no secondary-click hook. | `code_editor.rs`, `text_input.rs`, `pm-components/src/tile.rs:206-284` | `old: context_menu.rs:156-336`, `arrange.rs:17-36,142-204`, `message_menu.rs:45-102` |
 | 17 | **FIXED.** the session menu in the sidebar renames, closes (asking before discarding uncommitted changes), copies and opens folders; forks open at once. Verified by `closing_with_changes_asks_first`, `forks_open_at_once`, `renaming_changes_the_title` and the `session-menu`, `rename`, `discard` snapshots. **Sessions can't be closed or renamed.** `CloseSession` and `RenameSession` are never sent. A fork made in this window doesn't appear until a reconnect, because the `Started` reply is dropped (`Ask::Nothing`). | `pm-pages/src/actions.rs`, `link/conversation_requests.rs:161` | `old: work.rs:819-852,998` |
-| 18 | **PARTLY FIXED.** `IconButton::tooltip` exists and the title bar uses it; verified live (hovering Close shows its tooltip). Tooltips elsewhere are still missing. **Tooltips are almost all gone.** The new code has one `tooltip(` call (`usage_ring.rs:94`), and `IconButton` has no tooltip API. The title bar, git panel, browser, find bar, file header, debug controls, sidebar status marks and agent chips all lost theirs. | `pm-components/src/icon_button.rs:22-37` | `old: pm-ui/src/tooltip.rs`; title bar alone had 11 |
-| 19 | **PARTLY FIXED.** buttons and icon buttons take focus with Tab, show a ring and press on Enter/Space; `Dialog` and `ConfirmDialog` close on Escape, and Escape closes the top dialog or menu. Verified by `window_actions_are_done` and live Tab/Escape. Checkboxes, switches, selects, steppers, menus and the folder picker still lack keys. **There is no keyboard focus ring and no keyboard operation of controls.** Buttons, checkboxes, switches, segmented controls, selects, steppers and menus can't be focused or driven by keys. `Dialog` and `ConfirmDialog` don't close on Escape. The folder picker and adder have no arrow or Enter keys. | `button.rs:131-144`, `menu.rs:269-298`, `dialog.rs:82-111`, `confirm_dialog.rs` | `old: button.rs:253-313`, `settings.rs:20-92`, `folder_picker.rs:308-348` |
+| 18 | **PARTLY FIXED.** `IconButton::tooltip` exists and the title bar uses it; tooltips and menus are kept inside the window (`pm-components/src/window_area.rs`, `tip.rs`), verified live: Close's tooltip stays inside the right edge and the last project's menu opens upward. Tooltips elsewhere are still missing. **Tooltips are almost all gone.** The new code has one `tooltip(` call (`usage_ring.rs:94`), and `IconButton` has no tooltip API. The title bar, git panel, browser, find bar, file header, debug controls, sidebar status marks and agent chips all lost theirs. | `pm-components/src/icon_button.rs:22-37` | `old: pm-ui/src/tooltip.rs`; title bar alone had 11 |
+| 19 | **FIXED** (`gap2/window`). Buttons, icon buttons, checkboxes, switches and selects take focus with Tab, show a ring and press on Enter/Space (selects also open on Down); steppers step on the arrows; menus take the keyboard as they open and move with the arrows, Home and End and choose on Enter; option lists move with the arrows and pick on Enter; the folder picker moves with the arrows, goes in on Enter, goes up on Backspace and Alt+Up, back and forward on Alt+Left/Right, and closes on Escape. Verified live: Space flips a switch reached by Tab, Down and Enter choose Overview in a project menu. **There is no keyboard focus ring and no keyboard operation of controls.** Buttons, checkboxes, switches, segmented controls, selects, steppers and menus can't be focused or driven by keys. `Dialog` and `ConfirmDialog` don't close on Escape. The folder picker and adder have no arrow or Enter keys. | `button.rs:131-144`, `menu.rs:269-298`, `dialog.rs:82-111`, `confirm_dialog.rs` | `old: button.rs:253-313`, `settings.rs:20-92`, `folder_picker.rs:308-348` |
 | 20 | **PARTLY FIXED.** **Typing behaviour ignores its settings, and features are missing.** Typing ignores tab size, hard tabs, auto-close, auto-indent and comment extension. Format on save, code actions on save, auto save, snippets and Emmet on Tab, folding, multi-caret (Ctrl+D, Alt+click, column select), case and sort commands, and the line-copy fallback are gone. *Now honoured: tab size, hard tabs, auto-close, auto-surround, auto-indent, comment extension, format on save and on type, auto save, snippets and Emmet on Tab, folding, Ctrl+D, Ctrl+Shift+L, Ctrl+Alt+Up/Down and Alt+click. Still missing: code actions on save, column select, case and sort commands and the line-copy fallback.* | `code_editor.rs:669-855`, `link/code.rs:100-117`, `code_text.rs:14` | `old: editor.rs:353-684`, `line_edits.rs:20-157`, `app/code.rs:165-199` |
 | 21 | **FIXED** (`gap/conversation`), except the account chip's menu. **The composer is reduced.** The `+`, `@` and `/` toolbar buttons do nothing. `@` file mentions are gone. A prompt made only of attachments can't be sent. The box doesn't grow past one line. Signed-out sessions show no "Sign in again" bar. Account and Goal chips are inert. Shift+Tab mode cycling is gone. | `pm-components/src/composer.rs:294-320,471-477`, `prompt_box.rs:116`, `thread.rs:156` | `old: composer.rs:353-412,592-631`, `input.rs:254-354`, `choices.rs:784-968` |
 | 22 | **FIXED** (`gap/conversation`). **The start page drops what you chose.** `StartSession` sends empty `settings` and `attachments` and `base: "HEAD"`. The welcome composer can't take attachments. Agents aren't filtered to visible, signed-in ones. | `pm-shell/src/link.rs:524-537`, `pm-pages/src/welcome.rs:85,99-116` | `old: choices.rs:523-535,757-761`, `agent_list.rs:106-126` |
@@ -115,54 +115,65 @@ reads the value.
 
 | Setting | Old consumer | New consumer outside the settings UI | Status |
 |---|---|---|---|
-| Launch | `app.rs:312` | none; `window.rs:30` always restores | ignored |
-| ConfirmClose | `app.rs:2411` | none | ignored |
-| CheckUpdates, Channel | `app.rs:326` | `link.rs:285,366,746` | live (no 6-hour recheck) |
-| OfferLanguages | old WS | none | ignored |
-| EmbeddedBrowser | `app/browser.rs` | `web.rs:300,365,447` | partly: download only starts once the pane opens |
-| OpenDevServers, OpenLocalLinks | `app/browser.rs` | `link/browser.rs:230,256` | live |
-| RestrictAgentBrowsing, AgentOrigins | `app/browser.rs` | `web.rs:432-439`, `browser_agent.rs:179` | live |
-| ThemeMode | `app.rs:528` | `window.rs:185` | live |
-| LightTheme, DarkTheme | `app.rs:355` | removed | missing |
-| InterfaceFont, InterfaceSize, CodeFont, CodeSize, LineHeight, Density | `app.rs:330-336,713` | none | ignored |
-| LineNumbers, RelativeLineNumbers, CurrentLine, IndentGuides, WrapGuide, LineLength, GitGutter, InlineBlame, Occurrences, BracketColors, RedactPrivateValues, DependencyHints, SemanticHighlighting, InlayHints, CodeLens | old WS | none | ignored |
-| Minimap, StickyScroll | old WS | none; hard-coded on at `code_editor.rs:103-104` | ignored |
-| CursorShape, CursorBlink | `viewer.rs:350-359` | none | ignored |
-| Ligatures | `app/editing.rs:81-95` | none; hard-coded off at `code_editor.rs:254` | ignored |
-| SoftWrap | `viewer.rs:826` | none | ignored |
-| TabSize, HardTabs | `settings_state.rs:93-96` | none; `TAB_COLUMNS = 4` | ignored |
-| AutoClose, AutoSurround, AutoIndent, ExtendComments, FormatOnType, LinkedEditing, SnippetsOnTab, Emmet, DragAndDrop, VisualCaret | `editor.rs`, `app/editing.rs` | none | ignored |
-| FormatOnSave, TrimWhitespace, FinalNewline, OrganizeOnSave, FixAllOnSave | `editor.rs:647-684` | none | ignored |
-| Autosave | `app/code.rs:165-199` | none | ignored |
-| CompletionsOnInput, CompletionDocs, Hover, HoverDelay, SignatureHelp, Diagnostics, Lightbulb | `app/code.rs:202-301`, `editor.rs:863-899` | none | ignored |
-| SemanticRangeLines, SemanticRangeMargin | `app.rs:708-711` | none | ignored |
-| SearchWrap, SeedSearch, Smartcase, ScrollBeyond, ScrollMargin, ScrollbarMarks, AutoFindInSelection, CompareIgnoreWhitespace | old WS | none | ignored |
-| VimMode | `settings_state.rs:98` | `link/code.rs:55` | applies only to the next file opened |
-| VimClipboard, VimBindings, VimReplayTyping, VimSyntaxObjects | `components/vim.rs:73-135` | none; `ModalView` hard-coded at `code_editor.rs:863-872` | ignored |
-| LanguageTabSize, LanguageIndent, LanguageFormat, LanguageOrganize, LanguageFixAll | `settings_state.rs:93-96` (client) | none | ignored |
+| Launch | `app.rs:312` | `window.rs` restores the view only for Restore | live |
+| ConfirmClose | `app.rs:2411` | `link/sessions.rs` `may_close` | live |
+| CheckUpdates, Channel | `app.rs:326` | `link.rs` `recheck_release`, every 6 hours | live |
+| OfferLanguages | old WS | `link.rs` `follow_settings` → `file_view.rs`; declined languages kept in `declined_languages` | live |
+| EmbeddedBrowser | `app/browser.rs` | `web.rs` | live |
+| OpenDevServers, OpenLocalLinks | `app/browser.rs` | `link/browser.rs` | live |
+| RestrictAgentBrowsing, AgentOrigins | `app/browser.rs` | `web.rs`, `browser_agent.rs` | live |
+| ThemeMode, LightTheme, DarkTheme | `app.rs:355,528` | `pm-pages/src/window_theme.rs` | live |
+| InterfaceFont, InterfaceSize, CodeFont, CodeSize, LineHeight, Density | `app.rs:330-336,713` | `window_theme.rs` | live |
+| LineNumbers, RelativeLineNumbers, CurrentLine, IndentGuides, WrapGuide, LineLength, GitGutter, Occurrences, InlayHints, CodeLens, Minimap, StickyScroll, CursorShape, CursorBlink, Ligatures, SoftWrap | old WS | `CodeLook` in `code_look.rs`, read by `code_editor.rs` | live |
+| InlineBlame, GitBlame | `marks.rs:224-297` | `CodeLook::inline_blame` asks `Blame` for the caret's line (`ServerAsk::CaretLine`), drawn after the line | live |
+| BracketColors | old WS | `code_editor.rs` colours `brackets_on` by depth | live |
+| RedactPrivateValues | old WS | `code_editor.rs` `redacted` stars values off the caret's line | live |
+| DependencyHints | old WS | `link/lsp.rs` asks lenses with `dependencies` | live |
+| SemanticHighlighting, SemanticRangeLines, SemanticRangeMargin | `app.rs:708-711` | `link/lsp.rs` `ask_annotations`, a range around the caret first in long files, with the reader's token rules | live |
+| TabSize, HardTabs, AutoClose, AutoSurround, AutoIndent, ExtendComments, FormatOnType, SnippetsOnTab, Emmet | `editor.rs`, `app/editing.rs` | `code_editor.rs` | live |
+| LinkedEditing | `editor.rs` | `link/lsp.rs` asks `LinkedRanges` with each caret move | live |
+| DragAndDrop | `editor.rs` | `code_editor.rs` `press_at` | live |
+| VisualCaret | `app/editing.rs` | `code_editor.rs` `right_to_left_key` | live |
+| FormatOnSave, TrimWhitespace, FinalNewline, OrganizeOnSave, FixAllOnSave | `editor.rs:647-684` | `link/code.rs` `save_file` → `save_action` → `format_then_write` | live |
+| Autosave | `app/code.rs:165-199` | `code_editor.rs` | live |
+| CompletionsOnInput, Hover, HoverDelay, SignatureHelp, Diagnostics | `app/code.rs:202-301` | `code_editor.rs` | live |
+| CompletionDocs | `editor.rs:863-899` | `code_editor.rs` resolves only while on | live |
+| Lightbulb | `editor.rs` | `code_editor.rs` `bulb_shown` | live |
+| SearchWrap, SeedSearch, Smartcase, AutoFindInSelection | old WS | `code_bars.rs` `found`, `effective_query`; `open_find` | live |
+| ScrollBeyond, ScrollMargin, ScrollbarMarks | old WS | `code_editor.rs` (`padded` rows, vim margin, minimap marks) | live |
+| CompareIgnoreWhitespace | old WS | `Comparison::between_with` in `open_files.rs` | live |
+| VimMode | `settings_state.rs:98` | `link.rs` `follow_settings` | live, also for files already open |
+| VimClipboard, VimBindings, VimReplayTyping, VimSyntaxObjects | `components/vim.rs:73-135` | `code_editor.rs` `configure_vim`, `ModalView` | live |
+| LanguageTabSize, LanguageIndent | `settings_state.rs:93-96` | `OpenFiles::indents` → `file_view.rs` `CodeLook::with_indent` | live |
+| LanguageFormat, LanguageOrganize, LanguageFixAll | client | `link/code.rs` `save_file`, `format_then_write` | live |
 | LanguageServer, LanguageServerCommand, LanguageServers, WorkspaceRepositories, WorkspaceFolders | srv | srv | live |
-| BaseKeymap, custom keys | everywhere | `link/keys.rs:31` | window-wide actions only |
+| BaseKeymap, custom keys | everywhere | `link/keys.rs`, `KeyBindings` | live |
 | Shell, ShellArguments | srv | srv | new shells |
-| TerminalFontSize, TerminalCursor, CopyOnSelect, Scrollback | `terminal::Look`, `settings_state.rs:97,128` | none; `set_scrollback` has no caller | ignored |
+| TerminalFontSize, TerminalCursor, CopyOnSelect, Scrollback | `terminal::Look` | `window_theme.rs`, `window.rs`, `dock.rs` | live |
 | AutoFetch, FetchInterval, LocalHistory, HistoryDays, HistorySize, GitHosts | srv | srv | live |
-| GitBlame, GitGutterMarks, GitWordDiff | old WS, `diff.rs:788` | none | ignored |
+| GitGutterMarks, GitWordDiff | old WS, `diff.rs:788` | `CodeLook::with_git_gutter`, `with_git_marks`; `diff_view.rs` | live |
 | BranchTemplate, WorktreeFolder, WorktreeInclude, PermissionMode, Effort, Memory, Checkpoints, PromptCache, CacheWarming, PlanAutosave | srv | srv | live |
-| DefaultAgent | `settings_state.rs:140-149` | only for picking the library place (`link.rs:356`) | ignored for new work |
-| OnFinish, Notification | `notify.rs` | `window.rs:264` | partly: "Open review" only notifies |
-| DefaultServer | old WS | none | ignored |
+| DefaultAgent | `settings_state.rs:140-149` | `start_requests.rs` `offer_agents`, after the agent last used | live |
+| OnFinish, Notification | `notify.rs` | `window.rs`; `link.rs` `review_finished` opens the Diff tab | live |
+| DefaultServer | old WS | `link/projects.rs`: the adder and its folder picker start on it | live |
 
 ### Settings window UX
 
-- **P2** Keyboard navigation is gone: no Tab order or focus IDs, and Enter in a
+- FIXED: **P2** Keyboard navigation is gone: no Tab order or focus IDs, and Enter in a
   picker filter no longer picks the first row (`old: settings.rs:20-92`).
-- **P2** Unreadable list entries (origins, bindings) are dropped with no
-  message, and the box is cleared anyway (`settings_change.rs:184-197`,
-  `settings_rows.rs:202-205`).
-- **P3** The picker filter always shows and the list is uncapped. The old one
-  showed the filter from 10 choices and listed at most 12 rows.
-- **P3** Every change, including each keystroke in the search box, re-reads
-  both settings files from disk (`window.rs:171,211-220`). Save errors are
-  swallowed (`let _ =` at `window.rs:214,218`).
+  *Every control takes Tab; the option list moves with the arrows and Enter picks
+  the row marked, or the first.* Verified live.
+- FIXED: **P2** Unreadable list entries (origins, bindings) are dropped with no
+  message, and the box is cleared anyway. *The box keeps the text and says it
+  does not read (`line_reads`).*
+- FIXED: **P3** The picker filter always shows and the list is uncapped. *The
+  filter shows from 10 choices and the list scrolls past 240 px.*
+- FIXED: **P3** Every change re-reads both settings files from disk, and save
+  errors are swallowed. *`store_writer.rs` keeps what it wrote and writes off the
+  UI thread, logging failures.*
+- FIXED: settings failures (model servers, slots, MCP, library, tool sets) show
+  in a dismissible notice at the top of the settings page and no longer leave
+  "Asking the server…" up.
 - **OK:** search, reset buttons, and the narrow layout breakpoint (760 px,
   rows stacking below 480 px).
 
@@ -194,8 +205,8 @@ reads the value.
   - No per-account keys; `SaveKey` always sends `login: None`.
   - Sign-in and key buttons show for agents that can't use them.
   - No rename.
-- **The sign-in code dialog never closes by itself**, though its text says it
-  does (`link.rs:305,816`, `dialogs.rs:130`).
+- FIXED: **The sign-in code dialog never closes by itself**, though its text says it
+  does. *It closes when the server answers the sign-in (`Ask::SignIn`).*
 - **Declared model servers are not listed as agents**
   (`settings_model.rs:28-39`).
 - **"Find models" takes every model found.** There is no tick list to choose
@@ -216,7 +227,10 @@ reads the value.
   - Rows have no "Open" button.
   - A new draft doesn't open its file.
   - The SYSTEM.md / APPEND_SYSTEM.md writers are gone.
-- **Machines:** no Edit, and the address is not required.
+- FIXED: **Machines:** no Edit, and the address is not required. *Each server
+  row has Edit, which fills the form; saving under a known name changes it, and
+  the address is required.* Rendered in `settings-servers` and
+  `settings-servers-narrow`.
 
 **P3**
 - Per-agent icons are gone; every agent shows `ROBOT`.
@@ -250,49 +264,63 @@ reads the value.
   StageAll, UnstageAll, Fetch, Pull, PullRebase, Push, ForcePush and Sync.
   ToggleSourceControl, SearchProject, RunTask, RerunTask, StartDebugging and
   AttachDebugger only open a panel.
+  *Now also done (`gap2/window`):* ToggleReadOnly, CopyWithoutIndentation,
+  CursorUndo/Redo, ToggleBreakpoint, OutgoingCalls, ShowSupertypes and
+  ShowSubtypes in the editor (`code_keys.rs`, `code_editor.rs`
+  `run_beyond_text`); GoBack/GoForward, CopyPermalink, OpenPermalink,
+  FileHistory and OpenTerminalHere handed to the link (`ServerAsk::Act`,
+  `link/code.rs` `editor_action`); stash apply/pop/drop open the stash list when
+  there are several. Splits are still left/right only.
 - FIXED: **Close quits without asking** (top 30, #10). Verified by
   `closing_on_working_agents_asks_first` and live.
-- **The saved view lost most of what it kept.** Gone: open files (caret,
-  scroll, unsaved text), the prompt draft, the focused field, read receipts,
-  unfolded folders, recent commands, graph and plan sizes, the maximised
-  terminal, scroll positions and the pane layout (`pm-shell/src/view.rs:12-72`
-  vs `old: view.rs:47-175`).
+- PARTLY FIXED: **The saved view lost most of what it kept.** Open files with
+  their carets and unsaved text, read receipts, recent files and commands, the
+  folded projects and the split share are kept again (`Link::view`). Still gone:
+  the prompt draft, the focused field, unfolded folders, graph and plan sizes,
+  the maximised terminal and scroll positions.
 
 **P2**
-- **The view file is read and written on the UI thread for every action,**
-  including each terminal keystroke and every sash drag event
-  (`window.rs:251-256,405-409,487,592-601`). The old build debounced writes and
-  made them on a writer thread (`old: view/writer.rs`).
-- **The trail holds only pages.** Back and forward no longer step between
-  files and carets or return from go-to-definition, can land on deleted pages,
-  and the GoBack/GoForward editor actions and mouse buttons 4/5 do nothing
-  (`page.rs:28-75`).
-- **The window always opens at 1636×720,** with no remembered size, no fit to
-  the monitor and no minimum size (`window.rs:21,34`).
+- FIXED: **The view file is read and written on the UI thread for every action.**
+  *`store_writer.rs` compares with what it last wrote and writes on a thread of
+  its own, settling bursts for 150 ms; the close writes at once.*
+- PARTLY FIXED: **The trail holds only pages.** *Back and forward pass over
+  closed sessions and removed projects, the editor's GoBack/GoForward step
+  through the places the caret jumped from (`walk_jumps`), and mouse buttons
+  4/5 are bound on the workspace.* Buttons 4/5 could not be checked live:
+  KWin's fake input makes winit-wayland panic in `pointer_frame` on them.
+- FIXED: **The window always opens at 1636×720.** *It opens at the size it was
+  left, maximised when it was left so, clamped to 720×480–3840×2160, and has a
+  minimum size (`frame_memory.rs`).*
 - **macOS lost its native traffic lights.** The window is undecorated on every
   platform.
-- **The title bar has no tooltips** and no "Update languages" button.
-  Tooltips FIXED (verified live); the button is still missing, and tooltips
-  at the window's right edge are clipped because Rustle's `tooltip` always
-  hangs below-start.
-- **Resize grips misbehave.** They stay active when maximised and sit on the
-  far edge of the X11 shadow band (`window.rs:93-105,286-343`).
-- **"Open on launch" is ignored.**
+- FIXED: **The title bar has no tooltips** and no "Update languages" button.
+  *The button shows while an installed language has an update and opens
+  Extensions; tooltips are moved inside the window and above the control when
+  there is no room below (`tip.rs`), verified live on Close.*
+- FIXED: **Resize grips misbehave.** *They were laid out with `align` in a
+  stack and covered the whole floating window, so every press started a resize
+  (seen live: no click reached the page, and winit panicked). They are now rows
+  and columns on the frame's edge only, inset to the shadow band, and absent
+  while maximised.* Verified live: clicks reach the page.
+- FIXED: **"Open on launch" is ignored.**
 
 **P3**
 - FIXED: Panel toggles don't show their filled state (see `icons-zoom.png`);
   they now show `active` while open (snapshots).
-- The command centre is fixed at 330 px and its text is wrong on welcome pages.
-- No border around the floating frame.
-- No 6-hour update recheck, and the update installs on the UI thread.
+- FIXED: The command centre is fixed at 330 px and its text is wrong on welcome
+  pages. *It grows between 180 and 420 px and names the project of a new session.*
+- FIXED: No border around the floating frame. *A hairline in `outline_variant`.*
+- FIXED: No 6-hour update recheck, and the update installs on the UI thread.
 - The app id is hard-coded.
-- AltGr chords may be read as shortcuts (`key_recorder.rs:103-115`).
-- Chords are named by the character typed, as in the old build, so on a
-  Nordic layout Ctrl+` arrives as `ctrl+§` and does not toggle the terminal
-  (seen live in a virtual KWin); only control characters fall back to the
-  key's US sign.
-- The keymap is rebuilt on every keystroke. Partly FIXED: the bindings handed
-  to controls are kept until the keymap changes; `press_key` still rebuilds.
+- FIXED: AltGr chords may be read as shortcuts. *A key typed with Alt that
+  types a sign other than its own is typing.* Verified live on a Swedish layout:
+  AltGr+2 types `@` in the quick input.
+- FIXED: Chords are named by the character typed. *With Ctrl, Alt or the
+  command key held, letters, digits and signs are named by their physical key
+  as on a US layout.* Verified live on a Swedish layout: Ctrl with the key left
+  of 1 toggles the terminal.
+- FIXED: The keymap is rebuilt on every keystroke. *`Link::keymap` keeps it
+  until the preset or bindings change.*
 - Startup timings and `--snapshot-browser` are gone.
 
 ---
@@ -818,8 +846,9 @@ prompts, zoom, clear data, per-session scoping and restore.
   - FIXED: CloseSession, RenameSession (session tests and snapshots)
   - Restore, UndoTurn, TurnChanges, StopSubagent
   - SetSessionAccount, SignInSession, Identity, Discover, SaveChoices
-  - Stash and Step are now sent from keys; Stashes, CherryPick,
-    SubmoduleHeads, DevContainer are not
+  - FIXED: Stash, Step, Stashes and SubmoduleHeads are sent; CherryPick from the
+    graph's commit menu; DevContainer by the welcome page, which offers the dev
+    container only where one is set up
   - Owners, Repositories
   - FIXED: Terminals, AttachTerminal (`shells_of_the_server_are_taken_up`)
   - InspectExtension, InstallExtension, GrantExtension, RunExtensionCommand,
@@ -839,10 +868,12 @@ prompts, zoom, clear data, per-session scoping and restore.
 - Agent events dropped at `thread.rs:254`: ToolSignIn, Restored, Undone,
   Limits, Goal, Slots and Container.
 - Git is never refreshed on Finished, Failed, Restored or Undone.
-- On reconnect, nothing re-opens LSP documents or re-asks extension assets.
-  BrowserAvailable is now announced to each remote host when it connects.
-- Disconnect only sets the (unread) status. `Link::ask` drops requests while
-  there is no client, with no backlog (`link.rs:731-734`).
+- FIXED: On reconnect, nothing re-opens LSP documents or re-asks extension
+  assets. *`reopen_for_server` opens every local file again and
+  `ExtensionAssets` is asked on each connect.*
+- FIXED: Disconnect only sets the (unread) status, and requests made while
+  disconnected are dropped. *The status bar shows it, and `pm-client` keeps up
+  to 256 requests made while down and sends them once the connection is up.*
 - `open_branch` searches local sessions only, so pull requests never work for
   remote sessions. The overview skips Log for remote projects.
 
@@ -850,7 +881,7 @@ prompts, zoom, clear data, per-session scoping and restore.
 - No progress while a remote server starts, and a failed reach clears the
   backlog silently (`remote.rs:167-170`).
 - **`let _ =` swallowing real errors:**
-  - `window.rs:214,218,254`: saving settings and the view
+  - FIXED: `window.rs:214,218,254`: saving settings and the view
   - `web.rs:209`: open address
   - `notify.rs:75`
   - `link/quick_input.rs:357-363`: discarded `QuickOutcome`
