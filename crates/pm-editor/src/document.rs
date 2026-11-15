@@ -384,6 +384,12 @@ impl Document {
         self.set_indentation(self.indentation.0, self.indentation.1);
     }
 
+    /// The columns a level of indentation is and whether it is a tab, as
+    /// the reader chose them over the language's, each nothing when not.
+    pub fn indentation(&self) -> (Option<usize>, Option<bool>) {
+        self.indentation
+    }
+
     /// Indents with `columns` columns a level and with tabs when `tabs`, each in place of the language's own when given.
     pub fn set_indentation(&mut self, columns: Option<usize>, tabs: Option<bool>) {
         self.indentation = (columns, tabs);

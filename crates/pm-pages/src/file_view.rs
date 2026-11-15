@@ -7,7 +7,7 @@ use rustle::prelude::*;
 
 use pm_components::{
     Button, ButtonVariant, CodeEditor, CodeEditorBar, CodeEditorPopup, DiffView, IconButton, Label,
-    LabelVariant, Markdown, Menu, PictureView, Size,
+    LabelVariant, Markdown, Menu, PictureView, ServerAsk, Size,
 };
 use pm_shell::{
     Block, Comparison, DebugModel, EditorBar, EditorPopup, Extension, FileAction, FileBody,
@@ -155,11 +155,16 @@ fn editor(file: &OpenFile, index: usize, vim: bool, debug: &DebugModel, actions:
         EditorPopup::Actions => CodeEditorPopup::Actions,
         EditorPopup::Colour(index) => CodeEditorPopup::Colour(*index),
     });
-    let offered = file
+    let enabled: Vec<usize> = file
         .actions
         .iter()
-        .filter(|action| action.disabled.is_none())
-        .map(|action| action.title.clone())
+        .enumerate()
+        .filter(|(_, action)| action.disabled.is_none())
+        .map(|(place, _)| place)
+        .collect();
+    let offered = enabled
+        .iter()
+        .map(|place| file.actions[*place].title.clone())
         .collect();
     let save = actions.save_file.clone();
     let breakpoint = actions.toggle_breakpoint.clone();
@@ -175,13 +180,25 @@ fn editor(file: &OpenFile, index: usize, vim: bool, debug: &DebugModel, actions:
         .actions(offered)
         .popup(popup)
         .rename(file.rename.clone())
-        .on_ask(move |ask| code(index, ask))
+        .on_ask(move |ask| code(index, offered_action(ask, &enabled)))
         .on_dismiss(move || dismiss(index))
         .modifier(Modifier::new().fill_max_width().weight(1.0))
         .on_change(move || edited(TabAction::Keep(index)))
         .on_save(move || save(index))
         .on_gutter(move |line| breakpoint(path.clone(), line.saturating_sub(1)))
         .show();
+}
+
+/// Maps a [`ServerAsk::TakeAction`] that names a place among the `enabled`
+/// actions the editor offered to the action's place in the server's full
+/// list; any other `ask` is returned as it is.
+fn offered_action(ask: ServerAsk, enabled: &[usize]) -> ServerAsk {
+    match ask {
+        ServerAsk::TakeAction(place) => {
+            ServerAsk::TakeAction(enabled.get(place).copied().unwrap_or(place))
+        }
+        other => other,
+    }
 }
 
 /// Emits the markdown text of `file` rendered, scrolled in a reading column.

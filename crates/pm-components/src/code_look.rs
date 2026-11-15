@@ -2,7 +2,7 @@
 //! provided through a composition local by [`crate::app_theme`] so every
 //! editor in every window follows the settings as soon as they change.
 
-use pm_editor::{CursorShape, EditorSettings};
+use pm_editor::{CursorShape, DiagnosticsShown, EditorSettings, SoftWrap};
 use rustle::CompositionLocal;
 
 /// The editor settings the code editor reads while it draws and takes keys.
@@ -46,6 +46,38 @@ pub struct CodeLook {
     pub scroll_margin: usize,
     /// How the cursor of a shell in the terminal is drawn.
     pub terminal_cursor: CursorShape,
+    /// How many columns a level of indentation is, or the language's own when nothing.
+    pub tab_size: Option<usize>,
+    /// Whether a level of indentation is a tab, or the language's own when nothing.
+    pub hard_tabs: Option<bool>,
+    /// Whether a bracket or quote typed over a selection goes around it.
+    pub auto_surround: bool,
+    /// Whether a new line after a line comment starts with the comment too.
+    pub extend_comments: bool,
+    /// Whether Tab after the name of a snippet writes the snippet out.
+    pub snippets_on_tab: bool,
+    /// Whether the file is saved a moment after it was last changed.
+    pub autosave: bool,
+    /// Whether completions open as the reader types.
+    pub completions_on_input: bool,
+    /// Whether resting the pointer on a name shows what the server says of it.
+    pub hover: bool,
+    /// How long the pointer rests before that, in milliseconds.
+    pub hover_delay: u64,
+    /// Whether the signature of the call the caret is in shows as it is typed.
+    pub signature_help: bool,
+    /// Whether the caret blinks.
+    pub cursor_blink: bool,
+    /// Where long lines break onto the next row.
+    pub soft_wrap: SoftWrap,
+    /// How many characters long a line should be at most.
+    pub line_length: usize,
+    /// Whether the file is formatted as its language says when it is saved.
+    pub format_on_save: bool,
+    /// Whether what was just typed is formatted as its language says.
+    pub format_on_type: bool,
+    /// How bad a problem must be to be marked in the text.
+    pub diagnostics: DiagnosticsShown,
 }
 
 impl Default for CodeLook {
@@ -96,6 +128,22 @@ impl CodeLook {
             syntax_objects: settings.vim_syntax_objects,
             scroll_margin: settings.vertical_scroll_margin,
             terminal_cursor: CursorShape::Block,
+            tab_size: settings.tab_size,
+            hard_tabs: settings.hard_tabs,
+            auto_surround: settings.auto_surround,
+            extend_comments: settings.extend_comment_on_newline,
+            snippets_on_tab: settings.snippets_on_tab,
+            autosave: settings.autosave,
+            completions_on_input: settings.completions_on_input,
+            hover: settings.hover,
+            hover_delay: settings.hover_delay,
+            signature_help: settings.signature_help,
+            cursor_blink: settings.cursor_blink,
+            soft_wrap: settings.soft_wrap,
+            line_length: settings.preferred_line_length,
+            format_on_save: settings.format_on_save,
+            format_on_type: settings.format_on_type,
+            diagnostics: settings.diagnostics,
         }
     }
 }
@@ -107,4 +155,26 @@ pub(crate) static LOCAL_CODE_LOOK: CompositionLocal<CodeLook> =
 /// The code look in effect at this point of the composition.
 pub fn code_look() -> CodeLook {
     LOCAL_CODE_LOOK.current()
+}
+
+thread_local! {
+    /// The whole editor settings, for what the code look cannot carry by
+    /// copy, such as the reader's snippets.
+    static EDITOR_SETTINGS: std::cell::RefCell<std::rc::Rc<EditorSettings>> =
+        std::cell::RefCell::new(std::rc::Rc::new(EditorSettings::default()));
+}
+
+/// Makes `settings` the editor settings every code editor reads its
+/// snippets from; does nothing when they are already in effect.
+pub fn use_editor_settings(settings: &EditorSettings) {
+    EDITOR_SETTINGS.with(|held| {
+        if **held.borrow() != *settings {
+            *held.borrow_mut() = std::rc::Rc::new(settings.clone());
+        }
+    });
+}
+
+/// The editor settings in effect, as [`use_editor_settings`] last made them.
+pub fn editor_settings() -> std::rc::Rc<EditorSettings> {
+    EDITOR_SETTINGS.with(|held| held.borrow().clone())
 }

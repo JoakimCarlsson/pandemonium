@@ -296,7 +296,21 @@ impl CodeEditor {
                 remember(move || opening)
             },
             hovered: remember(|| None),
+            across: remember(|| 0.0_f32),
+            width: remember(|| Rc::new(std::cell::Cell::new(0.0_f32))).get(),
+            gutter: remember(|| Rc::new(std::cell::Cell::new(0.0_f32))).get(),
+            cell_width: cell.0,
+            blink: remember(|| true),
         };
+        blink_carets(&handle);
+        save_after_rest(&handle);
+        {
+            let mut document = self.document.borrow_mut();
+            let wanted = (handle.code.tab_size, handle.code.hard_tabs);
+            if document.indentation() != wanted {
+                document.set_indentation(wanted.0, wanted.1);
+            }
+        }
         if let Some(opening) = self.popup
             && handle.popup.get().is_none()
         {
@@ -344,6 +358,64 @@ impl CodeEditor {
     }
 }
 
+/// Blinks the carets of the editor `handle` stands for while it is focused
+/// and the settings ask for blinking, showing them again whenever the text
+/// or the caret changes.
+fn blink_carets(handle: &Handle) {
+    let blinking = handle.code.cursor_blink && handle.focus.is_focused();
+    let key = {
+        let document = handle.document.borrow();
+        (
+            blinking,
+            document.field.revision(),
+            document.field.caret(),
+            document.field.anchor(),
+        )
+    };
+    let blink = handle.blink.clone();
+    launched_effect(key, move |scope| async move {
+        blink.set(true);
+        if !blinking {
+            return;
+        }
+        loop {
+            scope.delay(CARET_BLINK).await;
+            blink.update(|shown| *shown = !*shown);
+        }
+    });
+}
+
+/// How long the carets show, and then stay hidden, while they blink.
+const CARET_BLINK: std::time::Duration = std::time::Duration::from_millis(530);
+
+/// How long the text rests unchanged before auto save writes it.
+const AUTOSAVE_REST: std::time::Duration = std::time::Duration::from_millis(1000);
+
+/// Saves the document of the editor `handle` stands for once its text has
+/// rested unchanged for a moment with changes not saved, when the settings
+/// ask for auto save.
+fn save_after_rest(handle: &Handle) {
+    let (revision, dirty) = {
+        let document = handle.document.borrow();
+        (document.field.revision(), document.is_dirty())
+    };
+    let wanted = handle.code.autosave && dirty && !handle.document.borrow().field.is_read_only();
+    let save = handle.on_save.clone();
+    let document = handle.document.clone();
+    launched_effect((revision, wanted), move |scope| async move {
+        if !wanted {
+            return;
+        }
+        scope.delay(AUTOSAVE_REST).await;
+        let still = document
+            .try_borrow()
+            .is_ok_and(|held| held.field.revision() == revision && held.is_dirty());
+        if let (true, Some(save)) = (still, save) {
+            save();
+        }
+    });
+}
+
 /// What the parts of an editor share to change its document and redraw it.
 #[derive(Clone)]
 pub(crate) struct Handle {
@@ -375,6 +447,16 @@ pub(crate) struct Handle {
     pub(crate) popup: State<Option<CodeEditorPopup>>,
     /// The byte the pointer rests on that a hover card was asked for last.
     hovered: State<Option<usize>>,
+    /// How far the text is scrolled across, in logical pixels.
+    pub(crate) across: State<f32>,
+    /// How wide the text area was laid out, gutter included, in logical pixels.
+    width: Rc<std::cell::Cell<f32>>,
+    /// How wide the gutter of numbers was drawn last, in logical pixels.
+    gutter: Rc<std::cell::Cell<f32>>,
+    /// How wide one character is, in logical pixels.
+    cell_width: f32,
+    /// Whether the carets show in this beat of their blinking.
+    blink: State<bool>,
 }
 
 impl Handle {
@@ -576,6 +658,7 @@ impl Handle {
             on_change();
         }
         self.reveal_caret();
+        self.reveal_caret_across();
         self.redraw();
     }
 
@@ -632,6 +715,68 @@ impl Handle {
         self.redraw();
     }
 
+    /// The point `x` of the text area measured across the whole text
+    /// rather than the part in view, for a point past the gutter `gutter` wide.
+    fn past_across(&self, x: f32, gutter: f32) -> f32 {
+        if x >= gutter {
+            x + self.across.get()
+        } else {
+            x
+        }
+    }
+
+    /// Scrolls the text across by `by` logical pixels, rightwards when
+    /// positive, no further left than its start and no further right than
+    /// its longest line in view needs.
+    fn scroll_across(&self, by: f32) {
+        let widest = {
+            let document = self.document.borrow();
+            let top = self.top();
+            let end = (top + self.rows() + 2).min(document.lines());
+            (top..end)
+                .map(|line| {
+                    let range = document.line(line);
+                    column_of(&document.field.text()[range.clone()], range.len())
+                })
+                .max()
+                .unwrap_or(0)
+        };
+        let room = (self.width.get() - self.gutter.get()).max(self.cell_width);
+        let most = ((widest + 4) as f32 * self.cell_width - room).max(0.0);
+        let across = (self.across.get() + by).clamp(0.0, most);
+        if across != self.across.get() {
+            self.across.set(across);
+        }
+    }
+
+    /// Scrolls across so the caret is in view, with a few characters to
+    /// spare at either side.
+    fn reveal_caret_across(&self) {
+        let room = self.width.get() - self.gutter.get();
+        if room <= self.cell_width * 4.0 {
+            return;
+        }
+        let x = {
+            let document = self.document.borrow();
+            let caret = document.field.caret();
+            let start = document.line(document.line_of(caret)).start;
+            column_of(&document.field.text()[start..caret], caret - start) as f32
+                * self.cell_width
+        };
+        let margin = self.cell_width * 4.0;
+        let across = self.across.get();
+        let wanted = if x < across + margin {
+            (x - margin).max(0.0)
+        } else if x > across + room - margin {
+            x - room + margin
+        } else {
+            across
+        };
+        if wanted != across {
+            self.across.set(wanted);
+        }
+    }
+
     /// Scrolls so the line the caret is on is in view.
     fn reveal_caret(&self) {
         let line = {
@@ -674,9 +819,16 @@ impl Handle {
                     self.type_text(&text);
                     return true;
                 }
-                Command::Newline => document.newline_edits(),
+                Command::Newline => {
+                    document.newline_edits_with(self.code.auto_indent, self.code.extend_comments)
+                }
                 Command::OpenLine(above) => vec![document.open_line_edit(above)],
                 Command::Indent => {
+                    drop(document);
+                    if self.expand_at_caret() {
+                        return true;
+                    }
+                    let document = self.document.borrow();
                     let selection = document.field.selection();
                     let spans_lines =
                         selection.is_some_and(|range| document.field.text()[range].contains('\n'));
@@ -685,6 +837,12 @@ impl Handle {
                     } else {
                         vec![Edit::Paste(document.editing.unit(1))]
                     }
+                }
+                Command::Outdent if document.snippet_active() => {
+                    drop(document);
+                    let step = self.document.borrow_mut().snippet_step(false);
+                    self.apply(step);
+                    return true;
                 }
                 Command::Outdent => document.indent_lines_edit(true).into_iter().collect(),
                 Command::Backspace => vec![document.backspace_edit().unwrap_or(Edit::Backspace)],
@@ -841,6 +999,25 @@ impl Handle {
         true
     }
 
+    /// Moves to the next blank of the snippet being filled in, or writes
+    /// out the snippet or Emmet abbreviation before the caret as the editor
+    /// settings allow; says whether Tab was taken by either.
+    fn expand_at_caret(&self) -> bool {
+        let step = self.document.borrow_mut().snippet_step(true);
+        if let Some(edit) = step {
+            self.apply([edit]);
+            return true;
+        }
+        let settings = crate::code_look::editor_settings();
+        let expansion = self.document.borrow().expansion(&settings);
+        let Some(expansion) = expansion else {
+            return false;
+        };
+        self.apply([expansion.edit.clone()]);
+        self.document.borrow_mut().begin_snippet(expansion);
+        true
+    }
+
     /// Types `text`: one character with its closing pair and the outdent
     /// it calls for, more as they are.
     fn type_text(&self, text: &str) {
@@ -852,7 +1029,7 @@ impl Handle {
         let typed = {
             let document = self.document.borrow();
             document
-                .typed_edit(character)
+                .typed_edit_with(character, self.code.auto_close, self.code.auto_surround)
                 .unwrap_or(Edit::Insert(character))
         };
         self.apply([typed]);
@@ -1276,6 +1453,16 @@ impl Line {
                 .iter()
                 .find(|(line, _)| *line == index)
                 .map(|(_, text)| text.clone()),
+            problems: if index < document.lines() {
+                document
+                    .diagnostics_on(index)
+                    .into_iter()
+                    .filter(|(_, found)| extras.code.diagnostics.shows(found.severity))
+                    .map(|(range, found)| (range, found.severity))
+                    .collect()
+            } else {
+                Vec::new()
+            },
             text,
         }
     }
@@ -1354,7 +1541,10 @@ fn text_area(
         focused,
         shape,
         code: extras.code,
+        across: handle.across.get(),
+        caret_shown: handle.blink.get() || !extras.code.cursor_blink,
     };
+    handle.gutter.set(gutter);
     let keys = {
         let handle = handle.clone();
         let engine = engine.clone();
@@ -1374,7 +1564,7 @@ fn text_area(
     let pointer = {
         let handle = handle.clone();
         move |event: &rustle::PointerEvent| {
-            let (x, y) = (event.position.x, event.position.y);
+            let (x, y) = (handle.past_across(event.position.x, gutter), event.position.y);
             match event.phase {
                 PointerPhase::Press if x < gutter && handle.press_bulb(x, y, cell.0) => {}
                 PointerPhase::Press if x < gutter && handle.press_gutter(y) => {}
@@ -1409,7 +1599,8 @@ fn text_area(
     let hover_handle = handle.clone();
     let hover = move |at: Option<rustle::Offset>| match at {
         Some(at) if at.x >= gutter => {
-            let byte = hover_handle.byte_at(at.x, at.y, gutter, cell.0);
+            let x = hover_handle.past_across(at.x, gutter);
+            let byte = hover_handle.byte_at(x, at.y, gutter, cell.0);
             hover_handle.hover_at(Some(byte));
         }
         _ => hover_handle.hover_at(None),
@@ -1417,9 +1608,27 @@ fn text_area(
     let assist_handle = handle.clone();
     let grid = Grid {
         cell,
-        gutter,
+        gutter: gutter - handle.across.get(),
         scrolled,
     };
+    let wheel_handle = handle.clone();
+    let wheel = move |input: &rustle::PointerInput| {
+        if input.phase != rustle::PointerInputPhase::Scroll {
+            return false;
+        }
+        let delta = input.scroll_delta;
+        let sideways = if input.modifiers.shift && delta.x == 0.0 {
+            delta.y
+        } else {
+            delta.x
+        };
+        if sideways == 0.0 || delta.y.abs() > delta.x.abs() && !input.modifiers.shift {
+            return false;
+        }
+        wheel_handle.scroll_across(-sideways);
+        true
+    };
+    let sized_handle = handle.clone();
     row_with(Modifier::new().fill_max_width().weight(1.0), move || {
         let document = document.clone();
         let list = list.clone();
@@ -1438,6 +1647,11 @@ fn text_area(
                 .fill_max_height()
                 .weight(1.0)
                 .focusable(&area_handle.focus, keys.clone())
+                .on_size_changed({
+                    let sized = sized_handle.clone();
+                    move |size| sized.width.set(size.width)
+                })
+                .pointer_input(wheel.clone())
                 .on_pointer_button(PointerButton::Primary, pointer.clone())
                 .on_pointer_move(hover.clone())
                 .cursor(CursorIcon::Text),
@@ -1581,6 +1795,10 @@ struct Look {
     shape: Shape,
     /// How the editor settings say the editor looks.
     code: CodeLook,
+    /// How far the text is scrolled across, in logical pixels.
+    across: f32,
+    /// Whether the carets are drawn in this beat of their blinking.
+    caret_shown: bool,
 }
 
 /// Something drawn inside a line that is not its text: a hint or a colour swatch.
@@ -1627,6 +1845,9 @@ struct Line {
     change: Option<LineChange>,
     /// What a paused debugger shows after it.
     value: Option<String>,
+    /// What the language server finds wrong on it, as offsets into it with
+    /// how bad each is, as far as the settings mark them.
+    problems: Vec<(Range<usize>, pm_editor::Severity)>,
 }
 
 impl Line {
@@ -1664,14 +1885,13 @@ impl Line {
         let (width, height) = look.cell;
         let scheme = look.scheme;
         let extended = look.extended;
-        let start = look.gutter;
+        let start = look.gutter - look.across;
         if self.current && look.code.current_line {
             canvas.rect(0.0, 0.0, 20_000.0, height, faded(scheme.on_surface, 10));
         }
         if look.code.line_numbers {
             self.paint_number(canvas, look);
         }
-        self.paint_guides(canvas, look);
         if self.breakpoint {
             canvas.circle(
                 width,
@@ -1704,6 +1924,8 @@ impl Line {
             ),
             None => {}
         }
+        canvas.push_clip(look.gutter, 0.0, 40_000.0, height);
+        self.paint_guides(canvas, look);
         let end_column =
             column_of(&self.text, self.text.len()) + self.shift_before(self.text.len(), true);
         let x_of = |byte: usize| start + self.column_at(byte) as f32 * width;
@@ -1831,7 +2053,8 @@ impl Line {
         if let Some(mark) = self.drop_mark {
             canvas.rect(x_of(mark), 0.0, 2.0, height, scheme.primary);
         }
-        if look.focused {
+        self.paint_problems(canvas, look, &span_x);
+        if look.focused && look.caret_shown {
             for caret in &self.carets {
                 let x = if *caret >= self.text.len() {
                     start
@@ -1849,6 +2072,37 @@ impl Line {
                 }
             }
         }
+        canvas.pop_clip();
+    }
+
+    /// Paints a wavy line under each stretch the language server finds
+    /// wrong, in the tone of how bad it is; `span_x` gives the left edge
+    /// and width a stretch of the line is drawn over.
+    fn paint_problems(
+        &self,
+        canvas: &mut Canvas,
+        look: &Look,
+        span_x: &dyn Fn(&Range<usize>) -> (f32, f32),
+    ) {
+        let height = look.cell.1;
+        for (range, severity) in &self.problems {
+            let (left, span) = span_x(range);
+            let span = span.max(look.cell.0);
+            let tone = severity_tone(*severity, &look.scheme, &look.extended);
+            let points: Vec<(f32, f32)> = (0..=((span / 2.0).ceil() as usize))
+                .map(|step| {
+                    let x = left + (step as f32 * 2.0).min(span);
+                    let y = if step % 2 == 0 { height - 1.0 } else { height - 3.0 };
+                    (x, y)
+                })
+                .collect();
+            canvas.polyline(&points, 1.0, tone);
+        }
+    }
+
+    /// How bad the worst problem on the line is, when it has any.
+    fn worst_problem(&self) -> Option<pm_editor::Severity> {
+        self.problems.iter().map(|(_, severity)| *severity).min()
     }
 
     /// Paints the line's number at the right of the gutter, brighter on the caret's line.
@@ -1857,10 +2111,12 @@ impl Line {
         let number = self.number.to_string();
         let number_x = look.gutter - (number.len() as f32 + 1.5) * width;
         let number_style = TextStyle {
-            color: if self.current {
-                look.scheme.on_surface
-            } else {
-                look.scheme.on_surface_variant
+            color: match self.worst_problem() {
+                Some(severity @ (pm_editor::Severity::Error | pm_editor::Severity::Warning)) => {
+                    severity_tone(severity, &look.scheme, &look.extended)
+                }
+                _ if self.current => look.scheme.on_surface,
+                _ => look.scheme.on_surface_variant,
             },
             ..look.style
         };
@@ -1877,7 +2133,7 @@ impl Line {
             let indent = column_of(&self.text, self.text.len() - self.text.trim_start().len());
             for column in (0..indent).step_by(INDENT_STEP) {
                 canvas.rect(
-                    look.gutter + column as f32 * width,
+                    look.gutter - look.across + column as f32 * width,
                     0.0,
                     1.0,
                     height,
@@ -1887,7 +2143,7 @@ impl Line {
         }
         if let Some(column) = look.code.wrap_guide {
             canvas.rect(
-                look.gutter + column as f32 * width,
+                look.gutter - look.across + column as f32 * width,
                 0.0,
                 1.0,
                 height,
@@ -1917,6 +2173,20 @@ impl Line {
         }
         pieces.push(from..range.end);
         pieces
+    }
+}
+
+/// The tone a problem of `severity` is marked in.
+fn severity_tone(
+    severity: pm_editor::Severity,
+    scheme: &ColorScheme,
+    extended: &ExtendedColors,
+) -> Color {
+    match severity {
+        pm_editor::Severity::Error => scheme.error,
+        pm_editor::Severity::Warning => extended.warning,
+        pm_editor::Severity::Information => scheme.primary,
+        pm_editor::Severity::Hint => scheme.on_surface_variant,
     }
 }
 

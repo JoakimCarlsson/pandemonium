@@ -102,7 +102,7 @@ pub use model::{
 };
 pub use open_files::{
     Comparison, EditorBar, EditorPopup, FileBody, OpenFile, OpenFiles, Pane, SessionTab,
-    SharedDocument, TabAction, TabMenu, is_picture,
+    SharedDocument, SavedFile, TabAction, TabMenu, Unsaved, is_picture,
 };
 pub use page::{Page, Trail};
 pub use pm_browser::CaptureKind as PageCapture;

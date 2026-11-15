@@ -6,7 +6,7 @@ use pm_editor::ServerAsk;
 use pm_protocol::{Request, Response};
 
 use super::{Ask, Link, expand_home};
-use crate::open_files::{FileBody, SessionTab, TabAction, is_picture};
+use crate::open_files::{FileBody, SessionTab, TabAction, Unsaved, is_picture};
 
 /// What a request about the open files was for.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,7 +60,17 @@ impl Link {
     }
 
     /// Carries out `action` the tab strip or its menu asked for.
-    pub fn file_tab(&mut self, action: TabAction) {
+    pub fn file_tab(&mut self, mut action: TabAction) {
+        if action == TabAction::Unsaved(Unsaved::Save) {
+            let held = self.workspace.open_files.asking;
+            for index in held
+                .map(|close| self.workspace.open_files.unsaved_closing(close))
+                .unwrap_or_default()
+            {
+                self.save_file(index);
+            }
+            action = TabAction::Unsaved(Unsaved::Discard);
+        }
         let synced: Vec<(String, String)> = self
             .workspace
             .open_files
@@ -190,6 +200,7 @@ impl Link {
                     None => file.body = FileBody::Failed("This file is not text.".to_owned()),
                 }
                 let pending_made = file.is_dirty();
+                self.hand_diagnostics(index);
                 self.open_for_server(index);
                 if pending_made {
                     self.workspace.open_files.files[index].preview = false;

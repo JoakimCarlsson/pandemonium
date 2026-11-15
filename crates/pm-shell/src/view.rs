@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::browser_scope::SavedBrowser;
 use crate::model::{DockTab, PanelSizes, RightTab, Workspace};
+use crate::open_files::SavedFile;
 use crate::page::Page;
 
 /// A page as it is written down.
@@ -69,6 +70,8 @@ pub struct View {
     pub sizes: PanelSizes,
     /// The browser of each session, with its tabs.
     pub browsers: Vec<SavedBrowser>,
+    /// The files open in the session view, with their unsaved text.
+    pub files: Vec<SavedFile>,
 }
 
 impl Default for View {
@@ -83,6 +86,7 @@ impl Default for View {
             dock_tab: DockTab::default(),
             sizes: PanelSizes::default(),
             browsers: Vec::new(),
+            files: Vec::new(),
         }
     }
 }
@@ -99,6 +103,7 @@ impl View {
             dock_tab: workspace.dock_tab,
             sizes: workspace.sizes,
             browsers: workspace.shelf.saved(&workspace.browser),
+            files: workspace.open_files.saved(),
         }
     }
 

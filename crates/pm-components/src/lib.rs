@@ -105,7 +105,7 @@ pub use chip::{Chip, ChipVariant};
 pub use code_assist::CodeEditorPopup;
 pub use code_bars::CodeEditorBar;
 pub use code_editor::{CodeEditor, CodeEditorVariant};
-pub use code_look::{CodeLook, code_look};
+pub use code_look::{CodeLook, code_look, editor_settings, use_editor_settings};
 pub use composer::{
     Composer, ComposerChoice, ComposerCommand, ComposerMenu, ComposerPick, ComposerVariant,
 };

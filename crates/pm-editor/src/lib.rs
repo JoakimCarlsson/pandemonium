@@ -54,7 +54,7 @@ pub use gutter::LineChange;
 pub use keymap::{Action, Chord, Keymap, Preset, Pressed, shown};
 pub use modal::{ModalPress, ModalView};
 pub use pm_buffer::{Position, Span};
-pub use pm_lsp::{Seek, Signature};
+pub use pm_lsp::{Diagnostic, Seek, Severity, Signature};
 pub use server_ask::{FIX_ALL, ORGANIZE_IMPORTS, ServerAsk};
 pub use settings::{
     CursorShape, DiagnosticsShown, EditorSettings, FindInSelection, LightbulbShown, SoftWrap,

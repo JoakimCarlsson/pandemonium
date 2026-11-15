@@ -55,6 +55,8 @@ const WORDS: &[&str] = &[
     "code-replace",
     "code-goto",
     "code-vim",
+    "code-problems",
+    "code-unsaved",
     "code-debug",
     "code-scrolled",
     "code-markdown",
@@ -607,6 +609,11 @@ fn show_code_state(workspace: &mut pm_shell::Workspace, words: &[&str]) {
             }
             "code-goto" => files.files[0].bar = Some(pm_shell::EditorBar::GoTo("120".to_owned())),
             "code-vim" => files.vim = true,
+            "code-problems" => show_problems(&files.files[0]),
+            "code-unsaved" => {
+                files.files[0].document.0.borrow_mut().mark_unsaved();
+                files.act(pm_shell::TabAction::Close(0));
+            }
             "code-scrolled" | "code-debug" => {
                 let line = CODE_SAMPLE[..CODE_SAMPLE.find("drag_resize_window(edge)").unwrap_or(0)]
                     .lines()
@@ -667,6 +674,34 @@ fn show_code_state(workspace: &mut pm_shell::Workspace, words: &[&str]) {
             pm_shell::FileBody::Picture(std::rc::Rc::new(PICTURE_SAMPLE.to_vec()));
         files.tab = pm_shell::SessionTab::File(index);
     }
+}
+
+/// Marks problems on the sample `file` as a language server would: an
+/// error, a warning and a hint on the lines around its caret.
+fn show_problems(file: &pm_shell::OpenFile) {
+    let mut document = file.document.0.borrow_mut();
+    let caret = document.field.caret();
+    let line = document.line_of(caret) as u32;
+    let found = |line: u32, from: u32, to: u32, severity, message: &str| pm_editor::Diagnostic {
+        span: pm_editor::Span::new(
+            pm_editor::Position {
+                line,
+                character: from,
+            },
+            pm_editor::Position {
+                line,
+                character: to,
+            },
+        ),
+        severity,
+        message: message.to_owned(),
+        source: Some("rustc".to_owned()),
+    };
+    document.diagnostics = vec![
+        found(line, 3, 7, pm_editor::Severity::Error, "cannot find value `root`"),
+        found(line + 2, 8, 20, pm_editor::Severity::Warning, "unused variable"),
+        found(line + 4, 4, 9, pm_editor::Severity::Hint, "consider borrowing"),
+    ];
 }
 
 /// Shows on the sample files of `workspace` the language features, panes

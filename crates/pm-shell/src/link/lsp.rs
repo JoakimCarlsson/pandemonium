@@ -83,6 +83,43 @@ impl Link {
         );
     }
 
+    /// Takes in `diagnostics`, what a language server found wrong with the
+    /// file at `path` in `directory`: listed in the problems, kept for when
+    /// the file opens, and handed to its editor when it is open.
+    pub(super) fn take_diagnostics(
+        &mut self,
+        directory: String,
+        path: String,
+        diagnostics: Vec<pm_protocol::Diagnostic>,
+    ) {
+        if let Some(index) = self.workspace.open_files.position(&directory, &path) {
+            self.workspace.open_files.files[index]
+                .document
+                .0
+                .borrow_mut()
+                .diagnostics = diagnostics.clone();
+        }
+        let key = (directory.clone(), path.clone());
+        if diagnostics.is_empty() {
+            self.diagnosed.remove(&key);
+        } else {
+            self.diagnosed.insert(key, diagnostics.clone());
+        }
+        self.change_dock(|dock| dock.diagnostics(directory, path, diagnostics));
+    }
+
+    /// Hands the open file at `index` what its language server last found
+    /// wrong with it, once its text has arrived.
+    pub(super) fn hand_diagnostics(&mut self, index: usize) {
+        let Some(file) = self.workspace.open_files.files.get(index) else {
+            return;
+        };
+        let key = (file.directory.clone(), file.path.clone());
+        if let Some(found) = self.diagnosed.get(&key) {
+            file.document.0.borrow_mut().diagnostics = found.clone();
+        }
+    }
+
     /// Tells the language servers that the files `closed`, by folder and
     /// path, are no longer open.
     pub(super) fn close_for_server(&mut self, closed: Vec<(String, String)>) {
