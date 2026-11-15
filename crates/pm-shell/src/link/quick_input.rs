@@ -65,6 +65,7 @@ impl Link {
                 self.workspace.quick = None;
                 return self.pick(item);
             }
+            QuickAction::Prompt => return self.quick_prompt(),
             QuickAction::Close => self.workspace.quick = None,
         }
         None
@@ -94,6 +95,9 @@ impl Link {
                 Request::Toolchains { directory, project },
                 Ask::Listing(choosing),
             );
+        }
+        if choosing == Choosing::CompareFile && !self.workspace.tree.loaded {
+            self.load_files();
         }
         self.ask_listing(choosing);
     }
@@ -137,7 +141,8 @@ impl Link {
             | Choosing::References
             | Choosing::Actions
             | Choosing::History
-            | Choosing::Toolchain => Vec::new(),
+            | Choosing::Toolchain
+            | Choosing::CompareFile => Vec::new(),
             Choosing::Task => self
                 .workspace
                 .tasks
@@ -214,13 +219,31 @@ impl Link {
         let Some(quick) = &mut self.workspace.quick else {
             return;
         };
+        if quick.choosing == Some(Choosing::Session) {
+            quick.chats.clear();
+            let needle = quick.needle().to_owned();
+            let query = quick.query.clone();
+            if !needle.is_empty() {
+                self.ask(
+                    Request::SearchChats {
+                        query: needle,
+                        limit: None,
+                    },
+                    Ask::Quick(query),
+                );
+            }
+            return;
+        }
         if quick.choosing.is_some() {
             return;
         }
         let mode = quick.mode();
         let needle = quick.needle().to_owned();
         let query = quick.query.clone();
-        if matches!(mode, QuickMode::Files | QuickMode::Commands) {
+        if matches!(
+            mode,
+            QuickMode::Files | QuickMode::Commands | QuickMode::Outline
+        ) {
             return;
         }
         quick.found.clear();
@@ -333,6 +356,14 @@ impl Link {
                     .collect();
                 quick.selected = 0;
             }
+            (Ask::Quick(query), Response::ChatsFound { hits })
+                if quick.choosing == Some(Choosing::Session) && quick.query == query =>
+            {
+                quick.chats = hits
+                    .into_iter()
+                    .map(|hit| (hit.session, hit.preview))
+                    .collect();
+            }
             (Ask::Quick(query), Response::Failed { message })
                 if quick.waiting.as_deref() == Some(query.as_str()) =>
             {
@@ -393,6 +424,14 @@ impl Link {
                     }
                 }
             }
+            QuickPick::NewSession(at) => {
+                self.new_session(at);
+                None
+            }
+            QuickPick::Compare(other) => {
+                self.compare_with_file(other);
+                None
+            }
             QuickPick::Toolchain { language, id } => {
                 let project = self.project_root()?;
                 self.ask(
@@ -410,6 +449,30 @@ impl Link {
                 None
             }
         }
+    }
+
+    /// Starts a new session with what is typed as its prompt when the quick input lists sessions and something is typed, in the open session's project or the first one; otherwise picks the row chosen as Enter does.
+    fn quick_prompt(&mut self) -> Option<QuickOutcome> {
+        let quick = self.workspace.quick.as_ref()?;
+        let typed = quick.needle().to_owned();
+        if quick.choosing != Some(Choosing::Session) || typed.is_empty() {
+            return self.quick(QuickAction::Pick(None));
+        }
+        self.workspace.quick = None;
+        let at = self
+            .workspace
+            .open
+            .as_ref()
+            .and_then(|open| open.first().copied())
+            .unwrap_or_default();
+        if self.workspace.projects.is_empty() {
+            self.new_chat();
+        } else {
+            self.new_session(vec![at]);
+        }
+        self.workspace.extras.prefill = Some(typed);
+        self.workspace.extras.composer.asked += 1;
+        None
     }
 
     /// Puts the command titled `title` first among those used lately.
@@ -517,7 +580,7 @@ impl Link {
                 self.workspace.dock_tab = crate::model::DockTab::Debug;
                 None
             }
-            Choosing::Toolchain => None,
+            Choosing::Toolchain | Choosing::CompareFile => None,
             Choosing::Keymap => {
                 self.change_settings(SettingsChange::Pick(Setting::BaseKeymap, place));
                 Some(QuickOutcome::SettingsChanged)

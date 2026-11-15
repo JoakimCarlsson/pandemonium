@@ -23,6 +23,7 @@ pub fn quick_input(workspace: &Workspace, actions: &Actions) {
     let typed = actions.quick.clone();
     let picked = actions.quick.clone();
     let moved = actions.quick.clone();
+    let prompted = actions.quick.clone();
     let empty = empty_note(quick);
     Modal::new()
         .variant(ModalVariant::Top)
@@ -42,6 +43,7 @@ pub fn quick_input(workspace: &Workspace, actions: &Actions) {
                     .on_query(move |text| typed(QuickAction::Query(text)))
                     .on_pick(move |place| picked(QuickAction::Pick(Some(place))))
                     .on_move(move |by| moved(QuickAction::Move(by)))
+                    .on_prompt(move || prompted(QuickAction::Prompt))
                     .on_close(move || escape(QuickAction::Close))
                     .show();
             },
