@@ -343,6 +343,16 @@ fn show_projects(workspace: &mut pm_shell::Workspace, words: &[&str]) {
             error: words.contains(&"clone-failed").then(|| {
                 "fatal: repository 'https://github.com/JoakimCarlsson/rustle/' not found".to_owned()
             }),
+            machines: vec![
+                pm_shell::Machine {
+                    name: "This machine".to_owned(),
+                    host: None,
+                },
+                pm_shell::Machine {
+                    name: "devbox".to_owned(),
+                    host: Some("devbox".to_owned()),
+                },
+            ],
             ..pm_shell::Adder::default()
         });
     }

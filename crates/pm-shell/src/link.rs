@@ -353,7 +353,7 @@ impl Link {
         &mut self.settings
     }
 
-    /// Readies the settings window as it opens: names the agent and project its customizations are read for, and asks the server for what its pages list.
+    /// Readies the settings window as it opens: names the agent and the project its customizations are read for, the open session's or else the first, on whichever machine it lives, and asks the server for what its pages list.
     pub fn open_settings(&mut self) {
         let agent = self
             .settings
@@ -362,7 +362,15 @@ impl Link {
             .default_agent
             .clone()
             .or_else(|| self.settings.agents.first().map(|agent| agent.id.clone()));
-        self.settings.library_place = agent.zip(self.paths.first().map(|path| expand_home(path)));
+        let open_project = self
+            .workspace
+            .open
+            .as_ref()
+            .filter(|_| !self.workspace.sample)
+            .and_then(|at| self.workspace.projects.get(*at.first()?))
+            .map(|project| project.path.clone());
+        let project = open_project.or_else(|| self.paths.first().cloned());
+        self.settings.library_place = agent.zip(project.map(|path| expand_home(&path)));
         let mut requests = vec![
             Request::McpServers,
             Request::ModelServers,
@@ -388,10 +396,21 @@ impl Link {
         self.change_dock(|_| {});
     }
 
-    /// Sends `request`, remembering what its answer is for.
+    /// Sends `request`, remembering what its answer is for; the agent's tools and what is withheld from it go to the machine of the project the settings window reads customizations for.
     fn send(&mut self, request: Request) {
         let ask = Ask::of(&request);
-        self.ask(request, ask);
+        let library_host = self
+            .settings
+            .library_place
+            .as_ref()
+            .and_then(|(_, directory)| pm_protocol::host_of(directory))
+            .map(|(host, _)| host.to_owned());
+        match (library_host, &request) {
+            (Some(host), Request::ToolSets { .. } | Request::SaveWithheld { .. }) => {
+                self.ask_remote(&host, request, ask)
+            }
+            _ => self.ask(request, ask),
+        }
     }
 
     /// Handles everything the server sent since the last call and returns

@@ -49,8 +49,8 @@ pub enum SettingsChange {
     ToggleWithheld(String),
     /// Takes the known server at a place out of the servers page.
     RemoveServer(usize),
-    /// Adds a server by its name, its address and the place of how it is reached among [`crate::settings_model::REACHES`].
-    AddServer(String, String, usize),
+    /// Adds a server by its name, its address, the place of how it is reached among [`crate::settings_model::REACHES`], and the token it lets the window in with, kept for servers reached straight or through a tunnel.
+    AddServer(String, String, usize, String),
     /// Takes every key off the action kept under this name.
     ClearKeys(String),
     /// Puts the action kept under this name back on the keys of the preset.
@@ -257,18 +257,25 @@ impl SettingsModel {
                     }
                 }
             }
-            SettingsChange::AddServer(name, address, reach) => {
+            SettingsChange::AddServer(name, address, reach, token) => {
                 let name = name.trim().to_owned();
                 let servers = &mut self.window.servers;
                 let taken =
                     name == "This machine" || servers.known.iter().any(|held| held.name == name);
                 if !name.is_empty() && !taken {
+                    let reach = crate::settings_model::REACHES
+                        .get(reach)
+                        .map_or_else(Default::default, |(reach, _)| *reach);
+                    let token = if reach.keeps_token() {
+                        token.trim().to_owned()
+                    } else {
+                        String::new()
+                    };
                     servers.known.push(pm_config::KnownServer {
                         name,
-                        reach: crate::settings_model::REACHES
-                            .get(reach)
-                            .map_or_else(Default::default, |(reach, _)| *reach),
+                        reach,
                         address: address.trim().to_owned(),
+                        token,
                         ..pm_config::KnownServer::default()
                     });
                 }

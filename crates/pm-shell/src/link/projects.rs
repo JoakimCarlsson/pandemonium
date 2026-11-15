@@ -43,10 +43,23 @@ impl Link {
                 self.rebuild();
             }
             ProjectAction::Adding(step) => {
+                let machines =
+                    FolderPicker::open(None, &self.settings.window.servers.known).machines;
                 self.workspace.adder = step.map(|step| Adder {
                     step,
+                    machines,
                     ..self.workspace.adder.clone().unwrap_or_default()
                 });
+            }
+            ProjectAction::CloneUnder(under) => {
+                let adder = self.workspace.adder.get_or_insert_with(Adder::default);
+                adder.under = under;
+                adder.error = None;
+            }
+            ProjectAction::CloneOn(machine) => {
+                let adder = self.workspace.adder.get_or_insert_with(Adder::default);
+                adder.machine = machine;
+                adder.error = None;
             }
             ProjectAction::CloneUrl(url) => {
                 let adder = self.workspace.adder.get_or_insert_with(Adder::default);
@@ -76,7 +89,7 @@ impl Link {
         self.save_projects(paths);
     }
 
-    /// Clones the address the adder holds into the usual folder for clones, adding the clone once it is made.
+    /// Clones the address the adder holds into the folder it names, or the usual folder for clones, on the machine it names, adding the clone once it is made.
     fn clone_repository(&mut self) {
         let Some(adder) = &mut self.workspace.adder else {
             return;
@@ -87,15 +100,24 @@ impl Link {
         }
         adder.busy = true;
         adder.error = None;
-        self.ask(Request::Clone { url, under: None }, Ask::Cloned);
+        let under = Some(adder.under.trim().to_owned()).filter(|under| !under.is_empty());
+        let request = Request::Clone { url, under };
+        match adder.machine.clone() {
+            Some(host) => self.ask_remote(&host, request, Ask::Cloned),
+            None => self.ask(request, Ask::Cloned),
+        }
     }
 
-    /// Takes the server's answer to a clone.
+    /// Takes the server's answer to a clone, adding the clone as a project on the machine it was made on.
     pub(super) fn answer_clone(&mut self, response: Response) {
         match response {
             Response::Directory { path } => {
-                self.workspace.adder = None;
-                self.add_project(path);
+                let machine = self.workspace.adder.take().and_then(|adder| adder.machine);
+                let address = match machine {
+                    Some(host) => super::routes::address_on(&host, &path),
+                    None => path,
+                };
+                self.add_project(address);
             }
             Response::Failed { message } => {
                 if let Some(adder) = &mut self.workspace.adder {

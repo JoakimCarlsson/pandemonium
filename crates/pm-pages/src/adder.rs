@@ -1,6 +1,7 @@
 //! The adder: a popover under the sidebar's "Workspaces" heading that adds a
 //! project from a folder, chosen in the folder picker, or from a clone of a
-//! repository on GitHub or any other git host.
+//! repository on GitHub or any other git host, into a folder and on a
+//! machine of the reader's choosing.
 
 use pm_components::{
     Button, ButtonVariant, Label, LabelVariant, Leading, Notice, NoticeVariant, Popover, Size,
@@ -43,7 +44,38 @@ fn choices(actions: &Actions) {
     });
 }
 
-/// The form that clones a repository and adds the clone.
+/// The machines the clone can be made on, the one chosen raised.
+fn machine_choice(state: &Adder, actions: &Actions) {
+    flow_row_with(
+        Modifier::new().fill_max_width(),
+        FlowOptions::new(6.0, 6.0),
+        || {
+            for machine in &state.machines {
+                let pick = actions.projects.clone();
+                let host = machine.host.clone();
+                let chosen = state.machine == machine.host;
+                key(machine.name.clone(), || {
+                    Button::new(machine.name.clone())
+                        .icon(if machine.host.is_some() {
+                            phosphor::CLOUD
+                        } else {
+                            phosphor::DESKTOP
+                        })
+                        .variant(if chosen {
+                            ButtonVariant::Secondary
+                        } else {
+                            ButtonVariant::Ghost
+                        })
+                        .size(Size::Xs)
+                        .on_click(move || pick(ProjectAction::CloneOn(host.clone())))
+                        .show();
+                });
+            }
+        },
+    );
+}
+
+/// The form that clones a repository, into the folder and on the machine chosen, and adds the clone.
 fn clone_form(state: &Adder, actions: &Actions) {
     let change = actions.projects.clone();
     let submit = actions.projects.clone();
@@ -73,6 +105,18 @@ fn clone_form(state: &Adder, actions: &Actions) {
                 .variant(LabelVariant::Subtle)
                 .size(Size::Xs)
                 .show();
+        }
+        spacer(Modifier::new().height(pm_components::spacing(8.0)));
+        let under = actions.projects.clone();
+        TextInput::new(state.under.clone())
+            .placeholder("Inside the usual folder for clones")
+            .size(Size::Sm)
+            .modifier(Modifier::new().fill_max_width())
+            .on_change(move |text| under(ProjectAction::CloneUnder(text)))
+            .show();
+        if state.machines.len() > 1 {
+            spacer(Modifier::new().height(pm_components::spacing(8.0)));
+            machine_choice(state, actions);
         }
         if let Some(error) = &state.error {
             spacer(Modifier::new().height(pm_components::spacing(8.0)));
