@@ -5,7 +5,7 @@
 use pm_components::{
     Composer, ComposerChoice, ComposerMenu, ComposerPick, QueuedList, UsageRing, UsageRingVariant,
 };
-use pm_shell::{CaptureKind, ComposerAction, ConversationSetting, Workspace};
+use pm_shell::{CaptureKind, ComposerAction, ComposerState, ConversationSetting, Workspace};
 use rustle::prelude::*;
 
 use crate::actions::Actions;
@@ -44,6 +44,35 @@ pub fn prompt_box(workspace: &Workspace, actions: &Actions, width: f32) {
     for command in &composer.commands {
         prompt = prompt.command(command.name.clone(), command.description.clone());
     }
+    prompt = with_attachments(prompt, composer, actions);
+    if let Some(context) = &composer.context {
+        prompt = prompt.ring(UsageRing::new(context.fraction).detail(context.detail.clone()));
+    }
+    if let Some(allowance) = &composer.allowance {
+        prompt = prompt.ring(
+            UsageRing::new(allowance.fraction)
+                .variant(UsageRingVariant::Allowance)
+                .detail(allowance.detail.clone()),
+        );
+    }
+    let (now, stop, pick, mention) = (act.clone(), act.clone(), act.clone(), act.clone());
+    with_attaching(prompt, actions)
+        .mentions(workspace.tree.paths.clone())
+        .on_mention(move || mention(ComposerAction::Mention))
+        .on_send(move |text| send(text))
+        .on_send_now(move |text| now(ComposerAction::SendNow(text)))
+        .on_stop(move || stop(ComposerAction::Stop))
+        .on_pick(move |id, value| pick(ComposerAction::Set(id, value)))
+        .show();
+}
+
+/// `prompt` with a chip for each file, browser element and capture `composer` holds for the next prompt, whose cross takes it off.
+pub(crate) fn with_attachments(
+    mut prompt: Composer,
+    composer: &ComposerState,
+    actions: &Actions,
+) -> Composer {
+    let act = actions.composer.clone();
     for (place, file) in composer.files.iter().enumerate() {
         let detach = act.clone();
         let glyph = if file.picture {
@@ -71,38 +100,20 @@ pub fn prompt_box(workspace: &Workspace, actions: &Actions, width: f32) {
             detach(ComposerAction::DetachCapture(place))
         });
     }
-    if let Some(context) = &composer.context {
-        prompt = prompt.ring(UsageRing::new(context.fraction).detail(context.detail.clone()));
-    }
-    if let Some(allowance) = &composer.allowance {
-        prompt = prompt.ring(
-            UsageRing::new(allowance.fraction)
-                .variant(UsageRingVariant::Allowance)
-                .detail(allowance.detail.clone()),
-        );
-    }
-    let (now, stop, pick, attach, picture) = (
-        act.clone(),
-        act.clone(),
-        act.clone(),
-        act.clone(),
-        act.clone(),
-    );
-    let (browse, mention, cycle) = (act.clone(), act.clone(), act.clone());
     prompt
-        .mentions(workspace.tree.paths.clone())
+}
+
+/// `prompt` attaching files picked with its `+` button, dropped or pasted on it, and pictures pasted, and cycling the mode with Shift+Tab.
+pub(crate) fn with_attaching(prompt: Composer, actions: &Actions) -> Composer {
+    let act = actions.composer.clone();
+    let (browse, attach, picture, cycle) = (act.clone(), act.clone(), act.clone(), act);
+    prompt
         .on_browse(move || browse(ComposerAction::Browse))
-        .on_mention(move || mention(ComposerAction::Mention))
         .on_cycle_mode(move || cycle(ComposerAction::CycleMode))
-        .on_send(move |text| send(text))
-        .on_send_now(move |text| now(ComposerAction::SendNow(text)))
-        .on_stop(move || stop(ComposerAction::Stop))
-        .on_pick(move |id, value| pick(ComposerAction::Set(id, value)))
         .on_attach(move |paths| attach(ComposerAction::Attach(paths)))
         .on_picture(move |width, height, rgba| {
             picture(ComposerAction::Picture(width, height, rgba))
         })
-        .show();
 }
 
 /// `prompt` with the open session's settings in its toolbar: those the
@@ -122,7 +133,7 @@ fn with_settings(mut prompt: Composer, workspace: &Workspace) -> Composer {
 }
 
 /// The toolbar choice of `setting`, its glyph picked by what it is for.
-fn choice_of(setting: &ConversationSetting) -> ComposerChoice {
+pub(crate) fn choice_of(setting: &ConversationSetting) -> ComposerChoice {
     let icon = match setting.category.as_str() {
         MODEL => None,
         MODE => Some(phosphor::SHIELD_CHECK),

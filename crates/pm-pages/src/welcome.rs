@@ -7,10 +7,11 @@ use pm_components::{
     Chip, Composer, ComposerChoice, ComposerMenu, ComposerPick, ComposerVariant, IconButton, Label,
     LabelVariant, Size,
 };
-use pm_shell::{AgentChoice, BrowserAction, ComposerAction, Start, Workspace};
+use pm_shell::{AgentChoice, BASE_SETTING, BrowserAction, ComposerAction, Start, Workspace};
 
 use crate::actions::Actions;
 use crate::browser_pane::browser_pane;
+use crate::prompt_box::{choice_of, with_attaching, with_attachments};
 
 /// Width of the welcome page's column.
 const COLUMN_WIDTH: f32 = 680.0;
@@ -82,7 +83,15 @@ fn welcome_column(workspace: &Workspace, start: &Start, actions: &Actions) {
                         Modifier::new().fill_max_width(),
                         FlowOptions::new(8.0, 8.0).arrangement(Arrangement::Center),
                         || {
-                            for (index, agent) in workspace.agents.iter().enumerate() {
+                            let shown: Vec<usize> = if start.shown.is_empty() {
+                                (0..workspace.agents.len()).collect()
+                            } else {
+                                start.shown.clone()
+                            };
+                            for index in shown {
+                                let Some(agent) = workspace.agents.get(index) else {
+                                    continue;
+                                };
                                 key(agent.id.clone(), || {
                                     let choose = actions.choose_agent.clone();
                                     Chip::new(agent.name.clone())
@@ -94,30 +103,75 @@ fn welcome_column(workspace: &Workspace, start: &Start, actions: &Actions) {
                             }
                         },
                     );
-                    let send = actions.start.clone();
-                    let place = actions.composer.clone();
-                    let mut composer =
-                        Composer::new("Describe a task, ask a question, or type / for commands")
-                            .variant(ComposerVariant::Start)
-                            .menu(
-                                start
-                                    .place_menu
-                                    .then(|| ComposerMenu::Setting(PLACE.to_owned())),
-                            )
-                            .modifier(Modifier::new().fill_max_width())
-                            .on_pick(move |_, value| {
-                                let (worktree, container) = place_of(&value);
-                                place(ComposerAction::Place(worktree, container))
-                            })
-                            .on_send(move |text| send(text));
-                    if start.at.is_some() {
-                        composer = composer.setting(place_choice(start));
-                    }
-                    composer.show();
+                    welcome_composer(workspace, start, actions);
                 },
             );
         },
     );
+}
+
+/// Emits the composer whose first prompt starts the work `start` describes,
+/// with the agent's settings, where the work runs and the branch it starts
+/// from, and what is attached in `workspace`.
+fn welcome_composer(workspace: &Workspace, start: &Start, actions: &Actions) {
+    let send = actions.start.clone();
+    let place = actions.composer.clone();
+    let mut composer = Composer::new("Describe a task, ask a question, or type / for commands")
+        .variant(ComposerVariant::Start)
+        .menu(
+            start
+                .place_menu
+                .then(|| ComposerMenu::Setting(PLACE.to_owned())),
+        )
+        .modifier(Modifier::new().fill_max_width())
+        .on_pick(move |id, value| {
+            if id == PLACE {
+                let (worktree, container) = place_of(&value);
+                place(ComposerAction::Place(worktree, container))
+            } else {
+                place(ComposerAction::Set(id, value))
+            }
+        })
+        .on_send(move |text| send(text));
+    for setting in &start.settings {
+        composer = composer.setting(choice_of(setting));
+    }
+    for command in &start.commands {
+        composer = composer.command(command.name.clone(), command.description.clone());
+    }
+    if start.at.is_some() {
+        composer = composer.setting(place_choice(start));
+        if start.worktree && !start.branches.is_empty() {
+            composer = composer.setting(base_choice(start));
+        }
+    }
+    composer = with_attachments(composer, &workspace.extras.composer, actions);
+    with_attaching(composer, actions).show();
+}
+
+/// The choice of the branch the worktree of the work `start` describes is made from.
+fn base_choice(start: &Start) -> ComposerChoice {
+    let current = start
+        .base
+        .clone()
+        .or_else(|| start.branches.first().cloned())
+        .unwrap_or_default();
+    ComposerChoice {
+        icon: Some(phosphor::GIT_FORK),
+        label: format!("From {current}"),
+        id: BASE_SETTING.to_owned(),
+        heading: "Branch from".to_owned(),
+        current,
+        picks: start
+            .branches
+            .iter()
+            .map(|branch| ComposerPick {
+                value: branch.clone(),
+                name: branch.clone(),
+                description: String::new(),
+            })
+            .collect(),
+    }
 }
 
 /// The id of the welcome composer's choice of where the work runs.

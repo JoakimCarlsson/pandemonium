@@ -128,6 +128,7 @@ const WORDS: &[&str] = &[
     "composer-field",
     "composer-mention",
     "welcome-place",
+    "welcome-branch",
     "settings-<section>[-narrow]",
 ];
 
@@ -144,7 +145,8 @@ const WORDS: &[&str] = &[
 /// [browser[-find|-menu|-tools|-ask|-cert|-clear|-notice|-pick]]
 /// [project-menu|adder|clone|clone-failed|sample|remote]
 /// [picker|picker-remote|picker-failed] [form]
-/// [composer[-model|-slash|-queued|-attached|-field]|welcome-place]
+/// [composer[-model|-slash|-queued|-attached|-field|-mention]|welcome-place|welcome-branch]
+/// [signed-out]
 /// [compact] [interface-<px>] [codesize-<px>] [line-<times>] [terminal-<px>]
 /// [font-<family>] [mono-<family>]`
 /// with `arguments` (those after the flag) and returns the process's exit
@@ -202,7 +204,10 @@ pub fn run(arguments: &[String]) -> i32 {
         }
         pm_shell::sample_composer(&mut workspace.extras, sample);
     }
-    let start = if words.contains(&"welcome") || words.contains(&"welcome-place") {
+    let start = if ["welcome", "welcome-place", "welcome-branch"]
+        .iter()
+        .any(|word| words.contains(word))
+    {
         pm_shell::start_in(&workspace.projects, &[0])
     } else if words.contains(&"chat") {
         Some(pm_shell::start_chat())
@@ -211,6 +216,12 @@ pub fn run(arguments: &[String]) -> i32 {
     };
     if let Some(mut start) = start {
         start.place_menu = words.contains(&"welcome-place");
+        if words.contains(&"welcome-branch") {
+            start.worktree = true;
+            start.branches = vec!["main".to_owned(), "feature/search".to_owned()];
+            start.base = Some("feature/search".to_owned());
+            start.settings = workspace.extras.composer.settings.clone();
+        }
         pm_shell::show_start(&mut workspace, start);
     }
     if !live {

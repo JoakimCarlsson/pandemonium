@@ -69,6 +69,8 @@ pub struct View {
     pub sizes: PanelSizes,
     /// The browser of each session, with its tabs.
     pub browsers: Vec<SavedBrowser>,
+    /// The agent new work was last started with, by its id.
+    pub last_agent: Option<String>,
 }
 
 impl Default for View {
@@ -83,6 +85,7 @@ impl Default for View {
             dock_tab: DockTab::default(),
             sizes: PanelSizes::default(),
             browsers: Vec::new(),
+            last_agent: None,
         }
     }
 }
@@ -99,6 +102,7 @@ impl View {
             dock_tab: workspace.dock_tab,
             sizes: workspace.sizes,
             browsers: workspace.shelf.saved(&workspace.browser),
+            last_agent: workspace.last_agent.clone(),
         }
     }
 
@@ -110,6 +114,7 @@ impl View {
         workspace.right_tab = self.right_tab;
         workspace.dock_tab = self.dock_tab;
         workspace.sizes = self.sizes.clamped();
+        workspace.last_agent = self.last_agent.clone();
         workspace
             .shelf
             .restore(&mut workspace.browser, &self.browsers);

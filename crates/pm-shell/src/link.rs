@@ -6,6 +6,8 @@
 
 mod composer_requests;
 mod conversation_requests;
+mod start_requests;
+pub use start_requests::BASE_SETTING;
 
 pub use conversation_requests::ConversationCommand;
 pub use keys::KeyOutcome;
@@ -125,6 +127,12 @@ enum Ask {
     RemoteSessions(String),
     /// Something a form of the settings window sent.
     Form,
+    /// Who the agent with this id is signed in as, for the welcome page.
+    Identity(String),
+    /// What the agent with this id lets the reader change, for the welcome page.
+    Discover(String),
+    /// The branches of the repository at this folder, for the welcome page.
+    StartBranches(String),
     /// Nothing that needs handling.
     Nothing,
 }
@@ -199,6 +207,8 @@ pub struct Link {
     routes: Routes,
     /// The chords pressed so far of a binding of several, waiting for the next.
     chords: Vec<pm_editor::Chord>,
+    /// Whether each agent is signed in, by its id, as the server said when asked.
+    identities: HashMap<String, bool>,
 }
 
 impl Link {
@@ -253,6 +263,7 @@ impl Link {
             remote_sessions: HashMap::new(),
             routes: Routes::default(),
             chords: Vec::new(),
+            identities: HashMap::new(),
         }
     }
 
@@ -472,6 +483,7 @@ impl Link {
             self.watched = None;
             show_start(&mut self.workspace, start);
             self.rescope_browser();
+            self.prepare_start();
         }
     }
 
@@ -480,15 +492,7 @@ impl Link {
         self.watched = None;
         show_start(&mut self.workspace, start_chat());
         self.rescope_browser();
-    }
-
-    /// Chooses the agent at position `index` on the welcome page.
-    pub fn choose_agent(&mut self, index: usize) {
-        if let Some(start) = &mut self.workspace.starting
-            && index < self.workspace.agents.len()
-        {
-            start.agent = index;
-        }
+        self.prepare_start();
     }
 
     /// Makes the work the welcome page starts run in a worktree of its own when `worktree`, otherwise in the project's checkout, and in the folder's dev container when `container`.
@@ -522,16 +526,28 @@ impl Link {
             None => (String::new(), None),
         };
         let title = title_of(&text);
+        let composer = &mut self.workspace.extras.composer;
+        let text = crate::composer::prompt_text(&text, &composer.elements, &composer.captures);
+        let attachments = composer
+            .files
+            .iter()
+            .filter_map(composer_requests::attachment_of)
+            .collect();
+        composer.files.clear();
+        composer.elements.clear();
+        composer.captures.clear();
+        self.workspace.last_agent = Some(agent.clone());
         self.ask(
             Request::StartSession {
                 agent,
                 directory: repository.clone(),
                 repository,
                 title: title.clone(),
-                base: (start.worktree && start.at.is_some()).then(|| "HEAD".to_owned()),
-                settings: Vec::new(),
+                base: (start.worktree && start.at.is_some())
+                    .then(|| start.base.clone().unwrap_or_else(|| "HEAD".to_owned())),
+                settings: start.changed.clone(),
                 text,
-                attachments: Vec::new(),
+                attachments,
                 submodule,
                 container: start.container && start.at.is_some(),
                 scratch: start.at.is_none(),
@@ -836,6 +852,9 @@ impl Link {
             (Ask::Git(ask), response) => self.git_answer(ask, response),
             (ask @ (Ask::SessionSlots(_) | Ask::SessionAllowance(_)), response) => {
                 self.composer_answer(ask, response)
+            }
+            (ask @ (Ask::Identity(_) | Ask::Discover(_) | Ask::StartBranches(_)), response) => {
+                self.start_answer(ask, response)
             }
             (
                 ask @ (Ask::Files(_) | Ask::Entry | Ask::Search(_) | Ask::Quick(_) | Ask::Branches),

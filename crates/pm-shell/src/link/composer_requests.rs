@@ -97,6 +97,10 @@ impl Link {
 
     /// Gives the open session's agent setting `setting` the value `value`.
     pub fn set_agent_setting(&mut self, setting: String, value: String) {
+        if self.workspace.starting.is_some() {
+            self.set_start_setting(setting, value);
+            return;
+        }
         let Some(session) = self.watched else {
             return;
         };
@@ -269,7 +273,7 @@ impl Link {
 }
 
 /// The attachment `file` is sent as: its bytes as pasted, or read from its path, or nothing when that cannot be read.
-fn attachment_of(file: &PromptFile) -> Option<Attachment> {
+pub(super) fn attachment_of(file: &PromptFile) -> Option<Attachment> {
     let data = match &file.path {
         Some(path) => std::fs::read(path).ok()?,
         None => file.data.clone(),
