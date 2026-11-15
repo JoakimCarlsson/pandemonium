@@ -166,9 +166,14 @@ impl Shell {
         }
     }
 
-    /// The bytes that type `text` into the shell as a paste: line ends as returns, wrapped in markers when the program asked for them.
+    /// The bytes that type `text` into the shell as a paste: line ends as returns, control characters other than tab and return dropped so the paste cannot end early, wrapped in markers when the program asked for them.
     pub fn paste_bytes(&self, text: &str) -> Vec<u8> {
-        let text = text.replace("\r\n", "\r").replace('\n', "\r");
+        let text: String = text
+            .replace("\r\n", "\r")
+            .replace('\n', "\r")
+            .chars()
+            .filter(|character| *character == '\r' || *character == '\t' || !character.is_control())
+            .collect();
         if self.emulator.bracketed_paste() {
             format!("\x1b[200~{text}\x1b[201~").into_bytes()
         } else {
@@ -221,5 +226,14 @@ mod tests {
         shell.select((0, 7), (0, 7), 2);
         assert_eq!(shell.emulator.selected_text().as_deref(), Some("world"));
         assert_eq!(shell.screen().selection, Some(((0, 6), (0, 10))));
+    }
+
+    /// A paste drops escape and other control characters, so it cannot leave bracketed paste mode, but keeps tabs and line ends.
+    #[test]
+    fn paste_strips_control_characters() {
+        let mut shell = Shell::starting(1, "~/".to_owned(), 20, 2);
+        assert_eq!(shell.paste_bytes("a\tb\r\nc\x1b[201~d\x07"), b"a\tb\rc[201~d".to_vec());
+        shell.feed(b"\x1b[?2004h");
+        assert_eq!(shell.paste_bytes("x\x1by"), b"\x1b[200~xy\x1b[201~".to_vec());
     }
 }
