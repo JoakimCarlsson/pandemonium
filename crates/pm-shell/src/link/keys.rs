@@ -155,6 +155,27 @@ impl Link {
             Action::ToggleBrowserTools => {
                 self.browser(BrowserAction::ToggleTools);
             }
+            Action::CopySessionPath => {
+                let session = self.watched?;
+                return Some(self.session_command(SessionCommand::CopyPath(session)));
+            }
+            Action::CopyBranchName => {
+                let session = self.watched?;
+                return Some(self.session_command(SessionCommand::CopyBranch(session)));
+            }
+            Action::OpenSessionFolder => {
+                let session = self.watched?;
+                return Some(self.session_command(SessionCommand::OpenFolder(session)));
+            }
+            Action::CopyPath | Action::CopyRelativePath => {
+                let file = self.workspace.open_files.shown()?;
+                let path = if action == Action::CopyPath {
+                    format!("{}/{}", file.directory.trim_end_matches('/'), file.path)
+                } else {
+                    file.path.clone()
+                };
+                return Some(Some(QuickOutcome::Copy(path)));
+            }
             _ => return None,
         }
         Some(None)
@@ -466,6 +487,34 @@ mod tests {
         for chord in ["ctrl+space", "f12", "f2", "ctrl+.", "ctrl+shift+space"] {
             assert!(!link.press_key(chord).taken, "{chord} was taken");
         }
+    }
+
+    /// The actions the window does beyond the link come back to it, the zoom changes the interface's size, and Escape closes the dialog on top.
+    #[test]
+    fn window_actions_are_done() {
+        let mut link = Link::built(None, None, Arc::new(|| {}));
+        assert_eq!(
+            link.run_action(Action::Quit),
+            Some(Some(QuickOutcome::Quit))
+        );
+        assert_eq!(
+            link.run_action(Action::ToggleTheme),
+            Some(Some(QuickOutcome::ToggleTheme))
+        );
+        let before = link.settings.window.appearance.interface_size;
+        assert_eq!(
+            link.run_action(Action::ZoomIn),
+            Some(Some(QuickOutcome::SettingsChanged))
+        );
+        assert_eq!(link.settings.window.appearance.interface_size, before + 1);
+        link.run_action(Action::ResetZoom);
+        assert_eq!(link.settings.window.appearance.interface_size, before);
+        assert!(link.run_action(Action::StashChanges).is_some());
+        assert!(link.run_action(Action::CloseAllTabs).is_some());
+        link.workspace.renaming = Some(crate::model::Renaming::default());
+        assert!(link.press_key("escape").taken);
+        assert_eq!(link.workspace.renaming, None);
+        assert!(!link.press_key("escape").taken);
     }
 
     /// A chord the reader bound an action to in the settings does it instead of the keymap's own.
