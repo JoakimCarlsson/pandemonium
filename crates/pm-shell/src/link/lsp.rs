@@ -42,6 +42,8 @@ pub(super) enum ServerFor {
     Colour(String, String),
     /// What each name of the file is, asked at this version.
     Tokens(String, String, i32),
+    /// What each name within a stretch of the file is, asked at this version.
+    TokenRange(String, String, i32, pm_editor::Span),
     /// The hints inside the lines, asked at this version.
     Hints(String, String, i32),
     /// The lenses, asked at this version.
@@ -50,6 +52,12 @@ pub(super) enum ServerFor {
     Colours(String, String, i32),
     /// Formatting the file before it is written, as the settings ask.
     FormatThenSave(String, String),
+    /// The changes of one kind offered for the whole file before it is saved, with the kinds still to take after it.
+    SaveAction(String, String, Vec<String>),
+    /// Taking a change offered before the file is saved, with the kinds still to take after it.
+    SaveTaken(String, String, Vec<String>),
+    /// The stretches edited together with the one at the caret, asked at this version.
+    Linked(String, String, i32),
 }
 
 impl Link {
@@ -83,6 +91,18 @@ impl Link {
             },
             Ask::Server(ServerFor::Opened(directory, path, version)),
         );
+    }
+
+    /// Opens every open file of this machine for its language server again, as the server forgot them when the connection dropped.
+    pub(super) fn reopen_for_server(&mut self) {
+        for index in 0..self.workspace.open_files.files.len() {
+            let file = &self.workspace.open_files.files[index];
+            if pm_protocol::host_of(&file.directory).is_some() {
+                continue;
+            }
+            file.document.0.borrow_mut().synced = false;
+            self.open_for_server(index);
+        }
     }
 
     /// Takes in `diagnostics`, what a language server found wrong with the
@@ -140,6 +160,14 @@ impl Link {
         let document = file.document.clone();
         let version = document.0.borrow().version;
         let (request, purpose) = match ask {
+            ServerAsk::CaretLine(line) => {
+                self.ask_blame(index, line);
+                return;
+            }
+            ServerAsk::Act(action) => {
+                self.editor_action(index, action);
+                return;
+            }
             ServerAsk::Changed(version, change) => {
                 self.ask(
                     Request::ChangeDocument {
@@ -190,15 +218,28 @@ impl Link {
                 },
                 ServerFor::Signature(directory, path, version),
             ),
-            ServerAsk::Highlights(version, position) => (
-                Request::Highlights {
-                    directory: directory.clone(),
-                    path: path.clone(),
-                    version,
-                    position,
-                },
-                ServerFor::Highlights(directory, path, version),
-            ),
+            ServerAsk::Highlights(version, position) => {
+                if self.settings.editor.linked_editing {
+                    self.ask(
+                        Request::LinkedRanges {
+                            directory: directory.clone(),
+                            path: path.clone(),
+                            version,
+                            position,
+                        },
+                        Ask::Server(ServerFor::Linked(directory.clone(), path.clone(), version)),
+                    );
+                }
+                (
+                    Request::Highlights {
+                        directory: directory.clone(),
+                        path: path.clone(),
+                        version,
+                        position,
+                    },
+                    ServerFor::Highlights(directory, path, version),
+                )
+            }
             ServerAsk::Seek(_, Seek::References) => {
                 self.workspace.open_files.tab = crate::open_files::SessionTab::File(index);
                 self.open_choices(crate::quick::Choosing::References);
@@ -316,14 +357,33 @@ impl Link {
         let mut document = shared.0.borrow_mut();
         let version = document.version;
         let mut asks = Vec::new();
-        if document.wants_semantic_tokens() {
+        let editor = &self.settings.editor;
+        if editor.semantic_highlighting && document.lines() > editor.semantic_range_lines {
+            let caret = document.line_of(document.field.caret());
+            let margin = editor.semantic_range_margin.max(1);
+            let lines = caret.saturating_sub(margin)..caret + margin + 1;
+            if let Some(span) = document.semantic_range_wanted(lines.clone()) {
+                document.semantic_range_asked(version, lines);
+                asks.push((
+                    Request::SemanticTokens {
+                        directory: directory.clone(),
+                        path: path.clone(),
+                        version,
+                        rules: editor.semantic_token_rules.clone(),
+                        range: Some(span),
+                    },
+                    ServerFor::TokenRange(directory.clone(), path.clone(), version, span),
+                ));
+            }
+        }
+        if editor.semantic_highlighting && document.wants_semantic_tokens() {
             document.semantic_tokens_asked(version);
             asks.push((
                 Request::SemanticTokens {
                     directory: directory.clone(),
                     path: path.clone(),
                     version,
-                    rules: Vec::new(),
+                    rules: editor.semantic_token_rules.clone(),
                     range: None,
                 },
                 ServerFor::Tokens(directory.clone(), path.clone(), version),
@@ -348,7 +408,7 @@ impl Link {
                     directory: directory.clone(),
                     path: path.clone(),
                     version,
-                    dependencies: false,
+                    dependencies: editor.dependency_hints,
                 },
                 ServerFor::Lenses(directory.clone(), path.clone(), version),
             ));
@@ -378,6 +438,22 @@ impl Link {
     /// Handles the `response` of a language server to a request made for `purpose`.
     pub(super) fn answer_server(&mut self, purpose: ServerFor, response: Response) {
         if let Response::Failed { message } = &response {
+            match &purpose {
+                ServerFor::SaveAction(directory, path, kinds)
+                | ServerFor::SaveTaken(directory, path, kinds) => {
+                    if let Some(index) = self.served_file(directory, path) {
+                        self.save_action(index, kinds.clone());
+                    }
+                    return;
+                }
+                ServerFor::FormatThenSave(directory, path) => {
+                    if let Some(index) = self.served_file(directory, path) {
+                        self.write_file(index);
+                    }
+                    return;
+                }
+                _ => {}
+            }
             if matches!(
                 purpose,
                 ServerFor::Seek(..)
@@ -468,6 +544,11 @@ impl Link {
                     document.take_highlights(version, spans)
                 });
             }
+            (ServerFor::Linked(directory, path, version), Response::LinkedRanges { spans }) => {
+                self.with_document(&directory, &path, |document| {
+                    document.take_linked(version, spans)
+                });
+            }
             (ServerFor::Seek(..), Response::Definitions { locations }) => match locations.first() {
                 Some(location) if locations.len() == 1 => {
                     let line = location.span.start.line as usize + 1;
@@ -515,6 +596,37 @@ impl Link {
                     .take_bulb(version, line, offered);
                 file.actions = actions;
             }
+            (ServerFor::SaveAction(directory, path, kinds), Response::CodeActions { actions }) => {
+                let Some(index) = self.served_file(&directory, &path) else {
+                    return;
+                };
+                match actions.iter().position(|action| action.disabled.is_none()) {
+                    Some(place) => self.ask(
+                        Request::TakeCodeAction {
+                            directory: directory.clone(),
+                            path: path.clone(),
+                            index: place,
+                        },
+                        Ask::Server(ServerFor::SaveTaken(directory, path, kinds)),
+                    ),
+                    None => self.save_action(index, kinds),
+                }
+            }
+            (ServerFor::SaveTaken(directory, path, kinds), Response::ActionTaken { files, .. }) => {
+                self.make_edits(files);
+                if let Some(index) = self.served_file(&directory, &path) {
+                    self.save_action(index, kinds);
+                }
+            }
+            (
+                ServerFor::SaveAction(directory, path, kinds)
+                | ServerFor::SaveTaken(directory, path, kinds),
+                _,
+            ) => {
+                if let Some(index) = self.served_file(&directory, &path) {
+                    self.save_action(index, kinds);
+                }
+            }
             (ServerFor::SourceAction(directory, path), Response::CodeActions { actions }) => {
                 let Some(index) = self.served_file(&directory, &path) else {
                     return;
@@ -561,6 +673,14 @@ impl Link {
             ) => {
                 self.with_document(&directory, &path, |document| {
                     document.take_semantic_tokens(version, tokens)
+                });
+            }
+            (
+                ServerFor::TokenRange(directory, path, version, span),
+                Response::SemanticTokens { tokens, .. },
+            ) => {
+                self.with_document(&directory, &path, |document| {
+                    document.take_semantic_range(version, span, tokens)
                 });
             }
             (ServerFor::Hints(directory, path, version), Response::InlayHints { hints }) => {

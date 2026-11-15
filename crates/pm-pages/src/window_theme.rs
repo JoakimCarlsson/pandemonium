@@ -56,6 +56,10 @@ pub fn window_theme(settings: &SettingsModel, system_dark: bool) -> AppTheme {
         .with_code_look(
             CodeLook::of(&settings.editor)
                 .with_git_gutter(settings.window.git.gutter.shows(true))
+                .with_git_marks(
+                    settings.window.git.blame.shows(true),
+                    settings.window.git.word_diff,
+                )
                 .with_terminal_cursor(match settings.window.terminal.cursor {
                     pm_config::TerminalCursor::Block => CursorShape::Block,
                     pm_config::TerminalCursor::Bar => CursorShape::Bar,

@@ -12,7 +12,7 @@ use pm_components::{
 };
 use pm_shell::{Page, PanelSizes, TreeAction, Workspace, name_of};
 
-use crate::actions::{Actions, Panel};
+use crate::actions::{Actions, Panel, WindowAction};
 use crate::dialogs::dialogs;
 use crate::dock::dock;
 use crate::extensions::extensions_page;
@@ -75,10 +75,14 @@ fn panel_key(panel: Panel) -> &'static str {
 pub fn workspace_page(workspace: &Workspace, theme: AppTheme, actions: &Actions) {
     app_theme(theme, || {
         let scheme = color_scheme();
+        let back = actions.window.clone();
+        let forward = actions.window.clone();
         stack_with(
             Modifier::new()
                 .fill_max_size()
-                .on_key_event(shortcuts(actions)),
+                .on_key_event(shortcuts(actions))
+                .on_back_click(move |_| back(WindowAction::Back))
+                .on_forward_click(move |_| forward(WindowAction::Forward)),
             || {
                 column_with(
                     Modifier::new()

@@ -23,19 +23,20 @@ pub fn adder(state: &Adder, actions: &Actions) {
         .offset(8.0, 0.0)
         .on_dismiss(move || close(ProjectAction::Adding(None)))
         .show(|| match state.step {
-            AddStep::Choose => choices(actions),
+            AddStep::Choose => choices(state, actions),
             AddStep::Clone => clone_form(state, actions),
         });
 }
 
-/// The two ways of adding a project.
-fn choices(actions: &Actions) {
+/// The two ways of adding a project, a folder looked for on the machine `state` names first.
+fn choices(state: &Adder, actions: &Actions) {
     let pick = actions.projects.clone();
+    let machine = state.machine.clone();
     let clone = actions.projects.clone();
     column_with(Modifier::new().fill_max_width().padding(4.0), || {
         Tile::new("Open a folder…")
             .leading(Leading::Icon(phosphor::FOLDER_OPEN))
-            .on_click(move || pick(ProjectAction::Picker(PickerAction::Open(None))))
+            .on_click(move || pick(ProjectAction::Picker(PickerAction::Open(machine.clone()))))
             .show();
         Tile::new("Clone a repository…")
             .leading(Leading::Icon(phosphor::GITHUB_LOGO))

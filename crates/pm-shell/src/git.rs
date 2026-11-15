@@ -394,6 +394,8 @@ pub enum GitAction {
     /// Points the panel at the submodule at the path from the session's
     /// folder, or at the session's own repository when nothing is given.
     Repository(Option<String>),
+    /// Makes the commit with this name again on top of the checked out branch.
+    CherryPick(String),
 }
 
 /// What the main button under the commit message does.

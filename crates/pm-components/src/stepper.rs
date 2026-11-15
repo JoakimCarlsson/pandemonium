@@ -80,8 +80,14 @@ impl Stepper {
             .height(height)
             .background_rounded(scheme.background, 6.0)
             .padding_xy(2.0, 0.0);
-        if self.variant == StepperVariant::Outlined {
+        let ring = crate::focus_ring::remember_focus_ring();
+        if ring.shown() {
+            modifier = modifier.border(1.5, scheme.primary, 6.0);
+        } else if self.variant == StepperVariant::Outlined {
             modifier = modifier.border(1.0, scheme.outline_variant, 6.0);
+        }
+        if let Some(step) = self.on_step.clone() {
+            modifier = modifier.focusable(&ring.focus, move |event| stepped(event, &*step));
         }
         let smaller = self.on_step.clone();
         let bigger = self.on_step;
@@ -111,4 +117,19 @@ impl Stepper {
             },
         );
     }
+}
+
+/// Calls `step` with -1 when `event` presses the down or left arrow, and with 1 for the up or right arrow, with no modifier held; says whether it did.
+fn stepped(event: &rustle::KeyEvent, step: &dyn Fn(i32)) -> bool {
+    let modifiers = event.modifiers;
+    if !event.pressed || modifiers.ctrl || modifiers.alt || modifiers.meta {
+        return false;
+    }
+    let by = match event.key {
+        rustle::Key::ArrowDown | rustle::Key::ArrowLeft => -1,
+        rustle::Key::ArrowUp | rustle::Key::ArrowRight => 1,
+        _ => return false,
+    };
+    step(by);
+    true
 }

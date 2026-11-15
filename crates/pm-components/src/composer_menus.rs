@@ -52,6 +52,7 @@ impl CommandMenu {
     #[track_caller]
     pub(crate) fn show(self) {
         let mut menu = Menu::new()
+            .keyboard(false)
             .heading("Commands")
             .size(Size::Xs)
             .width(360.0)
@@ -118,6 +119,7 @@ impl MentionMenu {
     #[track_caller]
     pub(crate) fn show(self) {
         let mut menu = Menu::new()
+            .keyboard(false)
             .heading("Files")
             .size(Size::Xs)
             .width(360.0)

@@ -138,10 +138,73 @@ impl Comparison {
         }
     }
 
+    /// The comparison [`Comparison::between`] makes, leaving out lines that differ only in white space when `ignore_whitespace` holds.
+    pub fn between_with(
+        label: impl Into<String>,
+        other: &str,
+        text: &str,
+        ignore_whitespace: bool,
+    ) -> Self {
+        if !ignore_whitespace {
+            return Self::between(label, other, text);
+        }
+        let old: Vec<&str> = other.lines().collect();
+        let new: Vec<&str> = text.lines().collect();
+        let ops = similar::capture_diff_slices_by_key(
+            similar::Algorithm::Myers,
+            &old,
+            &new,
+            |line: &&str| line.split_whitespace().collect::<Vec<_>>().join(" "),
+        );
+        let mut diff = String::new();
+        for group in similar::group_diff_ops(ops, 3) {
+            diff.push_str(&hunk(&group, &old, &new));
+        }
+        Self {
+            label: label.into(),
+            diff,
+        }
+    }
+
     /// Whether both sides are the same.
     pub fn is_same(&self) -> bool {
         self.diff.trim().is_empty()
     }
+}
+
+/// One hunk of a unified diff of the lines `old` and `new` made of `group`, with its header.
+fn hunk(group: &[similar::DiffOp], old: &[&str], new: &[&str]) -> String {
+    let (Some(first), Some(last)) = (group.first(), group.last()) else {
+        return String::new();
+    };
+    let (start_old, start_new) = (first.old_range().start, first.new_range().start);
+    let (end_old, end_new) = (last.old_range().end, last.new_range().end);
+    let mut out = format!(
+        "@@ -{},{} +{},{} @@\n",
+        start_old + 1,
+        end_old - start_old,
+        start_new + 1,
+        end_new - start_new
+    );
+    for op in group {
+        let (tag, removed, added) = op.as_tag_tuple();
+        match tag {
+            similar::DiffTag::Equal => {
+                for line in &old[removed] {
+                    out.push_str(&format!(" {line}\n"));
+                }
+            }
+            _ => {
+                for line in &old[removed] {
+                    out.push_str(&format!("-{line}\n"));
+                }
+                for line in &new[added] {
+                    out.push_str(&format!("+{line}\n"));
+                }
+            }
+        }
+    }
+    out
 }
 
 /// A bar an editor can be asked to open with over its text.
@@ -390,6 +453,10 @@ pub struct OpenFiles {
     pub update_tab: bool,
     /// The languages the reader declined to install, by name.
     pub declined: Vec<String>,
+    /// Whether the reader turned off the offer to install the language of a file no installed language reads.
+    pub offers_withheld: bool,
+    /// How many columns a level of indentation is and whether it is a tab, for the languages whose settings say, by language.
+    pub indents: std::collections::BTreeMap<String, (Option<usize>, Option<bool>)>,
     /// The close waiting while the reader is asked what to do with the
     /// unsaved changes of the files it would close.
     pub asking: Option<TabAction>,

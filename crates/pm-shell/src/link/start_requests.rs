@@ -44,14 +44,21 @@ impl Link {
                 Request::Branches {
                     directory: directory.clone(),
                 },
-                Ask::StartBranches(directory),
+                Ask::StartBranches(directory.clone()),
+            );
+            self.ask(
+                Request::DevContainer {
+                    directory: directory.clone(),
+                },
+                Ask::StartContainer(directory),
             );
         }
         self.discover_agent();
     }
 
     /// Lists on the welcome page the agents shown and signed in, keeping the
-    /// one chosen when it is among them, else the one last used, else the first.
+    /// one chosen when it is among them, else the one last used, else the
+    /// default agent the machine's settings name, else the first.
     fn offer_agents(&mut self) {
         let shown: Vec<usize> = self
             .workspace
@@ -73,6 +80,7 @@ impl Link {
             .collect();
         let offered = if ready.is_empty() { shown } else { ready };
         let last = self.workspace.last_agent.clone();
+        let default = self.settings.machine.agents.default_agent.clone();
         let agents = &self.workspace.agents;
         let Some(start) = &mut self.workspace.starting else {
             return;
@@ -81,8 +89,12 @@ impl Link {
             .iter()
             .copied()
             .find(|index| Some(&agents[*index].id) == last.as_ref());
+        let default = offered
+            .iter()
+            .copied()
+            .find(|index| Some(&agents[*index].id) == default.as_ref());
         if !offered.contains(&start.agent) || start.shown.is_empty() {
-            start.agent = last.or(offered.first().copied()).unwrap_or(0);
+            start.agent = last.or(default).or(offered.first().copied()).unwrap_or(0);
         }
         start.shown = offered;
     }
@@ -193,6 +205,20 @@ impl Link {
                     && current.as_deref() == Some(directory.as_str())
                 {
                     start.branches = names;
+                }
+            }
+            (Ask::StartContainer(directory), Response::DevContainer { configured }) => {
+                let current = self
+                    .workspace
+                    .starting
+                    .as_ref()
+                    .and_then(|start| start.at.clone())
+                    .and_then(|at| self.placement(&at))
+                    .map(|(folder, _)| folder);
+                if let Some(start) = &mut self.workspace.starting
+                    && current.as_deref() == Some(directory.as_str())
+                {
+                    start.has_container = configured;
                 }
             }
             _ => {}

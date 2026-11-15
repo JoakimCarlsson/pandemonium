@@ -83,9 +83,11 @@ mod text_area;
 mod text_input;
 mod theme_family;
 mod tile;
+mod tip;
 mod tree_item;
 mod trust;
 mod usage_ring;
+mod window_area;
 mod window_shadow;
 
 pub use activity::{Activity, ActivityVariant};
@@ -110,7 +112,7 @@ pub use chip::{Chip, ChipVariant};
 pub use code_assist::CodeEditorPopup;
 pub use code_bars::CodeEditorBar;
 pub use code_editor::{CodeEditor, CodeEditorVariant};
-pub use code_look::{CodeLook, code_look, editor_settings, use_editor_settings};
+pub use code_look::{CodeLook, code_look, editor_settings, provide_code_look, use_editor_settings};
 pub use composer::{
     Composer, ComposerChoice, ComposerCommand, ComposerMenu, ComposerPick, ComposerVariant,
 };
@@ -171,7 +173,9 @@ pub use text_area::{TextArea, TextAreaVariant};
 pub use text_input::{TextInput, TextInputVariant};
 pub use theme_family::{DEFAULT_FAMILY, Palette, ThemeFamily, family_named, shipped_families};
 pub use tile::{Leading, Tile, TileVariant};
+pub use tip::tip;
 pub use tree_item::{TreeItem, TreeItemVariant, mark_colour};
 pub use trust::{TrustAnswer, TrustCard, TrustVariant};
 pub use usage_ring::{UsageRing, UsageRingVariant};
+pub use window_area::provide_window_area;
 pub use window_shadow::{FRAME_RADIUS, SHADOW_MARGIN, WINDOW_SHADOW, shadow_band, window_shadow};

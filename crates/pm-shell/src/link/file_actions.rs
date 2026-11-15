@@ -46,7 +46,7 @@ impl Link {
                 self.open_choices(Choosing::History);
             }
             FileAction::CompareClipboard(clipboard) => {
-                self.show_comparison(index, Comparison::between("Clipboard", &clipboard, &text));
+                self.show_comparison(index, self.comparison("Clipboard", &clipboard, &text));
             }
             FileAction::CompareSaved => self.ask(
                 Request::ReadFile {
@@ -59,7 +59,7 @@ impl Link {
             ),
             FileAction::CompareCommitted => match file.base.clone() {
                 Some(base) => {
-                    self.show_comparison(index, Comparison::between("Last commit", &base, &text))
+                    self.show_comparison(index, self.comparison("Last commit", &base, &text))
                 }
                 None => self.workspace.status = Some("No commit holds this file yet.".to_owned()),
             },
@@ -69,7 +69,7 @@ impl Link {
                 };
                 let label = other.path.clone();
                 let held = other.document.0.borrow().field.text().to_owned();
-                self.show_comparison(index, Comparison::between(label, &held, &text));
+                self.show_comparison(index, self.comparison(label, &held, &text));
             }
             FileAction::OrganizeImports => self.code(
                 index,
@@ -81,8 +81,33 @@ impl Link {
             ),
             FileAction::Format => self.code(index, ServerAsk::Format(None)),
             FileAction::InstallLanguage(id) => self.press_extension(&id),
-            FileAction::DeclineLanguage(id) => self.workspace.open_files.decline(&id),
+            FileAction::DeclineLanguage(id) => self.decline_language(id),
         }
+    }
+
+    /// Stops offering to install the language `id`, now and in later runs, by keeping it in the window's settings.
+    fn decline_language(&mut self, id: String) {
+        self.workspace.open_files.decline(&id);
+        let declined = &mut self.settings.window.general.declined_languages;
+        if !declined.contains(&id) {
+            declined.push(id);
+            self.settings_changed = true;
+        }
+    }
+
+    /// How `text` differs from `other`, called `label`, leaving out white space as the editor settings say.
+    pub(super) fn comparison(
+        &self,
+        label: impl Into<String>,
+        other: &str,
+        text: &str,
+    ) -> Comparison {
+        Comparison::between_with(
+            label,
+            other,
+            text,
+            self.settings.editor.compare_ignore_whitespace,
+        )
     }
 
     /// Shows `comparison` in place of the text of the open file at `index`,

@@ -58,6 +58,33 @@ fn sign_of(event: &KeyEvent) -> Option<String> {
     Some(sign.to_owned())
 }
 
+/// What the key `event` pressed types on a US layout with no modifier, by where it sits on the keyboard: its letter, digit or sign, or nothing for any other key.
+fn us_name(event: &KeyEvent) -> Option<String> {
+    let PhysicalKey::Code(code) = event.physical_key else {
+        return None;
+    };
+    let name = code.name();
+    if let Some(letter) = name.strip_prefix("Key").filter(|rest| rest.len() == 1) {
+        return Some(letter.to_lowercase());
+    }
+    if let Some(digit) = name.strip_prefix("Digit") {
+        return Some(digit.to_owned());
+    }
+    sign_of(event)
+}
+
+/// Whether `event`, pressed with Alt, typed a sign of its own rather than the key's own sign, as AltGr and the Option key do, so it is typing and not a chord.
+fn types_beside_alt(event: &KeyEvent) -> bool {
+    let Some(typed) = event
+        .text
+        .as_deref()
+        .filter(|text| !text.is_empty() && !text.chars().any(char::is_control))
+    else {
+        return false;
+    };
+    us_name(event).is_some_and(|own| typed.to_lowercase() != own)
+}
+
 impl KeyRecorder {
     /// A recorder that is `recording` or waits.
     pub fn new(recording: bool) -> Self {
@@ -101,10 +128,18 @@ impl KeyRecorder {
         self
     }
 
-    /// The chord `event` types, as the settings write it, or nothing for a modifier alone or a key no chord names. A sign Control turned into a control character, as some layouts do with the backquote, is named as the key types it alone on a US layout.
+    /// The chord `event` types, as the settings write it, or nothing for a modifier alone, a key no chord names, or a sign typed with AltGr or Option. With Control, Alt or the command key held, a letter, digit or sign is named by where its key sits, as it reads on a US layout, so chords stay on the same keys whatever the layout.
     pub fn chord(event: &KeyEvent) -> Option<String> {
+        let held = event.modifiers;
+        if held.alt && types_beside_alt(event) {
+            return None;
+        }
+        let commanding = held.ctrl || held.meta || held.alt;
         let key = match &event.key {
             Key::Character(text) if text == " " => "space".to_owned(),
+            Key::Character(_) | Key::Other if commanding && us_name(event).is_some() => {
+                us_name(event)?
+            }
             Key::Character(text) if text.chars().any(char::is_control) => sign_of(event)?,
             Key::Character(text) => text.to_lowercase(),
             Key::Other => sign_of(event)?,
@@ -230,5 +265,40 @@ mod tests {
             KeyRecorder::chord(&press(KeyCode::KeyP, "P", both)).as_deref(),
             Some("ctrl+shift+p")
         );
+    }
+
+    /// With Control held, a key is named by where it sits, so Control with the key left of 1 is the backquote on a Nordic layout too, and Control with Shift and the bracket key names the bracket.
+    #[test]
+    fn chords_follow_the_physical_key() {
+        let ctrl = Modifiers {
+            ctrl: true,
+            ..Modifiers::NONE
+        };
+        let both = Modifiers {
+            shift: true,
+            ..ctrl
+        };
+        assert_eq!(
+            KeyRecorder::chord(&press(KeyCode::Backquote, "§", ctrl)).as_deref(),
+            Some("ctrl+`")
+        );
+        assert_eq!(
+            KeyRecorder::chord(&press(KeyCode::BracketLeft, "{", both)).as_deref(),
+            Some("ctrl+shift+[")
+        );
+    }
+
+    /// A sign typed with AltGr is typing, not a chord.
+    #[test]
+    fn alt_graph_types() {
+        let alt = Modifiers {
+            alt: true,
+            ..Modifiers::NONE
+        };
+        let typed = KeyEvent {
+            text: Some("@".to_owned()),
+            ..press(KeyCode::Digit2, "@", alt)
+        };
+        assert_eq!(KeyRecorder::chord(&typed), None);
     }
 }

@@ -4,10 +4,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod file_dialog;
+mod frame_memory;
 mod notify;
 mod performance;
 mod snapshot;
 mod snapshot_appearance;
+mod store_writer;
 mod window;
 
 /// Opens the window and runs it until it is closed; given `--version`, prints

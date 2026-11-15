@@ -168,7 +168,12 @@ struct Memory {
     shells: HashSet<u64>,
     /// The requests sent that have no answer yet.
     waiting: Vec<(u64, Request)>,
+    /// The requests made while the connection was down, oldest first, sent once it is up again.
+    backlog: Vec<(u64, Request)>,
 }
+
+/// How many requests made while the connection is down are kept for when it is up again; older ones beyond this fail at once.
+const BACKLOG: usize = 256;
 
 /// What the connection thread calls after it reports something, so the owner of the [`Client`] looks at once instead of when it next happens to.
 pub type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -356,13 +361,17 @@ fn keep(target: &Target, ordered: &Receiver<Order>, reporter: &Reporter, bell: &
                     memory.shells.insert(terminal);
                     memory.heard.entry(terminal).or_insert(after);
                 }
-                Ok(Order::Send(id, _)) => {
-                    let _ = reporter.send(Incoming::Response {
-                        id,
-                        response: Response::Failed {
-                            message: "the server cannot be reached".to_owned(),
-                        },
-                    });
+                Ok(Order::Send(id, request)) => {
+                    memory.backlog.push((id, *request));
+                    if memory.backlog.len() > BACKLOG {
+                        let (id, _) = memory.backlog.remove(0);
+                        let _ = reporter.send(Incoming::Response {
+                            id,
+                            response: Response::Failed {
+                                message: "the server cannot be reached".to_owned(),
+                            },
+                        });
+                    }
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => break,
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
@@ -447,6 +456,12 @@ fn converse(
             },
         };
         if let Err(reason) = send(socket, &message) {
+            return Some(reason);
+        }
+    }
+    for (id, request) in std::mem::take(&mut memory.backlog) {
+        memory.waiting.push((id, request.clone()));
+        if let Err(reason) = send(socket, &ClientMessage::Request { id, request }) {
             return Some(reason);
         }
     }

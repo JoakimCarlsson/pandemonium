@@ -131,6 +131,8 @@ enum Ask {
     RemoteSessions(String),
     /// Something a form of the settings window sent.
     Form,
+    /// Signing an agent in, whose code dialog closes once the server answers.
+    SignIn,
     /// Branching a new session off a turn of the open one, which opens once the server made it.
     Fork,
     /// Closing the session the window numbers so, which asks before throwing away changes not committed.
@@ -141,6 +143,8 @@ enum Ask {
     Discover(String),
     /// The branches of the repository at this folder, for the welcome page.
     StartBranches(String),
+    /// Whether the folder has a dev container set up, for the welcome page.
+    StartContainer(String),
     /// Nothing that needs handling but a failure, which the status bar shows.
     Nothing,
 }
@@ -161,11 +165,11 @@ impl Ask {
             Request::Accounts
             | Request::SetAccounts { .. }
             | Request::SaveKey { .. }
-            | Request::SignIn { .. }
             | Request::SearchTools { .. }
             | Request::FindModels { .. }
             | Request::CreateCustomization { .. } => Self::Form,
             Request::SaveModelServer { .. } => Self::ModelServers,
+            Request::SignIn { .. } => Self::SignIn,
             Request::PullRequest { .. } | Request::PullRequestAction { .. } => Self::PullRequest,
             _ => Self::Nothing,
         }
@@ -228,6 +232,22 @@ pub struct Link {
     recent_files: Vec<String>,
     /// The titles of the commands run lately from the quick input, the latest first.
     recent_commands: Vec<String>,
+    /// Whether the link changed the window's or the editor's settings itself since the window last saved them.
+    settings_changed: bool,
+    /// When the newest release was last asked for, so it is asked again every few hours while the window is open.
+    release_asked: Option<std::time::Instant>,
+    /// What the link asked of the window beyond itself while doing something that answers later, such as copying a link to a line, not yet taken.
+    outcomes: Vec<crate::quick::QuickOutcome>,
+    /// The places the caret jumped from, as path and line counted from 1, the latest last, for going back.
+    jumped_from: Vec<(String, usize)>,
+    /// The places gone back from, the latest last, for going forward again.
+    jumped_back: Vec<(String, usize)>,
+    /// The keymap the editor settings made last, with the preset and bindings it was made from, so a key does not build it again.
+    keymap: Option<(
+        pm_editor::Preset,
+        std::collections::BTreeMap<String, Vec<String>>,
+        pm_editor::Keymap,
+    )>,
 }
 
 impl Link {
@@ -287,6 +307,12 @@ impl Link {
             identities: HashMap::new(),
             recent_files: Vec::new(),
             recent_commands: Vec::new(),
+            settings_changed: false,
+            release_asked: None,
+            outcomes: Vec::new(),
+            jumped_from: Vec::new(),
+            jumped_back: Vec::new(),
+            keymap: None,
         }
     }
 
@@ -343,6 +369,9 @@ impl Link {
     /// Lays the window out the way `view` says and opens its page once the server lists its sessions.
     pub fn restore(&mut self, view: View) {
         view.lay_out(&mut self.workspace);
+        self.recent_files = view.recent_files.clone();
+        self.recent_commands = view.recent_commands.clone();
+        self.folded = view.folded.iter().cloned().collect();
         self.reopen = view.files.clone();
         self.pending = Some(Page::from(view.page));
     }
@@ -368,6 +397,18 @@ impl Link {
         }
     }
 
+    /// The layout to keep for the next run: what the workspace shows, with the files and commands used lately and the projects folded.
+    pub fn view(&self) -> View {
+        let mut folded: Vec<String> = self.folded.iter().cloned().collect();
+        folded.sort();
+        View {
+            recent_files: self.recent_files.clone(),
+            recent_commands: self.recent_commands.clone(),
+            folded,
+            ..View::of(&self.workspace)
+        }
+    }
+
     /// The workspace as it now stands.
     pub fn workspace(&self) -> &Workspace {
         &self.workspace
@@ -386,6 +427,47 @@ impl Link {
     /// The settings model, to put in what the window read of its own, such as its settings files and fonts.
     pub fn settings_mut(&mut self) -> &mut SettingsModel {
         &mut self.settings
+    }
+
+    /// The keymap the editor settings make, built again only when the preset or the reader's bindings changed.
+    fn keymap(&mut self) -> pm_editor::Keymap {
+        let editor = &self.settings.editor;
+        match &self.keymap {
+            Some((preset, keys, keymap)) if *preset == editor.keymap && *keys == editor.keys => {
+                keymap.clone()
+            }
+            _ => {
+                let keymap = editor.keymap();
+                self.keymap = Some((editor.keymap, editor.keys.clone(), keymap.clone()));
+                keymap
+            }
+        }
+    }
+
+    /// Takes what the link asked of the window beyond itself since the last call, such as text to copy.
+    pub fn take_outcomes(&mut self) -> Vec<crate::quick::QuickOutcome> {
+        std::mem::take(&mut self.outcomes)
+    }
+
+    /// Whether the link changed the settings itself since this was last asked, so the window saves them.
+    pub fn take_settings_changed(&mut self) -> bool {
+        std::mem::take(&mut self.settings_changed)
+    }
+
+    /// Hands what the window's settings decide to the parts of the workspace that follow them, once they are read and after each change.
+    pub fn follow_settings(&mut self) {
+        self.workspace.open_files.vim = self.settings.editor.vim_mode;
+        let general = &self.settings.window.general;
+        self.workspace.open_files.offers_withheld = !general.offer_languages;
+        self.workspace.open_files.declined = general.declined_languages.clone();
+        self.workspace.open_files.indents = self
+            .settings
+            .machine
+            .languages
+            .iter()
+            .filter(|(_, held)| held.tab_size.is_some() || held.hard_tabs.is_some())
+            .map(|(language, held)| (language.clone(), (held.tab_size, held.hard_tabs)))
+            .collect();
     }
 
     /// Readies the settings window as it opens: names the agent and the project its customizations are read for, the open session's or else the first, on whichever machine it lives, and asks the server for what its pages list.
@@ -429,6 +511,7 @@ impl Link {
             }
             self.send(request);
         }
+        self.follow_settings();
         self.change_dock(|_| {});
     }
 
@@ -464,7 +547,23 @@ impl Link {
         }
         let browsed = self.run_web();
         self.browser_agent();
+        self.recheck_release();
         browsed || changed || remote
+    }
+
+    /// Asks for the newest release again once enough time passed since it was last asked, while the settings say to look for one.
+    fn recheck_release(&mut self) {
+        let general = &self.settings.window.general;
+        if !general.check_updates || self.client.is_none() {
+            return;
+        }
+        let due = self
+            .release_asked
+            .is_none_or(|asked| asked.elapsed() >= RELEASE_RECHECK);
+        if due {
+            self.release_asked = Some(std::time::Instant::now());
+            self.send(release_request(general.channel));
+        }
     }
 
     /// Opens the session at index path `at`, recording it in the trail.
@@ -488,17 +587,37 @@ impl Link {
         self.go(page);
     }
 
-    /// Goes back to the page before the one showing in the trail.
+    /// Goes back to the page before the one showing in the trail, passing over pages that are gone, such as closed sessions.
     pub fn back(&mut self) {
-        if let Some(page) = self.workspace.trail.back() {
-            self.go(page);
+        while let Some(page) = self.workspace.trail.back() {
+            if self.still_there(&page) {
+                self.go(page);
+                return;
+            }
         }
     }
 
-    /// Goes forward to the page after the one showing in the trail.
+    /// Goes forward to the page after the one showing in the trail, passing over pages that are gone.
     pub fn forward(&mut self) {
-        if let Some(page) = self.workspace.trail.forward() {
-            self.go(page);
+        while let Some(page) = self.workspace.trail.forward() {
+            if self.still_there(&page) {
+                self.go(page);
+                return;
+            }
+        }
+    }
+
+    /// Whether `page` can still be shown: its session is still listed and its project still kept.
+    fn still_there(&self, page: &Page) -> bool {
+        match page {
+            Page::Session(id) => {
+                self.sessions
+                    .iter()
+                    .any(|info| info.session == *id && (!info.closed || self.reopened.contains(id)))
+                    || self.routes.remote(*id).is_some()
+            }
+            Page::Overview(path) => self.paths.contains(path),
+            Page::Home | Page::History | Page::Extensions => true,
         }
     }
 
@@ -821,9 +940,12 @@ impl Link {
                 self.ask(Request::Sessions, Ask::Sessions);
                 self.send(Request::MachineSettings);
                 if self.settings.window.general.check_updates {
+                    self.release_asked = Some(std::time::Instant::now());
                     self.send(release_request(self.settings.window.general.channel));
                 }
+                self.send(Request::ExtensionAssets);
                 self.change_dock(Dock::connected);
+                self.reopen_for_server();
             }
             Incoming::Disconnected(reason) => self.workspace.status = Some(reason),
             Incoming::Response { id, response } => {
@@ -918,9 +1040,13 @@ impl Link {
             (ask @ (Ask::SessionSlots(_) | Ask::SessionAllowance(_)), response) => {
                 self.composer_answer(ask, response)
             }
-            (ask @ (Ask::Identity(_) | Ask::Discover(_) | Ask::StartBranches(_)), response) => {
-                self.start_answer(ask, response)
-            }
+            (
+                ask @ (Ask::Identity(_)
+                | Ask::Discover(_)
+                | Ask::StartBranches(_)
+                | Ask::StartContainer(_)),
+                response,
+            ) => self.start_answer(ask, response),
             (
                 ask @ (Ask::Files(_) | Ask::Entry | Ask::Search(_) | Ask::Quick(_) | Ask::Branches),
                 response,
@@ -993,7 +1119,10 @@ impl Link {
             (Ask::Server(purpose), response) => self.answer_server(purpose, response),
             (Ask::Excerpt(excerpt), response) => self.answer_excerpt(excerpt, response),
             (Ask::Listing(choosing), response) => self.answer_listing(choosing, response),
-            (ask, response) => self.answer_settings(ask, response),
+            (ask, response) => {
+                self.answer_settings(ask, response);
+                self.follow_settings();
+            }
         }
     }
 
@@ -1057,6 +1186,12 @@ impl Link {
                 };
             }
             (Ask::LatestRelease, _) => settings.release = Some(Release::Unknown),
+            (Ask::SignIn, response) => {
+                self.workspace.sign_in = None;
+                for request in self.settings.take_form_answer(response) {
+                    self.send(request);
+                }
+            }
             (Ask::Form, response) => {
                 for request in settings.take_form_answer(response) {
                     self.send(request);
@@ -1074,7 +1209,20 @@ impl Link {
                     offer.run = UpdateRun::Idle;
                 }
             }
-            (_, Response::Failed { message }) => self.workspace.status = Some(message),
+            (ask, Response::Failed { message }) => {
+                let settings = &mut self.settings;
+                match ask {
+                    Ask::Library | Ask::ToolSets => settings.library_loaded = true,
+                    Ask::McpServers => settings.mcp_loaded = true,
+                    Ask::ModelServers => settings.model_servers_loaded = true,
+                    Ask::ModelSlots => settings.slots_loaded = true,
+                    Ask::MachineSettings => settings.machine_loaded = true,
+                    Ask::Extensions => settings.extensions_loaded = true,
+                    _ => {}
+                }
+                settings.failure = Some(message.clone());
+                self.workspace.status = Some(message);
+            }
             _ => {}
         }
     }
@@ -1272,8 +1420,25 @@ impl Link {
             show_thread(&mut self.workspace, thread);
         }
         self.rebuild();
+        if finishing && !replayed {
+            self.review_finished(session);
+        }
+    }
+
+    /// Opens the session numbered `session` on what it changed, when the settings say a finished turn opens its review.
+    fn review_finished(&mut self, session: u64) {
+        if self.settings.window.agents.on_finish != pm_config::Finish::OpenReview {
+            return;
+        }
+        if self.watched != Some(session) {
+            self.navigate(Page::Session(session));
+        }
+        self.workspace.open_files.tab = crate::open_files::SessionTab::Diff;
     }
 }
+
+/// How long the window waits before it asks for the newest release again.
+pub const RELEASE_RECHECK: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
 
 /// How many of a project's latest commits its overview lists.
 const COMMITS_SHOWN: usize = 8;

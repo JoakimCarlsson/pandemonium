@@ -186,6 +186,8 @@ pub struct SettingsModel {
     pub browser_note: Option<String>,
     /// What the extensions installed on this machine bring that the window uses itself: themes, icon themes and commands.
     pub assets: pm_protocol::ExtensionAssets,
+    /// What the server said last went wrong with something the settings window asked, until the reader dismisses it.
+    pub failure: Option<String>,
 }
 
 /// The names of the theme families the app ships, Default first.

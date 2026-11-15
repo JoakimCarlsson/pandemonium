@@ -11,7 +11,7 @@ use crate::text_input::TextInput;
 use rustle::color_scheme;
 
 /// How many choices a list holds before it offers a box to narrow it.
-const FILTER_FROM: usize = 8;
+const FILTER_FROM: usize = 10;
 
 /// How many matching choices the list shows at most.
 const SHOWN_AT_MOST: usize = 200;
@@ -140,6 +140,31 @@ impl OptionList {
         }
         let matching = Self::matching(&self.options, &self.filter);
         let filtering = self.options.len() > FILTER_FROM;
+        let focus = rustle::remember_focus();
+        let asked = remember(|| false);
+        let active = remember(|| None::<usize>);
+        if !filtering && !asked.get() {
+            asked.set(true);
+            focus.request_focus();
+        }
+        let highlighted = active.get().filter(|place| matching.contains(place));
+        let keys = {
+            let matching = matching.clone();
+            let pick = self.on_pick.clone();
+            let picked = self.picked;
+            move |event: &rustle::KeyEvent| {
+                option_key(event, &matching, &active, picked, &|place| {
+                    if let Some(pick) = &pick {
+                        pick(place);
+                    }
+                })
+            }
+        };
+        let modifier = if filtering {
+            modifier.on_preview_key_event(keys)
+        } else {
+            modifier.focusable(&focus, keys)
+        };
         column_arranged(
             modifier,
             Arrangement::SpacedBy(crate::spacing(4.0)),
@@ -150,6 +175,7 @@ impl OptionList {
                     let pick = self.on_pick.clone();
                     let first = matching.first().copied();
                     TextInput::new(self.filter.clone())
+                        .autofocus()
                         .placeholder("Filter")
                         .size(Size::Xs)
                         .modifier(Modifier::new().fill_max_width())
@@ -159,7 +185,7 @@ impl OptionList {
                             }
                         })
                         .on_submit(move |_| {
-                            if let (Some(pick), Some(first)) = (&pick, first) {
+                            if let (Some(pick), Some(first)) = (&pick, highlighted.or(first)) {
                                 pick(first);
                             }
                         })
@@ -184,6 +210,7 @@ impl OptionList {
                             option_row(
                                 self.options[place].clone(),
                                 picked,
+                                highlighted == Some(place),
                                 row_height,
                                 move || {
                                     if let Some(on_pick) = &on_pick {
@@ -199,14 +226,48 @@ impl OptionList {
     }
 }
 
-/// One choice of the list, reading `label`, marked when `picked`, `height` tall, calling `on_click` when pressed.
+/// Moves the choice `active` marks among the `matching` ones on the up and down arrows, starting from the one `picked`, and picks it through `pick` on Enter or Space; says whether `event` was taken.
+fn option_key(
+    event: &rustle::KeyEvent,
+    matching: &[usize],
+    active: &State<Option<usize>>,
+    picked: Option<usize>,
+    pick: &dyn Fn(usize),
+) -> bool {
+    use rustle::Key;
+    let modifiers = event.modifiers;
+    if !event.pressed || modifiers.ctrl || modifiers.alt || modifiers.meta || matching.is_empty() {
+        return false;
+    }
+    let held = active.get().or(picked);
+    let at = held.and_then(|place| matching.iter().position(|kept| *kept == place));
+    let last = matching.len() - 1;
+    match &event.key {
+        Key::ArrowDown => active.set(Some(matching[at.map_or(0, |at| (at + 1).min(last))])),
+        Key::ArrowUp => active.set(Some(matching[at.map_or(0, |at| at.saturating_sub(1))])),
+        Key::Enter if active.get().is_some() => {
+            if let Some(place) = active.get() {
+                pick(place);
+            }
+        }
+        Key::Character(text) if text == " " && active.get().is_some() => {
+            if let Some(place) = active.get() {
+                pick(place);
+            }
+        }
+        _ => return false,
+    }
+    true
+}
+
+/// One choice of the list, reading `label`, marked when `picked` and lit when the keys point at it (`lit`), `height` tall, calling `on_click` when pressed.
 #[track_caller]
-fn option_row(label: String, picked: bool, height: f32, on_click: impl Fn() + 'static) {
+fn option_row(label: String, picked: bool, lit: bool, height: f32, on_click: impl Fn() + 'static) {
     let scheme = color_scheme();
     let hovered = remember(|| false);
     let fill = if picked {
         scheme.secondary_container
-    } else if hovered.get() {
+    } else if hovered.get() || lit {
         scheme.surface_container_high
     } else {
         Color::TRANSPARENT

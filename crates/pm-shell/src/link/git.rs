@@ -478,6 +478,10 @@ impl Link {
                     None,
                 );
             }
+            GitAction::CherryPick(commit) => {
+                self.workspace.git.menu = None;
+                self.git_act(Request::CherryPick { directory, commit }, None);
+            }
         }
     }
 
@@ -597,6 +601,7 @@ fn busy_word(request: &Request) -> &'static str {
         },
         Request::Checkout { .. } | Request::CreateBranch { .. } => "Switching",
         Request::Discard { .. } => "Discarding",
+        Request::CherryPick { .. } => "Cherry-picking",
         Request::Stage { .. } => "Staging",
         Request::Ignore { .. } => "Ignoring",
         Request::Step { action, .. } => match action.as_str() {

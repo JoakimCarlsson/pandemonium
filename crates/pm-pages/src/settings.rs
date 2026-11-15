@@ -7,8 +7,11 @@ use rustle::prelude::*;
 
 use crate::top_bar::keep_press;
 
-use pm_components::{AppTheme, IconButton, Label, LabelVariant, SectionHeader, Size, app_theme};
-use pm_shell::{Section, SettingsModel};
+use pm_components::{
+    AppTheme, IconButton, Label, LabelVariant, Notice, NoticeVariant, SectionHeader, Size,
+    app_theme,
+};
+use pm_shell::{Section, SettingsChange, SettingsModel};
 
 use crate::settings_actions::SettingsActions;
 use crate::settings_nav::navigation;
@@ -82,6 +85,29 @@ pub fn settings_page(model: &SettingsModel, theme: AppTheme, actions: &SettingsA
     });
 }
 
+/// The note saying what the server said went wrong, with the button putting it away.
+fn failure_note(failure: &str, actions: &SettingsActions) {
+    let dismiss = actions.send(SettingsChange::DismissFailure);
+    row_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(pm_components::spacing(8.0)),
+        Alignment::Center,
+        || {
+            column_with(Modifier::new().weight(1.0), || {
+                Notice::new("The server could not do that")
+                    .detail(failure.to_owned())
+                    .variant(NoticeVariant::Danger)
+                    .show();
+            });
+            IconButton::new(phosphor::X)
+                .size(Size::Xs)
+                .tooltip("Dismiss")
+                .on_click(dismiss)
+                .show();
+        },
+    );
+}
+
 /// The strip across the top: the window's name, moving it when pressed, and the button closing it.
 fn title_strip(actions: &SettingsActions) {
     let scheme = color_scheme();
@@ -148,6 +174,9 @@ fn content(model: &Rc<SettingsModel>, actions: &SettingsActions, layout: Layout)
                             .trail(section.parent().map(|parent| parent.title().to_owned()))
                             .summary(section.summary())
                             .show();
+                        if let Some(failure) = &model.failure {
+                            failure_note(failure, actions);
+                        }
                         crate::settings_body::body(model, actions, section, layout);
                     },
                 );

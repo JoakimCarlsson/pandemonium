@@ -60,7 +60,7 @@ impl Link {
         let Some(chord) = Chord::parse(written) else {
             return KeyOutcome::default();
         };
-        let keymap = self.settings.editor.keymap();
+        let keymap = self.keymap();
         let before = std::mem::take(&mut self.chords);
         match keymap.press_among(&before, &chord, Action::everywhere) {
             Pressed::Waiting => {
@@ -326,6 +326,12 @@ impl Link {
             Action::SkipCommit => self.git_act(step("skip"), None),
             Action::AbortOperation => self.git_act(step("abort"), None),
             Action::StashChanges => self.git_act(stash("push", None), None),
+            Action::StashApply | Action::StashPop | Action::StashDrop
+                if self.workspace.git.stashes.len() > 1 =>
+            {
+                self.show_right(RightTab::Git);
+                self.git(GitAction::Menu(Some(crate::git::GitMenu::Stashes)));
+            }
             Action::StashApply => self.git_act(stash("apply", Some(0)), None),
             Action::StashPop => self.git_act(stash("pop", Some(0)), None),
             Action::StashDrop => self.git_act(stash("drop", Some(0)), None),

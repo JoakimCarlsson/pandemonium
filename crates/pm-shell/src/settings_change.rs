@@ -49,7 +49,7 @@ pub enum SettingsChange {
     ToggleWithheld(String),
     /// Takes the known server at a place out of the servers page.
     RemoveServer(usize),
-    /// Adds a server by its name, its address, the place of how it is reached among [`crate::settings_model::REACHES`], and the token it lets the window in with, kept for servers reached straight or through a tunnel.
+    /// Adds a server, or changes the known one of the same name, by its name, its address, the place of how it is reached among [`crate::settings_model::REACHES`], and the token it lets the window in with, kept for servers reached straight or through a tunnel.
     AddServer(String, String, usize, String),
     /// Takes every key off the action kept under this name.
     ClearKeys(String),
@@ -59,6 +59,8 @@ pub enum SettingsChange {
     SetKeys(String, String),
     /// Types or presses something in a form of the sections inside Agents.
     Form(crate::settings_forms::FormChange),
+    /// Puts away the note saying what last went wrong.
+    DismissFailure,
 }
 
 /// Whether `text` reads as an origin agents may be allowed to open: a host, optionally with a port, or a web address that begins with `http://` or `https://`, with no white space and no user name.
@@ -78,6 +80,16 @@ pub fn origin_reads(text: &str) -> bool {
 pub fn binding_reads(text: &str) -> bool {
     text.split_once("=>")
         .is_some_and(|(keys, action)| !keys.trim().is_empty() && !action.trim().is_empty())
+}
+
+/// Whether `text` can be added as a line of the list `setting` holds: a vim binding, an origin, or any text that is not empty.
+pub fn line_reads(setting: Setting, text: &str) -> bool {
+    let text = text.trim();
+    match setting {
+        Setting::VimBindings => binding_reads(text),
+        Setting::AgentOrigins => origin_reads(text),
+        _ => !text.is_empty(),
+    }
 }
 
 /// The request asking for the newest release on `channel`.
@@ -166,6 +178,7 @@ impl SettingsModel {
                 self.page.filter.clear();
             }
             SettingsChange::Filter(text) => self.page.filter = text,
+            SettingsChange::DismissFailure => self.failure = None,
             SettingsChange::Pick(setting, index) => {
                 self.page.picker = None;
                 self.page.filter.clear();
@@ -183,11 +196,7 @@ impl SettingsModel {
             }
             SettingsChange::AddLine(setting, text) => {
                 let text = text.trim().to_owned();
-                let reads = match setting {
-                    Setting::VimBindings => binding_reads(&text),
-                    Setting::AgentOrigins => origin_reads(&text),
-                    _ => !text.is_empty(),
-                };
+                let reads = line_reads(setting, &text);
                 let mut lines = setting.lines(self);
                 if reads && !lines.contains(&text) {
                     lines.push(text);
@@ -259,10 +268,9 @@ impl SettingsModel {
             }
             SettingsChange::AddServer(name, address, reach, token) => {
                 let name = name.trim().to_owned();
+                let address = address.trim().to_owned();
                 let servers = &mut self.window.servers;
-                let taken =
-                    name == "This machine" || servers.known.iter().any(|held| held.name == name);
-                if !name.is_empty() && !taken {
+                if !name.is_empty() && name != "This machine" && !address.is_empty() {
                     let reach = crate::settings_model::REACHES
                         .get(reach)
                         .map_or_else(Default::default, |(reach, _)| *reach);
@@ -271,12 +279,20 @@ impl SettingsModel {
                     } else {
                         String::new()
                     };
-                    servers.known.push(pm_config::KnownServer {
+                    let server = pm_config::KnownServer {
                         name,
                         reach,
-                        address: address.trim().to_owned(),
+                        address,
                         token,
-                    });
+                    };
+                    match servers
+                        .known
+                        .iter_mut()
+                        .find(|held| held.name == server.name)
+                    {
+                        Some(held) => *held = server,
+                        None => servers.known.push(server),
+                    }
                 }
             }
             SettingsChange::ClearKeys(key) => {

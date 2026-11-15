@@ -344,6 +344,8 @@ pub enum QuickOutcome {
     Quit,
     /// Switches between the light and the dark appearance, from the one showing.
     ToggleTheme,
+    /// Opens this address in the system's browser.
+    OpenAddress(String),
 }
 
 impl QuickInput {

@@ -204,6 +204,8 @@ pub struct Start {
     pub worktree: bool,
     /// Whether its agent runs in the dev container of the folder it works in.
     pub container: bool,
+    /// Whether the folder the work starts in has a dev container set up, so running in one is offered.
+    pub has_container: bool,
     /// Whether the menu of where the work runs is open, for snapshots.
     pub place_menu: bool,
     /// The positions among [`Workspace::agents`] of the agents offered: those shown and signed in.

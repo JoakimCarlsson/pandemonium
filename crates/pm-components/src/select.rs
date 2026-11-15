@@ -95,7 +95,10 @@ impl Select {
             (SelectVariant::Outlined, false) => scheme.background,
             (SelectVariant::Ghost, false) => Color::TRANSPARENT,
         };
-        let outline = if self.open {
+        let ring = crate::focus_ring::remember_focus_ring();
+        let outline = if ring.shown() {
+            scheme.primary
+        } else if self.open {
             scheme.outline
         } else {
             scheme.outline_variant
@@ -108,13 +111,20 @@ impl Select {
                 let hovered = hovered.clone();
                 move |inside| hovered.set(inside)
             });
-        if self.variant == SelectVariant::Outlined || self.open {
+        if self.variant == SelectVariant::Outlined || self.open || ring.shown() {
             modifier = modifier.border(1.0, outline, 6.0);
         }
         if let Some(on_click) = self.on_click {
-            modifier = modifier
-                .cursor(CursorIcon::Pointer)
-                .clickable(move || on_click());
+            let pressed = on_click.clone();
+            let clicked = ring.clone();
+            modifier = modifier.cursor(CursorIcon::Pointer).clickable(move || {
+                clicked.clicked();
+                on_click()
+            });
+            modifier = modifier.focusable(&ring.focus, move |event| {
+                crate::focus_ring::activates(event, &*pressed)
+                    || crate::focus_ring::opens(event, &*pressed)
+            });
         }
         let shown = self.shown;
         row_arranged(

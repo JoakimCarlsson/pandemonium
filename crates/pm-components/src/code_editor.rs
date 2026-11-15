@@ -270,6 +270,13 @@ impl CodeEditor {
         let revision = remember(|| 0_u64);
         let _ = revision.get();
         let engine = remember(|| Rc::new(RefCell::new(Vim::default()))).get();
+        let applied = remember(|| None::<(Vec<String>, pm_editor::VimClipboard)>);
+        let settings = crate::editor_settings();
+        let wanted = (settings.vim_bindings.clone(), settings.vim_clipboard);
+        if applied.get().as_ref() != Some(&wanted) {
+            configure_vim(&mut engine.borrow_mut(), &wanted.0, wanted.1);
+            applied.set(Some(wanted));
+        }
         if self.variant == CodeEditorVariant::Viewer {
             let mut document = self.document.borrow_mut();
             if !document.field.is_read_only() {
@@ -470,7 +477,7 @@ pub(crate) struct Handle {
     /// The number the first line is shown with.
     first_line: usize,
     /// How the editor settings say the editor looks and behaves, as they stood when it was last drawn.
-    code: CodeLook,
+    pub(crate) code: CodeLook,
     /// What the language server's popups need.
     pub(crate) assist: Assist,
     /// The popup open over the text, when one is.
@@ -515,8 +522,29 @@ impl Handle {
         }
         if moved {
             self.ask_at_caret();
+            self.ask_blame();
         }
         self.settle(changed);
+    }
+
+    /// Says which line the caret is on, when the line says who last changed it and git has not said so for that line yet.
+    fn ask_blame(&self) {
+        if !self.code.inline_blame {
+            return;
+        }
+        let line = {
+            let document = self.document.borrow();
+            let line = document.position_of(document.field.caret()).line as usize;
+            if document
+                .blame
+                .as_ref()
+                .is_some_and(|(held, _)| *held == line)
+            {
+                return;
+            }
+            line
+        };
+        self.ask(ServerAsk::CaretLine(line));
     }
 
     /// Asks the language server `ask`, when the file is read by one.
@@ -610,7 +638,7 @@ impl Handle {
             _ => return false,
         }
         let resolve = self.document.borrow_mut().completion_to_resolve();
-        if let Some(item) = resolve {
+        if let Some(item) = resolve.filter(|_| self.code.completion_docs) {
             self.ask(ServerAsk::Resolve(item));
         }
         self.redraw();
@@ -627,7 +655,12 @@ impl Handle {
             _ => return false,
         };
         let modifiers = event.modifiers;
-        if !event.pressed || modifiers.ctrl || modifiers.alt || modifiers.meta {
+        if !self.code.visual_caret
+            || !event.pressed
+            || modifiers.ctrl
+            || modifiers.alt
+            || modifiers.meta
+        {
             return false;
         }
         let in_reversed = {
@@ -889,10 +922,22 @@ impl Handle {
 
     /// Opens the find bar, replacing too when `replacing`, looking for the selected text when there is any.
     fn open_find(&self, replacing: bool) {
-        let selected = self.document.borrow().field.selected().to_owned();
+        let selected = {
+            let mut document = self.document.borrow_mut();
+            let selected = document.field.selected().to_owned();
+            let scope = self
+                .code
+                .find_in_selection
+                .limits_to(&selected)
+                .then(|| document.selection_scope())
+                .flatten();
+            document.set_find_scope(scope);
+            selected
+        };
+        let seed = self.code.seed_search;
         self.bars.update(|bars| {
             let mut find = bars.find.take().unwrap_or_default();
-            if !selected.is_empty() && !selected.contains('\n') {
+            if seed && !selected.is_empty() && !selected.contains('\n') {
                 find.query.text = selected;
             }
             find.replacing = replacing;
@@ -902,6 +947,9 @@ impl Handle {
 
     /// Carries out `command`; returns whether it was taken.
     fn run(&self, command: Command) -> bool {
+        if let Some(taken) = self.run_beyond_text(&command) {
+            return taken;
+        }
         let edits: Vec<Edit> = {
             let document = self.document.borrow();
             match command {
@@ -1048,6 +1096,54 @@ impl Handle {
         };
         self.apply(edits);
         true
+    }
+
+    /// Carries out `command` when it moves the carets back or forth, copies, sets a breakpoint, locks the text or leaves an action to the window; says it was taken, or nothing for any other command.
+    fn run_beyond_text(&self, command: &Command) -> Option<bool> {
+        match command {
+            Command::CursorHistory(forward) => {
+                let moved = {
+                    let mut document = self.document.borrow_mut();
+                    if *forward {
+                        document.cursor_redo()
+                    } else {
+                        document.cursor_undo()
+                    }
+                };
+                if moved {
+                    self.settle(false);
+                }
+                Some(true)
+            }
+            Command::CopyUnindented => {
+                copy(&unindented(&self.document.borrow().field.selected_all()));
+                Some(true)
+            }
+            Command::ToggleBreakpoint => {
+                let line = {
+                    let document = self.document.borrow();
+                    document.line_of(document.field.caret())
+                };
+                if let Some(on_gutter) = &self.on_gutter {
+                    on_gutter(line + self.first_line);
+                }
+                Some(true)
+            }
+            Command::ToggleReadOnly => {
+                {
+                    let mut document = self.document.borrow_mut();
+                    let locked = document.field.is_read_only();
+                    document.field = document.field.clone().read_only(!locked);
+                }
+                self.redraw();
+                Some(true)
+            }
+            Command::Window(action) => {
+                self.ask(ServerAsk::Act(*action));
+                Some(true)
+            }
+            _ => None,
+        }
     }
 
     /// Carries out `command`, one the language server answers; returns
@@ -1233,7 +1329,7 @@ impl Handle {
             let document = self.document.borrow();
             let range = document.line(line);
             let byte = self.byte_at(x, y, gutter, cell);
-            if clicks == 1 && !extend && document.picks_up_at(byte) {
+            if clicks == 1 && !extend && self.code.drag_and_drop && document.picks_up_at(byte) {
                 drop(document);
                 self.document.borrow_mut().drag_started(byte);
                 self.redraw();
@@ -1349,7 +1445,7 @@ impl Handle {
     /// `x` across, falls on the lightbulb; says whether it did.
     fn press_bulb(&self, x: f32, y: f32, cell: f32) -> bool {
         let line = self.line_at(y);
-        let on_bulb = self.document.borrow().bulb_line(false) == Some(line);
+        let on_bulb = bulb_shown(&self.document.borrow(), self.code.lightbulb) == Some(line);
         if !on_bulb || x < cell * 1.6 || x > cell * 3.0 {
             return false;
         }
@@ -1528,7 +1624,12 @@ impl Line {
         } else {
             0..0
         };
-        let text = document.field.text()[range].to_owned();
+        let text = redacted(document, index, range.clone(), &extras.code);
+        let brackets = if extras.code.bracket_colors && index < document.lines() {
+            document.brackets_on(index)
+        } else {
+            Vec::new()
+        };
         let spans = painted
             .cloned()
             .unwrap_or_else(|| document.line_highlights(index));
@@ -1566,6 +1667,13 @@ impl Line {
                 .iter()
                 .map(|lens| lens.title.clone())
                 .filter(|_| extras.code.code_lens)
+                .chain(
+                    document
+                        .blame
+                        .as_ref()
+                        .filter(|(line, _)| extras.code.inline_blame && *line == index)
+                        .map(|(_, said)| said.clone()),
+                )
                 .collect();
             (hints, lenses)
         } else {
@@ -1578,7 +1686,8 @@ impl Line {
             bulb: false,
             drop_mark: None,
             number: index + extras.first_line,
-            runs: runs(text.len(), &spans),
+            runs: split_at_brackets(runs(text.len(), &spans), &brackets),
+            brackets,
             selected: Vec::new(),
             found: Vec::new(),
             carets: Vec::new(),
@@ -1633,6 +1742,11 @@ fn text_area(
     );
     let shown = handle.rows.clone();
     let count = shown.borrow().len(&document);
+    let padded = if extras.code.scroll_beyond {
+        count + handle.rows().saturating_sub(1)
+    } else {
+        count
+    };
     let top = handle.top();
     let bottom = shown
         .borrow()
@@ -1660,32 +1774,39 @@ fn text_area(
     let found = Rc::new(found_matches(&handle.bars.get(), &document));
     let caret_line = document.line_of(document.field.caret());
     let occurrences: Rc<Vec<Range<usize>>> = Rc::new(document.occurrences().to_vec());
-    let bulb = document.bulb_line(false);
+    let bulb = bulb_shown(&document, extras.code.lightbulb);
     let drop_mark = document.drop_mark();
     let scrolled = handle.list.scroll().offset();
-    let marks = Marks {
-        found: found
-            .iter()
-            .map(|range| document.line_of(range.start))
-            .collect(),
-        breakpoints: extras.breakpoints.as_ref().clone(),
-        caret: caret_line,
-        problems: document
-            .diagnostics
-            .iter()
-            .filter(|found| {
-                matches!(
-                    found.severity,
-                    pm_editor::Severity::Error | pm_editor::Severity::Warning
-                ) && extras.code.diagnostics.shows(found.severity)
-            })
-            .map(|found| {
-                (
-                    found.span.start.line as usize,
-                    found.severity == pm_editor::Severity::Error,
-                )
-            })
-            .collect(),
+    let marks = if !extras.code.scrollbar_marks {
+        Marks {
+            caret: caret_line,
+            ..Marks::default()
+        }
+    } else {
+        Marks {
+            found: found
+                .iter()
+                .map(|range| document.line_of(range.start))
+                .collect(),
+            breakpoints: extras.breakpoints.as_ref().clone(),
+            caret: caret_line,
+            problems: document
+                .diagnostics
+                .iter()
+                .filter(|found| {
+                    matches!(
+                        found.severity,
+                        pm_editor::Severity::Error | pm_editor::Severity::Warning
+                    ) && extras.code.diagnostics.shows(found.severity)
+                })
+                .map(|found| {
+                    (
+                        found.span.start.line as usize,
+                        found.severity == pm_editor::Severity::Error,
+                    )
+                })
+                .collect(),
+        }
     };
     let held = if extras.sticky {
         sticky_lines(&document, top)
@@ -1870,7 +1991,11 @@ fn text_area(
                 let found = found.clone();
                 let occurrences = occurrences.clone();
                 let shown = shown.clone();
-                lazy_list(Modifier::new().fill_max_size(), &list, count, move |row| {
+                lazy_list(Modifier::new().fill_max_size(), &list, padded, move |row| {
+                    if row >= count {
+                        spacer(Modifier::new().fill_max_width().height(cell.1));
+                        return;
+                    }
                     let document = lines_document.borrow();
                     let (index, segment) = shown.borrow().at(&document, row);
                     let cached = (painted.0..painted.0 + painted.1.len())
@@ -1943,7 +2068,10 @@ fn editor_menu(handle: &Handle, at: (f32, f32)) {
     let mut menu = Menu::new()
         .width(240.0)
         .offset(at.0, at.1)
-        .on_dismiss(move || close.menu.set(None));
+        .on_dismiss(move || {
+            close.menu.set(None);
+            close.focus_text();
+        });
     if served {
         menu = menu
             .icon_item(
@@ -2070,7 +2198,9 @@ fn sticky_header(handle: &Handle, held: &[usize], extras: &Extras, look: Look) {
 fn found_matches(bars: &Bars, document: &Document) -> Vec<Range<usize>> {
     bars.find
         .as_ref()
-        .and_then(|find: &FindBar| document.find_all(&find.query).ok())
+        .and_then(|find: &FindBar| {
+            crate::code_bars::found(document, &find.query, &crate::code_look()).ok()
+        })
         .unwrap_or_default()
 }
 
@@ -2145,6 +2275,8 @@ struct Line {
     text: String,
     /// The runs of one highlight its text is painted in.
     runs: Vec<(Range<usize>, Option<pm_treesitter::Kind>)>,
+    /// The brackets on it that pair with another, with how deep each nests, while brackets are coloured.
+    brackets: Vec<(Range<usize>, usize)>,
     /// The selected stretches on it.
     selected: Vec<Range<usize>>,
     /// The stretches the find bar finds on it.
@@ -2190,6 +2322,11 @@ impl Line {
             .runs
             .iter()
             .filter_map(|(range, kind)| clip(range).map(|range| (range, *kind)))
+            .collect();
+        self.brackets = self
+            .brackets
+            .iter()
+            .filter_map(|(range, depth)| clip(range).map(|range| (range, *depth)))
             .collect();
         self.selected = self.selected.iter().filter_map(clip).collect();
         self.found = self.found.iter().filter_map(clip).collect();
@@ -2320,9 +2457,13 @@ impl Line {
         }
         let reversed = reversed_runs(&self.text);
         for (range, kind) in &self.runs {
-            let colour = kind.map_or(scheme.on_surface, |kind| {
-                kind_colour(kind, &scheme, &extended)
-            });
+            let bracket = self.brackets.iter().find(|(held, _)| held == range);
+            let colour = match bracket {
+                Some((_, depth)) => bracket_colour(*depth, &extended),
+                None => kind.map_or(scheme.on_surface, |kind| {
+                    kind_colour(kind, &scheme, &extended)
+                }),
+            };
             for piece_range in self.pieces(range, &reversed) {
                 let piece = &self.text[piece_range.clone()];
                 if piece.trim().is_empty() {
@@ -2671,6 +2812,122 @@ fn cell_size(style: &TextStyle) -> (f32, f32) {
     let sample = "0".repeat(64);
     let width = layout_text(&sample, style, None).size().width / 64.0;
     (width.max(1.0), style.line_height.max(1.0))
+}
+
+/// The line the lightbulb stands beside in `document`, as `shown` says it is shown, when it shows at all.
+fn bulb_shown(document: &Document, shown: pm_editor::LightbulbShown) -> Option<usize> {
+    match shown {
+        pm_editor::LightbulbShown::Off => None,
+        pm_editor::LightbulbShown::CaretLine => document.bulb_line(false),
+        pm_editor::LightbulbShown::Problems => document.bulb_line(true),
+    }
+}
+
+/// The colour of a bracket nested `depth` pairs deep, going round three of the theme's syntax colours.
+fn bracket_colour(depth: usize, extended: &ExtendedColors) -> Color {
+    [
+        extended.syntax_constant,
+        extended.syntax_keyword,
+        extended.syntax_function,
+    ][depth % 3]
+}
+
+/// `runs` cut wherever one of `brackets` starts or ends, so each bracket is a run of its own.
+fn split_at_brackets(
+    runs: Vec<(Range<usize>, Option<pm_treesitter::Kind>)>,
+    brackets: &[(Range<usize>, usize)],
+) -> Vec<(Range<usize>, Option<pm_treesitter::Kind>)> {
+    if brackets.is_empty() {
+        return runs;
+    }
+    let mut cuts: Vec<usize> = brackets
+        .iter()
+        .flat_map(|(range, _)| [range.start, range.end])
+        .collect();
+    cuts.sort_unstable();
+    cuts.dedup();
+    runs.into_iter()
+        .flat_map(|(range, kind)| {
+            let mut edges: Vec<usize> = cuts
+                .iter()
+                .copied()
+                .filter(|cut| range.start < *cut && *cut < range.end)
+                .collect();
+            edges.insert(0, range.start);
+            edges.push(range.end);
+            edges
+                .windows(2)
+                .map(|pair| (pair[0]..pair[1], kind))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// The text of the line at `index` of `document`, whose bytes are `range`, with the private values on it starred out while `code` says to hide them and the caret is on another line.
+fn redacted(document: &Document, index: usize, range: Range<usize>, code: &CodeLook) -> String {
+    let text = &document.field.text()[range.clone()];
+    if !code.redact || document.line_of(document.field.caret()) == index {
+        return text.to_owned();
+    }
+    let hidden = document.redactions();
+    let mut shown = text.to_owned();
+    for stretch in hidden.iter() {
+        let start = stretch.start.max(range.start);
+        let end = stretch.end.min(range.end);
+        if start >= end {
+            continue;
+        }
+        let local = start - range.start..end - range.start;
+        let starred: String = text[local.clone()]
+            .chars()
+            .map(|character| if character.is_ascii() { '*' } else { character })
+            .collect();
+        shown.replace_range(local, &starred);
+    }
+    shown
+}
+
+/// Puts the reader's vim `bindings`, each written as `keys => Action` with `@ context` after when it holds only in one, over vim's own in `engine`, and has its unnamed register share the clipboard as `sharing` says; bindings the engine cannot read are left out.
+fn configure_vim(engine: &mut Vim, bindings: &[String], sharing: pm_editor::VimClipboard) {
+    engine.reset_bindings();
+    for written in bindings {
+        let Some((keys, rest)) = written.split_once("=>") else {
+            continue;
+        };
+        let (action, context) = rest.split_once('@').unwrap_or((rest, "normal"));
+        let (keys, action, context) = (keys.trim(), action.trim(), context.trim());
+        if keys.is_empty() || action.is_empty() || context.is_empty() {
+            continue;
+        }
+        if engine.bind(keys, action, context).is_err() {
+            eprintln!("pandemonium: the vim binding `{written}` could not be read");
+        }
+    }
+    engine.share_clipboard(sharing.into());
+}
+
+/// `text` with the indentation its lines share taken off every line, blank lines left out of the reckoning.
+fn unindented(text: &str) -> String {
+    let shared = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.len() - line.trim_start().len())
+        .min()
+        .unwrap_or(0);
+    text.split_inclusive('\n')
+        .map(|line| {
+            let cut = line
+                .char_indices()
+                .take_while(|(at, character)| {
+                    *at < shared && character.is_whitespace() && *character != '\n'
+                })
+                .count();
+            &line[line
+                .char_indices()
+                .nth(cut)
+                .map_or(line.len(), |(at, _)| at)..]
+        })
+        .collect()
 }
 
 #[cfg(test)]
