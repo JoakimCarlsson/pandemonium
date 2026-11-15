@@ -71,15 +71,27 @@ fn tab_bar(workspace: &Workspace, actions: &Actions) {
                         .show();
                 });
             }
-            spacer(Modifier::new().weight(1.0));
             if workspace.dock_tab == DockTab::Terminal {
-                shell_tabs(workspace, actions);
+                let strip = remember_scroll_state();
+                row_arranged(
+                    Modifier::new()
+                        .weight(1.0)
+                        .fill_max_height()
+                        .padding_xy(8.0, 0.0)
+                        .horizontal_scroll(&strip),
+                    Arrangement::SpacedBy(pm_components::spacing(2.0)),
+                    Alignment::Center,
+                    || shell_tabs(workspace, actions),
+                );
                 let new = actions.terminal_new.clone();
                 IconButton::new(phosphor::PLUS)
                     .size(Size::Xs)
                     .on_click(move || new())
                     .show();
-            } else if matches!(workspace.dock_tab, DockTab::Tasks | DockTab::Debug) {
+            } else {
+                spacer(Modifier::new().weight(1.0));
+            }
+            if matches!(workspace.dock_tab, DockTab::Tasks | DockTab::Debug) {
                 let refresh = actions.refresh_dock.clone();
                 IconButton::new(phosphor::ARROW_CLOCKWISE)
                     .size(Size::Xs)
@@ -117,10 +129,7 @@ fn shell_tabs(workspace: &Workspace, actions: &Actions) {
                 .size(Size::Xs)
                 .selected(workspace.terminal_shown == Some(shell_key))
                 .on_click(move || pick(shell_key))
-                .show();
-            IconButton::new(phosphor::X)
-                .size(Size::Xs)
-                .on_click(move || close(shell_key))
+                .on_close(move || close(shell_key))
                 .show();
         });
     }
