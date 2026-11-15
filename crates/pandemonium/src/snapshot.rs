@@ -726,9 +726,27 @@ fn show_problems(file: &pm_shell::OpenFile) {
         source: Some("rustc".to_owned()),
     };
     document.diagnostics = vec![
-        found(line, 3, 7, pm_editor::Severity::Error, "cannot find value `root`"),
-        found(line + 2, 8, 20, pm_editor::Severity::Warning, "unused variable"),
-        found(line + 4, 4, 9, pm_editor::Severity::Hint, "consider borrowing"),
+        found(
+            line,
+            3,
+            7,
+            pm_editor::Severity::Error,
+            "cannot find value `root`",
+        ),
+        found(
+            line + 2,
+            8,
+            20,
+            pm_editor::Severity::Warning,
+            "unused variable",
+        ),
+        found(
+            line + 4,
+            4,
+            9,
+            pm_editor::Severity::Hint,
+            "consider borrowing",
+        ),
     ];
 }
 

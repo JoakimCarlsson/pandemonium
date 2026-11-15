@@ -34,11 +34,7 @@ pub fn problems_panel(problems: &[Problem], open: Rc<dyn Fn(String, usize)>) {
 /// pressing it calls `open` with where it is.
 fn problem_row(problem: &Problem, open: Rc<dyn Fn(String, usize)>) {
     let severity = problem.severity;
-    let whole = format!(
-        "{}/{}",
-        problem.folder.trim_end_matches('/'),
-        problem.path
-    );
+    let whole = format!("{}/{}", problem.folder.trim_end_matches('/'), problem.path);
     let line = problem.line + 1;
     let mut row = ListRow::new(problem.message.clone())
         .leading(Leading::Custom(Rc::new(move || severity_mark(severity))))

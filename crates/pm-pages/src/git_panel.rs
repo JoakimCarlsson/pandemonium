@@ -506,14 +506,11 @@ fn source_menu(git: &GitSummary, actions: &Actions) {
     } else if git.changes.is_empty() {
         menu = menu.disabled_item(phosphor::ARCHIVE, "No changes to stash");
     }
-    menu = menu
-        .separator()
-        .heading("Branch")
-        .icon_item(
-            phosphor::GIT_BRANCH,
-            "New branch…",
-            send(actions, GitAction::Ask(GitPrompt::NewBranch(String::new()))),
-        );
+    menu = menu.separator().heading("Branch").icon_item(
+        phosphor::GIT_BRANCH,
+        "New branch…",
+        send(actions, GitAction::Ask(GitPrompt::NewBranch(String::new()))),
+    );
     if !branch.is_empty() {
         if git.upstream.is_none() && !git.remotes.is_empty() {
             menu = menu.icon_item(
@@ -608,7 +605,9 @@ fn change_group(git: &GitSummary, group: ChangeGroup, members: &[&ChangedFile], 
     }
     header.show();
     for change in members {
-        key(change.path.clone(), || change_row(git, change, staged, actions));
+        key(change.path.clone(), || {
+            change_row(git, change, staged, actions)
+        });
     }
 }
 

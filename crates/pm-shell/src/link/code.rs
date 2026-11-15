@@ -364,7 +364,12 @@ impl Link {
                     );
                 }
             }
-            (CodeAsk::Reload(directory, path), Response::File { text: Some(text), .. }) => {
+            (
+                CodeAsk::Reload(directory, path),
+                Response::File {
+                    text: Some(text), ..
+                },
+            ) => {
                 if let Some(index) = files.position(&directory, &path) {
                     self.take_reloaded(index, text);
                 }

@@ -797,8 +797,7 @@ impl Handle {
             let document = self.document.borrow();
             let caret = document.field.caret();
             let start = document.line(document.line_of(caret)).start;
-            column_of(&document.field.text()[start..caret], caret - start) as f32
-                * self.cell_width
+            column_of(&document.field.text()[start..caret], caret - start) as f32 * self.cell_width
         };
         let margin = self.cell_width * 4.0;
         let across = self.across.get();
@@ -1213,7 +1212,8 @@ impl Handle {
         let document = self.document.borrow();
         let range = document.line(line);
         if segment.len() != range.len() {
-            let text = &document.field.text()[range.start + segment.start..range.start + segment.end];
+            let text =
+                &document.field.text()[range.start + segment.start..range.start + segment.end];
             let column = ((x - gutter) / cell).max(0.0);
             return range.start + segment.start + byte_at_column(text, column);
         }
@@ -1569,10 +1569,10 @@ fn text_area(
     } else {
         3.5 * cell.0
     };
-    handle
-        .rows
-        .borrow_mut()
-        .update(&document, wrap_columns(extras.code, handle.width.get() - gutter, cell.0));
+    handle.rows.borrow_mut().update(
+        &document,
+        wrap_columns(extras.code, handle.width.get() - gutter, cell.0),
+    );
     let shown = handle.rows.clone();
     let count = shown.borrow().len(&document);
     let top = handle.top();
@@ -1658,7 +1658,10 @@ fn text_area(
     let pointer = {
         let handle = handle.clone();
         move |event: &rustle::PointerEvent| {
-            let (x, y) = (handle.past_across(event.position.x, gutter), event.position.y);
+            let (x, y) = (
+                handle.past_across(event.position.x, gutter),
+                event.position.y,
+            );
             match event.phase {
                 PointerPhase::Press if x < gutter && handle.press_bulb(x, y, cell.0) => {}
                 PointerPhase::Press if x < gutter && handle.press_gutter(y) => {}
@@ -1788,51 +1791,46 @@ fn text_area(
                 let found = found.clone();
                 let occurrences = occurrences.clone();
                 let shown = shown.clone();
-                lazy_list(
-                    Modifier::new().fill_max_size(),
-                    &list,
-                    count,
-                    move |row| {
-                        let document = lines_document.borrow();
-                        let (index, segment) = shown.borrow().at(&document, row);
-                        let cached = (painted.0..painted.0 + painted.1.len())
-                            .contains(&index)
-                            .then(|| &painted.1[index - painted.0]);
-                        let mut line = Line::of(&document, index, cached, &extras_inner);
-                        let range = if index < document.lines() {
-                            document.line(index)
-                        } else {
-                            0..0
-                        };
-                        line.selected = within(&selections, &range);
-                        line.found = within(&found, &range);
-                        if extras_inner.code.occurrences {
-                            line.occurrences = within(&occurrences, &range);
-                        }
-                        line.bulb = bulb == Some(index);
-                        line.drop_mark = drop_mark
-                            .filter(|mark| range.contains(mark) || *mark == range.end)
-                            .map(|mark| mark - range.start);
-                        line.carets = carets
-                            .iter()
-                            .filter(|caret| range.contains(caret) || **caret == range.end)
-                            .map(|caret| caret - range.start)
-                            .collect();
-                        line.current = index == caret_line;
-                        line.folded = document.is_folded_at(index);
-                        if segment.len() != range.len() {
-                            line.cut(&segment);
-                        }
-                        if extras_inner.code.relative_line_numbers && !line.current {
-                            line.number = index.abs_diff(caret_line);
-                        }
-                        drop(document);
-                        canvas(
-                            Modifier::new().fill_max_width().height(cell.1),
-                            move |canvas| line.paint(canvas, &look),
-                        );
-                    },
-                );
+                lazy_list(Modifier::new().fill_max_size(), &list, count, move |row| {
+                    let document = lines_document.borrow();
+                    let (index, segment) = shown.borrow().at(&document, row);
+                    let cached = (painted.0..painted.0 + painted.1.len())
+                        .contains(&index)
+                        .then(|| &painted.1[index - painted.0]);
+                    let mut line = Line::of(&document, index, cached, &extras_inner);
+                    let range = if index < document.lines() {
+                        document.line(index)
+                    } else {
+                        0..0
+                    };
+                    line.selected = within(&selections, &range);
+                    line.found = within(&found, &range);
+                    if extras_inner.code.occurrences {
+                        line.occurrences = within(&occurrences, &range);
+                    }
+                    line.bulb = bulb == Some(index);
+                    line.drop_mark = drop_mark
+                        .filter(|mark| range.contains(mark) || *mark == range.end)
+                        .map(|mark| mark - range.start);
+                    line.carets = carets
+                        .iter()
+                        .filter(|caret| range.contains(caret) || **caret == range.end)
+                        .map(|caret| caret - range.start)
+                        .collect();
+                    line.current = index == caret_line;
+                    line.folded = document.is_folded_at(index);
+                    if segment.len() != range.len() {
+                        line.cut(&segment);
+                    }
+                    if extras_inner.code.relative_line_numbers && !line.current {
+                        line.number = index.abs_diff(caret_line);
+                    }
+                    drop(document);
+                    canvas(
+                        Modifier::new().fill_max_width().height(cell.1),
+                        move |canvas| line.paint(canvas, &look),
+                    );
+                });
                 if !held.is_empty() {
                     sticky_header(&sticky_handle, &held, &extras, look);
                 }
@@ -1883,9 +1881,17 @@ fn editor_menu(handle: &Handle, at: (f32, f32)) {
             .hint("Shift+F12");
         if !read_only {
             menu = menu
-                .icon_item(phosphor::PENCIL_SIMPLE, "Rename symbol", pick(Command::Rename))
+                .icon_item(
+                    phosphor::PENCIL_SIMPLE,
+                    "Rename symbol",
+                    pick(Command::Rename),
+                )
                 .hint("F2")
-                .icon_item(phosphor::LIGHTBULB, "Code actions", pick(Command::CodeActions))
+                .icon_item(
+                    phosphor::LIGHTBULB,
+                    "Code actions",
+                    pick(Command::CodeActions),
+                )
                 .hint("Ctrl+.")
                 .icon_item(phosphor::MAGIC_WAND, "Format", pick(Command::Format))
                 .hint("Shift+Alt+F");
@@ -1912,7 +1918,11 @@ fn editor_menu(handle: &Handle, at: (f32, f32)) {
             .hint("Ctrl+V");
     }
     menu = menu
-        .icon_item(phosphor::SELECTION_ALL, "Select all", pick(Command::SelectAll))
+        .icon_item(
+            phosphor::SELECTION_ALL,
+            "Select all",
+            pick(Command::SelectAll),
+        )
         .hint("Ctrl+A")
         .icon_item(
             phosphor::TEXT_AA,
@@ -1923,7 +1933,11 @@ fn editor_menu(handle: &Handle, at: (f32, f32)) {
         .separator();
     if !read_only {
         menu = menu
-            .icon_item(phosphor::CHAT_TEXT, "Toggle comment", pick(Command::ToggleComment))
+            .icon_item(
+                phosphor::CHAT_TEXT,
+                "Toggle comment",
+                pick(Command::ToggleComment),
+            )
             .hint("Ctrl+/");
     }
     menu = menu
@@ -2383,7 +2397,11 @@ impl Line {
             let points: Vec<(f32, f32)> = (0..=((span / 2.0).ceil() as usize))
                 .map(|step| {
                     let x = left + (step as f32 * 2.0).min(span);
-                    let y = if step % 2 == 0 { height - 1.0 } else { height - 3.0 };
+                    let y = if step % 2 == 0 {
+                        height - 1.0
+                    } else {
+                        height - 3.0
+                    };
                     (x, y)
                 })
                 .collect();

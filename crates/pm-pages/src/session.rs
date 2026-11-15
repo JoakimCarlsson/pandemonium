@@ -6,8 +6,8 @@
 use rustle::prelude::*;
 
 use pm_components::{
-    Activity, ConfirmDialog, ContinueChat, IconButton, Label, LabelVariant, PullRequestBar, PullRequestVariant,
-    Size, SpendStrip, extended_colors,
+    Activity, ConfirmDialog, ContinueChat, IconButton, Label, LabelVariant, PullRequestBar,
+    PullRequestVariant, Size, SpendStrip, extended_colors,
 };
 use pm_shell::{
     ActivityKind, Pane, Project, PullRequestInfo, SessionTab, SpendSummary, TabAction, Unsaved,
@@ -35,42 +35,42 @@ pub fn session_view(workspace: &Workspace, actions: &Actions) {
     let files = workspace.open_files.clone();
     let tab_keys = actions.file_tab.clone();
     stack_with(Modifier::new().fill_max_size(), || {
-    column_with(
-        Modifier::new()
-            .fill_max_size()
-            .background(scheme.background)
-            .on_key_event(move |event| match tab_key(event, &files) {
-                Some(action) => {
-                    tab_keys(action);
-                    true
-                }
-                None => false,
-            }),
-        || {
-            session_tabs(workspace, actions);
-            match workspace.open_files.right_tab() {
-                Some(right) => split_panes(workspace, right, actions),
-                None => row_with(Modifier::new().fill_max_width().weight(1.0), || {
-                    column_with(
-                        Modifier::new()
-                            .fill_max_height()
-                            .weight(1.0)
-                            .drop_target(dropped_on(actions, Pane::Left)),
-                        || pane_content(workspace, workspace.open_files.tab, actions),
-                    );
-                    spacer(
-                        Modifier::new()
-                            .width(SIDE_DROP)
-                            .fill_max_height()
-                            .drop_target(dropped_on(actions, Pane::Right)),
-                    );
+        column_with(
+            Modifier::new()
+                .fill_max_size()
+                .background(scheme.background)
+                .on_key_event(move |event| match tab_key(event, &files) {
+                    Some(action) => {
+                        tab_keys(action);
+                        true
+                    }
+                    None => false,
                 }),
-            }
-        },
-    );
-    if workspace.open_files.asking.is_some() {
-        unsaved_dialog(workspace, actions);
-    }
+            || {
+                session_tabs(workspace, actions);
+                match workspace.open_files.right_tab() {
+                    Some(right) => split_panes(workspace, right, actions),
+                    None => row_with(Modifier::new().fill_max_width().weight(1.0), || {
+                        column_with(
+                            Modifier::new()
+                                .fill_max_height()
+                                .weight(1.0)
+                                .drop_target(dropped_on(actions, Pane::Left)),
+                            || pane_content(workspace, workspace.open_files.tab, actions),
+                        );
+                        spacer(
+                            Modifier::new()
+                                .width(SIDE_DROP)
+                                .fill_max_height()
+                                .drop_target(dropped_on(actions, Pane::Right)),
+                        );
+                    }),
+                }
+            },
+        );
+        if workspace.open_files.asking.is_some() {
+            unsaved_dialog(workspace, actions);
+        }
     });
 }
 
@@ -84,7 +84,13 @@ fn unsaved_dialog(workspace: &Workspace, actions: &Actions) {
         .unwrap_or_default()
         .into_iter()
         .filter_map(|index| files.files.get(index))
-        .map(|file| file.path.rsplit('/').next().unwrap_or(&file.path).to_owned())
+        .map(|file| {
+            file.path
+                .rsplit('/')
+                .next()
+                .unwrap_or(&file.path)
+                .to_owned()
+        })
         .collect();
     let message = match names.as_slice() {
         [one] => format!("{one} has changes that are not saved. Save them before closing?"),
@@ -100,7 +106,9 @@ fn unsaved_dialog(workspace: &Workspace, actions: &Actions) {
         actions.file_tab.clone(),
     );
     ConfirmDialog::new("Unsaved changes", message, "Save")
-        .alternative("Don't save", move || discard(TabAction::Unsaved(Unsaved::Discard)))
+        .alternative("Don't save", move || {
+            discard(TabAction::Unsaved(Unsaved::Discard))
+        })
         .on_confirm(move || save(TabAction::Unsaved(Unsaved::Save)))
         .on_cancel(move || cancel(TabAction::Unsaved(Unsaved::Cancel)))
         .show();
