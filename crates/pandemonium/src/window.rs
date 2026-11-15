@@ -444,6 +444,8 @@ fn terminal_command(link: &mut Link, command: TerminalCommand) {
         }
         TerminalCommand::SelectAll => link.select_all_terminal(),
         TerminalCommand::Clear => link.clear_terminal(),
+        TerminalCommand::AddToChat => link.add_terminal_to_chat(),
+        TerminalCommand::Kill => link.kill_terminal(),
     }
 }
 

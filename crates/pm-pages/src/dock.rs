@@ -5,7 +5,7 @@
 use rustle::prelude::*;
 
 use pm_components::{IconButton, Label, LabelVariant, Size, Tab, TerminalView};
-use pm_shell::{DockTab, Workspace};
+use pm_shell::{DockTab, ProblemSeverity, Workspace};
 
 use crate::actions::{Actions, Panel};
 use crate::debug_panel::debug_panel;
@@ -37,11 +37,16 @@ pub fn dock(workspace: &Workspace, actions: &Actions) {
     );
 }
 
-/// What the tab of `tab` reads, with the number of problems on the Problems tab.
+/// What the tab of `tab` reads, with the number of problems on the Problems tab, hints left out of the count.
 fn tab_label(tab: DockTab, workspace: &Workspace) -> String {
+    let counted = workspace
+        .problems
+        .iter()
+        .filter(|problem| problem.severity != ProblemSeverity::Hint)
+        .count();
     match tab {
-        DockTab::Problems if workspace.problems.is_empty() => "Problems".to_owned(),
-        DockTab::Problems => format!("Problems {}", workspace.problems.len()),
+        DockTab::Problems if counted == 0 => "Problems".to_owned(),
+        DockTab::Problems => format!("Problems {counted}"),
         DockTab::Terminal => "Terminal".to_owned(),
         DockTab::Tasks => "Tasks".to_owned(),
         DockTab::Debug => "Debug".to_owned(),
@@ -157,6 +162,7 @@ fn terminal(workspace: &Workspace, actions: &Actions) {
         .selection(screen.selection)
         .application_cursor(screen.application_cursor)
         .size(Size::Sm)
+        .focus_key(workspace.terminal_shown)
         .modifier(Modifier::new().fill_max_size())
         .on_input(move |bytes| input(bytes))
         .on_resize(move |columns, rows| resize(columns, rows))
