@@ -1,263 +1,265 @@
-//! The card that puts the agent's questions to the reader one at a time, each with the answers it offers and a box for an answer of the reader's own.
+//! The card asking the reader the agent's form of questions: each question
+//! with the answers offered and room for their own words, then a button to
+//! send the answers and one to skip the form.
 
-use pm_harness::Alternative;
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, bg, border, border_color, cursor_pointer, flex, flex_1, flex_col, flex_none,
-    flex_wrap, gap, items_center, items_start, justify_center, justify_end, leading_ratio,
-    min_w_px, px, py, rounded, rounded_full, self_start, size, text_color, text_px, w_full,
-};
-use pm_text::Shaper;
-use pm_ui::{Node, node, text};
+use std::rc::Rc;
 
-use crate::Button;
-use crate::button::Variant;
-use crate::draft::{CLOSE, Draft, FOLD, NEXT, OTHER, PICK_BASE, SKIP};
-use crate::input::{self, Input};
-use crate::parts::line;
+use rustle::prelude::*;
+
+use crate::button::{Button, ButtonVariant};
+use crate::card::{Card, CardVariant};
+use crate::label::{Label, LabelVariant};
 use crate::size::Size;
+use crate::text_input::TextInput;
+use rustle::color_scheme;
 
-/// Draws every measured line of agent text within the available width.
-fn wrapped(content: &str, pixels: u32, tone: Role, width: f32, shaper: &mut Shaper) -> Node {
-    let styles = [pm_style::text_px(pixels), pm_style::leading_ratio(1.4)];
-    node().styles([flex(), flex_col(), min_w_px(0)]).children(
-        pm_ui::wrap(shaper, content, styles, width.max(32.0))
-            .into_iter()
-            .map(|part| {
-                text(&content[part.start..part.end]).styles([
-                    text_px(pixels),
-                    leading_ratio(1.4),
-                    text_color(tone),
-                    min_w_px(0),
-                ])
-            }),
-    )
+/// One question of the form.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct InquiryPrompt {
+    /// A short tag naming it.
+    pub header: String,
+    /// The question.
+    pub text: String,
+    /// Whether more than one answer can be picked.
+    pub multiple: bool,
+    /// The answers offered: each a label and what it means.
+    pub options: Vec<(String, String)>,
 }
 
-/// The small box holding the number of the key that picks a row.
-fn key(number: usize) -> Node {
-    node()
-        .styles([
-            flex(),
-            flex_none(),
-            items_center(),
-            justify_center(),
-            size(7),
-            rounded(Radius::Lg),
-            border(),
-            border_color(Role::Border),
-            bg(Role::Background),
-        ])
-        .child(line(number.to_string(), 13, 1.4, Role::Muted))
+/// What was answered to one question: the labels picked and the words written.
+pub type InquiryAnswer = (Vec<String>, String);
+
+/// The visual treatment of the inquiry card.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum InquiryVariant {
+    /// On an outlined card, focused.
+    #[default]
+    Card,
+    /// Flat, without a card.
+    Flat,
 }
 
-/// The row offering `alternative`, which the key `number` picks, drawn as taken when `picked`, answering to `id`.
-fn row(
-    alternative: &Alternative,
-    number: usize,
-    picked: bool,
-    id: FocusId,
-    width: f32,
-    shaper: &mut Shaper,
-) -> Node {
-    let mut words = node()
-        .styles([flex(), flex_col(), flex_1(), min_w_px(0)])
-        .child(wrapped(&alternative.label, 14, Role::Text, width, shaper));
-    if !alternative.description.is_empty() {
-        words = words.child(wrapped(
-            &alternative.description,
-            13,
-            Role::Muted,
-            width,
-            shaper,
-        ));
+/// The card asking a form of questions.
+#[derive(Clone)]
+pub struct InquiryCard {
+    /// The questions, in order.
+    questions: Vec<InquiryPrompt>,
+    /// What sending does with the answers, one per question.
+    on_submit: Option<Rc<dyn Fn(Vec<InquiryAnswer>)>>,
+    /// What skipping the form does.
+    on_skip: Option<Rc<dyn Fn()>>,
+    /// Its visual treatment.
+    variant: InquiryVariant,
+    /// Its text size.
+    size: Size,
+}
+
+impl InquiryCard {
+    /// A card asking `questions`.
+    pub fn new(questions: Vec<InquiryPrompt>) -> Self {
+        Self {
+            questions,
+            on_submit: None,
+            on_skip: None,
+            variant: InquiryVariant::Card,
+            size: Size::Sm,
+        }
     }
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            gap(2),
-            px(3),
-            py(2),
-            rounded(Radius::Lg),
-            border(),
-            border_color(if picked { Role::Accent } else { Role::Surface }),
-            bg(Role::SurfaceHover),
-            cursor_pointer(),
-            bg(Role::SurfaceActive).hover(),
-        ])
-        .child(words)
-        .child(key(number))
-        .focusable(id)
-}
 
-/// The row for an answer of the reader's own, with the box to type it in.
-fn other(draft: &Draft, number: usize) -> Node {
-    let field = &draft.others[draft.step];
-    let typed = Input::new(field, OTHER)
-        .variant(input::Variant::Ghost)
-        .placeholder("Type your own answer here");
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            gap(2),
-            px(3),
-            py(2),
-            rounded(Radius::Lg),
-            border(),
-            border_color(if field.text().trim().is_empty() {
-                Role::Surface
-            } else {
-                Role::Accent
-            }),
-            bg(Role::SurfaceHover),
-        ])
-        .child(
-            node()
-                .styles([flex(), items_center(), gap(3)])
-                .child(
-                    node()
-                        .styles([flex_1()])
-                        .child(line("Other", 15, 1.4, Role::Text)),
-                )
-                .child(key(number)),
-        )
-        .child(
-            node()
-                .styles([w_full(), rounded(Radius::Lg), bg(Role::Background)])
-                .child(typed.build()),
-        )
-}
-
-/// The card for `draft`: the question, the answers to pick from, and the buttons that skip it or move on, or only its title when folded.
-pub fn inquiry(draft: &Draft, width: f32, shaper: &mut Shaper) -> Node {
-    let question = draft.question();
-    let count = draft.inquiry.questions.len();
-    let mut title = node().styles([flex(), items_start(), gap(2)]);
-    if count > 1 {
-        title = title.child(
-            node()
-                .styles([
-                    flex(),
-                    flex_none(),
-                    items_center(),
-                    px(3),
-                    py(1),
-                    rounded_full(),
-                    bg(Role::SurfaceHover),
-                ])
-                .child(line(
-                    format!("{}/{count}", draft.step + 1),
-                    13,
-                    1.4,
-                    Role::Muted,
-                )),
-        );
+    /// The card running `on_submit` with the answers when sent.
+    pub fn on_submit(mut self, on_submit: impl Fn(Vec<InquiryAnswer>) + 'static) -> Self {
+        self.on_submit = Some(Rc::new(on_submit));
+        self
     }
-    let title = title
-        .child(node().styles([flex_1(), min_w_px(0)]).child(wrapped(
-            &question.text,
-            14,
-            Role::Text,
-            width - if count > 1 { 145.0 } else { 105.0 },
-            shaper,
-        )))
-        .child(
-            Button::icon(
-                if draft.folded {
-                    IconName::ChevronRight
-                } else {
-                    IconName::ChevronDown
+
+    /// The card running `on_skip` when the form is skipped.
+    pub fn on_skip(mut self, on_skip: impl Fn() + 'static) -> Self {
+        self.on_skip = Some(Rc::new(on_skip));
+        self
+    }
+
+    /// The card with `variant`.
+    pub fn variant(mut self, variant: InquiryVariant) -> Self {
+        self.variant = variant;
+        self
+    }
+
+    /// The card at `size`.
+    pub fn size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
+    }
+
+    /// Emits the card.
+    #[track_caller]
+    pub fn show(self) {
+        let scheme = color_scheme();
+        let count = self.questions.len();
+        let answers = remember(move || vec![(Vec::<String>::new(), String::new()); count]);
+        let body = move || {
+            row_arranged(
+                Modifier::new().fill_max_width(),
+                Arrangement::SpacedBy(8.0),
+                Alignment::Center,
+                || {
+                    icon(phosphor::CHAT_CIRCLE_DOTS, 15.0, scheme.primary);
+                    Label::new("The agent asks")
+                        .variant(LabelVariant::Heading)
+                        .size(self.size)
+                        .show();
                 },
-                FOLD,
+            );
+            for (index, question) in self.questions.iter().enumerate() {
+                let picked = answers.get().get(index).cloned().unwrap_or_default();
+                column_arranged(
+                    Modifier::new().fill_max_width(),
+                    Arrangement::SpacedBy(6.0),
+                    Alignment::Start,
+                    || {
+                        if !question.header.is_empty() {
+                            Label::new(question.header.to_uppercase())
+                                .variant(LabelVariant::Subtle)
+                                .size(Size::Xs)
+                                .show();
+                        }
+                        Label::new(question.text.clone())
+                            .size(self.size)
+                            .wrap()
+                            .show();
+                        for (label, meaning) in &question.options {
+                            let chosen = picked.0.contains(label);
+                            let answers = answers.clone();
+                            let label_owned = label.clone();
+                            let multiple = question.multiple;
+                            row_arranged(
+                                Modifier::new()
+                                    .fill_max_width()
+                                    .background_rounded(
+                                        if chosen {
+                                            scheme.secondary_container
+                                        } else {
+                                            scheme.surface_container
+                                        },
+                                        6.0,
+                                    )
+                                    .border(
+                                        1.0,
+                                        if chosen {
+                                            scheme.primary
+                                        } else {
+                                            scheme.outline_variant
+                                        },
+                                        6.0,
+                                    )
+                                    .padding_xy(10.0, 6.0)
+                                    .cursor(CursorIcon::Pointer)
+                                    .clickable(move || {
+                                        let mut all = answers.get();
+                                        if let Some((picks, _)) = all.get_mut(index) {
+                                            pick(picks, &label_owned, multiple);
+                                        }
+                                        answers.set(all);
+                                    }),
+                                Arrangement::SpacedBy(8.0),
+                                Alignment::Center,
+                                || {
+                                    let mark = match (question.multiple, chosen) {
+                                        (true, true) => phosphor::CHECK_SQUARE,
+                                        (true, false) => phosphor::SQUARE,
+                                        (false, true) => phosphor::RADIO_BUTTON,
+                                        (false, false) => phosphor::CIRCLE,
+                                    };
+                                    icon(
+                                        mark,
+                                        14.0,
+                                        if chosen {
+                                            scheme.primary
+                                        } else {
+                                            scheme.on_surface_variant
+                                        },
+                                    );
+                                    Label::new(label.clone()).size(self.size).show();
+                                    if !meaning.is_empty() {
+                                        Label::new(meaning.clone())
+                                            .variant(LabelVariant::Subtle)
+                                            .size(Size::Xs)
+                                            .modifier(Modifier::new().weight(1.0))
+                                            .show();
+                                    }
+                                },
+                            );
+                        }
+                        let answers = answers.clone();
+                        TextInput::new(picked.1.clone())
+                            .placeholder("Or answer in your own words")
+                            .size(Size::Sm)
+                            .modifier(Modifier::new().fill_max_width())
+                            .on_change(move |text| {
+                                let mut all = answers.get();
+                                if let Some((_, other)) = all.get_mut(index) {
+                                    *other = text;
+                                }
+                                answers.set(all);
+                            })
+                            .show();
+                    },
+                );
+            }
+            row_arranged(
+                Modifier::new().fill_max_width(),
+                Arrangement::SpacedBy(8.0),
+                Alignment::Center,
+                || {
+                    spacer(Modifier::new().weight(1.0));
+                    if let Some(on_skip) = self.on_skip.clone() {
+                        Button::new("Skip")
+                            .variant(ButtonVariant::Ghost)
+                            .size(Size::Sm)
+                            .on_click(move || on_skip())
+                            .show();
+                    }
+                    let on_submit = self.on_submit.clone();
+                    let answers = answers.clone();
+                    Button::new("Send answers")
+                        .variant(ButtonVariant::Primary)
+                        .size(Size::Sm)
+                        .on_click(move || {
+                            if let Some(on_submit) = &on_submit {
+                                on_submit(answers.get());
+                            }
+                        })
+                        .show();
+                },
+            );
+        };
+        let column = move || {
+            column_arranged(
+                Modifier::new().fill_max_width(),
+                Arrangement::SpacedBy(14.0),
+                Alignment::Start,
+                body,
             )
-            .build(),
-        )
-        .child(Button::icon(IconName::Close, CLOSE).build());
-    let mut card = node()
-        .styles([
-            flex(),
-            flex_col(),
-            gap(2),
-            px(3),
-            py(2.5),
-            rounded(Radius::Xl),
-            border(),
-            border_color(Role::Border),
-            bg(Role::Surface),
-        ])
-        .child(title);
-    if draft.folded {
-        return card;
+        };
+        match self.variant {
+            InquiryVariant::Card => Card::new()
+                .variant(CardVariant::Outlined)
+                .size(Size::Md)
+                .focused(true)
+                .modifier(Modifier::new().fill_max_width())
+                .show(column),
+            InquiryVariant::Flat => column(),
+        }
     }
-    let picked = &draft.picks[draft.step];
-    let rows = node()
-        .styles([flex(), flex_col(), gap(1)])
-        .children(
-            question
-                .alternatives
-                .iter()
-                .enumerate()
-                .map(|(index, alternative)| {
-                    row(
-                        alternative,
-                        index + 1,
-                        picked.contains(&index),
-                        FocusId(PICK_BASE + index as u64),
-                        width - 92.0,
-                        shaper,
-                    )
-                }),
-        )
-        .child(other(draft, question.alternatives.len() + 1));
-    let next = Button::new(if draft.last() { "Submit" } else { "Next" }, NEXT)
-        .size(Size::Sm)
-        .disabled(!draft.answered())
-        .build();
-    let buttons = node()
-        .styles([flex(), flex_wrap(), items_center(), justify_end(), gap(2)])
-        .child(
-            Button::new("Skip", SKIP)
-                .variant(Variant::Outline)
-                .size(Size::Sm)
-                .build(),
-        )
-        .child(next);
-    card = card.child(rows).child(buttons);
-    card
 }
 
-/// What the padding and border of the card that records answers take from its width, in logical pixels.
-const ANSWERED_INSET: f32 = 34.0;
-
-/// The card that records a form of questions the reader answered, at most `width` logical pixels wide: each question with its answer, or `[No preference]` when it was skipped, both wrapped to fit.
-pub fn answered(answers: &[(String, Option<String>)], width: f32, shaper: &mut Shaper) -> Node {
-    let room = width - ANSWERED_INSET;
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            gap(3),
-            px(4),
-            py(3.5),
-            self_start(),
-            rounded(Radius::Xl),
-            border(),
-            border_color(Role::Border),
-            bg(Role::Background),
-        ])
-        .children(answers.iter().map(|(question, answer)| {
-            node()
-                .styles([flex(), flex_col(), gap(0.5)])
-                .child(wrapped(question, 15, Role::Muted, room, shaper))
-                .child(wrapped(
-                    answer.as_deref().unwrap_or("[No preference]"),
-                    15,
-                    Role::Text,
-                    room,
-                    shaper,
-                ))
-        }))
+/// Picks or unpicks `label` among `picks`; a question with one answer keeps only the last.
+fn pick(picks: &mut Vec<String>, label: &str, multiple: bool) {
+    if let Some(at) = picks.iter().position(|picked| picked == label) {
+        picks.remove(at);
+    } else {
+        if !multiple {
+            picks.clear();
+        }
+        picks.push(label.to_owned());
+    }
 }

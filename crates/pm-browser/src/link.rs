@@ -157,7 +157,12 @@ pub(crate) struct Link {
     failure: Mutex<Option<String>>,
     /// The number the next page gets.
     next_page: AtomicU32,
+    /// What is called after each report, so the window looks again.
+    waker: Mutex<Option<Waker>>,
 }
+
+/// What wakes the window when the helper reports something.
+type Waker = Arc<dyn Fn() + Send + Sync>;
 
 impl Link {
     /// A connection that writes requests to `writer`.
@@ -167,6 +172,7 @@ impl Link {
             pages: Mutex::new(HashMap::new()),
             failure: Mutex::new(None),
             next_page: AtomicU32::new(1),
+            waker: Mutex::new(None),
         })
     }
 
@@ -175,6 +181,21 @@ impl Link {
         if let Ok(mut writer) = self.writer.lock() {
             let _ = writer.write_all(&line(request));
             let _ = writer.flush();
+        }
+    }
+
+    /// Has `wake` called after each report.
+    pub(crate) fn set_waker(&self, wake: Waker) {
+        if let Ok(mut waker) = self.waker.lock() {
+            *waker = Some(wake);
+        }
+    }
+
+    /// Calls the waker, when one is set.
+    fn wake(&self) {
+        let waker = self.waker.lock().ok().and_then(|waker| waker.clone());
+        if let Some(wake) = waker {
+            wake();
         }
     }
 
@@ -216,11 +237,13 @@ impl Link {
             }
             if let Ok(event) = serde_json::from_str::<Event>(&text) {
                 self.handle(event);
+                self.wake();
             }
         }
         if let Ok(mut failure) = self.failure.lock() {
             failure.get_or_insert_with(|| "the helper stopped".to_owned());
         }
+        self.wake();
     }
 
     /// Records one report.

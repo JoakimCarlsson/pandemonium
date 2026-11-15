@@ -1,304 +1,353 @@
-//! The pictures a markdown source shows: diagrams written as fenced mermaid code, formulas written in TeX and images it names, each drawn or fetched into pixels and kept under a key.
+//! The pictures a message shows: diagrams written as fenced mermaid code,
+//! formulas written in TeX and images it names, each drawn into pixels once
+//! and kept under a key, then shown at their own size.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::rc::Rc;
+use std::sync::{Arc, LazyLock};
 
-use pm_input::FocusId;
-use pm_markdown::{Block, Image};
-use pm_style::{
-    Role, cursor_pointer, flex, flex_none, flex_wrap, gap, h_px, items_end, justify_center, w_full,
-    w_px,
-};
-use pm_ui::{Node, Picture, node};
+use base64::Engine;
+use rustle::prelude::*;
 
-use crate::parts::line;
-use crate::preview::linked_path;
-use crate::state::{Outgoing, WorkspaceState};
+use crate::app_theme::{ExtendedColors, extended_colors};
+use crate::card::{Card, CardVariant};
+use crate::label::{Label, LabelVariant};
+use crate::size::Size;
+use rustle::{ColorScheme, color_scheme};
 
-/// Pixels a figure was drawn into, and how many of them fall on one logical pixel.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Drawing {
-    /// The pixels.
-    pub picture: Picture,
-    /// How many pixels fall on one logical pixel across: more than one for a picture drawn sharp for a dense screen.
-    pub density: f32,
+/// How many pixels a vector picture is drawn with per logical pixel, so it
+/// stays sharp on dense screens.
+const DENSITY: f32 = 2.0;
+
+/// The longest side a picture is drawn at, in pixels, so its texture fits any GPU.
+const LONGEST_SIDE: f32 = 4096.0;
+
+/// How tall the type of a formula is, in points, as a ratio.
+const FORMULA_POINTS: (i64, i64) = (27, 2);
+
+/// The fonts of this machine, loaded once, so the text in a picture is drawn.
+static FONTS: LazyLock<Arc<resvg::usvg::fontdb::Database>> = LazyLock::new(|| {
+    let mut fonts = resvg::usvg::fontdb::Database::new();
+    fonts.load_system_fonts();
+    let installed = |wanted: &str| {
+        fonts
+            .faces()
+            .any(|face| face.families.iter().any(|(name, _)| name == wanted))
+    };
+    let sans = SANS_SERIF.into_iter().find(|family| installed(family));
+    let mono = MONOSPACE.into_iter().find(|family| installed(family));
+    if let Some(family) = sans {
+        fonts.set_sans_serif_family(family);
+    }
+    if let Some(family) = mono {
+        fonts.set_monospace_family(family);
+    }
+    Arc::new(fonts)
+});
+
+/// The families tried, first found first, for text a picture sets in a sans-serif face.
+const SANS_SERIF: [&str; 7] = [
+    "Inter",
+    "Noto Sans",
+    "DejaVu Sans",
+    "Liberation Sans",
+    "Cantarell",
+    "Helvetica",
+    "Arial",
+];
+
+/// The families tried, first found first, for text a picture sets in a monospaced face.
+const MONOSPACE: [&str; 5] = [
+    "JetBrains Mono",
+    "Noto Sans Mono",
+    "DejaVu Sans Mono",
+    "Liberation Mono",
+    "Menlo",
+];
+
+thread_local! {
+    /// The figures drawn so far, by key, each its drawing or why there is none.
+    static DRAWN: RefCell<HashMap<u64, Result<Rc<Drawing>, String>>> = RefCell::default();
 }
 
-impl Drawing {
-    /// How wide and tall the drawing is at its own size, in logical pixels.
-    fn size(&self) -> (f32, f32) {
-        (
-            self.picture.width as f32 / self.density,
-            self.picture.height as f32 / self.density,
-        )
+/// What a figure is drawn from.
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub enum FigureSource {
+    /// A diagram written in mermaid.
+    Diagram(String),
+    /// A formula written in TeX.
+    Formula(String),
+    /// An image by its address, with the words that stand for it.
+    Image {
+        /// Where the picture is: a `data:` address, a web address or a path.
+        source: String,
+        /// What stands for the picture where it cannot be shown.
+        alt: String,
+    },
+}
+
+/// Pixels a figure was drawn into and the logical size it shows at.
+#[derive(Clone, Debug, PartialEq)]
+struct Drawing {
+    /// The pixels.
+    image: ImageData,
+    /// How wide it shows, in logical pixels.
+    width: f32,
+    /// How tall it shows, in logical pixels.
+    height: f32,
+}
+
+/// The visual treatment of a figure.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FigureVariant {
+    /// On its own, as drawn.
+    #[default]
+    Plain,
+    /// On a sunken card, as diagrams sit.
+    Framed,
+}
+
+/// A figure drawn from its source and shown at its own size, or a line
+/// saying why it cannot be shown.
+#[derive(Clone, Debug)]
+pub struct Figure {
+    /// What it is drawn from.
+    source: FigureSource,
+    /// Its visual treatment.
+    variant: FigureVariant,
+    /// The size of the line shown when it cannot be drawn.
+    size: Size,
+}
+
+impl Figure {
+    /// A figure drawn from `source`.
+    pub fn new(source: FigureSource) -> Self {
+        Self {
+            source,
+            variant: FigureVariant::Plain,
+            size: Size::Sm,
+        }
+    }
+
+    /// The figure with `variant`.
+    pub fn variant(mut self, variant: FigureVariant) -> Self {
+        self.variant = variant;
+        self
+    }
+
+    /// The figure with its failure line at `size`.
+    pub fn size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
+    }
+
+    /// Emits the figure.
+    #[track_caller]
+    pub fn show(self) {
+        let scheme = color_scheme();
+        let extended = extended_colors();
+        let drawn = drawing(&self.source, &scheme, &extended);
+        let size = self.size;
+        let body = move || match &drawn {
+            Ok(drawing) => image(
+                Modifier::new()
+                    .width_in(0.0, drawing.width)
+                    .aspect_ratio(drawing.width / drawing.height.max(1.0)),
+                &drawing.image,
+                ContentScale::Fit,
+            ),
+            Err(reason) => row_arranged(
+                Modifier::new(),
+                Arrangement::SpacedBy(6.0),
+                Alignment::Center,
+                || {
+                    icon(phosphor::IMAGE_BROKEN, 14.0, scheme.on_surface_variant);
+                    Label::new(reason.clone())
+                        .variant(LabelVariant::Subtle)
+                        .size(size)
+                        .wrap()
+                        .show();
+                },
+            ),
+        };
+        match self.variant {
+            FigureVariant::Plain => column_with(Modifier::new(), body),
+            FigureVariant::Framed => Card::new()
+                .variant(CardVariant::Sunken)
+                .size(Size::Md)
+                .modifier(Modifier::new().fill_max_width())
+                .show(move || {
+                    row_arranged(
+                        Modifier::new().fill_max_width(),
+                        Arrangement::Center,
+                        Alignment::Center,
+                        body,
+                    )
+                }),
+        }
     }
 }
 
-/// The figures drawn or fetched so far, by their key, each a drawing or why there is none.
-pub type Figures = HashMap<u64, Result<Drawing, String>>;
-
-/// What has to be done for a figure to be shown.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Wanted {
-    /// A diagram drawn from what it is written as.
-    Diagram(String),
-    /// A formula set from the TeX it is written in.
-    Formula(String),
-    /// A file of the repository read, by its path from the root.
-    File(String),
-    /// A picture fetched from the web, by its address.
-    Address(String),
-}
-
-/// Whether a fence naming `language` holds a diagram.
+/// Whether a code fence naming `language` holds a diagram.
 pub fn is_diagram(language: &str) -> bool {
     language.eq_ignore_ascii_case("mermaid")
 }
 
-/// `value` hashed into the key a figure is kept under.
-fn key_of(value: impl Hash) -> u64 {
+/// Whether a code fence naming `language` holds a formula.
+pub fn is_formula(language: &str) -> bool {
+    language.eq_ignore_ascii_case("math") || language.eq_ignore_ascii_case("latex")
+}
+
+/// The drawing of `source` in the colours of `scheme`, drawn the first time it is asked for.
+fn drawing(
+    source: &FigureSource,
+    scheme: &ColorScheme,
+    extended: &ExtendedColors,
+) -> Result<Rc<Drawing>, String> {
     let mut hasher = DefaultHasher::new();
-    value.hash(&mut hasher);
-    hasher.finish()
-}
-
-/// The key a diagram written as `source` is kept under.
-pub fn diagram_key(source: &str) -> u64 {
-    key_of(("diagram", source))
-}
-
-/// The key a formula written in TeX as `source` is kept under.
-pub fn formula_key(source: &str) -> u64 {
-    key_of(("formula", source))
-}
-
-/// The key the image at `source`, named by a markdown file at `place` or by text in no file, is kept under.
-pub fn image_key(place: Option<&str>, source: &str) -> u64 {
-    key_of(("image", place, source))
-}
-
-/// What showing the image at `source` takes, named by a markdown file at `place` or by text in no file: a web address is fetched, and a path is read from the repository when there is a file to read it from.
-fn wanted_image(place: Option<&str>, source: &str) -> Option<Wanted> {
-    if source.starts_with("https://") || source.starts_with("http://") {
-        return Some(Wanted::Address(source.to_owned()));
+    source.hash(&mut hasher);
+    hex(scheme.on_surface).hash(&mut hasher);
+    hex(scheme.background).hash(&mut hasher);
+    let key = hasher.finish();
+    if let Some(found) = DRAWN.with_borrow(|drawn| drawn.get(&key).cloned()) {
+        return found;
     }
-    linked_path(place?, source).map(Wanted::File)
+    let made = match source {
+        FigureSource::Diagram(text) => diagram(text, scheme, extended),
+        FigureSource::Formula(text) => formula(text, scheme),
+        FigureSource::Image { source, alt } => picture(source, alt),
+    }
+    .map(Rc::new);
+    DRAWN.with_borrow_mut(|drawn| drawn.insert(key, made.clone()));
+    made
 }
 
-/// A parsed figure index, with its source retained to reject hash collisions.
-struct FigureIndex {
-    /// The exact markdown source.
-    source: String,
-    /// The base path used to resolve images.
-    place: Option<String>,
-    /// The figures discovered in that source.
-    found: Vec<(u64, Wanted)>,
+/// `colour` written as `#rrggbb`.
+fn hex(colour: Color) -> String {
+    format!("#{:02x}{:02x}{:02x}", colour.r, colour.g, colour.b)
 }
 
-/// Two bounded generations of parsed figure indices.
-#[derive(Default)]
-struct FigureCache {
-    /// Recently used indices.
-    newer: HashMap<u64, FigureIndex>,
-    /// Indices from the previous generation.
-    older: HashMap<u64, FigureIndex>,
-    /// Source bytes retained in the newer generation.
-    bytes: usize,
+/// Whether `colour` is dark.
+fn is_dark(colour: Color) -> bool {
+    u32::from(colour.r) + u32::from(colour.g) + u32::from(colour.b) < 3 * 128
 }
 
-thread_local! {
-    /// Figure discovery survives prompt edits instead of reparsing every conversation reply.
-    static FIGURE_CACHE: RefCell<FigureCache> = RefCell::default();
+/// The diagram written in mermaid as `text`, in the colours of `scheme`.
+fn diagram(text: &str, scheme: &ColorScheme, extended: &ExtendedColors) -> Result<Drawing, String> {
+    let mut theme = if is_dark(scheme.background) {
+        mermaid_svg::Theme::dark()
+    } else {
+        mermaid_svg::Theme::default_theme()
+    };
+    let variables: BTreeMap<String, String> = [
+        ("background", scheme.background),
+        ("primaryColor", scheme.surface_container),
+        ("mainBkg", scheme.surface_container),
+        ("secondaryColor", scheme.surface_container_high),
+        ("tertiaryColor", scheme.surface_container_highest),
+        ("primaryBorderColor", extended.subtle),
+        ("nodeBorder", extended.subtle),
+        ("primaryTextColor", scheme.on_surface),
+        ("textColor", scheme.on_surface),
+        ("titleColor", scheme.on_surface),
+        ("lineColor", scheme.on_surface_variant),
+        ("signalColor", scheme.on_surface_variant),
+        ("signalTextColor", scheme.on_surface),
+        ("clusterBkg", scheme.surface_container_low),
+        ("clusterBorder", scheme.outline_variant),
+        ("edgeLabelBackground", scheme.background),
+    ]
+    .into_iter()
+    .map(|(name, colour)| (name.to_owned(), hex(colour)))
+    .collect();
+    theme.apply_theme_variables(&variables);
+    theme.responsive = false;
+    let svg = mermaid_svg::render_with(text, &theme)
+        .map_err(|error| format!("This diagram could not be drawn: {error}"))?;
+    vector(&svg)
 }
 
-/// Every figure of the markdown `source`, named by a file at `place` or by text in no file, nested ones included, each with its key and what showing it takes, in the order they are written.
-pub fn figures_of(source: &str, place: Option<&str>) -> Vec<(u64, Wanted)> {
-    let key = key_of((source, place));
-    FIGURE_CACHE.with_borrow_mut(|cache| {
-        if let Some(index) = cache
-            .newer
-            .get(&key)
-            .filter(|index| index.source == source && index.place.as_deref() == place)
-        {
-            return index.found.clone();
-        }
-        let previous = cache
-            .older
-            .remove(&key)
-            .filter(|index| index.source == source && index.place.as_deref() == place);
-        let index = previous.unwrap_or_else(|| {
-            let mut found = Vec::new();
-            collect(&pm_markdown::parse(source), place, &mut found);
-            FigureIndex {
-                source: source.to_owned(),
-                place: place.map(str::to_owned),
-                found,
-            }
-        });
-        let found = index.found.clone();
-        if source.len() <= 4 * 1024 * 1024 {
-            if cache.bytes + source.len() > 4 * 1024 * 1024 || cache.newer.len() >= 256 {
-                cache.older = std::mem::take(&mut cache.newer);
-                cache.bytes = 0;
-            }
-            cache.bytes += source.len();
-            cache.newer.insert(key, index);
-        }
-        found
+/// The formula written in TeX as `text`, set in the text colour of `scheme`.
+fn formula(text: &str, scheme: &ColorScheme) -> Result<Drawing, String> {
+    let font = latex_rust::MathFont::stix_two_math().map_err(|error| error.to_string())?;
+    let mut options = latex_rust::SvgOptions::new();
+    options.font_size_pt = latex_rust::Dim::ratio(FORMULA_POINTS.0, FORMULA_POINTS.1);
+    options.color = latex_rust::Color::rgb(
+        scheme.on_surface.r,
+        scheme.on_surface.g,
+        scheme.on_surface.b,
+    );
+    options.display = true;
+    let svg = latex_rust::latex_to_svg(text, &font, &options)
+        .map_err(|error| format!("This formula could not be set: {error}"))?;
+    vector(&svg)
+}
+
+/// The image at `source`: a `data:` address is decoded here; other addresses
+/// say the picture is not loaded, naming it by `alt`.
+fn picture(source: &str, alt: &str) -> Result<Drawing, String> {
+    let named = if alt.is_empty() { source } else { alt };
+    let Some(data) = source.strip_prefix("data:") else {
+        return Err(format!("{named} is not loaded"));
+    };
+    let (kind, payload) = data
+        .split_once(',')
+        .ok_or_else(|| format!("{named} could not be read"))?;
+    let bytes = if kind.ends_with(";base64") {
+        base64::engine::general_purpose::STANDARD
+            .decode(payload.trim())
+            .map_err(|error| format!("{named} could not be read: {error}"))?
+    } else {
+        payload.as_bytes().to_vec()
+    };
+    if kind.starts_with("image/svg") {
+        return vector(&String::from_utf8_lossy(&bytes));
+    }
+    let image =
+        ImageData::decode(&bytes).map_err(|error| format!("{named} could not be read: {error}"))?;
+    let (width, height) = (image.width() as f32, image.height() as f32);
+    Ok(Drawing {
+        image,
+        width,
+        height,
     })
 }
 
-/// Adds the figures among `blocks` and the blocks inside them, named by a file at `place`, to `found`.
-fn collect(blocks: &[Block], place: Option<&str>, found: &mut Vec<(u64, Wanted)>) {
-    for block in blocks {
-        match block {
-            Block::Code { language, text } if is_diagram(language) => {
-                found.push((diagram_key(text), Wanted::Diagram(text.clone())));
-            }
-            Block::Math(text) => found.push((formula_key(text), Wanted::Formula(text.clone()))),
-            Block::Images { images, .. } => found.extend(images.iter().filter_map(|image| {
-                wanted_image(place, &image.source)
-                    .map(|wanted| (image_key(place, &image.source), wanted))
-            })),
-            Block::List { items, .. } => {
-                for item in items {
-                    collect(item, place, found);
-                }
-            }
-            Block::Quote(inner) | Block::Details { blocks: inner, .. } => {
-                collect(inner, place, found)
-            }
-            _ => {}
-        }
-    }
-}
-
-/// What `figures` holds for each figure of the markdown `source` named by a file at `place`, as one number each that changes when its drawing arrives or fails, so a layout kept of the source is made again then.
-pub(crate) fn figure_marks(source: &str, place: Option<&str>, figures: &Figures) -> Vec<u64> {
-    figures_of(source, place)
-        .iter()
-        .map(|(key, _)| match figures.get(key) {
-            None => 0,
-            Some(Ok(drawing)) => drawing.picture.key,
-            Some(Err(_)) => 1,
-        })
-        .collect()
-}
-
-/// `drawing` `across` by `down` logical pixels.
-fn drawn(drawing: &Drawing, across: f32, down: f32) -> Node {
-    node()
-        .styles([w_px(across), h_px(down), flex_none()])
-        .picture(drawing.picture.clone())
-}
-
-/// `drawing`, a drawn diagram or formula, at its own size or shrunk to `width` logical pixels, in the middle of a row that wide.
-pub(crate) fn diagram_node(drawing: &Drawing, width: f32) -> Node {
-    let (across, down) = drawing.size();
-    let fit = (width / across.max(1.0)).min(1.0);
-    node()
-        .styles([flex(), justify_center(), w_full(), flex_none()])
-        .child(drawn(drawing, across * fit, down * fit))
-}
-
-/// How big `image` is drawn from `drawing`: the size the source asks for, the other side following the picture's shape when only one is asked, or else the drawing's own size, shrunk to `width` logical pixels.
-fn image_size(image: &Image, drawing: &Drawing, width: f32) -> (f32, f32) {
-    let (across, down) = drawing.size();
-    let shape = down / across.max(1.0);
-    let (across, down) = match (image.width, image.height) {
-        (Some(wide), Some(tall)) => (wide as f32, tall as f32),
-        (Some(wide), None) => (wide as f32, wide as f32 * shape),
-        (None, Some(tall)) => (tall as f32 / shape.max(f32::EPSILON), tall as f32),
-        (None, None) => (across, down),
+/// The vector picture `svg` drawn at [`DENSITY`].
+fn vector(svg: &str) -> Result<Drawing, String> {
+    let options = resvg::usvg::Options {
+        fontdb: Arc::clone(&FONTS),
+        ..resvg::usvg::Options::default()
     };
-    let fit = (width / across.max(1.0)).min(1.0);
-    (across * fit, down * fit)
-}
-
-/// `images` side by side, wrapping onto more rows within `width` logical pixels and set in the middle when `centered`, each drawn as `figures` holds it under `key`, and its words in `pixels` tall type in its place until then; an image that is the face of a link answers to the link's name from `links` up.
-pub(crate) fn images_node(
-    images: &[Image],
-    centered: bool,
-    figures: Option<&Figures>,
-    key: impl Fn(&Image) -> u64,
-    (links, pixels, width): (Option<u64>, u32, f32),
-) -> Node {
-    let mut row = node().styles([flex(), flex_wrap(), items_end(), gap(1.5), w_full()]);
-    if centered {
-        row = row.styles([justify_center()]);
-    }
-    row.children(images.iter().filter_map(|image| {
-        let shown = match figures.and_then(|figures| figures.get(&key(image))) {
-            Some(Ok(drawing)) => {
-                let (across, down) = image_size(image, drawing, width);
-                drawn(drawing, across, down)
-            }
-            _ if image.alt.is_empty() => return None,
-            _ => line(&image.alt, pixels.saturating_sub(1), 1.4, Role::Subtle),
-        };
-        Some(match (links, image.target) {
-            (Some(base), target) if target > 0 => shown
-                .styles([cursor_pointer()])
-                .focusable(FocusId(base + u64::from(target) - 1)),
-            _ => shown,
+    let tree = resvg::usvg::Tree::from_str(svg, &options)
+        .map_err(|error| format!("This picture could not be drawn: {error}"))?;
+    let size = tree.size();
+    let longest = size.width().max(size.height()).max(1.0);
+    let scale = (longest * DENSITY).min(LONGEST_SIDE) / longest;
+    let width = (size.width() * scale).round().max(1.0) as u32;
+    let height = (size.height() * scale).round().max(1.0) as u32;
+    let mut canvas = resvg::tiny_skia::Pixmap::new(width, height)
+        .ok_or_else(|| "This picture has no size to draw.".to_owned())?;
+    resvg::render(
+        &tree,
+        resvg::tiny_skia::Transform::from_scale(scale, scale),
+        &mut canvas.as_mut(),
+    );
+    let pixels = canvas
+        .pixels()
+        .iter()
+        .flat_map(|pixel| {
+            let colour = pixel.demultiply();
+            [colour.red(), colour.green(), colour.blue(), colour.alpha()]
         })
-    }))
-}
-
-impl WorkspaceState {
-    /// Asks for each of the figures `wanted` that is neither drawn nor asked for yet; a file of a repository is read from the folder of the session at `session`, and not asked for without one.
-    pub(crate) fn ask_figures(&mut self, wanted: Vec<(u64, Wanted)>, session: Option<usize>) {
-        for (key, wanted) in wanted {
-            if self.figures.contains_key(&key) || self.figures_asked.contains(&key) {
-                continue;
-            }
-            let asked = match (wanted, session) {
-                (Wanted::Diagram(source), _) => Outgoing::DrawDiagram { key, source },
-                (Wanted::Formula(source), _) => Outgoing::DrawFormula { key, source },
-                (Wanted::Address(address), _) => Outgoing::FetchFigure { key, address },
-                (Wanted::File(path), Some(session)) => Outgoing::ReadFigure { key, session, path },
-                (Wanted::File(_), None) => continue,
-            };
-            self.figures_asked.insert(key);
-            self.outbox.push(asked);
-        }
-    }
-
-    /// Asks for the figures of the last reply of the session at `session`, once it is finished.
-    pub(crate) fn ask_reply_figures(&mut self, session: usize) {
-        let wanted = self
-            .sessions
-            .get(session)
-            .and_then(|held| {
-                held.messages
-                    .iter()
-                    .rev()
-                    .find(|message| !message.from_user)
-            })
-            .map(|message| {
-                message
-                    .chunks()
-                    .into_iter()
-                    .flat_map(|(_, piece)| figures_of(piece, None))
-                    .collect()
-            })
-            .unwrap_or_default();
-        self.ask_figures(wanted, None);
-    }
-
-    /// The state after the figure kept under `key` was drawn or fetched, or could not be.
-    pub fn with_figure(mut self, key: u64, drawn: Result<Drawing, String>) -> Self {
-        self.figures_asked.remove(&key);
-        self.figures.insert(key, drawn);
-        self
-    }
-
-    /// The state with every figure let go, as when the colours diagrams are drawn in change, and those of the file shown asked for again.
-    pub fn without_figures(mut self) -> Self {
-        self.figures.clear();
-        self.figures_asked.clear();
-        self.ask_shown_figures();
-        self
-    }
+        .collect();
+    let image = ImageData::from_rgba(width, height, pixels)
+        .ok_or_else(|| "This picture could not be drawn.".to_owned())?;
+    Ok(Drawing {
+        image,
+        width: size.width() * scale / DENSITY,
+        height: size.height() * scale / DENSITY,
+    })
 }

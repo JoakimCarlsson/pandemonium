@@ -1,761 +1,578 @@
-//! The prompt box where work is handed to an agent.
+//! The composer: a card with a text area, the chips of what is attached, and
+//! a toolbar of the agent's settings, usage rings and the send button; with
+//! the slash command menu, the setting pickers and the text field's menu.
 
-use pm_harness::Setting;
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, ShadowLayer, bg, border, border_color, border_t, cursor_pointer, flex, flex_1,
-    flex_col, flex_none, flex_wrap, font_mono, gap, h, h_px, items_baseline, items_center,
-    justify_between, leading_ratio, max_h, min_w_px, mt, overflow_hidden, p, pb, pr, pt, px, py,
-    relative, rounded, shadow_layers, text_color, text_px, truncate, w_full, w_px,
-};
-use pm_text::Shaper;
-use pm_ui::{Node, node, text};
+use std::rc::Rc;
 
-use crate::Popover;
-use crate::choices::{LIST_ROW_HEIGHT, LIST_ROWS, PRESSABLE_LIST_ROWS};
-use crate::parts::{line, spacer};
-use crate::plan::proposal;
-use crate::popover::{anchored, heading, row};
-use crate::sample::Session;
+use rustle::prelude::*;
+use rustle::{Key, basic_text_area};
+
+use crate::button::{Button, ButtonVariant};
+use crate::card::{Card, CardVariant};
+use crate::chip::Chip;
+use crate::composer_menus::{CommandMenu, FieldMenu, SettingMenu, paste_attachments};
+use crate::icon_button::{IconButton, IconButtonVariant};
+use crate::label::{Label, LabelVariant};
 use crate::size::Size;
-use crate::state::{
-    ACCOUNT, ACCOUNT_BASE, AGENT_TOGGLE, ATTACH, ATTACHED_BASE, BRANCH_BASE, EFFORT_BASE,
-    GOAL_BASE, GOAL_CHIP, LOCATION, Location, MENTION, MENU_BODY, MENU_FILTER, MENU_PICK_BASE,
-    MENU_SCROLL, PLACE_BASE, PROMPT, Picker, SEND, SEND_NOW, SETTING_BASE, SLASH_BASE,
-    SLASH_BUTTON, STOP, WorkspaceState,
-};
-use crate::usage;
-use crate::{Button, Checkbox, Input, Stepper, button, checkbox, input};
+use crate::usage_ring::UsageRing;
+use rustle::color_scheme;
 
-/// The shadow under the prompt box: a soft, wide one that lifts it off the page.
-const COMPOSER_SHADOW: [ShadowLayer; 1] = [ShadowLayer::new(0.0, 8.0, 30.0, 0.0, 0.18, false)];
-
-/// How many branches the menu of where work is done lists.
-const BRANCH_ROWS: usize = 8;
-
-/// How tall a line of the prompt is, in logical pixels.
-const LINE: f32 = 22.0;
-
-/// The room the prompt's lines have above and below them, in logical pixels.
-const PADDING: f32 = 18.0;
-
-/// How far a menu stays clear of the prompt box, in logical pixels.
-const GAP: f32 = 10.0;
-
-/// How tall one value of a menu is, in logical pixels.
-const ROW_HEIGHT: f32 = crate::choices::ROW_HEIGHT;
-
-/// How many values of a menu show at once at most.
-const MAX_ROWS: f32 = 6.0;
-
-/// How tall the heading of a menu is, in logical pixels.
-const HEADING: f32 = 32.0;
-
-/// How tall a line in the footer of a menu is, in logical pixels.
-const FOOTER_ROW: f32 = 36.0;
-
-/// The room a menu keeps around what it holds, in logical pixels.
-const MENU_PADDING: f32 = 12.0;
-
-/// How wide a menu over the prompt box is, in logical pixels.
-const MENU_WIDTH: f32 = 360.0;
-
-/// How tall the list of values in a menu is, in logical pixels, when `above` pixels are free over the prompt box:
-/// as many whole values as fit beside the heading and the footer, between two and six.
-fn list_height(settings: &[Setting], above: f32, rows: u32) -> f32 {
-    let footer = settings
-        .iter()
-        .filter(|held| held.category == "thought_level" || held.id == "agent")
-        .count() as f32
-        * FOOTER_ROW;
-    let free = above + rows as f32 * LINE + PADDING - GAP - HEADING - footer - MENU_PADDING;
-    let shown = (free / ROW_HEIGHT).floor().clamp(2.0, MAX_ROWS);
-    shown * ROW_HEIGHT
+/// One value a toolbar setting can take.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ComposerPick {
+    /// What the setting's owner calls the value.
+    pub value: String,
+    /// What it is called to the reader.
+    pub name: String,
+    /// What choosing it means, or nothing.
+    pub description: String,
 }
 
-/// The menu of one setting: its values in a list that scrolls, and the effort beneath the models.
-fn setting_menu(state: &WorkspaceState, index: usize, rows: u32, above: f32) -> Option<Node> {
-    let settings = state.settings_now();
-    let setting = settings.get(index)?;
-    let (title, hint) = match setting.category.as_str() {
-        "model" => ("Select a model", None),
-        "mode" => ("Modes", Some(("shift+tab", "to switch"))),
-        _ => (setting.name.as_str(), None),
-    };
-    let filters = state.menu_filters();
-    let shown: Vec<usize> = if filters {
-        state.menu_matches()
-    } else {
-        (0..setting.picks.len()).collect()
-    };
-    let mut menu = Popover::new().width(MENU_WIDTH).heading(title, hint);
-    if filters {
-        menu = menu.child(
-            node().styles([px(1), pb(1)]).child(
-                Input::search(&state.menu_filter, MENU_FILTER)
-                    .size(Size::Sm)
-                    .placeholder(match setting.category.as_str() {
-                        "model" => "Search models",
-                        _ => "Search",
-                    })
-                    .build(),
-            ),
-        );
-    }
-    let mut list = node()
-        .styles([
-            flex(),
-            flex_col(),
-            max_h(list_height(settings, above, rows) / 4.0),
-            overflow_hidden(),
-        ])
-        .scroll_from_start(MENU_SCROLL, state.menu_scroll)
-        .children(shown.iter().filter_map(|position| {
-            let pick = setting.picks.get(*position)?;
-            Some(row(
-                &pick.name,
-                &pick.description,
-                pick.value == setting.current,
-                FocusId(MENU_PICK_BASE + *position as u64),
-            ))
-        }));
-    if shown.is_empty() {
-        list = list.child(node().styles([px(2), py(2)]).child(line(
-            "Nothing matches",
-            13,
-            1.4,
-            Role::Muted,
-        )));
-    }
-    menu = menu.child(list);
-    if setting.category == "model"
-        && let Some(effort) = settings
-            .iter()
-            .find(|held| held.category == "thought_level")
-    {
-        menu = menu.child(effort_row(effort));
-    }
-    if setting.category == "model"
-        && let Some(agent) = settings.iter().find(|held| held.id == "agent")
-    {
-        menu = menu.child(agent_row(agent));
-    }
-    Some(menu.over_button(MENU_BODY))
+/// A choice shown in the composer's toolbar, such as the model.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ComposerChoice {
+    /// Its glyph, before the text.
+    pub icon: Option<Icon>,
+    /// Its text.
+    pub label: String,
+    /// What its owner calls it, handed back when a value is picked; empty for a choice without a menu.
+    pub id: String,
+    /// The heading of its menu.
+    pub heading: String,
+    /// The value it has now.
+    pub current: String,
+    /// The values its menu offers.
+    pub picks: Vec<ComposerPick>,
 }
 
-/// The menu of where new work is done, and the branch a worktree is made from.
-fn location_menu(state: &WorkspaceState) -> Node {
-    let worktree = state.location == Location::Worktree;
-    let mut menu = Popover::new().width(MENU_WIDTH).heading("Run in", None);
-    if state.is_repository() {
-        menu = menu
-            .row(
-                "Worktree",
-                "A worktree of its own on a detached head",
-                worktree,
-                FocusId(PLACE_BASE),
-            )
-            .row(
-                "Local",
-                "Work directly in the main checkout",
-                !worktree,
-                FocusId(PLACE_BASE + 1),
-            );
-    }
-    if state.offers_container() {
-        menu = menu.child(
-            node()
-                .styles([border_t(), border_color(Role::Border), mt(1)])
-                .child(row(
-                    "Dev container",
-                    "Not a security boundary",
-                    state.container,
-                    FocusId(PLACE_BASE + 2),
-                )),
-        );
-    }
-    if worktree {
-        menu = menu
-            .child(
-                node()
-                    .styles([border_t(), border_color(Role::Border), mt(1)])
-                    .child(heading("Branch from", None)),
-            )
-            .children(branch_rows(&state.branches, state.base.as_ref()));
-    }
-    menu.over_button(MENU_BODY)
+/// A command offered behind a slash.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ComposerCommand {
+    /// What is typed after the slash.
+    pub name: String,
+    /// What it does.
+    pub description: String,
 }
 
-/// The rows choosing the branch a worktree is made from, out of `branches`: `picked` ticked, or the first while none was picked.
-pub(crate) fn branch_rows<'a>(
-    branches: &'a [String],
-    picked: Option<&'a String>,
-) -> impl Iterator<Item = Node> + 'a {
-    let chosen = picked.or(branches.first());
-    branches
-        .iter()
-        .take(BRANCH_ROWS)
-        .enumerate()
-        .map(move |(position, branch)| {
-            row(
-                branch,
-                "",
-                chosen == Some(branch),
-                FocusId(BRANCH_BASE + position as u64),
-            )
-        })
+/// A menu of the composer, open when it is first drawn.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ComposerMenu {
+    /// The menu of the toolbar setting with this id.
+    Setting(String),
+    /// The text field's menu, at this point inside the text area.
+    Field(f32, f32),
 }
 
-/// The menu of the logins of the chosen agent: its own, each one added, and adding another.
-fn account_menu(state: &WorkspaceState) -> Node {
-    /// What the menu says under an account: how much of its allowance is used, when the provider has said.
-    fn spoken(state: &WorkspaceState, login: Option<&str>) -> String {
-        state
-            .allowance_of(state.agent_now(), login)
-            .and_then(crate::usage::summary)
-            .unwrap_or_default()
-    }
-    let used = state.login_in_use();
-    let logins = state.logins_here();
-    let mut menu = Popover::new()
-        .width(MENU_WIDTH)
-        .heading("Account", None)
-        .row(
-            state.default_account().unwrap_or("Not signed in"),
-            &spoken(state, None),
-            used.is_none(),
-            FocusId(ACCOUNT_BASE),
-        );
-    for (position, (id, name)) in logins.iter().enumerate() {
-        menu = menu.row(
-            name,
-            &spoken(state, Some(id)),
-            used == Some(*id),
-            FocusId(ACCOUNT_BASE + 1 + position as u64),
-        );
-    }
-    menu.row(
-        "Add account",
-        "Sign in to another login",
-        false,
-        FocusId(ACCOUNT_BASE + 1 + logins.len() as u64),
-    )
-    .over_button(MENU_BODY)
+/// A chip of something attached to the prompt.
+#[derive(Clone)]
+struct Attached {
+    /// Its glyph.
+    icon: Icon,
+    /// What it says.
+    label: String,
+    /// What its cross does.
+    on_remove: Rc<dyn Fn()>,
 }
 
-/// What the goal chip says of `goal`: how it stands, and how much of its budget is used when it has one.
-fn goal_label(goal: &pm_harness::Goal) -> String {
-    use pm_harness::GoalState;
-    let state = match goal.state {
-        GoalState::Active => "Goal",
-        GoalState::Paused => "Goal paused",
-        GoalState::BudgetLimited => "Goal out of budget",
-        GoalState::Complete => "Goal done",
-        GoalState::Cleared => "No goal",
-    };
-    match goal.budget {
-        Some(budget) => format!(
-            "{state} · {}k/{}k",
-            goal.used.div_ceil(1000),
-            budget.div_ceil(1000)
-        ),
-        None => state.to_owned(),
-    }
+/// How a composer is drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ComposerVariant {
+    /// Replying in a running conversation.
+    #[default]
+    Reply,
+    /// Starting a new conversation, taller.
+    Start,
 }
 
-/// The menu of the goal chip: the objective and why the goal stands as it does, then pausing it while it is active, resuming it while it is paused, and clearing it.
-fn goal_menu(goal: &pm_harness::Goal) -> Node {
-    use pm_harness::GoalState;
-    let mut menu = Popover::new().width(MENU_WIDTH).heading("Goal", None).row(
-        &goal.objective,
-        goal.note.as_deref().unwrap_or(""),
-        false,
-        MENU_BODY,
-    );
-    if goal.state == GoalState::Active {
-        menu = menu.row(
-            "Pause",
-            "Finish this turn and start no more",
-            false,
-            FocusId(GOAL_BASE),
-        );
-    }
-    if goal.state == GoalState::Paused {
-        menu = menu.row(
-            "Resume",
-            "Go on working toward it",
-            false,
-            FocusId(GOAL_BASE + 1),
-        );
-    }
-    menu.row("Clear", "Forget the goal", false, FocusId(GOAL_BASE + 2))
-        .over_button_end(MENU_BODY)
+/// What pasting a picture calls with its width, height and RGBA rows.
+pub(crate) type PictureHandler = Rc<dyn Fn(u32, u32, Vec<u8>)>;
+
+/// What the composer's controls call.
+#[derive(Clone, Default)]
+pub(crate) struct ComposerCallbacks {
+    /// What sending does with the text.
+    pub(crate) on_send: Option<Rc<dyn Fn(String)>>,
+    /// What sending in place of the turn does with the text.
+    pub(crate) on_send_now: Option<Rc<dyn Fn(String)>>,
+    /// What stopping the turn does.
+    pub(crate) on_stop: Option<Rc<dyn Fn()>>,
+    /// What picking a value of a setting does, with the setting's id and the value.
+    pub(crate) on_pick: Option<Rc<dyn Fn(String, String)>>,
+    /// What attaching files does with their paths.
+    pub(crate) on_attach: Option<Rc<dyn Fn(Vec<String>)>>,
+    /// What pasting a picture does with its width, height and RGBA rows.
+    pub(crate) on_picture: Option<PictureHandler>,
 }
 
-/// The line under the models that sets how hard the agent thinks: its name and a track with a stop for each level.
-fn effort_row(effort: &Setting) -> Node {
-    let track = Stepper::new(effort.picks.len(), EFFORT_BASE)
-        .current(
-            effort
-                .picks
-                .iter()
-                .position(|pick| pick.value == effort.current),
-        )
-        .build();
-    labelled(
-        "Effort",
-        effort.current_name().unwrap_or("Default"),
-        track,
-        true,
-    )
+/// The composer with a variant and a size.
+#[derive(Clone)]
+pub struct Composer {
+    /// The text shown while it is empty.
+    placeholder: String,
+    /// The choices in the toolbar.
+    choices: Vec<ComposerChoice>,
+    /// The commands behind a slash.
+    commands: Vec<ComposerCommand>,
+    /// The usage rings at the end of the toolbar.
+    rings: Vec<UsageRing>,
+    /// The chips of what is attached.
+    attached: Vec<Attached>,
+    /// Whether the agent is on a turn, so that sending queues the prompt.
+    working: bool,
+    /// The menu open when the composer is first drawn.
+    menu: Option<ComposerMenu>,
+    /// How it is drawn.
+    variant: ComposerVariant,
+    /// Its size.
+    size: Size,
+    /// The modifier it is laid out with.
+    modifier: Modifier,
+    /// What its controls call.
+    callbacks: ComposerCallbacks,
+    /// Text put into the composer once each time it changes, such as a command to finish.
+    prefill: Option<String>,
 }
 
-/// The line under the models that switches the agent persona on and off.
-fn agent_row(agent: &Setting) -> Node {
-    let on = agent
-        .picks
-        .first()
-        .is_some_and(|first| first.value != agent.current);
-    labelled(
-        "Agent",
-        if on { "On" } else { "Default" },
-        Checkbox::new(on, AGENT_TOGGLE)
-            .variant(checkbox::Variant::Switch)
-            .build(),
-        false,
-    )
-}
-
-/// A line of a menu's footer: a name with how it is set in brackets, and the control that sets it.
-fn labelled(name: &str, value: &str, control: Node, rule: bool) -> Node {
-    let mut row = node().styles([
-        flex(),
-        items_center(),
-        justify_between(),
-        h(9),
-        px(2.5),
-        flex_none(),
-    ]);
-    if rule {
-        row = row.styles([border_t(), border_color(Role::Border)]);
-    }
-    row.child(
-        node()
-            .styles([flex(), items_center(), gap(1)])
-            .child(line(name, 13, 1.4, Role::Text))
-            .child(line(format!("({value})"), 13, 1.4, Role::Subtle)),
-    )
-    .child(control)
-}
-
-/// The list of files the word after an `@` being typed narrows.
-fn mention_list(state: &WorkspaceState) -> Option<Node> {
-    let matches = state.mention_matches();
-    if matches.is_empty() {
-        state.mention_query()?;
-        return Some(
-            Popover::new()
-                .full_width()
-                .heading("Files", None)
-                .child(node().styles([px(2.5), py(2)]).child(line(
-                    "No files found",
-                    13,
-                    1.4,
-                    Role::Subtle,
-                )))
-                .above_box(),
-        );
-    }
-    let chosen = state.slash.min(matches.len() - 1);
-    Some(
-        Popover::new()
-            .full_width()
-            .heading("Files", None)
-            .child(
-                node()
-                    .styles([
-                        flex(),
-                        flex_col(),
-                        max_h(LIST_ROW_HEIGHT * LIST_ROWS as f32 / 4.0),
-                        overflow_hidden(),
-                    ])
-                    .scroll_from_start(MENU_SCROLL, state.menu_scroll)
-                    .children(matches.iter().enumerate().map(|(position, path)| {
-                        let mut styles = vec![
-                            flex(),
-                            items_baseline(),
-                            px(2.5),
-                            py(2),
-                            rounded(Radius::Lg),
-                            cursor_pointer(),
-                            bg(Role::SurfaceHover).hover(),
-                        ];
-                        if position == chosen {
-                            styles.push(bg(Role::SurfaceHover));
-                        }
-                        node()
-                            .styles(styles)
-                            .child(
-                                node()
-                                    .styles([flex_1(), min_w_px(0), overflow_hidden()])
-                                    .child(
-                                        line(path.as_str(), 13, 1.4, Role::Text)
-                                            .styles([font_mono(), truncate()]),
-                                    ),
-                            )
-                            .focusable(FocusId(SLASH_BASE + position as u64))
-                    })),
-            )
-            .above_box(),
-    )
-}
-
-/// The list of commands the agent offers, which the slash being typed narrows.
-fn slash_list(state: &WorkspaceState) -> Option<Node> {
-    let matches = state.slash_matches();
-    if matches.is_empty() {
-        return mention_list(state);
-    }
-    let chosen = state.slash.min(matches.len() - 1);
-    Some(
-        Popover::new()
-            .full_width()
-            .heading("Commands", None)
-            .child(
-                node()
-                    .styles([
-                        flex(),
-                        flex_col(),
-                        max_h(LIST_ROW_HEIGHT * LIST_ROWS as f32 / 4.0),
-                        overflow_hidden(),
-                    ])
-                    .scroll_from_start(MENU_SCROLL, state.menu_scroll)
-                    .children(matches.iter().enumerate().map(|(position, command)| {
-                        let mut styles = vec![
-                            flex(),
-                            items_baseline(),
-                            gap(3),
-                            px(2.5),
-                            py(2),
-                            rounded(Radius::Lg),
-                            cursor_pointer(),
-                            bg(Role::SurfaceHover).hover(),
-                        ];
-                        if position == chosen {
-                            styles.push(bg(Role::SurfaceHover));
-                        }
-                        let row = node()
-                            .styles(styles)
-                            .child(text(format!("/{}", command.name)).styles([
-                                text_px(13),
-                                leading_ratio(1.4),
-                                font_mono(),
-                                text_color(Role::Text),
-                            ]))
-                            .child(
-                                node()
-                                    .styles([flex_1(), min_w_px(0), overflow_hidden()])
-                                    .child(
-                                        line(&command.description, 12, 1.4, Role::Subtle)
-                                            .styles([truncate()]),
-                                    ),
-                            );
-                        if position < PRESSABLE_LIST_ROWS {
-                            row.focusable(FocusId(SLASH_BASE + position as u64))
-                        } else {
-                            row
-                        }
-                    })),
-            )
-            .above_box(),
-    )
-}
-
-/// How far across a thumbnail of an attached picture is, in logical pixels.
-const THUMBNAIL: f32 = 28.0;
-
-/// How far across the picture of a file in a sent message is, in logical pixels.
-const SENT_PICTURE: f32 = 160.0;
-
-/// The file at `path` as the reader sees it: its picture when it is one and is decoded, and its name.
-pub fn attached_file(state: &WorkspaceState, path: &str, side: f32) -> Node {
-    let name = path.rsplit('/').next().unwrap_or(path);
-    let picture = state.previews.get(path).cloned();
-    let mut view = node().styles([flex(), items_center(), gap(2)]);
-    if let Some(picture) = picture {
-        view = view.child(
-            node()
-                .styles([w_px(side), h_px(side), flex_none(), rounded(Radius::Md)])
-                .picture(picture),
-        );
-    }
-    view.child(line(name, 12, 1.4, Role::Muted))
-}
-
-/// The files attached to the prompt, each with a button that takes it off again.
-fn attachment_row(state: &WorkspaceState) -> Option<Node> {
-    if state.attachments.is_empty() {
-        return None;
-    }
-    Some(
-        node()
-            .styles([flex(), flex_wrap(), gap(2), px(3), pt(3)])
-            .children(state.attachments.iter().enumerate().map(|(index, path)| {
-                node()
-                    .styles([
-                        flex(),
-                        items_center(),
-                        gap(1.5),
-                        p(1),
-                        pr(1),
-                        rounded(Radius::Lg),
-                        bg(Role::SurfaceHover),
-                    ])
-                    .child(attached_file(state, path, THUMBNAIL))
-                    .child(
-                        Button::icon(IconName::Close, FocusId(ATTACHED_BASE + index as u64))
-                            .build(),
-                    )
-            })),
-    )
-}
-
-/// The files sent with a message, each as large as the room beside the words allows.
-pub fn sent_files(state: &WorkspaceState, files: &[String]) -> Node {
-    node()
-        .styles([flex(), flex_col(), gap(2)])
-        .children(files.iter().map(|path| {
-            match state.previews.get(path) {
-                Some(picture) => node()
-                    .styles([w_px(SENT_PICTURE), h_px(SENT_PICTURE), rounded(Radius::Lg)])
-                    .picture(picture.clone()),
-                None => attached_file(state, path, THUMBNAIL),
-            }
-        }))
-}
-
-/// The round button at the end of the strip, answering to `id` with `icon`.
-fn round_button(icon: IconName, id: FocusId, disabled: bool) -> Node {
-    Button::icon(icon, id)
-        .variant(button::Variant::Default)
-        .size(Size::Md)
-        .round()
-        .disabled(disabled)
-        .build()
-}
-
-/// The buttons at the end of the strip: one that sends the prompt, or,
-/// while the agent is on a turn, one that stops it when nothing is written
-/// and otherwise one that queues the prompt behind the turn and one that
-/// sends it in place of the turn.
-fn send_buttons(working: bool, empty: bool) -> Vec<Node> {
-    match (working, empty) {
-        (true, true) => vec![round_button(IconName::Stop, STOP, false)],
-        (true, false) => vec![
-            Button::new("Send now", SEND_NOW)
-                .variant(button::Variant::Ghost)
-                .size(Size::Sm)
-                .with_icon(IconName::Zap)
-                .build(),
-            round_button(IconName::ArrowUp, SEND, false),
-        ],
-        (false, _) => vec![round_button(IconName::ArrowUp, SEND, empty)],
-    }
-}
-
-/// A button in the prompt box's strip that names a setting's current value and opens its menu.
-fn chip(label: &str, icon: Option<IconName>, id: FocusId, open: bool) -> Node {
-    let chip = Button::new(label, id)
-        .variant(button::Variant::Ghost)
-        .size(Size::Xs)
-        .selected(open);
-    match icon {
-        Some(icon) => chip.with_icon(icon),
-        None => chip,
-    }
-    .build()
-}
-
-/// The prompt box for `state`: a few lines to write in, a strip of what
-/// the agent is set to and where the work goes, and a send button that
-/// stops the turn while there is one.
-pub fn composer(
-    state: &WorkspaceState,
-    placeholder: &str,
-    session: Option<&Session>,
-    rows: u32,
-    above: f32,
-    text_width: f32,
-    shaper: &mut Shaper,
-) -> Node {
-    if let Some(session) = session
-        && let Some((reason, account)) = &session.signed_out
-    {
-        let agent = state.agent_look(session.agent).name;
-        let account = account.as_deref().or_else(|| {
-            session
-                .login
-                .as_deref()
-                .map(|id| state.account_as(session.agent, Some(id)).unwrap_or(id))
-        });
-        let label = match account {
-            Some(account) => format!("Sign in to {agent} again ({account})"),
-            None => format!("Sign in to {agent} again"),
-        };
-        return node()
-            .styles([
-                flex(),
-                flex_col(),
-                gap(3),
-                p(4),
-                rounded(Radius::Xl),
-                bg(Role::Surface),
-                border(),
-                border_color(Role::Border),
-            ])
-            .child(text(label).styles([text_color(Role::Text), text_px(14.0)]))
-            .child(text(reason).styles([text_color(Role::Muted), text_px(12.0)]))
-            .child(Button::new("Sign in", crate::state::SESSION_SIGN_IN).build());
-    }
-    if let Some(proposed) = session
-        .and_then(|session| session.ask.as_ref())
-        .and_then(proposal)
-    {
-        return proposed;
-    }
-    let working = session.is_some_and(|session| session.status == crate::sample::Status::Working);
-    let empty = state.prompt.text().trim().is_empty()
-        && state.attachments.is_empty()
-        && state.elements.is_empty()
-        && state.captures.is_empty();
-    let settings = state.settings_now();
-    let mut strip = node()
-        .styles([flex(), items_center(), gap(1), px(2.5), pt(1), pb(2.5)])
-        .child(Button::icon(IconName::Plus, ATTACH).build())
-        .child(Button::icon(IconName::At, MENTION).build())
-        .child(
-            Button::new("/", SLASH_BUTTON)
-                .size(Size::Sm)
-                .variant(button::Variant::Ghost)
-                .monospace()
-                .build(),
-        );
-    for (position, index) in WorkspaceState::chips(settings).into_iter().enumerate() {
-        let setting = &settings[index];
-        let icon = (setting.category == "mode").then_some(IconName::Zap);
-        let open = state.picker == Some(Picker::Setting(index));
-        strip = strip.child(anchored(
-            chip(
-                setting
-                    .current_name()
-                    .unwrap_or(&setting.current)
-                    .replace(" (recommended)", "")
-                    .as_str(),
-                icon,
-                FocusId(SETTING_BASE + position as u64),
-                open,
-            ),
-            open.then(|| setting_menu(state, index, rows, above))
-                .flatten(),
-        ));
-    }
-    let mut place = None;
-    if session.is_none() && (state.is_repository() || state.offers_container()) {
-        let base = state
-            .base
-            .as_ref()
-            .filter(|base| state.branches.first() != Some(base));
-        let mut label = match (state.location, base) {
-            (Location::Worktree, Some(base)) => format!("Worktree from {base}"),
-            (Location::Worktree, None) => "Worktree".to_owned(),
-            (Location::Local, _) => "Local".to_owned(),
-        };
-        if state.container_for_new_work() {
-            label.push_str(" in a dev container");
+impl Composer {
+    /// A reply composer showing `placeholder` while empty.
+    pub fn new(placeholder: impl Into<String>) -> Self {
+        Self {
+            placeholder: placeholder.into(),
+            choices: Vec::new(),
+            commands: Vec::new(),
+            rings: Vec::new(),
+            attached: Vec::new(),
+            working: false,
+            menu: None,
+            variant: ComposerVariant::Reply,
+            size: Size::Sm,
+            modifier: Modifier::new(),
+            callbacks: ComposerCallbacks::default(),
+            prefill: None,
         }
-        let open = state.picker == Some(Picker::Location);
-        place = Some(
-            node()
-                .styles([flex(), items_center(), gap(1), px(2.5)])
-                .child(anchored(
-                    chip(&label, Some(IconName::GitFork), LOCATION, open),
-                    open.then(|| location_menu(state)),
-                )),
-        );
     }
-    if let Some(chip) = session.and_then(|chat| crate::continue_chat::chip(state, chat)) {
-        place = Some(
-            node()
-                .styles([flex(), items_center(), gap(1), px(2.5)])
-                .child(chip),
-        );
+
+    /// The composer filled with `prefill` whenever it is given anew.
+    pub fn prefill(mut self, prefill: Option<String>) -> Self {
+        self.prefill = prefill;
+        self
     }
-    if state.on_this_computer() && state.agent_has_accounts(state.agent_now()) {
-        let account = state.account().unwrap_or("Account");
-        let open = state.picker == Some(Picker::Account);
-        let label = account.to_owned();
-        strip = strip.child(anchored(
-            chip(&label, Some(IconName::CircleUser), ACCOUNT, open),
-            open.then(|| account_menu(state)),
-        ));
+
+    /// The composer with `choice` added to its toolbar, without a menu.
+    pub fn choice(mut self, icon: Option<Icon>, label: impl Into<String>) -> Self {
+        self.choices.push(ComposerChoice {
+            icon,
+            label: label.into(),
+            id: String::new(),
+            heading: String::new(),
+            current: String::new(),
+            picks: Vec::new(),
+        });
+        self
     }
-    if let Some(goal) = session.and_then(|session| session.goal.as_ref()) {
-        let open = state.picker == Some(Picker::Goal);
-        strip = strip.child(anchored(
-            chip(&goal_label(goal), Some(IconName::Target), GOAL_CHIP, open),
-            open.then(|| goal_menu(goal)),
-        ));
+
+    /// The composer with the setting `choice` added to its toolbar, whose menu offers its picks.
+    pub fn setting(mut self, choice: ComposerChoice) -> Self {
+        self.choices.push(choice);
+        self
     }
-    let strip = strip.child(spacer());
-    let strip = strip.children(match session {
-        Some(session) => usage::rings_of(
-            session.context.as_ref(),
-            session
-                .limits
-                .as_ref()
-                .or_else(|| state.allowance_of(session.agent, session.login.as_deref())),
-        ),
-        None => usage::rings_of(
-            None,
-            state.allowance_of(state.agent, state.login_for_new_work(state.agent)),
-        ),
+
+    /// The composer offering the command `name` doing `description` behind a slash.
+    pub fn command(mut self, name: impl Into<String>, description: impl Into<String>) -> Self {
+        self.commands.push(ComposerCommand {
+            name: name.into(),
+            description: description.into(),
+        });
+        self
+    }
+
+    /// The composer with `ring` at the end of its toolbar.
+    pub fn ring(mut self, ring: UsageRing) -> Self {
+        self.rings.push(ring);
+        self
+    }
+
+    /// The composer with a chip of something attached, reading `label` after
+    /// `icon`, whose cross calls `on_remove`.
+    pub fn attached(
+        mut self,
+        icon: Icon,
+        label: impl Into<String>,
+        on_remove: impl Fn() + 'static,
+    ) -> Self {
+        self.attached.push(Attached {
+            icon,
+            label: label.into(),
+            on_remove: Rc::new(on_remove),
+        });
+        self
+    }
+
+    /// The composer queueing what is sent while `working`, offering to send it in place of the turn, or to stop the turn while nothing is written.
+    pub fn working(mut self, working: bool) -> Self {
+        self.working = working;
+        self
+    }
+
+    /// The composer with `menu` open when it is first drawn.
+    pub fn menu(mut self, menu: Option<ComposerMenu>) -> Self {
+        self.menu = menu;
+        self
+    }
+
+    /// The composer in `variant`.
+    pub fn variant(mut self, variant: ComposerVariant) -> Self {
+        self.variant = variant;
+        self
+    }
+
+    /// The composer at `size`.
+    pub fn size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
+    }
+
+    /// The composer laid out with `modifier`.
+    pub fn modifier(mut self, modifier: Modifier) -> Self {
+        self.modifier = modifier;
+        self
+    }
+
+    /// The composer calling `on_send` with the text when Enter or the send
+    /// button is pressed.
+    pub fn on_send(mut self, on_send: impl Fn(String) + 'static) -> Self {
+        self.callbacks.on_send = Some(Rc::new(on_send));
+        self
+    }
+
+    /// The composer calling `on_send_now` with the text when it is sent in place of the turn.
+    pub fn on_send_now(mut self, on_send_now: impl Fn(String) + 'static) -> Self {
+        self.callbacks.on_send_now = Some(Rc::new(on_send_now));
+        self
+    }
+
+    /// The composer calling `on_stop` when the turn is stopped.
+    pub fn on_stop(mut self, on_stop: impl Fn() + 'static) -> Self {
+        self.callbacks.on_stop = Some(Rc::new(on_stop));
+        self
+    }
+
+    /// The composer calling `on_pick` with a setting's id and the value picked from its menu.
+    pub fn on_pick(mut self, on_pick: impl Fn(String, String) + 'static) -> Self {
+        self.callbacks.on_pick = Some(Rc::new(on_pick));
+        self
+    }
+
+    /// The composer calling `on_attach` with the paths of files pasted or dropped on it.
+    pub fn on_attach(mut self, on_attach: impl Fn(Vec<String>) + 'static) -> Self {
+        self.callbacks.on_attach = Some(Rc::new(on_attach));
+        self
+    }
+
+    /// The composer calling `on_picture` with the width, height and RGBA rows of a picture pasted into it.
+    pub fn on_picture(mut self, on_picture: impl Fn(u32, u32, Vec<u8>) + 'static) -> Self {
+        self.callbacks.on_picture = Some(Rc::new(on_picture));
+        self
+    }
+
+    /// Emits the composer.
+    #[track_caller]
+    pub fn show(self) {
+        let scheme = color_scheme();
+        let state = remember_text_field_state("");
+        let filled = remember(|| None::<String>);
+        if self.prefill != filled.get() {
+            if let Some(text) = &self.prefill {
+                state.set_text(text.clone());
+            }
+            filled.set(self.prefill.clone());
+        }
+        let initial = self.menu.clone();
+        let menu = remember(move || initial);
+        let slash_closed = remember(|| None::<String>);
+        let focused = remember(|| false);
+        let height = match self.variant {
+            ComposerVariant::Reply => 22.0,
+            ComposerVariant::Start => 54.0,
+        };
+        let callbacks = self.callbacks.clone();
+        let working = self.working;
+        let send: Rc<dyn Fn(bool)> = {
+            let state = state.clone();
+            let callbacks = callbacks.clone();
+            Rc::new(move |now| {
+                let text = state.text();
+                if text.trim().is_empty() {
+                    return;
+                }
+                let target = if now {
+                    callbacks.on_send_now.as_ref()
+                } else {
+                    callbacks.on_send.as_ref()
+                };
+                if let Some(target) = target {
+                    target(text);
+                }
+                state.clear();
+            })
+        };
+        let text = state.text();
+        let empty = text.is_empty();
+        let matching = CommandMenu::matching(&self.commands, &text);
+        let slash_open = !matching.is_empty() && slash_closed.get().as_deref() != Some(&text);
+        let first_command = matching.first().map(|command| command.name.clone());
+        let key_send = send.clone();
+        let key_state = state.clone();
+        let key_callbacks = callbacks.clone();
+        let modifier = self
+            .modifier
+            .on_preview_key_event(move |event| {
+                if !event.pressed {
+                    return false;
+                }
+                let paste = (event.modifiers.ctrl || event.modifiers.meta)
+                    && event.key == Key::Character("v".into());
+                if paste {
+                    return paste_attachments(&key_callbacks);
+                }
+                let enter = event.key == Key::Enter && !event.modifiers.shift;
+                if enter {
+                    match (&first_command, slash_open) {
+                        (Some(name), true) => key_state.set_text(format!("/{name} ")),
+                        _ => key_send(event.modifiers.ctrl && working),
+                    }
+                }
+                enter
+            })
+            .on_hover(move |_| {});
+        let drop_callbacks = callbacks.clone();
+        let modifier = match drop_callbacks.on_attach.clone() {
+            Some(on_attach) => modifier
+                .on_file_drop(move |path| on_attach(vec![path.to_string_lossy().into_owned()])),
+            None => modifier,
+        };
+        let commands_state = state.clone();
+        let commands_closed = slash_closed.clone();
+        let field_menu = menu.clone();
+        let field_state = state.clone();
+        let field_callbacks = callbacks.clone();
+        Card::new()
+            .variant(CardVariant::Outlined)
+            .size(Size::Md)
+            .focused(focused.get() || !empty)
+            .modifier(modifier)
+            .show(move || {
+                if slash_open {
+                    let typed = text.clone();
+                    CommandMenu {
+                        commands: matching,
+                        on_pick: Rc::new(move |name: String| {
+                            commands_state.set_text(format!("/{name} "))
+                        }),
+                        on_dismiss: Rc::new(move || commands_closed.set(Some(typed.clone()))),
+                    }
+                    .show();
+                }
+                if !self.attached.is_empty() {
+                    attached_chips(self.attached);
+                }
+                let opener = field_menu.clone();
+                stack_with(
+                    Modifier::new()
+                        .fill_max_width()
+                        .height(height)
+                        .on_context_menu(move |event| {
+                            opener.set(Some(ComposerMenu::Field(
+                                event.position.x,
+                                event.position.y,
+                            )))
+                        }),
+                    || {
+                        if empty {
+                            Label::new(self.placeholder.clone())
+                                .variant(LabelVariant::Subtle)
+                                .show();
+                        }
+                        let style = Label::new("").wrap().style();
+                        LOCAL_TEXT_STYLE.provide(style, || {
+                            basic_text_area(Modifier::new().fill_max_size(), &state);
+                        });
+                        if let Some(ComposerMenu::Field(across, down)) = field_menu.get() {
+                            let closer = field_menu.clone();
+                            FieldMenu {
+                                state: field_state.clone(),
+                                callbacks: field_callbacks.clone(),
+                                at: (across, down),
+                                on_dismiss: Rc::new(move || closer.set(None)),
+                            }
+                            .show();
+                        }
+                    },
+                );
+                spacer(Modifier::new().height(8.0));
+                toolbar(
+                    self.choices,
+                    self.rings,
+                    &menu,
+                    &callbacks,
+                    &send,
+                    empty,
+                    working,
+                    scheme,
+                );
+            });
+    }
+}
+
+/// Emits the chips of `attached` in rows that wrap.
+#[track_caller]
+fn attached_chips(attached: Vec<Attached>) {
+    flow_row_with(
+        Modifier::new()
+            .fill_max_width()
+            .padding_each(0.0, 0.0, 0.0, 8.0),
+        FlowOptions::new(6.0, 6.0),
+        move || {
+            for (place, chip) in attached.into_iter().enumerate() {
+                key(place, move || {
+                    let on_remove = chip.on_remove.clone();
+                    Chip::new(chip.label)
+                        .icon(chip.icon)
+                        .size(Size::Xs)
+                        .on_remove(move || on_remove())
+                        .show();
+                });
+            }
+        },
+    );
+}
+
+/// Emits the toolbar: attaching, the `choices` with the menu `menu` names
+/// open, the `rings`, and the buttons that send with `send` or stop the turn
+/// through `callbacks`, drawn for an `empty` prompt and an agent `working` or
+/// not in `scheme`.
+#[track_caller]
+#[allow(clippy::too_many_arguments)]
+fn toolbar(
+    choices: Vec<ComposerChoice>,
+    rings: Vec<UsageRing>,
+    menu: &State<Option<ComposerMenu>>,
+    callbacks: &ComposerCallbacks,
+    send: &Rc<dyn Fn(bool)>,
+    empty: bool,
+    working: bool,
+    scheme: ColorScheme,
+) {
+    row_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(2.0),
+        Alignment::Center,
+        || {
+            IconButton::new(phosphor::PLUS).size(Size::Xs).show();
+            IconButton::new(phosphor::AT).size(Size::Xs).show();
+            stack_aligned(
+                Modifier::new().size(20.0, 20.0),
+                BoxAlignment::Center,
+                || Label::new("/").variant(LabelVariant::Muted).show(),
+            );
+            for (place, choice) in choices
+                .into_iter()
+                .filter(|choice| !choice.label.is_empty())
+                .enumerate()
+            {
+                let menu = menu.clone();
+                let on_pick = callbacks.on_pick.clone();
+                key(place, move || choice_button(choice, &menu, on_pick));
+            }
+            spacer(Modifier::new().weight(1.0));
+            for (place, ring) in rings.into_iter().enumerate() {
+                key(place, move || ring.show());
+            }
+            send_buttons(callbacks, send, empty, working, scheme);
+        },
+    );
+}
+
+/// Emits the button of `choice`, and its menu while `menu` names it, calling `on_pick` with a value picked.
+#[track_caller]
+fn choice_button(
+    choice: ComposerChoice,
+    menu: &State<Option<ComposerMenu>>,
+    on_pick: Option<Rc<dyn Fn(String, String)>>,
+) {
+    column_with(Modifier::new(), || {
+        let mut button = Button::new(choice.label.clone()).size(Size::Xs);
+        if let Some(glyph) = &choice.icon {
+            button = button.icon(glyph.clone());
+        }
+        let has_menu = !choice.id.is_empty() && !choice.picks.is_empty();
+        if has_menu {
+            let opener = menu.clone();
+            let id = choice.id.clone();
+            button = button.on_click(move || {
+                let open = opener.get() == Some(ComposerMenu::Setting(id.clone()));
+                opener.set((!open).then(|| ComposerMenu::Setting(id.clone())));
+            });
+        }
+        button.variant(ButtonVariant::Ghost).show();
+        if has_menu && menu.get() == Some(ComposerMenu::Setting(choice.id.clone())) {
+            let closer = menu.clone();
+            SettingMenu {
+                choice,
+                on_pick,
+                on_dismiss: Rc::new(move || closer.set(None)),
+            }
+            .show();
+        }
     });
-    let strip = strip.children(send_buttons(working, empty));
-    let prompt_box = node()
-        .styles([
-            relative(),
-            flex(),
-            flex_col(),
-            w_full(),
-            rounded(Radius::Xl),
-            border(),
-            border_color(Role::Border),
-            border_color(Role::Accent).focus(),
-            bg(Role::Surface),
-            shadow_layers(&COMPOSER_SHADOW),
-        ])
-        .focused_with(PROMPT)
-        .children(
-            session
-                .and_then(|session| session.ask.as_ref())
-                .and_then(proposal),
-        )
-        .children(slash_list(state))
-        .children(attachment_row(state))
-        .children(crate::elements::chips(state, shaper))
-        .children(crate::captures::chips(state, shaper))
-        .child(
-            Input::new(&state.prompt, PROMPT)
-                .variant(input::Variant::Multiline)
-                .placeholder(placeholder)
-                .rows(rows)
-                .wrap(text_width, shaper)
-                .build(),
-        )
-        .child(strip);
-    node()
-        .styles([flex(), flex_col(), gap(1.5), w_full()])
-        .children(place)
-        .child(prompt_box)
+}
+
+/// Emits the buttons at the end of the toolbar: one that sends the prompt,
+/// or, while the agent is `working`, one that stops it when the prompt is
+/// `empty`, and otherwise one that sends it in place of the turn and one
+/// that queues it behind; each calling `send` or `callbacks`.
+#[track_caller]
+fn send_buttons(
+    callbacks: &ComposerCallbacks,
+    send: &Rc<dyn Fn(bool)>,
+    empty: bool,
+    working: bool,
+    scheme: ColorScheme,
+) {
+    if working && empty {
+        let stop = callbacks.on_stop.clone();
+        IconButton::new(phosphor::STOP)
+            .variant(IconButtonVariant::Primary)
+            .size(Size::Xs)
+            .tint(scheme.background)
+            .on_click(move || {
+                if let Some(stop) = &stop {
+                    stop();
+                }
+            })
+            .show();
+        return;
+    }
+    if working && callbacks.on_send_now.is_some() {
+        let now = send.clone();
+        IconButton::new(phosphor::LIGHTNING)
+            .size(Size::Xs)
+            .on_click(move || now(true))
+            .show();
+    }
+    let queue = send.clone();
+    IconButton::new(if working {
+        phosphor::QUEUE
+    } else {
+        phosphor::ARROW_UP
+    })
+    .variant(IconButtonVariant::Primary)
+    .size(Size::Xs)
+    .tint(if empty {
+        scheme.surface_container_high
+    } else {
+        scheme.background
+    })
+    .on_click(move || queue(false))
+    .show();
 }

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use crate::engine::Engine;
 use crate::error::Error;
 use crate::frame::Frame;
-use crate::input::{Button, Cursor, Key, Modifiers};
+use crate::input::{Button, Cursor, Key, Modifiers, PageInput};
 use crate::link::{Link, Notice, PageState};
 use crate::wire::{
     Capture, CaptureKind, EditAction, PickedElement, Request, ToolResult, ZoomAction,
@@ -153,6 +153,35 @@ impl View {
             page: self.page,
             key: key.clone(),
         });
+    }
+
+    /// Hands the page one thing the reader did with the pointer or the keyboard.
+    pub fn input(&self, input: &PageInput) {
+        match input {
+            PageInput::Moved {
+                x,
+                y,
+                modifiers,
+                left,
+            } => self.pointer_moved(*x, *y, *modifiers, *left),
+            PageInput::Button {
+                x,
+                y,
+                button,
+                pressed,
+                clicks,
+                modifiers,
+            } => self.pointer_button(*x, *y, *button, *pressed, *clicks, *modifiers),
+            PageInput::Scrolled {
+                x,
+                y,
+                dx,
+                dy,
+                modifiers,
+            } => self.scrolled(*x, *y, *dx, *dy, *modifiers),
+            PageInput::Key(key) => self.key(key),
+            PageInput::Text(text) => self.commit_text(text),
+        }
     }
 
     /// Types `text` as finished input, as an input method does.

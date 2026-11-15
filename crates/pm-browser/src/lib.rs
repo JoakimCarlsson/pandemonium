@@ -20,7 +20,7 @@ pub mod wire;
 pub use engine::Engine;
 pub use error::Error;
 pub use frame::Frame;
-pub use input::{Button, Cursor, Key, Modifiers};
+pub use input::{Button, Cursor, Key, Modifiers, PageInput};
 pub use link::Notice;
 pub use view::View;
 pub use wire::{

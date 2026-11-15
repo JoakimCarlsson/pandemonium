@@ -1,136 +1,315 @@
-//! The plan an agent proposes before it starts: the panel that reads it and the band above the prompt that answers it.
+//! The agent's plan as a panel of steps with their progress, and the band
+//! that asks the reader to approve a plan or a permission.
 
-use pm_harness::{Permission, Verdict};
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, bg, border, border_b, border_color, border_l, flex, flex_col, flex_none,
-    flex_wrap, gap, h, h_full, items_center, overflow_hidden, px, py, rounded, w_px,
-};
-use pm_text::Shaper;
-use pm_ui::{Node, node};
+use std::rc::Rc;
 
-use crate::button::Variant;
-use crate::parts::{line, spacer};
+use rustle::prelude::*;
+
+use crate::app_theme::extended_colors;
+use crate::button::{Button, ButtonVariant};
+use crate::card::{Card, CardVariant};
+use crate::label::{Label, LabelVariant};
+use crate::markdown::Markdown;
+use crate::notice::faded;
 use crate::size::Size;
-use crate::state::{CHOICE_BASE, CLOSE_PLAN, OPEN_PLAN, PLAN_SCROLL, REVISE, WorkspaceState};
-use crate::{Button, Markdown};
+use rustle::color_scheme;
 
-/// How narrow and how wide the plan panel can be dragged, in logical pixels.
-pub const WIDTHS: (f32, f32) = (300.0, 960.0);
+/// How far along a plan step is.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PlanStepState {
+    /// Not started.
+    #[default]
+    Pending,
+    /// Being worked on.
+    Doing,
+    /// Done.
+    Done,
+}
 
-/// How wide the plan panel is when `room` logical pixels are left beside the sidebar and the review panel: as wide as it was dragged, or else nearly half of the room, kept within what a plan reads well in.
-pub fn width_in(state: &WorkspaceState, room: f32) -> f32 {
-    if state.plan_width > 0.0 {
-        state.plan_width.clamp(WIDTHS.0, WIDTHS.1)
-    } else {
-        (room * 0.45).clamp(300.0, 520.0)
+/// The visual treatment of the plan panel.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PlanVariant {
+    /// On an outlined card.
+    #[default]
+    Card,
+    /// Flat, without a card.
+    Flat,
+}
+
+/// The agent's plan: a header counting the steps done, then each step.
+#[derive(Clone, Debug, Default)]
+pub struct PlanPanel {
+    /// Each step and how far along it is.
+    steps: Vec<(String, PlanStepState)>,
+    /// Its visual treatment.
+    variant: PlanVariant,
+    /// Its text size.
+    size: Size,
+}
+
+impl PlanPanel {
+    /// An empty plan.
+    pub fn new() -> Self {
+        Self {
+            steps: Vec::new(),
+            variant: PlanVariant::Card,
+            size: Size::Xs,
+        }
+    }
+
+    /// The plan with a step saying `text` at `state`.
+    pub fn step(mut self, text: impl Into<String>, state: PlanStepState) -> Self {
+        self.steps.push((text.into(), state));
+        self
+    }
+
+    /// The plan with `variant`.
+    pub fn variant(mut self, variant: PlanVariant) -> Self {
+        self.variant = variant;
+        self
+    }
+
+    /// The plan at `size`.
+    pub fn size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
+    }
+
+    /// Emits the plan, folded to its header until opened; nothing when it has no steps.
+    #[track_caller]
+    pub fn show(self) {
+        if self.steps.is_empty() {
+            return;
+        }
+        let scheme = color_scheme();
+        let extended = extended_colors();
+        let open = remember(|| true);
+        let toggle = open.clone();
+        let done = self
+            .steps
+            .iter()
+            .filter(|(_, state)| *state == PlanStepState::Done)
+            .count();
+        let total = self.steps.len();
+        let body = move || {
+            row_arranged(
+                Modifier::new()
+                    .fill_max_width()
+                    .cursor(CursorIcon::Pointer)
+                    .clickable(move || toggle.set(!toggle.get())),
+                Arrangement::SpacedBy(8.0),
+                Alignment::Center,
+                || {
+                    icon(phosphor::LIST_CHECKS, 14.0, scheme.on_surface_variant);
+                    Label::new("Plan").size(self.size).show();
+                    Label::new(format!("{done} of {total} done"))
+                        .variant(LabelVariant::Subtle)
+                        .size(self.size)
+                        .modifier(Modifier::new().weight(1.0))
+                        .show();
+                    icon(
+                        if open.get() {
+                            phosphor::CARET_DOWN
+                        } else {
+                            phosphor::CARET_RIGHT
+                        },
+                        11.0,
+                        scheme.on_surface_variant,
+                    );
+                },
+            );
+            if open.get() {
+                spacer(Modifier::new().height(6.0));
+                for (text, state) in &self.steps {
+                    row_arranged(
+                        Modifier::new().fill_max_width().padding_xy(0.0, 2.0),
+                        Arrangement::SpacedBy(8.0),
+                        Alignment::Center,
+                        || {
+                            let (mark, tint) = match state {
+                                PlanStepState::Pending => {
+                                    (phosphor::CIRCLE, scheme.on_surface_variant)
+                                }
+                                PlanStepState::Doing => (phosphor::CIRCLE_HALF, scheme.primary),
+                                PlanStepState::Done => (phosphor::CHECK_CIRCLE, extended.success),
+                            };
+                            icon(mark, 13.0, tint);
+                            let mut label = Label::new(text.clone()).size(self.size).wrap();
+                            label = match state {
+                                PlanStepState::Done => label.variant(LabelVariant::Subtle),
+                                PlanStepState::Doing => label,
+                                PlanStepState::Pending => label.variant(LabelVariant::Muted),
+                            };
+                            label.modifier(Modifier::new().weight(1.0)).show();
+                        },
+                    );
+                }
+            }
+        };
+        match self.variant {
+            PlanVariant::Card => Card::new()
+                .variant(CardVariant::Outlined)
+                .size(Size::Sm)
+                .modifier(Modifier::new().fill_max_width())
+                .show(body),
+            PlanVariant::Flat => column_with(Modifier::new().fill_max_width(), body),
+        }
     }
 }
 
-/// The panel `width` logical pixels wide that reads `source`, the plan the agent proposed, as markdown beside the conversation.
-pub fn panel(state: &WorkspaceState, source: &str, width: f32, shaper: &mut Shaper) -> Node {
-    let header = node()
-        .styles([
-            flex(),
-            items_center(),
-            gap(2),
-            h(12),
-            px(4),
-            flex_none(),
-            border_b(),
-            border_color(Role::Border),
-        ])
-        .child(line("Plan", 13, 1.4, Role::Muted))
-        .child(spacer())
-        .child(Button::icon(IconName::Close, CLOSE_PLAN).build());
-    let body = node()
-        .styles([flex(), flex_col(), px(4), py(4)])
-        .child(Markdown::new(source, width - 33.0).build(shaper));
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            flex_none(),
-            w_px(width),
-            h_full(),
-            bg(Role::Background),
-            border_l(),
-            border_color(Role::Border),
-        ])
-        .child(header)
-        .child(
-            node()
-                .styles([flex(), flex_col(), pm_style::flex_1(), pm_style::min_h(0)])
-                .styles([overflow_hidden()])
-                .scroll_from_start(PLAN_SCROLL, state.plan_scroll)
-                .child(body),
-        )
+/// The visual treatment of the approve band.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ApproveBandVariant {
+    /// Approving a plan, in the accent.
+    #[default]
+    Plan,
+    /// Approving a permission such as running a command, in caution.
+    Permission,
 }
 
-/// The button answering with the choice at `index`, bold for the one that goes ahead without asking again.
-fn answer(index: usize, name: &str, verdict: &Verdict) -> Node {
-    Button::new(name, FocusId(CHOICE_BASE + index as u64))
-        .variant(match verdict {
-            Verdict::Reject => Variant::Ghost,
-            Verdict::Allow => Variant::Outline,
-            Verdict::Always => Variant::Default,
-        })
-        .size(Size::Sm)
-        .build()
+/// One answer the approve band offers.
+#[derive(Clone)]
+struct BandChoice {
+    /// What it says.
+    label: String,
+    /// Whether it refuses, which sets it apart.
+    refuses: bool,
+    /// What choosing it does.
+    on_click: Rc<dyn Fn()>,
 }
 
-/// The card that stands in for the prompt box while the plan in `ask` waits for a decision, or nothing when `ask` proposes none.
-pub fn proposal(ask: &Permission) -> Option<Node> {
-    ask.plan.as_ref()?;
-    let refusals = ask
-        .choices
-        .iter()
-        .enumerate()
-        .filter(|(_, choice)| choice.verdict == Verdict::Reject)
-        .take(1)
-        .map(|(index, _)| answer(index, "Reject", &Verdict::Reject));
-    let accepts = ask
-        .choices
-        .iter()
-        .enumerate()
-        .filter(|(_, choice)| choice.verdict != Verdict::Reject)
-        .map(|(index, choice)| answer(index, &choice.name, &choice.verdict));
-    let title = node()
-        .styles([flex(), items_center()])
-        .child(line("The agent proposed a plan", 14, 1.4, Role::Text))
-        .child(spacer())
-        .child(
-            Button::new("Open plan", OPEN_PLAN)
-                .variant(Variant::Ghost)
-                .size(Size::Sm)
-                .build(),
+/// The band that asks the reader to approve: a title, the plan or command
+/// asked about, and a button per answer.
+#[derive(Clone)]
+pub struct ApproveBand {
+    /// What is asked.
+    title: String,
+    /// The command it would run.
+    command: Option<String>,
+    /// The plan written out.
+    plan: Option<Vec<pm_markdown::Block>>,
+    /// The answers.
+    choices: Vec<BandChoice>,
+    /// Its visual treatment.
+    variant: ApproveBandVariant,
+    /// Its text size.
+    size: Size,
+}
+
+impl ApproveBand {
+    /// A band asking `title`.
+    pub fn new(title: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            command: None,
+            plan: None,
+            choices: Vec::new(),
+            variant: ApproveBandVariant::Plan,
+            size: Size::Sm,
+        }
+    }
+
+    /// The band showing the command `command` it asks to run.
+    pub fn command(mut self, command: Option<String>) -> Self {
+        self.command = command;
+        self
+    }
+
+    /// The band showing the parsed `plan` it asks to approve.
+    pub fn plan(mut self, plan: Option<Vec<pm_markdown::Block>>) -> Self {
+        self.plan = plan;
+        self
+    }
+
+    /// The band with an answer `label`, refusing when `refuses`, that runs `on_click`.
+    pub fn choice(
+        mut self,
+        label: impl Into<String>,
+        refuses: bool,
+        on_click: impl Fn() + 'static,
+    ) -> Self {
+        self.choices.push(BandChoice {
+            label: label.into(),
+            refuses,
+            on_click: Rc::new(on_click),
+        });
+        self
+    }
+
+    /// The band with `variant`.
+    pub fn variant(mut self, variant: ApproveBandVariant) -> Self {
+        self.variant = variant;
+        self
+    }
+
+    /// The band at `size`.
+    pub fn size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
+    }
+
+    /// Emits the band.
+    #[track_caller]
+    pub fn show(self) {
+        let scheme = color_scheme();
+        let extended = extended_colors();
+        let (tint, glyph) = match self.variant {
+            ApproveBandVariant::Plan => (scheme.primary, phosphor::LIST_CHECKS),
+            ApproveBandVariant::Permission => (extended.warning, phosphor::SHIELD_WARNING),
+        };
+        column_arranged(
+            Modifier::new()
+                .fill_max_width()
+                .background_rounded(faded(tint, 18), 8.0)
+                .border(1.0, faded(tint, 90), 8.0)
+                .padding_xy(14.0, 12.0),
+            Arrangement::SpacedBy(10.0),
+            Alignment::Start,
+            move || {
+                row_arranged(
+                    Modifier::new().fill_max_width(),
+                    Arrangement::SpacedBy(8.0),
+                    Alignment::Center,
+                    || {
+                        icon(glyph, 15.0, tint);
+                        Label::new(self.title.clone())
+                            .variant(LabelVariant::Heading)
+                            .size(self.size)
+                            .show();
+                    },
+                );
+                if let Some(command) = &self.command {
+                    Label::new(command.clone())
+                        .variant(LabelVariant::Code)
+                        .size(Size::Xs)
+                        .wrap()
+                        .modifier(
+                            Modifier::new()
+                                .fill_max_width()
+                                .background_rounded(scheme.surface_container, 6.0)
+                                .padding_xy(10.0, 6.0),
+                        )
+                        .show();
+                }
+                if let Some(plan) = &self.plan {
+                    Markdown::new(plan.clone()).size(self.size).show();
+                }
+                flow_row(Modifier::new().fill_max_width(), 8.0, 8.0, || {
+                    for (index, choice) in self.choices.iter().enumerate() {
+                        let on_click = choice.on_click.clone();
+                        let variant = match (index, choice.refuses) {
+                            (_, true) => ButtonVariant::Ghost,
+                            (0, false) => ButtonVariant::Primary,
+                            _ => ButtonVariant::Secondary,
+                        };
+                        Button::new(choice.label.clone())
+                            .variant(variant)
+                            .size(Size::Sm)
+                            .on_click(move || on_click())
+                            .show();
+                    }
+                });
+            },
         );
-    let answers = node()
-        .styles([flex(), flex_wrap(), items_center(), gap(2)])
-        .children(refusals)
-        .child(
-            Button::new("Revise…", REVISE)
-                .variant(Variant::Ghost)
-                .size(Size::Sm)
-                .build(),
-        )
-        .child(spacer())
-        .children(accepts);
-    Some(
-        node()
-            .styles([
-                flex(),
-                flex_col(),
-                gap(2),
-                px(4),
-                py(3),
-                rounded(Radius::Xl),
-                border(),
-                border_color(Role::Border),
-                bg(Role::Surface),
-            ])
-            .child(title)
-            .child(answers),
-    )
+    }
 }

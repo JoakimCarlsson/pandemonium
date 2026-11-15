@@ -166,6 +166,11 @@ impl Engine {
         });
     }
 
+    /// Has `wake` called each time the helper reports something, such as a new picture, so the window looks again.
+    pub fn set_waker(&self, wake: std::sync::Arc<dyn Fn() + Send + Sync>) {
+        self.link.set_waker(wake);
+    }
+
     /// Why the helper failed, if it did.
     pub fn failure(&self) -> Option<String> {
         self.link.failure()

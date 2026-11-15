@@ -1,125 +1,113 @@
-//! The stepper: stops along a line, the current one marked, as a track to press or as a bar that counts.
+//! A number with buttons making it smaller and bigger.
 
-use pm_input::FocusId;
-use pm_style::{
-    Role, bg, cursor_pointer, flex, gap, h, items_center, justify_between, justify_center, px,
-    rounded_full, size, w, w_px,
-};
-use pm_ui::{Node, node};
+use std::rc::Rc;
 
-use crate::parts::line;
+use rustle::prelude::*;
 
-/// How a stepper looks.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Variant {
-    /// A track with a stop for each level that answers to a press.
+use crate::icon_button::IconButton;
+use crate::label::Label;
+use crate::size::Size;
+use rustle::color_scheme;
+
+/// How a stepper is drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StepperVariant {
+    /// The window background with a hairline border.
     #[default]
-    Track,
-    /// A bar with a segment for each step, filled as far as the reader has got, and the step said in words.
-    Bar,
+    Outlined,
+    /// No border.
+    Plain,
 }
 
-/// A stepper being described: how many stops it has, which is current, and what its stops answer to.
-///
-/// Build it with [`Stepper::new`], change it with [`Stepper::current`] and
-/// [`Stepper::variant`], and turn it into a node with [`Stepper::build`].
-#[derive(Clone, Copy, Debug)]
+/// A stepper with a variant and a size.
+#[derive(Clone)]
 pub struct Stepper {
-    /// How many stops the track has.
-    stops: usize,
-    /// The stop that is current, if one is.
-    current: Option<usize>,
-    /// The name of the first stop; the rest follow it.
-    first: u64,
-    /// How it looks.
-    variant: Variant,
+    /// The number, as it is written, such as `14 px`.
+    shown: String,
+    /// How it is drawn.
+    variant: StepperVariant,
+    /// Its size.
+    size: Size,
+    /// What a button does: given -1 for smaller and 1 for bigger.
+    on_step: Option<Rc<dyn Fn(i32)>>,
 }
 
 impl Stepper {
-    /// A stepper of `stops` stops, the first answering to `first` and the rest to the names after it.
-    pub fn new(stops: usize, first: u64) -> Self {
+    /// A stepper showing `shown`.
+    pub fn new(shown: impl Into<String>) -> Self {
         Self {
-            stops,
-            current: None,
-            first,
-            variant: Variant::default(),
+            shown: shown.into(),
+            variant: StepperVariant::Outlined,
+            size: Size::Sm,
+            on_step: None,
         }
     }
 
-    /// The stepper with the stop at `current` marked, counted from zero.
-    pub fn current(mut self, current: Option<usize>) -> Self {
-        self.current = current;
-        self
-    }
-
-    /// The stepper looking like `variant`.
-    pub fn variant(mut self, variant: Variant) -> Self {
+    /// The stepper in `variant`.
+    pub fn variant(mut self, variant: StepperVariant) -> Self {
         self.variant = variant;
         self
     }
 
-    /// The node that draws the stepper.
-    pub fn build(self) -> Node {
-        match self.variant {
-            Variant::Track => self.track(),
-            Variant::Bar => self.bar(),
+    /// The stepper at `size`.
+    pub fn size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
+    }
+
+    /// The stepper calling `on_step` with -1 when made smaller and 1 when made bigger.
+    pub fn on_step(mut self, on_step: impl Fn(i32) + 'static) -> Self {
+        self.on_step = Some(Rc::new(on_step));
+        self
+    }
+
+    /// The width a stepper takes.
+    pub const WIDTH: f32 = 136.0;
+
+    /// Emits the stepper.
+    #[track_caller]
+    pub fn show(self) {
+        let scheme = color_scheme();
+        let height = match self.size {
+            Size::Xs => 22.0,
+            Size::Sm => 28.0,
+            Size::Md => 32.0,
+            Size::Lg => 38.0,
+        };
+        let mut modifier = Modifier::new()
+            .width(Self::WIDTH)
+            .height(height)
+            .background_rounded(scheme.background, 6.0)
+            .padding_xy(2.0, 0.0);
+        if self.variant == StepperVariant::Outlined {
+            modifier = modifier.border(1.0, scheme.outline_variant, 6.0);
         }
-    }
-
-    /// The track: a stop for each level, each a target for a press.
-    fn track(self) -> Node {
-        node()
-            .styles([
-                flex(),
-                items_center(),
-                justify_between(),
-                w_px(112.0),
-                h(6),
-                px(1),
-                rounded_full(),
-                bg(Role::SurfaceHover),
-            ])
-            .children((0..self.stops).map(|position| {
-                let dot = if self.current == Some(position) {
-                    node().styles([size(4), rounded_full(), bg(Role::Text)])
-                } else {
-                    node().styles([size(1), rounded_full(), bg(Role::Subtle)])
-                };
-                node()
-                    .styles([
-                        flex(),
-                        items_center(),
-                        justify_center(),
-                        size(4),
-                        cursor_pointer(),
-                    ])
-                    .child(dot)
-                    .focusable(FocusId(self.first + position as u64))
-            }))
-    }
-
-    /// The bar: a segment for each step up to the current one filled, and the step in words.
-    fn bar(self) -> Node {
-        let at = self.current.unwrap_or(0);
-        node()
-            .styles([flex(), items_center(), gap(3)])
-            .child(
-                node()
-                    .styles([flex(), items_center(), gap(2)])
-                    .children((0..self.stops).map(|candidate| {
-                        let tone = if candidate <= at {
-                            Role::Text
-                        } else {
-                            Role::SurfaceActive
-                        };
-                        node().styles([w(8), h(1.5), rounded_full(), bg(tone)])
-                    })),
-            )
-            .child(line(
-                format!("Step {} of {}", at + 1, self.stops),
-                12,
-                1.4,
-                Role::Subtle,
-            ))
+        let smaller = self.on_step.clone();
+        let bigger = self.on_step;
+        let shown = self.shown;
+        row_arranged(
+            modifier,
+            Arrangement::SpaceBetween,
+            Alignment::Center,
+            || {
+                IconButton::new(phosphor::MINUS)
+                    .size(Size::Xs)
+                    .on_click(move || {
+                        if let Some(step) = &smaller {
+                            step(-1);
+                        }
+                    })
+                    .show();
+                Label::new(shown).show();
+                IconButton::new(phosphor::PLUS)
+                    .size(Size::Xs)
+                    .on_click(move || {
+                        if let Some(step) = &bigger {
+                            step(1);
+                        }
+                    })
+                    .show();
+            },
+        );
     }
 }

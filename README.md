@@ -220,18 +220,43 @@ Cargo commands and make targets, set `CARGO_TARGET_DIR=build`.
 The binary draws one frame to a PNG without opening a window:
 
 ```text
-pandemonium --snapshot <path> [elapsed_ms [x y [focus [light|dark [screen]]]]]
+pandemonium --snapshot <path> [WIDTHxHEIGHT] [dark|light] [live] [PAGE]
 ```
 
 For example, after `CARGO_TARGET_DIR=build cargo build -p pandemonium`:
 
 ```sh
-build/debug/pandemonium --snapshot build/workspace.png 0 0 0 0 dark workspace
+build/debug/pandemonium --snapshot build/workspace.png 1636x720
 ```
 
-Screen names are selected in `crates/pandemonium/src/main.rs`; their states are
-built in `crates/pandemonium/src/snapshot.rs`. Settings sections have
-`settings-<section>` shots and `settings-<section>-narrow` shots at 640 by 420.
+It draws the sample workspace in the dark theme; `light` draws it light, and
+`live` draws the projects and newest session of the local server instead.
+`PAGE` picks what shows in place of the session view: `welcome` for the
+welcome page of a new session in the first project, `chat` for a new chat,
+`history`, `extensions` or `overview` for that page, and `update` or
+`sign-in` draws the update dialog or the sign-in code dialog over it.
+`approve`, `inquiry`, `trust` and `continue` show a card waiting on the
+reader. `code` opens sample files in the editor and `diff` the Diff tab;
+`git-menu`, `git-source`, `git-confirm` and `branch-menu` open the Git
+panel's menus and prompts; `files`, `search`, `file-menu` and `file-delete`
+show the Files and Search tabs; `quick`, `quick-commands`,
+`quick-sessions`, `quick-text` and `quick-theme` open the quick input;
+`browser` shows the browser pane on a sample page, and `browser-find`,
+`browser-menu`, `browser-tools`, `browser-ask`, `browser-cert`,
+`browser-clear`, `browser-notice` and `browser-pick` show it with the find
+bar, the menu over the page, the developer tools, a page's question and a
+download, an untrusted certificate, the question before clearing site data, a
+page that cannot be shown, or picking an element for the prompt (with `welcome`, beside the welcome page); and
+`problems`, `tasks` and `debug` pick the dock's tab, with `selection`
+marking text in its terminal. `project-menu`, `adder`, `clone` and
+`clone-failed` open the sidebar's project menu and the adder, `sample` shows
+the notice over the made-up projects, and `remote` adds projects on other
+machines with their reach. `picker`, `picker-remote` and `picker-failed` draw
+the folder picker's window on this machine, on another one, or on one that
+cannot be reached. `settings-<section>`,
+such as `settings-editor-vim`, draws that section of the settings window over
+sample settings at 960 by 720, and `settings-<section>-narrow` draws it at its
+narrowest, 640 by 420; `form` with it opens the section's form filled in.
 
 ## Architecture
 

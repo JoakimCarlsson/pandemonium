@@ -12,8 +12,11 @@ downloads the engine once, about 120 MB.
 - `helpers/electron-browser` is the helper, `pandemonium-browser`: an Electron
   app. Electron carries Chromium with the H.264 and AAC decoders, so video that
   Chromium alone cannot play works in the pane.
-- `pm-components` draws the pane, and `crates/pandemonium/src/app/browser.rs`
-  carries what the pane asks for to the helper.
+- `pm-components` has the page's window (`browser_view.rs`, `browser_keys.rs`),
+  `pm-pages` lays out the pane (`browser_pane.rs`, `browser_safety.rs`), and
+  `pm-shell` keeps the tabs (`browser.rs`, `browser_scope.rs`) and carries what
+  the pane asks for to the helper (`web.rs`, `link/browser.rs`,
+  `link/browser_agent.rs`).
 - `pm-server` hosts the MCP endpoint that gives agents the `browser_*` tools;
   the tools run in the helper of the window that announced the browser, on the
   tabs of the session whose agent called them. See
@@ -75,7 +78,7 @@ page is left there when a different server starts, since the reader or an agent
 is using it, and the server's page opens in a new tab behind it (see
 [Tabs](#tabs)); the tab shown goes to a server's page when it shows nothing or
 an error, and every tab on a page of that same server loads it again where it
-is (`served_move` in `pm-components/src/browser.rs`). A page is the same server's by the address the server reports, so `127.0.0.1` and `[::1]` count as `localhost`, and a tab on a remote machine, whether carried over SSH or reached directly, is compared by the remote address it shows, not the local one that carries it. It happens only while the embedded browser is on
+is (`served_move` in `pm-shell/src/browser.rs`). A page is the same server's by the address the server reports, so `127.0.0.1` and `[::1]` count as `localhost`, and a tab on a remote machine, whether carried over SSH or reached directly, is compared by the remote address it shows, not the local one that carries it. It happens only while the embedded browser is on
 and installed, and Settings, under Browser, can turn it off. A shell in a dev
 container is not seen, since its ports are the container's.
 
@@ -87,7 +90,7 @@ new tab. Ctrl+T and Ctrl+W open and close one while a page has the keyboard.
 Each tab is its own `View` in the helper with its own history, zoom, find bar,
 picking mode, permission questions and certificate page, and keeps a number for
 as long as it lives; the window drives the views by that number
-(`Web::pages` in `app/browser.rs`) and drops a view when its tab is gone. The
+(`Web::pages` in `pm-shell/src/web.rs`) and drops a view when its tab is gone. The
 address bar, the buttons and the developer tools belong to the tab shown, and the
 developer tools move to another tab when it is shown. At most 32 tabs are open;
 when the strip cannot give each at least 84 pixels it scrolls, and showing a tab
@@ -118,17 +121,17 @@ page for each tab of every session, so a page kept by a session you left is stil
 there, with its history, when you come back. Tab numbers are unique in the window,
 which is how the pages of different sessions are told apart.
 
-The browser of the session shown is `WorkspaceState::browser`, which the rest of
-the window reads and changes; the browsers of the other sessions wait in
-`WorkspaceState::browsers`, by the `scope` of the session that owns them, a
-number that stays with a session however the sessions are renumbered
-(`pm-components/src/browser_scope.rs`). Opening another session, or a page that
+The browser of the session shown is `Workspace::browser`, which the pages read;
+the browsers of the other sessions wait on `Workspace::shelf`, by the server's
+number for the session that owns them (`pm-shell/src/browser_scope.rs`). The
+start page and the pages that are no session's share the browser of no session,
+which starting a session from the start page hands to that session, with the
+shells of the dock. Opening another session, or a page that
 is no session's, swaps them, and a browser whose session is gone is dropped.
 
 Work on the tabs of a session the reader is not looking at, such as an agent's
 tool call or a dev server found for it, enters that session's browser and leaves
-it again, with the page the reader is on unchanged (`browser_scope_enter` and
-`browser_scope_leave`).
+it again, with the page the reader is on unchanged (`BrowserShelf::swap`).
 
 An agent can only reach its own session's tabs. The server gives each session its
 own token for the tools endpoint when its agent starts, so every call says which
@@ -138,10 +141,9 @@ The window runs `browser_tabs` and every other tool on that session's tabs, and
 number that does not exist. A dev server found for a session, from a shell of
 the session or by watching the ports, opens in that session's browser only.
 
-The saved state keeps the browser of the session that was shown, and in
-`session_browsers` the others by machine and the server's number for the session;
-a window restores each as the server lists its sessions. State saved when one
-browser belonged to the whole window restores into the session that was shown.
+The saved layout (`view.json`) keeps every session's browser in `browsers`, by
+the server's number for the session; a window restores each, and loads its pages
+once its session is shown.
 
 ### Locking a tab against agents
 
@@ -150,9 +152,9 @@ that change a page are refused with a message that says to open a tab of one's
 own: every tool except `browser_snapshot`, `browser_screenshot`,
 `browser_console`, `browser_get_bounding_box`, `browser_wait` and
 `browser_network`, which only read (`changes_page` in
-`pm-components/src/browser_tabs.rs`; a tool nobody listed counts as changing the
+`pm-shell/src/browser_tools.rs`; a tool nobody listed counts as changing the
 page). Closing a locked tab by `browser_tabs` is refused too. A tab an agent
-opened carries a sparkle mark in the strip and cannot be locked: agents may
+opened carries a robot mark in the strip and cannot be locked: agents may
 always work in it. The check is made by the window, before a call reaches the
 helper, so it holds for agents of remote servers as well.
 
@@ -286,7 +288,7 @@ take, the native box would open and the protocol could still answer it.
 
 Pages are not trusted. The helper (`src/safety.js`, `src/origins.js`) refuses by
 default and tells the window when it needs the reader's say; the window shows
-it in the pane (`crates/pm-components/src/browser_safety.rs`) and sends the
+it in the pane (`crates/pm-pages/src/browser_safety.rs`, kept in `crates/pm-shell/src/browser_safety.rs`) and sends the
 answer back. What the reader answers is remembered by the helper only until it
 ends, and never written to disk.
 
@@ -343,15 +345,14 @@ they move through the pages of the window, as before.
 ## The address bar
 
 What is typed in the address bar becomes an address in
-`crates/pm-components/src/browser_address.rs`. Text with a scheme (`https://`,
+`crates/pm-shell/src/browser_address.rs`. Text with a scheme (`https://`,
 `about:`, `data:`) is loaded as it is. A host gets a scheme: `http://` for
 `localhost`, loopback addresses, `*.localhost` and `:3000`, which means
 `localhost:3000`, and `https://` for anything with a dot or written as
 `name:port`. Everything else is searched for: text with spaces, and one word
 without a dot that is not a local host, such as `react`. The search is
 DuckDuckGo (`SEARCH_URL`). The engine is fixed in code; there is no setting for
-it yet, since the address is made in `pm-components`, which does not see the
-window's settings. Nothing typed loads `about:blank`.
+it yet. Nothing typed loads `about:blank`.
 
 ## Finding, zooming and loading again
 
@@ -412,8 +413,9 @@ same.
 ## Adding screenshots and the console to the prompt
 
 Besides elements, the reader can put four things from the page into the next
-prompt. The camera button of the pane's bar opens a menu of them, and the menu
-over the page (right click) lists them after Inspect:
+prompt. The camera button of the pane's bar adds a screenshot, and the menu
+over the page (right click, or the menu button of the bar) lists all four after
+Inspect and Pick Element:
 
 - **Add Screenshot to Chat:** a picture of what the page shows.
 - **Add Full Page Screenshot:** a picture of the whole page, cut at 16000 CSS

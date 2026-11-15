@@ -12,3 +12,4 @@ mod palette;
 pub use cell::{Cell, Color, Flags};
 pub use emulator::{Emulator, Link, Selection, Span};
 pub use palette::{ANSI, indexed};
+pub use pm_text::Reach;

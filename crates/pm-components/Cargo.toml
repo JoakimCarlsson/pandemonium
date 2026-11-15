@@ -5,25 +5,15 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
-pm-harness.workspace = true
-pm-config.workspace = true
-pm-editor.workspace = true
-pm-git.workspace = true
-pm-icon.workspace = true
-pm-input.workspace = true
-pm-markdown.workspace = true
-pm-protocol.workspace = true
-pm-style.workspace = true
-pm-terminal.workspace = true
+base64 = "0.23.1"
+latex-rust = "2.1.1"
+mermaid-svg = "0.7.0"
+pm-browser = { version = "0.15.0-rc.2", path = "../pm-browser" }
+pm-editor = { version = "0.15.0-rc.2", path = "../pm-editor" }
+pm-markdown = { version = "0.15.0-rc.2", path = "../pm-markdown" }
+pm-terminal = { version = "0.15.0-rc.2", path = "../pm-terminal" }
 pm-text.workspace = true
-pm-theme.workspace = true
 pm-treesitter.workspace = true
-pm-ui.workspace = true
 pm-vim.workspace = true
-serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.154"
-similar = "3.2.0"
-
-[dev-dependencies]
-pm-renderer = { path = "../pm-renderer" }
+resvg = "0.48.1"
+rustle.workspace = true

@@ -1,89 +1,97 @@
-//! The badge: a small label in a pill, filled, washed in its colour or quietly neutral.
+//! A small pill of text, such as a count or a state.
 
-use pm_style::{
-    Color, Radius, Role, bg, flex, flex_none, h, items_center, px, rounded, rounded_full,
-};
-use pm_ui::{Node, node};
+use rustle::prelude::*;
 
-use crate::parts::line;
+use crate::app_theme::extended_colors;
+use crate::label::Label;
+use crate::size::Size;
+use rustle::color_scheme;
 
-/// How a badge looks.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Variant {
-    /// A fill in its colour with the words cut out of it.
-    Solid,
-    /// A faint wash of its colour with the words in it.
-    Soft,
-    /// A neutral wash with the words in its colour.
+/// How a badge is drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BadgeVariant {
+    /// A raised surface in the muted tone.
     #[default]
-    Subtle,
+    Neutral,
+    /// The accent.
+    Accent,
+    /// The success tone.
+    Success,
+    /// The warning tone.
+    Warning,
+    /// The danger tone.
+    Danger,
 }
 
-/// A badge being described: what it says, in which colour and how it looks.
-///
-/// Build it with [`Badge::new`], change it with the methods that follow, and
-/// turn it into a node with [`Badge::build`].
-#[derive(Clone, Debug)]
+/// A badge with a variant and a size.
+#[derive(Clone)]
 pub struct Badge {
-    /// The words on the badge.
+    /// Its text.
     label: String,
-    /// The colour of its fill or its words, by variant.
-    tone: Color,
-    /// How it looks.
-    variant: Variant,
-    /// Whether its corners are fully round.
-    round: bool,
+    /// How it is drawn.
+    variant: BadgeVariant,
+    /// Its size.
+    size: Size,
 }
 
 impl Badge {
-    /// A neutral badge saying `label` in the muted colour, with fully round corners.
+    /// A neutral badge reading `label`.
     pub fn new(label: impl Into<String>) -> Self {
         Self {
             label: label.into(),
-            tone: Color::from(Role::Muted),
-            variant: Variant::default(),
-            round: true,
+            variant: BadgeVariant::Neutral,
+            size: Size::Xs,
         }
     }
 
-    /// The badge in `tone`.
-    pub fn tone(mut self, tone: impl Into<Color>) -> Self {
-        self.tone = tone.into();
-        self
-    }
-
-    /// The badge looking like `variant`.
-    pub fn variant(mut self, variant: Variant) -> Self {
+    /// The badge in `variant`.
+    pub fn variant(mut self, variant: BadgeVariant) -> Self {
         self.variant = variant;
         self
     }
 
-    /// The badge with small rounded corners instead of fully round ones.
-    pub fn square(mut self) -> Self {
-        self.round = false;
+    /// The badge at `size`.
+    pub fn size(mut self, size: Size) -> Self {
+        self.size = size;
         self
     }
 
-    /// The node that draws the badge.
-    pub fn build(self) -> Node {
-        let (fill, words) = match self.variant {
-            Variant::Solid => (self.tone, Color::from(Role::Background)),
-            Variant::Soft => (self.tone.alpha(0.18), self.tone),
-            Variant::Subtle => (Color::from(Role::SurfaceSelected), self.tone),
+    /// Emits the badge.
+    #[track_caller]
+    pub fn show(self) {
+        let scheme = color_scheme();
+        let extended = extended_colors();
+        let tint = match self.variant {
+            BadgeVariant::Neutral => scheme.on_surface_variant,
+            BadgeVariant::Accent => scheme.primary,
+            BadgeVariant::Success => extended.success,
+            BadgeVariant::Warning => extended.warning,
+            BadgeVariant::Danger => scheme.error,
         };
-        let pill = node().styles([flex(), items_center(), flex_none(), h(4.5), px(2), bg(fill)]);
-        let pill = if self.round {
-            pill.styles([rounded_full()])
-        } else {
-            pill.styles([rounded(Radius::Sm)])
+        let fill = match self.variant {
+            BadgeVariant::Neutral => scheme.surface_container_high,
+            _ => Color::rgba(tint.r, tint.g, tint.b, 40),
         };
-        pill.child(line(self.label, 11, 1.2, words))
-    }
-}
-
-impl From<Badge> for Node {
-    /// The node that draws the badge.
-    fn from(badge: Badge) -> Self {
-        badge.build()
+        let (height, padding) = match self.size {
+            Size::Xs => (18.0, 6.0),
+            Size::Sm => (20.0, 8.0),
+            Size::Md => (22.0, 8.0),
+            Size::Lg => (26.0, 10.0),
+        };
+        let label = self.label;
+        let size = self.size;
+        stack_aligned(
+            Modifier::new()
+                .height(height)
+                .background_rounded(fill, height / 2.0)
+                .padding_xy(padding, 0.0),
+            BoxAlignment::Center,
+            move || {
+                Label::new(label)
+                    .size(if size == Size::Xs { Size::Xs } else { Size::Sm })
+                    .colour(tint)
+                    .show();
+            },
+        );
     }
 }

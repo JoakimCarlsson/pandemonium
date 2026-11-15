@@ -1,187 +1,169 @@
-//! The popover: a raised surface that floats over a screen, with a heading and rows of choices.
+//! A raised surface floating above everything else where it is emitted,
+//! such as the menus and the branch list of the Git panel; a click outside
+//! it or Escape dismisses it.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::primitives::{Length, Sides};
-use pm_style::{
-    Radius, Role, absolute, bg, cursor_pointer, flex, flex_1, flex_col, flex_none, font_mono, gap,
-    h, inset_length, items_center, justify_between, leading_ratio, left, max_w_px, mb, min_w_px, p,
-    px, py, relative, right, rounded, text_color, text_px, truncate, w_full, w_px, z,
-};
-use pm_ui::{Node, node, text};
+use std::rc::Rc;
 
-use crate::parts::{glyph, line};
-use crate::{Surface, surface};
+use rustle::prelude::*;
+use rustle::{Key, Modifiers};
 
-/// A popover being described: the rows and sections it holds.
-///
-/// Build it with [`Popover::new`], fill it with [`Popover::heading`],
-/// [`Popover::row`], [`Popover::child`] and [`Popover::children`], and turn it
-/// into a node with [`Popover::build`], or with one of the methods that also
-/// place it over what it belongs to.
-#[derive(Clone, Debug)]
-pub struct Popover {
-    /// The frame holding everything in it.
-    body: Node,
+use crate::size::Size;
+use rustle::color_scheme;
+
+/// How a popover is drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PopoverVariant {
+    /// A raised surface with a hairline border.
+    #[default]
+    Raised,
+    /// The window background with a hairline border, for a popover over a raised surface.
+    Flat,
 }
 
-impl Default for Popover {
-    /// An empty popover.
-    fn default() -> Self {
-        Self::new()
-    }
+/// A popover with a variant and a size.
+#[derive(Clone)]
+pub struct Popover {
+    /// How it is drawn.
+    variant: PopoverVariant,
+    /// How much padding it has inside.
+    size: Size,
+    /// How wide it is.
+    width: f32,
+    /// How far it is moved from where it is emitted, across and down.
+    offset: (f32, f32),
+    /// What a click outside it does.
+    on_dismiss: Option<Rc<dyn Fn()>>,
+    /// Whether it opens upward from where it is emitted, for a field near the bottom of the window.
+    above: bool,
 }
 
 impl Popover {
-    /// An empty popover.
+    /// A raised popover 220 wide, 4 below where it is emitted.
     pub fn new() -> Self {
         Self {
-            body: Surface::new()
-                .variant(surface::Variant::Floating)
-                .build()
-                .styles([p(1.5)]),
+            variant: PopoverVariant::Raised,
+            size: Size::Sm,
+            width: 220.0,
+            offset: (0.0, 4.0),
+            on_dismiss: None,
+            above: false,
         }
     }
 
-    /// The popover `pixels` wide, and no wider.
-    pub fn width(mut self, pixels: f32) -> Self {
-        self.body = self.body.styles([w_px(pixels), max_w_px(pixels)]);
+    /// The popover opening upward from where it is emitted when `above`.
+    pub fn above(mut self, above: bool) -> Self {
+        self.above = above;
         self
     }
 
-    /// The popover as wide as what it is placed in.
-    pub fn full_width(mut self) -> Self {
-        self.body = self.body.styles([w_full()]);
+    /// The popover in `variant`.
+    pub fn variant(mut self, variant: PopoverVariant) -> Self {
+        self.variant = variant;
         self
     }
 
-    /// The popover with a heading line saying `title`, and `hint` at its right.
-    pub fn heading(self, title: &str, hint: Option<(&str, &str)>) -> Self {
-        self.child(heading(title, hint))
-    }
-
-    /// The popover with a row of `name` over `description`, ticked while `current`, answering to `id`.
-    pub fn row(self, name: &str, description: &str, current: bool, id: FocusId) -> Self {
-        self.child(row(name, description, current, id))
-    }
-
-    /// The popover with `child` after what it holds.
-    pub fn child(mut self, child: Node) -> Self {
-        self.body = self.body.child(child);
+    /// The popover with padding for `size`.
+    pub fn size(mut self, size: Size) -> Self {
+        self.size = size;
         self
     }
 
-    /// The popover with every node of `children` after what it holds.
-    pub fn children(mut self, children: impl IntoIterator<Item = Node>) -> Self {
-        self.body = self.body.children(children);
+    /// The popover `width` wide.
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = width;
         self
     }
 
-    /// The node that draws the popover.
-    pub fn build(self) -> Node {
-        self.body
+    /// The popover moved `across` and `down` from where it is emitted.
+    pub fn offset(mut self, across: f32, down: f32) -> Self {
+        self.offset = (across, down);
+        self
     }
 
-    /// The popover placed above the button it is a child of, a little way off, with their left edges together,
-    /// and answering to `id` so that pressing it does not count as pressing outside.
-    pub fn over_button(self, id: FocusId) -> Node {
-        placed_above(self.body).focusable(id)
+    /// The popover calling `on_dismiss` when clicked outside or on Escape.
+    pub fn on_dismiss(mut self, on_dismiss: impl Fn() + 'static) -> Self {
+        self.on_dismiss = Some(Rc::new(on_dismiss));
+        self
     }
 
-    /// The popover placed above the button it is a child of, a little way off, with their right edges together,
-    /// and answering to `id` so that pressing it does not count as pressing outside.
-    pub fn over_button_end(self, id: FocusId) -> Node {
-        placed_above_end(self.body).focusable(id)
-    }
-
-    /// The popover placed just above the box it is a child of, across its width.
-    pub fn above_box(self) -> Node {
-        placed_above(self.body)
+    /// Emits the popover holding `content`.
+    #[track_caller]
+    pub fn show(self, content: impl FnOnce()) {
+        let scheme = color_scheme();
+        let padding = match self.size {
+            Size::Xs => 2.0,
+            Size::Sm => 4.0,
+            Size::Md => 6.0,
+            Size::Lg => 8.0,
+        };
+        let fill = match self.variant {
+            PopoverVariant::Raised => scheme.surface_container,
+            PopoverVariant::Flat => scheme.background,
+        };
+        let dismiss = self.on_dismiss.clone();
+        let escape = self.on_dismiss.clone();
+        catching_outside(
+            self.above,
+            move || {
+                if let Some(dismiss) = &dismiss {
+                    dismiss();
+                }
+            },
+            || {
+                column_with(
+                    Modifier::new()
+                        .width(self.width)
+                        .offset(
+                            self.offset.0,
+                            if self.above {
+                                -self.offset.1
+                            } else {
+                                self.offset.1
+                            },
+                        )
+                        .shadow(8.0, 8.0)
+                        .background_rounded(fill, 8.0)
+                        .border(1.0, scheme.outline_variant, 8.0)
+                        .clickable_plain(|| {})
+                        .on_key_event(move |event| match &escape {
+                            Some(escape) if event.is(Key::Escape, Modifiers::NONE) => {
+                                escape();
+                                true
+                            }
+                            _ => false,
+                        })
+                        .padding(padding),
+                    content,
+                );
+            },
+        );
     }
 }
 
-/// `body` hanging above the box it is a child of.
-fn placed_above(body: Node) -> Node {
-    body.styles([
-        absolute(),
-        inset_length(Sides::Bottom, Length::Fraction(1.0)),
-        left(0),
-        mb(2),
-        z(40),
-    ])
-    .keep_in_view()
-}
-
-/// `body` hanging above the box it is a child of, with their right edges together.
-fn placed_above_end(body: Node) -> Node {
-    body.styles([
-        absolute(),
-        inset_length(Sides::Bottom, Length::Fraction(1.0)),
-        right(0),
-        mb(2),
-        z(40),
-    ])
-    .keep_in_view()
-}
-
-/// `button` with `popover`, if there is one, hanging above it.
-pub fn anchored(button: Node, popover: Option<Node>) -> Node {
-    node().styles([relative()]).child(button).children(popover)
-}
-
-/// One row of a popover: a name over what choosing it means, with a tick on the one that is current.
-pub fn row(name: &str, description: &str, current: bool, id: FocusId) -> Node {
-    let mut styles = vec![
-        flex(),
-        flex_none(),
-        items_center(),
-        gap(3),
-        px(2.5),
-        py(1.5),
-        rounded(Radius::Lg),
-        cursor_pointer(),
-        bg(Role::SurfaceHover).hover(),
-    ];
-    if current {
-        styles.push(bg(Role::SurfaceSelected));
+/// Emits `content` in the layer above everything else, opening upward when
+/// `above`, over an invisible layer larger than any window whose click calls
+/// `on_dismiss`.
+#[track_caller]
+fn catching_outside(above: bool, on_dismiss: impl Fn() + 'static, content: impl FnOnce()) {
+    let layered = move || {
+        spacer(
+            Modifier::new()
+                .size(20_000.0, 20_000.0)
+                .offset(-10_000.0, if above { 10_000.0 } else { -10_000.0 })
+                .clickable_plain(on_dismiss),
+        );
+        content();
+    };
+    if above {
+        floating_above(Modifier::new(), layered);
+    } else {
+        floating(Modifier::new(), layered);
     }
-    let mut texts = node()
-        .styles([flex(), flex_col(), flex_1(), min_w_px(0)])
-        .child(line(name, 13, 1.4, Role::Text).styles([truncate()]));
-    if !description.is_empty() {
-        texts = texts.child(line(description, 12, 1.4, Role::Subtle).styles([truncate()]));
-    }
-    let mut row = node().styles(styles).child(texts);
-    if current {
-        row = row.child(glyph(IconName::Check, 4.0, Role::Text));
-    }
-    row.focusable(id)
 }
 
-/// The small heading line of a popover, with `hint` at its right: a key to press, and what it does.
-pub fn heading(title: &str, hint: Option<(&str, &str)>) -> Node {
-    let mut row = node()
-        .styles([flex(), items_center(), justify_between(), h(8), px(2.5)])
-        .child(line(title, 12, 1.4, Role::Subtle));
-    if let Some((key, does)) = hint {
-        row = row.child(key_hint(key, does));
+impl Default for Popover {
+    /// The same as [`Popover::new`].
+    fn default() -> Self {
+        Self::new()
     }
-    row
-}
-
-/// A key to press, in a small chip, and what it does.
-pub fn key_hint(key: &str, does: &str) -> Node {
-    node()
-        .styles([flex(), items_center(), gap(1.5)])
-        .child(
-            node()
-                .styles([px(1.5), rounded(Radius::Md), bg(Role::SurfaceHover)])
-                .child(text(key.to_owned()).styles([
-                    text_px(11),
-                    leading_ratio(1.6),
-                    font_mono(),
-                    text_color(Role::Muted),
-                ])),
-        )
-        .child(line(does, 12, 1.4, Role::Subtle))
 }

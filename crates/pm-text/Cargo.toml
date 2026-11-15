@@ -5,5 +5,3 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-cosmic-text = "0.19.0"
-pm-typography.workspace = true

@@ -1,0 +1,107 @@
+//! The adder: a popover under the sidebar's "Workspaces" heading that adds a
+//! project from a folder, chosen in the folder picker, or from a clone of a
+//! repository on GitHub or any other git host.
+
+use pm_components::{
+    Button, ButtonVariant, Label, LabelVariant, Leading, Notice, NoticeVariant, Popover, Size,
+    TextInput, Tile,
+};
+use pm_shell::{AddStep, Adder, PickerAction, ProjectAction, clone_address, clone_name};
+use rustle::prelude::*;
+
+use crate::actions::Actions;
+
+/// How wide the adder is.
+const WIDTH: f32 = 280.0;
+
+/// Emits the adder in `state`, calling `actions` when the reader acts.
+pub fn adder(state: &Adder, actions: &Actions) {
+    let close = actions.projects.clone();
+    Popover::new()
+        .width(WIDTH)
+        .offset(8.0, 0.0)
+        .on_dismiss(move || close(ProjectAction::Adding(None)))
+        .show(|| match state.step {
+            AddStep::Choose => choices(actions),
+            AddStep::Clone => clone_form(state, actions),
+        });
+}
+
+/// The two ways of adding a project.
+fn choices(actions: &Actions) {
+    let pick = actions.projects.clone();
+    let clone = actions.projects.clone();
+    column_with(Modifier::new().fill_max_width().padding(4.0), || {
+        Tile::new("Open a folder…")
+            .leading(Leading::Icon(phosphor::FOLDER_OPEN))
+            .on_click(move || pick(ProjectAction::Picker(PickerAction::Open(None))))
+            .show();
+        Tile::new("Clone a repository…")
+            .leading(Leading::Icon(phosphor::GITHUB_LOGO))
+            .on_click(move || clone(ProjectAction::Adding(Some(AddStep::Clone))))
+            .show();
+    });
+}
+
+/// The form that clones a repository and adds the clone.
+fn clone_form(state: &Adder, actions: &Actions) {
+    let change = actions.projects.clone();
+    let submit = actions.projects.clone();
+    let back = actions.projects.clone();
+    let start = actions.projects.clone();
+    let address = clone_address(&state.url);
+    let ready = !address.is_empty() && !state.busy;
+    column_with(Modifier::new().fill_max_width().padding(12.0), || {
+        Label::new("Clone a repository").size(Size::Md).show();
+        spacer(Modifier::new().height(4.0));
+        Label::new("A GitHub owner/name, or any git address.")
+            .variant(LabelVariant::Muted)
+            .size(Size::Xs)
+            .show();
+        spacer(Modifier::new().height(10.0));
+        TextInput::new(state.url.clone())
+            .placeholder("owner/name or https://…")
+            .autofocus()
+            .size(Size::Sm)
+            .modifier(Modifier::new().fill_max_width())
+            .on_change(move |text| change(ProjectAction::CloneUrl(text)))
+            .on_submit(move |_| submit(ProjectAction::Clone))
+            .show();
+        if !address.is_empty() {
+            spacer(Modifier::new().height(6.0));
+            Label::new(format!("Into a folder named {}", clone_name(&address)))
+                .variant(LabelVariant::Subtle)
+                .size(Size::Xs)
+                .show();
+        }
+        if let Some(error) = &state.error {
+            spacer(Modifier::new().height(8.0));
+            Notice::new("The clone failed")
+                .detail(error.clone())
+                .variant(NoticeVariant::Danger)
+                .size(Size::Sm)
+                .show();
+        }
+        spacer(Modifier::new().height(12.0));
+        row_arranged(
+            Modifier::new().fill_max_width(),
+            Arrangement::End,
+            Alignment::Center,
+            || {
+                Button::new("Back")
+                    .variant(ButtonVariant::Secondary)
+                    .size(Size::Sm)
+                    .on_click(move || back(ProjectAction::Adding(Some(AddStep::Choose))))
+                    .show();
+                spacer(Modifier::new().width(8.0));
+                Button::new(if state.busy { "Cloning…" } else { "Clone" })
+                    .icon(phosphor::DOWNLOAD_SIMPLE)
+                    .variant(ButtonVariant::Primary)
+                    .size(Size::Sm)
+                    .disabled(!ready)
+                    .on_click(move || start(ProjectAction::Clone))
+                    .show();
+            },
+        );
+    });
+}

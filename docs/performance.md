@@ -26,27 +26,16 @@ PANDEMONIUM_FRAME_TIMINGS=1 CARGO_TARGET_DIR=build cargo run -p pandemonium
 ```
 
 Every 240 successfully submitted main-window frames, stderr reports p50, p95
-and p99 in milliseconds for CPU scene work, surface acquisition plus encoding
-and submission, pointer movement to successful submission, and key/IME handling
-to successful submission. Pointer timings
-start at event handling and include coalesced events from the oldest pending
-movement. They exclude OS event delivery, compositor queues, scanout and actual
-display latency. Keyboard timings begin before applying the edit and include
-coalesced input through the next successful submission. These are CPU
-measurements, not GPU timestamp queries.
+and p99 in milliseconds for CPU scene work (the frame clock, composition,
+layout and turning the tree into draw commands) and for surface acquisition
+plus encoding and submission. Rustle measures each frame and hands it to the
+observer `rustle::set_frame_observer` installs; `crates/pandemonium/src/performance.rs`
+sums them up. They exclude OS event delivery, compositor queues, scanout and
+actual display latency. These are CPU measurements, not GPU timestamp queries.
 
-For a hardware-specific comparison, run the same workload twice:
-
-```sh
-PANDEMONIUM_FRAME_TIMINGS=1 PANDEMONIUM_FRAME_LATENCY=2 CARGO_TARGET_DIR=build cargo run -p pandemonium
-PANDEMONIUM_FRAME_TIMINGS=1 PANDEMONIUM_FRAME_LATENCY=1 CARGO_TARGET_DIR=build cargo run -p pandemonium
-```
-
-The override accepts only `1` or `2`; the default remains `2`. Keep vsync on.
 Compare slow-frame percentiles while moving across a large expanded tree,
-scrolling, and receiving agent output. A smaller queue can reduce latency but
-can also reduce throughput, so choose it from measurements on the target GPU
-and compositor. Headless snapshots cannot establish this tradeoff.
+scrolling, and receiving agent output. Headless snapshots cannot measure
+this.
 
 ## Streaming latency
 

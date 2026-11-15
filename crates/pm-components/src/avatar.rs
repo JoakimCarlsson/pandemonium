@@ -1,82 +1,67 @@
-//! The avatar: a project's colour with its first letter, at a measure per size.
+//! The avatar: a project's colour with its first letter.
 
-use pm_style::{
-    Color, Radius, bg, flex, font_semibold, items_center, justify_center, leading_ratio, rounded,
-    size, text_color, text_px,
-};
-use pm_ui::{Node, node, text};
+use rustle::prelude::*;
 
-use crate::Project;
 use crate::size::Size;
 
-/// An avatar being described: the letter it shows, its colour and its size.
-///
-/// Build it with [`Avatar::new`] or [`Avatar::of`], change it with
-/// [`Avatar::size`], and turn it into a node with [`Avatar::build`].
+/// A rounded square in a colour with an initial on it.
 #[derive(Clone, Debug)]
 pub struct Avatar {
-    /// The first letter of the name, in capitals.
+    /// The uppercase first letter of the name.
     initial: String,
-    /// What it is filled with.
-    color: Color,
-    /// How big it is.
+    /// The fill.
+    colour: Color,
+    /// Its size.
     size: Size,
 }
 
 impl Avatar {
-    /// An avatar showing the first letter of `name` on `color`.
-    pub fn new(name: &str, color: Color) -> Self {
+    /// An avatar for `name` filled with `colour`.
+    pub fn new(name: &str, colour: Color) -> Self {
         Self {
             initial: name
                 .chars()
                 .next()
                 .map(|initial| initial.to_uppercase().to_string())
                 .unwrap_or_default(),
-            color,
+            colour,
             size: Size::Sm,
         }
     }
 
-    /// The avatar of `project`: its name's first letter on the colour its path gives it.
-    pub fn of(project: &Project) -> Self {
-        Self::new(&project.name, project.color())
-    }
-
-    /// The avatar at `size`: a square 16, 20, 24 or 32px on a side.
+    /// The avatar at `size`.
     pub fn size(mut self, size: Size) -> Self {
         self.size = size;
         self
     }
 
-    /// The node that draws the avatar.
-    pub fn build(self) -> Node {
+    /// Emits the avatar.
+    pub fn show(self) {
         let (side, font) = match self.size {
-            Size::Xs => (4.0, 11),
-            Size::Sm => (5.0, 13),
-            Size::Md => (6.0, 15),
-            Size::Lg => (8.0, 18),
+            Size::Xs => (14.0, 9.0),
+            Size::Sm => (18.0, 11.0),
+            Size::Md => (24.0, 15.0),
+            Size::Lg => (32.0, 18.0),
         };
-        node()
-            .styles([
-                flex(),
-                items_center(),
-                justify_center(),
-                size(side),
-                rounded(Radius::Md),
-                bg(self.color),
-            ])
-            .child(text(self.initial).styles([
-                text_px(font),
-                leading_ratio(1.2),
-                font_semibold(),
-                text_color(Color::White),
-            ]))
-    }
-}
-
-impl From<Avatar> for Node {
-    /// The node that draws the avatar.
-    fn from(avatar: Avatar) -> Self {
-        avatar.build()
+        let initial = self.initial;
+        stack_aligned(
+            Modifier::new()
+                .size(side, side)
+                .background_rounded(self.colour, side * 0.3),
+            BoxAlignment::Center,
+            move || {
+                text_styled(
+                    Modifier::new(),
+                    initial,
+                    TextStyle {
+                        color: Color::rgb(255, 255, 255),
+                        font_size: font,
+                        line_height: font * 1.2,
+                        font_weight: FontWeight::SEMI_BOLD,
+                        ..TextStyle::default()
+                    },
+                );
+            },
+        );
     }
 }

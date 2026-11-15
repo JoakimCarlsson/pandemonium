@@ -35,7 +35,7 @@ pub enum Button {
 }
 
 /// One press or release of a key.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Key {
     /// Whether the key went down, not up.
     pub pressed: bool,
@@ -67,4 +67,52 @@ pub enum Cursor {
     ResizeHorizontal,
     /// A resize handle running north and south.
     ResizeVertical,
+}
+
+/// One thing the reader did to a page with the pointer or the keyboard, in logical pixels from the page's corner.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PageInput {
+    /// The pointer moved to `x`, `y`, or out of the page when `left`.
+    Moved {
+        /// Across, from the left edge.
+        x: i32,
+        /// Down, from the top edge.
+        y: i32,
+        /// The modifiers and buttons held.
+        modifiers: Modifiers,
+        /// Whether the pointer left the page.
+        left: bool,
+    },
+    /// A button went down or up at `x`, `y`.
+    Button {
+        /// Across, from the left edge.
+        x: i32,
+        /// Down, from the top edge.
+        y: i32,
+        /// Which button.
+        button: Button,
+        /// Whether it went down, not up.
+        pressed: bool,
+        /// How many quick presses in a row this is.
+        clicks: i32,
+        /// The modifiers and buttons held.
+        modifiers: Modifiers,
+    },
+    /// The wheel turned by `dx`, `dy` with the pointer at `x`, `y`; positive `dy` scrolls up.
+    Scrolled {
+        /// Across, from the left edge.
+        x: i32,
+        /// Down, from the top edge.
+        y: i32,
+        /// How far across.
+        dx: i32,
+        /// How far up.
+        dy: i32,
+        /// The modifiers held.
+        modifiers: Modifiers,
+    },
+    /// A key went down or up.
+    Key(Key),
+    /// An input method finished typing this text.
+    Text(String),
 }

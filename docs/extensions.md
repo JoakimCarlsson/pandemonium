@@ -18,8 +18,9 @@ starts a language server; `make extension-sample` builds it too, into
 `build/extensions/sample-server`.
 
 An extension belongs to the server of the machine it is installed on, and
-applies only to the projects of that server. The window reads its themes, icon
-themes and command names from every server it is connected to.
+applies only to the projects of that server. The window reads its icon themes and
+command names from every server it is connected to; colour themes are read but
+not applied.
 
 ## The manifest
 
@@ -62,8 +63,9 @@ prompt = "Say hello to {argument}."     # a command without `prompt` is run by t
 ```
 
 - **Themes** name a colour, `#rrggbb` or `#rrggbbaa`, for each role they change,
-  in `[dark]` and `[light]`; the rest is the default theme's. They appear in the
-  theme settings.
+  in `[dark]` and `[light]`; the rest is the default theme's. The format is still
+  read, but the window no longer applies them: it draws in Rustle's light or dark
+  theme, as the appearance setting chooses.
 - **Icon themes** list `[[icons]]` with a `suffix`, an SVG `file` and a `color`.
 - **Debug adapters** are used by a launch scenario whose `type` is one of
   `types`. An adapter that is one the editor already knows is not replaced.

@@ -1,338 +1,263 @@
-//! The prompts above the prompt box that wait for the agent's turn to end, each of which can be read in full, edited in the prompt box, sent now or removed.
+//! The prompts written while the agent was on a turn, listed over the
+//! composer: each with its text and attached files, a button that hands it
+//! over in place of the turn, one that edits it and one that removes it.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, bg, border, border_color, flex, flex_1, flex_col, flex_none, gap, items_center,
-    items_start, mb, min_w_px, pl, pr, pt, py, rounded, w_full,
-};
-use pm_text::{Field, Shaper};
-use pm_ui::{Node, node};
+use std::rc::Rc;
 
-use crate::Button;
-use crate::button::Variant;
-use crate::parts::{glyph, line, paragraph};
-use crate::sample::{Queued, Session};
+use rustle::prelude::*;
+use rustle::{Key, Modifiers};
+
+use crate::card::{Card, CardVariant};
+use crate::icon_button::IconButton;
+use crate::label::{Label, LabelVariant};
 use crate::size::Size;
-use crate::state::{HURRY_BASE, Outgoing, Page, REMOVE_QUEUED_BASE, WorkspaceState, prompt_field};
+use crate::text_input::TextInput;
+use rustle::color_scheme;
 
-/// Gives up the edit of a waiting prompt and puts back what was in the prompt box before it.
-pub const QUEUED_CANCEL: FocusId = FocusId(7_402_302);
-
-/// The first of the buttons opening a waiting prompt for editing; the rest follow it.
-pub const EDIT_QUEUED_BASE: u64 = 4_901_000_000_000;
-
-/// How wide the three buttons beside the text of a waiting prompt are together, in logical pixels, which the text leaves free.
-const BESIDE_TEXT: f32 = 240.0;
-
-/// How wide the count of files beside the text of a waiting prompt is, in logical pixels.
-const FILE_COUNT: f32 = 60.0;
-
-/// How wide the button beside a waiting prompt being edited is, in logical pixels.
-const BESIDE_EDIT: f32 = 100.0;
-
-/// How much of a row's width its border, padding, glyph and gaps take, in logical pixels.
-const CHROME: f32 = 50.0;
-
-/// A waiting prompt whose text is being edited in the prompt box.
-#[derive(Clone, Debug, PartialEq)]
-pub struct EditingQueued {
-    /// The session it waits in, by the scope that names it however the sessions are renumbered.
-    pub scope: u64,
-    /// The prompt, by the id the server gave it.
-    pub id: u64,
-    /// What the prompt box held before the edit began, which goes back when it ends.
-    pub draft: Field,
+/// One waiting prompt.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Waiting {
+    /// The number it goes by within its session.
+    id: u64,
+    /// What the reader wrote.
+    text: String,
+    /// The names of the files attached.
+    files: Vec<String>,
 }
 
-impl WorkspaceState {
-    /// Puts the text of the waiting prompt at `index` of the open session in the prompt box to be edited, keeping what the box held until the edit ends, and holds the session's queue so that no prompt behind it is handed to the agent meanwhile.
-    pub(crate) fn open_queued_edit(&mut self, index: usize) {
-        if self.editing_queued.is_some() {
-            return;
+/// How the list of queued prompts is drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum QueuedVariant {
+    /// An outlined card over the composer.
+    #[default]
+    Card,
+    /// Rows only, inside another surface.
+    Inline,
+}
+
+/// The callbacks of the list.
+#[derive(Clone, Default)]
+struct Callbacks {
+    /// Hands the prompt numbered so over in place of the turn.
+    on_hurry: Option<Rc<dyn Fn(u64)>>,
+    /// Removes the prompt numbered so.
+    on_remove: Option<Rc<dyn Fn(u64)>>,
+    /// Holds the queue while a prompt is edited, or lets it go on.
+    on_hold: Option<Rc<dyn Fn(bool)>>,
+    /// Makes the prompt numbered so say the text.
+    on_edit: Option<Rc<dyn Fn(u64, String)>>,
+}
+
+/// The list of queued prompts with a variant and a size.
+#[derive(Clone)]
+pub struct QueuedList {
+    /// The waiting prompts, oldest first.
+    waiting: Vec<Waiting>,
+    /// How it is drawn.
+    variant: QueuedVariant,
+    /// Its size.
+    size: Size,
+    /// The modifier it is laid out with.
+    modifier: Modifier,
+    /// What its buttons do.
+    callbacks: Callbacks,
+}
+
+impl QueuedList {
+    /// An empty list.
+    pub fn new() -> Self {
+        Self {
+            waiting: Vec::new(),
+            variant: QueuedVariant::Card,
+            size: Size::Sm,
+            modifier: Modifier::new(),
+            callbacks: Callbacks::default(),
         }
-        let Page::Session(position) = self.page else {
-            return;
-        };
-        let Some(session) = self.sessions.get(position) else {
-            return;
-        };
-        let Some(queued) = session.queued.get(index) else {
-            return;
-        };
-        let (scope, id, text) = (session.scope, queued.id, prompt_field(&queued.text));
-        let draft = std::mem::replace(&mut self.prompt, text);
-        self.editing_queued = Some(EditingQueued { scope, id, draft });
-        self.outbox.push(Outgoing::HoldQueue {
-            session: position,
-            held: true,
+    }
+
+    /// The list with the prompt numbered `id` saying `text` with `files` attached added.
+    pub fn item(mut self, id: u64, text: impl Into<String>, files: Vec<String>) -> Self {
+        self.waiting.push(Waiting {
+            id,
+            text: text.into(),
+            files,
         });
+        self
     }
 
-    /// Ends the edit of the waiting prompt, puts back what the prompt box held before it and lets the session's queue go on.
-    pub(crate) fn cancel_queued_edit(&mut self) {
-        let Some(scope) = self.editing_queued.as_ref().map(|editing| editing.scope) else {
-            return;
-        };
-        self.end_queued_edit();
-        if let Some(session) = self.sessions.iter().position(|held| held.scope == scope) {
-            self.outbox.push(Outgoing::HoldQueue {
-                session,
-                held: false,
-            });
-        }
+    /// The list in `variant`.
+    pub fn variant(mut self, variant: QueuedVariant) -> Self {
+        self.variant = variant;
+        self
     }
 
-    /// Ends the edit of the waiting prompt and puts back what the prompt box held before it, asking nothing of the server.
-    fn end_queued_edit(&mut self) {
-        if let Some(editing) = self.editing_queued.take() {
-            self.prompt = editing.draft;
-        }
+    /// The list at `size`.
+    pub fn size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
     }
 
-    /// Hands the server the text in the prompt box as the text of the waiting prompt, which lets its queue go on, and ends the edit. Leaves the edit open when the text is empty and no file goes with the prompt. An edit that changed nothing only lets the queue go on.
-    pub(crate) fn save_queued_edit(&mut self) {
-        let Some(editing) = self.editing_queued.as_ref() else {
-            return;
-        };
-        let found = self
-            .sessions
-            .iter()
-            .position(|held| held.scope == editing.scope)
-            .and_then(|session| {
-                let queued = self.sessions[session]
-                    .queued
-                    .iter()
-                    .find(|queued| queued.id == editing.id)?;
-                Some((session, queued.clone()))
-            });
-        let Some((session, queued)) = found else {
-            self.cancel_queued_edit();
-            return;
-        };
-        let text = self.prompt.text().trim().to_owned();
-        if text.is_empty() && queued.files.is_empty() {
+    /// The list laid out with `modifier`.
+    pub fn modifier(mut self, modifier: Modifier) -> Self {
+        self.modifier = modifier;
+        self
+    }
+
+    /// The list calling `on_hurry` with a prompt's number to hand it over in place of the turn.
+    pub fn on_hurry(mut self, on_hurry: impl Fn(u64) + 'static) -> Self {
+        self.callbacks.on_hurry = Some(Rc::new(on_hurry));
+        self
+    }
+
+    /// The list calling `on_remove` with a prompt's number to drop it.
+    pub fn on_remove(mut self, on_remove: impl Fn(u64) + 'static) -> Self {
+        self.callbacks.on_remove = Some(Rc::new(on_remove));
+        self
+    }
+
+    /// The list calling `on_hold` with true when editing a prompt starts and false when it is given up.
+    pub fn on_hold(mut self, on_hold: impl Fn(bool) + 'static) -> Self {
+        self.callbacks.on_hold = Some(Rc::new(on_hold));
+        self
+    }
+
+    /// The list calling `on_edit` with a prompt's number and its new text when an edit is saved.
+    pub fn on_edit(mut self, on_edit: impl Fn(u64, String) + 'static) -> Self {
+        self.callbacks.on_edit = Some(Rc::new(on_edit));
+        self
+    }
+
+    /// Emits the list, or nothing while no prompt waits.
+    #[track_caller]
+    pub fn show(self) {
+        if self.waiting.is_empty() {
             return;
         }
-        self.end_queued_edit();
-        self.outbox.push(if text != queued.text {
-            Outgoing::EditQueued {
-                session,
-                queued: queued.id,
-                text,
+        let editing = remember(|| None::<u64>);
+        let waiting = self.waiting;
+        let callbacks = self.callbacks;
+        let size = self.size;
+        let rows = move || {
+            Label::new(format!("Queued · {}", waiting.len()))
+                .variant(LabelVariant::Subtle)
+                .size(Size::Xs)
+                .show();
+            for prompt in waiting {
+                let callbacks = callbacks.clone();
+                let editing = editing.clone();
+                key(prompt.id, move || {
+                    waiting_row(prompt, &callbacks, &editing, size)
+                });
             }
-        } else {
-            Outgoing::HoldQueue {
-                session,
-                held: false,
-            }
-        });
-    }
-}
-
-/// A button showing only `icon`, saying what it does with `tooltip`, answering to `id`.
-fn icon_button(icon: IconName, tooltip: &str, id: FocusId) -> Node {
-    Button::icon(icon, id)
-        .variant(Variant::Ghost)
-        .size(Size::Sm)
-        .build()
-        .tooltip(tooltip)
-}
-
-/// The box a row of a waiting prompt is drawn in, its contents aligned to the top.
-fn frame() -> Node {
-    node().styles([
-        flex(),
-        items_start(),
-        gap(2),
-        w_full(),
-        pl(3),
-        pr(1),
-        py(1),
-        rounded(Radius::Lg),
-        border(),
-        border_color(Role::Border),
-        bg(Role::Surface),
-    ])
-}
-
-/// One waiting prompt, at `index`, in a row `width` logical pixels wide: all its text wrapped, how many files go with it and buttons to edit it, send it now or remove it.
-fn waiting(index: usize, queued: &Queued, width: f32, shaper: &mut Shaper) -> Node {
-    let counted = if queued.files.is_empty() {
-        0.0
-    } else {
-        FILE_COUNT
-    };
-    let room = (width - CHROME - BESIDE_TEXT - counted).max(120.0);
-    let mut buttons = node()
-        .styles([flex(), items_center(), gap(1), flex_none()])
-        .child(icon_button(
-            IconName::Pencil,
-            "Edit",
-            FocusId(EDIT_QUEUED_BASE + index as u64),
-        ));
-    buttons = buttons
-        .child(
-            Button::new("Send now", FocusId(HURRY_BASE + index as u64))
-                .variant(Variant::Ghost)
+        };
+        match self.variant {
+            QueuedVariant::Inline => column_arranged(
+                self.modifier,
+                Arrangement::SpacedBy(4.0),
+                Alignment::Start,
+                rows,
+            ),
+            QueuedVariant::Card => Card::new()
+                .variant(CardVariant::Outlined)
                 .size(Size::Sm)
-                .with_icon(IconName::Zap)
-                .build(),
-        )
-        .child(
-            Button::new("Remove", FocusId(REMOVE_QUEUED_BASE + index as u64))
-                .variant(Variant::Ghost)
-                .size(Size::Sm)
-                .with_icon(IconName::Trash)
-                .build(),
-        );
-    let mut row = frame()
-        .child(
-            node()
-                .styles([pt(1)])
-                .child(glyph(IconName::Progress, 3.5, Role::Muted)),
-        )
-        .child(
-            node()
-                .styles([flex_1(), min_w_px(0), pt(1)])
-                .child(paragraph(&queued.text, 13, 1.5, Role::Text, room, shaper)),
-        );
-    if !queued.files.is_empty() {
-        let count = queued.files.len();
-        let files = if count == 1 { "file" } else { "files" };
-        row = row.child(node().styles([flex_none(), pt(1.5)]).child(line(
-            format!("{count} {files}"),
-            12,
-            1.4,
-            Role::Muted,
-        )));
-    }
-    row.child(buttons)
-}
-
-/// The waiting prompt being edited, in a row `width` logical pixels wide: the text it has until the edit is saved, and a button to give the edit up.
-fn editing(queued: &Queued, width: f32, shaper: &mut Shaper) -> Node {
-    let room = (width - CHROME - BESIDE_EDIT).max(120.0);
-    frame()
-        .child(
-            node()
-                .styles([pt(1)])
-                .child(glyph(IconName::Pencil, 3.5, Role::Accent)),
-        )
-        .child(
-            node()
-                .styles([flex_1(), min_w_px(0), pt(1)])
-                .child(paragraph(&queued.text, 13, 1.5, Role::Muted, room, shaper)),
-        )
-        .child(
-            Button::new("Cancel", QUEUED_CANCEL)
-                .variant(Variant::Ghost)
-                .size(Size::Sm)
-                .with_icon(IconName::Close)
-                .build(),
-        )
-}
-
-/// The prompts waiting for `session`'s agent, oldest first, in a column `width` logical pixels wide, or nothing when none waits.
-pub fn queued(
-    state: &WorkspaceState,
-    session: &Session,
-    width: f32,
-    shaper: &mut Shaper,
-) -> Option<Node> {
-    if session.queued.is_empty() {
-        return None;
-    }
-    let editing_id = state
-        .editing_queued
-        .as_ref()
-        .filter(|open| open.scope == session.scope)
-        .map(|open| open.id);
-    let mut rows = node().styles([flex(), flex_col(), gap(1), mb(2)]);
-    for (index, waiting_prompt) in session.queued.iter().enumerate() {
-        rows = rows.child(if editing_id == Some(waiting_prompt.id) {
-            editing(waiting_prompt, width, shaper)
-        } else {
-            waiting(index, waiting_prompt, width, shaper)
-        });
-    }
-    Some(rows)
-}
-
-#[cfg(test)]
-mod tests {
-    use pm_harness::Event;
-    use pm_text::Edit;
-
-    use super::*;
-    use crate::state::{PROMPT, WorkspaceState};
-
-    /// What `WorkspaceState` is given for the tests: the same state with nothing waiting in its outbox.
-    trait Drained {
-        /// The state with its outbox emptied.
-        fn drained(self) -> Self;
-    }
-
-    impl Drained for WorkspaceState {
-        /// The state with its outbox emptied.
-        fn drained(mut self) -> Self {
-            self.take_outbox();
-            self
+                .modifier(self.modifier)
+                .show(move || {
+                    column_arranged(
+                        Modifier::new().fill_max_width(),
+                        Arrangement::SpacedBy(4.0),
+                        Alignment::Start,
+                        rows,
+                    )
+                }),
         }
     }
+}
 
-    /// A state whose open session has two prompts waiting and a draft in the prompt box.
-    fn waiting_state() -> WorkspaceState {
-        let state = WorkspaceState::sample();
-        let session = state.sessions.len() - 1;
-        let state = state.after(FocusId(crate::state::SESSION_BASE + session as u64));
-        [(1, "first"), (2, "second")]
-            .into_iter()
-            .fold(state, |state, (id, text)| {
-                state.heard(
-                    session,
-                    Event::Queued {
-                        id,
-                        text: text.to_owned(),
-                        files: Vec::new(),
-                    },
-                )
-            })
-            .edited(PROMPT, Edit::Paste("my draft".to_owned()))
-            .drained()
+impl Default for QueuedList {
+    /// The same as [`QueuedList::new`].
+    fn default() -> Self {
+        Self::new()
     }
+}
 
-    /// Editing holds the queue and loads the waiting text into the prompt box, sending asks the server to replace the text and lets the queue go on, and the draft comes back.
-    #[test]
-    fn sending_while_editing_saves_the_edit_and_restores_the_draft() {
-        let mut state = waiting_state().after(FocusId(EDIT_QUEUED_BASE));
-        assert_eq!(state.prompt.text(), "first");
-        assert!(matches!(
-            state.take_outbox().as_slice(),
-            [Outgoing::HoldQueue { held: true, .. }]
-        ));
-        state = state
-            .edited(PROMPT, Edit::Paste(", edited".to_owned()))
-            .after(crate::state::SEND);
-        assert_eq!(state.prompt.text(), "my draft");
-        assert!(state.editing_queued.is_none());
-        assert!(matches!(
-            state.take_outbox().as_slice(),
-            [Outgoing::EditQueued { queued: 1, text, .. }] if text == "first, edited"
-        ));
-    }
-
-    /// Cancelling restores the draft and lets the queue go on without changing any prompt.
-    #[test]
-    fn cancelling_an_edit_restores_the_draft_and_releases_the_queue() {
-        let mut state = waiting_state()
-            .after(FocusId(EDIT_QUEUED_BASE))
-            .edited(PROMPT, Edit::Paste("x".to_owned()))
-            .after(QUEUED_CANCEL);
-        assert_eq!(state.prompt.text(), "my draft");
-        assert!(matches!(
-            state.take_outbox().last(),
-            Some(Outgoing::HoldQueue { held: false, .. })
-        ));
-    }
+/// Emits the row of `prompt` at `size`: its text, or a field editing it
+/// while `editing` names it, and the buttons calling `callbacks`.
+#[track_caller]
+fn waiting_row(prompt: Waiting, callbacks: &Callbacks, editing: &State<Option<u64>>, size: Size) {
+    let scheme = color_scheme();
+    let id = prompt.id;
+    let edited = editing.get() == Some(id);
+    row_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(4.0),
+        Alignment::Center,
+        || {
+            icon(phosphor::CLOCK, 12.0, scheme.on_surface_variant);
+            if edited {
+                let save = callbacks.on_edit.clone();
+                let hold = callbacks.on_hold.clone();
+                let done = editing.clone();
+                let cancel = editing.clone();
+                TextInput::new(prompt.text.clone())
+                    .autofocus()
+                    .size(size)
+                    .modifier(
+                        Modifier::new()
+                            .weight(1.0)
+                            .on_preview_key_event(move |event| {
+                                let escape =
+                                    event.pressed && event.is(Key::Escape, Modifiers::NONE);
+                                if escape {
+                                    cancel.set(None);
+                                    if let Some(hold) = &hold {
+                                        hold(false);
+                                    }
+                                }
+                                escape
+                            }),
+                    )
+                    .on_submit(move |text| {
+                        done.set(None);
+                        if let Some(save) = &save {
+                            save(id, text);
+                        }
+                    })
+                    .show();
+                return;
+            }
+            let mut line = prompt.text.lines().next().unwrap_or_default().to_owned();
+            if !prompt.files.is_empty() {
+                line.push_str(&format!(" · {} attached", prompt.files.len()));
+            }
+            Label::new(line)
+                .size(size)
+                .modifier(Modifier::new().weight(1.0).clip())
+                .show();
+            if let Some(hurry) = callbacks.on_hurry.clone() {
+                IconButton::new(phosphor::ARROW_UP)
+                    .size(Size::Xs)
+                    .on_click(move || hurry(id))
+                    .show();
+            }
+            if callbacks.on_edit.is_some() {
+                let hold = callbacks.on_hold.clone();
+                let start = editing.clone();
+                IconButton::new(phosphor::PENCIL_SIMPLE)
+                    .size(Size::Xs)
+                    .on_click(move || {
+                        start.set(Some(id));
+                        if let Some(hold) = &hold {
+                            hold(true);
+                        }
+                    })
+                    .show();
+            }
+            if let Some(remove) = callbacks.on_remove.clone() {
+                IconButton::new(phosphor::TRASH)
+                    .size(Size::Xs)
+                    .on_click(move || remove(id))
+                    .show();
+            }
+        },
+    );
 }

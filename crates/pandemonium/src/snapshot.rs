@@ -1,6001 +1,753 @@
-//! Drawing one frame to a PNG without opening a window.
+//! `--snapshot`: draws the window over the sample workspace, or a section
+//! of the settings window over sample settings, into a PNG, without a
+//! window or a server, on the page asked for: a session, the welcome page
+//! of a new session or chat, the history, the extensions or a project's
+//! overview; with the right panel's Files or Search tab, the quick input,
+//! the project menu, the adder, the made-up projects' notice, or the folder
+//! picker's window, shown when asked for.
 
 use std::path::Path;
 
-use pm_components::Project;
-use pm_components::adder::{ADDER_BROWSE, ADDER_CLONE, ADDER_ROW_BASE, Found, Kind as Row};
-use pm_components::branch_tasks::{BRANCH_TASK_ROW_BASE, BranchTask};
-use pm_components::browser_safety::{Certificate, Download, Question as Asked, Saving};
-use pm_components::diff::gutter_id;
-use pm_components::git_controls::{BRANCH_BUTTON, BRANCH_FILTER, Pick as Choosing};
-use pm_components::git_menus::MenuKind;
-use pm_components::git_prompts::Prompt;
-use pm_components::open_files::EDITOR_FIELD;
-use pm_components::panes::{Item, SPLIT_RIGHT, Side};
-use pm_components::settings::{SETTINGS_ADD, SETTINGS_FIND, Section};
-use pm_components::settings_catalog::{OPEN_LIST, Setting as SettingsCatalogue};
-use pm_components::settings_machines::{MACHINE_ADD, MACHINE_ADDRESS, MACHINE_NAME};
-use pm_components::state::{
-    CHAT_TEXT, COMMENT_ADD, COMMENT_FIELD, COMMIT_MESSAGE, DETAILS_BASE, FILE_BASE, RESTORE_BASE,
-    REVIEW_FILES, STAGE_BASE, SUBAGENTS_CHIP, TAB_CHAT,
+use pm_components::AppTheme;
+use pm_pages::{
+    Actions, PICKER_SIZE, PickerActions, SETTINGS_SIZE, SettingsActions, folder_picker_page,
+    settings_page, settings_section, workspace_page,
 };
-use pm_components::state::{LOCATION, SETTINGS};
-use pm_components::tree_actions::{TREE_NEW_FOLDER, TreeTarget};
-use pm_harness::{
-    Alternative, Background, Choice, Diff, Discovery, Event, Input as Skip, Inquiry, Kind, Merge,
-    Permission, Pick, PlanStep, Progress, Question, Setting, Skipped, Slash, Standing, Tool,
-    ToolState, TrustRequest, Verdict, Worktree,
-};
-use pm_input::{FocusId, PointerState};
-use pm_pages::{ADD_PROJECT, HISTORY, PROMPT, SEND, Screen, TAB_DIFF, TERMINAL, WorkspaceState};
-use pm_renderer::{DrawList, Renderer};
-use pm_text::Edit;
-use pm_theme::{Appearance, default_family};
-use pm_ui::{Input, TextPoint, TextSelection};
 
-use crate::scene;
+/// The size drawn when none is given.
+const DEFAULT_SIZE: (u32, u32) = (1636, 720);
 
-/// Logical width of the snapshot.
-const WIDTH: u32 = 1280;
+/// The size of a snapshot of the settings window at its narrowest.
+const NARROW_SIZE: (u32, u32) = (640, 420);
 
-/// Logical height of the snapshot.
-const HEIGHT: u32 = 800;
+/// How long the live snapshot waits for the server at each stage.
+const LIVE_WAIT: std::time::Duration = std::time::Duration::from_secs(4);
 
-/// Logical width of a snapshot of the settings window.
-const SETTINGS_WIDTH: u32 = 960;
+/// How long the live snapshot waits for the server to end the shells it started.
+const CLOSE_WAIT: std::time::Duration = std::time::Duration::from_millis(300);
 
-/// Logical height of a snapshot of the settings window.
-const SETTINGS_HEIGHT: u32 = 720;
-
-/// Logical width of a snapshot of the folder picker's window.
-const PICKER_WIDTH: u32 = 880;
-
-/// Logical height of a snapshot of the folder picker's window.
-const PICKER_HEIGHT: u32 = 560;
-
-/// Logical width of a snapshot of the settings window at its narrowest.
-const NARROW_WIDTH: u32 = 640;
-
-/// Logical height of a snapshot of the settings window at its smallest.
-const NARROW_HEIGHT: u32 = 420;
-
-/// The name of the shot of each section of the settings window, after `settings-`.
-pub const SETTINGS_SHOTS: [(&str, Section); 27] = [
-    ("general", Section::General),
-    ("appearance", Section::Appearance),
-    ("editor", Section::Editor),
-    ("editor-appearance", Section::EditorAppearance),
-    ("editor-editing", Section::EditorEditing),
-    ("editor-saving", Section::EditorSaving),
-    ("editor-intelligence", Section::EditorIntelligence),
-    ("editor-search", Section::EditorSearch),
-    ("editor-vim", Section::EditorVim),
-    ("languages", Section::Languages),
-    ("keymap", Section::Keymap),
-    ("terminal", Section::Terminal),
-    ("browser", Section::Browser),
-    ("git", Section::Git),
-    ("worktrees", Section::Worktrees),
-    ("agents", Section::Agents),
-    ("agent-servers", Section::AgentServers),
-    ("mcp-servers", Section::McpServers),
-    ("model-servers", Section::ModelServers),
-    ("models", Section::ModelSlots),
-    ("customizations", Section::Customizations),
-    ("skills", Section::Skills),
-    ("instructions", Section::Instructions),
-    ("agent-definitions", Section::AgentDefinitions),
-    ("hooks", Section::Hooks),
-    ("tools", Section::Tools),
-    ("servers", Section::Servers),
+/// The words a snapshot understands after its size.
+const WORDS: &[&str] = &[
+    "dark",
+    "light",
+    "live",
+    "welcome",
+    "chat",
+    "history",
+    "extensions",
+    "overview",
+    "approve",
+    "inquiry",
+    "trust",
+    "continue",
+    "update",
+    "sign-in",
+    "problems",
+    "tasks",
+    "debug",
+    "selection",
+    "git-menu",
+    "git-source",
+    "git-confirm",
+    "branch-menu",
+    "diff",
+    "code",
+    "code-find",
+    "code-replace",
+    "code-goto",
+    "code-vim",
+    "code-debug",
+    "code-scrolled",
+    "code-markdown",
+    "code-picture",
+    "code-completions",
+    "code-hover",
+    "code-signature",
+    "code-annotations",
+    "code-actions",
+    "code-rename",
+    "code-drag",
+    "code-colour",
+    "code-rtl",
+    "code-language",
+    "code-compare",
+    "code-file-menu",
+    "tab-menu",
+    "tab-steps",
+    "split",
+    "excerpts",
+    "update-tab",
+    "files",
+    "search",
+    "quick",
+    "quick-commands",
+    "quick-sessions",
+    "quick-text",
+    "quick-theme",
+    "quick-symbols",
+    "quick-outline",
+    "quick-keymap",
+    "quick-settings",
+    "quick-rewind",
+    "quick-branch",
+    "quick-references",
+    "quick-actions",
+    "quick-history",
+    "quick-problems",
+    "diff-notes",
+    "conflict",
+    "revision",
+    "changes",
+    "search-edit",
+    "file-menu",
+    "file-delete",
+    "browser",
+    "browser-find",
+    "browser-menu",
+    "browser-tools",
+    "browser-ask",
+    "browser-cert",
+    "browser-clear",
+    "browser-notice",
+    "browser-pick",
+    "project-menu",
+    "adder",
+    "clone",
+    "clone-failed",
+    "sample",
+    "remote",
+    "picker",
+    "picker-remote",
+    "picker-failed",
+    "form",
+    "composer",
+    "composer-model",
+    "composer-slash",
+    "composer-queued",
+    "composer-attached",
+    "composer-field",
+    "welcome-place",
+    "settings-<section>[-narrow]",
 ];
 
-/// Which screen a snapshot shows.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Shot {
-    /// The workspace on its first session.
-    Workspace,
-    /// Every workspace attention state and the session menu, on an unread error when true.
-    SessionStates(bool),
-    /// A forty-line prompt scrolled part way through its contents.
-    ComposerLong,
-    /// A session whose account needs signing in again.
-    SignedOut,
-    /// A session whose agent is writing its reply when a tool server it uses asks the reader to sign in, with the address of the sign-in page in the reply.
-    ToolSignIn,
-    /// The workspace showing the code a GitHub Copilot sign-in waits for the reader to enter.
-    SignInCode,
-    /// A session whose agent was at work when the window lost its connection to the agent's server.
-    OutOfReach,
-    /// A session whose branch has an open pull request, with checks passed, failed and running and changes asked for, under its header.
-    PullRequest,
-    /// A session whose repository's remote is on a code host that is not supported, which offers only pushing under its header.
-    PullRequestUnsupported,
-    /// The workspace asking whether to close the window while agents are working.
-    Quitting,
-    /// The workspace telling of a newer release in its title bar.
-    Update,
-    /// The workspace on the diff of its first session.
-    Diff,
-    /// The workspace on the diff of its first session with the words that changed inside changed lines marked.
-    WordDiff,
-    /// The workspace on the diff of its first session with the files after the first listed by the server and their diffs still to come.
-    DiffListed,
-    /// The workspace on the diff opened at its third file while the diffs above it were still to come, after they arrived longer than estimated.
-    DiffOpened,
-    /// The workspace on the diff at its compact density, with a file of thousands of added lines scrolled far down, whose rows must fill the view.
-    DiffCompact,
-    /// The workspace on the diff of its first session with a comment kept and another being written.
-    Commenting,
-    /// The workspace on the diff of its first session with the project's files listed in the review panel.
-    Files,
-    /// Ten thousand files in expanded folders, for tree rendering and latency checks.
-    FilesLarge,
-    /// The large file tree scrolled into the middle of an expanded folder.
-    FilesScrolled,
-    /// A long Unicode prompt below a large conversation, at the caret.
-    InputStress,
-    /// The same long prompt manually scrolled away from its caret.
-    InputStressScrolled,
-    /// A long prompt with an IME composition at its caret.
-    InputStressComposing,
-    /// Expanded ignored folders with nested files dimmed.
-    IgnoredFiles,
-    /// The workspace on the diff with the source control panel: staged and untracked files, a message, the graph.
-    Source,
-    /// The source control panel with git's refusal of a branch switch said in it.
-    Refused,
-    /// The source control panel with the menu over its actions open.
-    SourceMenu(Trigger),
-    /// The source control panel with the menu on a commit of the graph open.
-    HistoryMenu,
-    /// The source control panel asking what to call a stash.
-    Stashing,
-    /// The workspace on the diff with two changed files picked and the menu on them open.
-    ChangeMenu,
-    /// The workspace with sixty-eight changed files all picked and the menu on them open, whose longest row names them all.
-    ChangeMenuMany,
-    TreeMenu,
-    /// The project's files with three rows picked, two as a range, and the menu on them open.
-    TreePicked,
-    /// The project's files with two rows picked and dragged over a folder, which is marked as where they would land.
-    TreeDragging,
-    /// The project's files with a row cut and files from outside the window held over the space under the rows.
-    TreeHovered,
-    Naming,
-    /// The workspace on the diff with the question of whether to discard two changed files open.
-    Discarding,
-    /// The workspace with the list of branches open and a name being typed.
-    Branching,
-    /// The source control panel on a branch with commits and a remote but no upstream, with changes still uncommitted and the menu under the commit button open.
-    BranchLocal,
-    /// The source control panel on a branch that follows a remote branch, ahead and behind it.
-    BranchFollowing,
-    /// The list of remote branches the current branch can be made to follow.
-    BranchUpstream,
-    /// The question of whether to delete a branch with unmerged and unpushed commits.
-    BranchDelete,
-    /// The workspace reading a file as it is in the last commit.
-    Reading,
-    Editing,
-    NewFile,
-    /// The workspace with the terminal open.
-    Terminal,
-    /// The workspace with the terminal open and a web address in it underlined as what a press opens.
-    TerminalLink,
-    /// The workspace with text of the terminal marked and the menu over it open.
-    TerminalMenu,
-    /// The workspace with the browser open and the menu over its page open.
-    BrowserMenu,
-    /// The workspace with the browser zoomed to 125% and the bar for finding in its page open, with the sidebars wide so the pane is narrow when the flag is set.
-    BrowserFind(bool),
-    /// The same with the developer tools open beside the page.
-    BrowserFindTools,
-    /// The workspace with the browser open on several tabs: one shown, one opened by an agent, one locked against agents; with so many tabs that the strip scrolls when the flag is set.
-    BrowserTabs(bool),
-    /// The workspace on a second session, whose browser holds one tab of its own while the first session keeps the tabs of the browser-tabs picture.
-    BrowserSessions,
-    /// The workspace with the browser on a form whose text field has the keyboard, showing its focus ring, the selected text and the caret.
-    BrowserInput,
-    /// The workspace with the browser open and the question about clearing cookies and site data asked.
-    BrowserClear,
-    /// The workspace with the browser open and a page asking to use the camera and microphone, with a second question waiting.
-    BrowserPermission,
-    /// The workspace with the browser open on a site whose certificate is not trusted.
-    BrowserCertificate,
-    /// The same page after the reader pressed to proceed once, which asks them to press again.
-    BrowserCertificateConfirm,
-    /// The workspace with the browser open and the note that a download was saved.
-    BrowserDownload,
-    /// The overview of a project.
-    Overview,
-    /// The sidebar with the submodules of a project under it, a session working in one, and work being started in another.
-    Submodules,
-    /// A folded change opened from the project Changes list.
-    OverviewDiff,
-    /// The overview of a project with the menu on a changed file of its folder open.
-    OverviewChangeMenu,
-    /// The workspace with the terminal open and the sidebar, the review panel and the terminal dragged to other sizes.
-    Resized,
-    /// A workspace with projects and no sessions.
-    New,
-    /// The workspace with no project at all.
-    Empty,
-    /// The workspace on the history page with overflowing session groups.
-    History,
-    /// The history page scrolled to its oldest session.
-    HistoryScrolled,
-    /// The workspace with the menu of a project open.
-    ProjectMenu,
-    /// The workspace with a project dragged over another.
-    Dragging,
-    /// The page for starting work in this repository, with the agent's settings known.
-    Welcome,
-    /// The page for starting work with Ollama and OpenRouter hidden from new sessions.
-    WelcomeHidden,
-    /// The window before any project is added: the page that starts a chat, with its composer.
-    ChatNew,
-    /// The workspace with chats listed above the projects, open on one: its conversation, and the files of its scratch folder with no source control.
-    Chats,
-    /// The history with chats among the sessions, their project column empty.
-    ChatsHistory,
-    /// The menu of a chat, which can be archived or removed.
-    ChatMenu,
-    /// A chat with the choice of the project and the base branch to continue it in open.
-    ChatContinue,
-    /// The agents and their accounts in the settings window, scrolled down, with Ollama and OpenRouter hidden from new sessions.
-    SettingsAccountsHidden,
-    /// The agents and their accounts in the settings window, scrolled down, with the box for OpenRouter's API key open.
-    SettingsAccountsKey,
-    /// The page for starting work in this repository with the terminal open under it.
-    WelcomeTerminal,
-    /// A session cut into three panes: the conversation above the diff, beside a file.
-    Panes,
-    /// A session with the tab of a file being dragged to the right edge of its pane.
-    PanesDragging,
-    /// A session with the menu of panes open.
-    PaneMenu,
-    /// A session whose pane was split, an empty pane on its right.
-    PaneSplit,
-    /// A session whose pane was split, a file then opened in the empty pane on its right.
-    PaneSplitFile,
-    /// The page for starting work with a long prompt that wraps and has a line break.
-    Wrapped,
-    /// The page for starting work after a command was picked from the list behind a slash.
-    Slashed,
-    /// A conversation with messages and the list of commands and skills behind a slash open.
-    SlashSession,
-    /// The page for starting work with more commands and skills than rows, the last one highlighted.
-    SlashScrolled,
-    /// The page for starting work with the list of models scrolled to its end.
-    Scrolling,
-    /// The page for starting work with the menu of where it is done open.
-    Placing,
-    /// A conversation fed the events an agent produces, finished.
-    Live,
-    /// A conversation whose agent waits for permission.
-    Asking,
-    /// A conversation whose agent waits for permission to run a long command.
-    AskingCommand,
-    /// A conversation whose agent left out the hooks, instruction files, skills and agents of a project nobody has trusted yet, and waits for the reader to trust it.
-    Trust,
-    /// A conversation whose agent left out the hooks of a trusted project, as one changed since it was trusted.
-    TrustChanged,
-    /// A conversation whose agent waits for the answers to a form of three questions.
-    Inquiring,
-    /// A conversation whose reader answered a form of questions.
-    Answered,
-    /// A conversation whose turn ended while two subagents and a command were still running.
-    Background,
-    /// The same conversation in a floating window, with its shadow cast into the transparent band around it.
-    Floating,
-    /// The same conversation with the subagents above the prompt box open.
-    Agents,
-    /// The open panel of subagents with those at work announced by their agent, each with the button that stops it.
-    AgentsStoppable,
-    /// The open panel with dozens of expanded tool runs.
-    AgentsExpanded,
-    /// The expanded panel scrolled to its last rows.
-    AgentsScrolled,
-    /// The open panel of subagents working in git worktrees of their own: one whose changes were applied, one still at work and one whose changes conflicted.
-    AgentsWorktrees,
-    /// A conversation whose agent is on a turn with prompts queued behind it and another being written.
-    Queued,
-    /// The same conversation with a long, multi-line prompt waiting, shown in full.
-    QueuedLong,
-    /// The same conversation with the first waiting prompt open for editing.
-    QueuedEditing,
-    /// A conversation with the context ring in the prompt box.
-    Usage,
-    /// A conversation working toward a goal with a budget, its chip in the prompt box.
-    Goal,
-    /// The same conversation with the goal's menu open.
-    GoalMenu,
-    /// A finished conversation with an answer to a question asked on the side, then handed over to a new conversation, whose first reply follows the mark.
-    Aside,
-    /// The page for starting work, with how much of its allowance each agent's account has used.
-    Allowances,
-    /// A conversation with the model menu open.
-    Picking,
-    /// The page for starting work with the menu of a long list of models open, narrowed with a box.
-    ManyModels,
-    /// The page for starting work with the menu of a long list of models narrowed to those holding `gpt`.
-    ModelsFiltered,
-    /// A finished conversation scrolled back to its first message, whose files were kept before it.
-    Kept,
-    /// A finished conversation whose last message from the reader is one 2000-character line with no spaces.
-    LongLine,
-    /// A conversation the server rebuilt from what the harness saved, as its events come back after a restart: a turn with a tool, a diff and the context meter, a stopped turn and a failed one.
-    Restored,
-    /// The same conversation scrolled back to its first turn.
-    RestoredTop,
-    /// A finished conversation with the offer to put the files back as they were before its first message open.
-    Restoring,
-    /// What the agent changed during the first turn of a finished conversation, each file with the button that takes the change back out.
-    TurnChanges,
-    /// A conversation with the details of its steps open.
-    Expanded,
-    /// A conversation with a slash being typed.
-    Slashing,
-    /// The page for starting work with an `@` being typed that no file fits.
-    Missing,
-    /// The page for starting work with files attached.
-    Attached,
-    /// The page for starting work with two elements of a web page picked.
-    Elements,
-    /// The page for starting work with two elements of a web page picked and the first one's details open.
-    ElementDetails,
-    /// The same, scrolled down to the attributes and styles.
-    ElementScrolled,
-    /// A conversation whose first message was sent with two picked elements.
-    ElementsSent,
-    /// The page for starting work with a picked element, a screenshot, a skipped area and the console held for the prompt.
-    Captures,
-    /// The same, with the screenshot's preview open.
-    CapturePreview,
-    /// The same, with the console's lines open.
-    CaptureConsole,
-    /// The browser with the menu of what can be added to the prompt open.
-    CaptureMenu,
-    /// A conversation whose first message was sent with a screenshot and the console.
-    CapturesSent,
-    /// The page for starting work split with the browser beside it, after the first prompt was sent.
-    SplitStarted,
-    /// The session started from the page for starting work while a shell ran in the dock and the browser was open, holding both.
-    StartedHandedOver,
-    /// A pane that was split and had the browser brought into it with the button of the empty pane.
-    PaneBrowser,
-    /// The workspace on its first session with the fold-out of its last reply open.
-    Unfolded,
-    /// The page for starting work with a dead key's accent waiting for its letter in the prompt.
-    Composing,
-    /// The page for starting work in a project with a `devcontainer.json`, the menu of where work runs open with the dev container turned on.
-    DevContainer,
-    /// The workspace with the terminal open and a dead key's accent waiting for its letter at the cursor.
-    TerminalComposing,
-    /// The workspace on its first session with a stretch of the conversation's text selected.
-    Selecting,
-    /// The workspace on its first session, which runs as an account the reader added.
-    SessionAccount,
-    /// The same selection with the menu over a reply open.
-    MessageMenu,
-    /// The page for starting work with the panel for adding a project open on its choices.
-    Adding,
-    /// A file with its long lines wrapped at a line length of 36 and a block caret that does not blink.
-    SoftWrap,
-    /// The settings window on a section, at its narrowest when the flag is set.
-    SettingsPage(Section, bool),
-    /// The settings window on General scrolled to the restriction on what agents may open and its list of origins, at its narrowest when the flag is set.
-    SettingsOrigins(bool),
-    /// The settings window showing what a search for fonts found, at its narrowest when the flag is set.
-    SettingsSearch(bool),
-    /// The settings window on Appearance with the list of code fonts open, at its narrowest when the flag is set.
-    SettingsPicker(bool),
-    /// The settings window on Servers with the form for adding one open, at its narrowest when the flag is set.
-    SettingsMachine(bool),
-    /// The settings window on Appearance set compact with interface text at 15 pixels, at its narrowest when the flag is set.
-    SettingsCompact(bool),
-    /// The settings window on Skills with the form for a new skill filled in for every project, at its narrowest when the flag is set.
-    SettingsDraft(bool),
-    /// The settings panel on the MCP servers inside Agents, with one installed, the registry's offers and the menu of the installed one open.
-    SettingsMcp,
-    /// The settings panel on the model servers inside Agents, with two declared, the form of the second open and the models it was found to offer listed, two of them ticked, at its narrowest when the flag is set.
-    SettingsModelServers(bool),
-    /// The settings panel on the model slots inside Agents, with slots set, inherited and suggested, backups and one preset, scrolled down to the suggestion, the slot of the reader's own and the preset; at its narrowest when the flag is set, from the top.
-    SettingsModelSlots(bool),
-    /// A conversation whose turn moved to a backup model when its own was overloaded, with the notice in the chat.
-    ModelFallback,
-    /// The page for starting work on a declared model server, with the menu of the models it offers open.
-    ServerModels,
-    /// The settings panel on the Agent Servers inside Agents, with the form for adding one open.
-    SettingsForm,
-    /// The settings panel on the Agent Servers inside Agents, with two accounts added to the first agent, at its narrowest when the flag is set.
-    SettingsAccounts(bool),
-    /// The agents and their accounts in the settings window, scrolled down to the agents that keep no accounts and GitHub Copilot.
-    SettingsAccountsScrolled,
-    /// The agents in the settings window scrolled to the end, where the cloud providers say which cloud credentials they read, at its narrowest when the flag is set.
-    SettingsAccountsCloud(bool),
-    /// The same panel waiting for the accounts and organizations to clone from.
-    Loading,
-    /// The same panel on the accounts and organizations to clone from.
-    Owning,
-    /// The same panel on the repositories of one of them.
-    Cloning,
-    /// The folder picker's window on the folders of the machine, to open one as a project.
-    Folders,
-    /// A Rust file being written: highlighted, with what the language server finds wrong under it and the brackets at the caret paired.
-    Code,
-    /// A TSX component highlighted: JSX tags, attributes and braces, and the CSS of a styled-components template.
-    CodeTsx,
-    /// An MDX file highlighted: its Markdown, with the JSX and the import and export lines read as TSX.
-    CodeMdx,
-    /// A dotenv file highlighted.
-    CodeEnv,
-    /// A JavaScript file highlighted, with the run buttons its language marks.
-    CodeJs,
-    /// A shell script highlighted, with the run buttons its language marks.
-    CodeShell,
-    /// A Docker Compose file with the run button of each service in the gutter.
-    RunCompose,
-    /// A Dockerfile with the run button of each build stage in the gutter.
-    RunDockerfile,
-    /// A go.mod with the run button of the module line, the requires and each module in the gutter.
-    RunGoMod,
-    /// A package.json with a link for each script and a link that updates a dependency.
-    RunPackageJson,
-    /// A file of the sample extension's language, with its private values showing.
-    CodeSample,
-    /// The same file with the values its language marks as private hidden behind blocks.
-    Redacted,
-    /// A file written in a language that is not installed, with the offer to install it above its lines.
-    LanguageOffer,
-    /// A markdown file shown rendered as a page, with the switch to its source.
-    MarkdownPreview,
-    /// A vector picture shown drawn, with the switch to its source.
-    VectorPreview,
-    /// A picture file shown whole, with how many pixels it has.
-    PicturePreview,
-    /// The same file with the list of completions open at the caret.
-    Completing,
-    /// The same file with the card about a place that has something wrong with it.
-    Hovering,
-    /// The same file with breakpoints in its gutter and a program paused on one, the debug tab open under it.
-    Debugging,
-    /// The same file with the dock open on the list of what is wrong with the project.
-    Problems,
-    /// The same file with the sidebar hidden.
-    SidebarHidden,
-    /// The same file with its menu open.
-    EditorMenu,
-    /// The same file with the places a name is used listed under the caret.
-    References,
-    /// The same file with the box for a new name of the thing at the caret open.
-    Renaming,
-    /// The same file with the changes the language server offers at the caret listed.
-    CodeActions,
-    /// The same file with the commits that changed it, and the states it was saved in, listed as one timeline.
-    FileHistory,
-    /// The same file set against a state it was saved in, its changed lines edited in place.
-    Timeline,
-    /// A file a merge stopped on, with both sides of each conflict and the result under them.
-    Conflict,
-    /// The diff of a session that edited files inside a submodule and moved it to another commit.
-    DiffSubmodule,
-    /// The changes of a session in a folder that holds two repositories side by side: files edited in both, listed under the repository each is in, or, `true`, only those of the repository `api` picked in the list of repositories.
-    ChangesRepositories(bool),
-    /// The source control panel of a folder with submodules: the list of repositories with the folder's own picked, or, `true`, a submodule picked with its branches open.
-    BranchesSubmodule(bool),
-    /// The same file with the caret in a call, its signature over it and the uses of a name marked.
-    Signing,
-    /// The same file with brackets coloured by depth, names coloured by what the language server says they are, hints inside lines and lenses at the ends of lines.
-    Annotated,
-    /// The Rust file with small squares of colour before the stretches its language server says spell a colour.
-    ColorSwatches,
-    /// The same file with the box for changing the first colour open, and the ways its language server offers to write it listed.
-    ColorPicker,
-    /// The Rust file edited with vim's keys, with a word selected in visual mode, the mode named under the file and a command line being typed.
-    Vim,
-    /// The review panel on its search tab, with the hits of a search for a word, grouped by file.
-    ProjectSearch,
-    /// The hits of a search as excerpts of three files, one under another, edited in place.
-    Excerpts,
-    /// The same file with the bar for finding and replacing open on a word it holds several times.
-    Finding,
-    /// The same file with the bar for finding opened again over a query typed before, the query selected whole.
-    FindReopened,
-    /// The same file with its outline listed, narrowed by a letter typed.
-    Outline,
-    /// The same file with every use of a name selected, a caret at each.
-    Cursors,
-    /// The same file with a rectangle of text selected over three lines, dragged from the first to the third.
-    ColumnSelection,
-    /// The same file with the body of a function folded away.
-    Folded,
-    /// The same file scrolled into a method, the lines that open its blocks kept at the top.
-    Sticky,
-    /// The finder for the files of the project, narrowed by what is typed.
-    Finder,
-    /// The same file with the list of every command open, narrowed by what is typed.
-    Commands,
-    /// The same file with the list of every command open over the tasks the project's manifests imply.
-    Tasks,
-    /// A file with a `main` and tests, with the run button of each in the gutter.
-    RunButtons,
-    /// The same file with the list of toolchains installed open.
-    Toolchains,
-    /// The same file with the list of the other sessions open.
-    Sessions,
-    /// The same file with the list of sessions open on a search that found chats by what was said in them, each with a preview of the message.
-    ChatSearch,
-    /// The same file with the quick input listing what can be typed first.
-    QuickHelp,
-    /// The same file with the quick input listing the themes.
-    Themes,
-    /// The same file with the quick input going to a line.
-    GoLine,
-    /// The same file with the menu on its tab open.
-    TabMenu,
-    /// The extensions page, some installed, one being installed, one that failed and one of the reader's own.
-    Extensions,
-    /// The extensions page asking whether to install an extension, with what it asks to be allowed.
-    ExtensionInstall,
-    /// The same file with the lines of one function selected and finding limited to them, the matches in them marked.
-    FindInSelection,
-    /// The same, after every match in the selected lines was replaced.
-    FindInSelectionReplaced,
-    /// The same file with a selected line carried over the text, the mark of where it would be dropped in view.
-    DraggingText,
-    /// The same file after the selected line was dropped, moved.
-    DraggedText,
-    /// The same file with the marker beside the line of the caret that the language server offers changes on.
-    Lightbulb,
-    /// A file written with the arrows and comparisons a code font may join, as the code font with ligatures draws them.
-    Ligatures,
-    /// The same file with ligatures switched off.
-    LigaturesOff,
-    /// A file with lines of Hebrew, Arabic and mixed text, a selection and the caret in them.
-    Bidi,
-    /// The file compared with what the clipboard holds.
-    CompareClipboard,
-    /// The file compared with what was last saved of it.
-    CompareSaved,
-    /// The list of files of the project open to pick the one to compare the file with.
-    ComparePicking,
-    /// The file compared with another file of the project.
-    CompareFile,
-}
-
-/// Loads the grammar of the language `id` installed on this machine, if it is, and learns the endings of the files written in it, so a snapshot can highlight with it.
-fn load_installed_grammar(id: &str) {
-    let Some(manifest) = pm_lsp::installed_manifest(id) else {
-        return;
+/// Runs `--snapshot <path> [WIDTHxHEIGHT] [dark|light] [live]
+/// [welcome|chat|history|extensions|overview|settings-<section>[-narrow]]
+/// [approve|inquiry|trust|continue] [update|sign-in]
+/// [problems|tasks|debug] [selection]
+/// [git-menu|git-source|git-confirm|branch-menu|diff|diff-notes|conflict|revision|changes]
+/// [code[-find|-replace|-goto|-vim|-debug|-scrolled|-markdown|-picture]]
+/// [code-completions|code-hover|code-signature|code-annotations|code-actions]
+/// [code-rename|code-drag|code-colour|code-rtl|code-language|code-compare|code-file-menu]
+/// [tab-menu|tab-steps|split|excerpts|update-tab]
+/// [files|search|search-edit|quick[-<list>]|file-menu|file-delete]
+/// [browser[-find|-menu|-tools|-ask|-cert|-clear|-notice|-pick]]
+/// [project-menu|adder|clone|clone-failed|sample|remote]
+/// [picker|picker-remote|picker-failed] [form]
+/// [composer[-model|-slash|-queued|-attached|-field]|welcome-place]`
+/// with `arguments` (those after the flag) and returns the process's exit
+/// code: 0 when the PNG was written, 1 when drawing failed, 2 when the
+/// arguments are wrong.
+pub fn run(arguments: &[String]) -> i32 {
+    let Some(path) = arguments.first() else {
+        eprintln!("pandemonium: --snapshot needs a path");
+        return 2;
     };
-    let Ok(grammar) = pm_lsp::grammar_file(id) else {
-        return;
-    };
-    let read = |file: &str| {
-        pm_lsp::language_file(id, file)
-            .and_then(|path| std::fs::read_to_string(path).ok())
-            .unwrap_or_default()
-    };
-    let Ok(wasm) = std::fs::read(grammar) else {
-        return;
-    };
-    let queries = pm_treesitter::Queries {
-        highlights: read("highlights.scm"),
-        indents: read("indents.scm"),
-        outline: read("outline.scm"),
-        injections: read("injections.scm"),
-        brackets: read("brackets.scm"),
-        runnables: read("runnables.scm"),
-        overrides: read("overrides.scm"),
-        redactions: read("redactions.scm"),
-        textobjects: read("textobjects.scm"),
-        debugger: read("debugger.scm"),
-        dependencies: String::new(),
-    };
-    let editing = pm_treesitter::Editing {
-        run_lenses: pm_lsp::run_lenses_of(id)
-            .into_iter()
-            .map(|lens| (lens.tags, lens.label))
-            .collect(),
-        ..pm_lsp::editing_of(&manifest)
-    };
-    if let Ok(loaded) =
-        pm_treesitter::Grammar::load(id, &manifest.grammar, &wasm, &queries, editing)
-    {
-        let mut aliases = manifest.aliases.clone();
-        aliases.push(manifest.grammar.clone());
-        pm_treesitter::registry::add(loaded, &aliases);
-        pm_components::file_icon::learn_languages(
-            &None,
-            &[pm_protocol::ExtensionInfo {
-                id: id.to_owned(),
-                suffixes: manifest.suffixes.clone(),
-                names: manifest.names.clone(),
-                patterns: manifest.patterns.clone(),
-                icon: manifest
-                    .icon
-                    .as_deref()
-                    .and_then(|file| pm_lsp::language_file(id, file))
-                    .and_then(|path| std::fs::read_to_string(path).ok()),
-                color: manifest.color.clone(),
-                installed: true,
-                ..Default::default()
-            }],
+    let given = arguments.get(1).and_then(|text| parse_size(text));
+    let skipped = if given.is_some() { 2 } else { 1 };
+    let words: Vec<&str> = arguments.iter().skip(skipped).map(String::as_str).collect();
+    if let Some(unknown) = words.iter().find(|word| !known(word)) {
+        eprintln!(
+            "pandemonium: --snapshot does not know {unknown}; the size must look like 1636x720 and the words are {}",
+            WORDS.join(", ")
         );
+        return 2;
     }
-}
-
-/// The path of the Rust file the code snapshots write in.
-const CODE_PATH: &str = "crates/pandemonium/src/session.rs";
-
-/// The tab of the file the workspace with a file open shows.
-fn code_item() -> Item {
-    Item::File {
-        path: CODE_PATH.to_owned(),
-        head: false,
+    let light = words.contains(&"light");
+    if let Some(shot) = words.iter().find_map(|word| word.strip_prefix("settings-")) {
+        return settings_shot(path, shot, given, light, words.contains(&"form"));
     }
-}
-
-/// A Rust file of the first session open for writing, its grammar loaded when Rust is installed on this machine, with the caret after the brace that opens `new` and what the language server finds wrong in it.
-fn code() -> WorkspaceState {
-    for id in ["rust", "markdown", "markdown-inline"] {
-        load_installed_grammar(id);
-    }
-    let mut state = workspace_sample().after(TAB_DIFF);
-    state.open_viewer(CODE_PATH.to_owned(), false);
-    let text = "use std::collections::HashMap;\nuse std::path::PathBuf;\n\n/// A session of an agent, with its **own** worktree.\n#[derive(Clone, Debug)]\npub struct Session {\n    pub id: u64,\n    pub root: PathBuf,\n    names: HashMap<String, usize>,\n}\n\nconst LIMIT: usize = 64;\n\nimpl Session {\n    /// Makes a session working in `root`.\n    pub fn new(id: u64, root: PathBuf) -> Self {\n        let names = HashMap::with_capacity(LIMIT);\n        let label: u32 = \"main\";\n        Self { id, root, names }\n    }\n\n    /// How many names the session knows.\n    pub fn count(&self) -> usize {\n        self.names.len()\n    }\n}\n";
-    let state = state.with_file(
-        0,
-        CODE_PATH,
-        false,
-        Ok((Some(text.to_owned()), false, Some("rust".to_owned()))),
-    );
-    let base = text
-        .replace("        let label: u32 = \"main\";\n", "")
-        .replace("HashMap::with_capacity(LIMIT)", "HashMap::new()")
-        .replace(
-            "const LIMIT: usize = 64;\n\n",
-            "const LIMIT: usize = 64;\nconst SPARE: usize = 8;\n\n",
-        );
-    let state = state.with_base(0, CODE_PATH, Some(base));
-    let directory = state
-        .sessions
-        .first()
-        .map(|session| session.directory.clone())
-        .unwrap_or_default();
-    let span = |line: u32, from: u32, to: u32| {
-        pm_protocol::Span::new(
-            pm_protocol::Position::new(line, from),
-            pm_protocol::Position::new(line, to),
-        )
-    };
-    let diagnostics = vec![
-        pm_protocol::Diagnostic {
-            span: span(17, 26, 32),
-            severity: pm_protocol::Severity::Error,
-            message: "mismatched types\nexpected `u32`, found `&str`".to_owned(),
-            source: Some("rustc".to_owned()),
-        },
-        pm_protocol::Diagnostic {
-            span: span(17, 12, 17),
-            severity: pm_protocol::Severity::Warning,
-            message: "unused variable: `label`".to_owned(),
-            source: Some("rustc".to_owned()),
-        },
-    ];
-    let state = state
-        .with_opened(
-            0,
-            CODE_PATH,
-            Ok(pm_protocol::Triggers {
-                completion: vec![".".to_owned(), ":".to_owned()],
-                signature: vec!["(".to_owned(), ",".to_owned()],
-                ..Default::default()
-            }),
-        )
-        .with_diagnostics(&None, &directory, CODE_PATH, diagnostics);
-    let caret = text.find("-> Self {").map_or(0, |at| at + "-> Self ".len());
-    state
-        .edited(EDITOR_FIELD, Edit::Place(caret, false))
-        .with_blame(
-            0,
-            CODE_PATH,
-            16,
-            pm_git::Blame {
-                id: "514332d8".to_owned(),
-                author: "Joakim Carlsson".to_owned(),
-                when: (pm_components::age::now() / 1000) as i64 - 3 * 86_400,
-                summary: "Reopen files browsed on a project page".to_owned(),
-            },
-        )
-}
-
-/// The TSX component the TSX snapshot shows.
-const CODE_TSX: &str = "import styled, { css } from \"styled-components\";\n\nconst Card = styled.div`\n  color: ${(props) => props.color};\n  margin: 0 auto;\n  ${(props) => props.wide && css`width: 100%;`}\n`;\n\nexport function Button({ label, count }: { label: string; count: number }) {\n  return (\n    <>\n      <Card color=\"red\" {...rest}>\n        <Icon.Check size={16} />\n        {/* the label */}\n        <button className=\"flex items-center\" disabled>\n          {label} &amp; {count}\n        </button>\n      </Card>\n    </>\n  );\n}\n";
-
-/// The MDX file the MDX snapshot shows.
-const CODE_MDX: &str = "---\ntitle: Release notes\n---\n\nimport { Chart } from \"./chart.js\"\nexport const year = 2018\n\n# Hello, *MDX*\n\nSome `inline` text with a [link](https://example.com).\n\n<Chart year={year} color=\"red\" />\n\n```ts\nconst answer: number = 42;\n```\n";
-
-/// The dotenv file the dotenv snapshot shows.
-const CODE_ENV: &str = "# Database\nDATABASE_URL=\"postgres://user:secret@localhost:5432/app\"\nexport PORT=3000\nDEBUG=true\nSITE_URL='https://example.com'\nAPI_BASE=${SITE_URL}/api\nNEXT_PUBLIC_NAME=My app\n";
-
-/// The JavaScript file the JavaScript snapshot shows.
-const CODE_JS: &str = "import { readFile } from \"node:fs/promises\";\n\n/** Reads the settings of a project. */\nexport async function load(path) {\n  const text = await readFile(path, \"utf8\");\n  return JSON.parse(text);\n}\n\nconst main = async () => {\n  const settings = await load(\"settings.json\");\n  console.log(settings.name ?? `unnamed`);\n};\n\nmain();\n";
-
-/// The compose file the compose snapshot shows.
-const CODE_COMPOSE: &str = "name: demo\n\nservices:\n  web:\n    image: nginx:1.27\n    ports:\n      - \"8080:80\"\n    depends_on:\n      - api\n\n  api:\n    build: ./api\n    environment:\n      DATABASE_URL: postgres://db/app\n\n  db:\n    image: postgres:17\n    volumes:\n      - data:/var/lib/postgresql/data\n\nvolumes:\n  data: {}\n";
-
-/// The file the sample language snapshots show.
-const CODE_SAMPLE: &str = "# Sample program\nSECRET_TOKEN = \"hunter2\"\napi_key = 'abc-123-def'\ncount = 0\n\ndef bump(step):\n    total = count + step\n    return total\n";
-
-/// The Dockerfile the Dockerfile snapshot shows.
-const CODE_DOCKERFILE: &str = "FROM node:24-bookworm-slim AS web-build\nWORKDIR /app/web\nCOPY web/package.json ./\nRUN npm ci\n\nFROM golang:1.27.1 AS api-build\nWORKDIR /app\nRUN go build -o /app/api ./cmd/api\n\nFROM gcr.io/distroless/static-debian13:nonroot\nCOPY --from=api-build /app/api /api\nENTRYPOINT [\"/api\"]\n";
-
-/// The go.mod the go.mod snapshot shows.
-const CODE_GOMOD: &str = "module github.com/JoakimCarlsson/vault\n\ngo 1.27.0\n\nrequire (\n\tgithub.com/PuerkitoBio/goquery v1.13.0\n\tgithub.com/andybalholm/cascadia v1.3.5\n\tgolang.org/x/net v0.52.0 // indirect\n)\n\nreplace github.com/andybalholm/cascadia => ../cascadia\n";
-
-/// The package.json the package snapshot shows.
-const CODE_PACKAGE: &str = "{\n  \"name\": \"vault-web\",\n  \"scripts\": {\n    \"dev\": \"vite\",\n    \"build\": \"vite build\",\n    \"test\": \"vitest run\"\n  },\n  \"dependencies\": {\n    \"react\": \"^18.2.0\",\n    \"zod\": \"3.23.8\"\n  }\n}\n";
-
-/// The shell script the shell snapshot shows.
-const CODE_SHELL: &str = "#!/usr/bin/env bash\nset -euo pipefail\n\nroot=\"$(git rev-parse --show-toplevel)\"\n\nbuild() {\n  cargo build --workspace \"$@\"\n}\n\nfor crate in \"$root\"/crates/*; do\n  echo \"building ${crate##*/}\"\ndone\n\nbuild\n";
-
-/// A workspace with the file `path`, written in the installed language `language` and holding `text`, open for writing, the grammars of the languages `grammars` loaded.
-fn written(path: &str, language: &str, grammars: &[&str], text: &str) -> WorkspaceState {
-    for id in grammars {
-        load_installed_grammar(id);
-    }
-    let mut state = workspace_sample().after(TAB_DIFF);
-    state.open_viewer(path.to_owned(), false);
-    state.with_file(
-        0,
-        path,
-        false,
-        Ok((Some(text.to_owned()), false, Some(language.to_owned()))),
-    )
-}
-
-/// The review panel on its search tab, after a search for `names` that found lines in three files.
-fn project_search() -> WorkspaceState {
-    let hit = |path: &str, line: u32, column: u32, text: &str| pm_protocol::Location {
-        path: path.to_owned(),
-        span: pm_protocol::Span::new(
-            pm_protocol::Position::new(line, column),
-            pm_protocol::Position::new(line, column),
-        ),
-        inside: true,
-        line: Some(text.to_owned()),
-        ..pm_protocol::Location::default()
-    };
-    let mut state = code().project_search_opened();
-    for character in "names".chars() {
-        state = state.project_search_typed(pm_text::Edit::Insert(character));
-    }
-    let session = state.review_index().unwrap_or_default();
-    state.with_project_search(
-        session,
-        "names",
-        false,
-        false,
-        Ok(vec![
-            hit(
-                CODE_PATH,
-                8,
-                4,
-                "    names: HashMap<String, usize>,",
-            ),
-            hit(
-                CODE_PATH,
-                16,
-                12,
-                "        let names = HashMap::with_capacity(LIMIT);",
-            ),
-            hit(
-                CODE_PATH,
-                23,
-                13,
-                "        self.names.len()",
-            ),
-            hit(
-                "crates/pm-lsp/src/hub.rs",
-                120,
-                30,
-                "    /// The names of the servers the reader chose, kept for the length of the session and written out again when the project is opened.",
-            ),
-            hit("docs/protocol.md", 41, 9, "- **`names`:** every name"),
-        ]),
-    )
-}
-
-/// The hits of the search for `names` opened as excerpts, the files they come from read.
-fn excerpts() -> WorkspaceState {
-    let long = |line: usize, text: &str| {
-        (0..140)
-            .map(|row| {
-                if row == line {
-                    text.to_owned()
-                } else {
-                    format!("    let value_{row} = {row};")
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-    let state = project_search().excerpts_opened();
-    let session = state.review_index().unwrap_or_default();
-    state
-        .with_file(
-            session,
-            "crates/pm-lsp/src/hub.rs",
-            false,
-            Ok((
-                Some(long(
-                    120,
-                    "    /// The names of the servers the reader chose.",
-                )),
-                false,
-                Some("rust".to_owned()),
-            )),
-        )
-        .with_file(
-            session,
-            "docs/protocol.md",
-            false,
-            Ok((Some(long(41, "- **`names`:** every name")), false, None)),
-        )
-}
-
-/// The Rust file with what its language server says to show in and beside its lines: what each name is, hints inside lines and lenses at the ends of lines.
-fn annotated() -> WorkspaceState {
-    let state = code();
-    let (text, version) = state
-        .shown_document()
-        .map(|document| (document.field.text().to_owned(), document.version))
-        .unwrap_or_default();
-    let place = |line: &str, word: &str| {
-        let row = text
-            .lines()
-            .position(|held| held.contains(line))
-            .unwrap_or(0);
-        let column = text
-            .lines()
-            .nth(row)
-            .and_then(|held| held.find(word))
-            .unwrap_or(0);
-        (row as u32, column as u32, column as u32 + word.len() as u32)
-    };
-    let token = |line: &str, word: &str, kind: pm_protocol::TokenKind| {
-        let (line, start, end) = place(line, word);
-        pm_protocol::SemanticToken {
-            line,
-            start,
-            length: end - start,
-            kind,
-        }
-    };
-    let hint = |line: &str, word: &str, label: &str, kind: pm_protocol::HintKind, after: bool| {
-        let (row, start, end) = place(line, word);
-        pm_protocol::InlayHint {
-            position: pm_protocol::Position::new(row, if after { end } else { start }),
-            label: label.to_owned(),
-            kind,
-            pad_left: after,
-            pad_right: !after,
-        }
-    };
-    let lens = |line: &str, word: &str, title: &str, pressable: bool| {
-        let (row, start, end) = place(line, word);
-        pm_protocol::CodeLens {
-            span: pm_protocol::Span::new(
-                pm_protocol::Position::new(row, start),
-                pm_protocol::Position::new(row, end),
-            ),
-            title: title.to_owned(),
-            pressable,
-        }
-    };
-    state
-        .with_opened(
-            0,
-            CODE_PATH,
-            Ok(pm_protocol::Triggers {
-                semantic_tokens: true,
-                inlay_hints: true,
-                code_lens: true,
-                ..Default::default()
-            }),
-        )
-        .with_semantic_tokens(
-            0,
-            CODE_PATH,
-            version,
-            vec![
-                token("with_capacity", "HashMap", pm_protocol::TokenKind::Type),
-                token("with_capacity", "LIMIT", pm_protocol::TokenKind::Constant),
-                token("let names", "names", pm_protocol::TokenKind::Variable),
-                token("Self { id", "root", pm_protocol::TokenKind::Variable),
-                token("self.names.len", "len", pm_protocol::TokenKind::Function),
-            ],
-        )
-        .with_inlay_hints(
-            0,
-            CODE_PATH,
-            version,
-            vec![
-                hint(
-                    "let names",
-                    "names",
-                    ": HashMap<String, usize>",
-                    pm_protocol::HintKind::Type,
-                    true,
-                ),
-                hint(
-                    "with_capacity",
-                    "LIMIT",
-                    "capacity:",
-                    pm_protocol::HintKind::Parameter,
-                    false,
-                ),
-            ],
-        )
-        .with_code_lenses(
-            0,
-            CODE_PATH,
-            version,
-            vec![
-                lens("pub struct Session", "Session", "3 implementations", true),
-                lens("pub fn count", "count", "2 references", true),
-                lens("pub fn new", "new", "Run", false),
-            ],
-        )
-}
-
-/// The Rust file with swatches before three stretches its language server says spell a colour.
-fn color_swatches() -> WorkspaceState {
-    let state = code();
-    let (text, version) = state
-        .shown_document()
-        .map(|document| (document.field.text().to_owned(), document.version))
-        .unwrap_or_default();
-    let swatch = |line: &str, word: &str, [red, green, blue, alpha]: [u8; 4]| {
-        let row = text
-            .lines()
-            .position(|held| held.contains(line))
-            .unwrap_or(0);
-        let column = text
-            .lines()
-            .nth(row)
-            .and_then(|held| held.find(word))
-            .unwrap_or(0) as u32;
-        pm_protocol::ColorSwatch {
-            span: pm_protocol::Span::new(
-                pm_protocol::Position::new(row as u32, column),
-                pm_protocol::Position::new(row as u32, column + word.len() as u32),
-            ),
-            red,
-            green,
-            blue,
-            alpha,
-        }
-    };
-    state
-        .with_opened(
-            0,
-            CODE_PATH,
-            Ok(pm_protocol::Triggers {
-                colors: true,
-                ..Default::default()
-            }),
-        )
-        .with_colors(
-            0,
-            CODE_PATH,
-            version,
-            vec![
-                swatch("pub struct Session", "Session", [0xe0, 0x4f, 0x5f, 0xff]),
-                swatch("pub fn count", "count", [0x3d, 0xa5, 0x6c, 0xff]),
-                swatch("pub fn new", "new", [0x4f, 0x8c, 0xe0, 0x80]),
-            ],
-        )
-}
-
-/// The Rust file with modal editing on, after keys that go down three lines, to the next word, select it in visual mode and start a command line.
-fn vim() -> WorkspaceState {
-    /// A clipboard that holds nothing, for keys that do not need one.
-    struct Empty;
-
-    impl pm_vim::Clipboard for Empty {
-        /// Nothing is on it.
-        fn read(&mut self) -> Option<String> {
-            None
-        }
-
-        /// What is put on it is dropped.
-        fn write(&mut self, _text: String) {}
-    }
-
-    let state = code();
-    let mut settings = state.editor.clone();
-    settings.vim_mode = true;
-    let mut state = state.with_editor_settings(settings);
-    for ch in "gg3jwve:".chars() {
-        let key = pm_vim::Keystroke {
-            key: pm_vim::Key::Char(ch),
-            ctrl: false,
-            shift: false,
-        };
-        state.vim_key(key, 600.0, &mut Empty);
-    }
-    state
-}
-
-/// The Rust file with the box for changing its first colour open, over the ways its language server offers to write it.
-fn color_picker() -> WorkspaceState {
-    let format = |label: &str| pm_protocol::ColorPresentation {
-        label: label.to_owned(),
-        text: label.to_owned(),
-        ..Default::default()
-    };
-    color_swatches()
-        .color_picker_requested(0, (430.0, 262.0))
-        .with_color_presentations(
-            0,
-            CODE_PATH,
-            [0xe0, 0x4f, 0x5f, 0xff],
-            vec![
-                format("#e04f5f"),
-                format("rgb(224, 79, 95)"),
-                format("hsl(354, 70%, 60%)"),
-            ],
-        )
-}
-
-/// The Rust file with `self.names.` typed into `count` and the language server's completions open under it.
-fn completing() -> WorkspaceState {
-    let state = code();
-    let anchor = "        self.names.len()";
-    let at = state
-        .shown_document()
-        .and_then(|document| document.field.text().find(anchor))
-        .map_or(0, |at| at + "        self.names.".len());
-    let state = state
-        .edited(EDITOR_FIELD, Edit::Place(at, false))
-        .edited(EDITOR_FIELD, Edit::Paste("i".to_owned()))
-        .completion_requested((236.0, 548.0));
-    let version = state
-        .shown_document()
-        .map_or(0, |document| document.version);
-    let item = |label: &str, detail: &str, kind: pm_protocol::CompletionKind| {
-        pm_protocol::Completion {
-            label: label.to_owned(),
-            detail: Some(detail.to_owned()),
-            kind,
-            text: label.to_owned(),
-            span: None,
-            filter: label.to_owned(),
-            sort: label.to_owned(),
-            additional_edits: Vec::new(),
-            resolve: None,
-            documentation: (label == "insert").then(|| {
-                "Inserts a key-value pair into the map.\n\nIf the map did not have this key present, `None` is returned.\n\n```rust\nlet mut map = HashMap::new();\nassert_eq!(map.insert(37, \"a\"), None);\n```".to_owned()
-            }),
-        }
-    };
-    use pm_protocol::CompletionKind::{Function, Type};
-    state.with_completions(
-        0,
-        CODE_PATH,
-        version,
-        vec![
-            item("insert", "fn(&mut self, k: K, v: V) -> Option<V>", Function),
-            item("into_iter", "fn(self) -> IntoIter<K, V>", Function),
-            item("into_keys", "fn(self) -> IntoKeys<K, V>", Function),
-            item("into_values", "fn(self) -> IntoValues<K, V>", Function),
-            item("is_empty", "fn(&self) -> bool", Function),
-            item("iter", "fn(&self) -> Iter<'_, K, V>", Function),
-            item("iter_mut", "fn(&mut self) -> IterMut<'_, K, V>", Function),
-            item("IntoIter", "struct IntoIter<K, V>", Type),
-        ],
-    )
-}
-
-/// The Rust file with two breakpoints set and the program paused on the first, its stack, variables, watch and console in the dock.
-/// What the manifests of a project with a Cargo manifest, a Makefile and npm scripts imply, and a task it writes itself.
-fn sample_tasks() -> Vec<pm_protocol::Task> {
-    let task = |name: &str, command: &str, group: &str, source: &str| pm_protocol::Task {
-        name: name.to_owned(),
-        command: command.to_owned(),
-        group: group.to_owned(),
-        source: source.to_owned(),
-        ..pm_protocol::Task::default()
-    };
-    vec![
-        task(
-            "release notes",
-            "scripts/notes.sh",
-            "",
-            ".pandemonium.tasks.json",
-        ),
-        task(
-            "cargo build",
-            "cargo build --workspace",
-            "build",
-            "Cargo.toml",
-        ),
-        task(
-            "cargo check",
-            "cargo check --workspace",
-            "build",
-            "Cargo.toml",
-        ),
-        task("cargo test", "cargo test --workspace", "test", "Cargo.toml"),
-        task("make: lint", "make lint", "", "Makefile"),
-        task("make: run", "make run", "run", "Makefile"),
-        task("npm: build", "npm run build", "build", "package.json"),
-        task("npm: dev", "npm run dev", "run", "package.json"),
-    ]
-}
-
-/// The sample file with the list of sessions open on `restore`, which the servers found in the titles and conversations of some of them.
-fn chat_search() -> WorkspaceState {
-    let hit = |position: usize, field: pm_protocol::ChatField, preview: &str| {
-        (
-            position,
-            pm_protocol::ChatHit {
-                session: position as u64,
-                field,
-                preview: preview.to_owned(),
-                score: 0,
-            },
-        )
-    };
-    code()
-        .sessions_requested((340.0, 0.0))
-        .listing_filtered(Edit::Paste("restore".to_owned()))
-        .with_chats(
-            "restore",
-            vec![
-                hit(
-                    1,
-                    pm_protocol::ChatField::Prompt,
-                    "Make restore save the current state first, so a restore can be undone",
-                ),
-                hit(
-                    2,
-                    pm_protocol::ChatField::Reply,
-                    "…the worktree is removed before restore runs, which is why the files vanish…",
-                ),
-                hit(
-                    3,
-                    pm_protocol::ChatField::Reply,
-                    "Restoring the scroll position now waits for the first frame…",
-                ),
-            ],
-        )
-}
-
-/// The toolchains a machine with rustup, two Node.js versions and a virtual environment has.
-fn sample_toolchains() -> Vec<pm_protocol::ToolchainInfo> {
-    let toolchain =
-        |language: &str, id: &str, detail: &str, selected: bool| pm_protocol::ToolchainInfo {
-            language: language.to_owned(),
-            id: id.to_owned(),
-            name: id.to_owned(),
-            detail: detail.to_owned(),
-            selected,
-            language_name: match language {
-                "javascript" => "Node.js".to_owned(),
-                _ => String::new(),
-            },
-        };
-    vec![
-        toolchain("rust", "stable-x86_64-unknown-linux-gnu", "default", true),
-        toolchain("rust", "nightly-x86_64-unknown-linux-gnu", "", false),
-        toolchain("javascript", "system", "v22.11.0", true),
-        toolchain("javascript", "nvm v20.18.0", "v20.18.0", false),
-        toolchain("python", "system", "Python 3.13.1", true),
-        toolchain("python", "venv .venv", "Python 3.12.7", false),
-    ]
-}
-
-/// A file with a `main`, a test and a module of tests, so that the gutter shows a run button beside each.
-fn runnable() -> WorkspaceState {
-    let state = code();
-    let text = "use std::path::PathBuf;\n\n/// Where the session works.\npub fn root() -> PathBuf {\n    PathBuf::from(\".\")\n}\n\nfn main() {\n    println!(\"{}\", root().display());\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn finds_the_root() {\n        assert_eq!(root(), PathBuf::from(\".\"));\n    }\n\n    #[test]\n    fn shows_the_root() {\n        assert!(!root().display().to_string().is_empty());\n    }\n}\n";
-    state.with_file(
-        0,
-        CODE_PATH,
-        false,
-        Ok((Some(text.to_owned()), false, Some("rust".to_owned()))),
-    )
-}
-
-fn debugging() -> WorkspaceState {
-    use pm_protocol::{
-        Breakpoint, DebugCategory, DebugFrame, DebugLine, DebugScope, DebugThread, DebugView,
-        DebugWatched, Placed, Standing, Variable,
-    };
-    let mut state = code();
-    let root = state
-        .sessions
-        .first()
-        .map(|session| session.directory.clone())
-        .unwrap_or_default();
-    let path = std::path::PathBuf::from(&root).join(CODE_PATH);
-    let frame = |id: i64, name: &str, line: usize| DebugFrame {
-        id,
-        name: name.to_owned(),
-        path: Some(path.clone()),
-        line,
-        column: 0,
-    };
-    let variable = |name: &str, value: &str, kind: &str, reference: i64| Variable {
-        name: name.to_owned(),
-        value: value.to_owned(),
-        kind: Some(kind.to_owned()),
-        reference,
-    };
-    let line = |category: DebugCategory, text: &str| DebugLine {
-        category,
-        text: text.to_owned(),
-    };
-    state.debug.breakpoints.insert(
-        (0, CODE_PATH.to_owned()),
-        vec![
-            Breakpoint {
-                line: 17,
-                ..Breakpoint::default()
-            },
-            Breakpoint {
-                line: 24,
-                condition: Some("id > 3".to_owned()),
-                ..Breakpoint::default()
-            },
-        ],
-    );
-    state.debug.watches = vec!["root".to_owned(), "names.len()".to_owned()];
-    state.debug.unfolded.insert(7);
-    state.debug.run = Some(pm_components::debug::Run {
-        session: 0,
-        debug: 1,
-        view: DebugView {
-            label: "Run pandemonium".to_owned(),
-            standing: Standing::Stopped,
-            reason: Some("breakpoint 1".to_owned()),
-            threads: vec![DebugThread {
-                id: 1,
-                name: "main".to_owned(),
-            }],
-            thread: Some(1),
-            frames: vec![
-                frame(1, "Session::new", 17),
-                frame(2, "start", 211),
-                frame(3, "main", 31),
-            ],
-            frame: Some(1),
-            scopes: vec![DebugScope {
-                name: "Locals".to_owned(),
-                reference: 5,
-                expensive: false,
-            }],
-            variables: vec![
-                (
-                    5,
-                    vec![
-                        variable("id", "4", "u64", 0),
-                        variable("root", "\"/home/me/code\"", "PathBuf", 0),
-                        variable("names", "HashMap { len: 2 }", "HashMap<String, usize>", 7),
-                    ],
-                ),
-                (
-                    7,
-                    vec![
-                        variable("main", "0", "usize", 0),
-                        variable("lib", "1", "usize", 0),
-                    ],
-                ),
-            ],
-            watches: vec!["root".to_owned(), "names.len()".to_owned()],
-            watched: vec![
-                DebugWatched {
-                    expression: "root".to_owned(),
-                    value: Ok(variable("root", "\"/home/me/code\"", "PathBuf", 0)),
-                },
-                DebugWatched {
-                    expression: "names.len()".to_owned(),
-                    value: Err("no method named `len`".to_owned()),
-                },
-            ],
-            lines: vec![
-                line(DebugCategory::Console, "Launched target/debug/pandemonium"),
-                line(DebugCategory::Stdout, "listening on 6868"),
-                line(DebugCategory::Stderr, "warning: token is sent in the clear"),
-                line(DebugCategory::Asked, "id + 1"),
-                line(DebugCategory::Answer, "5"),
-            ],
-            line_count: 5,
-            placed: vec![(
-                path.clone(),
-                vec![Placed {
-                    line: 24,
-                    verified: false,
-                    message: None,
-                }],
-            )],
-        },
-    });
-    state.bottom = pm_components::dock::BottomTab::Debug;
-    state.terminal = true;
-    state
-}
-
-/// The Rust file with the dock open on the list of what is wrong with the project.
-fn problems() -> WorkspaceState {
-    let mut state = code();
-    let at = |line: u32, character: u32| pm_protocol::Position { line, character };
-    let problem = |path: &str, line: u32, severity, message: &str| pm_protocol::Problem {
-        path: path.to_owned(),
-        diagnostic: pm_protocol::Diagnostic {
-            span: pm_protocol::Span {
-                start: at(line, 4),
-                end: at(line, 9),
-            },
-            severity,
-            message: message.to_owned(),
-            source: Some("rustc".to_owned()),
-        },
-    };
-    let session = state.review_index().unwrap_or_default();
-    state = state.with_problems(
-        session,
-        vec![
-            problem(
-                CODE_PATH,
-                12,
-                pm_protocol::Severity::Error,
-                "mismatched types: expected `u32`, found `&str`",
-            ),
-            problem(
-                CODE_PATH,
-                17,
-                pm_protocol::Severity::Warning,
-                "unused variable: `label`",
-            ),
-            problem(
-                "src/main.rs",
-                3,
-                pm_protocol::Severity::Warning,
-                "unused import: `std::fmt`",
-            ),
-        ],
-    );
-    state.bottom = pm_components::dock::BottomTab::Problems;
-    state.terminal = true;
-    state
-}
-
-/// The Rust file with the card about the string that does not fit its type open over it.
-fn hovering() -> WorkspaceState {
-    let state = code();
-    let offset = state
-        .shown_document()
-        .and_then(|document| document.field.text().find("main\";"))
-        .unwrap_or_default();
-    let state = state.hover_requested(offset, (330.0, 440.0));
-    let position = state
-        .shown_document()
-        .map(|document| document.position_of(offset))
-        .unwrap_or_default();
-    state.with_hover(
-        0,
-        CODE_PATH,
-        position,
-        Some(pm_protocol::Hover {
-            text: "\n```rust\npandemonium::session\n```\n\n```rust\npub fn new(id: u64, root: PathBuf) -> Self\n```\n\n---\n\nMakes a session working in `root`, with no names yet. See [the session docs](https://example.com/session).\n\n```rust\npub fn with_a_very_long_signature(first_argument: HashMap<String, Vec<PathBuf>>, second_argument: Option<&mut Session>) -> Result<Self, std::io::Error>\n```\n\nParagraph 1 of the documentation keeps going so the card has more to say than fits, which is what makes it scroll instead of running off the bottom of the window.\n\nParagraph 2 of the documentation keeps going so the card has more to say than fits, which is what makes it scroll instead of running off the bottom of the window.\n\nParagraph 3 of the documentation keeps going so the card has more to say than fits, which is what makes it scroll instead of running off the bottom of the window.\n\nParagraph 4 of the documentation keeps going so the card has more to say than fits, which is what makes it scroll instead of running off the bottom of the window.\n\nParagraph 5 of the documentation keeps going so the card has more to say than fits, which is what makes it scroll instead of running off the bottom of the window.\n\nParagraph 6 of the documentation keeps going so the card has more to say than fits, which is what makes it scroll instead of running off the bottom of the window.\n\nParagraph 7 of the documentation keeps going so the card has more to say than fits, which is what makes it scroll instead of running off the bottom of the window.\n\nParagraph 8 of the documentation keeps going so the card has more to say than fits, which is what makes it scroll instead of running off the bottom of the window.".to_owned(),
-            span: None,
-        }),
-    )
-}
-
-/// The Rust file with the places `Session::new` is used listed under the caret.
-fn references() -> WorkspaceState {
-    let state = code().seek_requested(0, pm_protocol::Seek::References, (330.0, 470.0));
-    let place = |path: &str, line: u32, text: &str| pm_protocol::Location {
-        path: path.to_owned(),
-        span: pm_protocol::Span::new(
-            pm_protocol::Position::new(line, 8),
-            pm_protocol::Position::new(line, 11),
-        ),
-        inside: true,
-        line: Some(text.to_owned()),
-        ..pm_protocol::Location::default()
-    };
-    state.with_places(
-        0,
-        pm_protocol::Seek::References,
-        vec![
-            place(
-                CODE_PATH,
-                14,
-                "    pub fn new(id: u64, root: PathBuf) -> Self {",
-            ),
-            place(
-                "crates/pandemonium/src/app.rs",
-                211,
-                "        let session = Session::new(next_id, root.clone());",
-            ),
-            place(
-                "crates/pandemonium/src/work.rs",
-                88,
-                "            sessions.push(Session::new(id, folder));",
-            ),
-            place(
-                "crates/pm-server/src/core.rs",
-                301,
-                "    let session = Session::new(request.id, place(&request.directory));",
-            ),
-            place(
-                "tests/sessions.rs",
-                12,
-                "    let made = Session::new(1, PathBuf::from(\"/tmp/a\"));",
-            ),
-        ],
-    )
-}
-
-/// The Rust file with the caret in the call to `with_capacity`, its signature over it, and the uses of `names` marked.
-fn signing() -> WorkspaceState {
-    let state = code();
-    let text = state
-        .shown_document()
-        .map(|document| document.field.text().to_owned())
-        .unwrap_or_default();
-    let caret = text.find("(LIMIT)").map_or(0, |at| at + 1);
-    let mut state = state
-        .edited(EDITOR_FIELD, Edit::Place(caret, false))
-        .with_signature_at((470.0, 362.0));
-    let version = state
-        .shown_document()
-        .map_or(0, |document| document.version);
-    let uses: Vec<pm_protocol::Span> = text
-        .match_indices("names")
-        .filter_map(|(at, _)| {
-            let document = state.shown_document()?;
-            Some(pm_protocol::Span::new(
-                document.position_of(at),
-                document.position_of(at + "names".len()),
-            ))
-        })
-        .collect();
-    state = state.with_highlights(0, CODE_PATH, version, uses);
-    state.with_signature(
-        0,
-        CODE_PATH,
-        version,
-        Some(pm_protocol::Signature {
-            label: "pub fn with_capacity(capacity: usize) -> HashMap<K, V, RandomState>".to_owned(),
-            active: Some((21, 36)),
-            documentation: Some(
-                "Creates an empty `HashMap` with at least the specified capacity.".to_owned(),
-            ),
-            others: 0,
-        }),
-    )
-}
-
-/// The first session with a file edited inside the submodule `vendor/inner`, the submodule moved two commits on, and its diff open.
-fn diff_submodule() -> WorkspaceState {
-    let mut state = workspace_sample();
-    if let Some(session) = state.sessions.first_mut() {
-        let mut edited = pm_components::sample::Change::new(
-            "vendor/inner/src/parse.rs",
-            "@@ -3,3 +3,4 @@\n fn parse(text: &str) -> Tree {\n-    Tree::empty()\n+    let tokens = lex(text);\n+    Tree::from(tokens)\n }",
-        );
-        edited.submodule = Some("vendor/inner".to_owned());
-        let mut moved = pm_components::sample::Change::new("vendor/inner", "");
-        moved.moved = Some(pm_git::Moved {
-            from: Some("a1b2c3d".to_owned()),
-            to: "e4f5a6b".to_owned(),
-            commits: vec![
-                "Lex before parsing".to_owned(),
-                "Build trees from tokens".to_owned(),
-            ],
-            back: false,
-        });
-        session.changes.splice(0..0, [moved, edited]);
-    }
-    state.after(TAB_DIFF)
-}
-
-/// The first session in a folder that holds the repositories `api` and `web`, with files edited in both and one of them staged, where each repository stands, and, when `picked`, `api` picked in the list of repositories.
-fn changes_repositories(picked: bool) -> WorkspaceState {
-    let mut state = workspace_sample();
-    if let Some(session) = state.sessions.first_mut() {
-        let mut changes = Vec::new();
-        for (repository, path) in [
-            ("api", "api/src/routes.rs"),
-            ("api", "api/src/main.rs"),
-            ("web", "web/src/app.tsx"),
-        ] {
-            let mut change = pm_components::sample::Change::new(
-                path,
-                "@@ -1,3 +1,4 @@\n fn handler() {\n-    todo!()\n+    let body = read();\n+    respond(body)\n }",
-            );
-            change.repository = Some(repository.to_owned());
-            changes.push(change);
-        }
-        changes[1].staged = true;
-        changes[1].unstaged = false;
-        changes[1].index = Some('M');
-        changes[1].worktree = None;
-        session.changes = changes;
-        session.branch = "task/339-shared-branch".to_owned();
-        session.on_branch = true;
-        session.standings = vec![
-            pm_git::Standing {
-                path: "api".to_owned(),
-                branch: Some("task/339-shared-branch".to_owned()),
-                head: Some("3f2a1c9".to_owned()),
-                tracking: pm_git::Tracking {
-                    upstream: Some("origin/task/339-shared-branch".to_owned()),
-                    ahead: 2,
-                    behind: 0,
-                    remotes: Some(1),
-                },
-            },
-            pm_git::Standing {
-                path: "web".to_owned(),
-                branch: Some("task/339-shared-branch".to_owned()),
-                head: Some("9b8c7d6".to_owned()),
-                tracking: pm_git::Tracking::default(),
-            },
-        ];
-    }
-    state.git.submodule_heads = vec![
-        ("api".to_owned(), "task/339-shared-branch".to_owned()),
-        ("web".to_owned(), "task/339-shared-branch".to_owned()),
-    ];
-    if picked {
-        state.git.repository = Some("api".to_owned());
-    }
-    state.after(TAB_DIFF)
-}
-
-/// The session of [`diff_submodule`] with its submodules listed as repositories, the folder's own picked, or, when `inside`, the submodule `vendor/inner` picked with its branches open.
-fn branches_submodule(inside: bool) -> WorkspaceState {
-    let mut state = diff_submodule();
-    state.git.submodule_heads = vec![
-        ("vendor/inner".to_owned(), "main".to_owned()),
-        ("vendor/inner/nested".to_owned(), "@ 3f2a1c9".to_owned()),
-        ("deps/router".to_owned(), "feat/router".to_owned()),
-    ];
-    if inside {
-        state.git.branch_menu = true;
-        state.git.repository = Some("vendor/inner".to_owned());
-        state.git.branches = vec![
-            "main".to_owned(),
-            "fix/lexer".to_owned(),
-            "origin/main".to_owned(),
-        ];
-    } else {
-        state.git.branches = vec!["task/227-checkpoints".to_owned(), "main".to_owned()];
-    }
-    state
-}
-
-/// A JavaScript file open while JavaScript is not installed, so the offer to install it is above its lines.
-fn language_offer() -> WorkspaceState {
-    let path = "scripts/build.js";
-    let mut state = workspace_sample().after(TAB_DIFF);
-    state.extensions = sample_languages();
-    state.open_viewer(path.to_owned(), false);
-    state.with_file(
-        0,
-        path,
-        false,
-        Ok((
-            Some("const fs = require(\"fs\");\n\nfunction build(files) {\n  return files.map((file) => fs.readFileSync(file, \"utf8\"));\n}\n\nmodule.exports = { build };\n".to_owned()),
-            false,
-            None,
-        )),
-    )
-}
-
-/// The Rust file set against a state it was saved in a while ago, its changed lines edited in place.
-fn timeline() -> WorkspaceState {
-    let state = code();
-    let older = state
-        .shown_document()
-        .map(|document| document.field.text().to_owned())
-        .unwrap_or_default()
-        .replace("const LIMIT: usize = 64;", "const LIMIT: usize = 32;")
-        .replace("HashMap::with_capacity(LIMIT)", "HashMap::new()")
-        .replace(
-            "    /// How many names the session knows.\n    pub fn count(&self) -> usize {\n        self.names.len()\n    }\n",
-            "    pub fn len(&self) -> usize {\n        self.names.len()\n    }\n",
-        );
-    state.timeline_opened(0, CODE_PATH, "25m ago".to_owned(), older)
-}
-
-/// A file a merge stopped on, with two places where the sides disagree, and the result under them.
-fn conflict() -> WorkspaceState {
-    load_installed_grammar("rust");
-    let path = "crates/pandemonium/src/session.rs";
-    let ours = "pub struct Session {\n    pub id: u64,\n    pub root: PathBuf,\n    checkpoints: Vec<Checkpoint>,\n}\n";
-    let theirs = "pub struct Session {\n    pub id: u64,\n    pub root: PathBuf,\n    titles: Vec<String>,\n}\n";
-    let merged = "use std::path::PathBuf;\n\n/// A session of an agent.\n<<<<<<< HEAD\npub struct Session {\n    pub id: u64,\n    pub root: PathBuf,\n    checkpoints: Vec<Checkpoint>,\n}\n=======\npub struct Session {\n    pub id: u64,\n    pub root: PathBuf,\n    titles: Vec<String>,\n}\n>>>>>>> origin/main\n\nimpl Session {\n    pub fn new(id: u64, root: PathBuf) -> Self {\n<<<<<<< HEAD\n        Self { id, root, checkpoints: Vec::new() }\n=======\n        Self { id, root, titles: Vec::new() }\n>>>>>>> origin/main\n    }\n}\n";
-    workspace_sample()
-        .after(TAB_DIFF)
-        .with_conflict(
-            0,
+    let live = words.contains(&"live");
+    let theme = AppTheme::of_dark(!light);
+    if let Some(picker) = picker_named(&words) {
+        let actions = PickerActions::inert();
+        return draw(
+            move || folder_picker_page(&picker, theme, &actions),
+            given.unwrap_or((PICKER_SIZE.0 as u32, PICKER_SIZE.1 as u32)),
+            light,
             path,
-            Some(ours.to_owned()),
-            Some(theirs.to_owned()),
-            None,
-        )
-        .with_file(
-            0,
-            path,
-            false,
-            Ok((Some(merged.to_owned()), false, Some("rust".to_owned()))),
-        )
-}
-
-/// The Rust file with the changes the language server offers at the caret listed.
-fn code_actions() -> WorkspaceState {
-    let state = code().code_actions_requested((330.0, 470.0));
-    let action = |title: &str, kind: &str, preferred: bool| pm_protocol::CodeAction {
-        title: title.to_owned(),
-        kind: Some(kind.to_owned()),
-        preferred,
-        disabled: None,
-    };
-    state.with_code_actions(
-        0,
-        CODE_PATH,
-        vec![
-            action("Change type of `count` to `&str`", "quickfix", true),
-            action("Convert to `parse::<u32>()`", "quickfix", false),
-            action("Extract into variable", "refactor.extract", false),
-            action("Inline `label`", "refactor.inline", false),
-            pm_protocol::CodeAction {
-                title: "Generate documentation template".to_owned(),
-                kind: Some("refactor.rewrite".to_owned()),
-                preferred: false,
-                disabled: Some("not on a function".to_owned()),
-            },
-        ],
-    )
-}
-
-/// The Rust file with the commits that changed it listed.
-fn file_history() -> WorkspaceState {
-    let state = code().file_history_requested((330.0, 470.0));
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs() as i64);
-    let commit = |id: &str, author: &str, when: &str, ago: i64, summary: &str| pm_git::FileCommit {
-        object: format!("{id}0000000000000000000000000000000"),
-        id: id.to_owned(),
-        author: author.to_owned(),
-        when: when.to_owned(),
-        time: now - ago,
-        summary: summary.to_owned(),
-        path: CODE_PATH.to_owned(),
-    };
-    let saved = |ago: i64, size: u64| pm_protocol::LocalVersion {
-        id: ((now - ago) * 1000) as u64,
-        size,
-    };
-    let state = state.with_local_history(
-        0,
-        CODE_PATH,
-        vec![
-            saved(90, 1_204),
-            saved(25 * 60, 1_187),
-            saved(70 * 60, 1_102),
-        ],
-    );
-    state.with_file_history(
-        0,
-        CODE_PATH,
-        vec![
-            commit(
-                "54149c90",
-                "Joakim Carlsson",
-                "10 minutes ago",
-                600,
-                "Add go to definition, formatting and jumps",
-            ),
-            commit(
-                "514332d8",
-                "Joakim Carlsson",
-                "2 hours ago",
-                7_200,
-                "Reopen files browsed on a project page",
-            ),
-            commit(
-                "e3e796f4",
-                "Joakim Carlsson",
-                "3 days ago",
-                259_200,
-                "Add language support: tree-sitter highlighting",
-            ),
-            commit(
-                "81f70099",
-                "Joakim Carlsson",
-                "2 weeks ago",
-                1_209_600,
-                "Add the preview channel for pre-releases",
-            ),
-        ],
-    )
-}
-
-/// The sample extension package: it brings a language, a theme, a debug adapter, a tool server and a command, and asks to run programs and download files, of which only running programs is allowed once it is `installed`.
-fn sample_extension(installed: bool) -> pm_protocol::ExtensionInfo {
-    pm_protocol::ExtensionInfo {
-        id: "hello".to_owned(),
-        name: "Hello".to_owned(),
-        kind: "extension".to_owned(),
-        version: "0.1.0".to_owned(),
-        description:
-            "A sample extension: a language, a theme, a debug adapter, a tool server and a command."
-                .to_owned(),
-        installed,
-        local: true,
-        provides: [
-            "language: Hello Config",
-            "theme: Hello Dusk",
-            "debug adapter: Hello",
-            "tool server: hello-tools",
-            "command: Say hello",
-        ]
-        .map(str::to_owned)
-        .to_vec(),
-        requests: ["process", "download"].map(str::to_owned).to_vec(),
-        granted: if installed {
-            vec!["process".to_owned()]
-        } else {
-            Vec::new()
-        },
-        ..Default::default()
-    }
-}
-
-/// The languages a server on this machine could list: some installed, one being installed and one that failed.
-fn sample_languages() -> Vec<pm_protocol::ExtensionInfo> {
-    let language =
-        |id: &str, name: &str, suffix: &str, installed: bool| pm_protocol::ExtensionInfo {
-            id: id.to_owned(),
-            name: name.to_owned(),
-            kind: "language".to_owned(),
-            version: "0.1.0".to_owned(),
-            description: format!("{name} support."),
-            icon: std::fs::read_to_string(
-                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("../../languages")
-                    .join(id)
-                    .join("icon.svg"),
-            )
-            .ok(),
-            color: Some("#8fb8e8".to_owned()),
-            hidden: false,
-            suffixes: vec![suffix.to_owned()],
-            installed,
-            busy: None,
-            problem: None,
-            server: None,
-            local: false,
-            ..Default::default()
-        };
-    vec![
-        sample_extension(true),
-        pm_protocol::ExtensionInfo {
-            server: Some("gopls v0.24.0".to_owned()),
-            ..language("go", "Go", "go", true)
-        },
-        language("dotenv", "Dotenv", "env", false),
-        language("javascript", "JavaScript", "js", false),
-        language("json", "JSON", "json", false),
-        language("mdx", "MDX", "mdx", false),
-        pm_protocol::ExtensionInfo {
-            busy: Some("Installing the language server".to_owned()),
-            ..language("markdown", "Markdown", "md", false)
-        },
-        pm_protocol::ExtensionInfo {
-            problem: Some("Python: installing this language server needs Node.js and npm, which is not on this machine".to_owned()),
-            ..language("python", "Python", "py", true)
-        },
-        pm_protocol::ExtensionInfo {
-            server: Some("Uses /usr/bin/rust-analyzer".to_owned()),
-            ..language("rust", "Rust", "rs", true)
-        },
-        language("toml", "TOML", "toml", false),
-        pm_protocol::ExtensionInfo {
-            local: true,
-            server: Some("zls 0.14.0".to_owned()),
-            ..language("zig", "Zig", "zig", true)
-        },
-        language("tsx", "TSX", "tsx", true),
-        language("typescript", "TypeScript", "ts", false),
-    ]
-}
-
-/// The workspace of made-up sessions.
-fn workspace_sample() -> WorkspaceState {
-    WorkspaceState::sample()
-}
-
-/// The workspace with the browser on a page, zoomed to 125% with the bar for finding open and `tools` beside the page when set.
-fn browser_finding(tools: bool) -> WorkspaceState {
-    let mut state = workspace_sample();
-    state.open_browser("http://localhost:5173/docs/routing");
-    let first = state
-        .browser
-        .as_ref()
-        .map_or(1, |browser| browser.active_id());
-    let (width, height) = (640_u32, 400_u32);
-    let mut pixels = Vec::with_capacity((width * height * 4) as usize);
-    for y in 0..height {
-        for x in 0..width {
-            let bar = y % 40 > 24 && x > 40 && x < 500 - (y / 40 % 3) * 90;
-            let shade = if bar { 200 } else { 247 };
-            pixels.extend_from_slice(&[shade, shade, shade, 255]);
-        }
-    }
-    let page = pm_renderer::Picture {
-        key: pm_renderer::Picture::live_key(pm_components::browser::PAGE_SURFACE, 1),
-        width,
-        height,
-        pixels: std::sync::Arc::new(pixels),
-    };
-    state.browser_tab_painted(
-        first,
-        Some(page),
-        "Routing",
-        "http://localhost:5173/docs/routing",
-        pm_components::browser::Pointer::Arrow,
-        false,
-    );
-    state.browser_zoomed(first, 1.25);
-    state.browser_find_opened();
-    let mut state = state.edited(
-        pm_components::browser::BROWSER_FIND_FIELD,
-        Edit::Paste("route".to_owned()),
-    );
-    state.browser_found(first, 2, 7);
-    if tools {
-        state = state.browser_tools_shown();
-        if let Some(browser) = state.browser.as_mut() {
-            browser.tools_width = 300.0;
-        }
-    }
-    state
-}
-
-/// The picture of a page with one text field that has the keyboard: a ring round the field, its text selected up to a caret.
-fn input_page(width: u32, height: u32) -> pm_renderer::Picture {
-    let (left, right, top, bottom) = (40_u32, 400_u32, 60_u32, 100_u32);
-    let (selected_to, caret) = (260_u32, 262_u32);
-    let mut pixels = Vec::with_capacity((width * height * 4) as usize);
-    for y in 0..height {
-        for x in 0..width {
-            let inside = x >= left && x < right && y >= top && y < bottom;
-            let edge = inside && (x < left + 2 || x >= right - 2 || y < top + 2 || y >= bottom - 2);
-            let text = inside && y >= top + 12 && y < bottom - 12 && x >= left + 12;
-            let pixel = if edge {
-                [229, 151, 0, 255]
-            } else if inside && x == caret && text {
-                [0, 0, 0, 255]
-            } else if text && x < selected_to {
-                [51, 103, 209, 255]
-            } else if inside {
-                [255, 255, 255, 255]
-            } else {
-                [247, 247, 247, 255]
-            };
-            pixels.extend_from_slice(&pixel);
-        }
-    }
-    pm_renderer::Picture {
-        key: pm_renderer::Picture::live_key(pm_components::browser::PAGE_SURFACE, 1),
-        width,
-        height,
-        pixels: std::sync::Arc::new(pixels),
-    }
-}
-
-/// The workspace with the browser on a page whose text field has the keyboard.
-fn browser_input() -> WorkspaceState {
-    let mut state = workspace_sample();
-    state.open_browser("http://localhost:5173/signup");
-    let first = state
-        .browser
-        .as_ref()
-        .map_or(1, |browser| browser.active_id());
-    state.browser_tab_painted(
-        first,
-        Some(input_page(640, 400)),
-        "Sign up",
-        "http://localhost:5173/signup",
-        pm_components::browser::Pointer::Text,
-        false,
-    );
-    state
-}
-
-/// The workspace on the second session, whose browser holds one tab, after the first session was left with several tabs open.
-fn browser_sessions() -> WorkspaceState {
-    let mut state = workspace_sample().after(FocusId(pm_components::state::SESSION_BASE));
-    state.open_browser("http://localhost:3000/");
-    for address in [
-        "http://localhost:5173/checkout",
-        "http://localhost:8080/health",
-    ] {
-        state.browser_tab_opened(address, None, false, false);
-    }
-    let mut state = state.after(FocusId(pm_components::state::SESSION_BASE + 1));
-    state.open_browser("http://localhost:4173/preview");
-    if let Some(id) = state.browser.as_ref().map(|browser| browser.active_id()) {
-        state.browser_tab_painted(
-            id,
-            None,
-            "Preview - Second session",
-            "http://localhost:4173/preview",
-            pm_components::browser::Pointer::Arrow,
-            false,
         );
     }
-    state
-}
-
-/// The workspace with the browser on tabs: the shown one, one an agent opened, one locked, and, when `many`, enough more for the strip to scroll.
-fn browser_tabs(many: bool) -> WorkspaceState {
-    let mut state = browser_finding(false);
-    state.browser_find_closed();
-    let first = state
-        .browser
-        .as_ref()
-        .map_or(1, |browser| browser.active_id());
-    state.browser_zoomed(first, 1.0);
-    let pages = [
-        ("Pandemonium - Dashboard", "http://localhost:3000/", false),
-        ("Checkout flow", "http://localhost:5173/checkout", true),
-        (
-            "Staging - Admin",
-            "https://staging.example.com/admin",
-            false,
-        ),
-        ("localhost:8080", "http://localhost:8080/health", false),
-    ];
-    for (title, address, agent) in pages {
-        if let Some(id) = state.browser_tab_opened(address, None, agent, false) {
-            state.browser_tab_painted(
-                id,
-                None,
-                title,
-                address,
-                pm_components::browser::Pointer::Arrow,
-                false,
-            );
-        }
-    }
-    if many {
-        for number in 0..9 {
-            let address = format!("http://localhost:{}/", 4000 + number);
-            if let Some(id) = state.browser_tab_opened(&address, None, false, false) {
-                state.browser_tab_painted(
-                    id,
-                    None,
-                    &format!("Preview {number}"),
-                    &address,
-                    pm_components::browser::Pointer::Arrow,
-                    false,
-                );
-            }
-        }
-    }
-    if let Some(browser) = state.browser.as_mut() {
-        browser.tabs[3].locked = true;
-        browser.active = 3;
-    }
-    state
-}
-
-/// The workspace on the diff of its first session, the words that changed inside its changed lines marked as the server tells them.
-fn word_diff() -> WorkspaceState {
-    let mut state = workspace_sample().after(TAB_DIFF);
-    for change in &mut state.sessions[0].changes {
-        let source = change
-            .diff
-            .iter()
-            .map(|line| {
-                let marker = match line.kind {
-                    pm_components::sample::Kind::Add => "+",
-                    pm_components::sample::Kind::Remove => "-",
-                    pm_components::sample::Kind::Context => " ",
-                    pm_components::sample::Kind::Hunk => "",
-                };
-                format!("{marker}{}", line.text)
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        change.words = pm_git::words(&source);
-    }
-    state
-}
-
-/// The workspace on the diff with every file but the first as the server lists them: with the lines they change counted and their diffs not yet read.
-fn diff_listed() -> WorkspaceState {
-    let mut state = workspace_sample().after(TAB_DIFF);
-    for change in state.sessions[0].changes.iter_mut().skip(1) {
-        let (added, removed) = (change.added(), change.removed());
-        change.counts = Some((added, removed));
-        change.diff.clear();
-        change.words.clear();
-        change.loaded = false;
-    }
-    state
-}
-
-/// The workspace of [`diff_listed`] opened at its third file, then sent the diffs of every file the listing only counted, so the files above the opened one change height.
-fn diff_opened() -> WorkspaceState {
-    let read: Vec<pm_git::FileDiff> = workspace_sample().sessions[0]
-        .changes
-        .iter()
-        .skip(1)
-        .map(|change| pm_git::FileDiff {
-            path: change.path.clone(),
-            diff: unified(&change.diff),
-            words: change.words.clone(),
-        })
-        .collect();
-    let asked: Vec<String> = read.iter().map(|file| file.path.clone()).collect();
-    diff_listed()
-        .after(FocusId(FILE_BASE + 2))
-        .with_diffs(0, &asked, read)
-}
-
-/// The unified diff text that reads back as `lines`.
-fn unified(lines: &[pm_components::sample::DiffLine]) -> String {
-    lines
-        .iter()
-        .map(|line| match line.kind {
-            pm_components::sample::Kind::Hunk => format!("{}\n", line.text),
-            pm_components::sample::Kind::Context => format!(" {}\n", line.text),
-            pm_components::sample::Kind::Add => format!("+{}\n", line.text),
-            pm_components::sample::Kind::Remove => format!("-{}\n", line.text),
-        })
-        .collect()
-}
-
-/// The control a dropdown of the source control panel opens from, and the density the window is set to.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Trigger {
-    /// The `…` button of the Changes section.
-    Changes,
-    /// The `…` button of the Changes section, with the window at its compact density.
-    ChangesCompact,
-    /// The history references button of the Graph section.
-    Refs,
-}
-
-impl Trigger {
-    /// The menu the control opens and where the control is, as `(x, y, width, height)` in logical pixels.
-    fn control(self) -> (MenuKind, (f32, f32, f32, f32)) {
-        match self {
-            Self::Changes => (MenuKind::Source, (1245.0, 130.0, 26.0, 28.0)),
-            Self::ChangesCompact => (MenuKind::Source, (1245.0, 112.0, 26.0, 24.0)),
-            Self::Refs => (MenuKind::Refs, (1065.0, 774.0, 66.0, 24.0)),
-        }
-    }
-
-    /// How closely the window is set for the shot.
-    fn density(self) -> pm_config::Density {
-        match self {
-            Self::ChangesCompact => pm_config::Density::Compact,
-            _ => pm_config::Density::Comfortable,
-        }
-    }
-}
-
-/// The workspace on the diff at its compact density, its first file replaced by one of five thousand added lines and scrolled a good way into it.
-fn diff_compact() -> WorkspaceState {
-    let state = workspace_sample();
-    let mut window = state.window.clone();
-    window.appearance.density = pm_config::Density::Compact;
-    let mut state = state.with_window_settings(window).after(TAB_DIFF);
-    let source: String = std::iter::once("@@ -0,0 +1,5000 @@".to_owned())
-        .chain((1..=5000).map(|line| format!("+    let value_{line} = {line};")))
-        .collect::<Vec<_>>()
-        .join("\n");
-    state.sessions[0].changes[0] = pm_components::sample::Change::new("src/long.rs", &source);
-    state.scrolled_diff(40_000.0, 200_000.0)
-}
-
-/// The workspace on the diff with a comment kept on some lines and a box open to write another on a file.
-fn commenting() -> WorkspaceState {
-    let state = workspace_sample()
-        .after(TAB_DIFF)
-        .comment_drag_begun(gutter_id(1, true, 23))
-        .comment_drag_extended(gutter_id(1, true, 26))
-        .comment_drag_ended()
-        .edited(
-            COMMENT_FIELD,
-            Edit::Paste("Return the id from checkpoint() and drop the unwrap.".to_owned()),
-        )
-        .after(COMMENT_ADD);
-    state
-        .comment_drag_begun(gutter_id(1, false, 18))
-        .comment_drag_extended(gutter_id(1, false, 19))
-        .comment_drag_ended()
-        .scrolled_diff(560.0, 5000.0)
-}
-
-/// The commits of a graph with a branch that forks off and is merged back.
-fn commits() -> Vec<pm_git::Commit> {
-    use pm_git::{Commit, Edge, Half, Lanes};
-    let edge = |half, from, to, color| Edge {
-        half,
-        from,
-        to,
-        color,
-    };
-    let line = |lane: usize, color: usize, width: usize, edges: Vec<Edge>| Lanes {
-        lane,
-        color,
-        edges,
-        width,
-    };
-    let commit = |id: &str, refs: &[&str], summary: &str, lanes: Lanes| Commit {
-        id: id.to_owned(),
-        refs: refs.iter().map(|name| (*name).to_owned()).collect(),
-        summary: summary.to_owned(),
-        lanes,
-    };
-    vec![
-        commit(
-            "f180f7b",
-            &["HEAD -> task/rewrite", "origin/task/rewrite"],
-            "Build only the visible diff rows, stop copying the state on every event",
-            line(0, 0, 1, vec![edge(Half::Lower, 0, 0, 0)]),
-        ),
-        commit(
-            "0fdd820",
-            &[],
-            "Show the diff side by side with file icons and line comments",
-            line(
-                0,
-                0,
-                2,
-                vec![
-                    edge(Half::Upper, 0, 0, 0),
-                    edge(Half::Lower, 0, 0, 0),
-                    edge(Half::Lower, 0, 1, 1),
-                ],
-            ),
-        ),
-        commit(
-            "d94cadd",
-            &["origin/feat/modal"],
-            "Add projects from a modal that browses server folders",
-            line(
-                1,
-                1,
-                2,
-                vec![
-                    edge(Half::Upper, 0, 0, 0),
-                    edge(Half::Upper, 1, 1, 1),
-                    edge(Half::Lower, 0, 0, 0),
-                    edge(Half::Lower, 1, 1, 1),
-                ],
-            ),
-        ),
-        commit(
-            "9a625ad",
-            &["main"],
-            "Select the conversation's text with the pointer",
-            line(
-                0,
-                0,
-                2,
-                vec![
-                    edge(Half::Upper, 0, 0, 0),
-                    edge(Half::Upper, 1, 0, 1),
-                    edge(Half::Lower, 0, 0, 0),
-                ],
-            ),
-        ),
-        commit(
-            "b0fcc99",
-            &["tag: v0.12.0"],
-            "Ask the agent's questions in a card above the prompt",
-            line(0, 0, 1, vec![edge(Half::Upper, 0, 0, 0)]),
-        ),
-    ]
-}
-
-/// The workspace on the diff with the source control panel filled in: a staged file, an untracked one, a message waiting and the graph.
-fn source() -> WorkspaceState {
-    let mut state = workspace_sample()
-        .after(TAB_DIFF)
-        .after(FocusId(STAGE_BASE))
-        .after(FocusId(FILE_BASE + 1))
-        .edited(
-            COMMIT_MESSAGE,
-            Edit::Paste("Restore sessions from checkpoints".to_owned()),
-        )
-        .with_history(0, commits());
-    if let Some(session) = state.sessions.get_mut(0) {
-        session.changes[3].untracked = true;
-        session.changes[3].worktree = Some('?');
-    }
-    state
-}
-
-/// The workspace on the diff with the first and third changed files picked.
-fn picked() -> WorkspaceState {
-    workspace_sample()
-        .after(TAB_DIFF)
-        .after(FocusId(FILE_BASE))
-        .change_picked(2, Choosing::Toggle)
-}
-
-/// The workspace on the diff with sixty-eight changed files, every one of them picked.
-fn many_changes() -> WorkspaceState {
-    let mut state = workspace_sample();
-    if let Some(session) = state.sessions.first_mut() {
-        session.changes = (0..68)
-            .map(|index| {
-                pm_components::sample::Change::new(
-                    &format!("src/module_{index}.rs"),
-                    "@@ -1,3 +1,4 @@\n fn handler() {\n-    todo!()\n+    let body = read();\n+    respond(body)\n }",
-                )
-            })
-            .collect();
-    }
-    state
-        .after(TAB_DIFF)
-        .after(FocusId(FILE_BASE))
-        .changes_all_picked()
-}
-
-/// The workspace with the list of branches open and `feat` typed in its box.
-fn branching() -> WorkspaceState {
-    let names = [
-        "task/227-checkpoints",
-        "main",
-        "feat/session-titles",
-        "feat/worktree-cleanup",
-        "task/271-add-per-project-tasks-run-buttons-and-a-toolchain-selector",
-        "origin/main",
-        "origin/feat/editor",
-    ];
-    workspace_sample()
-        .after(TAB_DIFF)
-        .after(BRANCH_BUTTON)
-        .with_session_branches(0, names.map(str::to_owned).to_vec())
-        .edited(BRANCH_FILTER, Edit::Paste("t".to_owned()))
-}
-
-/// The workspace reading a file of the first session as it is in the last commit.
-fn reading() -> WorkspaceState {
-    let mut state = workspace_sample().after(TAB_DIFF);
-    state.open_viewer("crates/pandemonium/src/session.rs".to_owned(), true);
-    let text = "use std::path::PathBuf;\n\n/// A session of an agent.\npub struct Session {\n    pub id: SessionId,\n    pub root: PathBuf,\n}\n\nimpl Session {\n    pub fn new(id: SessionId, root: PathBuf) -> Self {\n        Self { id, root }\n    }\n}\n";
-    state.with_file(
-        0,
-        "crates/pandemonium/src/session.rs",
-        true,
-        Ok((Some(text.to_owned()), false, None)),
-    )
-}
-
-/// The workspace with one file kept open after an edit and another being looked at.
-fn editing() -> WorkspaceState {
-    let mut state = workspace_sample().after(TAB_DIFF);
-    state.open_viewer("crates/pandemonium/src/session.rs".to_owned(), false);
-    let text = "use std::path::PathBuf;\n\n/// A session of an agent.\npub struct Session {\n    pub id: SessionId,\n    pub root: PathBuf,\n}\n\nimpl Session {\n    pub fn new(id: SessionId) -> Self {\n        let name = \"main\"; // 42\n\tlet tabbed = 1;\n        Self { id, root: PathBuf::from(name) }\n    }\n}\n";
-    let state = state.with_file(
-        0,
-        "crates/pandemonium/src/session.rs",
-        false,
-        Ok((Some(text.to_owned()), false, None)),
-    );
-    let mut state = state.edited(EDITOR_FIELD, Edit::Paste("// edited\n".to_owned()));
-    state.open_viewer("crates/pandemonium/src/lib.rs".to_owned(), false);
-    state.with_file(
-        0,
-        "crates/pandemonium/src/lib.rs",
-        false,
-        Ok((Some("pub mod session;\n".to_owned()), false, None)),
-    )
-}
-
-/// The overview of the first project: its sessions, its own folder on a branch ahead of what it follows with a change, and its latest commits.
-fn overview() -> WorkspaceState {
-    let mut state = workspace_sample().after(FocusId(pm_components::state::PROJECT_BASE));
-    let home = state.review_index().unwrap_or_default();
-    if let Some(session) = state.sessions.get_mut(home) {
-        session.branch = "main".to_owned();
-        session.on_branch = true;
-        session.tracking = pm_git::Tracking {
-            upstream: Some("origin/main".to_owned()),
-            ahead: 2,
-            behind: 0,
-            remotes: Some(1),
-        };
-    }
-    let changes = state.sessions[0].changes[..1].to_vec();
-    state.sessions[home].changes = changes;
-    state.with_history(home, commits())
-}
-
-/// The first project with two submodules, one nested in the other, its second session working in the outer one, and new work being started in the nested one.
-fn submodules() -> WorkspaceState {
-    let mut state = workspace_sample();
-    state.projects[0].submodules =
-        vec!["vendor/inner".to_owned(), "vendor/inner/nested".to_owned()];
-    if let Some(session) = state
-        .sessions
-        .iter_mut()
-        .filter(|session| session.project == Some(0) && !session.home)
-        .nth(1)
-    {
-        session.submodule = Some("vendor/inner".to_owned());
-    }
-    state.after(FocusId(pm_components::state::NEW_IN_SUBMODULE_BASE + 1))
-}
-
-/// The page for starting work with a file of the project open beside it.
-fn new_file() -> WorkspaceState {
-    let mut state = workspace_sample().after(FocusId(pm_components::state::NEW_IN_BASE));
-    state.open_viewer("src/main.rs".to_owned(), false);
-    let session = state.review_index().unwrap_or_default();
-    state.with_file(
-        session,
-        "src/main.rs",
-        false,
-        Ok((
-            Some("fn main() {\n    println!(\"hi\");\n}\n".to_owned()),
-            false,
-            None,
-        )),
-    )
-}
-
-/// The workspace with the project's files listed in the review panel.
-fn files() -> WorkspaceState {
-    let state = workspace_sample().after(REVIEW_FILES);
-    let key = state.files_of.clone().unwrap_or_default();
-    let paths = [
-        "Cargo.toml",
-        "README.md",
-        "docs/protocol.md",
-        "crates/pandemonium/src/main.rs",
-        "crates/pandemonium/src/session.rs",
-        "crates/pandemonium/src/checkpoint.rs",
-        "crates/pandemonium/src/lib.rs",
-        "crates/pandemonium/Cargo.toml",
-        "crates/pm-ui/src/lib.rs",
-        "scripts/install.sh",
-        ".env",
-    ];
-    state.with_files(
-        &key,
-        paths.map(str::to_owned).to_vec(),
-        vec![
-            "crates/pandemonium/src/empty".to_owned(),
-            "target".to_owned(),
-        ],
-        vec![".env".to_owned(), "target".to_owned()],
-    )
-}
-
-/// The independent prompt and conversation sizes used by typing benchmarks and render fixtures.
-fn input_stress(long_prompt: bool, long_chat: bool) -> WorkspaceState {
-    let mut state = workspace_sample();
-    state.review = false;
-    let prompt = if long_prompt {
-        "A paragraph with Unicode café 🦀 and ordinary text to wrap. ".repeat(12) + "\n"
+    let mut workspace = if live {
+        live_workspace(&words)
     } else {
-        "hello".to_owned()
+        pm_shell::sample_workspace()
     };
-    state.prompt = pm_components::state::prompt_field(&if long_prompt {
-        prompt.repeat(120)
-    } else {
-        prompt
-    });
-    if long_chat {
-        let mut message = state.sessions[0]
-            .messages
-            .iter()
-            .find(|message| !message.from_user)
-            .unwrap()
-            .clone();
-        message.text =
-            "A paragraph of agent output with **formatting** and `code`.\n\n".repeat(100);
-        message.said.clear();
-        message.steps.clear();
-        message.answers.clear();
-        state.sessions[0].messages = vec![message; 40];
+    if let (false, Some(page)) = (live, page_named(&words, &workspace)) {
+        let first = workspace.page.clone();
+        workspace.trail.visit(first);
+        workspace.trail.visit(page.clone());
+        workspace.page = page;
     }
-    state
-}
-
-/// A large expanded tree with stable names, optionally scrolled halfway down.
-fn large_files(scrolled: bool) -> WorkspaceState {
-    let mut state = files();
-    state.files = (0..10_000)
-        .map(|index| format!("src/module-{:03}/file-{:05}.rs", index / 100, index))
-        .collect();
-    state.tree_folders.clear();
-    state.tree_ignored.clear();
-    state.open_tree = std::iter::once("src".to_owned())
-        .chain((0..100).map(|index| format!("src/module-{index:03}")))
-        .collect();
-    if scrolled {
-        state.tree_scroll = 120_000.0;
+    if !live && let Some(ask) = ask_named(&words) {
+        pm_shell::sample_ask(&mut workspace.extras, ask);
     }
-    state
-}
-
-/// Expanded ignored folders with every nested file and folder dimmed.
-fn ignored_files() -> WorkspaceState {
-    let mut state = files();
-    let paths = [
-        "server/prod/connect.sh",
-        "server/prod/key.pem",
-        "server/stage/connect.sh",
-        "server/stage/clip.mp4",
-    ];
-    let folders = ["server", "server/prod", "server/stage"];
-    state.files.extend(paths.map(str::to_owned));
-    state.tree_folders.extend(folders.map(str::to_owned));
-    state
-        .tree_ignored
-        .extend(paths.into_iter().chain(folders).map(str::to_owned));
-    state.open_tree.extend(folders.map(str::to_owned));
-    state
-}
-
-/// The workspace with a shell open that has run a few commands, as the shell would have drawn them.
-fn terminal() -> WorkspaceState {
-    with_shell(workspace_sample())
-}
-
-/// `state` with the terminal opened and a few commands run in its shell, as the shell would have drawn them.
-fn with_shell(state: WorkspaceState) -> WorkspaceState {
-    let mut state = state.after(TERMINAL);
-    state.fit_terminal(75, 11);
-    let printed = "\x1b[1;32mpandemonium\x1b[0m \x1b[34m~/code/pandemonium\x1b[0m $ git status\r\n\
-On branch \x1b[36mtask/227-checkpoints\x1b[0m\r\n\
-Changes not staged for commit:\r\n\
-\t\x1b[31mmodified:   crates/pandemonium/src/session.rs\x1b[0m\r\n\
-\x1b[1;32mpandemonium\x1b[0m \x1b[34m~/code/pandemonium\x1b[0m $ cargo test\r\n\
-\x1b[1;32m   Compiling\x1b[0m pandemonium v0.12.0\r\n\
-\x1b[1;32m    Finished\x1b[0m test profile in 6.21s\r\n\
-test result: \x1b[32mok\x1b[0m. 9 passed; 0 failed\r\n\
-\x1b[1;32mpandemonium\x1b[0m \x1b[34m~/code/pandemonium\x1b[0m $ ";
-    state.terminal_output(1, printed.as_bytes());
-    state
-}
-
-/// The projects shown in the sample workspace.
-fn projects() -> Vec<Project> {
-    ["~/code/pandemonium", "~/code/voxel"]
-        .into_iter()
-        .filter_map(Project::from_source)
-        .collect()
-}
-
-/// The page for starting work with a link and a card of a web page picked.
-fn picked_elements() -> WorkspaceState {
-    let pairs = |rows: &[(&str, &str)]| -> Vec<(String, String)> {
-        rows.iter()
-            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
-            .collect()
-    };
-    let link = pm_components::elements::Element {
-        selector: "div#root > div.relative.flex > header.sticky.top-0 > nav.flex.items-center > a.mr-3.flex:nth-of-type(1)".to_owned(),
-        tag: "a".to_owned(),
-        attributes: pairs(&[
-            ("title", "Home"),
-            ("class", "mr-3 flex items-center gap-2 rounded px-1 py-0.5 outline-none focus-visible:ring-3 focus-visible:ring-ring/50"),
-            ("href", "/"),
-            ("data-discover", "true"),
-        ]),
-        text: "VAULT".to_owned(),
-        styles: pairs(&[
-            ("color", "oklch(0.95 0.005 250)"),
-            ("background-color", "rgba(0, 0, 0, 0)"),
-            ("font-family", "Inter, ui-sans-serif, system-ui, sans-serif"),
-            ("font-size", "14px"),
-            ("font-weight", "600"),
-            ("display", "flex"),
-            ("padding", "2px 4px"),
-            ("border-radius", "4px"),
-            ("cursor", "pointer"),
-        ]),
-        width: 78.0,
-        height: 24.0,
-        component: "Link".to_owned(),
-        props: pairs(&[("to", "\"/\""), ("replace", "{false}"), ("title", "\"Home\"")]),
-        url: "http://localhost:5173/scenes/582".to_owned(),
-        title: "vault".to_owned(),
-    };
-    let card = pm_components::elements::Element {
-        selector: "div.flex.flex-col > div.relative.isolate > div.w-64.shrink-0.snap-start"
-            .to_owned(),
-        tag: "div".to_owned(),
-        attributes: pairs(&[
-            ("class", "w-64 shrink-0 snap-start sm:w-72"),
-            ("data-id", "card-2"),
-        ]),
-        text: "Soph Stardust ASMR - Body Triggers & Bra Scratching 15:06".to_owned(),
-        styles: pairs(&[
-            ("color", "#e5e7eb"),
-            ("background-color", "rgb(24, 24, 27)"),
-            ("width", "256px"),
-            ("display", "block"),
-        ]),
-        width: 256.0,
-        height: 190.0,
-        url: "http://localhost:5173/".to_owned(),
-        title: "vault".to_owned(),
-        ..Default::default()
-    };
-    welcome().with_element(link).with_element(card)
-}
-
-/// The page for starting work with a picked element, a screenshot, an area that was too large and the console held for the prompt.
-fn held_captures() -> WorkspaceState {
-    use pm_components::captures::{Capture, Kind, Shot};
-    let page = "http://localhost:5173/scenes/582".to_owned();
-    let screenshot = Capture {
-        kind: Kind::Screenshot,
-        shots: vec![Shot {
-            label: "Visible".to_owned(),
-            path: "/home/me/page-1.png".to_owned(),
-        }],
-        lines: Vec::new(),
-        url: page.clone(),
-        title: "vault".to_owned(),
-        note: String::new(),
-    };
-    let skipped = Capture {
-        kind: Kind::Area,
-        shots: vec![
-            Shot {
-                label: "Visible".to_owned(),
-                path: "/home/me/page-2.png".to_owned(),
-            },
-            Shot {
-                label: "Full page".to_owned(),
-                path: "/home/me/page-3.png".to_owned(),
-            },
-        ],
-        lines: Vec::new(),
-        url: page.clone(),
-        title: "vault".to_owned(),
-        note: "Area skipped: it was too large to attach. The visible part and the whole page are attached instead.".to_owned(),
-    };
-    let console = Capture {
-        kind: Kind::Console,
-        shots: Vec::new(),
-        lines: [
-            "[log] connected to ws://localhost:5173/",
-            "[warning] Each child in a list should have a unique \"key\" prop. Check the render method of `SceneList`.",
-            "[error] Uncaught TypeError: Cannot read properties of undefined (reading 'title') at Card (Card.tsx:41:22)",
-            "[error] GET http://localhost:5173/api/scenes/582 -> 500",
-        ]
-        .into_iter()
-        .map(str::to_owned)
-        .collect(),
-        url: page,
-        title: "vault".to_owned(),
-        note: String::new(),
-    };
-    picked_elements()
-        .with_preview("/home/me/page-1.png", gradient())
-        .with_preview("/home/me/page-2.png", gradient())
-        .with_preview("/home/me/page-3.png", gradient())
-        .with_capture(screenshot)
-        .with_capture(skipped)
-        .with_capture(console)
-}
-
-impl Shot {
-    /// Whether this snapshot shows the folder picker's window instead of the main one.
-    fn in_picker_window(self) -> bool {
-        matches!(self, Self::Folders)
+    if !live && let Some(sample) = composer_named(&words) {
+        pm_shell::sample_composer(&mut workspace.extras, sample);
     }
-
-    /// Whether this snapshot shows the settings window instead of the main one.
-    fn in_settings_window(self) -> bool {
-        matches!(
-            self,
-            Self::SettingsPage(..)
-                | Self::SettingsOrigins(_)
-                | Self::SettingsSearch(_)
-                | Self::SettingsPicker(_)
-                | Self::SettingsMachine(_)
-                | Self::SettingsCompact(_)
-                | Self::SettingsMcp
-                | Self::SettingsModelServers(_)
-                | Self::SettingsModelSlots(_)
-                | Self::SettingsDraft(_)
-                | Self::SettingsForm
-                | Self::SettingsAccounts(_)
-                | Self::SettingsAccountsScrolled
-                | Self::SettingsAccountsCloud(_)
-                | Self::SettingsAccountsHidden
-                | Self::SettingsAccountsKey
-        )
-    }
-
-    /// Whether this snapshot shows the settings window at its smallest.
-    fn narrow(self) -> bool {
-        matches!(
-            self,
-            Self::SettingsPage(_, true)
-                | Self::SettingsOrigins(true)
-                | Self::SettingsSearch(true)
-                | Self::SettingsPicker(true)
-                | Self::SettingsMachine(true)
-                | Self::SettingsDraft(true)
-                | Self::SettingsModelServers(true)
-                | Self::SettingsModelSlots(true)
-                | Self::SettingsCompact(true)
-                | Self::SettingsAccounts(true)
-                | Self::SettingsAccountsCloud(true)
-        )
-    }
-
-    /// The settings shot `name` names: `settings` for the first section, `settings-` and a section's name for another, `settings-search`, `settings-picker`, `settings-machine`, `settings-compact`, `settings-skills-new` or `settings-accounts-cloud`, each with `-narrow` after it for the window at its smallest.
-    pub fn settings_named(name: &str) -> Option<Self> {
-        let rest = name.strip_prefix("settings")?;
-        let (rest, narrow) = match rest.strip_suffix("-narrow") {
-            Some(rest) => (rest, true),
-            None => (rest, false),
-        };
-        let rest = rest.strip_prefix('-').unwrap_or(rest);
-        match rest {
-            "" => Some(Self::SettingsPage(Section::General, narrow)),
-            "origins" => Some(Self::SettingsOrigins(narrow)),
-            "search" => Some(Self::SettingsSearch(narrow)),
-            "picker" => Some(Self::SettingsPicker(narrow)),
-            "machine" => Some(Self::SettingsMachine(narrow)),
-            "compact" => Some(Self::SettingsCompact(narrow)),
-            "form" => Some(Self::SettingsForm),
-            "accounts" => Some(Self::SettingsAccounts(narrow)),
-            "accounts-scrolled" => Some(Self::SettingsAccountsScrolled),
-            "accounts-cloud" => Some(Self::SettingsAccountsCloud(narrow)),
-            "accounts-hidden" => Some(Self::SettingsAccountsHidden),
-            "accounts-key" => Some(Self::SettingsAccountsKey),
-            "mcp" => Some(Self::SettingsMcp),
-            "model-servers-found" => Some(Self::SettingsModelServers(narrow)),
-            "model-slots" => Some(Self::SettingsModelSlots(narrow)),
-            "skills-new" => Some(Self::SettingsDraft(narrow)),
-            slug => SETTINGS_SHOTS
-                .iter()
-                .find(|(held, _)| *held == slug)
-                .map(|(_, section)| Self::SettingsPage(*section, narrow)),
-        }
-    }
-
-    /// The stretch of selectable text this snapshot shows selected, if any.
-    fn selection(self) -> Option<TextSelection> {
-        matches!(self, Self::Selecting | Self::MessageMenu).then_some(TextSelection {
-            id: CHAT_TEXT,
-            anchor: TextPoint { piece: 27, byte: 3 },
-            head: TextPoint { piece: 38, byte: 2 },
-        })
-    }
-
-    /// The screen this snapshot is of.
-    fn screen(self) -> Screen {
-        let workspace = workspace_sample;
-        match self {
-            Self::Code => Screen::Workspace(code()),
-            Self::CodeTsx => Screen::Workspace(written(
-                "src/Button.tsx",
-                "tsx",
-                &["tsx", "css"],
-                CODE_TSX,
-            )),
-            Self::CodeMdx => Screen::Workspace(written(
-                "docs/post.mdx",
-                "mdx",
-                &["mdx", "tsx", "markdown-inline", "yaml"],
-                CODE_MDX,
-            )),
-            Self::CodeEnv => Screen::Workspace(written(
-                ".env.local",
-                "dotenv",
-                &["dotenv"],
-                CODE_ENV,
-            )),
-            Self::CodeJs => Screen::Workspace(written(
-                "scripts/settings.js",
-                "javascript",
-                &["javascript"],
-                CODE_JS,
-            )),
-            Self::CodeShell => Screen::Workspace(written(
-                "scripts/build.sh",
-                "bash",
-                &["bash"],
-                CODE_SHELL,
-            )),
-            Self::RunCompose => Screen::Workspace(written(
-                "docker-compose.yml",
-                "docker-compose",
-                &["yaml", "docker-compose"],
-                CODE_COMPOSE,
-            )),
-            Self::CodeSample => Screen::Workspace(written(
-                "settings.smpl",
-                "sample-sample",
-                &["python", "sample-sample"],
-                CODE_SAMPLE,
-            )),
-            Self::Redacted => Screen::Workspace(
-                written(
-                    "settings.smpl",
-                    "sample-sample",
-                    &["python", "sample-sample"],
-                    CODE_SAMPLE,
-                )
-                .with_editor_settings(pm_editor::EditorSettings {
-                    redact_private_values: true,
-                    ..pm_editor::EditorSettings::default()
-                }),
-            ),
-            Self::RunDockerfile => Screen::Workspace(written(
-                "Dockerfile",
-                "dockerfile",
-                &["dockerfile"],
-                CODE_DOCKERFILE,
-            )),
-            Self::RunGoMod => Screen::Workspace(written(
-                "go.mod",
-                "gomod",
-                &["gomod"],
-                CODE_GOMOD,
-            )),
-            Self::RunPackageJson => {
-                let state = written("package.json", "json", &["json"], CODE_PACKAGE);
-                let version = state
-                    .shown_document()
-                    .map(|document| document.version)
-                    .unwrap_or_default();
-                let at = |row: u32, word: &str| {
-                    let column = CODE_PACKAGE
-                        .lines()
-                        .nth(row as usize)
-                        .and_then(|held| held.find(word))
-                        .unwrap_or(0) as u32;
-                    pm_protocol::Span::new(
-                        pm_protocol::Position::new(row, column),
-                        pm_protocol::Position::new(row, column + word.len() as u32),
-                    )
-                };
-                Screen::Workspace(state.with_code_lenses(
-                    0,
-                    "package.json",
-                    version,
-                    vec![
-                        pm_protocol::CodeLens {
-                            span: at(8, "^18.2.0"),
-                            title: "Update to 19.3.1".to_owned(),
-                            pressable: true,
-                        },
-                        pm_protocol::CodeLens {
-                            span: at(9, "3.23.8"),
-                            title: "Update to 4.1.0".to_owned(),
-                            pressable: true,
-                        },
-                    ],
-                ))
-            }
-            Self::LanguageOffer => Screen::Workspace(language_offer()),
-            Self::MarkdownPreview => Screen::Workspace(previewed("README.md")),
-            Self::VectorPreview => Screen::Workspace(previewed("assets/logo.svg")),
-            Self::PicturePreview => Screen::Workspace(previewed("assets/screenshot.png")),
-            Self::SoftWrap => {
-                let editor = pm_editor::EditorSettings {
-                    soft_wrap: pm_editor::SoftWrap::LineLength,
-                    preferred_line_length: 36,
-                    wrap_guide: true,
-                    cursor_shape: pm_editor::CursorShape::Block,
-                    cursor_blink: false,
-                    ..pm_editor::EditorSettings::default()
-                };
-                Screen::Workspace(
-                    code()
-                        .with_editor_settings(editor)
-                        .with_code_view(560.0, 7.2)
-                        .edited(EDITOR_FIELD, Edit::Place(600, false)),
-                )
-            }
-            Self::Completing => Screen::Workspace(completing()),
-            Self::Hovering => Screen::Workspace(hovering()),
-            Self::Debugging => Screen::Workspace(debugging()),
-            Self::Problems => Screen::Workspace(problems()),
-            Self::SidebarHidden => {
-                let mut state = code();
-                state.sidebar_open = false;
-                Screen::Workspace(state)
-            }
-            Self::EditorMenu => Screen::Workspace(code().with_menu(EDITOR_FIELD, (420.0, 200.0))),
-            Self::References => Screen::Workspace(references()),
-            Self::Renaming => {
-                let state = code();
-                let caret = state
-                    .shown_document()
-                    .map_or(0, |document| document.field.caret());
-                Screen::Workspace(state.rename_requested(caret.saturating_sub(12), (330.0, 470.0)))
-            }
-            Self::CodeActions => Screen::Workspace(code_actions()),
-            Self::FileHistory => Screen::Workspace(file_history()),
-            Self::Timeline => Screen::Workspace(timeline()),
-            Self::Conflict => Screen::Workspace(conflict()),
-            Self::DiffSubmodule => Screen::Workspace(diff_submodule()),
-            Self::ChangesRepositories(picked) => Screen::Workspace(changes_repositories(picked)),
-            Self::BranchesSubmodule(inside) => Screen::Workspace(branches_submodule(inside)),
-            Self::Signing => Screen::Workspace(signing()),
-            Self::Annotated => Screen::Workspace(annotated()),
-            Self::ColorSwatches => Screen::Workspace(color_swatches()),
-            Self::ColorPicker => Screen::Workspace(color_picker()),
-            Self::Vim => Screen::Workspace(vim()),
-            Self::ProjectSearch => Screen::Workspace(project_search()),
-            Self::Excerpts => Screen::Workspace(excerpts()),
-            Self::FindInSelection => Screen::Workspace(find_in_selection(false)),
-            Self::FindInSelectionReplaced => Screen::Workspace(find_in_selection(true)),
-            Self::DraggingText => Screen::Workspace(dragging_text(false)),
-            Self::DraggedText => Screen::Workspace(dragging_text(true)),
-            Self::Lightbulb => Screen::Workspace(lightbulb()),
-            Self::Ligatures => Screen::Workspace(ligatures(true)),
-            Self::LigaturesOff => Screen::Workspace(ligatures(false)),
-            Self::Bidi => Screen::Workspace(bidi()),
-            Self::CompareClipboard => Screen::Workspace(compared(Compare::Clipboard)),
-            Self::CompareSaved => Screen::Workspace(compared(Compare::Saved)),
-            Self::ComparePicking => Screen::Workspace(compared(Compare::Picking)),
-            Self::CompareFile => Screen::Workspace(compared(Compare::File)),
-            Self::TabMenu => Screen::Workspace(code().with_tab_menu(0, (500.0, 52.0))),
-            Self::Finder => {
-                let mut state = code();
-                state.files = [
-                    "Cargo.toml",
-                    "README.md",
-                    "crates/pandemonium/src/main.rs",
-                    "crates/pandemonium/src/session.rs",
-                    "crates/pandemonium/src/snapshot.rs",
-                    "crates/pm-server/src/sessions.rs",
-                    "crates/pm-protocol/src/response.rs",
-                    "docs/protocol.md",
-                ]
-                .map(str::to_owned)
-                .to_vec();
-                Screen::Workspace(state.file_finder_requested((340.0, 0.0)).edited(
-                    pm_components::listing::LISTING_FILTER,
-                    Edit::Paste("ses".to_owned()),
-                ))
-            }
-            Self::QuickHelp => Screen::Workspace(code().file_finder_requested((340.0, 0.0)).edited(
-                pm_components::listing::LISTING_FILTER,
-                Edit::Paste("?".to_owned()),
-            )),
-            Self::Themes => Screen::Workspace(code().choices_requested(
-                pm_components::quick_choices::Choosing::Theme,
-                (340.0, 0.0),
-            )),
-            Self::GoLine => Screen::Workspace(code().file_finder_requested((340.0, 0.0)).edited(
-                pm_components::listing::LISTING_FILTER,
-                Edit::Paste(":12".to_owned()),
-            )),
-            Self::Tasks => Screen::Workspace(
-                code()
-                    .with_tasks(0, sample_tasks(), None)
-                    .commands_requested((340.0, 0.0))
-                    .edited(
-                        pm_components::listing::LISTING_FILTER,
-                        Edit::Paste("task".to_owned()),
-                    ),
-            ),
-            Self::RunButtons => Screen::Workspace(runnable()),
-            Self::Toolchains => Screen::Workspace(
-                code()
-                    .toolchains_requested((340.0, 0.0))
-                    .with_toolchains(0, sample_toolchains()),
-            ),
-            Self::Sessions => Screen::Workspace(code().sessions_requested((340.0, 0.0))),
-            Self::ChatSearch => Screen::Workspace(chat_search()),
-            Self::Commands => Screen::Workspace(
-                code()
-                    .command_used(pm_editor::Action::FileFinder)
-                    .command_used(pm_editor::Action::GoToLine)
-                    .commands_requested((340.0, 0.0))
-                    .edited(
-                        pm_components::listing::LISTING_FILTER,
-                        Edit::Paste("go".to_owned()),
-                    ),
-            ),
-            Self::Folded => Screen::Workspace(
-                code().lines_edited(pm_components::line_edits::LineEdit::Fold),
-            ),
-            Self::Sticky => Screen::Workspace(code().scrolled_viewer(360.0, 10_000.0)),
-            Self::Cursors => {
-                let state = code();
-                let at = state
-                    .shown_document()
-                    .and_then(|document| document.field.text().find("names"))
-                    .unwrap_or_default();
-                Screen::Workspace(
-                    state
-                        .edited(EDITOR_FIELD, Edit::Place(at + 2, false))
-                        .lines_edited(pm_components::line_edits::LineEdit::SelectAllOccurrences),
-                )
-            }
-            Self::ColumnSelection => {
-                let state = code();
-                let text = state
-                    .shown_document()
-                    .map(|document| document.field.text().to_owned())
-                    .unwrap_or_default();
-                let first = text.find("    pub id").unwrap_or_default() + 8;
-                let last = text.find("    names:").unwrap_or_default() + 13;
-                Screen::Workspace(state.lines_edited(
-                    pm_components::line_edits::LineEdit::ColumnDrag(first, last),
-                ))
-            }
-            Self::Outline => Screen::Workspace(
-                code()
-                    .outline_requested((340.0, 0.0))
-                    .edited(pm_components::listing::LISTING_FILTER, Edit::Paste("n".to_owned())),
-            ),
-            Self::Finding => Screen::Workspace(
-                code()
-                    .edited(EDITOR_FIELD, Edit::Place(0, false))
-                    .find_opened(true)
-                    .find_typed(Edit::Paste("names".to_owned()))
-                    .find_stepped(false),
-            ),
-            Self::FindReopened => Screen::Workspace(
-                code()
-                    .find_opened(false)
-                    .find_typed(Edit::Paste("names".to_owned()))
-                    .find_opened(false),
-            ),
-            Self::Extensions => Screen::Workspace(
-                welcome()
-                    .after(pm_components::extensions::EXTENSIONS)
-                    .with_extensions(sample_languages()),
-            ),
-            Self::ExtensionInstall => Screen::Workspace(
-                welcome()
-                    .after(pm_components::extensions::EXTENSIONS)
-                    .with_extensions(sample_languages())
-                    .with_extension_preview(
-                        "~/code/pandemonium/extensions/hello".to_owned(),
-                        sample_extension(false),
-                    ),
-            ),
-            Self::ComposerLong => {
-                let prompt = (1..=40).map(|line| format!("Prompt line {line}\n")).collect();
-                Screen::Workspace(
-                    workspace()
-                        .edited(PROMPT, Edit::Paste(prompt))
-                        .edited(PROMPT, Edit::ScrollTo(220.0)),
-                )
-            }
-            Self::SignedOut => {
-                let mut state = workspace();
-                state.sessions[0].login = Some("a1".to_owned());
-                Screen::Workspace(state.heard(0, Event::SignedOut {
-                    reason: "Failed to authenticate: OAuth session expired and could not be refreshed".to_owned(),
-                    account: Some("work@example.com".to_owned()),
-                }))
-            }
-            Self::ToolSignIn => Screen::Workspace(
-                workspace()
-                    .heard(0, Event::Prompted {
-                        text: "Which issues are still open?".to_owned(),
-                        files: Vec::new(),
-                        checkpoint: false,
-                        turn: 7,
-                        saved: None,
-                    })
-                    .heard(0, Event::Said("Let me look at the issue tracker.".to_owned()))
-                    .heard(0, Event::ToolSignIn(
-                        "https://issues.example.com/oauth/authorize?response_type=code&client_id=crab&state=Gc7p".to_owned(),
-                    )),
-            ),
-            Self::SignInCode => Screen::Workspace(workspace().with_sign_in_code(
-                "copilot",
-                "https://github.com/login/device".to_owned(),
-                "ABCD-1234".to_owned(),
-            )),
-            Self::PullRequest => {
-                let mut state = workspace();
-                let check = |name: &str, state: pm_git::CheckState| pm_git::Check {
-                    name: name.to_owned(),
-                    state,
-                    url: String::new(),
-                };
-                state.sessions[0].base = Some("main".to_owned());
-                state.sessions[0].pull_request = Some(pm_git::PullRequestStatus {
-                    number: 231,
-                    title: "Save and restore session checkpoints".to_owned(),
-                    state: "OPEN".to_owned(),
-                    url: "https://github.com/example/pandemonium/pull/231".to_owned(),
-                    draft: false,
-                    review: pm_git::ReviewDecision::ChangesRequested,
-                    checks: vec![
-                        check("build", pm_git::CheckState::Passed),
-                        check("test", pm_git::CheckState::Passed),
-                        check("lint", pm_git::CheckState::Failed),
-                        check("snapshots", pm_git::CheckState::Pending),
-                    ],
-                    head: "4f2a9c1".to_owned(),
-                    base: "main".to_owned(),
-                    checks_url: String::new(),
-                });
-                Screen::Workspace(state)
-            }
-            Self::PullRequestUnsupported => {
-                let mut state = workspace();
-                state.sessions[0].base = Some("main".to_owned());
-                state.sessions[0].code_host = Some(pm_git::CodeHost::unsupported("gitlab.com"));
-                Screen::Workspace(state)
-            }
-            Self::OutOfReach => {
-                let mut state = workspace();
-                state.sessions[0].status = pm_components::sample::Status::Working;
-                let host = state.machine_of(&state.sessions[0]).flatten();
-                Screen::Workspace(state.host_lost(&host))
-            }
-            Self::SessionStates(unread) => {
-                let mut state = workspace();
-                for session in &mut state.sessions {
-                    session.project = Some(0);
-                    session.status = pm_components::sample::Status::Idle;
-                    session.mark_read();
-                }
-                state.sessions[0].title = "Idle session".into();
-                state.sessions[1].title = "Agent working".into();
-                state.sessions[1].status = pm_components::sample::Status::Working;
-                state.sessions[2].title = "Unread response".into();
-                state.sessions[2].marked_unread = true;
-                state.sessions[3].title = "Unread error".into();
-                state = state.heard(3, Event::Failed("Connection lost".into()));
-                state.sessions[4].title = "Needs input".into();
-                state = state.heard(4, Event::Ask(Permission {
-                    ticket: 1, title: "Allow command?".into(), command: None, plan: None, choices: Vec::new(),
-                }));
-                let selected = if unread { 3 } else { 0 };
-                state = state.after(FocusId(pm_components::state::SESSION_BASE + selected as u64));
-                Screen::Workspace(state.with_session_menu(selected, (220.0, 160.0)))
-            }
-            Self::Workspace | Self::Selecting => Screen::Workspace(workspace()),
-            Self::SessionAccount => {
-                let mut state = workspace();
-                let agent = state.agent_id_at(state.sessions[0].agent).unwrap_or_default();
-                state.sessions[0].login = Some("a1".to_owned());
-                Screen::Workspace(state.with_accounts(
-                    vec![(agent, "a1".to_owned(), "work@example.com".to_owned())],
-                    Vec::new(),
-                ))
-            }
-            Self::Quitting => Screen::Workspace(workspace().close_asked()),
-            Self::Update => Screen::Workspace(workspace().with_release(
-                pm_components::update::Update::Newer {
-                    name: "Pandemonium 0.14.0".to_owned(),
-                    url: "https://github.com".to_owned(),
-                    version: "0.14.0".to_owned(),
-                    published: Some("2026-10-20T09:00:00Z".to_owned()),
-                    body: Some("## Changes\n\n- Update from inside the app\n- Faster diffs".to_owned()),
-                    blocker: None,
-                },
-            ).after(pm_components::title_bar::UPDATE)),
-            Self::MessageMenu => {
-                Screen::Workspace(workspace().with_message_menu(3, (520.0, 230.0), true))
-            }
-            Self::Unfolded => Screen::Workspace(workspace().after(FocusId(DETAILS_BASE + 3000))),
-            Self::Diff => {
-                load_installed_grammar("rust");
-                Screen::Workspace(workspace().after(TAB_DIFF))
-            }
-            Self::WordDiff => {
-                load_installed_grammar("rust");
-                Screen::Workspace(word_diff())
-            }
-            Self::DiffListed => {
-                load_installed_grammar("rust");
-                Screen::Workspace(diff_listed())
-            }
-            Self::DiffOpened => {
-                load_installed_grammar("rust");
-                Screen::Workspace(diff_opened())
-            }
-            Self::DiffCompact => {
-                load_installed_grammar("rust");
-                Screen::Workspace(diff_compact())
-            }
-            Self::Commenting => Screen::Workspace(commenting()),
-            Self::Files => Screen::Workspace(files()),
-            Self::FilesLarge => Screen::Workspace(large_files(false)),
-            Self::FilesScrolled => Screen::Workspace(large_files(true)),
-            Self::InputStress => Screen::Workspace(input_stress(true, true)),
-            Self::InputStressScrolled => {
-                let mut state = input_stress(true, true);
-                state.prompt.apply(pm_text::Edit::ScrollTo(700.0));
-                Screen::Workspace(state)
-            }
-            Self::InputStressComposing => {
-                let mut state = input_stress(true, true);
-                state.prompt.apply(pm_text::Edit::Compose("字".to_owned()));
-                Screen::Workspace(state)
-            }
-            Self::IgnoredFiles => Screen::Workspace(ignored_files()),
-            Self::Source => Screen::Workspace(source()),
-            Self::SourceMenu(trigger) => {
-                let state = source();
-                let (kind, control) = trigger.control();
-                let at = state.git_menu_below(kind, control, (WIDTH as f32, HEIGHT as f32));
-                let mut window = state.window.clone();
-                window.appearance.density = trigger.density();
-                Screen::Workspace(state.with_window_settings(window).with_git_menu(kind, at))
-            }
-            Self::HistoryMenu => {
-                let mut state = source();
-                state.git.graph_all = true;
-                Screen::Workspace(state.with_git_menu(MenuKind::History(2), (1000.0, 600.0)))
-            }
-            Self::BranchLocal => {
-                let mut state = source();
-                state.sessions[0].tracking = pm_git::Tracking {
-                    remotes: Some(2),
-                    ..pm_git::Tracking::default()
-                };
-                Screen::Workspace(state.with_git_menu(MenuKind::Commit, (1000.0, 600.0)))
-            }
-            Self::BranchFollowing => {
-                let mut state = source();
-                state.sessions[0].tracking = pm_git::Tracking {
-                    upstream: Some("origin/task/227-checkpoints".to_owned()),
-                    ahead: 2,
-                    behind: 1,
-                    remotes: Some(1),
-                };
-                Screen::Workspace(state)
-            }
-            Self::BranchUpstream => {
-                let info = pm_git::BranchInfo {
-                    remotes: vec!["origin".to_owned(), "fork".to_owned()],
-                    remote_branches: ["origin/main", "origin/feat/editor", "fork/main"]
-                        .map(str::to_owned)
-                        .to_vec(),
-                    ..pm_git::BranchInfo::default()
-                };
-                let mut state = source();
-                state.sessions[0].tracking.remotes = Some(2);
-                Screen::Workspace(
-                    state
-                        .branch_asked(BranchTask::Upstream)
-                        .with_branch_info(0, None, info),
-                )
-            }
-            Self::BranchDelete => {
-                let names = ["task/227-checkpoints", "main", "feat/session-titles"];
-                let info = pm_git::BranchInfo {
-                    remotes: vec!["origin".to_owned()],
-                    unmerged: 3,
-                    unpushed: 1,
-                    follows: Some("origin/feat/session-titles".to_owned()),
-                    ..pm_git::BranchInfo::default()
-                };
-                let mut state = source();
-                state.sessions[0].tracking.remotes = Some(1);
-                let state = state
-                    .branch_asked(BranchTask::Delete)
-                    .with_session_branches(0, names.map(str::to_owned).to_vec())
-                    .with_branch_info(0, None, info.clone())
-                    .after(FocusId(BRANCH_TASK_ROW_BASE + 1));
-                Screen::Workspace(state.with_branch_info(0, Some("feat/session-titles".to_owned()), info))
-            }
-            Self::Stashing => Screen::Workspace(source().asked(Prompt::StashMessage)),
-            Self::Refused => Screen::Workspace(
-                source().git_failed("Could not switch branch: fatal: a branch named 'main' already exists"),
-            ),
-            Self::ChangeMenu => Screen::Workspace(picked().with_change_menu(0, (1000.0, 250.0))),
-            Self::ChangeMenuMany => Screen::Workspace(many_changes().with_change_menu(0, (1000.0, 250.0))),
-            Self::TreeMenu => Screen::Workspace(files().with_tree_menu(
-                TreeTarget {
-                    path: "crates/pandemonium/src/session.rs".to_owned(),
-                    folder: false,
-                },
-                (1000.0, 250.0),
-            )),
-            Self::TreePicked => {
-                let file = |path: &str| TreeTarget {
-                    path: path.to_owned(),
-                    folder: false,
-                };
-                Screen::Workspace(
-                    files()
-                        .tree_row_picked(file(".env"), Choosing::Toggle)
-                        .tree_row_picked(file("Cargo.toml"), Choosing::Range)
-                        .tree_row_picked(file("README.md"), Choosing::Toggle)
-                        .with_tree_menu(file("README.md"), (1000.0, 250.0)),
-                )
-            }
-            Self::TreeDragging => {
-                let file = |path: &str| TreeTarget {
-                    path: path.to_owned(),
-                    folder: false,
-                };
-                let docs = TreeTarget {
-                    path: "docs".to_owned(),
-                    folder: true,
-                };
-                Screen::Workspace(
-                    files()
-                        .tree_row_picked(file("Cargo.toml"), Choosing::Toggle)
-                        .tree_row_picked(file("README.md"), Choosing::Toggle)
-                        .tree_dragged(file("README.md"), Some(docs), (1040.0, 150.0)),
-                )
-            }
-            Self::TreeHovered => {
-                let mut state = files();
-                state.git.tree_selected = Some(TreeTarget {
-                    path: "README.md".to_owned(),
-                    folder: false,
-                });
-                Screen::Workspace(
-                    state
-                        .tree_shortcut(pm_components::tree_actions::TreeShortcut::Cut)
-                        .tree_hovered(Some(TreeTarget::root()), (1040.0, 500.0)),
-                )
-            }
-            Self::Naming => Screen::Workspace(files().after(TREE_NEW_FOLDER)),
-            Self::Discarding => Screen::Workspace(picked().asked(Prompt::Discard(vec![0, 2]))),
-            Self::Branching => Screen::Workspace(branching()),
-            Self::Reading => Screen::Workspace(reading()),
-            Self::Editing => Screen::Workspace(editing()),
-            Self::NewFile => Screen::Workspace(new_file()),
-            Self::Terminal => Screen::Workspace(terminal()),
-            Self::TerminalLink => {
-                let mut state = terminal();
-                state.terminal_output(
-                    1,
-                    b"gh pr view --web\r\nOpening https://github.com/alster/pandemonium/pull/250 or \x1b]8;;https://docs.rs/vte\x1b\\the vte docs\x1b]8;;\x1b\\\r\n",
-                );
-                state.reach_terminal_link(Some((9, 20)));
-                Screen::Workspace(state)
-            }
-            Self::Overview => Screen::Workspace(overview()),
-            Self::Submodules => Screen::Workspace(submodules()),
-            Self::OverviewDiff => {
-                let mut state = overview();
-                let path = state.review_session().unwrap().changes[0].path.clone();
-                state.closed_diffs.insert(path);
-                Screen::Workspace(state.after(FocusId(pm_components::state::FILE_BASE)))
-            }
-            Self::OverviewChangeMenu => {
-                Screen::Workspace(overview().with_change_menu(0, (1000.0, 250.0)))
-            }
-            Self::Resized => {
-                let mut state = terminal();
-                state.sidebar_width = 360.0;
-                state.review_width = 300.0;
-                state.terminal_height = 400.0;
-                Screen::Workspace(state)
-            }
-            Self::TerminalMenu => {
-                let mut state = terminal();
-                state.select_in_terminal((1, 0), (2, 20));
-                Screen::Workspace(state.with_terminal_menu((420.0, 560.0)))
-            }
-            Self::BrowserMenu => {
-                let mut state = workspace_sample();
-                state.open_browser("http://localhost:5173");
-                Screen::Workspace(state.with_browser_menu((420.0, 120.0)))
-            }
-            Self::BrowserFind(narrow) => {
-                let mut state = browser_finding(false);
-                if narrow {
-                    state.sidebar_width = 360.0;
-                    state.review_width = 520.0;
-                }
-                Screen::Workspace(state)
-            }
-            Self::BrowserFindTools => Screen::Workspace(browser_finding(true)),
-            Self::BrowserTabs(many) => Screen::Workspace(browser_tabs(many)),
-            Self::BrowserSessions => Screen::Workspace(browser_sessions()),
-            Self::BrowserInput => Screen::Workspace(browser_input()),
-            Self::BrowserClear => {
-                let mut state = browser_finding(false);
-                state.browser_find_closed();
-                state.browser_clear_asked();
-                Screen::Workspace(state)
-            }
-            Self::BrowserPermission => {
-                let mut state = workspace_sample();
-                state.open_browser("https://meet.example.com/room/42");
-                if let Some(browser) = state.browser.as_mut() {
-                    browser.safety.ask(Asked {
-                        id: 1,
-                        origin: "https://meet.example.com".to_owned(),
-                        permission: "camera and microphone".to_owned(),
-                    });
-                    browser.safety.ask(Asked {
-                        id: 2,
-                        origin: "https://meet.example.com".to_owned(),
-                        permission: "notifications".to_owned(),
-                    });
-                }
-                Screen::Workspace(state)
-            }
-            Self::BrowserCertificate | Self::BrowserCertificateConfirm => {
-                let mut state = workspace_sample();
-                state.open_browser("https://staging.internal.example.com/");
-                if let Some(browser) = state.browser.as_mut() {
-                    browser.safety.certificate = Some(Certificate {
-                        url: "https://staging.internal.example.com/".to_owned(),
-                        error: "ERR_CERT_AUTHORITY_INVALID".to_owned(),
-                        subject: "staging.internal.example.com".to_owned(),
-                        issuer: "Internal Dev CA".to_owned(),
-                        fingerprint: "sha256/q3Zk1b0VYtq0mYpPzI7m4v0Zc2n0b2bX5Qm8jT1yFhE=".to_owned(),
-                        expires: "2027-03-14".to_owned(),
-                        confirming: matches!(self, Self::BrowserCertificateConfirm),
-                    });
-                }
-                Screen::Workspace(state)
-            }
-            Self::BrowserDownload => {
-                let mut state = workspace_sample();
-                state.open_browser("http://localhost:5173");
-                if let Some(browser) = state.browser.as_mut() {
-                    browser.safety.download = Some(Download {
-                        name: "quarterly-report (1).pdf".to_owned(),
-                        saving: Saving::Finished,
-                    });
-                }
-                Screen::Workspace(state)
-            }
-            Self::TerminalComposing => {
-                let mut state = terminal();
-                state.compose_in_terminal("¨");
-                Screen::Workspace(state)
-            }
-            Self::Composing => Screen::Workspace(
-                welcome()
-                    .edited(PROMPT, Edit::Paste("Varför försvinner sm".to_owned()))
-                    .edited(PROMPT, Edit::Compose("¨".to_owned())),
-            ),
-            Self::DevContainer => Screen::Workspace(
-                welcome()
-                    .with_devcontainer(0, true)
-                    .with_branches(0, vec!["main".to_owned(), "next".to_owned()])
-                    .after(LOCATION)
-                    .after(FocusId(pm_components::state::PLACE_BASE + 2)),
-            ),
-            Self::New => Screen::Workspace(WorkspaceState::new(&projects())),
-            Self::Empty => Screen::default(),
-            Self::History | Self::HistoryScrolled => {
-                let mut state = workspace().after(HISTORY);
-                let template = state.sessions[0].clone();
-                let now = pm_components::age::now();
-                for index in 0..36 {
-                    let mut session = template.clone();
-                    session.home = false;
-                    session.title = format!("History session {}", index + 1);
-                    session.updated_at = now.saturating_sub(index * 6 * 60 * 60 * 1000);
-                    state.sessions.push(session);
-                }
-                if self == Self::HistoryScrolled {
-                    state.history_scroll = f32::MAX;
-                }
-                Screen::Workspace(state)
-            }
-            Self::ProjectMenu => {
-                Screen::Workspace(workspace().with_project_menu(1, (236.0, 250.0)))
-            }
-            Self::Dragging => Screen::Workspace(workspace().dragged_over(0, 2, (150.0, 470.0))),
-            Self::Welcome => Screen::Workspace(welcome()),
-            Self::WelcomeHidden => Screen::Workspace(hiding_local_agents(welcome())),
-            Self::ChatNew => Screen::Workspace(chat_new()),
-            Self::Chats => Screen::Workspace(chats()),
-            Self::ChatsHistory => Screen::Workspace(chats().after(HISTORY)),
-            Self::ChatContinue => {
-                let state = chats().after(pm_components::continue_chat::CONTINUE);
-                let project = state.continue_project().unwrap_or(0);
-                Screen::Workspace(state.with_branches(
-                    project,
-                    vec![
-                        "main".to_owned(),
-                        "next".to_owned(),
-                        "task/231-titles".to_owned(),
-                    ],
-                ))
-            }
-            Self::ChatMenu => {
-                let state = chats();
-                let open = state.open_chats()[0];
-                Screen::Workspace(state.with_session_menu(open, (236.0, 250.0)))
-            }
-            Self::SettingsAccountsKey => {
-                let state = welcome();
-                let openrouter = state.agent_position("openrouter").unwrap_or_default();
-                Screen::Workspace(
-                    state
-                        .after(SETTINGS)
-                        .after(Section::AgentServers.id())
-                        .after(
-                            pm_components::settings_agents::key_set_id(openrouter)
-                                .unwrap_or(SETTINGS),
-                        )
-                        .scrolled_settings(420.0, 420.0),
-                )
-            }
-            Self::SettingsAccountsCloud(_) => Screen::Workspace(
-                welcome()
-                    .after(SETTINGS)
-                    .after(Section::AgentServers.id())
-                    .scrolled_settings(100_000.0, 100_000.0),
-            ),
-            Self::SettingsAccountsHidden => Screen::Workspace(
-                hiding_local_agents(welcome())
-                    .after(SETTINGS)
-                    .after(Section::AgentServers.id())
-                    .scrolled_settings(420.0, 420.0),
-            ),
-            Self::WelcomeTerminal => Screen::Workspace(with_shell(welcome())),
-            Self::Panes => Screen::Workspace(
-                code()
-                    .pane_dragged(code_item(), Some((0, Side::Right)), (0.0, 0.0))
-                    .pane_dropped()
-                    .pane_dragged(Item::Diff, Some((0, Side::Bottom)), (0.0, 0.0))
-                    .pane_dropped()
-                    .after(TAB_CHAT),
-            ),
-            Self::PaneSplit => Screen::Workspace(code().after(SPLIT_RIGHT)),
-            Self::PaneSplitFile => {
-                let mut state = code().after(SPLIT_RIGHT);
-                state.open_viewer("README.md".to_owned(), false);
-                Screen::Workspace(state)
-            }
-            Self::PaneMenu => Screen::Workspace(code().with_pane_menu((690.0, 44.0))),
-            Self::PanesDragging => Screen::Workspace(code().pane_dragged(
-                code_item(),
-                Some((0, Side::Right)),
-                (900.0, 420.0),
-            )),
-            Self::Wrapped => Screen::Workspace(welcome().edited(
-                PROMPT,
-                Edit::Paste(
-                    "Why does the sidebar lose its scroll position whenever a project is added, and what would it take to keep it where the reader left it? Start with the state that stores the offset.\nThen write the fix.".to_owned(),
-                ),
-            )),
-            Self::Slashed => Screen::Workspace(
-                welcome()
-                    .edited(PROMPT, Edit::Paste("/c".to_owned()))
-                    .after(FocusId(4401)),
-            ),
-            Self::SlashScrolled => {
-                let mut state = welcome();
-                state.agent_commands[0] = (1..=14)
-                    .map(|number| Slash {
-                        name: format!("skill-{number:02}"),
-                        description: format!("Description of the skill numbered {number}"),
-                    })
-                    .collect();
-                state = state.after(pm_components::state::SLASH_BUTTON);
-                for _ in 0..13 {
-                    state = state.slash_moved(1);
-                }
-                Screen::Workspace(state)
-            }
-            Self::SlashSession => {
-                let mut state = WorkspaceState::sample();
-                state.sessions[0].commands = claude_discovery().commands;
-                Screen::Workspace(state.edited(PROMPT, Edit::Paste("/".to_owned())))
-            }
-            Self::Scrolling => {
-                Screen::Workspace(welcome().after(FocusId(4200)).scrolled_menu(1000.0, 1000.0))
-            }
-            Self::Placing => {
-                let here = std::env::current_dir().unwrap_or_default();
-                let projects: Vec<Project> = Project::from_source(&here.to_string_lossy())
-                    .into_iter()
-                    .collect();
-                Screen::Workspace(
-                    WorkspaceState::new(&projects)
-                        .with_discovery(0, claude_discovery())
-                        .after(FocusId(4250)),
-                )
-            }
-            Self::Live => Screen::Workspace(live(Turn::Finished)),
-            Self::Asking => Screen::Workspace(live(Turn::Asking)),
-            Self::AskingCommand => Screen::Workspace(live(Turn::Command)),
-            Self::Trust => Screen::Workspace(trusting(Standing::Unknown)),
-            Self::TrustChanged => Screen::Workspace(trusting(Standing::Changed)),
-            Self::Answered => {
-                let state = live(Turn::Working);
-                let session = state.open_index().unwrap();
-                let state = state.heard(
-                    session,
-                    Event::Answered(vec![
-                        (
-                            "If a duck wore pants, how would it wear them?".to_owned(),
-                            Some("Something else".to_owned()),
-                        ),
-                        ("Which would win in a fight?".to_owned(), None),
-                        (
-                            "PR #186 is still open and adds shared pieces the savings flow needs (AreaHero, SaveCard, FollowUp, TileSearch, NumberedAccordion defaultIndex, SECTION_TITLE). Which branch should this work be based on?".to_owned(),
-                            Some("task/172 branch (Recommended), because it already carries the shared pieces and keeps the open PR as the base for everything that follows it".to_owned()),
-                        ),
-                    ]),
-                );
-                Screen::Workspace(state.heard(
-                    session,
-                    Event::Said("Thanks, going with that.".to_owned()),
-                ))
-            }
-            Self::Inquiring => Screen::Workspace(live(Turn::Inquiring)),
-            Self::Background | Self::Floating => Screen::Workspace(live(Turn::Background)),
-            Self::Agents => {
-                Screen::Workspace(live(Turn::Background).after(FocusId(SUBAGENTS_CHIP.0)))
-            }
-            Self::AgentsStoppable => {
-                let mut state = live(Turn::Background);
-                let session = state.open_index().unwrap();
-                let working: Vec<String> = state.sessions[session]
-                    .subagents()
-                    .into_iter()
-                    .filter(|(_, _, tool)| tool.is_working_agent())
-                    .map(|(_, _, tool)| tool.id.clone())
-                    .collect();
-                for id in working {
-                    state = state.heard(
-                        session,
-                        Event::Subagent(pm_harness::Subagent {
-                            id: id.clone(),
-                            call: id,
-                            agent: "scout".to_owned(),
-                            label: "Look".to_owned(),
-                            model: None,
-                            background: true,
-                            state: pm_harness::SubagentState::Running,
-                        }),
-                    );
-                }
-                Screen::Workspace(state.after(FocusId(SUBAGENTS_CHIP.0)))
-            }
-            Self::AgentsWorktrees => {
-                Screen::Workspace(live(Turn::Isolated).after(FocusId(SUBAGENTS_CHIP.0)))
-            }
-            Self::AgentsExpanded | Self::AgentsScrolled => {
-                let mut state = live(Turn::Background);
-                let session = state.open_index().unwrap();
-                for index in 0..40 {
-                    state = state.heard(session, Event::Tool(Tool {
-                        parent: Some("a1".to_owned()),
-                        id: format!("many-{index}"),
-                        title: Some("Grep".to_owned()),
-                        kind: Some(Kind::Search),
-                        state: Some(ToolState::Done),
-                        target: Some(format!("caller_{index}")),
-                        diff: None,
-                        output: None,
-                        agent: None,
-                        worktree: None,
-                    }));
-                }
-                let (reply, position, _) = state.sessions[session].subagents().into_iter()
-                    .find(|(_, _, tool)| tool.id == "a1").unwrap();
-                state = state.after(SUBAGENTS_CHIP).after(FocusId(pm_components::state::STEP_BASE + (reply * 1000 + position) as u64));
-                if matches!(self, Self::AgentsScrolled) {
-                    state.subagents_scroll = 10000.0;
-                }
-                Screen::Workspace(state)
-            }
-            Self::Usage => {
-                let state = live(Turn::Finished);
-                let last = state.sessions.len() - 1;
-                Screen::Workspace(
-                state
-                    .heard(
-                        last,
-                        Event::Used(pm_harness::Usage {
-                            used: 84_000,
-                            size: 200_000,
-                            written: 0,
-                        }),
-                    )
-                    .heard(
-                        last,
-                        Event::Spent(pm_harness::Spent {
-                            models: vec![
-                                pm_harness::ModelSpend {
-                                    model: "claude-opus-4-5".to_owned(),
-                                    requests: 14,
-                                    input: 2_100,
-                                    output: 9_400,
-                                    cache_read: 1_180_000,
-                                    cache_write: 96_000,
-                                    cost: Some(1_435_500),
-                                    missed: 310_000,
-                                },
-                                pm_harness::ModelSpend {
-                                    model: "claude-haiku-4-5".to_owned(),
-                                    requests: 6,
-                                    input: 41_000,
-                                    output: 3_200,
-                                    cache_read: 0,
-                                    cache_write: 0,
-                                    cost: Some(57_000),
-                                    missed: 0,
-                                },
-                            ],
-                        }),
-                    )
-                    .heard(
-                        last,
-                        Event::Limits(pm_harness::Allowance(pm_harness::Limits {
-                            provider: "claude".to_owned(),
-                            plan: None,
-                            fetched_at_ms: 0,
-                            limits: vec![
-                                {
-                                    let mut limit = pm_harness::Limit::new("5 hour");
-                                    limit.window = Some("5h".to_owned());
-                                    limit.used_fraction = Some(0.15);
-                                    limit.resets_at_ms = Some(3 * 3_600_000);
-                                    limit
-                                },
-                                {
-                                    let mut limit = pm_harness::Limit::new("7 day");
-                                    limit.window = Some("7d".to_owned());
-                                    limit.used_fraction = Some(0.3);
-                                    limit.resets_at_ms = Some(2 * 86_400_000);
-                                    limit
-                                },
-                            ],
-                        })),
-                    )
-            )
-            }
-            Self::Goal => Screen::Workspace(goal()),
-            Self::GoalMenu => Screen::Workspace(goal().after(pm_components::state::GOAL_CHIP)),
-            Self::Aside => Screen::Workspace(aside()),
-            Self::Allowances => {
-                let used = |five: f64, week: f64| {
-                    let window = |label: &str, name: &str, fraction: f64| {
-                        let mut limit = pm_harness::Limit::new(label);
-                        limit.window = Some(name.to_owned());
-                        limit.used_fraction = Some(fraction);
-                        limit
-                    };
-                    Some(pm_harness::Limits {
-                        provider: "claude".to_owned(),
-                        plan: None,
-                        fetched_at_ms: 0,
-                        limits: vec![window("5 hour", "5h", five), window("7 day", "7d", week)],
-                    })
-                };
-                Screen::Workspace(
-                    WorkspaceState::new(&projects())
-                        .with_allowance(0, None, used(0.15, 0.3))
-                        .with_allowance(1, None, used(0.62, 0.8)),
-                )
-            }
-            Self::Queued => Screen::Workspace(queued()),
-            Self::QueuedLong => Screen::Workspace(queued_long()),
-            Self::QueuedEditing => Screen::Workspace(
-                queued_long().after(FocusId(pm_components::queued::EDIT_QUEUED_BASE)),
-            ),
-            Self::Kept => Screen::Workspace(kept()),
-            Self::LongLine => Screen::Workspace(long_line()),
-            Self::Restored => Screen::Workspace(restored()),
-            Self::RestoredTop => Screen::Workspace(restored().scrolled_chat(-2000.0, 2000.0)),
-            Self::Restoring => Screen::Workspace(kept().after(FocusId(RESTORE_BASE))),
-            Self::TurnChanges => Screen::Workspace(turn_changes()),
-            Self::Picking => Screen::Workspace(welcome().after(FocusId(4200))),
-            Self::ManyModels => Screen::Workspace(many_models().after(FocusId(4200))),
-            Self::ModelsFiltered => Screen::Workspace(
-                many_models()
-                    .after(FocusId(4200))
-                    .edited(pm_components::state::MENU_FILTER, Edit::Paste("gpt".to_owned())),
-            ),
-            Self::Expanded => {
-                load_installed_grammar("rust");
-                Screen::Workspace(
-                    [201_000, 201_004, 201_005]
-                        .into_iter()
-                        .fold(live(Turn::Finished), |state, id| state.after(FocusId(id))),
-                )
-            }
-            Self::Attached => Screen::Workspace(
-                welcome()
-                    .with_attachments(&["/home/me/shot.png".to_owned(), "/home/me/notes.md".to_owned()])
-                    .with_preview("/home/me/shot.png", gradient()),
-            ),
-            Self::Elements => Screen::Workspace(picked_elements()),
-            Self::ElementDetails => {
-                let mut state = picked_elements();
-                state.picker = Some(pm_components::state::Picker::Element(0));
-                Screen::Workspace(state)
-            }
-            Self::PaneBrowser => Screen::Workspace(
-                code()
-                    .after(SPLIT_RIGHT)
-                    .after(FocusId(pm_components::panes::PANE_PUT_BASE + 5 + 4)),
-            ),
-            Self::SplitStarted => {
-                let mut state = welcome();
-                state.open_browser("http://localhost:5173");
-                let state = state
-                    .pane_dragged(Item::Browser, Some((0, Side::Right)), (0.0, 0.0))
-                    .pane_dropped()
-                    .edited(PROMPT, Edit::Paste("hello".to_owned()))
-                    .after(SEND);
-                Screen::Workspace(state)
-            }
-            Self::StartedHandedOver => {
-                let mut state = with_shell(welcome());
-                state.open_browser("http://localhost:5173");
-                let mut state = state
-                    .edited(PROMPT, Edit::Paste("Fix the header".to_owned()))
-                    .after(SEND);
-                state.rescope_browser();
-                Screen::Workspace(state.after(pm_components::browser::TAB_BROWSER))
-            }
-            Self::ElementsSent => {
-                let mut state = workspace_sample();
-                let elements = picked_elements().elements;
-                if let Some(message) = state
-                    .sessions
-                    .first_mut()
-                    .and_then(|session| session.messages.first_mut())
-                {
-                    message.text = format!(
-                        "these cards need to look like the other cards, with the proper checkbox\n\n{}",
-                        pm_components::elements::message(&elements)
-                    );
-                }
-                state.chat_back = 1.0e6;
-                Screen::Workspace(state)
-            }
-            Self::Captures => Screen::Workspace(held_captures()),
-            Self::CapturePreview => {
-                let mut state = held_captures();
-                state.picker = Some(pm_components::state::Picker::Capture(0));
-                Screen::Workspace(state)
-            }
-            Self::CaptureConsole => {
-                let mut state = held_captures();
-                state.picker = Some(pm_components::state::Picker::Capture(2));
-                Screen::Workspace(state)
-            }
-            Self::CaptureMenu => {
-                let mut state = workspace_sample();
-                state.open_browser("http://localhost:5173");
-                Screen::Workspace(state.with_browser_capture_menu((420.0, 60.0)))
-            }
-            Self::CapturesSent => {
-                let mut state = workspace_sample();
-                let captures = held_captures().captures;
-                if let Some(message) = state
-                    .sessions
-                    .first_mut()
-                    .and_then(|session| session.messages.first_mut())
-                {
-                    message.text = format!(
-                        "the card on scene 582 crashes, can you see why\n\n{}",
-                        pm_components::captures::message(&captures)
-                    );
-                }
-                state.chat_back = 1.0e6;
-                Screen::Workspace(state)
-            }
-            Self::ElementScrolled => {
-                let mut state = picked_elements();
-                state.picker = Some(pm_components::state::Picker::Element(0));
-                state.menu_scroll = 330.0;
-                Screen::Workspace(state)
-            }
-            Self::Missing => {
-                Screen::Workspace(welcome().edited(PROMPT, Edit::Paste("@zzzzqq".to_owned())))
-            }
-            Self::SettingsOrigins(narrow) => {
-                let state = browser_settings_sample(Section::Browser);
-                Screen::Workspace(state.scrolled_settings(if narrow { 900.0 } else { 420.0 }, 2000.0))
-            }
-            Self::SettingsPage(section, _) => Screen::Workspace(browser_settings_sample(section)),
-            Self::SettingsSearch(_) => Screen::Workspace(
-                settings_sample().edited(SETTINGS_FIND, Edit::Paste("font".to_owned())),
-            ),
-            Self::SettingsPicker(narrow) => Screen::Workspace(
-                settings_sample()
-                    .after(Section::Appearance.id())
-                    .after(
-                        SettingsCatalogue::CodeFont
-                            .id(OPEN_LIST)
-                            .unwrap_or(SETTINGS_FIND),
-                    )
-                    .scrolled_settings(if narrow { 560.0 } else { 0.0 }, 2000.0),
-            ),
-            Self::SettingsCompact(_) => {
-                let state = settings_sample();
-                let mut window = state.window.clone();
-                window.appearance.density = pm_config::Density::Compact;
-                window.appearance.interface_size = 15;
-                Screen::Workspace(
-                    state
-                        .with_window_settings(window)
-                        .after(Section::Appearance.id()),
-                )
-            }
-            Self::SettingsMachine(narrow) => Screen::Workspace(
-                settings_sample()
-                    .after(Section::Servers.id())
-                    .after(MACHINE_ADD)
-                    .edited(MACHINE_NAME, Edit::Paste("Lab".to_owned()))
-                    .edited(MACHINE_ADDRESS, Edit::Paste("100.64.0.9:6868".to_owned()))
-                    .scrolled_settings(if narrow { 300.0 } else { 0.0 }, 2000.0),
-            ),
-            Self::SettingsDraft(narrow) => Screen::Workspace(
-                browser_settings_sample(Section::Skills)
-                    .after(pm_components::settings_drafts::DRAFT_NEW)
-                    .edited(
-                        pm_components::settings_drafts::DRAFT_NAME,
-                        Edit::Paste("ship-it".to_owned()),
-                    )
-                    .edited(
-                        pm_components::settings_drafts::DRAFT_DESCRIPTION,
-                        Edit::Paste("Tags a release once CI is green on every OS".to_owned()),
-                    )
-                    .after(
-                        pm_components::settings_drafts::draft_scope(
-                            pm_protocol::library::Scope::User,
-                        )
-                        .unwrap_or(pm_components::settings_drafts::DRAFT_NEW),
-                    )
-                    .scrolled_settings(if narrow { 260.0 } else { 0.0 }, 2000.0),
-            ),
-            Self::SettingsModelServers(narrow) => Screen::Workspace(
-                welcome()
-                    .after(SETTINGS)
-                    .after(Section::ModelServers.id())
-                    .with_model_servers(model_servers())
-                    .after(pm_components::settings_ids::MODEL_SERVER_EDITS.at(1))
-                    .after(pm_components::settings_models::MODEL_FIND)
-                    .with_found_models(
-                        0,
-                        Ok([
-                            "qwen3-coder-30b",
-                            "gpt-oss-120b",
-                            "devstral-3",
-                            "glm-5.3-air",
-                            "llama-5-70b",
-                        ]
-                        .map(str::to_owned)
-                        .to_vec()),
-                    )
-                    .after(pm_components::settings_ids::FOUND_MODEL_PICKS.at(0))
-                    .after(pm_components::settings_ids::FOUND_MODEL_PICKS.at(2))
-                    .scrolled_settings(if narrow { 520.0 } else { 220.0 }, 2000.0),
-            ),
-            Self::SettingsModelSlots(_) => Screen::Workspace(
-                welcome()
-                    .after(SETTINGS)
-                    .after(Section::ModelSlots.id())
-                    .with_model_slots(model_slots())
-                    .scrolled_settings(0.0, 2000.0),
-            ),
-            Self::ModelFallback => Screen::Workspace(model_fallback()),
-            Self::ServerModels => Screen::Workspace(server_models().after(FocusId(4200))),
-            Self::SettingsMcp => Screen::Workspace(
-                welcome()
-                    .after(SETTINGS)
-                    .after(Section::McpServers.id())
-                    .with_mcp_servers(vec![pm_protocol::McpServer {
-                        name: "context7".to_owned(),
-                        target: "https://mcp.context7.com/mcp".to_owned(),
-                        env: vec![("API_KEY".to_owned(), "abc".to_owned())],
-                        description: "Up-to-date code docs for any prompt".to_owned(),
-                        website: "https://context7.com".to_owned(),
-                        enabled: true,
-                        extension: None,
-                    }])
-                    .with_tool_listings(
-                        "",
-                        Ok(vec![
-                            tool_listing("Context7", "context7", "https://mcp.context7.com/mcp"),
-                            tool_listing("GitHub", "github", "https://api.githubcopilot.com/mcp/"),
-                        ]),
-                    )
-                    .with_settings_menu(0, (711.0, 357.0)),
-            ),
-            Self::SettingsForm => Screen::Workspace(
-                welcome()
-                    .after(SETTINGS)
-                    .after(Section::AgentServers.id())
-                    .after(SETTINGS_ADD),
-            ),
-            Self::SettingsAccounts(_) | Self::SettingsAccountsScrolled => {
-                let agent = welcome().agent_id_at(0).unwrap_or_default();
-                let state = welcome()
-                    .after(SETTINGS)
-                    .after(Section::AgentServers.id())
-                    .with_accounts(
-                        vec![
-                            (agent.clone(), "a1".to_owned(), "work@example.com".to_owned()),
-                            (agent.clone(), "a2".to_owned(), "Account 2".to_owned()),
-                        ],
-                        vec![(agent, "a1".to_owned())],
-                    )
-                    .with_identity(
-                        0,
-                        Some("me@example.com".to_owned()),
-                        Some("work@example.com".to_owned()),
-                        Some("a1".to_owned()),
-                    )
-                    .with_identity(0, Some("me@example.com".to_owned()), None, Some("a2".to_owned()));
-                Screen::Workspace(if matches!(self, Self::SettingsAccountsScrolled) {
-                    state.scrolled_settings(420.0, 420.0)
-                } else {
-                    state
-                })
-            }
-            Self::Adding => Screen::Workspace(welcome().after(ADD_PROJECT)),
-            Self::Loading => Screen::Workspace(welcome().after(ADD_PROJECT).after(ADDER_CLONE)),
-            Self::Owning => Screen::Workspace(
-                welcome()
-                    .after(ADD_PROJECT)
-                    .after(ADDER_CLONE)
-                    .with_owners(Ok(owners())),
-            ),
-            Self::Folders => Screen::Workspace(
-                welcome()
-                    .after(ADD_PROJECT)
-                    .after(ADDER_BROWSE)
-                    .with_folders("~", sample_folders()),
-            ),
-            Self::Cloning => Screen::Workspace(
-                welcome()
-                    .after(ADD_PROJECT)
-                    .after(ADDER_CLONE)
-                    .with_owners(Ok(owners()))
-                    .after(FocusId(ADDER_ROW_BASE))
-                    .with_repositories("JoakimCarlsson", Ok(repositories())),
-            ),
-            Self::Slashing => {
-                Screen::Workspace(welcome().edited(PROMPT, Edit::Paste("/c".to_owned())))
-            }
-        }
-    }
-}
-
-/// The folders the server would list for the home folder.
-fn sample_folders() -> Result<(String, Vec<String>), String> {
-    Ok((
-        "/home/me/code".to_owned(),
-        ["pandemonium", "voxel", "wasa-cli", "world"]
-            .map(str::to_owned)
-            .to_vec(),
-    ))
-}
-
-/// Accounts and organizations as the server would list them for the account.
-fn owners() -> Vec<Found> {
-    [
-        ("JoakimCarlsson", "Personal repositories", false),
-        ("alsterverse", "Organization", true),
-    ]
-    .into_iter()
-    .map(|(name, detail, organization)| Found {
-        name: name.to_owned(),
-        detail: detail.to_owned(),
-        value: name.to_owned(),
-        kind: Row::Owner(organization),
-    })
-    .collect()
-}
-
-/// Repositories as the server would list them for the account.
-fn repositories() -> Vec<Found> {
-    [
-        (
-            "JoakimCarlsson/pandemonium",
-            "Agent-first desktop workspace",
-        ),
-        ("JoakimCarlsson/wasa-cli", "Command line client"),
-        ("JoakimCarlsson/voxel", "Voxel engine experiments"),
-        ("JoakimCarlsson/world", "Procedural world generator"),
-        ("JoakimCarlsson/dotfiles", "Shell and editor configuration"),
-    ]
-    .into_iter()
-    .map(|(name, detail)| Found {
-        name: name.to_owned(),
-        detail: detail.to_owned(),
-        value: format!("git@github.com:{name}.git"),
-        kind: Row::Repository,
-    })
-    .collect()
-}
-
-/// The settings window on `section` with the embedded browser turned on, its download under way, and agent browsing restricted to two listed origins.
-fn browser_settings_sample(section: Section) -> WorkspaceState {
-    let mut state = settings_sample().after(section.id());
-    let mut window = state.window.clone();
-    window.general.embedded_browser = true;
-    window.general.restrict_agent_browsing = true;
-    window.general.agent_origins = vec![
-        "https://docs.rs".to_owned(),
-        "staging.example.com:8443".to_owned(),
-    ];
-    state = state.with_window_settings(window);
-    state.set_browser_status(Some(
-        "Downloading the embedded browser: 42 of about 120 MB.".to_owned(),
-    ));
-    state
-}
-
-/// The page for starting work in this repository, once Claude Code has said what it offers.
-/// The workspace with the settings window open, knowing the languages, fonts and servers a machine has, and with some settings changed from how they come.
-fn settings_sample() -> WorkspaceState {
-    let mut machine = pm_protocol::MachineSettings::default();
-    machine.git.branch_template = "pm/{title}".to_owned();
-    machine.set_language(
-        "go",
-        pm_protocol::LanguagePreferences {
-            tab_size: Some(4),
-            ..pm_protocol::LanguagePreferences::default()
-        },
-    );
-    let mut window = pm_config::WindowSettings::default();
-    window.appearance.theme_mode = pm_config::ThemeMode::Dark;
-    window.servers.known = vec![
-        pm_config::KnownServer {
-            name: "Studio".to_owned(),
-            reach: pm_config::Reach::Ssh,
-            address: "me@studio.local".to_owned(),
-            token: String::new(),
-        },
-        pm_config::KnownServer {
-            name: "Build box".to_owned(),
-            reach: pm_config::Reach::Direct,
-            address: "100.64.0.7:6868".to_owned(),
-            token: "secret".to_owned(),
-        },
-        pm_config::KnownServer {
-            name: "Ubuntu".to_owned(),
-            reach: pm_config::Reach::Wsl,
-            address: "Ubuntu".to_owned(),
-            token: String::new(),
-        },
-        pm_config::KnownServer {
-            name: "App container".to_owned(),
-            reach: pm_config::Reach::Container,
-            address: "/home/me/app".to_owned(),
-            token: String::new(),
-        },
-        pm_config::KnownServer {
-            name: "Home server".to_owned(),
-            reach: pm_config::Reach::Tunnel,
-            address: "home.example.com".to_owned(),
-            token: "secret".to_owned(),
-        },
-    ];
-    let fonts = |names: &[&str]| names.iter().map(|name| (*name).to_owned()).collect();
-    let state = welcome()
-        .with_extensions(sample_languages())
-        .with_fonts(
-            fonts(&[
-                "DejaVu Sans",
-                "DejaVu Sans Mono",
-                "Fira Code",
-                "Inter",
-                "JetBrains Mono",
-                "Noto Sans",
-                "Noto Sans Mono",
-                "Source Code Pro",
-                "Ubuntu",
-                "Ubuntu Mono",
-                "Hack",
-                "IBM Plex Mono",
-                "Iosevka",
-                "Cascadia Code",
-            ]),
-            fonts(&[
-                "DejaVu Sans Mono",
-                "Fira Code",
-                "JetBrains Mono",
-                "Noto Sans Mono",
-                "Source Code Pro",
-                "Ubuntu Mono",
-                "Hack",
-                "IBM Plex Mono",
-                "Iosevka",
-                "Cascadia Code",
-            ]),
-        )
-        .with_window_settings(window)
-        .with_machine_settings(machine)
-        .with_release(pm_components::update::Update::Newer {
-            name: "Pandemonium 0.14.0".to_owned(),
-            url: "https://github.com".to_owned(),
-            version: "0.14.0".to_owned(),
-            published: None,
-            body: None,
-            blocker: None,
-        })
-        .after(SETTINGS);
-    with_library_sample(state)
-}
-
-/// `state` with what Claude Code is given in the project read, a skill and two tools of it turned off, and the GitHub tool server's set unfolded.
-fn with_library_sample(state: WorkspaceState) -> WorkspaceState {
-    use pm_protocol::library::{Item, Kind, Product, Scope, Source, ToolEntry, ToolSet};
-    let here = std::env::current_dir().unwrap_or_default();
-    let inside = |path: &str| here.join(path).to_string_lossy().into_owned();
-    let item = |kind, scope, name: &str, description: &str, path: String| Item {
-        kind,
-        scope,
-        name: name.to_owned(),
-        description: description.to_owned(),
-        path,
-        ..Item::default()
-    };
-    let items = vec![
-        item(Kind::Skill, Scope::Workspace, "release-notes", "Writes the notes of a release from the commits since the last tag", inside(".oh-my-crab/skills/release-notes/SKILL.md")),
-        item(Kind::Skill, Scope::User, "commit", "Commit the changes made in this session on the current branch", "/home/me/.claude/skills/commit/SKILL.md".to_owned()),
-        item(Kind::Skill, Scope::Plugin, "frontend-design:frontend-design", "Guidance for distinctive, intentional visual design", "/home/me/.claude/plugins/cache/official/frontend-design/skills/frontend-design/SKILL.md".to_owned()),
-        Item {
-            applies: vec![pm_protocol::library::APPENDS_PROMPT.to_owned()],
-            ..item(Kind::Instruction, Scope::User, "~/.config/oh-my-crab/APPEND_SYSTEM.md", "", "/home/me/.config/oh-my-crab/APPEND_SYSTEM.md".to_owned())
-        },
-        Item {
-            applies: vec!["the whole project".to_owned()],
-            ..item(Kind::Instruction, Scope::Workspace, "AGENTS.md", "", inside("AGENTS.md"))
-        },
-        Item {
-            applies: vec!["the whole project".to_owned()],
-            ..item(Kind::Instruction, Scope::Workspace, "CLAUDE.md", "", inside("CLAUDE.md"))
-        },
-        Item {
-            applies: vec!["crates/pm-ui/".to_owned()],
-            ..item(Kind::Instruction, Scope::Workspace, "crates/pm-ui/CLAUDE.md", "", inside("crates/pm-ui/CLAUDE.md"))
-        },
-        Item {
-            applies: vec!["every project".to_owned()],
-            ..item(Kind::Instruction, Scope::User, "~/.claude/CLAUDE.md", "", "/home/me/.claude/CLAUDE.md".to_owned())
-        },
-        Item {
-            model: "sonnet".to_owned(),
-            tools: vec!["read".to_owned(), "grep".to_owned(), "glob".to_owned()],
-            ..item(Kind::Agent, Scope::Workspace, "reviewer", "Reviews a change for bugs before it is committed", inside(".claude/agents/reviewer.md"))
-        },
-        item(Kind::Agent, Scope::User, "researcher", "Finds out how a library is used across the code", "/home/me/.claude/agents/researcher.md".to_owned()),
-        Item {
-            command: "~/.claude/hooks/guard.sh".to_owned(),
-            ..item(Kind::Hook, Scope::User, "PreToolUse", "Bash", "/home/me/.claude/settings.json".to_owned())
-        },
-        Item {
-            command: "make fmt".to_owned(),
-            ..item(Kind::Hook, Scope::Workspace, "Stop", "", inside(".claude/settings.json"))
-        },
-    ];
-    let items: Vec<Item> = items
-        .into_iter()
-        .map(|mut item| {
-            item.tool = if item.path.contains("oh-my-crab") || item.path.is_empty() {
-                "crab"
-            } else if item.path.contains(".claude") || item.path.ends_with("CLAUDE.md") {
-                "Claude Code"
-            } else {
-                ""
-            }
-            .to_owned();
-            item
-        })
-        .collect();
-    let tool = |name: &str, description: &str| ToolEntry {
-        name: name.to_owned(),
-        description: description.to_owned(),
-    };
-    let sets = ToolSet::built_in(
-        Some(Product::Claude),
-        Ok(vec![
-            tool("read", "Read a text file and return its lines."),
-            tool("grep", "Search file contents with a regular expression."),
-            tool("edit", "Edit a file by replacing one exact piece of text."),
-            tool("bash", "Run a shell command in the working directory."),
-        ]),
-    )
-    .into_iter()
-    .chain([
-        ToolSet {
-            id: "github".to_owned(),
-            name: "github".to_owned(),
-            source: Source::Server,
-            plugin: None,
-            tools: vec![
-                tool("create_issue", "Open a new issue in a repository"),
-                tool("get_issue", "Read an issue and its comments"),
-                tool(
-                    "list_pull_requests",
-                    "List the pull requests of a repository",
-                ),
-                tool("search_code", "Search code across repositories"),
-                tool("add_issue_comment", "Comment on an issue"),
-            ],
-            error: None,
-        },
-        ToolSet {
-            id: "context7".to_owned(),
-            name: "context7".to_owned(),
-            source: Source::Plugin,
-            plugin: Some("docs".to_owned()),
-            tools: vec![
-                tool("resolve-library-id", "Find the id of a library"),
-                tool("get-library-docs", "Read the documentation of a library"),
-            ],
-            error: None,
-        },
-    ])
-    .collect();
-    let withheld = vec![
-        "skill/user/commit".to_owned(),
-        "tool/github/create_issue".to_owned(),
-        "tool/github/add_issue_comment".to_owned(),
-        "tool/built-in/WebSearch".to_owned(),
-    ];
-    let agent = state.agent;
-    let mut state = state
-        .with_library(
-            Some(0),
-            agent,
-            Some(Product::Claude),
-            items,
-            withheld.clone(),
-        )
-        .with_tool_sets(Some(0), agent, Some(Product::Claude), sets, withheld);
-    state.settings_page.library.open_sets = vec!["github".to_owned()];
-    state
-}
-
-fn welcome() -> WorkspaceState {
-    let here = std::env::current_dir().unwrap_or_default();
-    let projects: Vec<Project> = Project::from_source(&here.to_string_lossy())
-        .into_iter()
-        .collect();
-    signed_in(
-        WorkspaceState::new(&projects).with_discovery(0, claude_discovery()),
-        &["claude-code", "codex", "openrouter", "copilot"],
-    )
-}
-
-/// The window before any project is added, with the agent's settings known: the page that starts a chat.
-fn chat_new() -> WorkspaceState {
-    signed_in(
-        WorkspaceState::new(&[]).with_discovery(0, claude_discovery()),
-        &["claude-code", "codex", "openrouter", "copilot"],
-    )
-}
-
-/// The sample workspace with two chats that belong to no project, open on the first, its review panel listing the files of its scratch folder.
-fn chats() -> WorkspaceState {
-    use pm_components::sample::{Message, Session};
-    let mut state = workspace_sample();
-    let folder = "/home/reader/.local/share/pandemonium/chats/41";
-    let mut explained = Session::restored_chat("Explain borrow checking", None, folder, 0, false);
-    explained.messages = vec![
-        Message::user("Explain borrow checking with a small example I can run."),
-        Message::reply(
-            "A value has one owner, and borrows of it must end before it is moved or changed. I wrote `borrow.rs` with an example that fails to compile and the fix beside it.",
-        ),
-    ];
-    let named = Session::restored_chat(
-        "Name ideas for the release",
-        None,
-        "/home/reader/.local/share/pandemonium/chats/42",
-        0,
-        false,
-    );
-    state.sessions.push(explained);
-    state.sessions.push(named);
-    let open = state.sessions.len() - 2;
-    let state = state.after(FocusId(pm_components::state::SESSION_BASE + open as u64));
-    let key = state.files_of.clone().unwrap_or_default();
-    state.with_files(
-        &key,
-        vec!["borrow.rs".to_owned(), "notes.md".to_owned()],
-        Vec::new(),
-        Vec::new(),
-    )
-}
-
-/// `state` with the default accounts of the agents `ids` signed in, so that the page for starting work offers them.
-fn signed_in(mut state: WorkspaceState, ids: &[&str]) -> WorkspaceState {
-    for id in ids {
-        if let Some(agent) = state.agent_position(id) {
-            state = state.with_identity(agent, Some("Signed in".to_owned()), None, None);
-        }
-    }
-    state
-}
-
-/// What Claude Code says about itself: its settings and commands.
-fn claude_discovery() -> Discovery {
-    Discovery {
-        settings: claude_settings(),
-        commands: [
-            "compact",
-            "clear",
-            "model",
-            "review",
-            "init",
-            "release-notes",
-            "frontend-design:frontend-design",
-        ]
-        .into_iter()
-        .map(|name| Slash {
-            name: name.to_owned(),
-            description: format!("Run {name}"),
-        })
-        .collect(),
-    }
-}
-
-/// What Claude Code lets the reader change, as it reports it.
-fn claude_settings() -> Vec<Setting> {
-    let pick = |value: &str, name: &str, description: &str| Pick {
-        value: value.to_owned(),
-        name: name.to_owned(),
-        description: description.to_owned(),
-    };
-    let setting = |id: &str, category: &str, name: &str, current: &str, picks| Setting {
-        id: id.to_owned(),
-        category: category.to_owned(),
-        name: name.to_owned(),
-        current: current.to_owned(),
-        picks,
-    };
-    vec![
-        setting(
-            "mode",
-            "mode",
-            "Mode",
-            "default",
-            vec![
-                pick("default", "Manual", "Always ask before making changes"),
-                pick("plan", "Plan", "Create a plan before making changes"),
-            ],
-        ),
-        setting(
-            "model",
-            "model",
-            "Model",
-            "default",
-            vec![
-                pick("default", "Default (recommended)", "Sonnet 5.5"),
-                pick("opus", "Opus 5.5", "For complex work and everyday tasks"),
-                pick("haiku", "Haiku 5.5", "Fastest for quick answers"),
-                pick("a", "Haiku 4.5", "Fastest for quick answers"),
-                pick("b", "Sonnet 5", "Efficient for routine tasks"),
-                pick("c", "Opus 5", "Best for everyday, complex tasks"),
-                pick("d", "Fable 5", "Most capable for your hardest tasks"),
-                pick("e", "Opus 4.8", "Best for everyday, complex tasks"),
-                pick("f", "Opus 4.7", "Best for everyday, complex tasks"),
-                pick("g", "Sonnet 4.6", "Efficient for routine tasks"),
-            ],
-        ),
-        setting(
-            "effort",
-            "thought_level",
-            "Effort",
-            "default",
-            vec![
-                pick("default", "Default", ""),
-                pick("low", "Low", ""),
-                pick("high", "High", ""),
-            ],
-        ),
-    ]
-}
-
-/// A finished conversation whose agent waits for the reader to trust the project it works in, which stands as `standing`: never decided, with hooks, instruction files, skills and an agent left out, or trusted before a hook changed, with only the hooks left out.
-fn trusting(standing: Standing) -> WorkspaceState {
-    let root = "/home/reader/code/pandemonium";
-    let skipped = |kind, name: &str, path: &str| Skipped {
-        kind,
-        name: name.to_owned(),
-        path: format!("{root}/{path}").into(),
-    };
-    let settings = ".claude/settings.json";
-    let skipped = match standing {
-        Standing::Changed => vec![skipped(
-            Skip::Hook,
-            "PreToolUse Bash: ./scripts/guard.sh --deny-network",
-            settings,
-        )],
-        _ => vec![
-            skipped(Skip::Hook, "PreToolUse Bash: ./scripts/guard.sh", settings),
-            skipped(Skip::Hook, "Stop: make lint && make fmt", settings),
-            skipped(Skip::Instruction, &format!("{root}/AGENTS.md"), "AGENTS.md"),
-            skipped(Skip::Instruction, &format!("{root}/CLAUDE.md"), "CLAUDE.md"),
-            skipped(
-                Skip::Instruction,
-                &format!("{root}/crates/pm-ui/AGENTS.md"),
-                "crates/pm-ui/AGENTS.md",
-            ),
-            skipped(
-                Skip::Instruction,
-                &format!("{root}/.claude/rules/rust.md"),
-                ".claude/rules/rust.md",
-            ),
-            skipped(
-                Skip::Instruction,
-                &format!("{root}/.claude/rules/snapshots.md"),
-                ".claude/rules/snapshots.md",
-            ),
-            skipped(Skip::Skill, "release", ".claude/skills/release/SKILL.md"),
-            skipped(Skip::Skill, "snapshot", ".claude/skills/snapshot/SKILL.md"),
-            skipped(Skip::Agent, "reviewer", ".claude/agents/reviewer.md"),
-        ],
-    };
-    let state = live(Turn::Finished);
-    let session = state.open_index().unwrap();
-    state.heard(
-        session,
-        Event::Trust(TrustRequest {
-            ticket: 1,
-            root: root.into(),
-            standing,
-            skipped,
-        }),
-    )
-}
-
-/// How the turn of a made-up conversation stands at the end of it.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Turn {
-    /// The agent finished it.
-    Finished,
-    /// The agent waits for permission.
-    Asking,
-    /// The agent waits for permission to run a long command.
-    Command,
-    /// The agent waits for the answers to a form of questions.
-    Inquiring,
-    /// The agent is still on it.
-    Working,
-    /// The agent finished it with subagents and a command left running.
-    Background,
-    /// The agent finished it like [`Turn::Background`], its subagents working in git worktrees of their own and a third one ended.
-    Isolated,
-}
-
-/// The model slots and presets the models page shows: `main` inheriting with a backup, `fast` set from the user's file with backups, `plan` set by the project, `vision` inheriting with a suggestion, `subagent` and `review` inheriting, a slot of the reader's own from the environment, and one preset.
-fn model_slots() -> pm_harness::SlotBook {
-    use pm_harness::SlotSource::{Environment, Main, Project, User};
-    let slot = |name: &str,
-                model: Option<&str>,
-                backups: &[&str],
-                source: pm_harness::SlotSource,
-                suggested: Option<&str>| pm_harness::SlotInfo {
-        name: name.to_owned(),
-        model: model.map(str::to_owned),
-        backups: backups.iter().map(|backup| (*backup).to_owned()).collect(),
-        resolved: Some(model.unwrap_or("claude-opus-4-5").to_owned()),
-        source,
-        inherited: model.is_none(),
-        suggested: suggested.map(str::to_owned),
-        providers: Vec::new(),
-    };
-    let assigned =
-        |provider: &str, model: Option<&str>, backups: &[&str], suggested: Option<&str>| {
-            pm_harness::SlotProvider {
-                provider: provider.to_owned(),
-                model: model.map(str::to_owned),
-                backups: backups.iter().map(|backup| (*backup).to_owned()).collect(),
-                suggested: suggested.map(str::to_owned),
-            }
-        };
-    let mut slots = vec![
-        slot("main", None, &["openai/gpt-5"], Main, None),
-        slot(
-            "fast",
-            Some("claude/haiku-4-5:low"),
-            &["openai/gpt-5-mini", "ollama/qwen3-coder:30b"],
-            User,
-            None,
-        ),
-        slot("plan", Some("claude/opus-4-5:high"), &[], Project, None),
-        slot("subagent", None, &[], Main, None),
-        slot("review", None, &[], Main, None),
-        slot("vision", None, &[], Main, Some("openai/gpt-5-mini")),
-        slot("docs", Some("claude/sonnet-4-5"), &[], Environment, None),
-    ];
-    slots[1].providers = vec![
-        assigned(
-            "claude",
-            Some("claude/haiku-4-5:low"),
-            &["claude/sonnet-4-5"],
-            None,
-        ),
-        assigned(
-            "codex",
-            Some("codex/gpt-5-mini:low"),
-            &["codex/gpt-5-nano"],
-            None,
-        ),
-    ];
-    slots[2].providers = vec![
-        assigned("claude", Some("claude/opus-4-5:high"), &[], None),
-        assigned("codex", None, &[], None),
-    ];
-    slots[5].providers = vec![
-        assigned("claude", None, &[], Some("claude/haiku-4-5")),
-        assigned("codex", None, &[], Some("codex/gpt-5-mini")),
-    ];
-    pm_harness::SlotBook {
-        slots,
-        presets: vec![pm_harness::PresetInfo {
-            name: "cheap".to_owned(),
-            slots: vec![
-                pm_harness::PresetSlot {
-                    name: "fast".to_owned(),
-                    model: Some("claude/haiku-4-5".to_owned()),
-                    backups: Vec::new(),
-                    providers: Vec::new(),
-                },
-                pm_harness::PresetSlot {
-                    name: "plan".to_owned(),
-                    model: Some("claude/sonnet-4-5".to_owned()),
-                    backups: Vec::new(),
-                    providers: Vec::new(),
-                },
-            ],
-            effort: Some("low".to_owned()),
-        }],
-    }
-}
-
-/// A conversation whose agent was answering when its model was overloaded, so the rest of the turn asked the `main` slot's backup, with the notice of the switch beside the reply.
-fn model_fallback() -> WorkspaceState {
-    let state = live(Turn::Finished)
-        .edited(
-            PROMPT,
-            Edit::Paste("Now add a test for the clamp".to_owned()),
-        )
-        .after(SEND);
-    let last = state.sessions.len() - 1;
-    [
-        Event::Said("I'll start with the sidebar tests.".to_owned()),
-        Event::ModelFallback {
-            slot: "main".to_owned(),
-            from: "claude-opus-4-5".to_owned(),
-            to: "openai/gpt-5".to_owned(),
-            reason: "provider returned 529: overloaded".to_owned(),
-        },
-        Event::Said(" The test rebuilds the list and checks the offset is kept.".to_owned()),
-        Event::Finished(None),
-    ]
-    .into_iter()
-    .fold(state, |state, event| state.heard(last, event))
-}
-
-/// A finished conversation in which the reader asked a question on the side, then had the work handed over to a new conversation, which has started on it.
-fn aside() -> WorkspaceState {
-    let state = live(Turn::Finished);
-    let last = state.sessions.len() - 1;
-    let state = state
-        .heard(
-            last,
-            Event::Aside {
-                question: "Which file keeps the sidebar's scroll offset?".to_owned(),
-                answer: "`crates/pm-components/src/state.rs`, in `sidebar_scroll`. It is clamped when the list is rebuilt.".to_owned(),
-                failed: false,
-            },
-        )
-        .edited(
-            PROMPT,
-            Edit::Paste("/handoff Add a test for the clamp".to_owned()),
-        )
-        .after(SEND);
-    [
-        Event::HandedOff {
-            prompt: "The sidebar lost its scroll position because the offset was clamped against a height measured before the list was rebuilt; the clamp now uses the new height. Add a test in pm-components that rebuilds the list and checks the offset is kept.".to_owned(),
-            turn: "handoff-1".to_owned(),
-        },
-        Event::Said("I'll add the test next to the other sidebar tests.".to_owned()),
-        Event::Finished(None),
-    ]
-    .into_iter()
-    .fold(state, |state, event| state.heard(last, event))
-}
-
-/// A finished conversation whose agent works toward a goal with a budget of two million tokens, a fifth of it used.
-fn goal() -> WorkspaceState {
-    let state = live(Turn::Finished);
-    let last = state.sessions.len() - 1;
-    state.heard(
-        last,
-        Event::Goal(pm_harness::Goal {
-            objective: "Make every test in the workspace pass".to_owned(),
-            state: pm_harness::GoalState::Active,
-            budget: Some(2_000_000),
-            used: 412_000,
-            note: None,
-        }),
-    )
-}
-
-/// A conversation on a turn, with two prompts waiting behind it and a third being written.
-fn queued() -> WorkspaceState {
-    let waiting = |id: u64, text: &str, files: &[&str]| Event::Queued {
-        id,
-        text: text.to_owned(),
-        files: files.iter().map(|name| (*name).to_owned()).collect(),
-    };
-    let state = live(Turn::Working);
-    let session = state.sessions.len() - 1;
-    [
-        waiting(1, "Then add a test for the clamp", &[]),
-        waiting(
-            2,
-            "Use the layout in this screenshot for the empty state\nand keep the icon",
-            &["empty.png"],
-        ),
-    ]
-    .into_iter()
-    .fold(state, |state, event| state.heard(session, event))
-    .edited(
-        PROMPT,
-        Edit::Paste("Stop, the clamp lives in pm-ui".to_owned()),
-    )
-}
-
-/// A conversation on a turn with a long, multi-line prompt waiting first and a short one with a file behind it.
-fn queued_long() -> WorkspaceState {
-    let waiting = |id: u64, text: &str, files: &[&str]| Event::Queued {
-        id,
-        text: text.to_owned(),
-        files: files.iter().map(|name| (*name).to_owned()).collect(),
-    };
-    let state = live(Turn::Working);
-    let session = state.sessions.len() - 1;
-    [
-        waiting(
-            1,
-            "Then add a test for the clamp, and make sure it covers a value below the minimum, a value above the maximum and a value exactly on each edge, because the last version only checked the middle of the range.\n\nAfter that, update the docs:\n- explain what the clamp does\n- list the edge cases it handles",
-            &[],
-        ),
-        waiting(2, "Use the layout in this screenshot", &["empty.png"]),
-    ]
-    .into_iter()
-    .fold(state, |state, event| state.heard(session, event))
-}
-
-/// A conversation told as the server tells it after a restart, from what the harness saved: the offer first, then each turn with its tools, its context meter and its end, the stopped and the failed turns among them.
-fn restored() -> WorkspaceState {
-    let state = WorkspaceState::new(&projects()).edited(
-        PROMPT,
-        Edit::Paste("Why does the sidebar lose its scroll position?".to_owned()),
-    );
-    let state = state.after(SEND);
-    let session = state.open_index().unwrap();
-    let tool = |id: &str, title: &str, kind, target: &str, state| Tool {
-        id: id.to_owned(),
-        title: Some(title.to_owned()),
-        kind: Some(kind),
-        state: Some(state),
-        target: Some(target.to_owned()),
-        diff: None,
-        output: None,
-        parent: None,
-        agent: None,
-        worktree: None,
-    };
-    let done = |id: &str, output: &str, diff: Option<Diff>| {
-        Event::Tool(Tool {
-            id: id.to_owned(),
-            title: None,
-            kind: None,
-            state: Some(ToolState::Done),
-            target: None,
-            diff,
-            output: Some(output.to_owned()),
-            parent: None,
-            agent: None,
-            worktree: None,
-        })
-    };
-    let prompted = |text: &str, turn: u64| Event::Prompted {
-        text: text.to_owned(),
-        files: Vec::new(),
-        checkpoint: false,
-        turn,
-        saved: None,
-    };
-    [
-        Event::Settings(claude_settings()),
-        Event::Commands(vec![Slash {
-            name: "compact".to_owned(),
-            description: "Summarise the conversation to free up context".to_owned(),
-        }]),
-        prompted("Why does the sidebar lose its scroll position?", 1),
-        Event::Tool(tool(
-            "r1",
-            "read",
-            Kind::Read,
-            "crates/pm-components/src/state.rs",
-            ToolState::Running,
-        )),
-        Event::Used(pm_harness::Usage {
-            used: 9466,
-            size: 1_000_000,
-            written: 0,
-        }),
-        done("r1", "pub struct WorkspaceState { .. }", None),
-        Event::Tool(tool(
-            "e1",
-            "edit",
-            Kind::Edit,
-            "crates/pm-components/src/state.rs",
-            ToolState::Running,
-        )),
-        Event::Used(pm_harness::Usage {
-            used: 9667,
-            size: 1_000_000,
-            written: 0,
-        }),
-        done(
-            "e1",
-            "edited state.rs",
-            Some(Diff {
-                path: "crates/pm-components/src/state.rs".to_owned(),
-                old: Some("fn a() {}\nfn b() {}\nfn c() {}\n".to_owned()),
-                new: "fn a() {}\nfn d() {}\nfn c() {}\n".to_owned(),
-            }),
-        ),
-        Event::Said("The offset is clamped against a stale height, so I changed it.".to_owned()),
-        Event::Used(pm_harness::Usage {
-            used: 9791,
-            size: 1_000_000,
-            written: 0,
-        }),
-        Event::Finished(None),
-        prompted("Now count to a thousand out loud.", 5),
-        Event::Halted,
-        Event::Finished(None),
-        prompted("Run the whole test suite again.", 8),
-        Event::Finished(Some("the model was overloaded".to_owned())),
-    ]
-    .into_iter()
-    .fold(state, |state, event| state.heard(session, event))
-}
-
-/// A finished conversation whose files were kept before its first message, scrolled back to it.
-fn kept() -> WorkspaceState {
-    let state = live(Turn::Finished);
-    let session = state.open_index().unwrap_or(0);
-    state
-        .heard(
-            session,
-            Event::Prompted {
-                text: "Why does the sidebar lose its scroll position?".to_owned(),
-                files: Vec::new(),
-                checkpoint: true,
-                turn: 0,
-                saved: None,
-            },
-        )
-        .scrolled_chat(-400.0, 400.0)
-}
-
-/// A file a turn changed, at `path`, marked with `letter`, with the lines `diff`.
-fn turn_change(path: &str, letter: char, diff: &str) -> pm_git::Change {
-    pm_git::Change {
-        path: path.to_owned(),
-        diff: diff.to_owned(),
-        words: Vec::new(),
-        staged: false,
-        untracked: false,
-        index: Some(letter),
-        worktree: None,
-        conflicted: false,
-        from: None,
-        submodule: None,
-        repository: None,
-        moved: None,
-        added: 0,
-        removed: 0,
-        lazy: false,
-    }
-}
-
-/// A finished conversation showing what the agent changed during its first turn.
-fn turn_changes() -> WorkspaceState {
-    let state = kept();
-    let session = state.open_index().unwrap();
-    state.revision_opened(
-        session,
-        "Turn 1 changes".to_owned(),
-        Some(0),
-        vec![
-            turn_change(
-                "crates/pm-components/src/sidebar.rs",
-                'M',
-                "@@ -40,6 +40,7 @@\n fn rows(state: &State) -> Vec<Row> {\n     let mut rows = Vec::new();\n-    state.scroll = 0.0;\n+    let kept = state.scroll;\n+    state.scroll = kept.min(state.extent());\n     rows\n }",
-            ),
-            turn_change(
-                "crates/pm-components/src/scroll.rs",
-                'A',
-                "@@ -0,0 +1,4 @@\n+/// How far a list can scroll.\n+pub fn extent(rows: usize, height: f32) -> f32 {\n+    (rows as f32 * ROW - height).max(0.0)\n+}",
-            ),
-        ],
-    )
-}
-
-/// A finished conversation in which the reader sent one 2000-character line with no spaces.
-fn long_line() -> WorkspaceState {
-    let state = live(Turn::Finished);
-    let session = state.open_index().unwrap();
-    let prompted = |text: String| Event::Prompted {
-        text,
-        files: Vec::new(),
-        checkpoint: false,
-        turn: 0,
-        saved: None,
-    };
-    state
-        .heard(
-            session,
-            prompted("Why does the sidebar lose it?".to_owned()),
-        )
-        .heard(
-            session,
-            prompted("QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo".repeat(58)),
-        )
-}
-
-/// A conversation that went through what an agent says in a turn, ending as `turn` says.
-fn live(turn: Turn) -> WorkspaceState {
-    let tool = |id: &str, title: &str, kind, target: &str| Tool {
-        id: id.to_owned(),
-        title: Some(title.to_owned()),
-        kind: Some(kind),
-        state: Some(ToolState::Done),
-        target: Some(target.to_owned()),
-        diff: None,
-        output: None,
-        parent: None,
-        agent: None,
-        worktree: None,
-    };
-    let mut state = WorkspaceState::new(&projects())
-        .edited(
-            PROMPT,
-            Edit::Paste("Why does the sidebar lose its scroll position?".to_owned()),
-        )
-        .after(SEND);
-    let mut events = vec![
-        Event::Settings(claude_settings()),
-        Event::Commands(vec![
-            Slash {
-                name: "compact".to_owned(),
-                description: "Summarise the conversation to free up context".to_owned(),
-            },
-            Slash {
-                name: "clear".to_owned(),
-                description: "Clear the conversation".to_owned(),
-            },
-            Slash {
-                name: "model".to_owned(),
-                description: "Choose the model for this session".to_owned(),
-            },
-        ]),
-        Event::Thought(
-            "The scroll offset lives in the workspace state, so a rebuilt list should keep it."
-                .to_owned(),
-        ),
-        Event::Plan(vec![
-            PlanStep {
-                text: "Find where the offset is stored".to_owned(),
-                progress: Progress::Done,
-            },
-            PlanStep {
-                text: "Check how it is clamped".to_owned(),
-                progress: Progress::Doing,
-            },
-            PlanStep {
-                text: "Write the fix".to_owned(),
-                progress: Progress::Pending,
-            },
-        ]),
-        Event::Tool(tool(
-            "1",
-            "read",
-            Kind::Read,
-            "~/code/pandemonium/crates/pm-components/src/workspace/state.rs",
-        )),
-        Event::Tool(tool("2", "grep", Kind::Search, "sidebar_scroll")),
-        Event::Tool(Tool {
-            diff: Some(Diff {
-                path: "~/code/pandemonium/src/lib.rs".to_owned(),
-                old: Some("fn a() {}\nfn b() {}\nfn c() {}\n".to_owned()),
-                new: "fn a() {}\nfn d() {}\nfn c() {}\n".to_owned(),
-            }),
-            ..tool("3", "edit", Kind::Edit, "~/code/pandemonium/src/lib.rs")
-        }),
-        Event::Tool(Tool {
-            output: Some("running 12 tests\ntest result: ok. 12 passed".to_owned()),
-            ..tool("4", "bash", Kind::Execute, "cargo test")
-        }),
-        Event::Said(
-            "The offset is clamped against a height measured before the list is rebuilt."
-                .to_owned(),
-        ),
-        Event::Tool(tool(
-            "5",
-            "read",
-            Kind::Read,
-            "~/code/pandemonium/README.md",
-        )),
-        Event::Said("I changed the clamp to use the new height.".to_owned()),
-    ];
-    if turn == Turn::Asking {
-        events.push(Event::Ask(Permission {
-            ticket: 1,
-            title: "Plan ready for review".to_owned(),
-            command: None,
-            plan: Some(
-                "## Export a session as Markdown\n\nAdd an export that writes the conversation to a Markdown file. Nothing is edited until you approve.\n\n1. Render the transcript\n   - Add a Markdown writer that streams messages to any `io::Write`.\n2. Wire it to the UI\n   - Add an export item to the session menu.\n\n### Files to change\n\n- `crates/pandemonium/src/export.rs`\n- `crates/pandemonium/src/session.rs`"
-                    .to_owned(),
-            ),
-            choices: vec![
-                Choice {
-                    id: "a".to_owned(),
-                    name: "Approve and ask before each edit".to_owned(),
-                    verdict: Verdict::Allow,
-                },
-                Choice {
-                    id: "b".to_owned(),
-                    name: "Approve and start".to_owned(),
-                    verdict: Verdict::Always,
-                },
-                Choice {
-                    id: "c".to_owned(),
-                    name: "Keep planning".to_owned(),
-                    verdict: Verdict::Reject,
-                },
-            ],
-        }));
-    } else if turn == Turn::Command {
-        let choice = |id: &str, name: &str, verdict| Choice {
-            id: id.to_owned(),
-            name: name.to_owned(),
-            verdict,
-        };
-        events.push(Event::Ask(Permission {
-            ticket: 1,
-            title: "Allow Claude to run a long read-only demo command? PR #186 is still open and adds shared pieces the savings flow needs (AreaHero, SaveCard, FollowUp, TileSearch, NumberedAccordion defaultIndex, SECTION_TITLE), so it matters which branch this runs on.".to_owned(),
-            command: Some("printf '%s\\n' \"permission prompt demo\" \"line two of a deliberately long command\" && ls -la /home/jdaddy/Documents/repos/vault | head -n 5 && git -C /home/jdaddy/Documents/repos/vault log --oneline --decorate --max-count=3 && wc -l /home/jdaddy/Documents/repos/vault/AGENTS.md /home/jdaddy/Documents/repos/vault/Makefile 2>/dev/null && date --iso-8601=seconds".to_owned()),
-            plan: None,
-            choices: vec![
-                choice("a", "Allow once", Verdict::Allow),
-                choice("b", "Always allow", Verdict::Always),
-                choice("d", "Allow on the task/172 branch (Recommended) and keep the open PR #186 as the base for everything that follows it", Verdict::Allow),
-                choice("c", "Deny", Verdict::Reject),
-            ],
-        }));
-    } else if turn == Turn::Inquiring {
-        let alternative = |label: &str, description: &str| Alternative {
-            label: label.to_owned(),
-            description: description.to_owned(),
-        };
-        events.push(Event::Inquire(Inquiry {
-            ticket: 1,
-            questions: vec![
-                Question {
-                    header: "Direction".to_owned(),
-                    text: "Imagine vault is three months from now and you open it every evening after a long day: the assistant can finally start jobs, the curating path is rewired, sources download straight into the library, and the whole thing feels like a private streaming service that knows your taste. When you picture the single most important thing that should have changed in how you interact with it compared to today, which of these is closest to the core of that change?".to_owned(),
-                    multiple: false,
-                    alternatives: vec![
-                        alternative(
-                            "Assistant acts for me",
-                            "I ask in plain language to find new scenes like the last five I liked and download the best ones. The assistant queues a scan, identifies and downloads candidates, then generates jobs itself, with me only confirming the result.",
-                        ),
-                        alternative(
-                            "Library curates itself",
-                            "Rewire internal ingest and bring back a curate-style path so new material is discovered, fetched, identified and filed with minimal input, while still respecting library paths and avoiding time-triggered jobs.",
-                        ),
-                        alternative("Browsing and taste first", "Focus on the grid, search, taste profile, recommendations and playback so finding something to watch is instant and personal. Automation can stay manual for now."),
-                        alternative("Metadata quality first", "Fix identify, populate visual descriptions, improve matching and scraper definitions so every scene has correct performers, studios and tags. Everything else builds on clean data."),
-                    ],
-                },
-                Question {
-                    header: "Where".to_owned(),
-                    text: "Where should the setting live?".to_owned(),
-                    multiple: true,
-                    alternatives: vec![
-                        alternative("Settings page", ""),
-                        alternative("Menu bar", ""),
-                    ],
-                },
-                Question {
-                    header: "Name".to_owned(),
-                    text: "What should it be called?".to_owned(),
-                    multiple: false,
-                    alternatives: vec![alternative("Appearance", ""), alternative("Theme", "")],
-                },
-            ],
-        }));
-    } else if turn == Turn::Finished {
-        events.push(Event::Finished(None));
-    } else if matches!(turn, Turn::Background | Turn::Isolated) {
-        let agent = |id: &str, title: &str| Tool {
-            state: Some(ToolState::Running),
-            agent: Some("explore".to_owned()),
-            ..tool(id, title, Kind::Other, title)
-        };
-        let child = |id: &str, parent: &str, target: &str| Tool {
-            parent: Some(parent.to_owned()),
-            ..tool(id, "Grep", Kind::Search, target)
-        };
-        events.extend([
-            Event::Tool(agent("a1", "Find every caller of Session::new")),
-            Event::Tool(agent(
-                "a2",
-                "Check how worktrees are located from a session root",
-            )),
-            Event::Tool(child("c1", "a1", "Session::new")),
-            Event::Tool(child("c2", "a1", "Session::default")),
-            Event::Tool(child("c3", "a2", "worktree_root")),
-            Event::Tool(Tool {
-                state: Some(ToolState::Running),
-                ..tool("s1", "Terminal", Kind::Execute, "cargo watch -x test")
-            }),
-            Event::Background(Background {
-                id: "s1".to_owned(),
-                label: "cargo watch -x test".to_owned(),
-                running: true,
-                call: Some("s1".to_owned()),
-            }),
-        ]);
-        if turn == Turn::Isolated {
-            events.extend(worktrees());
-        }
-        events.push(Event::Finished(None));
-    }
-    let asked = state.sessions.len() - 1;
-    for event in events {
-        state = state.heard(asked, event);
-    }
-    state
-}
-
-/// What the agent says of the subagents of [`Turn::Background`] working in git worktrees of their own: the first ended and its changes were applied, the second still works, and a third ended with changes that conflicted.
-fn worktrees() -> Vec<Event> {
-    let apart = |merge: Option<Merge>| {
-        Some(Box::new(Worktree {
-            path: "/home/reader/.cache/oh-my-crab/worktrees/c1/1/pandemonium".to_owned(),
-            merge,
-        }))
-    };
-    let update = |id: &str, state: Option<ToolState>, merge: Option<Merge>| Tool {
-        id: id.to_owned(),
-        title: None,
-        kind: None,
-        state,
-        target: None,
-        diff: None,
-        output: None,
-        parent: None,
-        agent: None,
-        worktree: apart(merge),
-    };
-    let applied = Merge::Applied {
-        files: ["src/session.rs", "src/root.rs", "src/lib.rs"]
-            .map(str::to_owned)
-            .to_vec(),
-    };
-    let conflicted = Merge::Conflicted {
-        patch: "/home/reader/.cache/oh-my-crab/output/c1/worktree-patch-1.log".to_owned(),
-        files: vec!["src/session.rs".to_owned()],
-    };
-    [
-        update("a1", Some(ToolState::Done), Some(applied)),
-        update("a2", None, None),
-        Tool {
-            title: Some("Rename the session root accessor".to_owned()),
-            kind: Some(Kind::Other),
-            target: Some("Rename the session root accessor".to_owned()),
-            agent: Some("task".to_owned()),
-            ..update("a3", Some(ToolState::Done), Some(conflicted))
-        },
-    ]
-    .map(Event::Tool)
-    .to_vec()
-}
-
-/// The text of the Rust file the code snapshots write in.
-fn code_text(state: &WorkspaceState) -> String {
-    state
-        .shown_document()
-        .map(|document| document.field.text().to_owned())
-        .unwrap_or_default()
-}
-
-/// The Rust file with the lines of `new` selected and the bar for finding open on "names", limited to the selection, where the editor limits finding to a selection of several lines; every match in them replaced when `replaced`.
-fn find_in_selection(replaced: bool) -> WorkspaceState {
-    let mut state = code();
-    state.editor.auto_find_in_selection = pm_editor::FindInSelection::Multiline;
-    let text = code_text(&state);
-    let start = text.find("    /// Makes a session").unwrap_or_default();
-    let end = text.find("    /// How many names").unwrap_or_default();
-    let state = state
-        .edited(EDITOR_FIELD, Edit::Select(start, end))
-        .find_opened(replaced)
-        .find_typed(Edit::Paste("names".to_owned()));
-    if !replaced {
-        return state;
-    }
-    state
-        .replacement_typed(Edit::Paste("labels".to_owned()))
-        .replaced_all()
-}
-
-/// The Rust file with the line that holds `label` selected, picked up, and carried over the line above it; dropped there, moving it, when `dropped`.
-fn dragging_text(dropped: bool) -> WorkspaceState {
-    let mut state = code();
-    let text = code_text(&state);
-    let start = text.find("        let label").unwrap_or_default();
-    let end = start + text[start..].find('\n').map_or(0, |at| at + 1);
-    let target = text.find("        let names").unwrap_or_default();
-    state = state.edited(EDITOR_FIELD, Edit::Select(start, end));
-    state.editor_drag_started(start + 16);
-    state.editor_drag_over(target);
-    if dropped {
-        state.editor_dropped(false);
-    }
-    state
-}
-
-/// The Rust file with the caret on the line that has a problem, where the language server offers two changes, and the marker for that beside the line.
-fn lightbulb() -> WorkspaceState {
-    let state = code();
-    let text = code_text(&state);
-    let at = text.find("label: u32").unwrap_or_default() + 4;
-    let state = state.edited(EDITOR_FIELD, Edit::Place(at, false));
-    let (version, line) = state
-        .shown_document()
-        .map_or((0, 0), |document| (document.version, document.line_of(at)));
-    state.with_lightbulb(0, CODE_PATH, version, line, 2)
-}
-
-/// A file of words with the letter pairs a font joins and of arrows and comparisons, set in a code font that has ligatures for the pairs of letters, joined or not as `joined` says; no code font with ligatures for arrows is installed where the snapshots are made, so the pairs of letters stand for them.
-fn ligatures(joined: bool) -> WorkspaceState {
-    let path = "notes/operators.txt";
-    let mut state = workspace_sample().after(TAB_DIFF);
-    state.editor.ligatures = joined;
-    state.window.appearance.code_font = "DejaVu Sans".to_owned();
-    state.open_viewer(path.to_owned(), false);
-    state.with_file(
-        0,
-        path,
-        false,
-        Ok((
-            Some("office affluent final flow waffle\na -> b => c <- d <= e >= f != g == h === i\nx |> y <|> z :: w ::= v >>= u <<= t\nwww //// /* */ <!-- --> 0xFF .. ... && ||\n".to_owned()),
-            false,
-            None,
-        )),
-    )
-}
-
-/// A file with a line of Hebrew, a line of Arabic and lines of left-to-right text mixed with them, a word of the Hebrew line selected and a stretch of the mixed line from its left-to-right text into the start of its Hebrew.
-fn bidi() -> WorkspaceState {
-    let path = "notes/mixed.txt";
-    let mut state = workspace_sample().after(TAB_DIFF);
-    state.open_viewer(path.to_owned(), false);
-    let text = "Left to right: hello world\nשלום עולם, זה טקסט בעברית\nmixed: abc שלום עולם def 123\nمرحبا بالعالم، هذا نص عربي\nAfter: the end\n";
-    let state = state.with_file(0, path, false, Ok((Some(text.to_owned()), false, None)));
-    let hebrew = text.find("שלום עולם,").unwrap_or_default();
-    let from = text.find("abc").unwrap_or_default() + 2;
-    let to = text.find("שלום עולם def").unwrap_or_default() + 6;
-    state
-        .edited(EDITOR_FIELD, Edit::Select(hebrew, hebrew + 8))
-        .edited(EDITOR_FIELD, Edit::AddSelection(from, to))
-}
-
-/// How the file is compared in a snapshot.
-#[derive(Clone, Copy)]
-enum Compare {
-    /// With what the clipboard holds.
-    Clipboard,
-    /// With what was last saved of it.
-    Saved,
-    /// With the list of files open to pick another.
-    Picking,
-    /// With another file of the project.
-    File,
-}
-
-/// The Rust file compared as `how` says, with an older text standing for the clipboard, the saved file or the other file.
-fn compared(how: Compare) -> WorkspaceState {
-    let mut state = code();
-    let edited = code_text(&state);
-    let older = edited
-        .replace("const LIMIT: usize = 64;", "const LIMIT: usize = 32;")
-        .replace("HashMap::with_capacity(LIMIT)", "HashMap::new()")
-        .replace(
-            "    /// How many names the session knows.\n    pub fn count(&self) -> usize {\n        self.names.len()\n    }\n",
-            "    pub fn len(&self) -> usize {\n        self.names.len()\n    }\n",
-        );
-    let other = "crates/pandemonium/src/session_old.rs";
-    match how {
-        Compare::Clipboard => state.compare_with_clipboard(older),
-        Compare::Saved => state.with_compared(0, CODE_PATH, CODE_PATH, true, &older),
-        Compare::Picking => {
-            state.files = [
-                CODE_PATH,
-                other,
-                "crates/pandemonium/src/main.rs",
-                "Cargo.toml",
-            ]
-            .map(str::to_owned)
-            .to_vec();
-            state.compare_with_file_requested((340.0, 0.0))
-        }
-        Compare::File => state.with_compared(0, CODE_PATH, other, false, &older),
-    }
-}
-
-/// Draws the screen as it looks `elapsed_ms` into the animations, with the
-/// pointer at `pointer` and focus on `focused` if given, in `appearance`, and
-/// writes it to `path` as a PNG. The pointer is taken to have rested where it
-/// is since the start, so a tooltip under it shows once `elapsed_ms` is long
-/// enough.
-pub fn write(
-    path: &Path,
-    elapsed_ms: f32,
-    pointer: Option<(f32, f32)>,
-    focused: Option<FocusId>,
-    appearance: Appearance,
-    shot: Shot,
-) -> Result<(), String> {
-    let (width, height) = if shot.narrow() {
-        (NARROW_WIDTH, NARROW_HEIGHT)
-    } else if shot.in_settings_window() {
-        (SETTINGS_WIDTH, SETTINGS_HEIGHT)
-    } else if matches!(shot, Shot::Inquiring) {
-        (WIDTH, 1000)
-    } else if shot.in_picker_window() {
-        (PICKER_WIDTH, PICKER_HEIGHT)
-    } else {
-        (WIDTH, HEIGHT)
-    };
-    pm_components::set_floating(matches!(shot, Shot::Floating));
-    let band = pm_components::shadow_margin();
-    let target = (width + 2 * band as u32, height + 2 * band as u32);
-    let paint = if shot.in_settings_window() {
-        scene::paint_settings
-    } else if shot.in_picker_window() {
-        scene::paint_picker
-    } else {
-        scene::paint
-    };
-    let mut renderer =
-        Renderer::headless(target.0, target.1, 1.0).map_err(|error| error.to_string())?;
-    renderer.set_band(band);
-    let mut shaper = scene::shaper();
-    let mut list = DrawList::new();
-    let input = Input {
-        pointer: PointerState {
-            position: pointer,
-            ..PointerState::default()
-        },
-        focused,
-        elapsed_ms,
-        selection: shot.selection(),
-        held_bar: None,
-    };
-    let family = default_family();
-    let theme = family.variant(appearance);
-    let mut screen = shot.screen();
-    let Screen::Workspace(held) = &screen;
-    let looks = &held.window.appearance;
-    if !looks.code_font.is_empty() || !looks.interface_font.is_empty() {
-        scene::set_fonts(&mut shaper, &looks.interface_font, &looks.code_font);
-    }
-    shaper.set_ligatures(held.editor.ligatures);
-    let resting = Input {
-        elapsed_ms: 0.0,
-        ..input
-    };
-    let rested = paint(
-        width as f32,
-        height as f32,
-        &screen,
-        &resting,
-        theme,
-        &mut shaper,
-        &mut DrawList::new(),
-    );
-    if let Some(measured) = screen.diff_resized(&rested.scrollers) {
-        screen = screen.measured_diff(measured);
-    }
-    paint(
-        width as f32,
-        height as f32,
-        &screen,
-        &input,
-        theme,
-        &mut shaper,
-        &mut list,
-    );
-    let pixels = renderer
-        .snapshot(&list, &mut shaper, scene::ground(theme))
-        .ok_or("the renderer could not read its frame back")?;
-    image::save_buffer(path, &pixels, target.0, target.1, image::ColorType::Rgba8)
-        .map_err(|error| error.to_string())
-}
-
-/// What a markdown file shown rendered in a snapshot says.
-const PREVIEW_MARKDOWN: &str = "<p align=\"center\"><img src=\"assets/banner.png\" width=\"300\" alt=\"pandemonium\"></p>\n\n[![CI](https://img.shields.io/badge/ci-passing-green.svg)](https://github.com) ![License](https://img.shields.io/badge/license-MIT-blue.svg)\n\n# pandemonium\n\nA GPU-native editor for conducting agents. Several **projects** live in one window; a *session* is an agent working in its own git worktree of one of them.\n\nEach turn costs $t = n \\cdot c$ tokens:\n\n$$\n\\sum_{i=1}^{n} \\frac{c_i}{\\sqrt{2}} \\le T\n$$\n\n## Commands\n\n```sh\nmake run     # cargo run -p pandemonium\nmake lint    # cargo clippy --workspace\n```\n\n```mermaid\nflowchart LR\n    Window -->|requests| Server\n    Server --> Agents\n    Server --> Git\n```\n\n- Read [the protocol](docs/protocol.md) before changing `pm-protocol`.\n- Layers point one way.\n- An agent outlives its client.\n\n> A session is a worktree you review, not a terminal you supervise.\n\n| Crate | Job |\n| --- | --- |\n| `pm-ui` | the element tree |\n| `pm-renderer` | talks to wgpu |\n";
-
-/// A badge of the kind a README shows from the web, for a snapshot.
-const PREVIEW_BADGE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="88" height="20"><rect width="88" height="20" rx="3" fill="#555"/><rect x="34" width="54" height="20" rx="3" fill="#4c1"/><text x="6" y="14" fill="#fff" font-family="sans-serif" font-size="11">ci</text><text x="40" y="14" fill="#fff" font-family="sans-serif" font-size="11">passing</text></svg>"##;
-
-/// What a vector picture shown drawn in a snapshot holds.
-const PREVIEW_VECTOR: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="240" height="160" viewBox="0 0 240 160"><rect width="240" height="160" rx="24" fill="#1f2937"/><circle cx="80" cy="80" r="44" fill="#f97316"/><path d="M140 40 L204 120 L140 120 Z" fill="#38bdf8"/></svg>"##;
-
-/// The workspace with the file at `path` open and shown rendered, as what it ends in says it is.
-fn previewed(path: &str) -> WorkspaceState {
-    load_installed_grammar("markdown");
-    let mut state = workspace_sample().after(TAB_DIFF);
-    state.open_viewer(path.to_owned(), false);
-    match pm_components::preview::Rendering::of(path) {
-        Some(pm_components::preview::Rendering::Picture) => {
-            state.with_picture(0, path, false, Ok(gradient()))
-        }
-        Some(pm_components::preview::Rendering::Vector) => state
-            .with_file(
-                0,
-                path,
-                false,
-                Ok((Some(PREVIEW_VECTOR.to_owned()), false, None)),
-            )
-            .with_drawn(
-                0,
-                path,
-                false,
-                crate::work::picture::draw(path, PREVIEW_VECTOR),
-            ),
-        _ => {
-            let palette = crate::work::picture::Palette::of(
-                pm_theme::default_family().variant(pm_theme::Appearance::Dark),
-                true,
-            );
-            pm_components::figures::figures_of(PREVIEW_MARKDOWN, Some(path))
-                .iter()
-                .fold(
-                    state.with_file(
-                        0,
-                        path,
-                        false,
-                        Ok((
-                            Some(PREVIEW_MARKDOWN.to_owned()),
-                            false,
-                            Some("markdown".to_owned()),
-                        )),
-                    ),
-                    |state, (key, wanted)| match wanted {
-                        pm_components::figures::Wanted::Diagram(source) => {
-                            state.with_figure(*key, crate::work::picture::diagram(source, &palette))
-                        }
-                        pm_components::figures::Wanted::Formula(source) => {
-                            state.with_figure(*key, crate::work::picture::formula(source, &palette))
-                        }
-                        pm_components::figures::Wanted::Address(_) => state.with_figure(
-                            *key,
-                            crate::work::picture::figure(PREVIEW_BADGE.as_bytes(), false),
-                        ),
-                        pm_components::figures::Wanted::File(_) => state.with_figure(
-                            *key,
-                            Ok(pm_components::figures::Drawing {
-                                picture: gradient(),
-                                density: 1.0,
-                            }),
-                        ),
-                    },
-                )
-        }
-    }
-}
-
-/// A picture that fades from red to blue, for a snapshot of a preview.
-fn gradient() -> pm_renderer::Picture {
-    let (width, height) = (200u32, 120u32);
-    let pixels = (0..height)
-        .flat_map(|y| {
-            (0..width)
-                .flat_map(move |x| [(255 * x / width) as u8, (255 * y / height) as u8, 200, 255])
-        })
-        .collect();
-    pm_renderer::Picture {
-        key: 1,
-        width,
-        height,
-        pixels: std::sync::Arc::new(pixels),
-    }
-}
-
-/// A listing of the registry of tool servers, for a snapshot.
-fn tool_listing(title: &str, name: &str, target: &str) -> pm_protocol::ToolListing {
-    pm_protocol::ToolListing {
-        id: name.to_owned(),
-        title: title.to_owned(),
-        description: "Up-to-date code docs for any prompt".to_owned(),
-        name: name.to_owned(),
-        target: target.to_owned(),
-        env: Vec::new(),
-        inputs: Vec::new(),
-        asks: false,
-        website: String::new(),
-    }
-}
-
-#[cfg(test)]
-mod offer_tests {
-    use super::*;
-    use pm_components::language_offer::{OFFER_DECLINE, OFFER_INSTALL};
-    use pm_components::state::Outgoing;
-
-    /// Pressing Install asks for the language, and once the server lists it installed the open file takes it.
-    #[test]
-    fn install_asks_and_the_file_takes_the_language() {
-        let mut state = language_offer().after(OFFER_INSTALL);
-        let asked = state.take_outbox().into_iter().any(|outgoing| {
-            matches!(outgoing, Outgoing::InstallExtensions { ids } if ids == ["javascript"])
-        });
-        assert!(asked);
-        assert_eq!(state.shown_document().unwrap().language, None);
-        let installed = sample_languages()
-            .into_iter()
-            .map(|language| pm_protocol::ExtensionInfo {
-                installed: language.installed || language.id == "javascript",
-                ..language
-            })
-            .collect::<Vec<_>>();
-        let state = state.with_host_extensions(&None, &installed);
-        assert_eq!(
-            state.shown_document().unwrap().language.as_deref(),
-            Some("javascript")
-        );
-    }
-
-    /// Pressing Not now remembers the language, and it is not offered or installed from the bar after.
-    #[test]
-    fn declining_is_remembered() {
-        let mut state = language_offer().after(OFFER_DECLINE);
-        assert_eq!(state.window.general.declined_languages, ["javascript"]);
-        state.take_outbox();
-        let mut state = state.after(OFFER_INSTALL);
-        assert!(
-            !state
-                .take_outbox()
-                .iter()
-                .any(|outgoing| matches!(outgoing, Outgoing::InstallExtensions { .. }))
-        );
-    }
-}
-
-#[cfg(test)]
-mod performance_tests {
-    use super::*;
-    use std::alloc::{GlobalAlloc, Layout, System};
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    /// The bytes handed out and not yet returned, and the bytes handed out in total.
-    static LIVE: AtomicUsize = AtomicUsize::new(0);
-    /// The bytes handed out in total, never reduced.
-    static TOTAL: AtomicUsize = AtomicUsize::new(0);
-
-    /// An allocator that counts what it hands out, so a benchmark can say where memory goes.
-    struct Counting;
-
-    // SAFETY: every call is forwarded unchanged to the system allocator.
-    unsafe impl GlobalAlloc for Counting {
-        /// Allocates from the system and counts the bytes.
-        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-            LIVE.fetch_add(layout.size(), Ordering::Relaxed);
-            TOTAL.fetch_add(layout.size(), Ordering::Relaxed);
-            unsafe { System.alloc(layout) }
-        }
-
-        /// Returns the memory to the system and counts the bytes back.
-        unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
-            LIVE.fetch_sub(layout.size(), Ordering::Relaxed);
-            unsafe { System.dealloc(pointer, layout) }
-        }
-    }
-
-    #[global_allocator]
-    static ALLOCATOR: Counting = Counting;
-
-    /// Measures a long conversation while an agent streams into it: each frame hears one chunk, then builds, lays out and paints.
-    #[test]
-    #[ignore = "manual CPU benchmark: cargo test -p pandemonium benchmark_streaming -- --ignored --nocapture --test-threads=1"]
-    fn benchmark_streaming() {
-        for (long_chat, paragraphs) in [(false, false), (true, false), (false, true)] {
-            let state = input_stress(false, long_chat);
-            let mut screen = Screen::Workspace(state);
-            let mut shaper = scene::shaper();
-            let mut cached = scene::Cached::default();
-            let theme = default_family().dark;
-            let mut list = DrawList::new();
-            let (mut heard, mut painted) = (Vec::new(), Vec::new());
-            let live_start = LIVE.load(Ordering::Relaxed);
-            let mut live_before = 0;
-            let mut total_before = 0;
-            for version in 0..301u64 {
-                if version == 1 {
-                    eprintln!(
-                        "streaming long_chat={long_chat} paragraphs={paragraphs}: first frame retains {} KiB",
-                        (LIVE.load(Ordering::Relaxed) as i64 - live_start as i64) / 1024
-                    );
-                    live_before = LIVE.load(Ordering::Relaxed);
-                    total_before = TOTAL.load(Ordering::Relaxed);
-                }
-                let started = std::time::Instant::now();
-                screen = screen.heard(
-                    0,
-                    pm_harness::Event::Said(format!(
-                        "chunk {version} of **streamed** words and `code`. "
-                    )),
-                );
-                let heard_at = started.elapsed();
-                std::hint::black_box(cached.paint(
-                    version,
-                    WIDTH as f32,
-                    HEIGHT as f32,
-                    &screen,
-                    &Input::default(),
-                    &theme,
-                    &mut shaper,
-                    &mut list,
-                ));
-                if version > 0 {
-                    heard.push(heard_at.as_secs_f64() * 1000.0);
-                    painted.push((started.elapsed() - heard_at).as_secs_f64() * 1000.0);
-                }
-            }
-            let live = (LIVE.load(Ordering::Relaxed) as i64 - live_before as i64) / 1024;
-            let total = (TOTAL.load(Ordering::Relaxed) - total_before) / 1024 / 300;
-            for (name, samples) in [("hear", &mut heard), ("paint", &mut painted)] {
-                samples.sort_by(f64::total_cmp);
-                eprintln!(
-                    "streaming long_chat={long_chat} paragraphs={paragraphs} {name}: p50={:.2} p95={:.2} p99={:.2} max={:.2} ms",
-                    samples[150], samples[285], samples[297], samples[299]
-                );
-            }
-            eprintln!(
-                "streaming long_chat={long_chat} paragraphs={paragraphs}: live +{live} KiB, {total} KiB allocated per frame"
-            );
-        }
-    }
-
-    /// Measures rebuilding the same screen against repainting retained geometry, without GPU submission.
-    #[test]
-    #[ignore = "manual CPU benchmark: cargo test -p pandemonium benchmark_retained_screen -- --ignored --nocapture"]
-    fn benchmark_retained_screen() {
-        let screen = Shot::FilesScrolled.screen();
-        let mut shaper = scene::shaper();
-        let mut list = DrawList::new();
-        let theme = default_family().dark;
-        let mut cached = scene::Cached::default();
-        for retained in [false, true] {
-            let mut samples = Vec::new();
-            for frame in 0..61 {
-                let input = Input {
-                    pointer: PointerState {
-                        position: Some((1200.0, 220.0 + (frame % 20) as f32 * 24.0)),
-                        ..PointerState::default()
-                    },
-                    elapsed_ms: frame as f32 * 16.67,
-                    ..Input::default()
-                };
-                let started = std::time::Instant::now();
-                let output = if retained {
-                    cached.paint(
-                        0,
-                        WIDTH as f32,
-                        HEIGHT as f32,
-                        &screen,
-                        &input,
-                        &theme,
-                        &mut shaper,
-                        &mut list,
-                    )
-                } else {
-                    scene::paint(
-                        WIDTH as f32,
-                        HEIGHT as f32,
-                        &screen,
-                        &input,
-                        &theme,
-                        &mut shaper,
-                        &mut list,
-                    )
-                };
-                std::hint::black_box(output);
-                if frame > 0 {
-                    samples.push(started.elapsed().as_secs_f64() * 1000.0);
-                }
-            }
-            samples.sort_by(f64::total_cmp);
-            eprintln!(
-                "screen build+layout+paint retained={retained}: p50={:.2} p95={:.2} p99={:.2} ms",
-                samples[29], samples[56], samples[59]
-            );
-        }
-    }
-
-    /// Model updates and viewport changes rebuild retained geometry and font changes can clear it.
-    #[test]
-    fn retained_screen_invalidates_for_content_and_viewport() {
-        let mut cached = scene::Cached::default();
-        let mut shaper = scene::shaper();
-        let mut list = DrawList::new();
-        let mut state = files();
-        let theme = default_family().dark;
-        let input = Input::default();
-        let first = cached.paint(
-            0,
-            WIDTH as f32,
-            HEIGHT as f32,
-            &Screen::Workspace(state.clone()),
-            &input,
-            &theme,
-            &mut shaper,
-            &mut list,
-        );
-        state.open_tree.insert("crates".to_owned());
-        let screen = Screen::Workspace(state);
-        let changed = cached.paint(
-            1,
-            WIDTH as f32,
-            HEIGHT as f32,
-            &screen,
-            &input,
-            &theme,
-            &mut shaper,
-            &mut list,
-        );
-        assert!(changed.regions.len() > first.regions.len());
-        let resized = cached.paint(
-            1,
-            1000.0,
-            HEIGHT as f32,
-            &screen,
-            &input,
-            &theme,
-            &mut shaper,
-            &mut list,
-        );
-        assert_ne!(changed.regions, resized.regions);
-        cached.clear();
-        let rebuilt = cached.paint(
-            1,
-            1000.0,
-            HEIGHT as f32,
-            &screen,
-            &input,
-            &theme,
-            &mut shaper,
-            &mut list,
-        );
-        assert_eq!(resized.regions, rebuilt.regions);
-    }
-
-    /// Measures editing and drawing independently for prompt size and conversation size.
-    #[test]
-    #[ignore = "manual CPU benchmark: cargo test -p pandemonium benchmark_typing -- --ignored --nocapture"]
-    fn benchmark_typing() {
-        for (long_prompt, long_chat) in [(false, false), (true, false), (false, true), (true, true)]
-        {
-            let state = input_stress(long_prompt, long_chat);
-            let mut screen = Screen::Workspace(state);
-            let mut shaper = scene::shaper();
-            let mut cached = scene::Cached::default();
-            let theme = default_family().dark;
-            let mut list = DrawList::new();
-            let mut samples = Vec::new();
-            for version in 0..21 {
-                let started = std::time::Instant::now();
-                screen = screen.edited(PROMPT, pm_text::Edit::Insert('x'));
-                let input = Input {
-                    focused: Some(PROMPT),
-                    ..Input::default()
-                };
-                std::hint::black_box(cached.paint(
-                    version,
-                    WIDTH as f32,
-                    HEIGHT as f32,
-                    &screen,
-                    &input,
-                    &theme,
-                    &mut shaper,
-                    &mut list,
-                ));
-                if version > 0 {
-                    samples.push(started.elapsed().as_secs_f64() * 1000.0);
-                }
-            }
-            samples.sort_by(f64::total_cmp);
-            eprintln!(
-                "typing CPU long_prompt={long_prompt} long_chat={long_chat}: p50={:.2} p95={:.2} ms",
-                samples[9], samples[18]
-            );
-        }
-    }
-}
-
-/// Writes one frame of the window with a live page open in the browser to a PNG, after sending a few events into the page when `interact`, and with the developer tools open when `tools`; prints the title the page ends with.
-pub fn write_browser(path: &Path, url: &str, tools: bool, interact: bool) -> Result<(), String> {
-    use pm_browser::{Button as Mouse, Engine, Key as Typed, Modifiers as Held, View};
-    use pm_components::browser::{
-        BROWSER_BODY, BROWSER_TOOLS_BODY, PAGE_SURFACE, Pointer, TOOLS_SURFACE,
-    };
-    use pm_renderer::Picture;
-    use std::time::Duration;
-
-    let (width, height) = (WIDTH, HEIGHT);
-    let theme_family = default_family();
-    let theme = theme_family.variant(Appearance::Dark);
-    let mut shaper = scene::shaper();
-    let mut renderer = Renderer::headless(width, height, 1.0).map_err(|error| error.to_string())?;
-    let mut list = DrawList::new();
-    let input = Input {
-        pointer: PointerState::default(),
-        focused: None,
-        elapsed_ms: 0.0,
-        selection: None,
-        held_bar: None,
-    };
-    let mut workspace = workspace_sample();
-    workspace.open_browser(url);
-    if tools {
-        workspace = workspace.browser_tools_shown();
-    }
-    let mut screen = Screen::Workspace(workspace);
-    let region = |output: &pm_ui::Output, id: FocusId| {
-        output
-            .regions
-            .iter()
-            .find(|region| region.id == id)
-            .map(|region| region.rect)
-    };
-    let output = scene::paint(
-        width as f32,
-        height as f32,
-        &screen,
-        &input,
-        theme,
-        &mut shaper,
-        &mut list,
-    );
-    let body = region(&output, BROWSER_BODY).ok_or("the page has no window")?;
-    let engine = Engine::start().map_err(|error| error.to_string())?;
-    let page = View::open(&engine, url, body.width as u32, body.height as u32, 1.0)
-        .map_err(|error| error.to_string())?;
-    let pump = |seconds: f64| std::thread::sleep(Duration::from_secs_f64(seconds));
-    let tools_view = if tools {
-        let room = region(&output, BROWSER_TOOLS_BODY).ok_or("the tools have no window")?;
-        pump(2.0);
-        Some(page.open_devtools(room.width as u32, room.height as u32, 1.0))
+    let start = if words.contains(&"welcome") || words.contains(&"welcome-place") {
+        pm_shell::start_in(&workspace.projects, &[0])
+    } else if words.contains(&"chat") {
+        Some(pm_shell::start_chat())
     } else {
         None
     };
-    pump(3.0);
-    if tools_view.is_some() {
-        pump(3.0);
+    if let Some(mut start) = start {
+        start.place_menu = words.contains(&"welcome-place");
+        pm_shell::show_start(&mut workspace, start);
     }
-    if interact {
-        let none = Held::default();
-        page.focus(true);
-        page.pointer_moved(40, 40, none, false);
-        page.pointer_button(40, 40, Mouse::Left, true, 1, none);
-        page.pointer_button(40, 40, Mouse::Left, false, 1, none);
-        pump(0.3);
-        for letter in ['h', 'i'] {
-            for pressed in [true, false] {
-                page.key(&Typed {
-                    pressed,
-                    code: letter.to_ascii_uppercase() as i32,
-                    text: Some(letter.to_string()),
-                    modifiers: none,
-                });
-            }
-        }
-        pump(0.3);
-        page.pointer_moved(60, 130, none, false);
-        page.pointer_button(60, 130, Mouse::Left, true, 1, none);
-        page.pointer_button(60, 130, Mouse::Left, false, 1, none);
-        pump(0.3);
-        page.scrolled(200, 300, 0, -300, none);
-        pump(1.0);
+    if !live {
+        show_panels(&mut workspace, &words);
+        show_projects(&mut workspace, &words);
     }
-    let picture = |view: &View, surface: u32| {
-        view.frame().map(|frame| Picture {
-            key: Picture::live_key(surface, frame.generation),
-            width: frame.width,
-            height: frame.height,
-            pixels: frame.rgba,
-        })
-    };
-    let title = page.title();
-    let Screen::Workspace(state) = &mut screen;
+    show_git_state(&mut workspace.git, &words);
+    if !live {
+        show_review(&mut workspace, &words);
+    }
+    if workspace.git.diff.is_some()
+        || workspace.git.revision.is_some()
+        || words.contains(&"changes")
     {
-        let first = state
-            .browser
-            .as_ref()
-            .map_or(1, |browser| browser.active_id());
-        state.browser_tab_painted(
-            first,
-            picture(&page, PAGE_SURFACE),
-            &title,
-            &page.address(),
-            Pointer::Arrow,
+        workspace.open_files.tab = pm_shell::SessionTab::Diff;
+    }
+    if words.iter().any(|word| {
+        ["code", "tab-menu", "tab-steps", "split"].contains(word) || word.starts_with("code-")
+    }) {
+        open_sample_files(&mut workspace.open_files);
+        show_code_state(&mut workspace, &words);
+    }
+    if let Some(tab) = dock_tab_named(&words) {
+        workspace.dock_tab = tab;
+    }
+    if words.contains(&"selection") {
+        workspace.terminal.selection = Some(((0, 1), (0, 22)));
+    }
+    if words.contains(&"update") || words.contains(&"update-tab") {
+        workspace.update = Some(pm_shell::sample_update());
+    }
+    if words.contains(&"update-tab") {
+        if let Some(offer) = &mut workspace.update {
+            offer.open = false;
+        }
+        workspace
+            .open_files
+            .act(pm_shell::TabAction::Open(pm_shell::SessionTab::Update));
+    }
+    if words.contains(&"excerpts") {
+        pm_shell::sample_search_edit(&mut workspace.search);
+        workspace
+            .open_files
+            .act(pm_shell::TabAction::Open(pm_shell::SessionTab::Excerpts));
+    }
+    if words.contains(&"sign-in") {
+        workspace.sign_in = Some(pm_shell::sample_sign_in());
+    }
+    if let Some(sample) = browser_named(&words) {
+        workspace.browser = Some(pm_shell::sample_browser(sample));
+        workspace.open_files.tab = pm_shell::SessionTab::Browser;
+    }
+    let actions = Actions::inert();
+    draw(
+        move || workspace_page(&workspace, theme, &actions),
+        given.unwrap_or(DEFAULT_SIZE),
+        light,
+        path,
+    )
+}
+
+/// Draws `content` at `size` into the PNG at `path`, in the light theme when
+/// `light`, and returns the process's exit code: 0 when it was written, 1 when
+/// drawing failed.
+fn draw(content: impl FnMut() + 'static, size: (u32, u32), light: bool, path: &str) -> i32 {
+    match rustle::preview(content, size, !light, Path::new(path)) {
+        Ok(()) => 0,
+        Err(error) => {
+            eprintln!("pandemonium: {error}");
+            1
+        }
+    }
+}
+
+/// The folder picker a word among `words` names: `picker` on this machine,
+/// `picker-remote` on another one, `picker-failed` on one that cannot be reached.
+fn picker_named(words: &[&str]) -> Option<pm_shell::FolderPicker> {
+    words.iter().find_map(|word| match *word {
+        "picker" => Some(pm_shell::sample_picker(None, false)),
+        "picker-remote" => Some(pm_shell::sample_picker(Some("devbox"), false)),
+        "picker-failed" => Some(pm_shell::sample_picker(Some("devbox"), true)),
+        _ => None,
+    })
+}
+
+/// Shows on the sample `workspace` what `words` name of the sidebar's
+/// projects: the menu of a project, the adder choosing or cloning, a clone
+/// that failed, the made-up projects' notice, or projects on other machines.
+fn show_projects(workspace: &mut pm_shell::Workspace, words: &[&str]) {
+    if words.contains(&"project-menu") {
+        workspace.project_menu = workspace
+            .projects
+            .get(2)
+            .map(|project| project.path.clone());
+    }
+    if words.contains(&"adder") {
+        workspace.adder = Some(pm_shell::Adder::default());
+    }
+    if words.contains(&"clone") || words.contains(&"clone-failed") {
+        workspace.adder = Some(pm_shell::Adder {
+            step: pm_shell::AddStep::Clone,
+            url: "JoakimCarlsson/rustle".to_owned(),
+            error: words.contains(&"clone-failed").then(|| {
+                "fatal: repository 'https://github.com/JoakimCarlsson/rustle/' not found".to_owned()
+            }),
+            ..pm_shell::Adder::default()
+        });
+    }
+    if words.contains(&"sample") {
+        workspace.sample = true;
+    }
+    if words.contains(&"remote") {
+        workspace
+            .projects
+            .extend(pm_shell::sample_remote_projects());
+    }
+}
+
+/// Opens in `git` the Git panel's menu, question or Diff tab named among
+/// `words`: `git-menu` for the menu on a changed file, `git-source` for the
+/// panel's own menu, `git-confirm` for the question before discarding,
+/// `branch-menu` for the branch list, and `diff` for the Diff tab.
+fn show_git_state(git: &mut pm_shell::GitSummary, words: &[&str]) {
+    let first = git.listed().first().map(|change| change.path.clone());
+    let second = git.listed().get(1).map(|change| change.path.clone());
+    for word in words {
+        match *word {
+            "git-menu" => git.menu = second.clone().map(pm_shell::GitMenu::Change),
+            "git-source" => git.menu = Some(pm_shell::GitMenu::Source),
+            "git-confirm" => {
+                git.prompt = second
+                    .clone()
+                    .map(|path| pm_shell::GitPrompt::Discard(vec![path]))
+            }
+            "branch-menu" => git.branch_menu = Some(pm_shell::BranchMenu::default()),
+            "diff" => git.diff = first.clone(),
+            _ => {}
+        }
+    }
+}
+
+/// Shows on the sample `workspace` the review states `words` name: notes
+/// on the diff, a conflicted file, a commit's files, or search results as
+/// editable excerpts, with the Rust and TOML grammars installed on this
+/// machine loaded to colour them.
+fn show_review(workspace: &mut pm_shell::Workspace, words: &[&str]) {
+    let _ = pm_shell::installed_grammar("rust");
+    let _ = pm_shell::installed_grammar("toml");
+    for word in words {
+        pm_shell::sample_review(&mut workspace.git, word);
+    }
+    if words.contains(&"search-edit") {
+        workspace.right_tab = pm_shell::RightTab::Search;
+        pm_shell::sample_search_edit(&mut workspace.search);
+    }
+}
+
+/// Shows on the sample `workspace` what `words` name: the Files tab with
+/// changes marked, its menu open on a file or the question before deleting
+/// one, the Search tab, or the quick input on files, commands, sessions,
+/// lines or themes.
+fn show_panels(workspace: &mut pm_shell::Workspace, words: &[&str]) {
+    let marked = ["files", "file-menu", "file-delete"];
+    if words.iter().any(|word| marked.contains(word)) {
+        workspace.right_tab = pm_shell::RightTab::Files;
+        workspace.git.changes = pm_shell::sample_changes();
+    }
+    if words.contains(&"file-menu") {
+        workspace.tree.menu = Some("crates/pm-shell/src/link.rs".to_owned());
+    }
+    if words.contains(&"file-delete") {
+        workspace.tree.removing = Some("crates/pm-shell/src/link.rs".to_owned());
+    }
+    if words.contains(&"search") {
+        workspace.right_tab = pm_shell::RightTab::Search;
+    }
+    let quick = words.iter().find_map(|word| match *word {
+        "quick" => Some("files"),
+        _ => word.strip_prefix("quick-"),
+    });
+    if let Some(kind) = quick {
+        workspace.quick = Some(pm_shell::sample_quick(kind));
+    }
+}
+
+/// Whether `word` is one a snapshot understands after its size.
+fn known(word: &str) -> bool {
+    word.starts_with("settings-") || WORDS.contains(&word)
+}
+
+/// Draws the settings window on the section `shot` names, such as `editor-vim`, or
+/// `editor-vim-narrow` for the narrowest window, into `path` at `size` or the
+/// size the shot implies, in the light theme when `light`, with the section's
+/// form open and filled in when `form`.
+fn settings_shot(path: &str, shot: &str, size: Option<(u32, u32)>, light: bool, form: bool) -> i32 {
+    let (slug, narrow) = match shot.strip_suffix("-narrow") {
+        Some(slug) => (slug, true),
+        None => (shot, false),
+    };
+    let Some(section) = settings_section(slug) else {
+        eprintln!("pandemonium: no settings section is called {slug}");
+        return 2;
+    };
+    let size = size.unwrap_or(if narrow {
+        NARROW_SIZE
+    } else {
+        (SETTINGS_SIZE.0 as u32, SETTINGS_SIZE.1 as u32)
+    });
+    let theme = AppTheme::of_dark(!light);
+    let mut model = pm_shell::sample_settings(section);
+    if form {
+        pm_shell::sample_forms(&mut model);
+    }
+    let actions = SettingsActions::inert();
+    draw(
+        move || settings_page(&model, theme, &actions),
+        size,
+        light,
+        path,
+    )
+}
+
+/// The workspace of the local server: its projects and sessions, with the
+/// newest session opened and its conversation loaded, then the page named
+/// among `words` shown with what the server lists for it, and the Files or
+/// Search tab filled from the server when `words` name it.
+fn live_workspace(words: &[&str]) -> pm_shell::Workspace {
+    let mut link = pm_shell::Link::connect(std::sync::Arc::new(|| {}));
+    pump_for(&mut link, LIVE_WAIT);
+    if let Some(at) = newest_session(&link.workspace().projects, Vec::new()) {
+        link.open_session(at);
+        pump_for(&mut link, LIVE_WAIT);
+    }
+    if let Some(page) = page_named(words, link.workspace()) {
+        link.navigate(page);
+        pump_for(&mut link, LIVE_WAIT);
+    }
+    if words.contains(&"files") {
+        link.choose_right_tab(pm_shell::RightTab::Files);
+        pump_for(&mut link, LIVE_WAIT);
+    }
+    if words.contains(&"search") {
+        link.choose_right_tab(pm_shell::RightTab::Search);
+        link.search(pm_shell::SearchAction::Query("fn main".to_owned()));
+        link.search(pm_shell::SearchAction::Run);
+        pump_for(&mut link, LIVE_WAIT);
+    }
+    let workspace = link.workspace().clone();
+    link.close_terminals();
+    pump_for(&mut link, CLOSE_WAIT);
+    workspace
+}
+
+/// Handles what the server sends for `duration`.
+fn pump_for(link: &mut pm_shell::Link, duration: std::time::Duration) {
+    let end = std::time::Instant::now() + duration;
+    while std::time::Instant::now() < end {
+        link.pump();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+/// The index path of the first session listed among `projects`, under `prefix`.
+fn newest_session(projects: &[pm_shell::Project], prefix: Vec<usize>) -> Option<Vec<usize>> {
+    projects.iter().enumerate().find_map(|(index, project)| {
+        let mut here = prefix.clone();
+        here.push(index);
+        if project.sessions.is_empty() {
+            newest_session(&project.children, here)
+        } else {
+            here.push(0);
+            Some(here)
+        }
+    })
+}
+
+/// The page named among `words`, if one is: `history`, `extensions`, or
+/// `overview` for the overview of the first project of `workspace` with a
+/// session.
+fn page_named(words: &[&str], workspace: &pm_shell::Workspace) -> Option<pm_shell::Page> {
+    words.iter().find_map(|word| match *word {
+        "history" => Some(pm_shell::Page::History),
+        "extensions" => Some(pm_shell::Page::Extensions),
+        "overview" => newest_session(&workspace.projects, Vec::new())
+            .and_then(|at| workspace.projects.get(at[0]))
+            .or(workspace.projects.first())
+            .map(|project| pm_shell::Page::Overview(project.path.clone())),
+        _ => None,
+    })
+}
+
+/// What the sample agent waits on as a word among `words` names it: the
+/// approve band, the inquiry card, the trust card, or the bar continuing a chat.
+fn ask_named(words: &[&str]) -> Option<pm_shell::SampleAsk> {
+    words.iter().find_map(|word| match *word {
+        "approve" => Some(pm_shell::SampleAsk::Plan),
+        "inquiry" => Some(pm_shell::SampleAsk::Inquiry),
+        "trust" => Some(pm_shell::SampleAsk::Trust),
+        "continue" => Some(pm_shell::SampleAsk::Continue),
+        _ => None,
+    })
+}
+
+/// The composer state named among `words`, if any.
+fn composer_named(words: &[&str]) -> Option<pm_shell::SampleComposer> {
+    words.iter().find_map(|word| match *word {
+        "composer" => Some(pm_shell::SampleComposer::Plain),
+        "composer-model" => Some(pm_shell::SampleComposer::ModelMenu),
+        "composer-slash" => Some(pm_shell::SampleComposer::Slash),
+        "composer-queued" => Some(pm_shell::SampleComposer::Queued),
+        "composer-attached" => Some(pm_shell::SampleComposer::Attached),
+        "composer-field" => Some(pm_shell::SampleComposer::Field),
+        _ => None,
+    })
+}
+
+/// The state of the browser named among `words`, if one is: `browser` for a painted page, or `browser-` and `find`, `menu`, `tools`, `ask`, `cert`, `clear`, `notice` or `pick`.
+fn browser_named(words: &[&str]) -> Option<pm_shell::BrowserSample> {
+    words.iter().find_map(|word| match *word {
+        "browser" => Some(pm_shell::BrowserSample::Page),
+        "browser-find" => Some(pm_shell::BrowserSample::Find),
+        "browser-menu" => Some(pm_shell::BrowserSample::Menu),
+        "browser-tools" => Some(pm_shell::BrowserSample::Tools),
+        "browser-ask" => Some(pm_shell::BrowserSample::Ask),
+        "browser-cert" => Some(pm_shell::BrowserSample::Certificate),
+        "browser-clear" => Some(pm_shell::BrowserSample::Clear),
+        "browser-notice" => Some(pm_shell::BrowserSample::Notice),
+        "browser-pick" => Some(pm_shell::BrowserSample::Pick),
+        _ => None,
+    })
+}
+
+/// The dock tab named among `words`, if one is: `problems`, `tasks` or `debug`.
+fn dock_tab_named(words: &[&str]) -> Option<pm_shell::DockTab> {
+    words.iter().find_map(|word| match *word {
+        "problems" => Some(pm_shell::DockTab::Problems),
+        "tasks" => Some(pm_shell::DockTab::Tasks),
+        "debug" => Some(pm_shell::DockTab::Debug),
+        _ => None,
+    })
+}
+
+/// The Rust file the `code` snapshot shows open.
+const CODE_SAMPLE: &str = include_str!("window.rs");
+
+/// The manifest the `code` snapshot shows in the preview tab.
+const MANIFEST_SAMPLE: &str = include_str!("../Cargo.toml");
+
+/// Opens a Rust file in a tab of its own, highlighted with the Rust grammar
+/// installed on this machine when there is one, with a manifest in the
+/// preview tab beside it, and shows the Rust file.
+fn open_sample_files(files: &mut pm_shell::OpenFiles) {
+    let _ = pm_shell::installed_grammar("rust");
+    let _ = pm_shell::installed_grammar("toml");
+    let folder = "~/Documents/repos/pandemonium";
+    files.open(folder, "crates/pandemonium/src/window.rs", true);
+    files.files[0].take_text(CODE_SAMPLE, false, Some("rust".to_owned()));
+    files.open(folder, "crates/pandemonium/Cargo.toml", false);
+    files.files[1].take_text(MANIFEST_SAMPLE, false, Some("toml".to_owned()));
+    files.open(folder, "crates/pandemonium/src/window.rs", false);
+    let caret = CODE_SAMPLE.find("fn root").unwrap_or(0);
+    files.files[0]
+        .document
+        .0
+        .borrow_mut()
+        .edit(pm_text::Edit::Select(caret + 3, caret + 7));
+}
+
+/// The README the `code-markdown` snapshot shows rendered.
+const README_SAMPLE: &str = include_str!("../../../README.md");
+
+/// The picture the `code-picture` snapshot shows.
+const PICTURE_SAMPLE: &[u8] = include_bytes!("../../../assets/brand/png/pandemonium-256.png");
+
+/// Shows on the sample files of `workspace` what `words` name: the find
+/// bar, the find bar with its replace row, the go-to-line bar, vim's keys,
+/// breakpoints with inline values and lines changed since the last commit,
+/// the view scrolled into a block so its opening lines stick, the README
+/// rendered, or a picture.
+fn show_code_state(workspace: &mut pm_shell::Workspace, words: &[&str]) {
+    let files = &mut workspace.open_files;
+    for word in words {
+        match *word {
+            "code-find" => {
+                files.files[0].bar = Some(pm_shell::EditorBar::Find("palette".to_owned()))
+            }
+            "code-replace" => {
+                files.files[0].bar = Some(pm_shell::EditorBar::Replace("palette".to_owned()))
+            }
+            "code-goto" => files.files[0].bar = Some(pm_shell::EditorBar::GoTo("120".to_owned())),
+            "code-vim" => files.vim = true,
+            "code-scrolled" | "code-debug" => {
+                let line = CODE_SAMPLE[..CODE_SAMPLE.find("drag_resize_window(edge)").unwrap_or(0)]
+                    .lines()
+                    .count();
+                files.files[0].go_to(line + 1);
+            }
+            _ => {}
+        }
+    }
+    if words.contains(&"code-debug") {
+        let base = CODE_SAMPLE
+            .replacen(
+                "let modifier = match height",
+                "let modifier = match size",
+                1,
+            )
+            .replacen("                .cursor(edge.cursor())\n", "", 1)
+            .replacen(
+                "/// How the window changes",
+                "// removed\n/// How the window changes",
+                1,
+            );
+        files.files[0].take_base(Some(base));
+        let caret = files.files[0].document.0.borrow().field.caret();
+        let line = files.files[0].document.0.borrow().line_of(caret);
+        let path = files.files[0].path.clone();
+        workspace.debug.breakpoints = [line.saturating_sub(4), line]
+            .into_iter()
+            .map(|line| pm_shell::DebugBreakpoint {
+                path: path.clone(),
+                line,
+                verified: Some(true),
+            })
+            .collect();
+        if let Some(session) = &mut workspace.debug.session {
+            session.inline_values = vec![pm_shell::InlineValue {
+                path: format!("/home/me/pandemonium/{path}"),
+                line,
+                text: "event = KeyEvent { key: Enter }, handled = false".to_owned(),
+            }];
+        }
+    }
+    let files = &mut workspace.open_files;
+    let folder = "~/Documents/repos/pandemonium";
+    if words.contains(&"code-markdown")
+        && let Some(index) = files.open(folder, "README.md", true)
+    {
+        files.files[index].take_text(README_SAMPLE, false, Some("markdown".to_owned()));
+        files.files[index].rendered = true;
+        files.tab = pm_shell::SessionTab::File(index);
+    }
+    show_language_samples(workspace, words);
+    let files = &mut workspace.open_files;
+    if words.contains(&"code-picture")
+        && let Some(index) = files.open(folder, "assets/brand/png/pandemonium-256.png", true)
+    {
+        files.files[index].body =
+            pm_shell::FileBody::Picture(std::rc::Rc::new(PICTURE_SAMPLE.to_vec()));
+        files.tab = pm_shell::SessionTab::File(index);
+    }
+}
+
+/// Shows on the sample files of `workspace` the language features, panes
+/// and menus `words` name: completions, a hover card, a signature, names
+/// coloured with hints and lenses, the lightbulb's menu, renaming, text
+/// dragged, a colour picker, right-to-left text, the offer of a missing
+/// language, a comparison, the file's menu, a tab's menu, the tabs stepped
+/// through forward twice and back once, and split panes.
+fn show_language_samples(workspace: &mut pm_shell::Workspace, words: &[&str]) {
+    let folder = "~/Documents/repos/pandemonium";
+    let samples = [
+        ("code-completions", pm_shell::CodeSample::Completions),
+        ("code-hover", pm_shell::CodeSample::Hover),
+        ("code-signature", pm_shell::CodeSample::Signature),
+        ("code-annotations", pm_shell::CodeSample::Annotations),
+        ("code-actions", pm_shell::CodeSample::Actions),
+        ("code-rename", pm_shell::CodeSample::Rename),
+        ("code-drag", pm_shell::CodeSample::Drag),
+    ];
+    for (word, sample) in samples {
+        if words.contains(&word) {
+            pm_shell::sample_code(&mut workspace.open_files.files[0], sample);
+        }
+    }
+    let files = &mut workspace.open_files;
+    if words.contains(&"code-colour")
+        && let Some(index) = files.open(folder, "site/theme.css", true)
+    {
+        let _ = pm_shell::installed_grammar("css");
+        files.files[index].take_text(pm_shell::COLOUR_SAMPLE, false, Some("css".to_owned()));
+        pm_shell::sample_code(&mut files.files[index], pm_shell::CodeSample::Colour);
+    }
+    if words.contains(&"code-rtl")
+        && let Some(index) = files.open(folder, "locales/greetings.toml", true)
+    {
+        files.files[index].take_text(
+            pm_shell::RIGHT_TO_LEFT_SAMPLE,
             false,
+            Some("toml".to_owned()),
         );
-        if let Some(tools) = tools_view
-            .as_ref()
-            .and_then(|view| picture(view, TOOLS_SURFACE))
-        {
-            state.browser_tools_painted(tools);
+        let caret = pm_shell::RIGHT_TO_LEFT_SAMPLE.find("עולם").unwrap_or(0);
+        files.files[index]
+            .document
+            .0
+            .borrow_mut()
+            .edit(pm_text::Edit::Select(caret, caret + "עולם".len()));
+    }
+    if words.contains(&"code-language")
+        && let Some(index) = files.open(folder, "legacy/telemetry.adb", true)
+    {
+        files.files[index].take_text(
+            "with Ada.Text_IO; use Ada.Text_IO;\n\nprocedure Telemetry is\nbegin\n   Put_Line (\"Sending the session's figures\");\nend Telemetry;\n",
+            false,
+            None,
+        );
+        workspace.extensions = Some(pm_shell::sample_workspace().extensions.unwrap_or_default());
+    }
+    let files = &mut workspace.open_files;
+    if words.contains(&"code-compare") {
+        let text = files.files[0].document.0.borrow().field.text().to_owned();
+        let older = text
+            .replacen(
+                "let installed = remember(|| false);",
+                "let installed = remember(|| true);",
+                1,
+            )
+            .replacen("    let _ = revision.get();\n", "", 1);
+        files.files[0].compare = Some(pm_shell::Comparison::between("Saved", &older, &text));
+    }
+    if words.contains(&"code-file-menu") {
+        files.menu = Some(pm_shell::TabMenu::File(0));
+    }
+    if words.contains(&"tab-menu") {
+        files.menu = Some(pm_shell::TabMenu::Tab(0));
+    }
+    if words.contains(&"tab-steps") {
+        for step in [
+            pm_shell::TabAction::Next,
+            pm_shell::TabAction::Next,
+            pm_shell::TabAction::Previous,
+        ] {
+            files.act(step);
         }
     }
-    println!("title: {title}");
-    scene::paint(
-        width as f32,
-        height as f32,
-        &screen,
-        &input,
-        theme,
-        &mut shaper,
-        &mut list,
-    );
-    let pixels = renderer
-        .snapshot(&list, &mut shaper, scene::ground(theme))
-        .ok_or("the renderer could not read its frame back")?;
-    drop(tools_view);
-    drop(page);
-    drop(engine);
-    image::save_buffer(path, &pixels, width, height, image::ColorType::Rgba8)
-        .map_err(|error| error.to_string())
-}
-
-/// `state` with Ollama and OpenRouter hidden from new sessions, as the settings keep it.
-fn hiding_local_agents(mut state: WorkspaceState) -> WorkspaceState {
-    state.machine.agents.hidden = vec!["ollama".to_owned(), "openrouter".to_owned()];
-    state
-}
-
-/// Two model servers as the server declares them: a gateway with a saved key and a fixed list of models, and a local server whose models are asked of it.
-fn model_servers() -> Vec<pm_harness::ModelServer> {
-    let server = |id: &str, label: &str, base_url: &str, models: &[&str]| pm_harness::ModelServer {
-        id: id.to_owned(),
-        label: Some(label.to_owned()),
-        base_url: base_url.to_owned(),
-        wire: pm_harness::ServerWire::ChatCompletions,
-        api_key_env: Vec::new(),
-        api_key: None,
-        has_api_key: false,
-        headers: Vec::new(),
-        default_model: None,
-        models: models.iter().map(|model| (*model).to_owned()).collect(),
-        replay_reasoning: false,
-    };
-    let mut gateway = server(
-        "gateway",
-        "Company Gateway",
-        "https://llm.example.com/v1",
-        &["gpt-6.1-terra", "claude-opus-5.5", "gemini-4-pro"],
-    );
-    gateway.wire = pm_harness::ServerWire::Responses;
-    gateway.has_api_key = true;
-    let mut local = server("local-vllm", "Local vLLM", "http://localhost:8000/v1", &[]);
-    local.api_key_env = vec!["VLLM_API_KEY".to_owned()];
-    vec![gateway, local]
-}
-
-/// The page for starting work on the declared Company Gateway, the only agent signed in, offering the models it was given.
-fn server_models() -> WorkspaceState {
-    let here = std::env::current_dir().unwrap_or_default();
-    let projects: Vec<Project> = Project::from_source(&here.to_string_lossy())
-        .into_iter()
-        .collect();
-    let state = WorkspaceState::new(&projects).with_model_servers(model_servers());
-    let place = state.agent_position("gateway").unwrap_or_default();
-    let picks: Vec<Pick> = model_servers()[0]
-        .models
-        .iter()
-        .map(|model| Pick {
-            value: model.clone(),
-            name: model.clone(),
-            description: String::new(),
-        })
-        .collect();
-    let mut discovery = claude_discovery();
-    if let Some(model) = discovery
-        .settings
-        .iter_mut()
-        .find(|setting| setting.category == "model")
-    {
-        model.current = picks[0].value.clone();
-        model.picks = picks;
+    if words.contains(&"split") {
+        files.act(pm_shell::TabAction::MoveTo(
+            pm_shell::SessionTab::File(1),
+            pm_shell::Pane::Right,
+        ));
     }
-    let mut state = signed_in(state.with_discovery(place, discovery), &["gateway"]);
-    state.agent = place;
-    state
 }
 
-/// The page for starting work with an agent that offers as many models as a hosted router does.
-fn many_models() -> WorkspaceState {
-    let vendors = [
-        "openai",
-        "anthropic",
-        "google",
-        "meta-llama",
-        "mistralai",
-        "qwen",
-        "z-ai",
-        "deepseek",
-    ];
-    let families = [
-        "gpt-6.1-terra",
-        "claude-opus-5.5",
-        "gemini-4-pro",
-        "llama-5-405b",
-        "devstral-3",
-        "qwen4-coder",
-        "glm-5.3",
-        "deepseek-v5",
-    ];
-    let picks: Vec<Pick> = (0..80)
-        .map(|place| {
-            let value = format!("{}/{}-{place}", vendors[place % 8], families[place % 8]);
-            Pick {
-                value: value.clone(),
-                name: value,
-                description: String::new(),
-            }
-        })
-        .collect();
-    let mut discovery = claude_discovery();
-    if let Some(model) = discovery
-        .settings
-        .iter_mut()
-        .find(|setting| setting.category == "model")
-    {
-        model.current = picks[0].value.clone();
-        model.picks = picks;
-    }
-    let here = std::env::current_dir().unwrap_or_default();
-    let projects: Vec<Project> = Project::from_source(&here.to_string_lossy())
-        .into_iter()
-        .collect();
-    WorkspaceState::new(&projects).with_discovery(0, discovery)
+/// The width and height in `text`, written as `WIDTHxHEIGHT`.
+fn parse_size(text: &str) -> Option<(u32, u32)> {
+    let (width, height) = text.split_once('x')?;
+    Some((width.parse().ok()?, height.parse().ok()?))
 }

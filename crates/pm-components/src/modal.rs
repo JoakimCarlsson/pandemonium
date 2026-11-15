@@ -1,80 +1,153 @@
-//! The modal: a panel centred over a darkened window, which pressing outside closes.
+//! A modal: a dimmed layer over the whole window with a surface on it,
+//! centred or hung near the top, closed by a click on the dimmed layer or
+//! Escape. Emit it last in a stack that fills the window.
 
-use pm_input::FocusId;
-use pm_style::{
-    Color, absolute, bg, flex, flex_none, inset, items_center, justify_center, w_px, z,
-};
-use pm_ui::{Node, node};
+use std::rc::Rc;
 
-use crate::{Surface, surface};
+use rustle::prelude::*;
+use rustle::{Key, Modifiers};
 
-/// How dark the window behind a modal is made, from 0.0 to 1.0.
-const DIM: f32 = 0.55;
+use crate::label::{Label, LabelVariant};
+use crate::size::Size;
+use rustle::color_scheme;
 
-/// A modal being described: how wide its panel is and what the panel holds.
-///
-/// Build it with [`Modal::new`], fill it with [`Modal::child`] and
-/// [`Modal::children`], and turn it into a node with [`Modal::build`]. The
-/// node covers its parent, so it belongs last in the root of a screen.
-#[derive(Clone, Debug)]
+/// Where a modal's surface sits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ModalVariant {
+    /// In the middle of the window, for a question or a form.
+    #[default]
+    Centred,
+    /// Near the top, under the command centre, for the quick input.
+    Top,
+}
+
+/// A modal with a variant and a size.
+#[derive(Clone)]
 pub struct Modal {
-    /// What pressing the dimmed window outside the panel does.
-    outside: FocusId,
-    /// The panel itself, which keeps a press on it from counting as outside.
-    panel: Node,
+    /// The heading over its content.
+    title: Option<String>,
+    /// The text under the heading.
+    message: Option<String>,
+    /// How wide the surface is, by default from its size.
+    width: Option<f32>,
+    /// Where it sits.
+    variant: ModalVariant,
+    /// Its size, which sets its width and padding.
+    size: Size,
 }
 
 impl Modal {
-    /// A modal whose dimmed window answers to `outside` and whose panel answers to `inside`.
-    pub fn new(outside: FocusId, inside: FocusId) -> Self {
+    /// A centred modal with no heading.
+    pub fn new() -> Self {
         Self {
-            outside,
-            panel: Surface::new()
-                .variant(surface::Variant::Dialog)
-                .build()
-                .styles([flex_none()])
-                .focusable(inside),
+            title: None,
+            message: None,
+            width: None,
+            variant: ModalVariant::Centred,
+            size: Size::Md,
         }
     }
 
-    /// The modal with a panel `pixels` wide.
-    pub fn width(mut self, pixels: f32) -> Self {
-        self.panel = self.panel.styles([w_px(pixels)]);
+    /// The modal headed `title`.
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        self.title = Some(title.into());
         self
     }
 
-    /// The modal with `child` after what its panel holds.
-    pub fn child(mut self, child: Node) -> Self {
-        self.panel = self.panel.child(child);
+    /// The modal saying `message` under its heading.
+    pub fn message(mut self, message: impl Into<String>) -> Self {
+        self.message = Some(message.into());
         self
     }
 
-    /// The modal with every node of `children` after what its panel holds.
-    pub fn children(mut self, children: impl IntoIterator<Item = Node>) -> Self {
-        self.panel = self.panel.children(children);
+    /// The modal's surface `width` wide.
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = Some(width);
         self
     }
 
-    /// The node that draws the modal.
-    pub fn build(self) -> Node {
-        node()
-            .styles([
-                absolute(),
-                inset(0),
-                z(70),
-                flex(),
-                items_center(),
-                justify_center(),
-                bg(Color::Black.alpha(DIM)),
-            ])
-            .child(self.panel)
-            .focusable(self.outside)
+    /// The modal in `variant`.
+    pub fn variant(mut self, variant: ModalVariant) -> Self {
+        self.variant = variant;
+        self
+    }
+
+    /// The modal at `size`.
+    pub fn size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
+    }
+
+    /// Emits the modal holding `content`, calling `on_dismiss` on a click on the dimmed layer or Escape.
+    #[track_caller]
+    pub fn show(self, on_dismiss: impl Fn() + 'static, content: impl FnOnce()) {
+        let scheme = color_scheme();
+        let on_dismiss: Rc<dyn Fn()> = Rc::new(on_dismiss);
+        let escape = on_dismiss.clone();
+        let (width, padding) = match self.size {
+            Size::Xs => (280.0, 12.0),
+            Size::Sm => (360.0, 16.0),
+            Size::Md => (440.0, 20.0),
+            Size::Lg => (600.0, 0.0),
+        };
+        let width = self.width.unwrap_or(width);
+        let (alignment, top) = match self.variant {
+            ModalVariant::Centred => (BoxAlignment::Center, 0.0),
+            ModalVariant::Top => (BoxAlignment::TopCenter, 56.0),
+        };
+        let title = self.title;
+        let message = self.message;
+        stack_aligned(
+            Modifier::new()
+                .fill_max_size()
+                .z_index_unclipped(2)
+                .background(Color::rgba(0, 0, 0, 110))
+                .clickable_plain(move || on_dismiss())
+                .on_key_event(move |event| {
+                    if event.is(Key::Escape, Modifiers::NONE) {
+                        escape();
+                        return true;
+                    }
+                    false
+                }),
+            alignment,
+            move || {
+                column_arranged(
+                    Modifier::new()
+                        .offset(0.0, top)
+                        .width(width)
+                        .shadow(16.0, 10.0)
+                        .background_rounded(scheme.surface_container, 10.0)
+                        .border(1.0, scheme.outline_variant, 10.0)
+                        .clickable_plain(|| {})
+                        .padding(padding),
+                    Arrangement::SpacedBy(8.0),
+                    Alignment::Start,
+                    move || {
+                        if let Some(title) = title {
+                            Label::new(title)
+                                .variant(LabelVariant::Heading)
+                                .size(Size::Md)
+                                .show();
+                        }
+                        if let Some(message) = message {
+                            Label::new(message)
+                                .variant(LabelVariant::Muted)
+                                .wrap()
+                                .modifier(Modifier::new().fill_max_width())
+                                .show();
+                        }
+                        content();
+                    },
+                );
+            },
+        );
     }
 }
 
-impl From<Modal> for Node {
-    /// The node that draws the modal.
-    fn from(modal: Modal) -> Self {
-        modal.build()
+impl Default for Modal {
+    /// A centred modal with no heading.
+    fn default() -> Self {
+        Self::new()
     }
 }

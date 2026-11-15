@@ -1,172 +1,127 @@
-//! File and folder icons, and which installed language a file is written in: a file is shown with the icon of that language, and as a plain file otherwise; nothing language-specific ships with the app.
+//! The icon of a file or folder, picked and tinted by the file's name.
 
-use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex};
+use rustle::prelude::*;
 
-use pm_icon::{IconName, Svg};
-use pm_protocol::{ExtensionIconTheme, ExtensionInfo};
-use pm_style::{Color, Role, size, text_color};
-use pm_ui::{Node, node};
+use crate::size::Size;
+use rustle::color_scheme;
 
-use crate::parts::glyph;
+/// How a file icon is tinted.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FileIconVariant {
+    /// In the colour of the file's kind.
+    #[default]
+    Coloured,
+    /// Muted, for an entry git ignores.
+    Muted,
+}
 
-/// What an installed language says of the files whose names end as it reads.
+/// A file or folder icon with a variant and a size.
 #[derive(Clone)]
-struct Known {
-    /// The language, by its folder's name.
-    language: String,
-    /// The icon and colour its files are shown with, when it has one.
-    icon: Option<(Svg, Color)>,
+pub struct FileIcon {
+    /// The file's name, whose ending picks the icon.
+    name: String,
+    /// Whether it is a folder, and then whether it is open.
+    folder: Option<bool>,
+    /// How it is tinted.
+    variant: FileIconVariant,
+    /// Its size.
+    size: Size,
 }
 
-/// What the installed languages of one machine say of their files: by the ending of a file name, and by the whole names and name patterns that are read before an ending is.
-#[derive(Default)]
-struct Machine {
-    /// By the ending of a file name, in lower case.
-    endings: HashMap<String, Known>,
-    /// Each language that reads files by their whole name or a pattern of it, as the listing describes it with its endings left out.
-    named: Vec<(ExtensionInfo, Known)>,
-}
+impl FileIcon {
+    /// The icon of the file called `name`.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            folder: None,
+            variant: FileIconVariant::Coloured,
+            size: Size::Sm,
+        }
+    }
 
-/// What the installed languages of each machine say of their files, by machine.
-type Learned = HashMap<Option<String>, Machine>;
+    /// The icon of a folder, open when `open`.
+    pub fn folder(mut self, open: bool) -> Self {
+        self.folder = Some(open);
+        self
+    }
 
-/// What was learned from the languages installed on the machines reached.
-static LEARNED: LazyLock<Mutex<Learned>> = LazyLock::new(Default::default);
+    /// The icon in `variant`.
+    pub fn variant(mut self, variant: FileIconVariant) -> Self {
+        self.variant = variant;
+        self
+    }
 
-/// The icons the icon themes of each machine give the endings of file names: by machine, then by ending.
-type Themed = HashMap<Option<String>, HashMap<String, (Svg, Color)>>;
+    /// The icon at `size`.
+    pub fn size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
+    }
 
-/// What was learned from the icon themes installed on the machines reached.
-static THEMED: LazyLock<Mutex<Themed>> = LazyLock::new(Default::default);
-
-/// The colour `hex`, written `#rrggbb`, names.
-fn colour_of(hex: &str) -> Option<Color> {
-    let digits = hex.strip_prefix('#')?;
-    let value = u32::from_str_radix(digits, 16)
-        .ok()
-        .filter(|_| digits.len() == 6)?;
-    Some(Color::rgb(
-        (value >> 16) as u8,
-        (value >> 8) as u8,
-        value as u8,
-    ))
-}
-
-/// Takes in the languages installed on `host` and their icons, as `extensions` lists them, in place of those it had before.
-pub fn learn_languages(host: &Option<String>, extensions: &[ExtensionInfo]) {
-    let mut machine = Machine::default();
-    for extension in extensions.iter().filter(|extension| extension.installed) {
-        let icon = extension.icon.as_ref().map(|source| {
-            let svg = Svg::arrived(&format!("extension-{}", extension.id), source);
-            let tone = extension
-                .color
-                .as_deref()
-                .and_then(colour_of)
-                .unwrap_or_else(|| Color::from(Role::Muted));
-            (svg, tone)
-        });
-        let known = Known {
-            language: extension.id.clone(),
-            icon,
+    /// Emits the icon.
+    #[track_caller]
+    pub fn show(self) {
+        let scheme = color_scheme();
+        let side = match self.size {
+            Size::Xs => 12.0,
+            Size::Sm => 14.0,
+            Size::Md => 16.0,
+            Size::Lg => 18.0,
         };
-        for suffix in &extension.suffixes {
-            machine.endings.insert(suffix.to_lowercase(), known.clone());
+        let (glyph, tint) = match self.folder {
+            Some(true) => (phosphor::FOLDER_OPEN, Some(scheme.on_surface_variant)),
+            Some(false) => (phosphor::FOLDER, Some(scheme.on_surface_variant)),
+            None => file_glyph(&self.name),
+        };
+        let tint = match self.variant {
+            FileIconVariant::Muted => scheme.on_surface_variant,
+            FileIconVariant::Coloured => tint.unwrap_or(scheme.on_surface_variant),
+        };
+        icon(glyph, side, tint);
+    }
+}
+
+/// The glyph of the file called `name`, and the colour of its kind when it has one.
+pub fn file_glyph(name: &str) -> (Icon, Option<Color>) {
+    let lower = name.to_lowercase();
+    let ending = lower.rsplit_once('.').map_or("", |(_, ending)| ending);
+    let tone = |r, g, b| Some(Color::rgb(r, g, b));
+    match (lower.as_str(), ending) {
+        ("cargo.lock" | "package-lock.json" | "yarn.lock" | "pnpm-lock.yaml", _) => {
+            (phosphor::FILE_LOCK, None)
         }
-        if !extension.names.is_empty() || !extension.patterns.is_empty() {
-            machine.named.push((
-                ExtensionInfo {
-                    suffixes: Vec::new(),
-                    ..extension.clone()
-                },
-                known,
-            ));
+        ("makefile" | "dockerfile" | "justfile", _) => {
+            (phosphor::FILE_CODE, tone(0x6d, 0x8c, 0xb3))
         }
-    }
-    if let Ok(mut learned) = LEARNED.lock() {
-        learned.insert(host.clone(), machine);
-    }
-}
-
-/// Takes in the icon themes installed on `host`, in place of those it had before; a later theme's icon for an ending replaces an earlier one's.
-pub fn learn_icon_themes(host: &Option<String>, themes: &[ExtensionIconTheme]) {
-    let mut endings = HashMap::new();
-    for theme in themes {
-        for icon in &theme.icons {
-            let tone = icon
-                .color
-                .as_deref()
-                .and_then(colour_of)
-                .unwrap_or_else(|| Color::from(Role::Muted));
-            let svg = Svg::arrived(
-                &format!(
-                    "icon-theme-{}-{}-{}",
-                    theme.extension, theme.name, icon.suffix
-                ),
-                &icon.svg,
-            );
-            endings.insert(icon.suffix.to_lowercase(), (svg, tone));
+        (_, "rs") => (phosphor::FILE_RS, tone(0xde, 0x8a, 0x5a)),
+        (_, "ts" | "mts" | "cts") => (phosphor::FILE_TS, tone(0x31, 0x78, 0xc6)),
+        (_, "tsx") => (phosphor::FILE_TSX, tone(0x31, 0x78, 0xc6)),
+        (_, "js" | "mjs" | "cjs") => (phosphor::FILE_JS, tone(0xe8, 0xc5, 0x4a)),
+        (_, "jsx") => (phosphor::FILE_JSX, tone(0xe8, 0xc5, 0x4a)),
+        (_, "py") => (phosphor::FILE_PY, tone(0x4b, 0x8b, 0xbe)),
+        (_, "c" | "h") => (phosphor::FILE_C, tone(0x5c, 0x6b, 0xc0)),
+        (_, "cpp" | "cc" | "cxx" | "hpp" | "hh") => (phosphor::FILE_CPP, tone(0x5c, 0x6b, 0xc0)),
+        (_, "cs") => (phosphor::FILE_C_SHARP, tone(0x9b, 0x4f, 0x96)),
+        (_, "css" | "scss" | "sass" | "less") => (phosphor::FILE_CSS, tone(0x56, 0x3d, 0x7c)),
+        (_, "html" | "htm") => (phosphor::FILE_HTML, tone(0xe3, 0x4c, 0x26)),
+        (_, "vue") => (phosphor::FILE_VUE, tone(0x41, 0xb8, 0x83)),
+        (_, "md" | "markdown" | "mdx") => (phosphor::FILE_MD, tone(0x51, 0x9a, 0xba)),
+        (_, "sql") => (phosphor::FILE_SQL, tone(0xda, 0xa5, 0x2e)),
+        (_, "csv" | "tsv") => (phosphor::FILE_CSV, tone(0x4c, 0xaf, 0x50)),
+        (_, "toml" | "ini" | "cfg" | "conf" | "yaml" | "yml" | "json" | "jsonc") => {
+            (phosphor::FILE_INI, tone(0x8f, 0x9b, 0xa8))
         }
+        (_, "svg") => (phosphor::FILE_SVG, tone(0xff, 0xb1, 0x3b)),
+        (_, "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "ico") => {
+            (phosphor::FILE_IMAGE, tone(0xa0, 0x74, 0xc4))
+        }
+        (_, "pdf") => (phosphor::FILE_PDF, tone(0xd9, 0x4c, 0x3c)),
+        (_, "zip" | "tar" | "gz" | "tgz" | "xz" | "7z") => (phosphor::FILE_ZIP, None),
+        (_, "mp3" | "wav" | "ogg" | "flac") => (phosphor::FILE_AUDIO, None),
+        (_, "mp4" | "mov" | "mkv" | "webm") => (phosphor::FILE_VIDEO, None),
+        (_, "txt" | "log") => (phosphor::FILE_TXT, None),
+        (_, "sh" | "bash" | "zsh" | "fish" | "ps1" | "go" | "java" | "kt" | "rb" | "lua") => {
+            (phosphor::FILE_CODE, tone(0x6d, 0x8c, 0xb3))
+        }
+        _ => (phosphor::FILE, None),
     }
-    if let Ok(mut themed) = THEMED.lock() {
-        themed.insert(host.clone(), endings);
-    }
-}
-
-/// The ending of the name of the file `path`, in lower case; empty when it has none.
-fn suffix_of(path: &str) -> String {
-    path.rsplit(['/', '\\'])
-        .next()
-        .and_then(|name| name.rsplit_once('.'))
-        .map(|(_, suffix)| suffix.to_lowercase())
-        .unwrap_or_default()
-}
-
-/// What `read` finds in what the installed language of the file `path` names says of it, on the first machine where it finds something.
-fn learned_of<T>(path: &str, read: impl Fn(&Known) -> Option<T>) -> Option<T> {
-    let suffix = suffix_of(path);
-    LEARNED.lock().ok().and_then(|learned| {
-        learned.values().find_map(|machine| {
-            let named = machine
-                .named
-                .iter()
-                .find(|(info, _)| info.reads(path))
-                .and_then(|(_, known)| read(known));
-            named.or_else(|| machine.endings.get(&suffix).and_then(&read))
-        })
-    })
-}
-
-/// The installed language the file `path` names is written in, by its folder's name, when there is one.
-pub fn file_language(path: &str) -> Option<String> {
-    learned_of(path, |known| Some(known.language.clone()))
-}
-
-/// The icon and colour of the file `path` names: its installed language's, or a plain muted file.
-pub fn file_kind(path: &str) -> (Svg, Color) {
-    let suffix = suffix_of(path);
-    let themed = THEMED.lock().ok().and_then(|themed| {
-        themed
-            .values()
-            .find_map(|endings| endings.get(&suffix).copied())
-    });
-    themed
-        .or_else(|| learned_of(path, |known| known.icon))
-        .unwrap_or_else(|| (IconName::File.svg(), Color::from(Role::Muted)))
-}
-
-/// The icon of the file `path` names, `steps` on a side, tinted by its kind.
-pub fn file_icon(path: &str, steps: f32) -> Node {
-    let (svg, tone) = file_kind(path);
-    node().styles([size(steps), text_color(tone)]).artwork(svg)
-}
-
-/// A folder, open or closed, `steps` on a side, in the folder colour.
-pub fn folder_icon(open: bool, steps: f32) -> Node {
-    let icon = if open {
-        IconName::FolderOpen
-    } else {
-        IconName::Folder
-    };
-    glyph(icon, steps, Color::rgb(0xd9, 0xa9, 0x5b))
 }

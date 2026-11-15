@@ -14,8 +14,9 @@
 - Keep dependencies pointing down the layers. Pages use components; components
   never depend on pages. Keep domain work on the server and the `pandemonium`
   binary limited to wiring the layers together.
-- Keep wgpu calls in `pm-renderer`. Build interface elements with `pm-ui` and
-  the existing styling and component APIs. Use winit and wgpu for portability.
+- Build the interface with Rustle: composables in `pm-components`, pages in
+  `pm-pages`, server link and models in `pm-shell`. Use Rustle's layout,
+  text and drawing; never add a drawing or layout layer of our own.
 - Give each operation one implementation. Reuse the same path for session
   creation, project resolution and worktree teardown wherever it is called.
 - When a control is repeated or needed by a second page, extract it into
@@ -91,9 +92,9 @@ come from that tag, which catches a local override and a stale lock.
 - For Rust changes, build the affected targets, run the relevant tests, and
   run `make fmt` and `make lint`. Fix failures caused by the change.
 - For UI changes, build first, render the affected state with `--snapshot`,
-  and inspect the resulting image. Add a `Shot` in
-  `crates/pandemonium/src/snapshot.rs` when the state has none. A draw list or
-  successful compilation alone does not verify rendering.
+  and inspect the resulting image. Extend `crates/pandemonium/src/snapshot.rs`
+  when the state cannot be rendered yet. Successful compilation alone does
+  not verify rendering.
 - For settings UI changes, inspect both `settings-<section>` and
   `settings-<section>-narrow`; the narrow window is 640 by 420.
 - For documentation-only changes, check links and the diff; builds and UI

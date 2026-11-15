@@ -1,217 +1,322 @@
-//! The menu: a floating list of actions opened at a point.
+//! A menu of commands in a popover: rows with an icon, a label and a hint,
+//! split by separators, some of them destructive or disabled.
 
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, absolute, bg, cursor_not_allowed, cursor_pointer, flex, flex_1, gap, h,
-    items_center, leading_ratio, left_px, min_w_px, opacity, p, px, rounded, text_color, text_px,
-    top_px, w, z,
-};
-use pm_ui::{Node, node, text};
+use std::rc::Rc;
 
-use crate::Surface;
+use rustle::prelude::*;
 
-/// How far a menu opened from a control hangs from it, in logical pixels.
-const MENU_GAP: f32 = 4.0;
+use crate::label::{Label, LabelVariant};
+use crate::popover::Popover;
+use crate::size::Size;
+use rustle::color_scheme;
 
-/// One row of a menu, or the rule between groups of rows.
-#[derive(Clone, Debug)]
-pub enum Entry {
-    /// An action the reader can pick.
-    Item {
-        /// What the row says.
-        label: String,
-        /// The keys that do the same, written out, if any.
-        shortcut: Option<String>,
-        /// The name the row answers to.
-        id: FocusId,
-        /// Whether the row is switched off.
-        disabled: bool,
-    },
-    /// A hairline between two groups of rows.
-    Separator,
+/// How a menu is drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MenuVariant {
+    /// A floating popover dismissed by a click outside.
+    #[default]
+    Floating,
+    /// Rows only, for a menu inside another surface.
+    Inline,
 }
 
-/// A menu being described: where it opens and what it holds.
-///
-/// Build it with [`Menu::new`], add rows with [`Menu::item`] and
-/// [`Menu::separator`], and turn it into a node with [`Menu::build`]. The
-/// node is positioned over whatever it is placed in, so it belongs last in
-/// the root of a screen.
-#[derive(Clone, Debug)]
+/// One entry of a menu.
+#[derive(Clone)]
+enum Entry {
+    /// A command.
+    Item {
+        /// What it reads.
+        label: String,
+        /// The icon before it.
+        icon: Option<Icon>,
+        /// Faint text at its end, such as a key.
+        hint: Option<String>,
+        /// Whether it is drawn as a warning.
+        destructive: bool,
+        /// Whether it is greyed out and does nothing.
+        disabled: bool,
+        /// What choosing it does.
+        on_select: Rc<dyn Fn()>,
+    },
+    /// A hairline between groups of commands.
+    Separator,
+    /// A small heading over a group of commands.
+    Heading(String),
+}
+
+/// A menu with a variant and a size.
+#[derive(Clone)]
 pub struct Menu {
-    /// Where its top-left corner is, in logical pixels.
-    at: (f32, f32),
-    /// The rows, top to bottom.
+    /// Its entries, in order.
     entries: Vec<Entry>,
-    /// How wide it is, in style units.
+    /// How it is drawn.
+    variant: MenuVariant,
+    /// How tall its rows are.
+    size: Size,
+    /// How wide it is.
     width: f32,
-    /// How tall each row is, in style units.
-    row: f32,
+    /// How far it is moved from where it is emitted, across and down.
+    offset: (f32, f32),
+    /// What a click outside it does.
+    on_dismiss: Option<Rc<dyn Fn()>>,
+    /// Whether it opens upward from where it is emitted.
+    above: bool,
 }
 
 impl Menu {
-    /// An empty menu opening with its corner at `x`, `y` logical pixels.
-    pub fn new(x: f32, y: f32) -> Self {
+    /// An empty floating menu.
+    pub fn new() -> Self {
         Self {
-            at: (x, y),
             entries: Vec::new(),
-            width: 52.0,
-            row: 8.0,
+            variant: MenuVariant::Floating,
+            size: Size::Sm,
+            width: 220.0,
+            offset: (0.0, 4.0),
+            on_dismiss: None,
+            above: false,
         }
     }
 
-    /// The menu with rows `units` style units tall, for a long menu that has to fit the window.
-    pub fn row_height(mut self, units: f32) -> Self {
-        self.row = units;
+    /// The menu opening upward from where it is emitted when `above`, for a field near the bottom of the window.
+    pub fn above(mut self, above: bool) -> Self {
+        self.above = above;
         self
     }
 
-    /// The menu `units` style units wide, for rows whose labels and keys need more room.
-    pub fn width(mut self, units: f32) -> Self {
-        self.width = units;
+    /// The menu with a command reading `label` that calls `on_select`.
+    pub fn item(self, label: impl Into<String>, on_select: impl Fn() + 'static) -> Self {
+        self.entry(label.into(), None, None, false, false, Rc::new(on_select))
+    }
+
+    /// The menu with a command reading `label` after `icon` that calls `on_select`.
+    pub fn icon_item(
+        self,
+        icon: Icon,
+        label: impl Into<String>,
+        on_select: impl Fn() + 'static,
+    ) -> Self {
+        self.entry(
+            label.into(),
+            Some(icon),
+            None,
+            false,
+            false,
+            Rc::new(on_select),
+        )
+    }
+
+    /// The menu with a warning command reading `label` after `icon` that calls `on_select`.
+    pub fn destructive_item(
+        self,
+        icon: Icon,
+        label: impl Into<String>,
+        on_select: impl Fn() + 'static,
+    ) -> Self {
+        self.entry(
+            label.into(),
+            Some(icon),
+            None,
+            true,
+            false,
+            Rc::new(on_select),
+        )
+    }
+
+    /// The menu with a greyed-out command reading `label` after `icon`.
+    pub fn disabled_item(self, icon: Icon, label: impl Into<String>) -> Self {
+        self.entry(label.into(), Some(icon), None, false, true, Rc::new(|| {}))
+    }
+
+    /// The last command shown with `hint` at its end.
+    pub fn hint(mut self, hint: impl Into<String>) -> Self {
+        if let Some(Entry::Item { hint: slot, .. }) = self.entries.last_mut() {
+            *slot = Some(hint.into());
+        }
         self
     }
 
-    /// The menu with a row saying `label`, answering to `id`, written with
-    /// `shortcut` beside it, and switched off while `disabled` is true.
-    pub fn item(
+    /// The menu with a hairline after what it holds so far.
+    pub fn separator(mut self) -> Self {
+        if !self.entries.is_empty() {
+            self.entries.push(Entry::Separator);
+        }
+        self
+    }
+
+    /// The menu with a small heading reading `title`.
+    pub fn heading(mut self, title: impl Into<String>) -> Self {
+        self.entries.push(Entry::Heading(title.into()));
+        self
+    }
+
+    /// The menu in `variant`.
+    pub fn variant(mut self, variant: MenuVariant) -> Self {
+        self.variant = variant;
+        self
+    }
+
+    /// The menu with rows at `size`.
+    pub fn size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
+    }
+
+    /// The menu `width` wide.
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = width;
+        self
+    }
+
+    /// The menu moved `across` and `down` from where it is emitted.
+    pub fn offset(mut self, across: f32, down: f32) -> Self {
+        self.offset = (across, down);
+        self
+    }
+
+    /// The menu calling `on_dismiss` when clicked outside or when a command is chosen.
+    pub fn on_dismiss(mut self, on_dismiss: impl Fn() + 'static) -> Self {
+        self.on_dismiss = Some(Rc::new(on_dismiss));
+        self
+    }
+
+    /// The menu with `entry` added.
+    fn entry(
         mut self,
-        label: &str,
-        shortcut: Option<&str>,
-        id: FocusId,
+        label: String,
+        icon: Option<Icon>,
+        hint: Option<String>,
+        destructive: bool,
         disabled: bool,
+        on_select: Rc<dyn Fn()>,
     ) -> Self {
         self.entries.push(Entry::Item {
-            label: label.to_owned(),
-            shortcut: shortcut.map(str::to_owned),
-            id,
+            label,
+            icon,
+            hint,
+            destructive,
             disabled,
+            on_select,
         });
         self
     }
 
-    /// The menu with a rule after the rows so far.
-    pub fn separator(mut self) -> Self {
-        self.entries.push(Entry::Separator);
-        self
-    }
-
-    /// The menu opened from the control occupying `trigger`, as `(x, y, width, height)` in logical pixels, inside a window `window` wide and tall:
-    /// below the control with their left edges together, or their right edges together when it would leave the window on the right,
-    /// and above the control when there is more room above it than below.
-    pub fn below(mut self, trigger: (f32, f32, f32, f32), window: (f32, f32)) -> Self {
-        let (x, y, width, height) = trigger;
-        let (menu_width, menu_height) = self.extent();
-        let left = if x + menu_width <= window.0 {
-            x
-        } else {
-            x + width - menu_width
+    /// Emits the menu.
+    #[track_caller]
+    pub fn show(self) {
+        let height = match self.size {
+            Size::Xs => 22.0,
+            Size::Sm => 26.0,
+            Size::Md => 30.0,
+            Size::Lg => 34.0,
         };
-        let room_below = window.1 - (y + height + MENU_GAP);
-        let top = if menu_height <= room_below || room_below >= y - MENU_GAP {
-            y + height + MENU_GAP
-        } else {
-            y - MENU_GAP - menu_height
+        let entries = self.entries;
+        let dismiss = self.on_dismiss.clone();
+        let rows = move || {
+            for (place, entry) in entries.into_iter().enumerate() {
+                let dismiss = dismiss.clone();
+                key(place, move || entry_row(entry, height, dismiss));
+            }
         };
-        self.at = (
-            left.min(window.0 - menu_width).max(0.0),
-            top.min(window.1 - menu_height).max(0.0),
-        );
-        self
-    }
-
-    /// Where its top-left corner is, in logical pixels.
-    pub fn at(&self) -> (f32, f32) {
-        self.at
-    }
-
-    /// How wide and how tall the menu is, in logical pixels, at the spacing scale being built for.
-    fn extent(&self) -> (f32, f32) {
-        let step = 4.0 * pm_style::step_scale();
-        let rows: f32 = self
-            .entries
-            .iter()
-            .map(|entry| match entry {
-                Entry::Item { .. } => self.row * step,
-                Entry::Separator => step * 2.25,
-            })
-            .sum();
-        (self.width * step, rows + step * 0.5)
-    }
-
-    /// The node that draws the menu.
-    pub fn build(self) -> Node {
-        Surface::new()
-            .build()
-            .styles([
-                absolute(),
-                left_px(self.at.0),
-                top_px(self.at.1),
-                z(50),
-                w(self.width),
-                min_w_px(0),
-                p(1),
-            ])
-            .keep_in_view()
-            .children(self.entries.into_iter().map(|entry| row(entry, self.row)))
-    }
-}
-
-/// The node for one entry, `height` style units tall when it is a row.
-fn row(entry: Entry, height: f32) -> Node {
-    match entry {
-        Entry::Separator => node().styles([
-            h(0.25),
-            bg(Role::Border),
-            pm_style::mx(-1.0),
-            pm_style::my(1),
-        ]),
-        Entry::Item {
-            label,
-            shortcut,
-            id,
-            disabled,
-        } => {
-            let mut styles = vec![
-                flex(),
-                items_center(),
-                gap(4),
-                h(height),
-                px(2),
-                rounded(Radius::Sm),
-            ];
-            if disabled {
-                styles.extend([opacity(40), cursor_not_allowed()]);
-            } else {
-                styles.extend([
-                    cursor_pointer(),
-                    bg(Role::SurfaceHover).hover(),
-                    bg(Role::SurfaceActive).active(),
-                ]);
+        match self.variant {
+            MenuVariant::Inline => column_with(Modifier::new().width(self.width), rows),
+            MenuVariant::Floating => {
+                let mut popover = Popover::new()
+                    .width(self.width)
+                    .offset(self.offset.0, self.offset.1)
+                    .above(self.above);
+                if let Some(dismiss) = self.on_dismiss {
+                    popover = popover.on_dismiss(move || dismiss());
+                }
+                popover.show(rows);
             }
-            let mut item =
-                node()
-                    .styles(styles)
-                    .child(node().styles([flex_1()]).child(text(label).styles([
-                        text_px(13),
-                        leading_ratio(1.4),
-                        text_color(Role::Text),
-                    ])));
-            if let Some(shortcut) = shortcut {
-                item = item.child(text(shortcut).styles([
-                    text_px(12),
-                    leading_ratio(1.4),
-                    text_color(Role::Subtle),
-                ]));
-            }
-            if disabled { item } else { item.focusable(id) }
         }
     }
 }
 
-impl From<Menu> for Node {
-    /// The node that draws the menu.
-    fn from(menu: Menu) -> Self {
-        menu.build()
+impl Default for Menu {
+    /// The same as [`Menu::new`].
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Emits `entry` `height` tall, calling `dismiss` after a command is chosen.
+#[track_caller]
+fn entry_row(entry: Entry, height: f32, dismiss: Option<Rc<dyn Fn()>>) {
+    let scheme = color_scheme();
+    match entry {
+        Entry::Separator => spacer(
+            Modifier::new()
+                .fill_max_width()
+                .padding_xy(0.0, 4.0)
+                .height(9.0)
+                .border_bottom_hairline(scheme.outline_variant),
+        ),
+        Entry::Heading(title) => Label::new(title)
+            .variant(LabelVariant::Subtle)
+            .size(Size::Xs)
+            .modifier(Modifier::new().padding_xy(8.0, 4.0))
+            .show(),
+        Entry::Item {
+            label,
+            icon: glyph,
+            hint,
+            destructive,
+            disabled,
+            on_select,
+        } => {
+            let hovered = remember(|| false);
+            let tone = if disabled {
+                scheme.on_surface_variant
+            } else if destructive {
+                scheme.error
+            } else {
+                scheme.on_surface
+            };
+            let fill = if hovered.get() && !disabled {
+                scheme.surface_container_high
+            } else {
+                Color::TRANSPARENT
+            };
+            let mut modifier = Modifier::new()
+                .fill_max_width()
+                .height(height)
+                .background_rounded(fill, 4.0)
+                .on_hover({
+                    let hovered = hovered.clone();
+                    move |inside| hovered.set(inside)
+                })
+                .padding_xy(8.0, 0.0);
+            if !disabled {
+                modifier = modifier.cursor(CursorIcon::Pointer).clickable(move || {
+                    if let Some(dismiss) = &dismiss {
+                        dismiss();
+                    }
+                    on_select();
+                });
+            }
+            row_arranged(
+                modifier,
+                Arrangement::SpacedBy(8.0),
+                Alignment::Center,
+                || {
+                    match glyph {
+                        Some(glyph) => icon(glyph, 13.0, tone),
+                        None => spacer(Modifier::new().width(13.0)),
+                    }
+                    Label::new(label)
+                        .colour(tone)
+                        .size(Size::Xs)
+                        .modifier(Modifier::new().weight(1.0))
+                        .show();
+                    if let Some(hint) = hint {
+                        Label::new(hint)
+                            .variant(LabelVariant::Subtle)
+                            .size(Size::Xs)
+                            .show();
+                    }
+                },
+            );
+        }
     }
 }

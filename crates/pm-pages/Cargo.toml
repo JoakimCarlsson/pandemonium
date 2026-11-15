@@ -5,16 +5,6 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-pm-harness.workspace = true
 pm-components.workspace = true
-pm-config.workspace = true
-pm-editor.workspace = true
-pm-git.workspace = true
-pm-icon.workspace = true
-pm-input.workspace = true
-pm-protocol.workspace = true
-pm-style.workspace = true
-pm-terminal.workspace = true
-pm-text.workspace = true
-pm-ui.workspace = true
-pm-vim.workspace = true
+pm-shell.workspace = true
+rustle.workspace = true

@@ -1,103 +1,114 @@
-//! The menu that opens over a message of the conversation: copying what is
-//! selected, the message as it reads or as the markdown it was written in,
-//! and selecting the whole conversation.
+//! The menu of a message, opened from the button beside it: copying it and
+//! the conversation commands that act from it, such as retrying or
+//! rewinding to it.
 
-use pm_input::FocusId;
-use pm_ui::Node;
+use std::rc::Rc;
 
-use crate::Menu;
-use crate::state::{Outgoing, WorkspaceState};
+use rustle::prelude::*;
 
-/// Copies the selected text of the conversation.
-pub const MESSAGE_MENU_COPY: FocusId = FocusId(206);
+use crate::icon_button::IconButton;
+use crate::size::Size;
 
-/// Copies the message the menu was opened on, as it reads.
-pub const MESSAGE_MENU_COPY_REPLY: FocusId = FocusId(207);
+/// The visual treatment of the menu's button.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MessageMenuVariant {
+    /// Three dots.
+    #[default]
+    Dots,
+    /// A caret.
+    Caret,
+}
 
-/// Copies the message the menu was opened on, as the markdown it was written in.
-pub const MESSAGE_MENU_COPY_MARKDOWN: FocusId = FocusId(208);
+/// One entry of the menu.
+#[derive(Clone)]
+struct Entry {
+    /// What it says.
+    label: String,
+    /// What choosing it does.
+    on_click: Rc<dyn Fn()>,
+}
 
-/// Selects the text of the whole conversation.
-pub const MESSAGE_MENU_SELECT_ALL: FocusId = FocusId(209);
-
-/// The menu open over a message of the open session, and where.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// A button opening a menu of entries.
+#[derive(Clone, Default)]
 pub struct MessageMenu {
-    /// The message, by position in the open session.
-    pub message: usize,
-    /// Where it opened, in logical pixels.
-    pub at: (f32, f32),
-    /// Whether any of the conversation's text is selected, so there is something to copy.
-    pub selected: bool,
+    /// The entries, in order.
+    entries: Vec<Entry>,
+    /// Its visual treatment.
+    variant: MessageMenuVariant,
+    /// Its size.
+    size: Size,
 }
 
-/// Whether `id` names a row of the menu over a message.
-pub fn is_message_menu_item(id: FocusId) -> bool {
-    [
-        MESSAGE_MENU_COPY,
-        MESSAGE_MENU_COPY_REPLY,
-        MESSAGE_MENU_COPY_MARKDOWN,
-        MESSAGE_MENU_SELECT_ALL,
-    ]
-    .contains(&id)
-}
-
-/// The menu opened at `open`.
-pub fn message_menu(open: MessageMenu) -> Node {
-    Menu::new(open.at.0, open.at.1)
-        .item("Copy", Some("Ctrl+C"), MESSAGE_MENU_COPY, !open.selected)
-        .separator()
-        .item("Copy reply", None, MESSAGE_MENU_COPY_REPLY, false)
-        .item(
-            "Copy reply as Markdown",
-            None,
-            MESSAGE_MENU_COPY_MARKDOWN,
-            false,
-        )
-        .separator()
-        .item("Select all", Some("Ctrl+A"), MESSAGE_MENU_SELECT_ALL, false)
-        .build()
-}
-
-impl WorkspaceState {
-    /// The state with the menu over the message at `message` of the open
-    /// session open at `at`, offering to copy the selection when `selected`.
-    pub fn with_message_menu(mut self, message: usize, at: (f32, f32), selected: bool) -> Self {
-        let exists = self
-            .open()
-            .is_some_and(|session| message < session.messages.len());
-        if exists {
-            self.menu = None;
-            self.project_menu = None;
-            self.session_menu = None;
-            self.message_menu = Some(MessageMenu {
-                message,
-                at,
-                selected,
-            });
+impl MessageMenu {
+    /// An empty menu.
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+            variant: MessageMenuVariant::Dots,
+            size: Size::Xs,
         }
+    }
+
+    /// The menu with an entry `label` that runs `on_click`.
+    pub fn item(mut self, label: impl Into<String>, on_click: impl Fn() + 'static) -> Self {
+        self.entries.push(Entry {
+            label: label.into(),
+            on_click: Rc::new(on_click),
+        });
         self
     }
 
-    /// The state after the row `row` of the open menu over a message was
-    /// pressed: the menu closes, and the message is asked to be put on the
-    /// clipboard when that is what the row does.
-    pub(crate) fn message_menu_pressed(mut self, row: FocusId) -> Self {
-        let Some(open) = self.message_menu.take() else {
-            return self;
-        };
-        let Some(message) = self
-            .open()
-            .and_then(|session| session.messages.get(open.message))
-        else {
-            return self;
-        };
-        let text = match row {
-            MESSAGE_MENU_COPY_REPLY => message.plain_text(),
-            MESSAGE_MENU_COPY_MARKDOWN => message.markdown_text(),
-            _ => return self,
-        };
-        self.outbox.push(Outgoing::Copy { text });
+    /// The menu with an entry `label` that copies `text` to the clipboard.
+    pub fn copy(self, label: impl Into<String>, text: String) -> Self {
+        self.item(label, move || {
+            if let Some(clipboard) = rustle::clipboard() {
+                clipboard.set_text(&text);
+            }
+        })
+    }
+
+    /// The menu with `variant`.
+    pub fn variant(mut self, variant: MessageMenuVariant) -> Self {
+        self.variant = variant;
         self
+    }
+
+    /// The menu at `size`.
+    pub fn size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
+    }
+
+    /// Emits the button and, while open, the menu under it.
+    #[track_caller]
+    pub fn show(self) {
+        let open = remember(|| false);
+        let toggle = open.clone();
+        let dismiss = open.clone();
+        column_with(Modifier::new(), move || {
+            IconButton::new(match self.variant {
+                MessageMenuVariant::Dots => phosphor::DOTS_THREE,
+                MessageMenuVariant::Caret => phosphor::CARET_DOWN,
+            })
+            .size(self.size)
+            .active(open.get())
+            .on_click(move || toggle.set(!toggle.get()))
+            .show();
+            let close = open.clone();
+            dropdown_menu(
+                open.get(),
+                move || dismiss.set(false),
+                move || {
+                    for entry in &self.entries {
+                        let on_click = entry.on_click.clone();
+                        let close = close.clone();
+                        dropdown_menu_item(&entry.label, move || {
+                            close.set(false);
+                            on_click();
+                        });
+                    }
+                },
+            );
+        });
     }
 }

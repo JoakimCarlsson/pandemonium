@@ -1,378 +1,220 @@
-//! The bar under a session's header that tells how the pull request of its branch stands, with its checks and review, and offers what can be done next: push, open, update, mark ready, merge, reopen, and delete the branch from its remote. It names the review as the code host its repository is on does, and offers only pushing when that host is not supported.
+//! The bar above the conversation naming the pull request of the session's
+//! branch, how its checks and review stand, and what can be done with it.
 
-use pm_git::{CheckState, CodeHost, PullRequestStatus, ReviewDecision};
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, border_b, border_color, flex, flex_none, gap, h, items_center, overflow_hidden,
-    px, rounded,
-};
-use pm_ui::{Node, node};
+use std::rc::Rc;
 
-use crate::Button;
-use crate::badge::{Badge, Variant as BadgeVariant};
-use crate::button::Variant;
-use crate::parts::{glyph, line, spacer};
-use crate::sample::Session;
+use rustle::prelude::*;
+
+use crate::app_theme::extended_colors;
+use crate::badge::{Badge, BadgeVariant};
+use crate::button::{Button, ButtonVariant};
+use crate::icon_button::IconButton;
+use crate::label::{Label, LabelVariant};
 use crate::size::Size;
-use crate::state::{Outgoing, Page, WorkspaceState};
+use rustle::color_scheme;
 
-/// Opens the pull request on its code host.
-pub const PULL_OPEN: FocusId = FocusId(7_414_000);
-
-/// Pushes the branch.
-pub const PULL_PUSH: FocusId = FocusId(7_414_001);
-
-/// Pushes the branch and opens a pull request of it.
-pub const PULL_CREATE: FocusId = FocusId(7_414_002);
-
-/// Pushes the branch and opens a draft pull request of it.
-pub const PULL_CREATE_DRAFT: FocusId = FocusId(7_414_003);
-
-/// Pushes the branch and redrafts the body of its open pull request.
-pub const PULL_UPDATE: FocusId = FocusId(7_414_004);
-
-/// Marks the draft pull request ready for review.
-pub const PULL_READY: FocusId = FocusId(7_414_005);
-
-/// Squashes and merges the open pull request.
-pub const PULL_MERGE: FocusId = FocusId(7_414_006);
-
-/// Reopens the closed pull request.
-pub const PULL_REOPEN: FocusId = FocusId(7_414_007);
-
-/// Deletes the branch from its remote.
-pub const PULL_DELETE_BRANCH: FocusId = FocusId(7_414_008);
-
-/// Opens the page of the pull request's checks.
-pub const PULL_CHECKS: FocusId = FocusId(7_414_009);
-
-/// Whether `session` gets the bar: a session with a branch of its own, made from another, or one that has a pull request already.
-fn shows(session: &Session) -> bool {
-    !session.is_chat()
-        && !session.home
-        && session.on_branch
-        && !session.branch.is_empty()
-        && (session.base.is_some() || session.pull_request.is_some())
+/// How the pull request stands, which picks its colour and its actions.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PullRequestVariant {
+    /// The branch has no pull request yet.
+    #[default]
+    None,
+    /// Open and ready for review.
+    Open,
+    /// Open as a draft.
+    Draft,
+    /// Merged.
+    Merged,
+    /// Closed without merging.
+    Closed,
 }
 
-/// What the code host of `session` calls a review, in lower case: `pull request` until its server says otherwise.
-fn noun(session: &Session) -> &str {
-    session
-        .code_host
-        .as_ref()
-        .map_or("pull request", CodeHost::noun)
+/// The pull request bar.
+#[derive(Clone)]
+pub struct PullRequestBar {
+    /// Its number, or nought for none.
+    number: u64,
+    /// Its title.
+    title: String,
+    /// How it stands.
+    variant: PullRequestVariant,
+    /// The review decision, or empty.
+    review: String,
+    /// Checks passed, failed and pending.
+    checks: (usize, usize, usize),
+    /// What each action does, given its name such as `merge`.
+    on_action: Option<Rc<dyn Fn(String)>>,
+    /// Its text size.
+    size: Size,
 }
 
-/// `words` with the first letter of each word in upper case, such as `Pull Request`.
-fn title_case(words: &str) -> String {
-    words
-        .split(' ')
-        .map(|word| {
-            let mut letters = word.chars();
-            letters.next().map_or_else(String::new, |first| {
-                first.to_uppercase().chain(letters).collect()
-            })
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-/// The code host of `session` when its server said it is one whose reviews cannot be read or acted on.
-fn unsupported(session: &Session) -> Option<&CodeHost> {
-    session.code_host.as_ref().filter(|host| !host.supported)
-}
-
-/// The badge naming the pull request's number and how it stands, in the colour of that.
-fn state_badge(request: &PullRequestStatus) -> Node {
-    let (said, tone) = if request.is_merged() {
-        ("Merged", Role::Accent)
-    } else if request.is_closed() {
-        ("Closed", Role::Danger)
-    } else if request.draft {
-        ("Draft", Role::Muted)
-    } else {
-        ("Open", Role::Success)
-    };
-    Badge::new(format!("#{} {said}", request.number))
-        .tone(tone)
-        .variant(BadgeVariant::Soft)
-        .build()
-}
-
-/// A glyph in `tone` followed by `count`, or nothing when the count is nothing.
-fn tally(icon: IconName, tone: Role, count: usize) -> Option<Node> {
-    (count > 0).then(|| {
-        node()
-            .styles([flex(), items_center(), gap(1), flex_none()])
-            .child(glyph(icon, 3.5, tone))
-            .child(line(count.to_string(), 12, 1.4, tone))
-    })
-}
-
-/// The button counting the checks by how they stand, whose tooltip names the first that failed; it opens the page of the checks.
-fn checks(request: &PullRequestStatus) -> Node {
-    let failed = request
-        .checks
-        .iter()
-        .find(|check| check.state == CheckState::Failed);
-    let summary = if request.checks.is_empty() {
-        "No checks".to_owned()
-    } else if let Some(check) = failed {
-        format!("{} failed", check.name)
-    } else if request.count(CheckState::Pending) > 0 {
-        "Checks running".to_owned()
-    } else {
-        "Checks passed".to_owned()
-    };
-    Button::new(
-        if request.checks.is_empty() {
-            "No checks"
-        } else {
-            ""
-        },
-        PULL_CHECKS,
-    )
-    .variant(Variant::Ghost)
-    .size(Size::Xs)
-    .mark(
-        node()
-            .styles([flex(), items_center(), gap(2), flex_none()])
-            .children(tally(
-                IconName::CheckCircle,
-                Role::Success,
-                request.count(CheckState::Passed),
-            ))
-            .children(tally(
-                IconName::Close,
-                Role::Danger,
-                request.count(CheckState::Failed),
-            ))
-            .children(tally(
-                IconName::Progress,
-                Role::Warning,
-                request.count(CheckState::Pending),
-            )),
-    )
-    .build()
-    .styles([flex_none()])
-    .tooltip(format!("{summary}: Open the Checks"))
-}
-
-/// What the reviewers decided, in words and the colour of that, or nothing when nothing is asked of them.
-fn review(request: &PullRequestStatus) -> Option<Node> {
-    let (said, tone) = match request.review {
-        ReviewDecision::None => return None,
-        ReviewDecision::Required => ("Review required", Role::Warning),
-        ReviewDecision::Approved => ("Approved", Role::Success),
-        ReviewDecision::ChangesRequested => ("Changes requested", Role::Danger),
-    };
-    Some(Badge::new(said).tone(tone).build())
-}
-
-/// A small button saying `label` that does `id`, filled when it is the `main` thing to do.
-fn action(label: &str, id: FocusId, main: bool) -> Node {
-    Button::new(label, id)
-        .variant(if main {
-            Variant::Default
-        } else {
-            Variant::Outline
-        })
-        .size(Size::Xs)
-        .build()
-        .styles([flex_none()])
-}
-
-/// The buttons for what can be done to the branch of `session` and its pull request, as that stands.
-fn actions(session: &Session) -> Vec<Node> {
-    let ahead = session.tracking.upstream.is_none() || session.tracking.ahead > 0;
-    if unsupported(session).is_some() {
-        return vec![action("Push", PULL_PUSH, true)];
-    }
-    let noun = title_case(noun(session));
-    match &session.pull_request {
-        None => vec![
-            action("Create Draft", PULL_CREATE_DRAFT, false),
-            action(&format!("Create {noun}"), PULL_CREATE, true)
-                .tooltip(format!("Push and Open a {noun}")),
-        ],
-        Some(request) if request.is_open() => {
-            let mut buttons = Vec::new();
-            if ahead {
-                buttons.push(action("Push", PULL_PUSH, false));
-            }
-            buttons.push(
-                action("Update", PULL_UPDATE, false).tooltip("Push and Redraft the Description"),
-            );
-            if request.draft {
-                buttons.push(action("Ready", PULL_READY, true).tooltip("Ready for Review"));
-            } else {
-                buttons.push(action("Merge", PULL_MERGE, true).tooltip("Squash and Merge"));
-            }
-            buttons
-        }
-        Some(request) if request.is_closed() => vec![
-            action("Delete Branch", PULL_DELETE_BRANCH, false),
-            action("Reopen", PULL_REOPEN, true),
-        ],
-        Some(_) => vec![action("Delete Branch", PULL_DELETE_BRANCH, false)],
-    }
-}
-
-/// The bar for `session`, or nothing when it has no branch of its own to open a pull request of.
-pub fn bar(session: &Session) -> Option<Node> {
-    if !shows(session) {
-        return None;
-    }
-    let mut strip = node().styles([
-        flex(),
-        overflow_hidden(),
-        items_center(),
-        gap(3),
-        h(10),
-        px(5),
-        flex_none(),
-        border_b(),
-        border_color(Role::Border),
-    ]);
-    let host_name = session
-        .code_host
-        .as_ref()
-        .map(|host| host.name.as_str())
-        .filter(|name| !name.is_empty());
-    match (&session.pull_request, unsupported(session)) {
-        (_, Some(host)) => {
-            let said = if host.name.is_empty() {
-                "This code host is not supported yet".to_owned()
-            } else {
-                format!("{} is not supported yet", host.name)
-            };
-            strip = strip
-                .child(glyph(IconName::GitCompare, 3.5, Role::Muted))
-                .child(line(said, 12, 1.4, Role::Muted))
-                .child(spacer());
-        }
-        (Some(request), None) => {
-            strip = strip
-                .child(
-                    Button::new("", PULL_OPEN)
-                        .variant(Variant::Ghost)
-                        .size(Size::Xs)
-                        .mark(state_badge(request))
-                        .build()
-                        .styles([flex_none(), rounded(Radius::Md)])
-                        .tooltip(match host_name {
-                            Some(name) => format!("Open on {name}: {}", request.title),
-                            None => format!("Open: {}", request.title),
-                        }),
-                )
-                .child(checks(request))
-                .children(review(request))
-                .child(spacer());
-        }
-        (None, None) => {
-            strip = strip
-                .child(glyph(IconName::GitCompare, 3.5, Role::Muted))
-                .child(line(format!("No {}", noun(session)), 12, 1.4, Role::Muted))
-                .child(spacer());
+impl PullRequestBar {
+    /// A bar for the pull request numbered `number` titled `title`.
+    pub fn new(number: u64, title: impl Into<String>) -> Self {
+        Self {
+            number,
+            title: title.into(),
+            variant: PullRequestVariant::None,
+            review: String::new(),
+            checks: (0, 0, 0),
+            on_action: None,
+            size: Size::Xs,
         }
     }
-    strip = match session.pull_busy {
-        Some(doing) => strip
-            .child(glyph(IconName::Loading, 3.5, Role::Muted))
-            .child(line(doing, 12, 1.4, Role::Muted)),
-        None => strip.children(actions(session)),
-    };
-    Some(strip)
-}
 
-impl WorkspaceState {
-    /// Carries out `action` if it is one of the bar's, on the open session, and says whether it was.
-    pub(crate) fn press_pull_request(&mut self, action: FocusId) -> bool {
-        let (operation, doing) = match action {
-            PULL_OPEN | PULL_CHECKS => {
-                let address = self
-                    .open()
-                    .and_then(|session| session.pull_request.as_ref())
-                    .map(|request| match action {
-                        PULL_CHECKS if !request.checks_url.is_empty() => request.checks_url.clone(),
-                        _ => request.url.clone(),
-                    });
-                if let Some(address) = address {
-                    self.outbox.push(Outgoing::Open { address });
-                }
-                return true;
-            }
-            PULL_PUSH => ("push", "Pushing…"),
-            PULL_CREATE => ("create", "Opening…"),
-            PULL_CREATE_DRAFT => ("create_draft", "Opening the draft…"),
-            PULL_UPDATE => ("update", "Updating…"),
-            PULL_READY => ("ready", "Marking ready…"),
-            PULL_MERGE => ("squash", "Merging…"),
-            PULL_REOPEN => ("reopen", "Reopening…"),
-            PULL_DELETE_BRANCH => ("delete_branch", "Deleting the branch…"),
-            _ => return false,
-        };
-        let Page::Session(index) = self.page else {
-            return true;
-        };
-        let Some(session) = self
-            .sessions
-            .get_mut(index)
-            .filter(|session| session.pull_busy.is_none())
-        else {
-            return true;
-        };
-        session.pull_busy = Some(doing);
-        let title = session.title.clone();
-        let plan = crate::activity::latest_plan(session)
-            .map(|steps| steps.iter().map(|step| step.text.clone()).collect())
-            .unwrap_or_default();
-        self.outbox.push(Outgoing::PullRequestAction {
-            session: index,
-            action: operation,
-            title,
-            plan,
-        });
-        true
-    }
-
-    /// The state after the server said the branch of the session at `session` has `request` as its newest pull request, or none, on the code host `host`, when it said which.
-    pub fn with_pull_request(
-        mut self,
-        session: usize,
-        request: Option<PullRequestStatus>,
-        host: Option<CodeHost>,
-    ) -> Self {
-        if let Some(held) = self.sessions.get_mut(session) {
-            held.pull_request = request;
-            if host.is_some() {
-                held.code_host = host;
-            }
-        }
+    /// The bar with `variant`.
+    pub fn variant(mut self, variant: PullRequestVariant) -> Self {
+        self.variant = variant;
         self
     }
 
-    /// The state after the server acted on the pull request of the session at `session`: it stands as `request` afterwards, unless the action failed for `failure`, which is said in the git panel.
-    pub fn pull_request_done(
-        mut self,
-        session: usize,
-        request: Option<PullRequestStatus>,
-        failure: Option<String>,
-    ) -> Self {
-        let mut said = "pull request".to_owned();
-        if let Some(held) = self.sessions.get_mut(session) {
-            held.pull_busy = None;
-            said = noun(held).to_owned();
-            if failure.is_none() {
-                held.pull_request = request;
-            }
+    /// The bar naming the review decision `review`.
+    pub fn review(mut self, review: impl Into<String>) -> Self {
+        self.review = review.into();
+        self
+    }
+
+    /// The bar counting checks `passed`, `failed` and `pending`.
+    pub fn checks(mut self, passed: usize, failed: usize, pending: usize) -> Self {
+        self.checks = (passed, failed, pending);
+        self
+    }
+
+    /// The bar running `on_action` with the name of the action pressed:
+    /// `push`, `create`, `create_draft`, `ready`, `merge`, `squash`,
+    /// `reopen`, `delete_branch` or `open`.
+    pub fn on_action(mut self, on_action: impl Fn(String) + 'static) -> Self {
+        self.on_action = Some(Rc::new(on_action));
+        self
+    }
+
+    /// The bar at `size`.
+    pub fn size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
+    }
+
+    /// Emits the bar.
+    #[track_caller]
+    pub fn show(self) {
+        let scheme = color_scheme();
+        let extended = extended_colors();
+        let (tint, state) = match self.variant {
+            PullRequestVariant::None => (scheme.on_surface_variant, ""),
+            PullRequestVariant::Open => (extended.success, "Open"),
+            PullRequestVariant::Draft => (scheme.on_surface_variant, "Draft"),
+            PullRequestVariant::Merged => (scheme.primary, "Merged"),
+            PullRequestVariant::Closed => (scheme.error, "Closed"),
+        };
+        let actions: &[(&str, &str)] = match self.variant {
+            PullRequestVariant::None => &[
+                ("Push", "push"),
+                ("Draft", "create_draft"),
+                ("Create pull request", "create"),
+            ],
+            PullRequestVariant::Open => &[("Squash", "squash"), ("Merge", "merge")],
+            PullRequestVariant::Draft => &[("Ready for review", "ready")],
+            PullRequestVariant::Merged => &[("Delete branch", "delete_branch")],
+            PullRequestVariant::Closed => &[("Reopen", "reopen")],
+        };
+        row_arranged(
+            Modifier::new()
+                .fill_max_width()
+                .height(34.0)
+                .border_bottom_hairline(scheme.outline_variant)
+                .padding_xy(12.0, 0.0),
+            Arrangement::SpacedBy(8.0),
+            Alignment::Center,
+            move || {
+                icon(phosphor::GIT_PULL_REQUEST, 14.0, tint);
+                if self.variant == PullRequestVariant::None {
+                    Label::new("No pull request for this branch yet")
+                        .variant(LabelVariant::Muted)
+                        .size(self.size)
+                        .modifier(Modifier::new().weight(1.0))
+                        .show();
+                } else {
+                    Label::new(format!("#{}", self.number))
+                        .variant(LabelVariant::Muted)
+                        .size(self.size)
+                        .show();
+                    Label::new(self.title.clone())
+                        .size(self.size)
+                        .modifier(Modifier::new().weight(1.0).clip())
+                        .show();
+                    Badge::new(state)
+                        .variant(match self.variant {
+                            PullRequestVariant::Open => BadgeVariant::Success,
+                            PullRequestVariant::Merged => BadgeVariant::Accent,
+                            PullRequestVariant::Closed => BadgeVariant::Danger,
+                            _ => BadgeVariant::Neutral,
+                        })
+                        .size(Size::Xs)
+                        .show();
+                    checks(self.checks, self.size);
+                    if !self.review.is_empty() {
+                        Label::new(self.review.clone())
+                            .variant(LabelVariant::Subtle)
+                            .size(self.size)
+                            .show();
+                    }
+                }
+                for (index, (label, action)) in actions.iter().enumerate() {
+                    let on_action = self.on_action.clone();
+                    let action = (*action).to_owned();
+                    Button::new(*label)
+                        .variant(if index + 1 == actions.len() {
+                            ButtonVariant::Primary
+                        } else {
+                            ButtonVariant::Secondary
+                        })
+                        .size(Size::Xs)
+                        .on_click(move || {
+                            if let Some(on_action) = &on_action {
+                                on_action(action.clone());
+                            }
+                        })
+                        .show();
+                }
+                if self.variant != PullRequestVariant::None {
+                    let on_action = self.on_action.clone();
+                    IconButton::new(phosphor::ARROW_SQUARE_OUT)
+                        .size(Size::Xs)
+                        .on_click(move || {
+                            if let Some(on_action) = &on_action {
+                                on_action("open".to_owned());
+                            }
+                        })
+                        .show();
+                }
+            },
+        );
+    }
+}
+
+/// Emits the counts of checks passed, failed and pending, leaving out none.
+fn checks((passed, failed, pending): (usize, usize, usize), size: Size) {
+    let scheme = color_scheme();
+    let extended = extended_colors();
+    for (count, glyph, tint) in [
+        (passed, phosphor::CHECK_CIRCLE, extended.success),
+        (failed, phosphor::X_CIRCLE, scheme.error),
+        (pending, phosphor::CIRCLE_DASHED, extended.warning),
+    ] {
+        if count == 0 {
+            continue;
         }
-        match failure {
-            Some(message) => {
-                self.git_failed(&format!("Could not do that to the {said}: {message}"))
-            }
-            None => self,
-        }
+        row_arranged(
+            Modifier::new(),
+            Arrangement::SpacedBy(3.0),
+            Alignment::Center,
+            || {
+                icon(glyph, 12.0, tint);
+                Label::new(count.to_string())
+                    .variant(LabelVariant::Muted)
+                    .size(size)
+                    .show();
+            },
+        );
     }
 }

@@ -1,125 +1,125 @@
-//! The check box: a small control that is ticked or not, as a square or as a switch.
+//! A small square box that is ticked, empty or partly filled, such as the
+//! box that stages a changed file or a whole group of them.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, bg, border, border_color, cursor_pointer, flex, h, items_center, justify_center,
-    justify_end, justify_start, px, rounded, rounded_full, size, w,
-};
-use pm_ui::{Node, node};
+use std::rc::Rc;
 
-use crate::parts::glyph;
+use rustle::prelude::*;
 
-/// How a check box looks.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Variant {
-    /// A small square with a tick.
+use crate::app_theme::extended_colors;
+use crate::size::Size;
+use rustle::color_scheme;
+
+/// How a checkbox is drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CheckboxVariant {
+    /// Filled with the accent colour when ticked.
     #[default]
-    Box,
-    /// A track with a knob that sits at the end while it is on.
-    Switch,
+    Accent,
+    /// Filled with the muted text colour when ticked, for quiet lists.
+    Quiet,
 }
 
-/// A check box being described: whether it is ticked, what it answers to and how it looks.
-///
-/// Build it with [`Checkbox::new`], change it with [`Checkbox::variant`], and
-/// turn it into a node with [`Checkbox::build`].
-#[derive(Clone, Copy, Debug)]
+/// What a checkbox shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CheckState {
+    /// Empty.
+    #[default]
+    Off,
+    /// Ticked.
+    On,
+    /// Partly ticked, for a group where only some members are.
+    Partial,
+}
+
+/// A checkbox with a variant and a size.
+#[derive(Clone)]
 pub struct Checkbox {
-    /// Whether it is ticked.
-    checked: bool,
-    /// Whether it is dashed, standing for some of what it covers being ticked.
-    mixed: bool,
-    /// The name it answers to.
-    id: FocusId,
-    /// How it looks.
-    variant: Variant,
+    /// What it shows.
+    state: CheckState,
+    /// How it is drawn.
+    variant: CheckboxVariant,
+    /// Its size.
+    size: Size,
+    /// What a click does.
+    on_toggle: Option<Rc<dyn Fn()>>,
 }
 
 impl Checkbox {
-    /// A check box answering to `id`, ticked while `checked`.
-    pub fn new(checked: bool, id: FocusId) -> Self {
+    /// A checkbox showing `state`.
+    pub fn new(state: CheckState) -> Self {
         Self {
-            checked,
-            mixed: false,
-            id,
-            variant: Variant::default(),
+            state,
+            variant: CheckboxVariant::Accent,
+            size: Size::Sm,
+            on_toggle: None,
         }
     }
 
-    /// The check box dashed instead of ticked while `mixed` and not `checked`.
-    pub fn mixed(mut self, mixed: bool) -> Self {
-        self.mixed = mixed;
-        self
+    /// A checkbox ticked when `checked`.
+    pub fn checked(checked: bool) -> Self {
+        Self::new(if checked {
+            CheckState::On
+        } else {
+            CheckState::Off
+        })
     }
 
-    /// The check box looking like `variant`.
-    pub fn variant(mut self, variant: Variant) -> Self {
+    /// The checkbox in `variant`.
+    pub fn variant(mut self, variant: CheckboxVariant) -> Self {
         self.variant = variant;
         self
     }
 
-    /// The node that draws the check box.
-    pub fn build(self) -> Node {
-        match self.variant {
-            Variant::Box => self.build_box(),
-            Variant::Switch => self.build_switch(),
-        }
+    /// The checkbox at `size`.
+    pub fn size(mut self, size: Size) -> Self {
+        self.size = size;
+        self
     }
 
-    /// The node that draws the square.
-    fn build_box(self) -> Node {
-        let mut styles = vec![
-            flex(),
-            items_center(),
-            justify_center(),
-            size(4),
-            rounded(Radius::Sm),
-            border(),
-            cursor_pointer(),
-        ];
-        let filled = self.checked || self.mixed;
-        if filled {
-            styles.extend([bg(Role::Accent), border_color(Role::Accent)]);
-        } else {
-            styles.push(border_color(Role::Subtle));
-        }
-        let boxed = node().styles(styles);
-        let boxed = if self.checked {
-            boxed.child(glyph(IconName::Check, 3.0, Role::OnAccent))
-        } else if self.mixed {
-            boxed.child(glyph(IconName::Minus, 3.0, Role::OnAccent))
-        } else {
-            boxed
-        };
-        boxed.focusable(self.id)
+    /// The checkbox calling `on_toggle` when clicked.
+    pub fn on_toggle(mut self, on_toggle: impl Fn() + 'static) -> Self {
+        self.on_toggle = Some(Rc::new(on_toggle));
+        self
     }
 
-    /// The node that draws the switch.
-    fn build_switch(self) -> Node {
-        let track = node().styles([
-            flex(),
-            items_center(),
-            w(9),
-            h(5),
-            px(0.5),
-            rounded_full(),
-            cursor_pointer(),
-        ]);
-        let track = if self.checked {
-            track.styles([justify_end(), bg(Role::Text)])
-        } else {
-            track.styles([justify_start(), bg(Role::SurfaceHover)])
+    /// Emits the checkbox.
+    #[track_caller]
+    pub fn show(self) {
+        let scheme = color_scheme();
+        let extended = extended_colors();
+        let hovered = remember(|| false);
+        let (side, glyph) = match self.size {
+            Size::Xs => (12.0, 9.0),
+            Size::Sm => (14.0, 10.0),
+            Size::Md => (16.0, 12.0),
+            Size::Lg => (18.0, 13.0),
         };
-        let knob = node().styles([
-            size(4),
-            rounded_full(),
-            bg(if self.checked {
-                Role::Background
-            } else {
-                Role::Muted
-            }),
-        ]);
-        track.child(knob).focusable(self.id)
+        let filled = match self.variant {
+            CheckboxVariant::Accent => scheme.primary,
+            CheckboxVariant::Quiet => scheme.on_surface_variant,
+        };
+        let (fill, border) = match self.state {
+            CheckState::Off if hovered.get() => (Color::TRANSPARENT, scheme.on_surface_variant),
+            CheckState::Off => (Color::TRANSPARENT, extended.subtle),
+            CheckState::On | CheckState::Partial => (filled, filled),
+        };
+        let mut modifier = Modifier::new()
+            .size(side, side)
+            .background_rounded(fill, 3.0)
+            .border(1.0, border, 3.0)
+            .on_hover({
+                let hovered = hovered.clone();
+                move |inside| hovered.set(inside)
+            })
+            .cursor(CursorIcon::Pointer);
+        if let Some(on_toggle) = self.on_toggle {
+            modifier = modifier.clickable(move || on_toggle());
+        }
+        let state = self.state;
+        stack_aligned(modifier, BoxAlignment::Center, move || match state {
+            CheckState::On => icon(phosphor::CHECK, glyph, scheme.on_primary),
+            CheckState::Partial => icon(phosphor::MINUS, glyph, scheme.on_primary),
+            CheckState::Off => {}
+        });
     }
 }
