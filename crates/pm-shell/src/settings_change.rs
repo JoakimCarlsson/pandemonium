@@ -276,7 +276,6 @@ impl SettingsModel {
                         reach,
                         address: address.trim().to_owned(),
                         token,
-                        ..pm_config::KnownServer::default()
                     });
                 }
             }
