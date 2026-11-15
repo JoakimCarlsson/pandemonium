@@ -630,13 +630,18 @@ impl Link {
         self.prompt(text, false);
     }
 
-    /// Changes the dock with `change`, sends what it asks of the server and shows how it stands.
+    /// Changes the dock with `change`, sends what it asks of the server, has the connection replay and follow the shells it took up, and shows how it stands.
     fn change_dock(&mut self, change: impl FnOnce(&mut Dock)) {
         self.dock
             .set_scrollback(self.settings.window.terminal.scrollback);
         change(&mut self.dock);
         for (request, ask) in self.dock.take_requests() {
             self.ask(request, Ask::Dock(ask));
+        }
+        for terminal in self.dock.take_watches() {
+            if let Some(client) = &self.client {
+                client.watch_terminal(terminal, 0);
+            }
         }
         self.dock.publish(&mut self.workspace);
     }
