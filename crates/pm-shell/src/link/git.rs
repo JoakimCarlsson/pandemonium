@@ -500,7 +500,13 @@ impl Link {
 
     /// Commits the message, rewriting the last commit when `amend`, then pushes when `push`.
     fn git_commit(&mut self, amend: bool, push: bool) {
-        if self.workspace.git.changes.iter().any(|change| change.conflicted) {
+        if self
+            .workspace
+            .git
+            .changes
+            .iter()
+            .any(|change| change.conflicted)
+        {
             self.workspace.git.notice = Some("Resolve the conflicts first.".to_owned());
             return;
         }
