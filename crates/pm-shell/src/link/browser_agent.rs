@@ -18,6 +18,9 @@ impl Link {
     pub(super) fn browser_agent(&mut self) {
         if let Some(available) = self.web.announcement(&self.settings.window.general) {
             self.ask(Request::BrowserAvailable { available }, Ask::Nothing);
+            for host in self.remotes.hosts() {
+                self.ask_remote(&host, Request::BrowserAvailable { available }, Ask::Nothing);
+            }
         }
         for result in self.web.take_results() {
             let image = result

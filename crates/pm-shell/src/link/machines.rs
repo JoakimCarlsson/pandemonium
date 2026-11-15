@@ -66,6 +66,9 @@ impl Link {
         let changed = !connected.is_empty() || !answers.is_empty();
         for host in connected {
             self.hand_machine_settings(&host);
+            if let Some(available) = self.web.announced() {
+                self.ask_remote(&host, Request::BrowserAvailable { available }, Ask::Nothing);
+            }
             if self.remote_hosts().contains(&host) {
                 self.ask_remote(&host, Request::Sessions, Ask::RemoteSessions(host.clone()));
             }

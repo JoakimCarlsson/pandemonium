@@ -250,6 +250,11 @@ impl Web {
         })
     }
 
+    /// What the servers were last told about the agents' browser tools, once they were.
+    pub fn announced(&self) -> Option<bool> {
+        self.announced
+    }
+
     /// Forgets what the server was told, as when the connection to it started again.
     pub fn forget_announcement(&mut self) {
         self.announced = None;
@@ -348,6 +353,33 @@ impl Web {
         changed
     }
 
+    /// Downloads the browser when it is turned on and missing, though no page is open, and takes in how a download went; returns whether that changed anything shown.
+    pub fn prepare(
+        &mut self,
+        shown: &mut Option<Browser>,
+        shelf: &mut BrowserShelf,
+        general: &GeneralSettings,
+    ) -> bool {
+        self.install(shown, shelf, general)
+    }
+
+    /// How the download of the browser stands while one runs, or why the last one failed.
+    pub fn download_status(&self) -> Option<String> {
+        if self.installing.is_some() {
+            let note = self
+                .download_note
+                .lock()
+                .map(|held| held.clone())
+                .unwrap_or_default();
+            return Some(if note.is_empty() {
+                "Downloading the embedded browser, about 120 MB…".to_owned()
+            } else {
+                note
+            });
+        }
+        self.install_failed.clone()
+    }
+
     /// Closes every page and ends the helper.
     pub fn shutdown(&mut self) {
         self.tools = None;
@@ -389,7 +421,6 @@ impl Web {
             || self.install_failed.is_some()
             || !pm_browser::install::supported()
             || pm_browser::install::installed()
-            || (shown.is_none() && shelf.kept.is_empty())
         {
             return false;
         }
@@ -398,8 +429,11 @@ impl Web {
         let wake = self.wake.clone();
         std::thread::spawn(move || {
             let say = |text: String| {
-                if let Ok(mut held) = note.lock() {
+                if let Ok(mut held) = note.lock()
+                    && *held != text
+                {
                     *held = text;
+                    wake();
                 }
             };
             let outcome = pm_browser::install::install(&|step| match step {
