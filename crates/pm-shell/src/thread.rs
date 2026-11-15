@@ -3,10 +3,14 @@
 
 use pm_harness::{Event, Part, SlotInfo, SubagentState};
 
-use crate::composer::{QueuedPrompt, SlashCommand, agent_settings, context_gauge, with_slot_picks};
+use crate::composer::{
+    QueuedPrompt, SlashCommand, agent_settings, allowance_gauge, context_gauge, goal_chip,
+    with_slot_picks,
+};
 
 use crate::conversation::{
-    Activity, ActivityKind, Block, Extras, Message, Notice, NoticeKind, Speaker,
+    Activity, ActivityKind, Block, Extras, Message, Notice, NoticeKind, Speaker, StepState,
+    ToolStep,
 };
 use crate::model::SessionStatus;
 use crate::translate;
@@ -22,6 +26,8 @@ pub struct Thread {
     said: String,
     /// What kind of block the agent is writing.
     part: Option<Part>,
+    /// Whether the agent said it starts a new block, so the next text or thought does not add to the last.
+    fresh: bool,
     /// How many of the reader's turns there have been.
     turns: u64,
     /// The number of the last event taken.
@@ -54,23 +60,32 @@ impl Thread {
         }
         self.seq = seq;
         match event {
-            Event::Prompted { text, .. } => {
+            Event::Prompted {
+                text,
+                files,
+                checkpoint,
+                ..
+            } => {
                 self.said.clear();
                 self.part = None;
                 self.working = true;
                 self.extras.composer.working = true;
+                self.extras.tool_sign_in = None;
                 self.failed = false;
                 self.messages.push(Message {
                     speaker: Speaker::User,
                     blocks: vec![Block::markdown(text)],
                     footer: None,
                     turn: Some(self.turns),
+                    checkpoint,
+                    files,
                 });
                 self.turns += 1;
             }
             Event::Started(part) => {
                 self.said.clear();
                 self.part = Some(part);
+                self.fresh = true;
                 self.busy();
                 self.agent_message();
             }
@@ -98,18 +113,18 @@ impl Thread {
                 self.busy();
                 self.part = None;
                 self.said.clear();
-                let known = self.messages.iter_mut().rev().find_map(|message| {
-                    message.blocks.iter_mut().find_map(|block| match block {
-                        Block::Tool(step) if step.id == tool.id => Some(step),
-                        _ => None,
-                    })
-                });
-                match known {
-                    Some(step) => translate::update_step(step, &tool),
-                    None => self
-                        .agent_message()
+                if let Some(step) = self.step_mut(&tool.id) {
+                    translate::update_step(step, &tool);
+                } else if let Some(parent) = tool
+                    .parent
+                    .clone()
+                    .and_then(|parent| self.step_mut(&parent))
+                {
+                    parent.children.push(translate::tool_step(&tool));
+                } else {
+                    self.agent_message()
                         .blocks
-                        .push(Block::Tool(translate::tool_step(&tool))),
+                        .push(Block::Tool(translate::tool_step(&tool)));
                 }
             }
             Event::Background(background) => {
@@ -122,6 +137,12 @@ impl Thread {
             }
             Event::Subagent(subagent) => {
                 let running = subagent.state == SubagentState::Running;
+                if let Some(step) = self.step_mut(&subagent.call) {
+                    step.subagent = running.then(|| subagent.id.clone());
+                    if step.agent.is_none() {
+                        step.agent = Some(subagent.agent.clone());
+                    }
+                }
                 self.track(subagent.id, ActivityKind::Subagent, subagent.label, running);
             }
             Event::Plan(steps) => self.extras.plan = translate::plan(&steps),
@@ -133,9 +154,17 @@ impl Thread {
                 self.asking = true;
                 self.extras.inquiry = Some(translate::inquiry(&inquiry));
             }
-            Event::Answered(_) => {
+            Event::Answered(answers) => {
                 self.asking = false;
                 self.extras.inquiry = None;
+                let detail = answers
+                    .into_iter()
+                    .map(|(question, answer)| {
+                        format!("{question}: {}", answer.as_deref().unwrap_or("skipped"))
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                self.notice(NoticeKind::Answered, "Answered the agent's questions", detail);
             }
             Event::Trust(request) => {
                 self.asking = true;
@@ -152,12 +181,42 @@ impl Thread {
                     self.asking = false;
                 }
             }
-            Event::SignedIn => self.busy(),
-            Event::SignedOut { .. } => self.asking = true,
+            Event::SignedIn => {
+                self.extras.signed_out = None;
+                self.asking = false;
+            }
+            Event::SignedOut { reason, account } => {
+                self.end_turn(StepState::Failed, "Signed out");
+                self.extras.signed_out = Some(match account {
+                    Some(account) => format!("{account}: {reason}"),
+                    None => reason,
+                });
+                self.asking = true;
+            }
             Event::Failed(reason) => {
                 self.failed = true;
                 self.notice(NoticeKind::Failure, "The agent failed", reason);
+                self.end_turn(StepState::Failed, "Failed");
             }
+            Event::Container(step) => self.extras.container = Some(step),
+            Event::ToolSignIn(page) => self.extras.tool_sign_in = Some(page),
+            Event::Limits(pm_harness::Allowance(limits)) => {
+                if let Some(gauge) = allowance_gauge(&limits) {
+                    self.extras.composer.allowance = Some(gauge);
+                }
+            }
+            Event::Goal(goal) => self.extras.composer.goal = goal_chip(&goal),
+            Event::Slots(slots) => self.set_slots(slots),
+            Event::Restored { turn, files } => self.notice(
+                NoticeKind::Files,
+                format!("Put the files back as they were before turn {}", turn + 1),
+                files.join("\n"),
+            ),
+            Event::Undone { turn, files } => self.notice(
+                NoticeKind::Files,
+                format!("Took turn {}'s changes back out", turn + 1),
+                files.join("\n"),
+            ),
             Event::Spent(spent) => self.extras.spend = Some(translate::spend(&spent)),
             Event::ModelFallback {
                 slot,
@@ -202,6 +261,8 @@ impl Thread {
                     self.messages.truncate(cut);
                 }
                 self.turns = turn;
+                self.extras.approval = None;
+                self.extras.inquiry = None;
             }
             Event::Titled(title) => self.title = Some(title),
             Event::Commands(commands) => {
@@ -243,15 +304,15 @@ impl Thread {
                 self.model = named("model").or(self.model.take());
                 self.mode = named("mode").or(self.mode.take());
             }
-            Event::Finished(failure) => {
-                if let Some(reason) = failure {
+            Event::Finished(failure) => match failure {
+                Some(reason) => {
                     self.failed = true;
                     self.notice(NoticeKind::Failure, "The turn failed", reason);
+                    self.end_turn(StepState::Failed, "Failed");
                 }
-                self.end_turn();
-            }
-            Event::Halted => self.end_turn(),
-            _ => {}
+                None => self.end_turn(StepState::Done, "Worked"),
+            },
+            Event::Halted => self.end_turn(StepState::Failed, "Stopped"),
         }
         true
     }
@@ -268,21 +329,46 @@ impl Thread {
         self.extras.composer.working = true;
         self.asking = false;
         self.extras.approval = None;
+        self.extras.container = None;
     }
 
-    /// Ends the turn: nothing waits, nothing runs, and the reply gets its footer.
-    fn end_turn(&mut self) {
+    /// The step of the tool call `id` in the reply being written or an earlier one, nested or not.
+    fn step_mut(&mut self, id: &str) -> Option<&mut ToolStep> {
+        self.messages.iter_mut().rev().find_map(|message| {
+            message.blocks.iter_mut().find_map(|block| match block {
+                Block::Tool(step) => step.find_mut(id),
+                _ => None,
+            })
+        })
+    }
+
+    /// Ends the turn: nothing waits, steps still running are marked `closed`, and the reply gets a footer saying `verb` and how many steps it took.
+    fn end_turn(&mut self, closed: StepState, verb: &str) {
         self.working = false;
         self.extras.composer.working = false;
         self.asking = false;
         self.part = None;
+        self.fresh = false;
         self.extras.approval = None;
+        self.extras.container = None;
         self.extras.activity.clear();
         self.updates += 1;
         if let Some(message) = self.messages.last_mut()
             && message.speaker == Speaker::Agent
+            && message.footer.is_none()
         {
-            message.footer = Some("Worked".to_owned());
+            let mut steps = 0;
+            for block in &mut message.blocks {
+                if let Block::Tool(step) = block {
+                    step.close(closed);
+                    steps += step.count();
+                }
+            }
+            message.footer = Some(match steps {
+                0 => verb.to_owned(),
+                1 => format!("{verb} · 1 step"),
+                _ => format!("{verb} · {steps} steps"),
+            });
         }
     }
 
@@ -306,8 +392,10 @@ impl Thread {
     /// Puts `block` into the agent message being written, in place of its
     /// last block when that one is of the kind `same` accepts.
     fn write_block(&mut self, block: Block, same: impl Fn(&Block) -> bool) {
+        let fresh = std::mem::take(&mut self.fresh);
         let message = self.agent_message();
         match message.blocks.last_mut() {
+            Some(_) if fresh => message.blocks.push(block),
             Some(last) if same(last) => *last = block,
             _ => message.blocks.push(block),
         }
@@ -316,6 +404,7 @@ impl Thread {
     /// Sets a notice of `kind` saying `title` and `detail` into the conversation.
     fn notice(&mut self, kind: NoticeKind, title: impl Into<String>, detail: impl Into<String>) {
         self.part = None;
+        self.said.clear();
         let notice = Notice {
             kind,
             title: title.into(),
@@ -356,8 +445,82 @@ impl Thread {
 }
 
 #[cfg(test)]
+/// Tests for how a thread takes events.
 mod tests {
     use super::*;
+
+    /// A tool report with `id`, under the call `parent` when there is one.
+    fn tool(id: &str, parent: Option<&str>) -> pm_harness::Tool {
+        pm_harness::Tool {
+            id: id.to_owned(),
+            title: Some(id.to_owned()),
+            kind: None,
+            state: None,
+            target: None,
+            diff: None,
+            output: None,
+            parent: parent.map(str::to_owned),
+            agent: None,
+            worktree: None,
+        }
+    }
+
+    /// Each block the agent starts is its own, so two thoughts in a row stay two.
+    #[test]
+    fn each_thinking_block_is_one_thought() {
+        let mut thread = Thread::default();
+        thread.take(1, Event::Started(Part::Thinking));
+        thread.take(2, Event::Thought("First".to_owned()));
+        thread.take(3, Event::Started(Part::Thinking));
+        thread.take(4, Event::Thought("Second".to_owned()));
+        assert_eq!(
+            thread.messages[0].blocks,
+            [
+                Block::Thought("First".to_owned()),
+                Block::Thought("Second".to_owned())
+            ]
+        );
+    }
+
+    /// A failure ends the turn and closes the steps still running.
+    #[test]
+    fn a_failure_ends_the_turn() {
+        let mut thread = Thread::default();
+        thread.take(1, Event::Tool(tool("t", None)));
+        thread.take(2, Event::Failed("broke".to_owned()));
+        assert_eq!(thread.status(false), SessionStatus::Error);
+        let Block::Tool(step) = &thread.messages[0].blocks[0] else {
+            panic!("expected a step");
+        };
+        assert_eq!(step.state, StepState::Failed);
+        assert_eq!(thread.messages[0].footer.as_deref(), Some("Failed · 1 step"));
+    }
+
+    /// A subagent's calls nest under the call that started it, which can stop it while it runs.
+    #[test]
+    fn subagent_steps_nest_under_their_call() {
+        let mut thread = Thread::default();
+        thread.take(1, Event::Tool(tool("task", None)));
+        thread.take(
+            2,
+            Event::Subagent(pm_harness::Subagent {
+                id: "s1".to_owned(),
+                call: "task".to_owned(),
+                agent: "scout".to_owned(),
+                label: "Look".to_owned(),
+                model: None,
+                background: false,
+                state: SubagentState::Running,
+            }),
+        );
+        thread.take(3, Event::Tool(tool("read", Some("task"))));
+        let Block::Tool(step) = &thread.messages[0].blocks[0] else {
+            panic!("expected a step");
+        };
+        assert_eq!(step.subagent.as_deref(), Some("s1"));
+        assert_eq!(step.children.len(), 1);
+        assert_eq!(thread.messages[0].blocks.len(), 1);
+    }
 
     /// A finished turn reads unread until marked read, and replays are ignored.
     #[test]

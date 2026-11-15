@@ -1,12 +1,15 @@
 //! The cards above the composer: the agent's plan, and what the agent waits
 //! on the reader for: approving a plan or permission, answering its
-//! questions or trusting the project.
+//! questions, trusting the project or signing in, and the bars saying the
+//! dev container is being prepared and how the goal stands.
+
+use rustle::prelude::*;
 
 use pm_components::{
-    ApproveBand, ApproveBandVariant, InquiryCard, InquiryPrompt, PlanPanel, PlanStepState,
+    Button, ButtonVariant, Chip, Label, LabelVariant, Notice, NoticeVariant, Size, ApproveBand, ApproveBandVariant, InquiryCard, InquiryPrompt, PlanPanel, PlanStepState,
     TrustAnswer, TrustCard,
 };
-use pm_shell::{Approval, Extras, InquiryForm, InquiryReply, PlanProgress, TrustAsk, TrustVerdict};
+use pm_shell::{ConversationCommand, Approval, Extras, InquiryForm, InquiryReply, PlanProgress, TrustAsk, TrustVerdict};
 
 use crate::actions::Actions;
 
@@ -31,6 +34,63 @@ pub fn waiting_cards(extras: &Extras, actions: &Actions) {
     if let Some(trust) = &extras.trust {
         trust_card(trust, actions);
     }
+    sign_in_bars(extras, actions);
+    if let Some(step) = &extras.container {
+        Label::new(format!("Preparing the dev container: {step}"))
+            .variant(LabelVariant::Muted)
+            .size(Size::Xs)
+            .show();
+    }
+    if let Some(goal) = &extras.composer.goal {
+        Chip::new(format!("Goal · {} · {}", goal.state, goal.objective))
+            .icon(phosphor::FLAG)
+            .size(Size::Xs)
+            .selected(goal.active)
+            .show();
+        Label::new(goal.detail.clone())
+            .variant(LabelVariant::Subtle)
+            .size(Size::Xs)
+            .show();
+    }
+}
+
+/// The bars asking the reader to sign in again as the session's account, or to a tool server.
+fn sign_in_bars(extras: &Extras, actions: &Actions) {
+    if let Some(reason) = &extras.signed_out {
+        let run = actions.conversation.clone();
+        sign_in_bar("The session's account is signed out", reason, "Sign in again", move || {
+            run(ConversationCommand::SignIn)
+        });
+    }
+    if let Some(page) = &extras.tool_sign_in {
+        let open = actions.open_address.clone();
+        let address = page.clone();
+        sign_in_bar("A tool server asks you to sign in", page, "Open sign-in page", move || {
+            open(address.clone())
+        });
+    }
+}
+
+/// One bar saying `title` and `detail`, with a button reading `label` that runs `on_click`.
+fn sign_in_bar(title: &str, detail: &str, label: &str, on_click: impl Fn() + 'static) {
+    column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(pm_components::spacing(6.0)),
+        Alignment::Start,
+        || {
+            Notice::new(title)
+                .detail(detail)
+                .icon(phosphor::SIGN_IN)
+                .variant(NoticeVariant::Warning)
+                .size(Size::Sm)
+                .show();
+            Button::new(label)
+                .variant(ButtonVariant::Primary)
+                .size(Size::Sm)
+                .on_click(on_click)
+                .show();
+        },
+    );
 }
 
 /// The band asking to approve `approval`.

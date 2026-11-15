@@ -27,6 +27,10 @@ pub struct Message {
     pub footer: Option<String>,
     /// For the reader's messages, the turn it began, counted from nought.
     pub turn: Option<u64>,
+    /// For the reader's messages, whether the files were kept before the turn, so they can be put back.
+    pub checkpoint: bool,
+    /// For the reader's messages, the names of the files sent with it.
+    pub files: Vec<String>,
 }
 
 impl Message {
@@ -36,6 +40,25 @@ impl Message {
         self.blocks
             .iter()
             .map(Block::plain_text)
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+
+    /// The message as markdown: its text as written, thoughts quoted, steps as list items and notices in bold.
+    pub fn markdown(&self) -> String {
+        self.blocks
+            .iter()
+            .map(|block| match block {
+                Block::Markdown { source, .. } => source.clone(),
+                Block::Thought(text) => text
+                    .lines()
+                    .map(|line| format!("> {line}"))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                Block::Tool(step) => format!("- {}", step.title),
+                Block::Notice(notice) => format!("**{}** {}", notice.title, notice.detail),
+            })
             .filter(|text| !text.is_empty())
             .collect::<Vec<_>>()
             .join("\n\n")
@@ -96,6 +119,42 @@ pub struct ToolStep {
     pub output: Option<String>,
     /// Lines added and removed, for a call that edits a file.
     pub lines: Option<(usize, usize)>,
+    /// What an edit changed, as the lines of a unified diff.
+    pub diff: Option<String>,
+    /// The kind of subagent the call starts, when it starts one.
+    pub agent: Option<String>,
+    /// The subagent the call started, by the id it can be stopped by, while it runs.
+    pub subagent: Option<String>,
+    /// What the chip of the subagent's worktree says, such as `Merged 3 files`.
+    pub worktree: Option<String>,
+    /// The calls the subagent this call started made, in order.
+    pub children: Vec<ToolStep>,
+}
+
+impl ToolStep {
+    /// The steps under this one, all the way down, counted.
+    pub fn count(&self) -> usize {
+        1 + self.children.iter().map(ToolStep::count).sum::<usize>()
+    }
+
+    /// The step `id` among this one and those under it.
+    pub fn find_mut(&mut self, id: &str) -> Option<&mut ToolStep> {
+        if self.id == id {
+            return Some(self);
+        }
+        self.children.iter_mut().find_map(|child| child.find_mut(id))
+    }
+
+    /// Marks this step and those under it that still run as `state`, and forgets the subagent it ran.
+    pub fn close(&mut self, state: StepState) {
+        if self.state == StepState::Running {
+            self.state = state;
+        }
+        self.subagent = None;
+        for child in &mut self.children {
+            child.close(state);
+        }
+    }
 }
 
 /// The kind of a tool call.
@@ -151,6 +210,10 @@ pub enum NoticeKind {
     HandedOff,
     /// The turn or the agent failed.
     Failure,
+    /// Files were put back or a turn's changes taken out of them.
+    Files,
+    /// The reader answered the agent's questions.
+    Answered,
 }
 
 /// Something running beside the turn, shown as a chip above the prompt.
@@ -336,4 +399,10 @@ pub struct Extras {
     pub prefill: Option<String>,
     /// What the composer shows besides the text being written.
     pub composer: crate::composer::ComposerState,
+    /// Why the session's account needs signing in again, while it does.
+    pub signed_out: Option<String>,
+    /// The page a tool server asks the reader to sign in on, until they do.
+    pub tool_sign_in: Option<String>,
+    /// The step the dev container the agent runs in is on, while it is built or started.
+    pub container: Option<String>,
 }

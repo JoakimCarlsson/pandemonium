@@ -4,6 +4,7 @@ use pm_harness::{
     Inquiry, Kind, Permission, PlanStep, Progress, Spent, Standing, Tool, ToolState, TrustRequest,
     Verdict,
 };
+use pm_harness::{Merge, Worktree};
 
 use crate::conversation::{
     Approval, ApprovalChoice, InquiryForm, InquiryQuestion, PlanItem, PlanProgress, SpendSummary,
@@ -49,19 +50,52 @@ pub fn update_step(step: &mut ToolStep, tool: &Tool) {
         step.output = tool.output.clone();
     }
     if let Some(diff) = &tool.diff {
-        step.lines = Some(line_counts(diff.old.as_deref().unwrap_or(""), &diff.new));
+        let (lines, text) = unified(diff.old.as_deref().unwrap_or(""), &diff.new);
+        step.lines = Some(lines);
+        step.diff = Some(text);
+    }
+    if tool.agent.is_some() {
+        step.agent = tool.agent.clone();
+    }
+    if let Some(worktree) = &tool.worktree {
+        step.worktree = Some(worktree_chip(worktree));
     }
 }
 
-/// Lines added and removed going from `old` to `new`, counted by lines
-/// present in one and missing from the other.
-fn line_counts(old: &str, new: &str) -> (usize, usize) {
-    let before: std::collections::HashSet<&str> = old.lines().collect();
-    let after: std::collections::HashSet<&str> = new.lines().collect();
-    (
-        new.lines().filter(|line| !before.contains(line)).count(),
-        old.lines().filter(|line| !after.contains(line)).count(),
-    )
+/// What the chip of a subagent's `worktree` says.
+fn worktree_chip(worktree: &Worktree) -> String {
+    let files = |count: usize| {
+        if count == 1 {
+            "1 file".to_owned()
+        } else {
+            format!("{count} files")
+        }
+    };
+    match &worktree.merge {
+        None => "In its own worktree".to_owned(),
+        Some(Merge::Applied { files: changed }) => format!("Merged {}", files(changed.len())),
+        Some(Merge::Unchanged) => "Changed nothing".to_owned(),
+        Some(Merge::Conflicted { files: changed, .. }) => {
+            format!("Conflicts in {}", files(changed.len()))
+        }
+        Some(Merge::Held { reason, .. }) => format!("Not merged: {reason}"),
+    }
+}
+
+/// Lines added and removed going from `old` to `new`, and the changed lines as a unified diff.
+fn unified(old: &str, new: &str) -> ((usize, usize), String) {
+    let diff = similar::TextDiff::from_lines(old, new);
+    let mut added = 0;
+    let mut removed = 0;
+    for change in diff.iter_all_changes() {
+        match change.tag() {
+            similar::ChangeTag::Insert => added += 1,
+            similar::ChangeTag::Delete => removed += 1,
+            similar::ChangeTag::Equal => {}
+        }
+    }
+    let text = diff.unified_diff().context_radius(2).to_string();
+    ((added, removed), text.trim_end().to_owned())
 }
 
 /// The plan `steps` describe.

@@ -236,7 +236,7 @@ welcome page of a new session in the first project, `chat` for a new chat,
 `history`, `extensions` or `overview` for that page, and `update` or
 `sign-in` draws the update dialog or the sign-in code dialog over it.
 `approve`, `inquiry`, `trust` and `continue` show a card waiting on the
-reader. `code` opens sample files in the editor and `diff` the Diff tab;
+reader, and `signed-out` the sign-in bars and the goal chip. `code` opens sample files in the editor and `diff` the Diff tab;
 `git-menu`, `git-source`, `git-confirm` and `branch-menu` open the Git
 panel's menus and prompts; `files`, `search`, `file-menu` and `file-delete`
 show the Files and Search tabs; `quick`, `quick-commands`,

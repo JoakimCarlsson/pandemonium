@@ -7,8 +7,8 @@ use std::rc::Rc;
 use rustle::prelude::*;
 
 use pm_components::{
-    Card, CardVariant, Label, LabelVariant, Markdown, MessageMenu, Notice, NoticeVariant, Size,
-    Step, StepVariant, Thought,
+    Card, CardVariant, Chip, Label, LabelVariant, Markdown, MessageMenu, Notice, NoticeVariant,
+    Size, Step, StepVariant, Thought,
 };
 use pm_shell::{
     Block, ConversationCommand, Message, NoticeKind, Speaker, StepState, ToolKind, ToolStep,
@@ -58,6 +58,11 @@ pub fn conversation(messages: &[Message], actions: &Actions) {
 /// Emits one message: a bubble on the right for the person, the agent's
 /// blocks in a column otherwise, then its footer and menu.
 fn message_view(message: &Message, last: bool, actions: &Actions) {
+    menu(message, last, actions).around(|| message_body(message, last, actions));
+}
+
+/// Emits the body of `message`: its bubble or blocks, its footer and its menu button.
+fn message_body(message: &Message, last: bool, actions: &Actions) {
     match message.speaker {
         Speaker::User => {
             row_arranged(
@@ -71,12 +76,15 @@ fn message_view(message: &Message, last: bool, actions: &Actions) {
                         .variant(CardVariant::Filled)
                         .size(Size::Md)
                         .modifier(Modifier::new().width_in(0.0, READING_WIDTH * 0.6))
-                        .show(|| blocks(&message.blocks));
+                        .show(|| {
+                            blocks(&message.blocks, actions);
+                            sent_files(&message.files);
+                        });
                 },
             );
         }
         Speaker::Agent => {
-            blocks(&message.blocks);
+            blocks(&message.blocks, actions);
             row_arranged(
                 Modifier::new()
                     .fill_max_width()
@@ -98,8 +106,30 @@ fn message_view(message: &Message, last: bool, actions: &Actions) {
     }
 }
 
+/// Emits a chip for each file in `files`, the names of the files sent with a message.
+fn sent_files(files: &[String]) {
+    if files.is_empty() {
+        return;
+    }
+    row_arranged(
+        Modifier::new()
+            .fill_max_width()
+            .padding_each(0.0, 6.0, 0.0, 0.0),
+        Arrangement::SpacedBy(pm_components::spacing(4.0)),
+        Alignment::Center,
+        || {
+            for file in files {
+                Chip::new(file.clone())
+                    .icon(phosphor::PAPERCLIP)
+                    .size(Size::Xs)
+                    .show();
+            }
+        },
+    );
+}
+
 /// Emits `list` in a column, each block as its kind shows.
-fn blocks(list: &[Block]) {
+fn blocks(list: &[Block], actions: &Actions) {
     column_arranged(
         Modifier::new().fill_max_width(),
         Arrangement::SpacedBy(pm_components::spacing(8.0)),
@@ -109,7 +139,7 @@ fn blocks(list: &[Block]) {
                 match block {
                     Block::Markdown { blocks, .. } => Markdown::new(blocks.clone()).show(),
                     Block::Thought(text) => Thought::new(text.clone()).show(),
-                    Block::Tool(step) => tool_step(step),
+                    Block::Tool(step) => to_step(step, actions).show(),
                     Block::Notice(notice) => {
                         let (variant, glyph) = match notice.kind {
                             NoticeKind::Fallback => {
@@ -120,6 +150,12 @@ fn blocks(list: &[Block]) {
                                 (NoticeVariant::Info, phosphor::ARROW_BEND_DOWN_RIGHT)
                             }
                             NoticeKind::Failure => (NoticeVariant::Danger, phosphor::WARNING),
+                            NoticeKind::Files => {
+                                (NoticeVariant::Info, phosphor::CLOCK_COUNTER_CLOCKWISE)
+                            }
+                            NoticeKind::Answered => {
+                                (NoticeVariant::Accent, phosphor::CHAT_CIRCLE_TEXT)
+                            }
                         };
                         Notice::new(notice.title.clone())
                             .detail(notice.detail.clone())
@@ -133,8 +169,8 @@ fn blocks(list: &[Block]) {
     );
 }
 
-/// Emits the row of the tool call `step`.
-fn tool_step(step: &ToolStep) {
+/// The row of the tool call `step`, with the steps of the subagent it started under it.
+fn to_step(step: &ToolStep, actions: &Actions) -> Step {
     let glyph = match step.kind {
         ToolKind::Read => phosphor::FILE_TEXT,
         ToolKind::Edit => phosphor::PENCIL_SIMPLE,
@@ -148,12 +184,28 @@ fn tool_step(step: &ToolStep) {
         StepState::Done => StepVariant::Done,
         StepState::Failed => StepVariant::Failed,
     };
-    Step::new(step.title.clone())
+    let mut row = Step::new(step.title.clone())
         .icon(glyph)
         .variant(variant)
         .lines(step.lines)
-        .output(step.output.clone())
-        .show();
+        .output(step.output.clone().or_else(|| step.diff.clone()))
+        .children(
+            step.children
+                .iter()
+                .map(|child| to_step(child, actions))
+                .collect(),
+        );
+    if let Some(agent) = &step.agent {
+        row = row.chip(agent.clone());
+    }
+    if let Some(worktree) = &step.worktree {
+        row = row.chip(worktree.clone());
+    }
+    if let Some(subagent) = step.subagent.clone() {
+        let run = actions.conversation.clone();
+        row = row.on_stop(move || run(ConversationCommand::StopSubagent(subagent.clone())));
+    }
+    row
 }
 
 /// The menu of `message`: copying it, and the conversation commands that act
@@ -163,12 +215,21 @@ fn menu(message: &Message, last: bool, actions: &Actions) -> MessageMenu {
         let run = actions.conversation.clone();
         move || run(order.clone())
     };
-    let mut menu = MessageMenu::new().copy("Copy", message.plain_text());
+    let mut menu = MessageMenu::new()
+        .copy("Copy", message.plain_text())
+        .copy("Copy as Markdown", message.markdown());
     match (message.speaker, message.turn) {
         (Speaker::User, Some(turn)) => {
             menu = menu
                 .item("Rewind to here", command(ConversationCommand::Rewind(turn)))
                 .item("Branch off here", command(ConversationCommand::Fork(turn)));
+            if message.checkpoint {
+                menu = menu.item(
+                    "Restore files to before this turn",
+                    command(ConversationCommand::Restore(turn)),
+                );
+            }
+            menu = menu.item("Undo this turn", command(ConversationCommand::UndoTurn(turn)));
         }
         _ => {
             if last {

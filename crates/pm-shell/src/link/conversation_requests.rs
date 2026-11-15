@@ -26,6 +26,14 @@ pub enum ConversationCommand {
     Rewind(u64),
     /// Start a session branching off after the reader's turn given.
     Fork(u64),
+    /// Put the files back as they were before the reader's turn given.
+    Restore(u64),
+    /// Take what the reader's turn given changed back out of the files.
+    UndoTurn(u64),
+    /// Stop the subagent with this id, and those it started.
+    StopSubagent(String),
+    /// Sign in again as the session's account.
+    SignIn,
 }
 
 impl Link {
@@ -158,7 +166,25 @@ impl Link {
                 self.ask(Request::Rewind { session, turn }, Ask::Nothing)
             }
             ConversationCommand::Fork(turn) => {
-                self.ask(Request::ForkSession { session, turn }, Ask::Nothing)
+                self.ask(Request::ForkSession { session, turn }, Ask::Start)
+            }
+            ConversationCommand::Restore(turn) => {
+                self.ask(Request::Restore { session, turn }, Ask::Nothing)
+            }
+            ConversationCommand::UndoTurn(turn) => self.ask(
+                Request::UndoTurn {
+                    session,
+                    turn,
+                    paths: Vec::new(),
+                },
+                Ask::Nothing,
+            ),
+            ConversationCommand::StopSubagent(subagent) => {
+                self.ask(Request::StopSubagent { session, subagent }, Ask::Nothing)
+            }
+            ConversationCommand::SignIn => {
+                self.workspace.extras.signed_out = None;
+                self.ask(Request::SignInSession { session }, Ask::Nothing)
             }
         }
     }

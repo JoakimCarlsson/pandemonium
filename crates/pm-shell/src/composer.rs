@@ -209,6 +209,47 @@ pub struct ComposerState {
     pub captures: Vec<Capture>,
     /// The menu open when the composer is first drawn, for snapshots.
     pub menu: Option<ComposerMenu>,
+    /// The conversation's goal and how it stands, while it has one.
+    pub goal: Option<GoalChip>,
+}
+
+/// The conversation's goal, as the composer's chip shows it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GoalChip {
+    /// What the agent works toward.
+    pub objective: String,
+    /// How it stands, in words, such as `Paused`.
+    pub state: String,
+    /// What the chip says when asked: tokens used and the harness's note.
+    pub detail: String,
+    /// Whether the agent works toward it now.
+    pub active: bool,
+}
+
+/// The chip `goal` shows, or nothing once it was cleared.
+pub fn goal_chip(goal: &pm_harness::Goal) -> Option<GoalChip> {
+    use pm_harness::GoalState;
+    let state = match goal.state {
+        GoalState::Active => "Active",
+        GoalState::Paused => "Paused",
+        GoalState::BudgetLimited => "Out of budget",
+        GoalState::Complete => "Complete",
+        GoalState::Cleared => return None,
+    };
+    let used = match goal.budget {
+        Some(budget) => format!("{} of {} tokens", short_count(goal.used), short_count(budget)),
+        None => format!("{} tokens", short_count(goal.used)),
+    };
+    let detail = match &goal.note {
+        Some(note) if !note.is_empty() => format!("{used} · {note}"),
+        _ => used,
+    };
+    Some(GoalChip {
+        objective: goal.objective.clone(),
+        state: state.to_owned(),
+        detail,
+        active: goal.state == GoalState::Active,
+    })
 }
 
 impl ComposerState {

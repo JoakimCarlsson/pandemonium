@@ -39,6 +39,7 @@ const WORDS: &[&str] = &[
     "inquiry",
     "trust",
     "continue",
+    "signed-out",
     "update",
     "sign-in",
     "problems",
@@ -515,6 +516,7 @@ fn ask_named(words: &[&str]) -> Option<pm_shell::SampleAsk> {
         "inquiry" => Some(pm_shell::SampleAsk::Inquiry),
         "trust" => Some(pm_shell::SampleAsk::Trust),
         "continue" => Some(pm_shell::SampleAsk::Continue),
+        "signed-out" => Some(pm_shell::SampleAsk::SignIn),
         _ => None,
     })
 }

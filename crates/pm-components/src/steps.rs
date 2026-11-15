@@ -1,9 +1,13 @@
 //! The agent's work shown inline in its reply: one row per tool it used,
 //! opening onto what the tool printed, and its thinking folded to a line.
 
+use std::rc::Rc;
+
 use rustle::prelude::*;
 
 use crate::app_theme::extended_colors;
+use crate::chip::Chip;
+use crate::icon_button::IconButton;
 use crate::label::{Label, LabelVariant};
 use crate::markdown::{Markdown, MarkdownVariant};
 use crate::size::Size;
@@ -21,8 +25,8 @@ pub enum StepVariant {
     Failed,
 }
 
-/// One tool call of the agent, as a row that opens onto its output.
-#[derive(Clone, Debug)]
+/// One tool call of the agent, as a row that opens onto its output and the steps of the subagent it started.
+#[derive(Clone)]
 pub struct Step {
     /// What the call does.
     title: String,
@@ -36,6 +40,24 @@ pub struct Step {
     lines: Option<(usize, usize)>,
     /// Its text size.
     size: Size,
+    /// The chips after its title, such as the kind of subagent and what became of its worktree.
+    chips: Vec<String>,
+    /// What stopping the subagent it started does, while that runs.
+    on_stop: Option<Rc<dyn Fn()>>,
+    /// The steps of the subagent it started, shown under it.
+    children: Vec<Step>,
+}
+
+impl std::fmt::Debug for Step {
+    /// Writes the step's title, state and how many steps are under it.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Step")
+            .field("title", &self.title)
+            .field("variant", &self.variant)
+            .field("children", &self.children.len())
+            .finish()
+    }
 }
 
 impl Step {
@@ -48,7 +70,28 @@ impl Step {
             output: None,
             lines: None,
             size: Size::Xs,
+            chips: Vec::new(),
+            on_stop: None,
+            children: Vec::new(),
         }
+    }
+
+    /// The step with a chip saying `text` after its title.
+    pub fn chip(mut self, text: impl Into<String>) -> Self {
+        self.chips.push(text.into());
+        self
+    }
+
+    /// The step with a Stop button that runs `on_stop`.
+    pub fn on_stop(mut self, on_stop: impl Fn() + 'static) -> Self {
+        self.on_stop = Some(Rc::new(on_stop));
+        self
+    }
+
+    /// The step with `children` nested under it.
+    pub fn children(mut self, children: Vec<Step>) -> Self {
+        self.children = children;
+        self
     }
 
     /// The step with `glyph` naming its kind of tool.
@@ -86,9 +129,12 @@ impl Step {
     pub fn show(self) {
         let scheme = color_scheme();
         let extended = extended_colors();
-        let open = remember(|| self.variant == StepVariant::Failed);
+        let open = remember(|| self.variant == StepVariant::Failed || !self.children.is_empty());
         let toggle = open.clone();
-        let has_output = self.output.is_some();
+        let has_output = self.output.is_some() || !self.children.is_empty();
+        let chips = self.chips.clone();
+        let on_stop = self.on_stop.clone();
+        let children = self.children.clone();
         column_with(Modifier::new().fill_max_width(), move || {
             let mut header = Modifier::new()
                 .fill_max_width()
@@ -110,6 +156,15 @@ impl Step {
                         .size(self.size)
                         .modifier(Modifier::new().weight(1.0).clip())
                         .show();
+                    for chip in chips {
+                        Chip::new(chip).size(Size::Xs).show();
+                    }
+                    if let Some(on_stop) = on_stop {
+                        IconButton::new(phosphor::STOP)
+                            .size(Size::Xs)
+                            .on_click(move || on_stop())
+                            .show();
+                    }
                     if let Some((added, removed)) = self.lines {
                         Label::new(format!("+{added}"))
                             .colour(extended.success)
@@ -139,6 +194,18 @@ impl Step {
                     }
                 },
             );
+            if open.get() && !children.is_empty() {
+                column_with(
+                    Modifier::new()
+                        .fill_max_width()
+                        .padding_each(18.0, 0.0, 0.0, 2.0),
+                    move || {
+                        for (place, child) in children.into_iter().enumerate() {
+                            key(place, move || child.show());
+                        }
+                    },
+                );
+            }
             if let (true, Some(output)) = (open.get(), &self.output) {
                 let output = output.clone();
                 column_with(

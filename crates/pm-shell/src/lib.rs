@@ -68,6 +68,7 @@ pub use browser_scope::{BrowserShelf, NO_SCOPE, SavedBrowser};
 pub use browser_tools::{agent_may_open, changes_page, locked_message, origin_allowed, tabs_text};
 pub use composer::{
     Capture, CaptureKind, ComposerAction, ComposerMenu, ComposerState, ConversationSetting, Gauge,
+    GoalChip, goal_chip,
     PickedElement, PromptFile, QueuedPrompt, SettingPick, SlashCommand, allowance_gauge,
     context_gauge, matching_commands, prompt_text, slot_resolves_to, with_slot_picks,
 };

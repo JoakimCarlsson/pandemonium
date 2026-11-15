@@ -18,6 +18,8 @@ pub enum SampleAsk {
     Trust,
     /// Continuing the session, a chat, in a project.
     Continue,
+    /// Signing in again, to the account and to a tool server, with a goal set.
+    SignIn,
 }
 
 /// The markdown of the first agent reply: fold-outs, a table, a diagram, a
@@ -88,6 +90,7 @@ fn step(kind: ToolKind, title: &str, target: Option<&str>) -> Block {
         target: target.map(str::to_owned),
         output: None,
         lines: None,
+        ..ToolStep::default()
     })
 }
 
@@ -99,6 +102,9 @@ pub fn conversation() -> Vec<Message> {
             blocks: vec![Block::markdown("How does a query flow through VOID right now?")],
             footer: None,
             turn: Some(0),
+            checkpoint: true,
+            files: vec!["architecture.png".to_owned()],
+            ..Message::default()
         },
         Message {
             speaker: Speaker::Agent,
@@ -109,6 +115,31 @@ pub fn conversation() -> Vec<Message> {
                 step(ToolKind::Read, "Read Cargo.toml", Some("Cargo.toml")),
                 step(ToolKind::Search, "Search for `fn search`", None),
                 Block::Tool(ToolStep {
+                    id: "task".to_owned(),
+                    title: "Survey ranking crates".to_owned(),
+                    state: StepState::Running,
+                    agent: Some("scout".to_owned()),
+                    subagent: Some("scout-1".to_owned()),
+                    worktree: Some("In its own worktree".to_owned()),
+                    children: vec![
+                        ToolStep {
+                            id: "scout-read".to_owned(),
+                            title: "Read void-rank/Cargo.toml".to_owned(),
+                            kind: ToolKind::Read,
+                            state: StepState::Done,
+                            ..ToolStep::default()
+                        },
+                        ToolStep {
+                            id: "scout-fetch".to_owned(),
+                            title: "Fetch crates.io/search?q=bm25".to_owned(),
+                            kind: ToolKind::Fetch,
+                            state: StepState::Running,
+                            ..ToolStep::default()
+                        },
+                    ],
+                    ..ToolStep::default()
+                }),
+                Block::Tool(ToolStep {
                     id: "edit".to_owned(),
                     title: "Edit void-server/src/router.rs".to_owned(),
                     kind: ToolKind::Edit,
@@ -116,6 +147,7 @@ pub fn conversation() -> Vec<Message> {
                     target: Some("void-server/src/router.rs".to_owned()),
                     output: None,
                     lines: Some((12, 3)),
+                    ..ToolStep::default()
                 }),
                 Block::Tool(ToolStep {
                     id: "test".to_owned(),
@@ -127,6 +159,7 @@ pub fn conversation() -> Vec<Message> {
                         "test extract::strips_scripts ... FAILED\nassertion failed: text.contains(\"body\")".to_owned(),
                     ),
                     lines: None,
+                    ..ToolStep::default()
                 }),
                 Block::Notice(Notice {
                     kind: NoticeKind::Fallback,
@@ -137,6 +170,7 @@ pub fn conversation() -> Vec<Message> {
             ],
             footer: Some("Worked for 42s".to_owned()),
             turn: None,
+            ..Message::default()
         },
         Message {
             speaker: Speaker::User,
@@ -145,6 +179,7 @@ pub fn conversation() -> Vec<Message> {
             )],
             footer: None,
             turn: Some(1),
+            ..Message::default()
         },
         Message {
             speaker: Speaker::Agent,
@@ -158,6 +193,7 @@ pub fn conversation() -> Vec<Message> {
             ],
             footer: Some("Worked for 6s".to_owned()),
             turn: None,
+            ..Message::default()
         },
     ]
 }
@@ -217,6 +253,16 @@ pub fn extras() -> Extras {
 /// Sets the agent of `extras` waiting on `ask`.
 pub fn sample_ask(extras: &mut Extras, ask: SampleAsk) {
     match ask {
+        SampleAsk::SignIn => {
+            extras.signed_out = Some("Claude: the token expired".to_owned());
+            extras.tool_sign_in = Some("https://mcp.example.com/login".to_owned());
+            extras.composer.goal = Some(crate::composer::GoalChip {
+                objective: "Ship /v1/search".to_owned(),
+                state: "Active".to_owned(),
+                detail: "41k of 200k tokens".to_owned(),
+                active: true,
+            });
+        }
         SampleAsk::Plan => {
             extras.approval = Some(Approval {
                 ticket: 1,

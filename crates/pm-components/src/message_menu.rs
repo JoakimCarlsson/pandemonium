@@ -1,12 +1,13 @@
 //! The menu of a message, opened from the button beside it: copying it and
 //! the conversation commands that act from it, such as retrying or
-//! rewinding to it.
+//! rewinding to it; the same entries open on a right click over the message.
 
 use std::rc::Rc;
 
 use rustle::prelude::*;
 
 use crate::icon_button::IconButton;
+use crate::menu::Menu;
 use crate::size::Size;
 
 /// The visual treatment of the menu's button.
@@ -77,6 +78,39 @@ impl MessageMenu {
     pub fn size(mut self, size: Size) -> Self {
         self.size = size;
         self
+    }
+
+    /// Emits `content` in a column whose right click opens the entries as a menu where the pointer is.
+    #[track_caller]
+    pub fn around(self, content: impl FnOnce()) {
+        let at = remember(|| None::<(f32, f32)>);
+        let open = at.clone();
+        column_with(
+            Modifier::new()
+                .fill_max_width()
+                .on_secondary_click(move |event| {
+                    open.set(Some((event.position.x, event.position.y)))
+                }),
+            move || {
+                if let Some((across, down)) = at.get() {
+                    let dismiss = at.clone();
+                    let mut menu = Menu::new()
+                        .offset(across, down)
+                        .width(240.0)
+                        .on_dismiss(move || dismiss.set(None));
+                    for entry in self.entries {
+                        let close = at.clone();
+                        let on_click = entry.on_click.clone();
+                        menu = menu.item(entry.label, move || {
+                            close.set(None);
+                            on_click();
+                        });
+                    }
+                    menu.show();
+                }
+                content();
+            },
+        );
     }
 
     /// Emits the button and, while open, the menu under it.
