@@ -573,7 +573,7 @@ fn note_box(note: &DiffNote, place: usize, view: &DiffView) {
         Arrangement::SpacedBy(crate::spacing(8.0)),
         Alignment::Center,
         || {
-            icon(phosphor::CHAT_CIRCLE_TEXT, 13.0, scheme.primary);
+            icon(phosphor::CHAT_CIRCLE_TEXT, 14.0, scheme.primary);
             Label::new(note.text.clone())
                 .size(Size::Xs)
                 .modifier(Modifier::new().weight(1.0))

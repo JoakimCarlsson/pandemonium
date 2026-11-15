@@ -44,7 +44,7 @@ impl Leading {
                 stack_aligned(
                     Modifier::new().size(14.0, 14.0),
                     BoxAlignment::Center,
-                    || icon(glyph.clone(), 13.0, scheme.on_surface_variant),
+                    || icon(glyph.clone(), 14.0, scheme.on_surface_variant),
                 );
             }
             Leading::Dot { filled } => {
@@ -275,10 +275,10 @@ impl Tile {
                                     .cursor(CursorIcon::Pointer)
                                     .clickable(move || on_press()),
                                 BoxAlignment::Center,
-                                || icon(glyph.clone(), 13.0, tint),
+                                || icon(glyph.clone(), 14.0, tint),
                             );
                         }
-                        None => icon(glyph.clone(), 13.0, tint),
+                        None => icon(glyph.clone(), 14.0, tint),
                     }
                 }
             },

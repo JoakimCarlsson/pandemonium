@@ -133,7 +133,7 @@ impl PlanPanel {
                                 PlanStepState::Doing => (phosphor::CIRCLE_HALF, scheme.primary),
                                 PlanStepState::Done => (phosphor::CHECK_CIRCLE, extended.success),
                             };
-                            icon(mark, 13.0, tint);
+                            icon(mark, 14.0, tint);
                             let mut label = Label::new(text.clone()).size(self.size).wrap();
                             label = match state {
                                 PlanStepState::Done => label.variant(LabelVariant::Subtle),
@@ -271,7 +271,7 @@ impl ApproveBand {
                     Arrangement::SpacedBy(crate::spacing(8.0)),
                     Alignment::Center,
                     || {
-                        icon(glyph, 15.0, tint);
+                        icon(glyph, 16.0, tint);
                         Label::new(self.title.clone())
                             .variant(LabelVariant::Heading)
                             .size(self.size)

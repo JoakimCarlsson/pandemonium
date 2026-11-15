@@ -243,8 +243,8 @@ fn close_mark(on_close: Option<Rc<dyn Fn()>>, dirty: bool, revealed: bool, side:
 fn glyph_size(size: Size) -> f32 {
     match size {
         Size::Xs => 12.0,
-        Size::Sm => 13.0,
-        Size::Md => 15.0,
+        Size::Sm => 14.0,
+        Size::Md => 16.0,
         Size::Lg => 16.0,
     }
 }

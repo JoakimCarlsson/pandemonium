@@ -107,8 +107,8 @@ impl Chip {
         let lit = hovered.get();
         let (height, padding, glyph) = match self.size {
             Size::Xs => (22.0, 8.0, 12.0),
-            Size::Sm => (26.0, 10.0, 13.0),
-            Size::Md => (32.0, 14.0, 14.0),
+            Size::Sm => (26.0, 10.0, 14.0),
+            Size::Md => (32.0, 14.0, 16.0),
             Size::Lg => (38.0, 18.0, 16.0),
         };
         let (height, padding) = (crate::row_height(height), crate::spacing(padding));

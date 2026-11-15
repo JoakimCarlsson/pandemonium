@@ -302,7 +302,7 @@ fn entry_row(entry: Entry, height: f32, dismiss: Option<Rc<dyn Fn()>>) {
                 Alignment::Center,
                 || {
                     match glyph {
-                        Some(glyph) => icon(glyph, 13.0, tone),
+                        Some(glyph) => icon(glyph, 14.0, tone),
                         None => spacer(Modifier::new().width(13.0)),
                     }
                     Label::new(label)

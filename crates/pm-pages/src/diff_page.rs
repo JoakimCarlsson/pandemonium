@@ -64,7 +64,7 @@ pub fn diff_page(workspace: &Workspace, path: &str, actions: &Actions) {
             Arrangement::SpacedBy(pm_components::spacing(6.0)),
             Alignment::Center,
             || {
-                icon(phosphor::GIT_DIFF, 13.0, scheme.on_surface_variant);
+                icon(phosphor::GIT_DIFF, 14.0, scheme.on_surface_variant);
                 Label::new(path.to_owned())
                     .size(Size::Xs)
                     .modifier(Modifier::new().weight(1.0))

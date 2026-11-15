@@ -109,7 +109,7 @@ impl SearchField {
             Arrangement::SpacedBy(crate::spacing(8.0)),
             Alignment::Center,
             move || {
-                icon(phosphor::MAGNIFYING_GLASS, 13.0, scheme.on_surface_variant);
+                icon(phosphor::MAGNIFYING_GLASS, 14.0, scheme.on_surface_variant);
                 Label::new(placeholder)
                     .variant(LabelVariant::Muted)
                     .modifier(Modifier::new().weight(1.0))

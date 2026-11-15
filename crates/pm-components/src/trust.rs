@@ -116,7 +116,7 @@ impl TrustCard {
                     Arrangement::SpacedBy(crate::spacing(8.0)),
                     Alignment::Center,
                     || {
-                        icon(phosphor::SHIELD_WARNING, 15.0, tint);
+                        icon(phosphor::SHIELD_WARNING, 16.0, tint);
                         Label::new(format!("Trust {}?", self.root))
                             .variant(LabelVariant::Heading)
                             .size(self.size)

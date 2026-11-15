@@ -102,7 +102,7 @@ impl InquiryCard {
                 Arrangement::SpacedBy(crate::spacing(8.0)),
                 Alignment::Center,
                 || {
-                    icon(phosphor::CHAT_CIRCLE_DOTS, 15.0, scheme.primary);
+                    icon(phosphor::CHAT_CIRCLE_DOTS, 16.0, scheme.primary);
                     Label::new("The agent asks")
                         .variant(LabelVariant::Heading)
                         .size(self.size)

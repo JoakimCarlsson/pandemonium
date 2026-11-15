@@ -317,7 +317,7 @@ fn header_chip(glyph: Icon, text: &str) {
         Arrangement::SpacedBy(pm_components::spacing(4.0)),
         Alignment::Center,
         || {
-            icon(glyph, 11.0, scheme.on_surface_variant);
+            icon(glyph, 12.0, scheme.on_surface_variant);
             Label::new(text.to_owned())
                 .variant(LabelVariant::Muted)
                 .size(Size::Xs)

@@ -86,9 +86,9 @@ impl IconButton {
         let hovered = remember(|| false);
         let (side, glyph) = match self.size {
             Size::Xs => (20.0, 12.0),
-            Size::Sm => (26.0, 15.0),
-            Size::Md => (30.0, 16.0),
-            Size::Lg => (34.0, 18.0),
+            Size::Sm => (28.0, 16.0),
+            Size::Md => (32.0, 16.0),
+            Size::Lg => (36.0, 16.0),
         };
         let fill = match self.variant {
             IconButtonVariant::Primary => scheme.on_surface_variant,

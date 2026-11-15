@@ -89,10 +89,10 @@ impl Checkbox {
         let extended = extended_colors();
         let hovered = remember(|| false);
         let (side, glyph) = match self.size {
-            Size::Xs => (12.0, 9.0),
+            Size::Xs => (12.0, 8.0),
             Size::Sm => (14.0, 10.0),
             Size::Md => (16.0, 12.0),
-            Size::Lg => (18.0, 13.0),
+            Size::Lg => (18.0, 14.0),
         };
         let filled = match self.variant {
             CheckboxVariant::Accent => scheme.primary,
