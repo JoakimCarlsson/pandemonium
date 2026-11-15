@@ -23,6 +23,9 @@ pub(super) enum CodeAsk {
     Base(String, String),
     /// What the folder holds of the file at this path in this folder, to compare its editor with.
     Compare(String, String),
+    /// What the folder holds of the open file at this path in this folder
+    /// after something outside the editor changed the folder.
+    Reload(String, String),
 }
 
 impl Link {
@@ -103,6 +106,65 @@ impl Link {
         if git.diff.is_none() {
             git.diff = git.listed().first().map(|change| change.path.clone());
             self.git_load_diff();
+        }
+    }
+
+    /// Reads again the open files of `directory` that have no unsaved
+    /// changes, after the server said something changed the folder, so
+    /// that their editors follow edits made outside them.
+    pub(super) fn reload_open_files(&mut self, directory: &str) {
+        let stale: Vec<(String, String)> = self
+            .workspace
+            .open_files
+            .files
+            .iter()
+            .filter(|file| {
+                file.body == FileBody::Text
+                    && !file.is_dirty()
+                    && super::same_folder(&file.directory, directory)
+            })
+            .map(|file| (file.directory.clone(), file.path.clone()))
+            .collect();
+        for (directory, path) in stale {
+            self.ask(
+                Request::ReadFile {
+                    directory: directory.clone(),
+                    path: path.clone(),
+                    head: false,
+                    revision: None,
+                },
+                Ask::Code(CodeAsk::Reload(directory, path)),
+            );
+        }
+    }
+
+    /// Puts `text`, what the folder now holds of the open file at `index`,
+    /// in its editor in place of the text it shows, keeping the caret where
+    /// it can, unless the file was changed in the editor meanwhile or holds
+    /// that text already; its language server is told of the change.
+    fn take_reloaded(&mut self, index: usize, text: String) {
+        let told = {
+            let file = &self.workspace.open_files.files[index];
+            if file.body != FileBody::Text || file.is_dirty() {
+                return;
+            }
+            let mut document = file.document.0.borrow_mut();
+            let text = text.replace("\r\n", "\n");
+            if document.field.text() == text {
+                return;
+            }
+            let whole = document.field.text().len();
+            let caret = document.field.caret().min(text.len());
+            let caret = (0..=caret)
+                .rev()
+                .find(|at| text.is_char_boundary(*at))
+                .unwrap_or(0);
+            let edited = document.edit(pm_text::Edit::Replace(0..whole, text, (caret, caret)));
+            document.mark_saved();
+            edited.and_then(|edited| edited.change)
+        };
+        if let Some((version, change)) = told {
+            self.code(index, ServerAsk::Changed(version, change));
         }
     }
 
@@ -276,6 +338,11 @@ impl Link {
                         index,
                         crate::open_files::Comparison::between("Saved", &saved, &edited),
                     );
+                }
+            }
+            (CodeAsk::Reload(directory, path), Response::File { text: Some(text), .. }) => {
+                if let Some(index) = files.position(&directory, &path) {
+                    self.take_reloaded(index, text);
                 }
             }
             (CodeAsk::Save(_, path), Response::Failed { message }) => {

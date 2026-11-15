@@ -71,7 +71,7 @@ impl Link {
                     .filter(|path| {
                         git.changes
                             .iter()
-                            .any(|change| &change.path == path && change.diff.is_empty())
+                            .any(|change| &change.path == path && !change.fetched)
                     })
                     .collect();
                 if paths.is_empty() || folder.is_empty() {
@@ -81,9 +81,9 @@ impl Link {
                 self.ask(
                     Request::Diffs {
                         directory: folder.clone(),
-                        paths,
+                        paths: paths.clone(),
                     },
-                    Ask::Git(GitAsk::Diffs(folder)),
+                    Ask::Git(GitAsk::Diffs(folder, paths)),
                 );
             }
             GitAction::TakeConflict(place, side) => {

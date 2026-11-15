@@ -27,8 +27,10 @@ pub(super) enum GitAsk {
     Branches(String),
     /// The folder's remotes and their branches.
     BranchInfo(String),
-    /// The diffs of files listed without them.
-    Diffs(String),
+    /// The diffs of files listed without them: the folder and the paths asked for.
+    Diffs(String, Vec<String>),
+    /// The folder's stashes.
+    Stashes(String),
     /// The files a commit or a branch changed, for the folder.
     Revision(String),
     /// The versions of a conflicted file of the folder, at the path.
@@ -97,7 +99,13 @@ impl Link {
                 directory: folder.clone(),
                 branch,
             },
-            Ask::Git(GitAsk::BranchInfo(folder)),
+            Ask::Git(GitAsk::BranchInfo(folder.clone())),
+        );
+        self.ask(
+            Request::Stashes {
+                directory: folder.clone(),
+            },
+            Ask::Git(GitAsk::Stashes(folder)),
         );
     }
 
@@ -136,7 +144,8 @@ impl Link {
             | (GitAsk::Log(folder), _)
             | (GitAsk::Branches(folder), _)
             | (GitAsk::BranchInfo(folder), _)
-            | (GitAsk::Diffs(folder), _)
+            | (GitAsk::Diffs(folder, _), _)
+            | (GitAsk::Stashes(folder), _)
                 if folder != git.folder => {}
             (
                 GitAsk::Inspect(_),
@@ -159,6 +168,7 @@ impl Link {
                 git.upstream = tracking.upstream;
                 git.ahead = tracking.ahead;
                 git.behind = tracking.behind;
+                git.skippable = matches!(operation, Some(pm_git::Operation::Rebase { .. }));
                 git.operation = operation.map(|operation| operation.label());
                 git.repository = true;
                 git.loaded = true;
@@ -190,19 +200,28 @@ impl Link {
                 git.remotes = remotes;
                 git.remote_branches = remote_branches;
             }
-            (GitAsk::Diffs(_), Response::Diffs { files }) => {
-                for file in files {
-                    git.wanted.retain(|path| *path != file.path);
-                    if let Some(change) = git
-                        .changes
-                        .iter_mut()
-                        .find(|change| change.path == file.path)
-                    {
-                        change.diff = file.diff;
+            (GitAsk::Diffs(_, asked), response) => {
+                let files = match response {
+                    Response::Diffs { files } => files,
+                    _ => Vec::new(),
+                };
+                git.wanted.retain(|path| !asked.contains(path));
+                for change in &mut git.changes {
+                    if !asked.contains(&change.path) {
+                        continue;
+                    }
+                    change.fetched = true;
+                    if let Some(file) = files.iter().find(|file| file.path == change.path) {
+                        change.diff = file.diff.clone();
                     }
                 }
             }
-            (GitAsk::Diffs(_), Response::Failed { .. }) => git.wanted.clear(),
+            (GitAsk::Stashes(_), Response::Stashes { stashes }) => {
+                git.stashes = stashes
+                    .into_iter()
+                    .map(|stash| (stash.index, stash.message))
+                    .collect();
+            }
             (ask @ (GitAsk::Revision(_) | GitAsk::Conflict(..)), response) => {
                 self.review_answer(ask, response)
             }
@@ -219,16 +238,17 @@ impl Link {
         let missing = git
             .changes
             .iter()
-            .any(|change| &change.path == path && change.diff.is_empty());
-        if missing {
+            .any(|change| &change.path == path && !change.fetched && !change.untracked);
+        if missing && !git.wanted.contains(path) {
             let folder = git.folder.clone();
             let paths = vec![path.clone()];
+            self.workspace.git.wanted.extend(paths.iter().cloned());
             self.ask(
                 Request::Diffs {
                     directory: folder.clone(),
-                    paths,
+                    paths: paths.clone(),
                 },
-                Ask::Git(GitAsk::Diffs(folder)),
+                Ask::Git(GitAsk::Diffs(folder, paths)),
             );
         }
     }
@@ -388,6 +408,36 @@ impl Link {
             | GitAction::TakeConflict(..)
             | GitAction::TakeAllConflicts(_)
             | GitAction::Resolve) => self.git_review(action),
+            GitAction::Step(step) => {
+                let message = (step == "continue")
+                    .then(|| git.message.trim().to_owned())
+                    .filter(|message| !message.is_empty());
+                if message.is_some() {
+                    git.message.clear();
+                }
+                self.git_act(
+                    Request::Step {
+                        directory,
+                        action: step,
+                        message,
+                    },
+                    None,
+                );
+            }
+            GitAction::Stash(stash, index) => {
+                let message = (stash == "push")
+                    .then(|| git.message.trim().to_owned())
+                    .filter(|message| !message.is_empty());
+                self.git_act(
+                    Request::Stash {
+                        directory,
+                        action: stash,
+                        index,
+                        message,
+                    },
+                    None,
+                );
+            }
         }
     }
 
@@ -410,6 +460,10 @@ impl Link {
 
     /// Commits the message, rewriting the last commit when `amend`, then pushes when `push`.
     fn git_commit(&mut self, amend: bool, push: bool) {
+        if self.workspace.git.operation.is_some() && !amend {
+            self.git(GitAction::Step("continue".to_owned()));
+            return;
+        }
         let git = &mut self.workspace.git;
         let message = git.message.trim().to_owned();
         if message.is_empty() && !amend {
@@ -495,6 +549,16 @@ fn busy_word(request: &Request) -> &'static str {
         Request::Discard { .. } => "Discarding",
         Request::Stage { .. } => "Staging",
         Request::Ignore { .. } => "Ignoring",
+        Request::Step { action, .. } => match action.as_str() {
+            "abort" => "Aborting",
+            "skip" => "Skipping",
+            _ => "Continuing",
+        },
+        Request::Stash { action, .. } => match action.as_str() {
+            "push" => "Stashing",
+            "drop" => "Dropping",
+            _ => "Applying",
+        },
         Request::BranchOperation { action, .. } => match action.as_str() {
             "publish" => "Publishing",
             "merge" => "Merging",
@@ -519,14 +583,19 @@ pub(super) fn changed_file(change: pm_git::Change, kept: &[ChangedFile]) -> Chan
         change.worktree.or(change.index).unwrap_or('M')
     };
     let (counted_added, counted_removed) = tally(&change.diff);
-    let diff = if change.diff.is_empty() {
+    let fetched = !change.diff.is_empty();
+    let diff = if fetched {
+        change.diff
+    } else {
         kept.iter()
             .find(|old| old.path == change.path && old.staged == change.staged)
             .map(|old| old.diff.clone())
             .unwrap_or_default()
-    } else {
-        change.diff
     };
+    let partly = !change.untracked
+        && !change.conflicted
+        && change.index.is_some()
+        && change.worktree.is_some();
     ChangedFile {
         path: change.path,
         status,
@@ -535,6 +604,8 @@ pub(super) fn changed_file(change: pm_git::Change, kept: &[ChangedFile]) -> Chan
         staged: change.staged,
         untracked: change.untracked,
         conflicted: change.conflicted,
+        partly,
+        fetched,
         from: change.from,
         diff,
     }

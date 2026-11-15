@@ -49,6 +49,8 @@ const WORDS: &[&str] = &[
     "git-source",
     "git-confirm",
     "branch-menu",
+    "git-rebase",
+    "git-stashes",
     "diff",
     "code",
     "code-find",
@@ -329,7 +331,9 @@ fn show_projects(workspace: &mut pm_shell::Workspace, words: &[&str]) {
 /// Opens in `git` the Git panel's menu, question or Diff tab named among
 /// `words`: `git-menu` for the menu on a changed file, `git-source` for the
 /// panel's own menu, `git-confirm` for the question before discarding,
-/// `branch-menu` for the branch list, and `diff` for the Diff tab.
+/// `branch-menu` for the branch list, `diff` for the Diff tab, `git-rebase`
+/// for a rebase stopped with a partly staged and a conflicted file, and
+/// `git-stashes` for the menu of stashes.
 fn show_git_state(git: &mut pm_shell::GitSummary, words: &[&str]) {
     let first = git.listed().first().map(|change| change.path.clone());
     let second = git.listed().get(1).map(|change| change.path.clone());
@@ -344,6 +348,26 @@ fn show_git_state(git: &mut pm_shell::GitSummary, words: &[&str]) {
             }
             "branch-menu" => git.branch_menu = Some(pm_shell::BranchMenu::default()),
             "diff" => git.diff = first.clone(),
+            "git-rebase" => {
+                git.operation = Some("Rebasing onto main (2/5)".to_owned());
+                git.skippable = true;
+                if let Some(change) = git.changes.first_mut() {
+                    change.partly = true;
+                    change.staged = false;
+                }
+                if let Some(change) = git.changes.last_mut() {
+                    change.conflicted = true;
+                    change.untracked = false;
+                    change.status = 'U';
+                }
+            }
+            "git-stashes" => {
+                git.stashes = vec![
+                    (0, "WIP on main: Keep the reader's position".to_owned()),
+                    (1, "On main: try a smaller ranking window".to_owned()),
+                ];
+                git.menu = Some(pm_shell::GitMenu::Stashes);
+            }
             _ => {}
         }
     }

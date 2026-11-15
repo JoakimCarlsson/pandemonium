@@ -145,7 +145,10 @@ pub fn diff_page(workspace: &Workspace, path: &str, actions: &Actions) {
             Some(change) if change.diff.is_empty() && change.untracked => {
                 Some("A new file; stage it to see its lines.")
             }
-            Some(change) if change.diff.is_empty() => Some("Loading the diff…"),
+            Some(change) if change.diff.is_empty() && !change.fetched => {
+                Some("Loading the diff…")
+            }
+            Some(change) if change.diff.is_empty() => Some("No lines of this file can be shown."),
             Some(_) => None,
         };
         if let Some(message) = message {

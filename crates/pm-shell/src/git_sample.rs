@@ -43,6 +43,7 @@ fn change(path: &str, status: char, staged: bool, diff: &str) -> ChangedFile {
         added: added.max(usize::from(diff.is_empty()) * 3),
         removed: removed.max(usize::from(diff.is_empty())),
         staged,
+        fetched: !diff.is_empty(),
         diff: diff.to_owned(),
         ..ChangedFile::default()
     }

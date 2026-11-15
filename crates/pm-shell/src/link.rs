@@ -798,7 +798,10 @@ impl Link {
                 self.rebuild();
             }
             Incoming::ProjectsChanged(paths) => self.set_projects(paths),
-            Incoming::FolderChanged(directory) => self.git_folder_changed(&directory),
+            Incoming::FolderChanged(directory) => {
+                self.reload_open_files(&directory);
+                self.git_folder_changed(&directory);
+            }
             Incoming::ExtensionsChanged(extensions) => {
                 self.workspace.extensions = Some(listed(&extensions));
                 self.settings.extensions = extensions;
