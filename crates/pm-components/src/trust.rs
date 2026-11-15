@@ -131,17 +131,17 @@ impl TrustCard {
                                 .clone()
                                 .unwrap_or_else(|| format!("Trust {}?", self.root)),
                         )
-                            .variant(LabelVariant::Heading)
-                            .size(self.size)
-                            .show();
+                        .variant(LabelVariant::Heading)
+                        .size(self.size)
+                        .show();
                     },
                 );
                 if !self.reason.is_empty() {
                     Label::new(self.reason.clone())
-                    .variant(LabelVariant::Muted)
-                    .size(self.size)
-                    .wrap()
-                    .show();
+                        .variant(LabelVariant::Muted)
+                        .size(self.size)
+                        .wrap()
+                        .show();
                 }
                 for (kind, name) in &self.skipped {
                     row_arranged(

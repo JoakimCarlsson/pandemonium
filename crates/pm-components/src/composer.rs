@@ -497,9 +497,11 @@ impl Composer {
         let field_menu = menu.clone();
         let field_state = state.clone();
         let field_callbacks = callbacks.clone();
+        let field_focus = focus.clone();
         let mention_state = state.clone();
         let mention_closed = slash_closed.clone();
         let toolbar_state = state.clone();
+        let toolbar_focus = focus.clone();
         Card::new()
             .variant(CardVariant::Outlined)
             .size(Size::Md)
@@ -570,6 +572,7 @@ impl Composer {
                                 callbacks: field_callbacks.clone(),
                                 at: (across, down),
                                 on_dismiss: Rc::new(move || closer.set(None)),
+                                focus: field_focus.clone(),
                             }
                             .show();
                         }
@@ -583,6 +586,7 @@ impl Composer {
                     &callbacks,
                     &send,
                     &toolbar_state,
+                    &toolbar_focus,
                     empty && !has_attached,
                     working,
                     scheme,
@@ -626,7 +630,8 @@ fn attached_chips(attached: Vec<Attached>) {
 /// Emits the toolbar: attaching, the `choices` with the menu `menu` names
 /// open, the `rings`, and the buttons that send with `send` or stop the turn
 /// through `callbacks`, drawn for an `empty` prompt and an agent `working` or
-/// not in `scheme`.
+/// not in `scheme`; the `@` and `/` buttons type into the field `state` holds
+/// and give it the keyboard through `focus`.
 #[track_caller]
 #[allow(clippy::too_many_arguments)]
 fn toolbar(
@@ -636,6 +641,7 @@ fn toolbar(
     callbacks: &ComposerCallbacks,
     send: &Rc<dyn Fn(bool)>,
     state: &TextFieldState,
+    focus: &rustle::Focus,
     empty: bool,
     working: bool,
     scheme: ColorScheme,
@@ -656,12 +662,17 @@ fn toolbar(
                 })
                 .show();
             let at = state.clone();
+            let at_focus = focus.clone();
             IconButton::new(phosphor::AT)
                 .tooltip("Mention a file")
                 .size(Size::Xs)
-                .on_click(move || at.set_text(with_trigger(&at.text(), '@')))
+                .on_click(move || {
+                    at.set_text(with_trigger(&at.text(), '@'));
+                    at_focus.request_focus();
+                })
                 .show();
             let slash = state.clone();
+            let slash_focus = focus.clone();
             stack_aligned(
                 Modifier::new()
                     .size(20.0, 20.0)
@@ -670,6 +681,7 @@ fn toolbar(
                         if slash.text().trim().is_empty() {
                             slash.set_text("/".to_owned());
                         }
+                        slash_focus.request_focus();
                     }),
                 BoxAlignment::Center,
                 || Label::new("/").variant(LabelVariant::Muted).show(),

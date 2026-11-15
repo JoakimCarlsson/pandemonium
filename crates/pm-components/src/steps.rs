@@ -248,7 +248,11 @@ fn capped(output: &str) -> String {
         return output.to_owned();
     }
     let kept: Vec<&str> = output.lines().skip(count - OUTPUT_LINES).collect();
-    format!("… {} earlier lines\n{}", count - OUTPUT_LINES, kept.join("\n"))
+    format!(
+        "… {} earlier lines\n{}",
+        count - OUTPUT_LINES,
+        kept.join("\n")
+    )
 }
 
 /// What the agent thought, folded to one line until opened.

@@ -146,7 +146,11 @@ fn welcome_composer(workspace: &Workspace, start: &Start, actions: &Actions) {
         }
     }
     composer = with_attachments(composer, &workspace.extras.composer, actions);
-    with_attaching(composer, actions).show();
+    let mention = actions.composer.clone();
+    with_attaching(composer, actions)
+        .mentions(workspace.tree.paths.clone())
+        .on_mention(move || mention(ComposerAction::Mention))
+        .show();
 }
 
 /// The choice of the branch the worktree of the work `start` describes is made from.

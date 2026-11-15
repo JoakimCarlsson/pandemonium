@@ -10,7 +10,8 @@ use pm_protocol::{Request, Response};
 use super::remote::Standing;
 use super::{Ask, Link};
 use crate::projects::{
-    AddStep, Adder, FolderPicker, GithubRepository, PickerAction, ProjectAction, Reach, clone_address, moved, reordered,
+    AddStep, Adder, FolderPicker, GithubRepository, PickerAction, ProjectAction, Reach,
+    clone_address, moved, reordered,
 };
 use crate::sample::sample_projects;
 

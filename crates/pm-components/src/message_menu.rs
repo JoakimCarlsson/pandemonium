@@ -94,9 +94,7 @@ impl MessageMenu {
         column_with(
             Modifier::new()
                 .fill_max_width()
-                .on_secondary_click(move |event| {
-                    open.set(Some((event.position.x, event.position.y)))
-                }),
+                .on_context_menu(move |event| open.set(Some((event.position.x, event.position.y)))),
             move || {
                 if let Some((across, down)) = at.get() {
                     let dismiss = at.clone();

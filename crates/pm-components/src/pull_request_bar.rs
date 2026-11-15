@@ -165,11 +165,23 @@ impl PullRequestBar {
         if self.supported {
             match self.variant {
                 PullRequestVariant::None => {
-                    actions.push(("Create draft".to_owned(), "create_draft", "Push and open a draft"));
-                    actions.push((format!("Create {}", self.noun), "create", "Push and open it for review"));
+                    actions.push((
+                        "Create draft".to_owned(),
+                        "create_draft",
+                        "Push and open a draft",
+                    ));
+                    actions.push((
+                        format!("Create {}", self.noun),
+                        "create",
+                        "Push and open it for review",
+                    ));
                 }
                 PullRequestVariant::Open | PullRequestVariant::Draft => {
-                    actions.push(("Update".to_owned(), "update", "Push and redraft the description"));
+                    actions.push((
+                        "Update".to_owned(),
+                        "update",
+                        "Push and redraft the description",
+                    ));
                     if self.variant == PullRequestVariant::Draft {
                         actions.push(("Ready".to_owned(), "ready", "Ready for review"));
                     } else {
@@ -177,11 +189,19 @@ impl PullRequestBar {
                     }
                 }
                 PullRequestVariant::Closed => {
-                    actions.push(("Delete branch".to_owned(), "delete_branch", "Delete the branch from its remote"));
+                    actions.push((
+                        "Delete branch".to_owned(),
+                        "delete_branch",
+                        "Delete the branch from its remote",
+                    ));
                     actions.push(("Reopen".to_owned(), "reopen", "Reopen it"));
                 }
                 PullRequestVariant::Merged => {
-                    actions.push(("Delete branch".to_owned(), "delete_branch", "Delete the branch from its remote"));
+                    actions.push((
+                        "Delete branch".to_owned(),
+                        "delete_branch",
+                        "Delete the branch from its remote",
+                    ));
                 }
             }
         }
@@ -255,8 +275,8 @@ impl PullRequestBar {
                             if let Some(on_action) = &on_action {
                                 on_action(action.clone());
                             }
-                        })
-                        ; tooltip(tip, move || button.show());
+                        });
+                    tooltip(tip, move || button.show());
                 }
                 if self.variant != PullRequestVariant::None {
                     let on_action = self.on_action.clone();

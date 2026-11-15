@@ -5,9 +5,9 @@ use std::rc::Rc;
 use pm_components::ServerAsk;
 use pm_components::{TerminalCommand, TerminalSelection};
 use pm_shell::{
-    BrowserAction, ComposerAction, ConversationCommand, DebugCommand, DockTab, ExtensionDo, FileAction,
-    GitAction, InquiryReply, ProjectAction, QuickAction, RightTab, SearchAction, SessionCommand,
-    TabAction, TreeAction, TrustVerdict,
+    BrowserAction, ComposerAction, ConversationCommand, DebugCommand, DockTab, ExtensionDo,
+    FileAction, GitAction, InquiryReply, ProjectAction, QuickAction, RightTab, SearchAction,
+    SessionCommand, TabAction, TreeAction, TrustVerdict,
 };
 
 /// The callbacks the pages call; the shell decides what each does.

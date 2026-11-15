@@ -600,7 +600,10 @@ impl Link {
             path: path.clone(),
             ..Default::default()
         });
-        self.ask(Request::InspectExtension { path: path.clone() }, Ask::Inspect(path));
+        self.ask(
+            Request::InspectExtension { path: path.clone() },
+            Ask::Inspect(path),
+        );
     }
 
     /// Shows the welcome page for a new session in the project or submodule
@@ -685,7 +688,7 @@ impl Link {
     }
 
     /// The project folder and submodule a session started at index path `at` works in.
-    fn placement(&self, at: &[usize]) -> Option<(String, Option<String>)> {
+    pub(super) fn placement(&self, at: &[usize]) -> Option<(String, Option<String>)> {
         let path = self.paths.get(*at.first()?)?;
         let submodule = match at.get(1) {
             Some(index) => Some(self.submodules.get(path)?.get(*index)?.clone()),
@@ -1007,9 +1010,7 @@ impl Link {
                 | Ask::StartBranches(_)
                 | Ask::StartContainer(_)),
                 response,
-            ) => {
-                self.start_answer(ask, response)
-            }
+            ) => self.start_answer(ask, response),
             (
                 ask @ (Ask::Files(_) | Ask::Entry | Ask::Search(_) | Ask::Quick(_) | Ask::Branches),
                 response,
@@ -1058,7 +1059,7 @@ impl Link {
                     None => directory,
                 };
                 self.hand_over(session, &directory);
-                self.threads.insert(session, Thread::default());
+                self.threads.entry(session).or_default();
                 self.watch(session);
                 self.navigate(Page::Session(session));
             }

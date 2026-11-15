@@ -113,27 +113,25 @@ impl InquiryCard {
         };
         let column = move || {
             column_arranged(
-                Modifier::new()
-                    .fill_max_width()
-                    .on_key_event(move |event| {
-                        let Key::Character(typed) = &event.key else {
-                            return false;
-                        };
-                        let number = typed.parse::<usize>().ok().filter(|_| event.pressed);
-                        let Some(label) = number
-                            .and_then(|number| number.checked_sub(1))
-                            .and_then(|place| key_question.options.get(place))
-                            .map(|(label, _)| label.clone())
-                        else {
-                            return false;
-                        };
-                        let mut all = keyed.get();
-                        if let Some((picks, _)) = all.get_mut(at) {
-                            pick(picks, &label, key_question.multiple);
-                        }
-                        keyed.set(all);
-                        true
-                    }),
+                Modifier::new().fill_max_width().on_key_event(move |event| {
+                    let Key::Character(typed) = &event.key else {
+                        return false;
+                    };
+                    let number = typed.parse::<usize>().ok().filter(|_| event.pressed);
+                    let Some(label) = number
+                        .and_then(|number| number.checked_sub(1))
+                        .and_then(|place| key_question.options.get(place))
+                        .map(|(label, _)| label.clone())
+                    else {
+                        return false;
+                    };
+                    let mut all = keyed.get();
+                    if let Some((picks, _)) = all.get_mut(at) {
+                        pick(picks, &label, key_question.multiple);
+                    }
+                    keyed.set(all);
+                    true
+                }),
                 Arrangement::SpacedBy(crate::spacing(14.0)),
                 Alignment::Start,
                 body,

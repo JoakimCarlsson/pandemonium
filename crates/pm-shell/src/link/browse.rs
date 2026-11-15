@@ -15,15 +15,24 @@ use crate::search::{SearchAction, SearchHit};
 const FILES_LIMIT: usize = 20_000;
 
 impl Link {
-    /// The folder the Files and Search tabs work in: the open session's,
-    /// or the first project's, as the server knows it.
+    /// The folder the Files and Search tabs and mentions work in: the open
+    /// session's, the one new work starts in, or the first project's, as the
+    /// server knows it.
     pub(super) fn browse_root(&self) -> Option<String> {
         let session = self
             .watched
             .and_then(|id| self.sessions.iter().find(|info| info.session == id))
             .filter(|info| !info.directory.is_empty())
             .map(|info| info.directory.clone());
+        let starting = self
+            .workspace
+            .starting
+            .as_ref()
+            .and_then(|start| start.at.clone())
+            .and_then(|at| self.placement(&at))
+            .map(|(folder, _)| folder);
         session
+            .or(starting)
             .or_else(|| self.paths.first().cloned())
             .map(|path| expand_home(&path))
     }

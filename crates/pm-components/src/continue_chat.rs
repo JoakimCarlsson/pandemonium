@@ -173,12 +173,15 @@ impl ContinueChat {
                                         let on_branch = self.on_branch.clone();
                                         let close = close.clone();
                                         let picked = branch.clone();
-                                        dropdown_menu_item(&format!("Branch from {branch}"), move || {
-                                            close.set(false);
-                                            if let Some(on_branch) = &on_branch {
-                                                on_branch(picked.clone());
-                                            }
-                                        });
+                                        dropdown_menu_item(
+                                            &format!("Branch from {branch}"),
+                                            move || {
+                                                close.set(false);
+                                                if let Some(on_branch) = &on_branch {
+                                                    on_branch(picked.clone());
+                                                }
+                                            },
+                                        );
                                     }
                                 }
                             }

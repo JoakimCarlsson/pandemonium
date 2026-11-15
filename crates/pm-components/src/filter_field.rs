@@ -1,7 +1,7 @@
 //! A field the reader types into to narrow a list, with a magnifier and a
 //! placeholder while it is empty.
 
-use rustle::basic_text_field;
+use rustle::{TextFieldOptions, basic_text_field_in, remember_focus};
 
 use crate::text_menu::TextMenu;
 use rustle::prelude::*;
@@ -68,6 +68,7 @@ impl FilterField {
     pub fn show(self) -> String {
         let scheme = color_scheme();
         let state = remember_text_field_state("");
+        let focus = remember_focus();
         let height = match self.size {
             Size::Xs => 24.0,
             Size::Sm => 28.0,
@@ -90,7 +91,7 @@ impl FilterField {
             Alignment::Center,
             move || {
                 icon(phosphor::MAGNIFYING_GLASS, 14.0, scheme.on_surface_variant);
-                let menu = TextMenu::new(&state);
+                let menu = TextMenu::new(&state).focus(&focus);
                 menu.around(
                     Modifier::new().weight(1.0),
                     BoxAlignment::CenterStart,
@@ -101,7 +102,13 @@ impl FilterField {
                                 .show();
                         }
                         LOCAL_TEXT_STYLE.provide(Label::new("").style(), || {
-                            basic_text_field(Modifier::new().fill_max_width(), &state);
+                            basic_text_field_in(
+                                Modifier::new().fill_max_width(),
+                                Modifier::new(),
+                                &state,
+                                &focus,
+                                TextFieldOptions::default(),
+                            );
                         });
                     },
                 );

@@ -27,36 +27,40 @@ pub fn conversation(messages: &[Message], actions: &Actions) {
     let actions = actions.clone();
     let selection = remember_selection_state();
     let held = selection.clone();
-    selection_container_with(Modifier::new().fill_max_width().weight(1.0), &held, move || {
-        let count = messages.len();
-        lazy_list_keyed(
-            Modifier::new().fill_max_size(),
-            &list,
-            count,
-            |index| index,
-            move |index| {
-                let message = messages[index].clone();
-                let last = index + 1 == messages.len();
-                let actions = actions.clone();
-                let selection = selection.clone();
-                row_arranged(
-                    Modifier::new().fill_max_width().padding_each(
-                        0.0,
-                        if index == 0 { 16.0 } else { 0.0 },
-                        0.0,
-                        18.0,
-                    ),
-                    Arrangement::Center,
-                    Alignment::Start,
-                    move || {
-                        column_with(Modifier::new().width(READING_WIDTH), || {
-                            message_view(&message, last, &actions, &selection)
-                        });
-                    },
-                );
-            },
-        );
-    });
+    selection_container_with(
+        Modifier::new().fill_max_width().weight(1.0),
+        &held,
+        move || {
+            let count = messages.len();
+            lazy_list_keyed(
+                Modifier::new().fill_max_size(),
+                &list,
+                count,
+                |index| index,
+                move |index| {
+                    let message = messages[index].clone();
+                    let last = index + 1 == messages.len();
+                    let actions = actions.clone();
+                    let selection = selection.clone();
+                    row_arranged(
+                        Modifier::new().fill_max_width().padding_each(
+                            0.0,
+                            if index == 0 { 16.0 } else { 0.0 },
+                            0.0,
+                            18.0,
+                        ),
+                        Arrangement::Center,
+                        Alignment::Start,
+                        move || {
+                            column_with(Modifier::new().width(READING_WIDTH), || {
+                                message_view(&message, last, &actions, &selection)
+                            });
+                        },
+                    );
+                },
+            );
+        },
+    );
 }
 
 /// Emits one message: a bubble on the right for the person, the agent's

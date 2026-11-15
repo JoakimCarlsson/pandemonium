@@ -93,24 +93,26 @@ impl SpendStrip {
             .collect::<Vec<_>>()
             .join("\n");
         column_with(Modifier::new(), move || {
-            let row = || row_arranged(
-                modifier,
-                Arrangement::SpacedBy(crate::spacing(6.0)),
-                Alignment::Center,
-                || {
-                    icon(phosphor::COINS, 12.0, scheme.on_surface_variant);
-                    Label::new(self.total.clone())
-                        .variant(LabelVariant::Muted)
-                        .size(self.size)
-                        .show();
-                    if !self.detail.is_empty() {
-                        Label::new(self.detail.clone())
-                            .variant(LabelVariant::Subtle)
+            let row = || {
+                row_arranged(
+                    modifier,
+                    Arrangement::SpacedBy(crate::spacing(6.0)),
+                    Alignment::Center,
+                    || {
+                        icon(phosphor::COINS, 12.0, scheme.on_surface_variant);
+                        Label::new(self.total.clone())
+                            .variant(LabelVariant::Muted)
                             .size(self.size)
                             .show();
-                    }
-                },
-            );
+                        if !self.detail.is_empty() {
+                            Label::new(self.detail.clone())
+                                .variant(LabelVariant::Subtle)
+                                .size(self.size)
+                                .show();
+                        }
+                    },
+                )
+            };
             if breakdown.is_empty() || open.get() {
                 row();
             } else {

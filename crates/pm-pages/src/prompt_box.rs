@@ -156,16 +156,11 @@ fn account_choice(workspace: &Workspace) -> ComposerChoice {
         name: "Default account".to_owned(),
         description: "The agent's own login".to_owned(),
     }];
-    picks.extend(
-        workspace
-            .accounts
-            .iter()
-            .map(|(id, name)| ComposerPick {
-                value: id.clone(),
-                name: name.clone(),
-                description: String::new(),
-            }),
-    );
+    picks.extend(workspace.accounts.iter().map(|(id, name)| ComposerPick {
+        value: id.clone(),
+        name: name.clone(),
+        description: String::new(),
+    }));
     picks.push(ComposerPick {
         value: ADD_ACCOUNT.to_owned(),
         name: "Add account…".to_owned(),

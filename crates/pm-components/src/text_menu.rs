@@ -4,7 +4,7 @@
 use std::rc::Rc;
 
 use rustle::prelude::*;
-use rustle::{clipboard, TextFieldState};
+use rustle::{Focus, TextFieldState, clipboard};
 
 use crate::menu::Menu;
 use crate::size::Size;
@@ -23,6 +23,8 @@ pub struct TextMenu {
     size: Size,
     /// What pasting does first, when anything.
     on_paste: Option<PasteHook>,
+    /// The field's focus, given back to it after each command so what it selected shows and stays.
+    focus: Option<Focus>,
 }
 
 impl TextMenu {
@@ -33,7 +35,14 @@ impl TextMenu {
             above: false,
             size: Size::Xs,
             on_paste: None,
+            focus: None,
         }
+    }
+
+    /// The menu giving the keyboard back to the field whose focus is `focus` after each command.
+    pub fn focus(mut self, focus: &Focus) -> Self {
+        self.focus = Some(focus.clone());
+        self
     }
 
     /// The menu opening upward when `above`.
@@ -90,6 +99,13 @@ impl TextMenu {
         let on_paste = self.on_paste.clone();
         let size = self.size;
         let above = self.above;
+        let refocus = self.focus.clone();
+        let back = move || {
+            if let Some(focus) = &refocus {
+                focus.request_focus();
+            }
+        };
+        let (cut_back, paste_back, all_back) = (back.clone(), back.clone(), back);
         stack_with(Modifier::new().offset(at.0, at.1), move || {
             let mut menu = Menu::new().size(size).width(180.0).above(above);
             menu = if selected.is_empty() {
@@ -99,23 +115,25 @@ impl TextMenu {
                 menu.icon_item(phosphor::SCISSORS, "Cut", move || {
                     copy_text(&cut_text);
                     cut_state.replace_selection("");
+                    cut_back();
                 })
                 .hint("Ctrl+X")
                 .icon_item(phosphor::COPY, "Copy", move || copy_text(&selected))
                 .hint("Ctrl+C")
             };
             menu.icon_item(phosphor::CLIPBOARD_TEXT, "Paste", move || {
-                if on_paste.as_ref().is_some_and(|hook| hook()) {
-                    return;
-                }
-                if let Some(text) = clipboard().and_then(|clipboard| clipboard.text()) {
+                if !on_paste.as_ref().is_some_and(|hook| hook())
+                    && let Some(text) = clipboard().and_then(|clipboard| clipboard.text())
+                {
                     paste_state.replace_selection(&text);
                 }
+                paste_back();
             })
             .hint("Ctrl+V")
             .separator()
             .icon_item(phosphor::SELECTION_ALL, "Select all", move || {
-                all_state.select_all()
+                all_state.select_all();
+                all_back();
             })
             .hint("Ctrl+A")
             .on_dismiss(on_dismiss)

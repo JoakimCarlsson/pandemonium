@@ -1,8 +1,8 @@
 //! Turning what the harness reports into the plain data the pages show.
 
 use pm_harness::{
-    Input, Inquiry, Kind, Permission, PlanStep, Progress, Spent, Standing, Tool, ToolState, TrustRequest,
-    Verdict,
+    Input, Inquiry, Kind, Permission, PlanStep, Progress, Spent, Standing, Tool, ToolState,
+    TrustRequest, Verdict,
 };
 use pm_harness::{Merge, Worktree};
 

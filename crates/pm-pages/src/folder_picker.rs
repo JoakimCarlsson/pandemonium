@@ -297,11 +297,11 @@ fn footer(picker: &FolderPicker, actions: &PickerActions) {
             } else {
                 phosphor::FOLDER_PLUS
             })
-                .variant(ButtonVariant::Primary)
-                .size(Size::Sm)
-                .disabled(picker.reach != Reach::Reached)
-                .on_click(doing(actions, PickerAction::Choose))
-                .show();
+            .variant(ButtonVariant::Primary)
+            .size(Size::Sm)
+            .disabled(picker.reach != Reach::Reached)
+            .on_click(doing(actions, PickerAction::Choose))
+            .show();
         },
     );
 }

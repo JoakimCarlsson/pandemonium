@@ -124,8 +124,7 @@ impl Link {
         };
         let (name, argument) = typed.split_once(char::is_whitespace).unwrap_or((typed, ""));
         let agents = &self.workspace.extras.composer.commands;
-        if self.routes.remote(session).is_some() || agents.iter().any(|known| known.name == name)
-        {
+        if self.routes.remote(session).is_some() || agents.iter().any(|known| known.name == name) {
             return false;
         }
         let Some(command) = self
@@ -235,7 +234,11 @@ impl Link {
         let Some(session) = self.watched else {
             return;
         };
-        if let Some(info) = self.sessions.iter_mut().find(|info| info.session == session) {
+        if let Some(info) = self
+            .sessions
+            .iter_mut()
+            .find(|info| info.session == session)
+        {
             info.login = login.clone();
         }
         self.ask(Request::SetSessionAccount { session, login }, Ask::Nothing);

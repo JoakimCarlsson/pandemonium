@@ -10,8 +10,8 @@ use pm_components::{
     PullRequestVariant, Sash, Size, SpendStrip, extended_colors,
 };
 use pm_shell::{
-    ActivityKind, PANE_SHARE_MIN, Pane, Project, PullRequestInfo, SessionStatus, SessionTab, SpendSummary,
-    TabAction, Unsaved, Workspace,
+    ActivityKind, PANE_SHARE_MIN, Pane, Project, PullRequestInfo, SessionStatus, SessionTab,
+    SpendSummary, TabAction, Unsaved, Workspace,
 };
 
 use crate::actions::Actions;

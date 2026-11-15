@@ -320,16 +320,26 @@ fn entry_row(entry: Entry, height: f32, lit: bool, dismiss: Option<Rc<dyn Fn()>>
                         Some(glyph) => icon(glyph, 14.0, tone),
                         None => spacer(Modifier::new().width(13.0)),
                     }
-                    Label::new(label)
-                        .colour(tone)
-                        .size(Size::Xs)
-                        .modifier(Modifier::new().weight(1.0))
-                        .show();
-                    if let Some(hint) = hint {
-                        Label::new(hint)
-                            .variant(LabelVariant::Subtle)
+                    match hint {
+                        Some(hint) => {
+                            Label::new(label).colour(tone).size(Size::Xs).show();
+                            row_arranged(
+                                Modifier::new().weight(1.0).clip(),
+                                Arrangement::End,
+                                Alignment::Center,
+                                || {
+                                    Label::new(hint)
+                                        .variant(LabelVariant::Subtle)
+                                        .size(Size::Xs)
+                                        .show();
+                                },
+                            );
+                        }
+                        None => Label::new(label)
+                            .colour(tone)
                             .size(Size::Xs)
-                            .show();
+                            .modifier(Modifier::new().weight(1.0))
+                            .show(),
                     }
                 },
             );
