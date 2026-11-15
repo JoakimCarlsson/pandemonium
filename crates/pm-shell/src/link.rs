@@ -95,8 +95,8 @@ enum Ask {
     ToolSets,
     /// The newest release.
     LatestRelease,
-    /// The pull request of the open session's branch.
-    PullRequest,
+    /// The pull request of the branch of the session the window numbers so.
+    PullRequest(u64),
     /// Downloading a newer release.
     Update,
     /// Something the Git panel asked.
@@ -180,7 +180,6 @@ impl Ask {
             | Request::FindModels { .. }
             | Request::CreateCustomization { .. } => Self::Form,
             Request::SaveModelServer { .. } => Self::ModelServers,
-            Request::PullRequest { .. } | Request::PullRequestAction { .. } => Self::PullRequest,
             _ => Self::Nothing,
         }
     }
@@ -1015,10 +1014,7 @@ impl Link {
                 ask @ (Ask::Files(_) | Ask::Entry | Ask::Search(_) | Ask::Quick(_) | Ask::Branches),
                 response,
             ) => self.answer_browse(ask, response),
-            (Ask::PullRequest, Response::PullRequest { request, .. })
-            | (Ask::PullRequest, Response::PullRequestActed { request, .. }) => {
-                self.show_pull_request(request);
-            }
+            (Ask::PullRequest(session), response) => self.answer_pull_request(session, response),
             (Ask::Projects, Response::Projects { paths, saved }) => {
                 self.note_saved(saved);
                 self.set_projects(paths);

@@ -377,6 +377,16 @@ pub struct PullRequestInfo {
     pub checks: (usize, usize, usize),
     /// Its page on the code host.
     pub url: String,
+    /// What the code host calls a review, in lower case, such as `merge request`.
+    pub noun: String,
+    /// Whether the code host's reviews can be read and acted on; when not, only pushing is offered.
+    pub supported: bool,
+    /// Whether the branch has commits its remote does not, or no remote branch yet.
+    pub ahead: bool,
+    /// What is being done to it, such as `Pushing…`, while the server is at it.
+    pub busy: Option<String>,
+    /// Why the last thing done to it failed, when it did.
+    pub error: Option<String>,
 }
 
 /// The cards, strips and bars around the open session's conversation.

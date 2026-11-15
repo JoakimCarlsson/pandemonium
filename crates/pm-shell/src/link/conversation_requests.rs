@@ -101,20 +101,28 @@ impl Link {
         );
     }
 
-    /// Asks the server for the pull request of the open session's branch.
+    /// Asks the server for the pull request of the open session's branch, when it has a branch of its own.
     pub(super) fn ask_pull_request(&mut self) {
-        let Some((directory, branch)) = self.open_branch() else {
+        let Some((session, directory, branch)) = self.open_branch() else {
+            self.workspace.extras.pull_request = None;
             return;
         };
-        self.ask(Request::PullRequest { directory, branch }, Ask::PullRequest);
+        self.ask(
+            Request::PullRequest { directory, branch },
+            Ask::PullRequest(session),
+        );
     }
 
     /// Pushes the open session's branch or acts on its pull request with
-    /// `action`, such as `create` or `merge`.
+    /// `action`, such as `create` or `merge`, showing that it is under way.
     pub fn pull_request_action(&mut self, action: String) {
-        let Some((directory, branch)) = self.open_branch() else {
+        let Some((session, directory, branch)) = self.open_branch() else {
             return;
         };
+        if let Some(bar) = &mut self.workspace.extras.pull_request {
+            bar.busy = Some(busy_words(&action).to_owned());
+            bar.error = None;
+        }
         let plan = self
             .workspace
             .extras
@@ -122,32 +130,75 @@ impl Link {
             .iter()
             .map(|item| item.text.clone())
             .collect();
+        let base = self.workspace.git.base.clone();
         self.ask(
             Request::PullRequestAction {
                 directory,
                 branch,
-                base: None,
+                base,
                 action,
                 title: String::new(),
                 plan,
             },
-            Ask::PullRequest,
+            Ask::PullRequest(session),
         );
     }
 
-    /// Shows the pull request the server reported for the open session's branch.
-    pub(super) fn show_pull_request(&mut self, status: Option<PullRequestStatus>) {
-        self.workspace.extras.pull_request =
-            Some(status.map(pull_request_info).unwrap_or_default());
+    /// Takes the server's answer about the pull request of `session`'s branch, shown while that session is open: how it stands, why acting on it failed, or, after a pull request was drafted the code host's program could not open, its page in the reader's browser.
+    pub(super) fn answer_pull_request(&mut self, session: u64, response: Response) {
+        if self.watched != Some(session) {
+            return;
+        }
+        let known = self.workspace.extras.pull_request.clone();
+        match response {
+            Response::PullRequest { request, host } => {
+                let has_base = self.workspace.git.base.is_some();
+                if request.is_none() && !has_base {
+                    self.workspace.extras.pull_request = None;
+                    return;
+                }
+                let mut bar = request.map(pull_request_info).unwrap_or_default();
+                bar.noun = host
+                    .as_ref()
+                    .map_or("pull request", pm_git::CodeHost::noun)
+                    .to_owned();
+                bar.supported = host.is_none_or(|host| host.supported);
+                bar.ahead = self.branch_ahead();
+                self.workspace.extras.pull_request = Some(bar);
+            }
+            Response::PullRequestActed { request, compare } => {
+                let mut bar = request.map(pull_request_info).unwrap_or_default();
+                if let Some(known) = known {
+                    bar.noun = known.noun;
+                    bar.supported = known.supported;
+                }
+                bar.ahead = self.branch_ahead();
+                self.workspace.extras.pull_request = Some(bar);
+                if let Some(url) = compare {
+                    self.open_address(&url);
+                }
+            }
+            Response::Failed { message } => {
+                if let Some(bar) = &mut self.workspace.extras.pull_request {
+                    bar.busy = None;
+                    bar.error = Some(message);
+                }
+            }
+            _ => {}
+        }
     }
 
-    /// The folder and branch of the open session, when it has a branch.
-    fn open_branch(&self) -> Option<(String, String)> {
-        let info = self
-            .sessions
-            .iter()
-            .find(|info| Some(info.session) == self.watched)?;
-        Some((info.directory.clone(), info.branch.clone()?))
+    /// Whether the open session's branch has commits its remote has not, or no remote branch yet.
+    fn branch_ahead(&self) -> bool {
+        let git = &self.workspace.git;
+        git.upstream.is_none() || git.ahead > 0
+    }
+
+    /// The session, folder and branch of the open session, when it is no chat and has a branch, the folder as an address on its machine.
+    fn open_branch(&self) -> Option<(u64, String, String)> {
+        let session = self.watched?;
+        let info = self.session_info(session).filter(|info| !info.chat)?;
+        Some((session, info.directory.clone(), info.branch.clone()?))
     }
 
     /// Carries out `command` on the open session.
@@ -288,6 +339,20 @@ fn project_at<'a>(projects: &'a [Project], at: &[usize]) -> Option<&'a Project> 
     Some(project)
 }
 
+/// What the bar says while `action` is under way.
+fn busy_words(action: &str) -> &'static str {
+    match action {
+        "push" => "Pushing…",
+        "create" | "create_draft" => "Creating…",
+        "update" => "Updating…",
+        "ready" => "Marking ready…",
+        "merge" | "squash" | "rebase" => "Merging…",
+        "reopen" => "Reopening…",
+        "delete_branch" => "Deleting the branch…",
+        _ => "Working…",
+    }
+}
+
 /// The bar `status` shows.
 fn pull_request_info(status: PullRequestStatus) -> PullRequestInfo {
     let count = |state: CheckState| {
@@ -314,5 +379,6 @@ fn pull_request_info(status: PullRequestStatus) -> PullRequestInfo {
             count(CheckState::Pending),
         ),
         url: status.url.clone(),
+        ..PullRequestInfo::default()
     }
 }

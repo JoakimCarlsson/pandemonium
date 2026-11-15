@@ -436,6 +436,11 @@ fn pull_request_bar(request: &PullRequestInfo, actions: &Actions) {
     let url = request.url.clone();
     PullRequestBar::new(request.number, request.title.clone())
         .variant(variant)
+        .noun(request.noun.clone())
+        .supported(request.supported)
+        .ahead(request.ahead)
+        .busy(request.busy.clone())
+        .error(request.error.clone())
         .review(request.review.clone())
         .checks(passed, failed, pending)
         .on_action(move |action| {

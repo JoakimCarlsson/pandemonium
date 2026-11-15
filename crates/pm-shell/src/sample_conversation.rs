@@ -244,6 +244,11 @@ pub fn extras() -> Extras {
             review: "Review required".to_owned(),
             checks: (4, 1, 1),
             url: "https://github.com/void/void/pull/42".to_owned(),
+            noun: "pull request".to_owned(),
+            supported: true,
+            ahead: true,
+            busy: None,
+            error: None,
         }),
         ..Extras::default()
     }
