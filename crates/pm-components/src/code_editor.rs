@@ -2068,7 +2068,10 @@ fn editor_menu(handle: &Handle, at: (f32, f32)) {
     let mut menu = Menu::new()
         .width(240.0)
         .offset(at.0, at.1)
-        .on_dismiss(move || close.menu.set(None));
+        .on_dismiss(move || {
+            close.menu.set(None);
+            close.focus_text();
+        });
     if served {
         menu = menu
             .icon_item(

@@ -103,17 +103,31 @@ impl Checkbox {
             CheckState::Off => (Color::TRANSPARENT, extended.subtle),
             CheckState::On | CheckState::Partial => (filled, filled),
         };
+        let ring = crate::focus_ring::remember_focus_ring();
+        let (border, edge) = if ring.shown() {
+            (scheme.primary, 2.0)
+        } else {
+            (border, 1.0)
+        };
         let mut modifier = Modifier::new()
             .size(side, side)
             .background_rounded(fill, 3.0)
-            .border(1.0, border, 3.0)
+            .border(edge, border, 3.0)
             .on_hover({
                 let hovered = hovered.clone();
                 move |inside| hovered.set(inside)
             })
             .cursor(CursorIcon::Pointer);
         if let Some(on_toggle) = self.on_toggle {
-            modifier = modifier.clickable(move || on_toggle());
+            let pressed = on_toggle.clone();
+            let clicked = ring.clone();
+            modifier = ring.focusable(
+                modifier.clickable(move || {
+                    clicked.clicked();
+                    on_toggle()
+                }),
+                move || pressed(),
+            );
         }
         let state = self.state;
         stack_aligned(modifier, BoxAlignment::Center, move || match state {

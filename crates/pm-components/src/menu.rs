@@ -9,6 +9,7 @@ use crate::label::{Label, LabelVariant};
 use crate::popover::Popover;
 use crate::size::Size;
 use rustle::color_scheme;
+use rustle::remember_focus;
 
 /// How a menu is drawn.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -61,6 +62,8 @@ pub struct Menu {
     on_dismiss: Option<Rc<dyn Fn()>>,
     /// Whether it opens upward from where it is emitted.
     above: bool,
+    /// Whether it takes the keyboard as it opens, to be driven by the arrows and Enter.
+    keyboard: bool,
 }
 
 impl Menu {
@@ -74,7 +77,14 @@ impl Menu {
             offset: (0.0, 4.0),
             on_dismiss: None,
             above: false,
+            keyboard: true,
         }
+    }
+
+    /// The menu leaving the keyboard where it is when `keyboard` is false, for a menu that opens over a field being typed in, which drives it itself.
+    pub fn keyboard(mut self, keyboard: bool) -> Self {
+        self.keyboard = keyboard;
+        self
     }
 
     /// The menu opening upward from where it is emitted when `above`, for a field near the bottom of the window.
@@ -210,13 +220,62 @@ impl Menu {
             Size::Lg => 34.0,
         };
         let height = crate::row_height(height);
+        let focus = remember_focus();
+        let active = remember(|| None::<usize>);
+        let asked = remember(|| false);
+        if self.keyboard && !asked.get() {
+            asked.set(true);
+            focus.request_focus();
+        }
         let entries = self.entries;
         let dismiss = self.on_dismiss.clone();
-        let rows = move || {
-            for (place, entry) in entries.into_iter().enumerate() {
-                let dismiss = dismiss.clone();
-                key(place, move || entry_row(entry, height, dismiss));
+        let choosable: Vec<usize> = entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| {
+                matches!(
+                    entry,
+                    Entry::Item {
+                        disabled: false,
+                        ..
+                    }
+                )
+            })
+            .map(|(place, _)| place)
+            .collect();
+        let chosen: Vec<Rc<dyn Fn()>> = entries
+            .iter()
+            .map(|entry| match entry {
+                Entry::Item { on_select, .. } => on_select.clone(),
+                _ => Rc::new(|| {}) as Rc<dyn Fn()>,
+            })
+            .collect();
+        let keyed = {
+            let active = active.clone();
+            let dismiss = dismiss.clone();
+            move |event: &rustle::KeyEvent| {
+                menu_key(event, &choosable, &active, &|place| {
+                    if let Some(dismiss) = &dismiss {
+                        dismiss();
+                    }
+                    if let Some(chosen) = chosen.get(place) {
+                        chosen();
+                    }
+                })
             }
+        };
+        let highlighted = active.get();
+        let rows = move || {
+            column_with(
+                Modifier::new().fill_max_width().focusable(&focus, keyed),
+                move || {
+                    for (place, entry) in entries.into_iter().enumerate() {
+                        let dismiss = dismiss.clone();
+                        let lit = highlighted == Some(place);
+                        key(place, move || entry_row(entry, height, dismiss, lit));
+                    }
+                },
+            );
         };
         match self.variant {
             MenuVariant::Inline => column_with(Modifier::new().width(self.width), rows),
@@ -241,9 +300,53 @@ impl Default for Menu {
     }
 }
 
-/// Emits `entry` `height` tall, calling `dismiss` after a command is chosen.
+/// Moves the row `active` marks among the `choosable` rows on the arrows, Home and End, and chooses it through `choose` on Enter or Space; says whether `event` was taken.
+fn menu_key(
+    event: &rustle::KeyEvent,
+    choosable: &[usize],
+    active: &State<Option<usize>>,
+    choose: &dyn Fn(usize),
+) -> bool {
+    use rustle::Key;
+    let modifiers = event.modifiers;
+    if !event.pressed || modifiers.ctrl || modifiers.alt || modifiers.meta || choosable.is_empty() {
+        return false;
+    }
+    let at = active
+        .get()
+        .and_then(|place| choosable.iter().position(|held| *held == place));
+    let last = choosable.len() - 1;
+    let next = match &event.key {
+        Key::ArrowDown => Some(at.map_or(0, |at| if at >= last { 0 } else { at + 1 })),
+        Key::ArrowUp => Some(at.map_or(last, |at| if at == 0 { last } else { at - 1 })),
+        Key::Home => Some(0),
+        Key::End => Some(last),
+        Key::Enter => {
+            if let Some(at) = at {
+                choose(choosable[at]);
+            }
+            return at.is_some();
+        }
+        Key::Character(text) if text == " " => {
+            if let Some(at) = at {
+                choose(choosable[at]);
+            }
+            return at.is_some();
+        }
+        _ => None,
+    };
+    match next {
+        Some(next) => {
+            active.set(Some(choosable[next]));
+            true
+        }
+        None => false,
+    }
+}
+
+/// Emits `entry` `height` tall, marked as the row the keys point at when `lit`, calling `dismiss` after a command is chosen.
 #[track_caller]
-fn entry_row(entry: Entry, height: f32, dismiss: Option<Rc<dyn Fn()>>) {
+fn entry_row(entry: Entry, height: f32, dismiss: Option<Rc<dyn Fn()>>, lit: bool) {
     let scheme = color_scheme();
     match entry {
         Entry::Separator => spacer(
@@ -274,7 +377,7 @@ fn entry_row(entry: Entry, height: f32, dismiss: Option<Rc<dyn Fn()>>) {
             } else {
                 scheme.on_surface
             };
-            let fill = if hovered.get() && !disabled {
+            let fill = if (hovered.get() || lit) && !disabled {
                 scheme.surface_container_high
             } else {
                 Color::TRANSPARENT

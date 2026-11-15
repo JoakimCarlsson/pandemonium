@@ -44,6 +44,19 @@ pub(crate) fn remember_focus_ring() -> FocusRing {
     FocusRing { focus, clicked }
 }
 
+/// Does `open` when `event` presses the down arrow, or Alt with it, as a list box opens its list, and says whether it did.
+pub(crate) fn opens(event: &KeyEvent, open: &dyn Fn()) -> bool {
+    let modifiers = event.modifiers;
+    if event.pressed
+        && event.key == Key::ArrowDown
+        && !(modifiers.ctrl || modifiers.meta || modifiers.shift)
+    {
+        open();
+        return true;
+    }
+    false
+}
+
 /// Does `press` when `event` presses Enter or Space with no modifier held, and says whether it did.
 pub(crate) fn activates(event: &KeyEvent, press: &dyn Fn()) -> bool {
     let modifiers = event.modifiers;

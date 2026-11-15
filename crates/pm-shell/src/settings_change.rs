@@ -80,6 +80,16 @@ pub fn binding_reads(text: &str) -> bool {
         .is_some_and(|(keys, action)| !keys.trim().is_empty() && !action.trim().is_empty())
 }
 
+/// Whether `text` can be added as a line of the list `setting` holds: a vim binding, an origin, or any text that is not empty.
+pub fn line_reads(setting: Setting, text: &str) -> bool {
+    let text = text.trim();
+    match setting {
+        Setting::VimBindings => binding_reads(text),
+        Setting::AgentOrigins => origin_reads(text),
+        _ => !text.is_empty(),
+    }
+}
+
 /// The request asking for the newest release on `channel`.
 pub fn release_request(channel: pm_config::Channel) -> Request {
     Request::LatestRelease {
@@ -183,11 +193,7 @@ impl SettingsModel {
             }
             SettingsChange::AddLine(setting, text) => {
                 let text = text.trim().to_owned();
-                let reads = match setting {
-                    Setting::VimBindings => binding_reads(&text),
-                    Setting::AgentOrigins => origin_reads(&text),
-                    _ => !text.is_empty(),
-                };
+                let reads = line_reads(setting, &text);
                 let mut lines = setting.lines(self);
                 if reads && !lines.contains(&text) {
                     lines.push(text);

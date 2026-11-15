@@ -164,6 +164,7 @@ fn picker(
 /// The lines of the list `setting` holds, each with a button taking it out, and a box with a button adding one.
 fn list(actions: &SettingsActions, setting: Setting, lines: Vec<String>) {
     let typed = remember(String::new);
+    let refused = remember(|| false);
     column_arranged(
         Modifier::new().fill_max_width(),
         Arrangement::SpacedBy(pm_components::spacing(6.0)),
@@ -203,7 +204,12 @@ fn list(actions: &SettingsActions, setting: Setting, lines: Vec<String>) {
             let add: Rc<dyn Fn(String)> = {
                 let change = actions.change.clone();
                 let typed = typed.clone();
+                let refused = refused.clone();
                 Rc::new(move |text: String| {
+                    if !pm_shell::line_reads(setting, &text) {
+                        refused.set(true);
+                        return;
+                    }
                     change(SettingsChange::AddLine(setting, text));
                     typed.set(String::new());
                 })
@@ -214,12 +220,16 @@ fn list(actions: &SettingsActions, setting: Setting, lines: Vec<String>) {
                 Alignment::Center,
                 || {
                     let keep = typed.clone();
+                    let calm = refused.clone();
                     let submit = add.clone();
                     TextInput::new(typed.get())
                         .placeholder(setting.add_placeholder())
                         .code()
                         .modifier(Modifier::new().weight(1.0))
-                        .on_change(move |text| keep.set(text))
+                        .on_change(move |text| {
+                            keep.set(text);
+                            calm.set(false);
+                        })
                         .on_submit(move |text| submit(text))
                         .show();
                     let typed = typed.clone();
@@ -230,6 +240,15 @@ fn list(actions: &SettingsActions, setting: Setting, lines: Vec<String>) {
                         .show();
                 },
             );
+            if refused.get() {
+                Label::new(format!(
+                    "That does not read as a line of this list ({}).",
+                    setting.add_placeholder()
+                ))
+                .variant(LabelVariant::Subtle)
+                .size(Size::Xs)
+                .show();
+            }
         },
     );
 }

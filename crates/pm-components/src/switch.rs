@@ -102,16 +102,29 @@ impl Switch {
             scheme.on_surface_variant
         };
         let alpha = if self.disabled { 0.5 } else { 1.0 };
+        let ring = crate::focus_ring::remember_focus_ring();
+        let outline = if ring.shown() {
+            scheme.primary
+        } else {
+            Color::TRANSPARENT
+        };
         let mut modifier = Modifier::new()
             .size(width, height)
             .alpha(alpha)
             .background_rounded(track, height / 2.0)
+            .border(1.5, outline, height / 2.0)
             .padding(inset);
         if let (Some(on_change), false) = (self.on_change, self.disabled) {
             let on = self.on;
-            modifier = modifier
-                .cursor(CursorIcon::Pointer)
-                .clickable(move || on_change(!on));
+            let pressed = on_change.clone();
+            let clicked = ring.clone();
+            modifier = ring.focusable(
+                modifier.cursor(CursorIcon::Pointer).clickable(move || {
+                    clicked.clicked();
+                    on_change(!on)
+                }),
+                move || pressed(!on),
+            );
         }
         let alignment = if self.on {
             BoxAlignment::CenterEnd

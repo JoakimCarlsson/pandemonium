@@ -136,7 +136,9 @@ pub use search::{
     splice_excerpts,
 };
 pub use settings_catalog::{Keeper, LISTS, Setting, found, on_page};
-pub use settings_change::{SettingsChange, binding_reads, origin_reads, release_request};
+pub use settings_change::{
+    SettingsChange, binding_reads, line_reads, origin_reads, release_request,
+};
 pub use settings_forms::{
     Draft, FormChange, McpField, McpForm, ModelField, ModelForm, SettingsForms,
 };
