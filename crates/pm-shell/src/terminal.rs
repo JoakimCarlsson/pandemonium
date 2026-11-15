@@ -232,8 +232,14 @@ mod tests {
     #[test]
     fn paste_strips_control_characters() {
         let mut shell = Shell::starting(1, "~/".to_owned(), 20, 2);
-        assert_eq!(shell.paste_bytes("a\tb\r\nc\x1b[201~d\x07"), b"a\tb\rc[201~d".to_vec());
+        assert_eq!(
+            shell.paste_bytes("a\tb\r\nc\x1b[201~d\x07"),
+            b"a\tb\rc[201~d".to_vec()
+        );
         shell.feed(b"\x1b[?2004h");
-        assert_eq!(shell.paste_bytes("x\x1by"), b"\x1b[200~xy\x1b[201~".to_vec());
+        assert_eq!(
+            shell.paste_bytes("x\x1by"),
+            b"\x1b[200~xy\x1b[201~".to_vec()
+        );
     }
 }

@@ -77,6 +77,8 @@ enum Ask {
     MachineSettings,
     /// The extensions, languages among them.
     Extensions,
+    /// The themes, icon themes and commands the installed extensions bring.
+    ExtensionAssets,
     /// The tool servers.
     McpServers,
     /// The model servers.
@@ -135,6 +137,7 @@ impl Ask {
         match request {
             Request::MachineSettings => Self::MachineSettings,
             Request::Extensions => Self::Extensions,
+            Request::ExtensionAssets => Self::ExtensionAssets,
             Request::McpServers => Self::McpServers,
             Request::ModelServers | Request::RemoveModelServer { .. } => Self::ModelServers,
             Request::ModelSlots { .. } => Self::ModelSlots,
@@ -199,6 +202,10 @@ pub struct Link {
     routes: Routes,
     /// The chords pressed so far of a binding of several, waiting for the next.
     chords: Vec<pm_editor::Chord>,
+    /// The files opened lately from the quick input, the latest first.
+    recent_files: Vec<String>,
+    /// The titles of the commands run lately from the quick input, the latest first.
+    recent_commands: Vec<String>,
 }
 
 impl Link {
@@ -253,6 +260,8 @@ impl Link {
             remote_sessions: HashMap::new(),
             routes: Routes::default(),
             chords: Vec::new(),
+            recent_files: Vec::new(),
+            recent_commands: Vec::new(),
         }
     }
 
@@ -361,6 +370,7 @@ impl Link {
             Request::McpServers,
             Request::ModelServers,
             Request::Extensions,
+            Request::ExtensionAssets,
         ];
         requests.extend(self.settings.asks_for(self.settings.page.section));
         if self.settings.window.general.check_updates && self.settings.release.is_none() {
@@ -786,8 +796,12 @@ impl Link {
             Incoming::FolderChanged(directory) => self.git_folder_changed(&directory),
             Incoming::ExtensionsChanged(extensions) => {
                 self.workspace.extensions = Some(listed(&extensions));
+                let changed = self.settings.extensions != extensions;
                 self.settings.extensions = extensions;
                 self.settings.extensions_loaded = true;
+                if changed {
+                    self.send(Request::ExtensionAssets);
+                }
             }
             Incoming::Event {
                 session,
@@ -882,8 +896,15 @@ impl Link {
             (Ask::Dock(ask), response) => self.change_dock(|dock| dock.answer(ask, response)),
             (Ask::Extensions, Response::Extensions { extensions }) => {
                 self.workspace.extensions = Some(listed(&extensions));
+                let changed = self.settings.extensions != extensions;
                 self.settings.extensions = extensions;
                 self.settings.extensions_loaded = true;
+                if changed {
+                    self.send(Request::ExtensionAssets);
+                }
+            }
+            (Ask::ExtensionAssets, Response::ExtensionAssets(assets)) => {
+                self.settings.assets = assets;
             }
             (Ask::Log(path), Response::Log { commits })
                 if self.workspace.page == Page::Overview(path.clone()) =>

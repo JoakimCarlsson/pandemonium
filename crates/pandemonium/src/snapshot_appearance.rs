@@ -25,6 +25,7 @@ const FLAGS: &[&str] = &[
     "wrap-guide",
     "no-minimap",
     "bar-terminal",
+    "dusk",
 ];
 
 /// Whether `word` is an appearance word.
@@ -49,6 +50,10 @@ fn apply_word(model: &mut SettingsModel, word: &str) {
         "wrap-guide" => model.editor.wrap_guide = true,
         "no-minimap" => model.editor.minimap = false,
         "bar-terminal" => model.window.terminal.cursor = TerminalCursor::Bar,
+        "dusk" => {
+            appearance.dark_theme = "Dusk".to_owned();
+            appearance.light_theme = "Dusk".to_owned();
+        }
         _ => apply_valued(model, word),
     }
 }

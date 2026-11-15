@@ -182,7 +182,14 @@ pub struct SettingsModel {
     pub page: SettingsPage,
     /// What the forms of the sections inside Agents hold.
     pub forms: crate::settings_forms::SettingsForms,
+    /// How the download of the embedded browser stands, while one runs or after one failed.
+    pub browser_note: Option<String>,
+    /// What the extensions installed on this machine bring that the window uses itself: themes, icon themes and commands.
+    pub assets: pm_protocol::ExtensionAssets,
 }
+
+/// The names of the theme families the app ships, Default first.
+pub const SHIPPED_THEMES: [&str; 2] = ["Default", "Dusk"];
 
 impl SettingsModel {
     /// The model with `editor` and `window` read from where the window keeps them, and the harness's agents.
@@ -209,6 +216,20 @@ impl SettingsModel {
         self.editor = kept.editor;
         self.window = kept.window;
         self.machine = kept.machine;
+    }
+
+    /// The names of the theme families that can be chosen: those the app ships, then those extensions bring.
+    pub fn theme_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = SHIPPED_THEMES
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect();
+        for theme in &self.assets.themes {
+            if !names.contains(&theme.name) {
+                names.push(theme.name.clone());
+            }
+        }
+        names
     }
 
     /// The languages installed on the server on this machine, by id and name, in the order of their names.

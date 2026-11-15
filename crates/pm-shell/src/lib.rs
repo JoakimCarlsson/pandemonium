@@ -85,7 +85,8 @@ pub use dock_model::{
 pub use extensions::{Extension, ExtensionAction, Tone, language_offer, listed};
 pub use file_actions::FileAction;
 pub use file_tree::{
-    EditKind, FOLDER_MARK, FileTree, TreeAction, TreeEdit, TreeRow, join, name_of, parent_of,
+    EditKind, FOLDER_MARK, FileTree, Held, PickHow, TreeAction, TreeEdit, TreeRow, join, name_of,
+    name_problem, parent_of,
 };
 pub use finish::{FinishNotice, finish_notice};
 pub use git::{
@@ -101,8 +102,8 @@ pub use model::{
     SessionStatus, Start, Workspace,
 };
 pub use open_files::{
-    Comparison, EditorBar, EditorPopup, FileBody, OpenFile, OpenFiles, Pane, SessionTab,
-    SharedDocument, TabAction, TabMenu, is_picture,
+    Comparison, EditorBar, EditorPopup, FileBody, OpenFile, OpenFiles, PANE_SHARE_MIN, Pane,
+    SessionTab, SharedDocument, TabAction, TabMenu, is_picture,
 };
 pub use page::{Page, Trail};
 pub use pm_browser::CaptureKind as PageCapture;
@@ -138,8 +139,8 @@ pub use settings_forms::{
 };
 pub use settings_keymap::{KeymapGroup, KeymapRow};
 pub use settings_model::{
-    AgentSetting, Item, Kept, Kind, REACHES, RUNNING, Release, SettingsModel, SettingsPage,
-    ToolSet, reach_of, slot_source,
+    AgentSetting, Item, Kept, Kind, REACHES, RUNNING, Release, SHIPPED_THEMES, SettingsModel,
+    SettingsPage, ToolSet, reach_of, slot_source,
 };
 pub use settings_sample::{sample_forms, sample_settings};
 pub use settings_section::Section;

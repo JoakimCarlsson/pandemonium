@@ -123,6 +123,8 @@ impl Setting {
                     &window.appearance.theme_mode,
                 ),
             ),
+            Self::LightTheme => Control::Picker(window.appearance.light_theme.clone()),
+            Self::DarkTheme => Control::Picker(window.appearance.dark_theme.clone()),
             Self::InterfaceFont => Control::Picker(font_shown(&window.appearance.interface_font)),
             Self::InterfaceSize => {
                 Control::Number(format!("{} px", window.appearance.interface_size))
@@ -670,6 +672,8 @@ impl Setting {
                 window.agents.notification = chosen(&ways, option);
             }
             Self::InterfaceFont
+            | Self::LightTheme
+            | Self::DarkTheme
             | Self::CodeFont
             | Self::Language
             | Self::LanguageServerCommand
@@ -696,6 +700,7 @@ impl Setting {
                 .collect()
         };
         match self {
+            Self::LightTheme | Self::DarkTheme => state.theme_names(),
             Self::InterfaceFont => fonts(&state.fonts),
             Self::CodeFont => fonts(&state.mono_fonts),
             Self::Language => state
@@ -727,6 +732,8 @@ impl Setting {
         let options = self.options(state);
         let named = |name: &str| options.iter().position(|held| held == name);
         match self {
+            Self::LightTheme => named(&state.window.appearance.light_theme),
+            Self::DarkTheme => named(&state.window.appearance.dark_theme),
             Self::InterfaceFont => named(&font_shown(&state.window.appearance.interface_font)),
             Self::CodeFont => named(&font_shown(&state.window.appearance.code_font)),
             Self::Language => {
@@ -761,6 +768,8 @@ impl Setting {
             }
         };
         match self {
+            Self::LightTheme => state.window.appearance.light_theme = name,
+            Self::DarkTheme => state.window.appearance.dark_theme = name,
             Self::InterfaceFont => state.window.appearance.interface_font = font(name),
             Self::CodeFont => state.window.appearance.code_font = font(name),
             Self::Language => {
@@ -920,6 +929,14 @@ impl Setting {
                 .clone_from(&own.general.agent_origins),
             Self::Channel => window.general.channel = own.general.channel,
             Self::ThemeMode => window.appearance.theme_mode = own.appearance.theme_mode,
+            Self::LightTheme => window
+                .appearance
+                .light_theme
+                .clone_from(&own.appearance.light_theme),
+            Self::DarkTheme => window
+                .appearance
+                .dark_theme
+                .clone_from(&own.appearance.dark_theme),
             Self::InterfaceFont => {
                 window
                     .appearance
